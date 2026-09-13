@@ -221,8 +221,19 @@ func (s Step) failureReasons() []string { return dedupeReasons(s.Output.Errors) 
 // (`steps[].errors`, a sibling of `output`, not `steps[].output.errors`) and
 // would have been the third copy; it calls this instead.
 //
-// The four callers are the two step types' failureReasons and the two
-// workflow-level FailureReasons. The workflow-level ones run it over every
+// The three callers are Step.failureReasons and the two workflow-level
+// FailureReasons — Workflow's and ListedWorkflow's.
+//
+// 🔴 THAT SENTENCE READ "The four callers are the two step types'
+// failureReasons and the two workflow-level FailureReasons" until it was
+// counted. There is ONE step-type failureReasons; no ListedStep.failureReasons
+// has ever existed, because ListedWorkflow.FailureReasons reads `steps[].errors`
+// inline rather than through a step method. It stayed green through every suite
+// since it was written because nothing asserted on it. The set is now a
+// bidirectional ledger — TestDedupeReasonsCallersAreLedgered — and each row
+// names the wire field its array is built from.
+//
+// The workflow-level ones run it over every
 // step's raw array at once, which is exactly per-step dedupe followed by
 // cross-step dedupe: trimming, the emptiness drop and the exact-repeat drop are
 // all order-preserving and idempotent.

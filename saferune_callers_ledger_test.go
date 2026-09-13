@@ -4,7 +4,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -79,7 +78,7 @@ var countWords = map[int]string{2: "TWO", 3: "THREE", 4: "FOUR"}
 
 // TestSaferuneCallersAreLedgered is round 3's finding 2.
 func TestSaferuneCallersAreLedgered(t *testing.T) {
-	files := goSourceFiles(t)
+	files := moduleGoFiles(t, false)
 	// POSITIVE CONTROL on the walk itself, before any verdict: a walk that found
 	// nothing reports "no unledgered callers", which is the reassuring zero.
 	if len(files) < 100 {
@@ -323,31 +322,6 @@ func agentsSaferuneEntry(t *testing.T) string {
 	return entry
 }
 
-// goSourceFiles returns every non-test .go file in the module.
-func goSourceFiles(t *testing.T) []string {
-	t.Helper()
-	var out []string
-	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		name := d.Name()
-		if d.IsDir() {
-			if path != "." && (strings.HasPrefix(name, ".") || name == "testdata" ||
-				name == "node_modules" || name == "dist" || name == "bin") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			return nil
-		}
-		out = append(out, path)
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk module: %v", err)
-	}
-	sort.Strings(out)
-	return out
-}
+// The module walk that used to live here as goSourceFiles is now moduleGoFiles,
+// in saferune_arg_origins_test.go — one copy for the three guards in this
+// package that need it. See its comment for why.

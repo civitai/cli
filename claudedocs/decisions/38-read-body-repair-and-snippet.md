@@ -8,7 +8,8 @@
 Guards: `pkg/civitai/read_repair_test.go`, `pkg/civitai/raw_doc_ledger_test.go`,
 `internal/cmd/read_json_note_test.go`, `internal/cmd/read_help_test.go`,
 `internal/cmd/read_r2_test.go`, `cmd/civitai/read_error_stderr_test.go`,
-`saferune_callers_ledger_test.go`, `pkg/civitai/snippet_args_ledger_test.go`.
+`saferune_callers_ledger_test.go`, `pkg/civitai/snippet_args_ledger_test.go`,
+`saferune_arg_origins_test.go`.
 This list and `item38CommentedFiles` — the set whose comments are checked for
 dangling test citations — are pinned equal by
 `TestItem38FileLedgerMatchesTheDecisionHeader`. They disagreed in both
@@ -16,7 +17,7 @@ directions until round 4: the ledger held four files, two of which this header
 did not name, and none of the `pkg/civitai` or `cmd/civitai` ones.
 
 Born split: written straight into `claudedocs/decisions/` — AGENTS.md had 472
-bytes of headroom when this was added, and the body is five decisions, three
+bytes of headroom when this was added, and the body is six decisions, four
 tables and the enumerated residuals. See `bornSplitItems` in
 `agents_split_preserved_test.go`.
 
@@ -369,6 +370,142 @@ number. `TestSaferuneCallersAreLedgered` is the bidirectional ledger: it fails
 when the importer set grows or shrinks, requires both texts to name every
 ledgered call site, and derives the count WORD from the ledger's own length so
 the numeral cannot drift from the membership.
+
+## 6. A CLOSED ISSUE IS NOT A DISCHARGED CONDITION — #542's second clause
+
+`civitai/cli#542` asked for a guard that fails when "`snippet()` **or any
+`saferune.*` call site outside `internal/cmd`**" gains a caller whose argument
+is not server-supplied, **or when the caller set changes at all,
+bidirectionally**. It was CLOSED by `civitai/cli#557`, which shipped
+`pkg/civitai`'s `snippetArgs` — the right guard for the first clause, keyed per
+enclosing function, bidirectional. It enumerates `snippet(` call sites in
+`pkg/civitai` and nothing else, so the words "or any `saferune.*` call site
+outside `internal/cmd`" were never covered by anything.
+
+Measured when this section was written: `saferune.*` appears at **three** places
+in the module's non-test sources — `internal/cmd/safeterm.go` (`safeTerm`),
+`internal/genapi/status.go` (`hasPrintableContent`) and `pkg/civitai/read.go`
+(`snippet`). `snippetArgs` sees one of them. The gap sat behind a green suite,
+a lint run and a **closed issue** for a full arc, which is the durable part: a
+closed issue reads as a discharged condition, and nothing in this repository was
+asserting the difference.
+
+**All three sites delegate, and that is the finding rather than a shortcut.**
+Every one is a one-line wrapper whose argument is the wrapper's own parameter,
+so the bytes' origin is not decidable at the `saferune` call site at all — it is
+decided one level out. A ledger that only asked "are these server bytes?" would
+answer "cannot tell here" three times out of three, which is how a guard ends up
+reading as coverage while providing none. So `saferuneRefs`
+(`saferune_arg_origins_test.go`) records `originDelegated`, a reference COUNT,
+plus the Test that
+answers the question at the wrapper's own call sites, and **resolves that name
+to a real declaration** before believing it — the move
+`checkQuestionsResolve` already makes next door, for the same reason.
+
+The delegations, and what each buys:
+
+- `internal/cmd:safeTerm` → `TestSafeTermIsNeverAppliedToUserTypedInput`. This
+  site **must not** be classified server-or-user here: `internal/cmd`
+  deliberately routes two non-server values through `safeTerm` — `--input` file
+  content and `download`'s mixed-origin target path — both named in
+  `saferune`'s package doc as documented exceptions.
+- `pkg/civitai:snippet` → `TestSnippetArgumentsAreAllServerBytes`, i.e. #557's
+  own ledger, now reachable from the module root instead of being a fact about
+  one package's test directory.
+- `internal/genapi:hasPrintableContent` →
+  `TestHasPrintableContentArgumentsAreServerBytes`, which did not exist: this is
+  the hole. `internal/genapi/saferune_origins_test.go` is `snippetArgs`' sibling
+  for it, and it pins **two** hops, because `hasPrintableContent`'s only caller
+  is `dedupeReasons` and `dedupeReasons`' callers are where the wire fields are
+  actually read. Pinning only the first hop would be a description ("the
+  argument is server bytes") wider than its body ("the argument is whatever
+  `dedupeReasons` passes").
+
+🔴 **The second hop found a live stale claim on its first run.** `dedupeReasons`'
+doc comment read *"The four callers are the two step types' `failureReasons` and
+the two workflow-level `FailureReasons`."* There is **one** step-type
+`failureReasons` and there are **three** callers; no `ListedStep.failureReasons`
+has ever existed, because `ListedWorkflow.FailureReasons` reads `steps[].errors`
+inline. A comment is a claim, and that one had been green since it was written.
+`TestDedupeReasonsCallersAreLedgered` now holds the set bidirectionally, with
+each row naming the wire field its array is built from — a **ledger, not a
+count**, because a count of four would have been satisfied by any four
+functions at all.
+
+**Why a `genapi` guard is described here but is NOT in item 38's file ledger** —
+an inconsistency a round-0 audit named, resolved rather than left implicit. What
+item 38 owns is the DELEGATION: `saferune_arg_origins_test.go` is item 38's guard
+(it covers `snippet`, and `saferune_callers_ledger_test.go` is already item 38's),
+and a delegation is unreadable without saying where it points. The file it points
+*at* answers for `internal/genapi`'s failure-reason path, which is item 13's seam,
+so it is not in `item38CommentedFiles` and this header does not name it. The rule,
+stated so the next reader does not have to re-derive it: **item 38 owns the
+pointer; the item whose seam the target guards owns the target.**
+
+The scan is structural rather than spelled, which is the property that decides
+whether it can be walked around: the saferune import's **local name is
+resolved** (so `import sr ".../saferune"` is caught), a dot import is a hard
+refusal (it would make every reference unqualified and the scan blind), and a
+**bare, non-call reference** — `f := saferune.Strip` — is reported separately
+rather than ignored, because it escapes the argument question entirely. The
+import scan collects EVERY local name the file binds to the package, not just the
+last: a file may bind one import twice under two names, `gofmt` and
+golangci-lint both accept it, and the first draft kept only one — an audit
+planted `sr.Strip(userFlagValue)` beside a `saferune.` alias and the guard never
+saw it.
+
+🔴 **THE MODULE-ROOT GUARD WAS CUT IN HALF AFTER FOUR AUDIT ROUNDS, AND THE
+MEASUREMENT THAT JUSTIFIED THE CUT IS THE DURABLE PART.** Its first form keyed
+every reference by package, enclosing declaration and rendered argument, so that
+no two sites could share a row. Three rounds found that property broken three
+times — `vs.Names[0]` collapsing a multi-name spec; a refusal encoded in a key's
+spelling, which a row simply spelled; a blank-identifier flag wired into one
+branch, which `func _()` and `func init()` walked past — plus an unnameable
+argument rendering by AST *type* so two expressions shared a key, and a control
+that masked the findings it guarded.
+
+Then the question nobody had asked: **has the thing that machinery defends
+against ever happened?** Measured over the repository's whole history: **every
+package has had exactly ONE `saferune` call site, always.** The set has only ever
+grown by *package* (two to three, when `snippet` arrived), and that direction was
+already covered bidirectionally by `TestSaferuneCallersAreLedgered` before this
+file existed. Not one of the colliding shapes those rounds fixed has ever
+occurred here — 741 lines that found **zero** defects in this repository's code
+and **nine** in themselves.
+
+The identity machinery is gone. What replaces it is a **COUNT**: a row records
+how many references it covers, so a package that gains a second call site fails
+because 2 ≠ 1 and the failure names every position. A count cannot collide with
+itself, cannot be out-spelled, and needs no owner key, no argument rendering and
+no uniqueness proof. Verified: every shape that beat the old machinery —
+`func _()` ×2, `func init()` ×2, `var _ =` ×2, a multi-name spec, two
+`BinaryExpr` arguments, an aliased import — now dies on that one comparison.
+480 lines, down from 741.
+
+**The general lesson, which is not about this file:** a guard that keeps failing
+its own property is evidence about the property's *cost*, not only about the
+fixes. Ask what it defends against and whether that has ever happened, before
+paying for the fourth attempt. `/audit-pr`'s round 0 asked exactly this on day
+one — *"the half that found something is 302 lines, the half that found nothing
+is 494"* — and three rounds of findings landed in the half it named before anyone
+acted on it.
+
+🔴 **Two of this section's own guards shipped defects that a green suite could
+not see, and both were SURVIVED MUTANTS against the exact relationship they
+pin.** (a) The genapi walk iterated `FuncDecl`s only, so two `dedupeReasons`
+callers added as package-level initialisers left `go test ./...` fully green with
+the ledger still reporting three call sites — falsifying its own row's *"every
+caller is ledgered below"*. Fixed by attributing package-level declarations to
+the variable they initialise (not to one shared `<file-level>` key, which the
+first fix did and which would have let one row vouch for two sites), plus a
+TOTALITY CONTROL: a second traversal, built differently, whose disagreement with
+the first is the failure. (b) `pinnedBy` resolved a Test name MODULE-WIDE, so a
+stub of the right name in any package satisfied it — the name-not-a-relationship
+state `3457c5d` (civitai/cli#578) had deleted from this repo shortly before this branch was cut,
+reintroduced in the file that cites it. Now resolved inside the site's own
+package, as `checkQuestionsResolve` already did. **Residual, stated:** package
+scoping does not catch a GUTTED test in the right package, and no static scan
+can; `pinnedBy` is not evidence the delegated guard is effective.
 
 ## Residuals, enumerated
 

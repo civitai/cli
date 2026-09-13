@@ -435,7 +435,7 @@ var bornSplitItems = []string{
 	"claudedocs/decisions/37-numeric-username.md",
 	// Item 38 was written straight into claudedocs/decisions/ for the same
 	// reason: AGENTS.md had 472 bytes of headroom when it was added, and the
-	// body is five decisions, four tables and the enumerated residuals.
+	// body is six decisions, four tables and the enumerated residuals.
 	//
 	// 🔴 THIS SENTENCE HAS NOW BEEN WRONG TWICE, IN OPPOSITE DIRECTIONS, SO THE
 	// GEOMETRY IS PINNED RATHER THAN COUNTED IN PROSE. Round 2 wrote "measurement

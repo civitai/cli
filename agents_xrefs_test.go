@@ -143,8 +143,36 @@ var scannedExts = map[string]bool{
 
 // skippedDirs are never source. `.git` in particular holds packed objects that
 // would be read as text.
+//
+// 🔴 `.claude` HOLDS WHOLE CHECKOUTS OF THIS REPO, AND OMITTING IT MADE THIS
+// GUARD'S VERDICT A FUNCTION OF WHICH BRANCHES HAPPEN TO BE CHECKED OUT.
+// `.claude/worktrees/` is where agent worktrees live: measured, 20 of them,
+// holding 9,012 `.go` and 1,495 `.md` files, and this walk read all of them —
+// TestAgentsItemCrossReferencesResolve reported 17,658 item references, most of
+// them from other branches. It passed only because no worktree happened to
+// reference a number above AGENTS.md's current highest. A worktree standing on a
+// branch that appends the NEXT item turns `main` red for a file `main` does not
+// contain, and the failure reads as a broken cross-reference rather than as a
+// checkout that is none of this tree's business.
+//
+// 🔴 THE NEXT NUMBER IS NOT SPELLED OUT ABOVE, AND THAT IS NOT SQUEAMISHNESS.
+// The first draft of this comment named it — and THIS TEST FAILED ON ITS OWN
+// DOC COMMENT, because the scan reads `.go` files for `item N` and cannot tell a
+// comment from a citation. Exactly the hazard the paragraph describes, produced
+// by describing it. Describe the number; do not write it.
+//
+// ⚠ An earlier draft of THIS paragraph sourced that rule to
+// `agents_evidence_test.go` — wrongly. That file records a different constraint,
+// about decisions-file PATHS, and says nothing about item numbers; a maintainer
+// following the pointer would have found nothing and concluded the rule was
+// invented. The constraint actually lives a few lines below, in parseAgentsItems,
+// which is what makes an out-of-range number fatal.
+//
+// `skipDirsForSourceScan` in agents_evidence_test.go — same package, same
+// question — has always included it. Two spellings of one predicate, disagreeing
+// on exactly this entry.
 var skippedDirs = map[string]bool{
-	".git": true, "node_modules": true, "dist": true, "bin": true,
+	".git": true, ".claude": true, "node_modules": true, "dist": true, "bin": true,
 }
 
 // parseAgentsItems returns the highest item number in AGENTS.md's numbered list
