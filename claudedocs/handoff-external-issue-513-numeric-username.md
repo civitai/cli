@@ -17,31 +17,31 @@ answered — starting with #513, and fix the API-side root cause behind it.
 
 ## State now
 
-- **Branch `main` @ `6f0a8d8`** — `#573` merged. Working tree clean. 🔴 `main` moved many times
-  across this arc, mostly from PARALLEL sessions; re-measure every sha before acting.
-- **The #552 engineering is DONE and CLOSED.** What remains of this arc is three external
-  issues, each blocked on a named third party, plus one recorded-residual issue nobody owns.
-- **No `clawgate-task:`** — `resolve` exited 5 (0 tasks for this session; the board was reached).
-  A real reading, not a clean bill of health.
-- **Claims: only `devdocs-61-flux2-klein-whatif-500` and `devdocs-76-drift-sweep-red` held.**
-  All `cli-*` claims released.
+- **`civitai/cli` `main` @ `095f4ac`**; **`civitai-developer-docs` `main` @ `17f2a44`**. Both clean.
+- **Handoff PR `cli#584`** is open — this doc's own update.
+- **🔴 `devdocs#77` is now VERIFIED against the original symptom, not merely merged.** Dispatched
+  run `34737535532`: issue #76's body went from **0 named failing steps + 1** `at least one drift
+  check is red` to **7 named steps + 0**, with **no** degraded clause — so the live API path
+  worked end to end (token-first or the anonymous retry succeeded, `job.name` matched, the
+  multi-line reason rendered). Baseline captured beforehand at `/tmp/claude-1000/i76-before.md`.
+- **🔴 IT IS SEVEN DRIFTS, NOT SIX — and the seventh only became visible because of the fix.**
+  The example-app-rot check, whose counters the OLD body rendered while six other checks failed,
+  is now itself failing: `ZacxDev/civitai-app-playable-collections` declares
+  `apps:storage:read`/`write` that `apps/examples.md` does not list. Measured 6 failed steps at
+  run `34690400566` (09-12) and 7 at `34737535532` (09-13), so the seventh is genuinely new.
+- **Claims: `devdocs-61` and `devdocs-76` still held.** `devdocs-76` is only PARTLY discharged —
+  the reporting half shipped; the seven drifts did not.
+- **No `clawgate-task:`** — `resolve` exited 5 with its positive control answering for a different
+  session, so the board was reached; an unknown id also answers 200 with an empty array, so this
+  is a real reading and not proof the session id is right.
 
-### The #552 arc, closed out
+### Merged this session — verified by CONTENT
 
-| what | state |
+| what | sha |
 |---|---|
-| `#552` | **CLOSED — condition met, verified element by element** |
-| `#575` | **OPEN — the four recorded residuals** |
-| `#554` (xsvm) | CLOSED by the author, superseded by `#569` |
-
-The full sha ledger for this arc has been **moved to Gotchas** (an APPEND section) so it
-stops being at risk — see "THE ARC'S SHA LEDGER" there.
-
-**39 bare-`safeTerm` cell reaches at base → 0.** Three audit rounds ran on `#573`: a
-requirements/deletion pass, a blind correctness pass, and a delta re-audit.
-
-⚠ **Other sessions are active in this repo right now** — `PR #572` and issues `#566`, `#574`
-(the download path) are not this arc's work. Do not assume an open cli PR is yours.
+| `cli#578` — #575 **R1** | `3457c5d` |
+| `cli#582` — #575 **R5** | `095f4ac` |
+| `devdocs#77` — the reporting half of devdocs#76 | `17f2a44` |
 
 ## Open investigations — live diagnosis state
 
@@ -481,36 +481,87 @@ soft-wrap residual"*). That was the wrong call: its body enumerated ~13 unguarde
 are now all gated, so an open issue with a stale body would misinform the next reader — the exact
 failure the 2026-09-12 rewrite fixed. Said so explicitly on the issue rather than quietly.
 
+### 🔴 `devdocs#77` is MERGED but NOT VERIFIED against the original symptom
+as-of: 2026-09-13
+
+- **Symptom + exact repro:** `devdocs#76`'s body renders example-app counters (8 verified, 0
+  rotted) under a banner saying `at least one drift check is red`, while SIX other steps fail.
+  Reproduced at run `34690400566`: `drift` = failure with six named failed steps, `notify` =
+  success.
+- **Observed (with values):** everything proven about the fix is against FAKES. The
+  `--self-test` gate drives `decideNotification` and `fetchFailedSteps` through a stubbed
+  `fetchImpl`. Live-untested: whether the token-first call succeeds in Actions or 403s into the
+  retry; whether `job.name` matches `DRIFT_NOTIFY_JOB_NAME: drift` at runtime; whether the
+  multi-line reason renders in the real issue body. Baseline for the comparison is captured at
+  `/tmp/claude-1000/i76-before.md` (1162 bytes).
+- **Ruled out:** that CI green means the live path works — `check-example-apps` runs the
+  self-test on every PR but is NOT among `main`'s required contexts
+  (`test-cli, test-messages, test-bridge, typecheck-snippets, build-site, test-md-regions`), and
+  it only ever exercises fakes. `via: measurement`
+- **Leading hypothesis:** it works — the anonymous jobs endpoint was measured returning 200 with
+  all six step names, and `job.name` is `drift` because the job declares no `name:`. But that is
+  reasoning, not a live reading. `via: assumed`
+- **Next probe:** read the issue body after run `34737535532` and diff it against the baseline.
+  ```bash
+  gh issue view 76 --repo civitai/civitai-developer-docs --json body --jq .body > /tmp/after.md
+  grep -icE "Snapshot drift|OpenAPI spec drift|Manifest schema parity" /tmp/after.md   # want 6
+  grep -ic "at least one drift check is red" /tmp/after.md                             # want 0
+  ```
+  If it reads 0/1 instead, the degraded path names its own reason — read the clause after
+  `the failing steps could not be named:`; a 403 both ways means the retry does not save us in
+  Actions, `no job named "drift"` means the runtime name lookup is wrong.
+
+### `devdocs` has a SECOND red workflow nobody has looked at
+as-of: 2026-09-13
+
+- **Symptom + exact repro:** `gh run list --repo civitai/civitai-developer-docs --workflow
+  cli-snapshot-refresh --limit 2` → **failure** on 2026-09-11T12:09 and 2026-09-12T11:34.
+- **Observed (with values):** it is a distinct workflow from `appblocks-drift`, and it is NOT
+  mentioned anywhere in `devdocs#76` or in this doc's earlier text. It shares a name with
+  `appblocks-drift`'s failing step *"CLI snapshot freshness — civitai-cli-help.txt vs the latest
+  civitai/cli release"*, so the two are plausibly the same underlying drift surfaced twice.
+- **Ruled out:** nothing yet — this has not been investigated at all. `via: assumed`
+- **Leading hypothesis:** the same CLI-snapshot staleness that fails inside the drift sweep also
+  fails in its own refresh workflow. `via: assumed`
+- **Next probe:** `gh run view --repo civitai/civitai-developer-docs --log-failed` on the latest
+  `cli-snapshot-refresh` run, and compare its failing step to the drift sweep's CLI-snapshot step.
+
 ## Next steps (ranked)
 
-🔴 Numbering stable; 1–12 keep their meaning.
+🔴 Numbering stable — rank is half a `claim-work` slug's identity. 1–14 keep their meaning.
 
 1. **DONE — `civitai/cli#526`.** forcing: none
-2. **`developer-docs#61`** — routed and re-tested (HTTP 200 now, but at the GOOD end of the
-   reporter's own insufficient-balance hypothesis, so **not** fixed-by-measurement). Awaiting
-   their balance figure. Claim held.
-   forcing: user — external reporter, waiting on them since 2026-09-11.
-3. **DONE — #513 diagnosed; `civitai/civitai#4768` filed** (still 0 comments). cli#513 stays
-   OPEN deliberately. forcing: none
+2. **`developer-docs#61`** — awaiting the reporter's blue balance at the time of their 500.
+   Claim held. forcing: user — external reporter, waiting since 2026-09-11.
+3. **DONE — #513 diagnosed; `civitai/civitai#4768` filed.** Still **0 comments**; needs routing to
+   a platform owner, which is outward-facing and unasked-for so far. forcing: none
 4. **DONE — stale branch deleted** (`12818a3`). forcing: none
 5. **DONE — `#545` merged.** forcing: none
-6. **DONE — `#554` closed by @xsvm**, superseded by `#569`. forcing: none
-7. **DONE — AGENTS.md item 37 / `decisions/37` corrected** via `#556`. forcing: none
-8. **DONE — `#552` CLOSED, condition verified element by element.** forcing: none
-9. **`developer-docs#76`** — the four other failing checks, the `/apps/installed` →
-   `/apps/activity` rename in the docs' prose, and fixing `drift-notify.mjs` to NAME the failing
-   steps. Claim held.
-   forcing: gate — a red gate whose body reads all-green trains readers to dismiss it.
-10. **DONE — vendored mirrors measured CLEAN** (slot registry 4/4, scopes 12/12,
-    `SENSITIVE_BLOCK_SCOPES` 5/5, each with a control). forcing: none
-11. **`home-manager switch`** so `devrc#1498`'s mentions-id-collision lesson is live. Merged ≠
-    deployed for a `home.file` copy. Operator's call — it restarts collector/keylog/i3 on both
-    hosts. forcing: none
-12. **`civitai/cli#575`** — the four recorded residuals. R1 (`gatePreSanitised`) is the only one
-    that is plainly a defect; R2–R4 may legitimately be accepted in writing, and the issue's
-    closing condition says so.
-    forcing: security — one gate state is still a hole any row can be moved into, on a shipped
-    guard.
+6. **DONE — `#554` closed by @xsvm.** forcing: none
+7. **DONE — AGENTS.md item 37 corrected** via `#556`. forcing: none
+8. **DONE — `#552` CLOSED.** forcing: none
+9. **`developer-docs#76` — SEVEN real drifts, all unfixed.** #77 fixed only the reporting layer.
+   Snapshot drift, CLI snapshot freshness, manifest schema parity, generation-bridge pin drift,
+   OpenAPI spec drift, design-system pin drift, **and example-app rot** (the newest, with a
+   concrete remedy already in the issue body: update the `Scopes` line for
+   `civitai-app-playable-collections`). Also unstarted: the `/apps/installed` → `/apps/activity`
+   rename in the docs' prose. Claim held, partly discharged.
+   forcing: gate — red for 32 consecutive scheduled runs (last green 2026-08-11).
+10. **DONE — vendored mirrors measured CLEAN.** forcing: none
+11. **`home-manager switch`** so `devrc#1498`'s lesson is live. Operator's call — restarts
+    collector/keylog/i3 on both hosts. forcing: none
+12. **`civitai/cli#575` — R2, R3, R4, R6 remain.** R2–R4 need a WRITTEN maintainer decision, not
+    code. **R6** is the one with engineering in it. The body now carries a status table.
+    forcing: none
+13. **DONE — `#77` verified live** (see State now). forcing: none
+14. **`cli-snapshot-refresh` is red too**, 09-11 and 09-12, named in no issue and never
+    investigated. forcing: gate — a second unowned red workflow in the same repo.
+15. **The `civitai-developer-docs` cairn scope is unreachable — an entry could not be written.**
+    `cairn doctor` reports it exists ONLY in the frozen pre-cutover mirror and is not in the
+    store's answer to this token; `cairn create` refuses `[not-found]`. Either it was never
+    seeded to the pod or it is not in this token's allowlist — the API deliberately cannot say
+    which. The drafted `drift-sweep` entry is preserved in this doc's Gotchas instead.
+    forcing: none
 
 ## Gotchas / decisions / dead-ends
 
@@ -748,21 +799,99 @@ FLOOR, not a guarantee — and the structural fix is to keep the record where no
   it produced four deletion candidates and a dropped requirement, none of which the nine
   correctness axes would have asked about. One more run before the retire/promote decision.
 
+- 🔴 **FOUR AUDIT LADDERS RAN THIS SESSION AND EVERY SINGLE FINDING WAS IN MY OWN EVIDENCE, NOT
+  IN THE CODE.** #578: a coverage reduction whose opposite the PR body asserted. #582: three
+  ledger rows saying SERVER about strings carrying the user's typed bytes. #77: a permission
+  scope that was never needed, then five mutants surviving a fixture table that recorded requests
+  and read none of them. The shipped behaviour was right early in all four; what took the rounds
+  was making the CLAIMS about it true. Budget for that shape — it is not a sign the work is bad.
+- 🔴 **TWICE IN TWO COMMITS I FIXED AN UNPINNED CLAIM AND SHIPPED THE FIX UNPINNED.** #77's 404
+  retry arm, then the `firstStatus` message that fixed its message. Both survived the full suite
+  on revert. **When a round's finding is "this claim has no fixture", check the FIX has one
+  before committing** — the reflex to write the fix and move on is exactly what reproduces it.
+- 🔴 **A FIXTURE THAT COUNTS CALLS IS NOT A FIXTURE THAT CHECKS REQUESTS.** #77's fake `fetch`
+  took no arguments, so five mutants survived — including "never send the token" and "invert the
+  ordering", the very property the table's failure text claimed to protect. Record the request
+  (`{url, auth, signal}`) and assert the per-call ORDER, not the count. And then read every field
+  you record: `url` was recorded and asserted by nothing for a whole round.
+- 🔴 **A LEDGER THAT MISCOUNTS ITS OWN PAYLOAD BREAKS THE LADDER'S STOP GATE.** I reported "57
+  executable payload lines" for a round whose true figure was 11 — 57 was the SCAFFOLDING count.
+  The ladder stops on two consecutive ZERO-payload rounds, so an inflated number means the gate
+  can never fire and the ladder runs on its own scaffolding forever. Classify hunk by hunk.
+- 🔴 **A PERMISSION SCOPE THAT LOOKS NECESSARY MAY BE YOUR OWN HEADER.** #77 added `actions: read`
+  because the jobs API answered 403 — but the repo is PUBLIC and answers **200 anonymously**; the
+  403 came from unconditionally attaching `Bearer`. Measured with controls (bogus run id → 404).
+  Token-first + anonymous retry removed the scope and made three doc claims true again untouched.
+- 🔴 **THE INSTRUMENT FAILED FIVE TIMES THIS SESSION, EACH TIME IN THE REASSURING DIRECTION.**
+  A mutation anchor matching 0 times printed SURVIVED; another matching 2 times did the same; a
+  case-sensitive grep for a lowercase banner returned a false zero; `set -- $x` in zsh did not
+  word-split so a gate measurement ran with an EMPTY range and reported 0; and `| head` ate a
+  non-zero exit status. **Assert the anchor matched exactly once, and capture `rc` before piping.**
+- 🔴 **`git checkout -- <file>` DISCARDS UNCOMMITTED WORK, AND I DID IT TWICE MID-MUTATION.** Both
+  times it silently reverted an edit I had not committed. Use `cp -a <f> /tmp/bak` before a
+  mutation battery and restore from the copy; commit before starting one.
+- 🔴 **`gh issue view --json body | grep` IS A CLAIM ABOUT YOUR PATTERN.** Verifying #575's body
+  edit, a grep for `CLOSED — #578` returned 0 because the real text is `**CLOSED** — #578`.
+  Pair every such check with a positive control string you know is absent.
+- **An issue's BODY is what the next reader acts on; comments are not.** #575 listed R1 as an
+  open 🔴 for hours after #578 merged, and R5/R6 exist only as comments. Annotate the body in
+  place — a status table at the top, headings amended rather than rewritten — so the original
+  framing stays readable.
+- **`audit-dispatch.py` takes `--repo owner/name`, not `owner/name#N`.** The positional argument
+  is an int. For a cross-repo PR it prints an explicit `git -C … worktree add` recipe and tells
+  you NOT to pass `isolation: "worktree"` — that flag worktrees the cwd's repo, which is wrong.
+- **A round-0 claims block is REFUSED by design** (`round 0 has no fixes to claim`). Round 0's
+  verdict goes in a PR comment as prose; the claims chain starts at the round that first fixes
+  something.
+- **Round-0 trial ledger is CLOSED** at `ran: 6 · changed the outcome: 3`; the fix was a TRIGGER
+  (`audit-pr-nudge.py` routes it at `gh pr create`), not an edit to the section. Keep reporting
+  the pair per PR — it is now the only signal for whether that trigger works. This session:
+  `ran: 3 · changed the outcome: 3`.
+- **A subagent self-disclosed exceeding its permitted writes** — a `git fetch` with no destination
+  refspec in a shared clone. Checked: `for-each-ref 'refs/pull/*'` → 0, clone clean. The
+  disclosure was accurate and the impact nil; worth knowing the disclosure habit works.
+
+- 🔴 **THE devdocs `drift-sweep` INDEX ENTRY COULD NOT BE WRITTEN, AND THE CONTENT IS HERE SO IT
+  IS NOT LOST.** `cairn create --scope civitai-developer-docs` refuses `[not-found]`; `cairn
+  doctor` names the scope as existing only in the frozen pre-cutover mirror and absent from the
+  store's answer to this token. 🔴 **Do NOT fall back to writing the local mirror** — entry files
+  are `0444`, but `Edit` rewrites-and-renames and `Write` creates a fresh `0644` file, so both
+  succeed and strand the content invisibly on one host; that is a measured 5-entry / 24-bullet
+  loss. The durable facts that entry would have carried:
+  - `.github/workflows/appblocks-drift.yml` — `drift` pins `contents: read`; `notify` is the one
+    elevated job (`issues: write`) and runs **no `npm ci`**, so `scripts/drift-notify.mjs` may
+    import node builtins ONLY.
+  - **No `actions: read` is needed and adding one is the easy mistake.** The repo is PUBLIC, so
+    `GET /actions/runs/<id>/jobs` answers **200 anonymously** (bogus run id → 404 as the control).
+    A first cut attached `Bearer` unconditionally, got 403 from a scope-less token, and granted a
+    scope to fix a header it was sending itself. Token-first, anonymous retry on 403 **or** 404.
+  - **`check-example-apps` RUNS on every PR but is NOT a required context** on `main`
+    (`test-cli, test-messages, test-bridge, typecheck-snippets, build-site, test-md-regions`).
+    Say "runs on", never "gates".
+- 🔴 **A COUNT I ASSERTED WENT STALE INSIDE ONE DAY, AND THE FIX IS WHAT REVEALED IT.** I wrote
+  "six real drifts" in a PR body, a merge commit and this doc; the verification run shows
+  **seven**. The seventh is the example-app-rot check — the one whose counters the broken body
+  rendered — so its own failure was the least visible of all. Re-derive a count from the newest
+  run before quoting it, and prefer "as of run `<id>`" to a bare number.
+
 ## How to verify
 
 ```bash
 R=/home/zach/workspace/civit/cli
+D=/home/zach/workspace/civit/civitai-developer-docs
 
-# #552's condition, element by element, on main
-git -C $R show origin/main:internal/cmd/tabwriter_ledger_test.go | grep -c 'GREW'    # >0
-git -C $R show origin/main:internal/cmd/tabwriter_ledger_test.go | grep -c 'SHRANK'  # >0
-git -C $R show origin/main:internal/cmd/safeterm.go | grep -A6 'func safeTermSingle' # \n AND \t
+# the three merges, by CONTENT (a squash is never an ancestor)
+git -C $R show origin/main:internal/cmd/tabwriter_ledger_test.go | grep -c gatePreSanitised   # want 0
+git -C $R show origin/main:internal/cmd/safeterm_userinput_test.go | grep -c 'func bareIdentKey' # want 1
+git -C $D show origin/main:scripts/drift-notify.mjs | grep -c 'export async function fetchFailedSteps' # want 1
+git -C $D show origin/main:.github/workflows/appblocks-drift.yml | grep -cE '^\s+actions: read'  # want 0
 
-# 🔴 #575 R1 — the residual is REAL and recorded as open, not shut
-git -C $R show origin/main:internal/cmd/tabwriter_ledger_test.go | grep -c 'CLOSED AT TWO IS NOT THE SAME'  # 1
+# the issues that must STAY open
+gh issue view 575 --repo civitai/cli --json state --jq .state                      # OPEN (R2-R4, R6)
+gh issue view 76  --repo civitai/civitai-developer-docs --json state --jq .state   # OPEN (six drifts)
 
-# the gate, on the MERGED tree rather than a branch
-make -C $R ci && make -C $R lint     # lint needs nix-shell -p golangci-lint on this host
+# the notifier's own gate (fakes only — see the open investigation)
+node $D/scripts/drift-notify.mjs --self-test   # 17 decision + 11 step-fetcher fixtures
 
 # claims still held
 claim-work --list | grep -E 'devdocs-61|devdocs-76'
