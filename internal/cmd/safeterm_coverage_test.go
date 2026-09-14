@@ -389,16 +389,17 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"waitAndCollect (:1367), and printSubmitted carries its own notCovered row above. That draft " +
 			"also enumerated the workflow id only, so safeTerm(wf.Status) — a SERVER STATUS STRING on " +
 			"the same line, keeping \\n and \\t exactly as the id does — was missing from the list of " +
-			"what is still open HERE. Both corrected in round 3. 🔴 AND THREE MORE ARE REACHABLE FROM " +
-			"THIS FUNCTION WITHOUT BEING IN IT: waitAndCollect CALLS printReattach (generate.go:1447 on " +
-			"errWaitTimeout, :1451 on context.Canceled/DeadlineExceeded), which prints " +
-			"safeTerm(workflowID) at :1628, safeTerm(status) at :1630 and safeTerm(workflowID) at :1631 " +
-			"— the counterfeit `Re-attach:` lines civitai/cli#604 measured. Scoping this row to the " +
-			"function's OWN call sites is deliberate, but round 4 found that a reader takes 'the other " +
-			"three are still open' as the complete residual for the wait path, so the reachable-through " +
-			"set is named here too. All six are pre-existing and outside #574's closing condition; they " +
-			"are civitai/cli#604, not a silent inclusion. Read this row as 'the function is no longer " +
-			"wholesale-unpinned', never as 'the workflow id is safe everywhere here'"},
+			"what is still open HERE. Both corrected in round 3. 🔴 THIS ROW COUNTS ONLY THE CALL SITES " +
+			"INSIDE waitAndCollect, AND THAT SCOPE IS NOW EXPLICIT BECAUSE TWICE IT WAS READ AS THE " +
+			"COMPLETE RESIDUAL FOR THE WAIT PATH. More surfaces are reachable THROUGH callees — " +
+			"printReattach, printOutputURLs, classifyGenerateError and both poll reporters — each " +
+			"rendering server text through plain safeTerm. 🔴 DO NOT ENUMERATE THEM HERE: three " +
+			"successive drafts tried, and named 3, then 6, then still missed printOutputURLs (whose " +
+			"safeTerm(*o.URL) writes a TAB-separated row to STDOUT on --no-download) and the poll " +
+			"reporters (which run on EVERY waiting generate, not only the timeout path). The " +
+			"authoritative list is the notCovered rows in THIS map plus civitai/cli#604. All are " +
+			"pre-existing and outside #574's closing condition. Read this row as 'the function is no " +
+			"longer wholesale-unpinned', never as 'the workflow id is safe everywhere here'"},
 	"substitutionRefusal": {notCovered,
 		"the server's reason inside the refusal that ABORTS a spend"},
 	"joinQuoted": {notCovered,

@@ -442,27 +442,32 @@ func TestDownloadOutputsErrorsCannotForgeALine(t *testing.T) {
 // deliverables error (:1558). Note the FIRST of those carries the server's
 // STATUS, not the id.
 //
-// 🔴 AND THREE MORE ARE REACHABLE FROM HERE, THROUGH printReattach.
-// waitAndCollect CALLS IT — generate.go:1447 on errWaitTimeout and :1451 on
-// context.Canceled/DeadlineExceeded — and it prints safeTerm(workflowID) at
-// :1628, safeTerm(status) at :1630 and safeTerm(workflowID) at :1631. So a
-// server-chosen id forges counterfeit column-zero `Re-attach:` lines on the
-// timeout path, the first one ABOVE the genuine line. That is the repro in
-// civitai/cli#604, and it is reachable from THIS function.
+// 🔴 MORE ARE REACHABLE FROM HERE, THROUGH CALLEES — AND THIS COMMENT NO LONGER
+// TRIES TO LIST THEM. waitAndCollect reaches printReattach (generate.go:1447,
+// :1451), printOutputURLs (:1562), classifyGenerateError (:1455) and both poll
+// reporters (via newPollReporter, :1441); every one renders server text through
+// plain safeTerm, which keeps \n and \t. The authoritative list is the
+// notCovered rows in safeTermCoveredBy plus civitai/cli#604 — NOT this
+// paragraph.
 //
-// Only printSubmitted is unreachable from here: runGenerate calls
-// emitSubmitHandle (:1362), which calls printSubmitted (:1399), before it calls
-// waitAndCollect (:1367).
+// 🔴 THREE SUCCESSIVE DRAFTS TRIED TO ENUMERATE THAT SET AND ALL THREE WERE
+// INCOMPLETE IN THE REASSURING DIRECTION. Draft 1 credited printSubmitted's two
+// lines to waitAndCollect and omitted wf.Status (caught round 3). Draft 2 fixed
+// that and asserted both printSubmitted and printReattach are "different
+// functions this one never calls" — true of the former, FALSE of the latter —
+// pointing a reader closing #604 away from the exact path that issue measured a
+// forgery on, and again saying only "the id" so safeTerm(status) went unnamed
+// (caught round 4). Draft 3 named six sites and called that "the reachable-
+// through set"; it missed printOutputURLs, whose safeTerm(*o.URL) on the
+// --no-download path writes a TAB-separated numbered row to STDOUT, so a URL
+// carrying "\n2\t<other>" forges a whole extra row on the piping surface — and
+// it missed the poll reporters, which run on EVERY waiting generate rather than
+// only the timeout path (caught round 5).
 //
-// 🔴 TWO DRAFTS OF THIS PARAGRAPH WERE WRONG IN THE REASSURING DIRECTION, IN
-// OPPOSITE WAYS. The first credited printSubmitted's two lines to waitAndCollect
-// and omitted wf.Status (round 3). The fix for it then asserted that BOTH
-// printSubmitted and printReattach are "different functions this one never
-// calls" — true of the former, false of the latter — which pointed a reader
-// closing #604 away from the exact path that issue measured a forgery on, and
-// again said only "the id", omitting safeTerm(status) at :1630. Round 4 caught
-// it. The pre-round-3 text had no unreachability claim at all and was, on this
-// point, less wrong than its correction.
+// The lesson is the one the repo already records about name blocklists: an
+// enumeration like this cannot be completed by thinking harder, and each attempt
+// reads as exhaustive to the next reader. State the PROPERTY and point at the
+// ledger. Do not add a fourth list.
 //
 // All of them are pre-existing, are honestly ledgered notCovered in
 // safeTermCoveredBy, and are outside #574's closing condition — they are

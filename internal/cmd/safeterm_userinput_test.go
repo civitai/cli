@@ -162,10 +162,18 @@ var bareIdentArgs = map[string]string{
 // a third site to an existing pair. Nothing asserts on these totals: they are
 // `t.Logf`-ed, under a comment that says so, so they can never go red and
 // nothing will ever tell you they drifted. A number kept beside what it counts
-// drifts; the property does not. For the live figures read the harness's own log
-// line at the bottom of this file ("scanned N safeTerm call site(s); … bare-
-// identifier origins are pinned") — it is computed from the tree you are
-// standing in, which no sentence here can be.
+// drifts; the property does not.
+//
+// ⚠ NO OUTPUT OF THIS PACKAGE PRINTS THE NUMBER THAT WAS DELETED, AND SAYING SO
+// IS PART OF THE FIX. The `t.Logf` at the bottom of this file reports ROW count
+// and TOTAL safeTerm call sites ("scanned N safeTerm call site(s); … bare-
+// identifier origins are pinned") — the second figure counts EVERY expression
+// shape, so pairing the two gives a ratio that is not the one this paragraph was
+// about, and the bare-identifier SITE total is not printed anywhere. It is also
+// a `t.Logf`, so `make ci` (no `-v`) shows nothing: you need
+// `go test ./internal/cmd -v -run TestSafeTermIsNeverAppliedToUserTypedInput`.
+// If you need the site total or the distribution, measure it — do not infer it
+// from the log line, and do not write the answer back into this comment.
 // What still holds is why composers are a LEDGER: a file-wide exemption would
 // pass every future function added to safeterm.go without anyone naming it.
 //
@@ -379,7 +387,10 @@ func safeTermFuncKey(fd *ast.FuncDecl) string {
 // goes hunting for a row that does not exist.
 // Nothing asserts on any of it — see the `t.Logf` at the bottom of this file and
 // the comment above it saying LOGGED, NOT ASSERTED — so it cannot go red and
-// nothing will tell you it drifted. Read the live numbers off that log line.
+// nothing will tell you it drifted. ⚠ That log line does NOT print the deleted
+// figure: it reports the ROW count and the total over ALL safeTerm expression
+// shapes, not the bare-identifier site count, and being a `t.Logf` it is silent
+// without `-v`. Measure if you need it; do not write it back here.
 func bareIdentKey(s safeTermSite) string { return s.enclosing + "::" + s.arg }
 
 // classifyBareIdents is the unclassified half of the guard, as a pure function of
