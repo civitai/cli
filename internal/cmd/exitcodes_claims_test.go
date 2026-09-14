@@ -109,7 +109,21 @@ func exitCodeContractClaims() []contractClaim {
 				"reachable only if the server ever attaches Retry-After to a cap 429, which pkg/civitai assumes " +
 				"it never does — a VENDORED assumption with no local guard, which is why it is published rather " +
 				"than relied on in silence",
-			pinnedBy: "nothing local — the assumption is about the server. That is the point of publishing it",
+			// 🔴 THIS FIELD USED TO READ "nothing local — the assumption is about
+			// the server", and that CONFLATED TWO CLAIMS. Only one of them is
+			// unguardable, and telling the next maintainer no guard was possible
+			// is the description-reads-as-coverage failure this table exists to
+			// stop. Measured with the mutant applied — inverting the ordering in
+			// pkg/civitai/retry.go (consult the cap wording before the header,
+			// return terminal, flipping the published bullet from 5 to 2): 20 ok
+			// packages and exactly ONE `--- FAIL`, the guard named below. So every
+			// pre-existing test in the repo stays green under it, which is the
+			// round-4 reading (21 ok / 0 FAIL before this guard existed) confirmed
+			// from the other side.
+			pinnedBy: "the ORDERING: pkg/civitai's TestCapWorded429WithRetryAfterIsRetriedNotReclassified " +
+				"(cap-worded body + Retry-After → 4 requests and errors.Is ErrNetwork, NOT ErrBadRequest). " +
+				"The REACHABILITY is what nothing local can pin — whether the server ever attaches Retry-After " +
+				"to a cap 429 is a vendored assumption about the server, and that half is why this is published",
 		},
 		{
 			code: 5,
