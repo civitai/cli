@@ -237,7 +237,7 @@ func reportExcludedOutputs(errw io.Writer, excluded []genapi.Output, settled boo
 		// The reason is SERVER free text and safeTerm keeps newlines, so a
 		// multi-line one is indented to stay visibly inside this list item —
 		// see indentContinuation. The id is server-origin too.
-		fmt.Fprintf(errw, "    - %s: %s\n", safeTerm(dashIfEmpty(o.ID)),
+		fmt.Fprintf(errw, "    - %s: %s\n", safeTermSingle(dashIfEmpty(o.ID)),
 			indentContinuation(safeTerm(genapi.ExclusionReason(o)), "      "))
 	}
 	// 🔴 The second half of this line used to read "a blocked or missing output
@@ -381,6 +381,18 @@ func reportOutputCountMismatch(errw io.Writer, requested, delivered int) {
 // the answer, re-reading the workflow for a fresh URL is.
 func blobStatusError(status int, name string) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
+	// 🔴 THE NAME IS SERVER-DERIVED AND main.go PRINTS err.Error() RAW —
+	// civitai/cli#574. `name` is filepath.Base of a target built from
+	// renderOutName, whose `{workflow}` comes off the wire. Gated ONCE here
+	// rather than at each of the three returns below: they are three spellings
+	// of one rule, and #566 exists because two spellings of one rule drifted
+	// apart. This is the structural twin of download.go's downloadStatusError,
+	// which #572 gated exactly this way — the two must not diverge.
+	//
+	// safeTermSingle, not safeTerm: every arm is one line, and saferune keeps
+	// \n and \t by design, so safeTerm alone would let the server forge a line
+	// (civitai/cli#577, the same lesson one command over).
+	name = safeTermSingle(name)
 	switch {
 	case status >= 200 && status < 300:
 		return nil
@@ -405,18 +417,28 @@ func downloadBlobTo(ctx context.Context, fetch blobFetcher, out, errw io.Writer,
 	name := filepath.Base(target)
 	if !force {
 		if info, err := os.Stat(target); err == nil && !info.IsDir() {
-			return fmt.Errorf("refusing to overwrite the existing file %s — pass --force to replace it, or --out-dir <dir> to write somewhere else", target)
+			return fmt.Errorf("refusing to overwrite the existing file %s — pass --force to replace it, or --out-dir <dir> to write somewhere else", safeTermSingle(target))
 		}
 	}
 	if dir := filepath.Dir(target); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
+			// 🔴 `dir` IS DELIBERATELY UNGATED AND MUST STAY THAT WAY. It is
+			// filepath.Dir(target) — the user's own `--out-dir`, never the
+			// server's leaf, because outputTarget refuses any name that is not
+			// its own filepath.Base. Sanitising it would strip USER-TYPED bytes,
+			// which internal/saferune's rule forbids (civitai/cli#393).
+			//
+			// download.go carries the byte-identical line, also ungated, for the
+			// same reason — #572 round 0 REMOVED a gate someone had added here.
+			// A reader seeing one gated twin and one ungated one will try to
+			// "fix" this. Do not. Pinned by TestCreateOutputDirectoryStaysUngated.
 			return fmt.Errorf("create output directory %s: %w", dir, err)
 		}
 	}
 
 	resp, err := fetch(ctx, fileURL)
 	if err != nil {
-		return fmt.Errorf("download %s: %w", name, err)
+		return fmt.Errorf("download %s: %w", safeTermSingle(name), safeTermErr(err))
 	}
 	defer resp.Body.Close()
 	if err := blobStatusError(resp.StatusCode, name); err != nil {
@@ -430,9 +452,9 @@ func downloadBlobTo(ctx context.Context, fetch blobFetcher, out, errw io.Writer,
 	}
 	if err := os.Rename(partPath, target); err != nil {
 		_ = os.Remove(partPath)
-		return fmt.Errorf("install %s: %w", target, err)
+		return fmt.Errorf("install %s: %w", safeTermSingle(target), safeTermErr(err))
 	}
-	fmt.Fprintf(out, "Saved %s (%s)\n", safeTerm(target), humanBytes(written))
+	fmt.Fprintf(out, "Saved %s (%s)\n", safeTermSingle(target), humanBytes(written))
 	return nil
 }
 
@@ -461,7 +483,23 @@ func downloadOutputs(ctx context.Context, fetch blobFetcher, out, errw io.Writer
 	byTarget := make(map[string]int, len(outputs))
 	for i, o := range outputs {
 		if o.URL == nil || strings.TrimSpace(*o.URL) == "" {
-			return nil, fmt.Errorf("output %s is marked available but carries no URL — nothing to download", safeTerm(dashIfEmpty(o.ID)))
+			// 🔴 safeTermSingle, NOT safeTerm — THIS IS A SINGLE-LINE ERROR
+			// SURFACE AND `o.ID` IS THE SERVER'S OWN BLOB ID. saferune keeps \n
+			// and \t by design, so safeTerm alone lets the id forge a whole
+			// line, and cmd/civitai/main.go prints `Error: <err>` to stderr with
+			// no renderer in front of it. MEASURED on this line before the
+			// change, with an id carrying `\x1b[1A\x1b[2K`, a newline and a tab:
+			// esc=false (safeTerm did strip the escape), 1 forged newline, 1
+			// surviving tab — i.e. half-closed exactly as civitai/cli#577
+			// describes one command over.
+			//
+			// 🔴 IT IS REACHABLE WITHOUT ANY TOCTOU WINDOW, and round 1 of
+			// civitai/cli#596 claimed it was already gated when what that commit
+			// actually moved was reportExcludedOutputs' id one function away.
+			// genapi.Deliverable is `Available && !blocked && !hidden` and says
+			// nothing about a URL, so a payload with `"available": true` and
+			// `"url": null` is partitioned into `kept` and arrives right here.
+			return nil, fmt.Errorf("output %s is marked available but carries no URL — nothing to download", safeTermSingle(dashIfEmpty(o.ID)))
 		}
 		target, err := planOutputTarget(outName, outDir, workflowID, i+1, *o.URL)
 		if err != nil {
@@ -470,7 +508,7 @@ func downloadOutputs(ctx context.Context, fetch blobFetcher, out, errw io.Writer
 		if first, dup := byTarget[target]; dup {
 			return nil, fmt.Errorf(
 				"outputs %d and %d would both be written to %q — this run produced %d outputs and the name is the same for each, so it would overwrite its own results. Include {n} in --out-name (e.g. 'img-{n}{ext}'); nothing was downloaded, and the outputs are still readable with `civitai workflows get %s`",
-				first, i+1, target, len(outputs), safeTerm(workflowID))
+				first, i+1, target, len(outputs), safeTermSingle(workflowID))
 		}
 		byTarget[target] = i + 1
 		jobs = append(jobs, job{url: *o.URL, target: target})
@@ -479,7 +517,58 @@ func downloadOutputs(ctx context.Context, fetch blobFetcher, out, errw io.Writer
 		var clashes []string
 		for _, j := range jobs {
 			if info, err := os.Stat(j.target); err == nil && !info.IsDir() {
-				clashes = append(clashes, j.target)
+				// 🔴 SANITISED HERE, NOT AT THE JOIN — civitai/cli#574 round 0.
+				// This refusal was fully RAW: j.target is planOutputTarget's
+				// output, whose {workflow} comes off the wire, so an uploader
+				// could put `\x1b[1A\x1b[2K` — cursor-up plus erase-line, the
+				// exact primitive safeTerm exists for — into the one error
+				// standing between the user and an overwrite.
+				//
+				// 🔴 RE-MEASURED AT civitai/cli#596 ROUND 2: esc=true, ONE
+				// forged newline, 1 tab. This comment and the test's header both
+				// said "2 forged newlines" for two rounds. The message writes
+				// two newlines of its OWN (header, then the trailer after the
+				// row), so the ungated fixture renders THREE and only the third
+				// is the server's. Method: revert this one expression to
+				// `j.target` and run TestDownloadOutputsErrorsCannotForgeALine's
+				// overwrite-refusal subtest — its counter reports "3 newline(s)
+				// … want 2", on the `\x1b[1A\x1b[2K\nSaved …\tDONE` id this PR
+				// ships. A count in a comment is a claim; this one was carried,
+				// not re-derived.
+				//
+				// 🔴 AND THIS IS THE REACHABLE ONE. downloadBlobTo's own !force
+				// refusal, which #574's table named, fires only in a TOCTOU
+				// window because THIS check runs first over every job. #574's
+				// six-row table was built by reading two functions and hardened
+				// the branch users almost never hit while leaving this one raw.
+				//
+				// 🔴 `j.target` IS MIXED-ORIGIN AND GATING IT COSTS USER BYTES —
+				// SAID HERE BECAUSE NO LEDGER CAN SAY IT. It is
+				// planOutputTarget(outName, outDir, …): the server's
+				// {workflow} expands into the leaf, and the directory is the
+				// user's own --out-dir. So this is the documented saferune
+				// exception, not an oversight — AGENTS.md names "download's
+				// mixed-origin target path" as one of the two, downloadBlobTo's
+				// own :420 refusal already resolves it the same way, and
+				// bareIdentArgs records the twin `downloadBlobTo::target` as
+				// MIXED for the same trade.
+				//
+				// RESIDUAL, OPEN AND NOT CLOSED BY THIS: an --out-dir containing
+				// a rune saferune strips (a U+2800, a variation selector) is
+				// printed WITHOUT it, so the refusal names a directory that is
+				// not the directory and a user who pastes it gets a path that
+				// does not exist. That is the same papercut targetPath's comment
+				// accepts on the download path, and it is accepted here for the
+				// same reason: the leaf is mostly server bytes and this is the
+				// one error standing in front of an overwrite.
+				//
+				// 🔴 THE LEDGER IS STRUCTURALLY BLIND TO THIS ARGUMENT, which is
+				// why the decision is written in the code. bareIdentArgs
+				// (safeterm_userinput_test.go) keys BARE IDENTIFIERS only;
+				// `j.target` is a selector expression, so it never reaches
+				// classifyBareIdents and no row was ever required. See the note
+				// beside bareIdentArgs recording that blind spot.
+				clashes = append(clashes, safeTermSingle(j.target))
 			}
 		}
 		if len(clashes) > 0 {

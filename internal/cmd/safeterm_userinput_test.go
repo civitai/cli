@@ -66,6 +66,31 @@ var userTypedArgs = map[string]string{
 // It fails in both directions: an unclassified name (the set grew) and a
 // classified name that no longer appears (the set shrank, so the note is stale
 // and the next reader would trust it).
+//
+// 🔴 KNOWN BLIND SPOT, STATED RATHER THAN PAPERED OVER: A SELECTOR EXPRESSION
+// IS STRUCTURALLY INVISIBLE TO THIS LEDGER, AND ALWAYS HAS BEEN.
+// scanSafeTermCallSites sets `bareIdent` from
+// `_, bare := ce.Args[0].(*ast.Ident)`, and classifyBareIdents `continue`s on
+// every site where that is false. So `safeTermSingle(j.target)` — the overwrite
+// refusal in generate_output.go's downloadOutputs, a MIXED-ORIGIN path whose
+// leaf carries the server's {workflow} and whose directory is the user's own
+// --out-dir — can never be keyed here, and no row was ever demanded for it.
+// userTypedArgs does not reach it either: that map is consulted by the rendered
+// argument string and holds the shapes somebody thought to FORBID, not every
+// selector that exists.
+//
+// Read the silence correctly: for a selector it means UNASKED, never
+// CLASSIFIED. That is exactly the reassuring-direction reading this file exists
+// to prevent, so civitai/cli#596 round 2 wrote that particular decision — the
+// mixed origin, the documented saferune exception it rests on, and the open
+// --out-dir residual it accepts — into a comment AT THE CALL SITE instead.
+//
+// Deliberately NOT fixed by widening the parser. A selector has no obvious key
+// (`downloadOutputs::j.target` invents a second key format), and the thing it
+// would classify is a struct FIELD whose origin is decided by whoever FILLS the
+// struct rather than by the renderer — so the row would be a claim about a
+// different function than the one it is filed under. Recorded as the shape to
+// reconsider if a second mixed-origin selector argument ever appears.
 var bareIdentArgs = map[string]string{
 	// --- download path ------------------------------------------------------
 	"checkTargetCollisions::target":  "MIXED: --out verbatim, else filepath.Base(SERVER file name) — see targetPath. The refusal that is the only thing between the user and a silent overwrite",
@@ -75,8 +100,10 @@ var bareIdentArgs = map[string]string{
 	"printDownloadPlan::target":      "MIXED: as targetPath, on the plan's `target:` line",
 	"writePart::partPath":            "MIXED: `target` + \".part\", inheriting whichever origin its caller's target had — targetPath on the download path, planOutputTarget on the generate-output one",
 	"downloadStatusError::name":      "SERVER: a published file name, re-assigned through the gate in place",
+	"blobStatusError::name":          "SERVER: filepath.Base of a generate-output target built by planOutputTarget, whose {workflow} comes off the wire (renderOutName). Re-assigned through the gate in place, exactly as downloadStatusError does — the two are structural twins and #566 exists because two spellings of one rule drifted (civitai/cli#574)",
+	"downloadBlobTo::name":           "🔴 MIXED, AND MOSTLY SERVER — filepath.Base(target) off planOutputTarget, so the LEAF is where the user's --out-name template lands and the server's {workflow} expands INTO that leaf. An earlier draft of this row called it SERVER and explained that the sibling `target` row is MIXED 'because it carries the --out-name template too' — backwards: the template lands in the leaf, --out-dir lands in the directory. That is exactly the reassuring-direction error writePart::name below warns about, in the ledger whose purpose is stopping one value acquiring two spellings. Gated because mostly-server wins, as download.go does for its own MIXED target",
 	"emitPreDownloadNotes::name":     "SERVER: a published file name, in the no-SHA256 warning",
-	"writePart::name":                "🔴 MIXED, AND MOSTLY SERVER — an earlier draft of this row called the second origin \"the USER's --out-name template\", which is wrong in the reassuring direction and would excuse leaving a sibling raw. writePart has TWO callers: download.go:926 passes the SERVER's f.Name, and generate_output.go:427 passes filepath.Base(target) off planOutputTarget(o.outName,…). That second value is SERVER-DERIVED BY DEFAULT: renderOutName expands the default template \"{workflow}-{n}{ext}\" with {workflow} = the server's workflow id and {ext} = a bounded URL extension, so with no --out-name the whole basename is the server's. The user half is only the literal text AROUND the placeholders when --out-name is passed. A (function, name) key cannot express two callers with two origins at all, which is why this row is MIXED by necessity rather than by measurement — recorded as R6 on civitai/cli#575",
+	"writePart::name":                "🔴 MIXED, AND MOSTLY SERVER — an earlier draft of this row called the second origin \"the USER's --out-name template\", which is wrong in the reassuring direction and would excuse leaving a sibling raw. writePart has TWO callers: download.go:935 passes the SERVER's f.Name, and generate_output.go:449 passes filepath.Base(target) off planOutputTarget(o.outName,…). That second value is SERVER-DERIVED BY DEFAULT: renderOutName expands the default template \"{workflow}-{n}{ext}\" with {workflow} = the server's workflow id and {ext} = a bounded URL extension, so with no --out-name the whole basename is the server's. The user half is only the literal text AROUND the placeholders when --out-name is passed. A (function, name) key cannot express two callers with two origins at all, which is why this row is MIXED by necessity rather than by measurement — recorded as R6 on civitai/cli#575",
 	"printDownloadPlan::note":        "🔴 MIXED, not SERVER — an earlier draft of this row said SERVER and was wrong. routeDir (layout.go:145) interpolates `root`, the USER's --root, alongside the server file name. MEASURED: --root with a U+2800 in it prints the path without it, so the line whose whole job is to say WHERE THE FILE GOES names a directory that is not the directory",
 	"downloadSelected::note":         "🔴 MIXED, not SERVER — the same routeDir note at its other call site, carrying the user's --root the same way",
 	"printDownloadPlan::sha":         "SERVER: a published hash",
@@ -124,9 +151,29 @@ var bareIdentArgs = map[string]string{
 // package, so one `"s"` blinded the harness everywhere — this paragraph used to
 // say "in all ~67 files at once", and civitai/cli#575 R5 made that false by
 // re-keying to `enclosingFunction::argument`. A row now blinds ONE (function,
-// name) PAIR — one call site for 29 of the 35 rows and two for the other six,
-// not "exactly one site", which is what an earlier draft of this very sentence
-// said while the same commit retracted that wording 200 lines below.
+// name) PAIR, which may still be SEVERAL call sites — most rows govern one, some
+// govern two, and at least one governs three.
+//
+// 🔴 NO COUNT IS QUOTED HERE ON PURPOSE, AND THAT IS THE FIX RATHER THAN A NEW
+// NUMBER. This sentence has now been wrong three times in the same direction:
+// "exactly one site" (retracted 200 lines below by the commit that wrote it),
+// then "one call site for 29 of the 35 rows and two for the other six" — exact
+// at this PR's merge base and falsified by this PR's OWN new rows, which added
+// a third site to an existing pair. Nothing asserts on these totals: they are
+// `t.Logf`-ed, under a comment that says so, so they can never go red and
+// nothing will ever tell you they drifted. A number kept beside what it counts
+// drifts; the property does not.
+//
+// ⚠ NO OUTPUT OF THIS PACKAGE PRINTS THE NUMBER THAT WAS DELETED, AND SAYING SO
+// IS PART OF THE FIX. The `t.Logf` at the bottom of this file reports ROW count
+// and TOTAL safeTerm call sites ("scanned N safeTerm call site(s); … bare-
+// identifier origins are pinned") — the second figure counts EVERY expression
+// shape, so pairing the two gives a ratio that is not the one this paragraph was
+// about, and the bare-identifier SITE total is not printed anywhere. It is also
+// a `t.Logf`, so `make ci` (no `-v`) shows nothing: you need
+// `go test ./internal/cmd -v -run TestSafeTermIsNeverAppliedToUserTypedInput`.
+// If you need the site total or the distribution, measure it — do not infer it
+// from the log line, and do not write the answer back into this comment.
 // What still holds is why composers are a LEDGER: a file-wide exemption would
 // pass every future function added to safeterm.go without anyone naming it.
 //
@@ -324,12 +371,26 @@ func safeTermFuncKey(fd *ast.FuncDecl) string {
 // and true at printAppDetail. Pick the unguarded site, and make the plant
 // reachable.
 //
-// 🔴 AND THE ROW COUNT IS NOT A SITE COUNT. 35 rows govern 41 bare-identifier
-// call sites: six rows cover two sites each (downloadOne::target,
-// presentTargetSatisfies::target, printReattach::workflowID,
-// printSubmitted::workflowID, waitAndCollect::workflowID, writePart::partPath).
-// A row is a claim about one (function, name) PAIR — not about one call site,
-// which an earlier draft of this comment said.
+// 🔴 AND THE ROW COUNT IS NOT A SITE COUNT. A row is a claim about one
+// (function, name) PAIR — not about one call site, which an earlier draft of
+// this comment said. One pair can occur several times in its function, so the
+// site total is always >= the row total, and a single row can be covering more
+// sites than the day it was written.
+//
+// 🔴 THE TOTALS AND THE ENUMERATED LIST THAT USED TO SIT HERE ARE DELETED, NOT
+// UPDATED. They read "35 rows govern 41 bare-identifier call sites: six rows
+// cover two sites each (…)" and named the six. Every part was exact at this PR's
+// merge base and every part was falsified by this PR's own new rows — which also
+// pushed one of those pairs from two sites to three, so the list's implicit
+// "two is the maximum" became false as well. The enumeration is the worst part:
+// it reads as exhaustive, so a reader auditing ledger completeness against it
+// goes hunting for a row that does not exist.
+// Nothing asserts on any of it — see the `t.Logf` at the bottom of this file and
+// the comment above it saying LOGGED, NOT ASSERTED — so it cannot go red and
+// nothing will tell you it drifted. ⚠ That log line does NOT print the deleted
+// figure: it reports the ROW count and the total over ALL safeTerm expression
+// shapes, not the bare-identifier site count, and being a `t.Logf` it is silent
+// without `-v`. Measure if you need it; do not write it back here.
 func bareIdentKey(s safeTermSite) string { return s.enclosing + "::" + s.arg }
 
 // classifyBareIdents is the unclassified half of the guard, as a pure function of
