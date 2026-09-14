@@ -237,7 +237,7 @@ func reportExcludedOutputs(errw io.Writer, excluded []genapi.Output, settled boo
 		// The reason is SERVER free text and safeTerm keeps newlines, so a
 		// multi-line one is indented to stay visibly inside this list item —
 		// see indentContinuation. The id is server-origin too.
-		fmt.Fprintf(errw, "    - %s: %s\n", safeTerm(dashIfEmpty(o.ID)),
+		fmt.Fprintf(errw, "    - %s: %s\n", safeTermSingle(dashIfEmpty(o.ID)),
 			indentContinuation(safeTerm(genapi.ExclusionReason(o)), "      "))
 	}
 	// 🔴 The second half of this line used to read "a blocked or missing output
@@ -492,7 +492,7 @@ func downloadOutputs(ctx context.Context, fetch blobFetcher, out, errw io.Writer
 		if first, dup := byTarget[target]; dup {
 			return nil, fmt.Errorf(
 				"outputs %d and %d would both be written to %q — this run produced %d outputs and the name is the same for each, so it would overwrite its own results. Include {n} in --out-name (e.g. 'img-{n}{ext}'); nothing was downloaded, and the outputs are still readable with `civitai workflows get %s`",
-				first, i+1, target, len(outputs), safeTerm(workflowID))
+				first, i+1, target, len(outputs), safeTermSingle(workflowID))
 		}
 		byTarget[target] = i + 1
 		jobs = append(jobs, job{url: *o.URL, target: target})
@@ -501,7 +501,20 @@ func downloadOutputs(ctx context.Context, fetch blobFetcher, out, errw io.Writer
 		var clashes []string
 		for _, j := range jobs {
 			if info, err := os.Stat(j.target); err == nil && !info.IsDir() {
-				clashes = append(clashes, j.target)
+				// 🔴 SANITISED HERE, NOT AT THE JOIN — civitai/cli#574 round 0.
+				// This refusal was fully RAW: j.target is planOutputTarget's
+				// output, whose {workflowId} comes off the wire, so an uploader
+				// could put `\x1b[1A\x1b[2K` — cursor-up plus erase-line, the
+				// exact primitive safeTerm exists for — into the one error
+				// standing between the user and an overwrite. Measured before
+				// this line: esc=true, 2 forged newlines, 1 tab.
+				//
+				// 🔴 AND THIS IS THE REACHABLE ONE. downloadBlobTo's own !force
+				// refusal, which #574's table named, fires only in a TOCTOU
+				// window because THIS check runs first over every job. #574's
+				// six-row table was built by reading two functions and hardened
+				// the branch users almost never hit while leaving this one raw.
+				clashes = append(clashes, safeTermSingle(j.target))
 			}
 		}
 		if len(clashes) > 0 {

@@ -386,8 +386,13 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"target (civitai/cli#574). Its `create output directory` line is deliberately UNGATED " +
 			"and pinned the OTHER way by TestCreateOutputDirectoryStaysUngated, because that value " +
 			"is the user's own --out-dir"},
-	"downloadOutputs": {notCovered,
-		"the multi-output progress line and the no-URL error, both naming server ids"},
+	"downloadOutputs": {"TestDownloadOutputsRefusalCannotForgeALine",
+		"the overwrite refusal that users actually reach (it pre-checks every job, so downloadBlobTo's " +
+			"own refusal is TOCTOU-only), the no-URL error and the duplicate-target hint — all naming " +
+			"a target whose {workflowId} comes off the wire. 🔴 The refusal was FULLY RAW until " +
+			"civitai/cli#574's round-0 audit: raw ESC, not merely an ungated newline. This row " +
+			"previously read \"the multi-output progress line and the no-URL error\" and named a " +
+			"progress line this function does not have"},
 	"printAppMetrics": {"TestTabwriterRenderersCannotBeForged",
 		"the scope and endpoint tokens — kept RAW on purpose (AGENTS.md item 8), which makes the " +
 			"strip the ONLY thing between an uploader-shaped token and the terminal — plus the window " +
@@ -483,7 +488,7 @@ const (
 	// this paragraph as the authority on what the number should be, so it is
 	// amended rather than search-and-replaced: each bullet now says which tree its
 	// figure belonged to.
-	maxUncoveredSafeTermFuncs = 19
+	maxUncoveredSafeTermFuncs = 18
 )
 
 // TestSafeTermCallSitesAreCoveredByANamedTest is civitai/cli#399.

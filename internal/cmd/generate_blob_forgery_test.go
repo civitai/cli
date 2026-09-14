@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/civitai/cli/internal/genapi"
 )
 
 // civitai/cli#574 — generate's BLOB DOWNLOAD PATH printed the server-derived
@@ -51,18 +53,12 @@ import (
 // newline AND a tab — the two runes saferune deliberately retains.
 const gbfHostileName = "out-1.png\nSaved /home/u/real.png (2.0 MiB)\tDONE"
 
-// gbfAssertOneLine is the shared assertion.
-func gbfAssertOneLine(t *testing.T, surface, got string) {
-	t.Helper()
-	if n := strings.Count(got, "\n"); n != 0 {
-		t.Errorf("#574 FORGERY in %s: %d forged line(s) — a server-derived name chose the "+
-			"geometry of a message the user reads on the money-spending path:\n%s", surface, n, got)
-	}
-	if strings.Contains(got, "\t") {
-		t.Errorf("#574 FORGERY in %s: a TAB survived; on any tabwriter surface it inserts a "+
-			"column rather than misaligning one:\n%s", surface, got)
-	}
-}
+// 🔴 THE ASSERTION IS assertOneLine, NOT A SECOND COPY OF IT. A first draft of
+// this file defined gbfAssertOneLine — byte-identical to
+// download_newline_test.go's assertOneLine but for the issue number in its
+// message, in the SAME package. Two spellings of one rule is the mechanism
+// civitai/cli#566 exists about, and writing a second one inside a PR applying
+// that lesson is how it recurs. Found by this PR's round-0 audit.
 
 // TestBlobStatusErrorCannotForgeALine drives all FOUR arms.
 //
@@ -82,7 +78,7 @@ func TestBlobStatusErrorCannotForgeALine(t *testing.T) {
 		if err == nil {
 			t.Fatalf("CONTROL failure, not a finding: status %d produced no error", status)
 		}
-		gbfAssertOneLine(t, "blobStatusError (HTTP "+http.StatusText(status)+")", err.Error())
+		assertOneLine(t, "blobStatusError (HTTP "+http.StatusText(status)+")", err.Error())
 		// POSITIVE CONTROL: the name must actually reach the message, or the
 		// assertion above passes vacuously.
 		if !strings.Contains(err.Error(), "out-1.png") {
@@ -116,7 +112,7 @@ func TestDownloadBlobToErrorsCannotForgeALine(t *testing.T) {
 		if !strings.Contains(err.Error(), "refusing to overwrite") {
 			t.Fatalf("CONTROL failure, not a finding: reached a different error: %v", err)
 		}
-		gbfAssertOneLine(t, "downloadBlobTo (refusing to overwrite)", err.Error())
+		assertOneLine(t, "downloadBlobTo (refusing to overwrite)", err.Error())
 	})
 
 	t.Run("download %s: %w — both halves", func(t *testing.T) {
@@ -135,7 +131,7 @@ func TestDownloadBlobToErrorsCannotForgeALine(t *testing.T) {
 		if !strings.Contains(err.Error(), "download ") {
 			t.Fatalf("CONTROL failure, not a finding: reached a different error: %v", err)
 		}
-		gbfAssertOneLine(t, "downloadBlobTo (download %s: %w)", err.Error())
+		assertOneLine(t, "downloadBlobTo (download %s: %w)", err.Error())
 		// The strip must not break the chain the exit-code classifier reads.
 		var pe *os.PathError
 		if !errors.As(err, &pe) {
@@ -195,5 +191,75 @@ func TestCreateOutputDirectoryStaysUngated(t *testing.T) {
 			"the `%%w` cause). `dir` is filepath.Dir(target), which outputTarget guarantees holds no "+
 			"server bytes — gating it strips what the USER typed, and someone copying that path "+
 			"gets one that does not exist.\ngot: %s", n, err.Error())
+	}
+}
+
+// TestDownloadOutputsRefusalCannotForgeALine drives the refusal users ACTUALLY
+// reach — the one #574's six-site table missed.
+//
+// 🔴 IT WAS FULLY RAW, NOT MERELY UNGATED FOR `\n`. `j.target` is
+// planOutputTarget's output, whose `{workflowId}` comes off the wire, and it was
+// joined into the message with no sanitiser at all — so this is the #566 class
+// (raw ANSI) rather than the #577 one. Measured before the fix: `esc=true`, two
+// forged newlines and a tab, with `\x1b[1A\x1b[2K` — cursor-up plus erase-line —
+// intact.
+//
+// 🔴 AND IT IS THE REACHABLE BRANCH. downloadOutputs pre-checks every job here
+// before any bytes move, so downloadBlobTo's own `!force` refusal (which #574
+// DID name) fires only in a TOCTOU window. The requirement's table was built by
+// reading two functions; it hardened the branch users almost never hit and left
+// this one raw. Found by this PR's round-0 audit, which is the round that asks
+// whether the requirement itself is right.
+func TestDownloadOutputsRefusalCannotForgeALine(t *testing.T) {
+	// 🔴 DRIVE THE REAL FUNCTION. A first draft of this test rebuilt the message
+	// inline with safeTermSingle(target) hardcoded — so it asserted on the
+	// HELPER, not on the production line, and ungating that line left it GREEN.
+	// Caught by its own mutation check. A guard that reconstructs the thing it
+	// is guarding is testing its own arithmetic.
+	dir := t.TempDir()
+	// A cursor-control payload, not merely a newline: this surface had NO gate
+	// at all, so a `\n`-only fixture could not distinguish "gated for lines"
+	// from "gated".
+	hostileID := "wf1\x1b[1A\x1b[2K\nSaved out.png (2.0 MiB)\tDONE"
+	url := "https://example.invalid/blob.png"
+	outs := []genapi.Output{{Blob: genapi.Blob{URL: &url}}}
+
+	// Pre-create what planOutputTarget will choose, so the refusal fires.
+	target, err := planOutputTarget("", dir, hostileID, 1, url)
+	if err != nil {
+		t.Fatalf("CONTROL failure, not a finding: planOutputTarget refused the fixture: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatalf("CONTROL failure, not a finding: %v", err)
+	}
+	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
+		t.Fatalf("CONTROL failure, not a finding: %v", err)
+	}
+	// POSITIVE CONTROL on the fixture: the hostile id must actually reach the
+	// target, or the refusal below cannot carry it.
+	if !strings.Contains(target, "wf1") {
+		t.Fatalf("CONTROL failure, not a finding: planOutputTarget dropped the id; target=%q", target)
+	}
+
+	_, err = downloadOutputs(context.Background(), nil, io.Discard, io.Discard,
+		hostileID, outs, dir, "", false)
+	if err == nil {
+		t.Fatal("CONTROL failure, not a finding: an existing target produced no refusal")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "refusing to overwrite") {
+		t.Fatalf("CONTROL failure, not a finding: reached a different error: %v", err)
+	}
+	if strings.Contains(got, "\x1b") {
+		t.Errorf("#566 FORGERY in downloadOutputs (refusing to overwrite): a raw ESC survived into "+
+			"the one error standing between the user and an overwrite:\n%q", got)
+	}
+	// Header + one line per clash. A forged newline breaks that relationship.
+	if n := strings.Count(strings.TrimRight(got, "\n"), "\n"); n != 2 {
+		t.Errorf("#574 FORGERY in downloadOutputs (refusing to overwrite): %d newline(s) for ONE "+
+			"clash, want 2 (header, the row, the trailer) — the server chose the geometry:\n%s", n, got)
+	}
+	if strings.Contains(got, "\t") {
+		t.Errorf("#574 FORGERY in downloadOutputs (refusing to overwrite): a TAB survived:\n%s", got)
 	}
 }
