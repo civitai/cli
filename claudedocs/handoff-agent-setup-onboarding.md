@@ -19,46 +19,54 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 
 ## State now
 
-**Rank 23 (cli#596 / cli#574) is MID-LADDER, not ready to merge.** The previous handoff
-said #596 was "CLEAN, gated, **not audited**" and that the next action was "round 0 + the
-nine axes". That was stale on arrival: round 0 AND a full nine-axis round had already run
-against `2d509d3`, and their fixes were already pushed.
+**Rank 23 is DONE. cli#596 is MERGED (`752bf50`) and cli#574 is CLOSED by hand with evidence.**
 
-- **cli#596** — `fix/generate-blob-forgery`, worktree `/home/zach/workspace/civit/cli-596b`
-  (NOT `cli-574`, which no longer exists). 🔴 **The worktree's local branch is
-  `fix/generate-blob-forgery-r0` and its upstream reads `[gone]` — the PR's head branch has
-  NO `-r0` suffix.** Push with an explicit refspec or you create a second remote branch and
-  the PR never moves:
-  `git push origin fix/generate-blob-forgery-r0:fix/generate-blob-forgery`.
-- **Ladder state at the time of writing:** round 0 ✅, round 1 (nine axes) ✅ — both against
-  `2d509d3`, answered by `382c7fc` + `19455c0`, claims block posted. **Round 2 (delta,
-  `2d509d3..19455c0c`) ✅ — RETURNED FINDINGS**, so the ladder continues. A fix round is
-  IN FLIGHT (subagent, in place in `cli-596b`); round 3 is owed after it lands.
-- **PR gate at `19455c0`:** `MERGEABLE`/`CLEAN`, all 13 checks terminal `SUCCESS`. The round-2
-  auditor additionally ran the **merged tree** (#596 was 3 commits behind `origin/main`):
-  `git merge-tree --write-tree origin/main 19455c0c` → rc 0, tree `d26c141`, full suite green
-  there. It validated its lint instrument with a positive control (injected unused const +
-  raw U+200B → 2 issues), so its `0 issues` is a real zero. Gap it declared: it ran
-  golangci-lint **v2.13.2** while CI pins **v2.12.2**.
-- **#574 is still OPEN.** Nothing has been merged or closed this session.
-- **Claim `agent-setup-onboarding-23` still HELD.**
-- 🔴 **The base clone `/home/zach/workspace/civit/cli` was switched out from under this
-  session again** — it started on `main` and is now on `test/pin-429-header-before-message`.
-  Second occurrence in two sessions. Do not write to it; check
-  `git branch --show-current` there before ANY operation.
+- **cli#596** — seven commits, **five adversarial audit rounds** (round 0, a full nine-axis
+  round, then deltas 2/3/4/5). Merged 2026-09-14T06:49Z as `752bf50`.
+  **Verified by CONTENT, not by `gh pr merge`'s rc** (which returns 0 and prints nothing):
+  `git diff a8cfa88 origin/main` over the six touched files is EMPTY, with a positive control
+  (`pkg/civitai/retry.go` differs) proving the comparison can report a difference.
+  🔴 A whole-tree diff is NOT the check here — `origin/main` advanced twice mid-ladder
+  (`7467c62` → `b727a83` → `752bf50`), so the whole-tree diff is non-empty for reasons that
+  have nothing to do with whether your work landed. Diff the FILES YOU TOUCHED.
+- **Merged tree tested before merging, because the base moved:** `git merge-tree --write-tree
+  origin/main a8cfa88` → rc 0 (branch on the EXIT CODE — it prints no conflict markers), tree
+  `842a47f`; extracted and run: vet clean, **21 packages ok, 0 FAIL**. CI 13/13 SUCCESS.
+- **cli#574 CLOSED** — its own stated check re-run against post-merge `origin/main` at
+  `752bf50`, not against the branch: baseline green; delete `name = safeTermSingle(name)` from
+  `blobStatusError` (one occurrence, asserted before removal) → **rc 1**, `--- FAIL:
+  TestBlobStatusErrorCannotForgeALine`, **all four arms**, **no build error**. Both required
+  `safeTermCoveredBy` rows verified present, and the gate confirmed to sit ONCE above the
+  `switch`.
+- **cli#604 FILED AND WIDENED 7 → 13 sites.** Round 5 found six more surfaces reachable from
+  `waitAndCollect`: `printOutputURLs` (`generate.go:1591`, via `:1562` on `--no-download`),
+  `classifyGenerateError` (`:2039`), and both poll reporters
+  (`generate_wait.go:313/317/322/342/349`, via `:1441`).
+- **Claims:** `agent-setup-onboarding-23` RELEASED and verified absent from `--list`.
+- ⚠ **Other sessions' PRs open at handoff time, no file overlap with ours:** #600 (a DIFFERENT
+  handoff doc), #602 (source, the #423/#585 submit-ceiling follow-up).
+- 🔴 **The base clone was switched to another session's branch AGAIN** mid-session
+  (`test/pin-429-header-before-message`). Third occurrence in three sessions. All work here was
+  done in `cli-596b` and a throwaway `cli-handoff-r2`; nothing was written to the base clone.
 
 ### Honest limits
 
-- 🔴 **The fix round's results are NOT in this doc** — it was still running when this was
-  written. Nothing below claims its edits landed, and no gate result is reported for them.
-- 🔴 **Round 1's claims block contained a FALSE claim, caught by round 2 and re-verified by
-  hand.** Claim 4 said "the no-URL error (`:486`) and the duplicate-target hint (`:494`)"
-  were gated. The hint half is true; `:486` is still `safeTerm(dashIfEmpty(o.ID))` and the
-  commit had gated a *different function's* line (`reportExcludedOutputs`, `:240`). The
-  coverage row was simultaneously rewritten to advertise `:486` as covered. A row that reads
-  as coverage while providing none is the class this repo keeps re-finding.
-- **The audit base rate is now five for five** — every audited commit in this arc contained
-  a defect.
+- 🔴 **The ladder was ENDED ON THE STATED CRITERION, NOT ON A CLEAN ROUND.** Round 5 returned
+  three findings, all fixed. No round of this ladder ever came back clean. The full rationale
+  and the enumerated list of what is deliberately NOT fixed is posted on cli#596 — read it
+  there before assuming convergence.
+- 🔴 **The audit base rate for this arc is now SIX FOR SIX.** Every round that ran found
+  something: round 0 found the reachable branch #574's table missed; round 1 found four
+  surfaces the ledger claimed and did not drive; round 2 found a round-1 claim was FALSE;
+  rounds 3, 4 and 5 each found a defect the previous round's own FIX introduced.
+- 🔴 **`printOutputURLs` forges a row on STDOUT and is LIVE on `main`.** `safeTerm(*o.URL)`
+  into `fmt.Fprintf(out, "%d\t%s\n", …)`; a URL carrying `\n2\t<other>` writes a second
+  attacker-controlled numbered row on the surface the CLI documents for piping. Tracked in
+  #604; NOT fixed.
+- **Two reachability/measurement claims in the merged code rest on evidence nobody can re-run
+  from the tree:** the no-URL error's end-to-end reachability (proved with a throwaway driver;
+  no shipped test drives it through `runGenerate`), and the `\t`-expansion measurement that
+  justified deleting a tab assertion (scoped to lipgloss v1.1.0 as vendored).
 
 ## Open investigations — live diagnosis state
 
@@ -401,76 +409,49 @@ before those rounds' commits were read back.
 
 ## Next steps (ranked)
 
-🔴 **Ranks 1–14, 18–22 and 24 are DONE — numbering preserved** so live `claim-work` slugs keep
-pointing at what they were taken for. Open: **15, 16, 17, 23 (in flight), 25, 26, 27, 28, 29,
-30**.
+🔴 **Ranks 1–14, 18–24 are DONE — numbering preserved** so live `claim-work` slugs keep
+pointing at what they were taken for. **Rank 23 is now DONE too.** Open: **15, 16, 17, 25, 26,
+27, 28, 29, 30**.
 
-🔴 **Re-verify every item against live state before trusting it** — this list went stale
-*within twenty minutes* on a previous pass, this session found rank 23's own entry describing a
-ladder state two rounds behind reality, and it found rank 29 asserting a gate that does not
-exist.
+🔴 **Re-verify every item against live state before trusting it.** This session found rank 23's
+entry two audit rounds behind reality and rank 29 asserting a gate that does not exist.
 
-23. **IN FLIGHT: civitai/cli#596** — rank 23 / cli#574. Round 0 ✅, round 1 ✅, round 2 ✅ (with
-    findings, one of them proving a round-1 claim false), fix round ✅ at `a3a8ca0`, **round 3
-    dispatched**. All 13 checks SUCCESS at `a3a8ca0`; `MERGEABLE`/`CLEAN`. A `audit-claims
-    round=2 audited=19455c0c..a3a8ca0` block is posted. Next: read round 3 — **a clean round
-    ENDS the ladder** — then merge, then close #574 BY HAND against its own stated check (see
-    *How to verify*). Worktree `cli-596b`; mind the `-r0` push refspec.
-    forcing: security — uploader-influenced text on the path that spends money.
-30. **civitai/cli#604 — `generate.go`'s sibling `workflowID` sites forge lines.** FILED.
-    Deferred out of #596 by operator decision (narrow fix scope). Seven sites; the issue carries
-    the measured forgery (two counterfeit `Re-attach:` lines pointing at `wf-ATTACKER`, the
-    first one ABOVE the genuine line) and a mechanical closing condition. ⚠ The seventh site
-    (`:1630`, `safeTerm(status)`) was added by the filer on "one rule, one place" grounds and is
-    flagged in the issue as a judgement call to trim if you disagree.
-    ⚠ **Read the issue's closing note before writing any tab guard there:** `ui`'s lipgloss
-    styles expand `\t` to four spaces before bytes reach the writer (measured:
-    `ui.For(w).Dim("a\tb") == "a    b"`), so a tab assertion is INERT on `:1610`/`:1616` and
-    live only on the bare-`Fprintf` sites.
-    forcing: security — a forged recovery instruction on a money-spending path.
-15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT
-    re-verified this session. `/home/zach/workspace/civit/civitai-developer-docs`.
+30. **civitai/cli#604 — 13 sites where a server-chosen string forges lines on `generate`.**
+    Widened from 7 during #596's ladder. The two that matter most are NOT in the original
+    table: `printOutputURLs` writes to **stdout** (the piping surface), and the poll reporters
+    run on **every** waiting generate rather than only the timeout path. Closing condition is
+    mechanical and amended in the issue: all 13 gated with `safeTermSingle`, per-site mutation
+    matrix, a **row-count** assertion for `printOutputURLs` (not a substring), and a
+    non-terminal status driven through `pollWorkflow`.
+    ⚠ Read the issue's note before writing any tab guard: `ui`'s lipgloss styles expand `\t` to
+    four spaces, so a tab assertion is INERT on a `ui`-styled surface and live only on bare
+    `fmt.Fprintf`.
+    forcing: security — a forged row on the surface users pipe into other commands.
+15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT re-verified
+    for two sessions. `/home/zach/workspace/civit/civitai-developer-docs`.
     forcing: gate
 16. **`images search --help` sits 14 runes under the 1400 budget.** The guard PASSES.
-    ⚠ **RECOMMENDED FOR RETIREMENT** — pre-emptive work against a failure that has not
-    happened and will be loud when it does.
+    ⚠ **RECOMMENDED FOR RETIREMENT.**
     forcing: none
-17. **Most of this arc's PRs were not adversarially audited.** ⚠ **RECOMMENDED FOR
-    CONVERSION, not work:** the base rate argues for auditing at MERGE time, which is a
-    practice, not a backlog item.
+17. **Most of this arc's PRs were not adversarially audited.** ⚠ **RECOMMENDED FOR CONVERSION,
+    not work** — the six-for-six base rate argues for auditing at MERGE time, which is a
+    practice.
     forcing: none
-25. **cli#579 — `saferune.Strip`'s doc claims a byte-for-byte subsequence.** Explicitly
-    inert. Unchanged.
+25. **cli#579 — `saferune.Strip`'s doc claims a byte-for-byte subsequence.** Explicitly inert.
     forcing: none
-26. **cli#575 R2–R4.** ⚠ **R2/R3 RECOMMENDED FOR DEFERRAL.** R4 (~60 `label: value` sites) is
-    the one with real coverage value.
+26. **cli#575 R2–R4.** ⚠ R2/R3 RECOMMENDED FOR DEFERRAL. R4 (~60 `label: value` sites) has the
+    real coverage value.
     forcing: none
-27. **cli#586 — three near-identical AST expression renderers**, two carrying the "cannot
-    collide with a ledgered key" sentence #583's audit demonstrated FALSE.
+27. **cli#586 — three near-identical AST expression renderers.**
     forcing: none
 28. **The soft-wrap forgery has no tracking object.** Live on `main`, measured, outside #577's
-    scope. Closing condition: either `p.name` is bounded and a test drives a
-    terminal-width-padded name asserting the display-row count, or the residual is accepted in
-    writing in `decisions/38` with the measurement.
-    forcing: security — a forged `(SHA256 verified)` the user reads as an integrity result,
-    reachable with no control runes at all.
-29. **This doc is 97,170 B and that is a real per-session cost — but it is NOT gated, and every
-    prior version of this item said it was.** ❌ **RETRACTED: "the test reds `main` and the next
-    unrelated PR inherits it."** `test_no_handoff_doc_exceeds_its_budget` lives in **devrc**,
-    its `REPO_ROOT` is devrc's root, and its corpus function is `this_repos_corpus()` — it never
-    scans `civitai/cli`. Measured 2026-09-14 three ways: the test RUNS GREEN (9 passed); no such
-    test exists anywhere in `civitai/cli`; and cli#603 carried this doc at 97 KB through **all
-    13** checks SUCCESS. So the honest forcing function is `none` — nothing external will ever
-    fail because of this file.
-    The reason to do it anyway is unchanged and is the one that was always true: this doc is
-    read first thing by every `/resume`, so its size is paid in context on every single session.
-    Playbook, raising a number LAST: evict what has CLOSED (the `Open investigations` section is
-    mostly `✅ RESOLVED` / `❌ SUPERSEDED` blocks whose work shipped), then demote dated evidence
-    to `claudedocs/refs/agent-setup-onboarding.md` leaving a pointer — the pattern already exists
-    as `claudedocs/refs/external-issue-513-numeric-username.md` — then split by initiative.
+    scope.
+    forcing: security — a forged `(SHA256 verified)` reachable with no control runes at all.
+29. **This doc is over its byte ceiling — a real per-session cost, NOT a gate.** ❌ The
+    "reds `main`, every unrelated PR inherits it" claim is RETRACTED; see the 2026-09-14 gotcha.
+    Playbook, raising a number LAST: evict what has CLOSED, demote dated evidence to
+    `claudedocs/refs/agent-setup-onboarding.md` leaving a pointer, then split by initiative.
     🔴 Do NOT satisfy it by deleting an open investigation, a gotcha or a ruled-out theory.
-    ⚠ A delta cannot do this: `Open investigations` and `Gotchas` are APPEND-only through
-    `handoff_doc.py`, so the prune is its own commit.
     forcing: none
 
 ## Gotchas / decisions / dead-ends
@@ -1364,6 +1345,51 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   be picked up, not more. That is the honest state — the cost is real (~24k tokens of context
   on every `/resume`) but no external signal is asking for it. Do not re-mint a fake gate to
   raise its priority.
+
+### Added 2026-09-14 — five audit rounds, and three of them found the previous round's prose
+
+- 🔴 **AN ENUMERATION IN A COMMENT CANNOT BE COMPLETED BY THINKING HARDER — DELETE IT, DO NOT
+  EXTEND IT.** A paragraph naming "the surfaces reachable from this function" went 3 sites → 6
+  → still incomplete across three successive corrections, each one written to fix the last, and
+  each reading as exhaustive to the next reader. Round 5 found `printOutputURLs` and the poll
+  reporters still missing. What ended it was deleting the list, stating the property, naming the
+  ledger + issue as authoritative, and writing **"do not add a fourth list"** into the comment.
+  Same shape as the name-blocklist lesson already in this doc — it recurs because each attempt
+  looks like it is *almost* complete.
+- 🔴 **THE AUDIT LADDER'S ATTRIBUTION GATE CANNOT FIRE WHEN THE FIXES ARE COMMENTS IN PAYLOAD
+  FILES.** It needs two consecutive rounds changing zero PAYLOAD lines; a comment edit in
+  `generate_output.go` counts as payload. The series here was 6, 0, 14 — never two zeros —
+  while **zero executable lines moved after `a3a8ca0`**. Switching to an "executable payload"
+  count would make it fire instantly and would be re-deciding the payload class mid-ladder,
+  which is exactly how that gate gets disarmed without anyone choosing to. **Name the condition
+  and stop on the stated criterion instead.**
+- 🔴 **A ROUND'S "SAFE TO MERGE" VERDICT IS NOT THE STOP SIGNAL, AND ITS "I CALL THIS CLEAN" IS
+  NOT EITHER.** Round 3 reported two 🟢 findings, said each *"changes what a reader
+  concludes"*, and then declared itself clean. By the ladder's own rule that makes them
+  findings. Both were real: one of them was a coverage row crediting another function's lines.
+  **Read the findings, not the verdict.**
+- 🔴 **`gh pr merge` RETURNS rc 0 AND PRINTS NOTHING — AND THE OBVIOUS CONTENT CHECK IS WRONG
+  WHEN `main` HAS MOVED.** `git diff <head> origin/main` is non-empty because *other people's*
+  work landed, not because yours did not. **Diff only the files you touched, and run a positive
+  control** (a file you did NOT touch that differs) so an empty result is not indistinguishable
+  from a broken comparison. Ancestry is useless here: a squash merge never makes the branch head
+  an ancestor.
+- 🔴 **A HANDOFF'S LADDER STATE IS A CLAIM ABOUT WHEN IT WAS WRITTEN.** This doc said #596 was
+  "not audited, next action round 0"; two rounds had already run and their fixes were pushed.
+  The tell was one command the doc did not carry: `gh pr view <n> --json commits` showing three
+  commits where the doc implied one. `audit-dispatch.py --round N` will happily assemble
+  whichever round you ASK for. **Read the PR's commits and comments before believing any ladder
+  state.**
+- ⚠ **A `git worktree`'s local branch can track a remote branch that no longer exists, and a
+  bare `git push` then silently creates a SECOND remote branch instead of updating the PR**
+  — rc 0, no warning, PR head unchanged. `cli-596b`'s branch is `fix/generate-blob-forgery-r0`
+  while the PR's head is `fix/generate-blob-forgery`; `git status -sb` showed
+  `...origin/fix/generate-blob-forgery-r0 [gone]`. Push with an explicit refspec and confirm
+  `gh pr view --json headRefOid` moved.
+- ⚠ **A MUTATION SWEEP RUN FROM A COPY INSIDE THE GO MODULE ROOT SCORES FAKE KILLS** — a stray
+  `package cmd` copy there makes every mutant return `[setup failed]`. Copy OUTSIDE the module
+  root, and `rm -f <copy>/.git` first (a worktree's `.git` is a FILE, so a commit in the copy
+  lands on the real branch).
 
 ## How to verify
 
