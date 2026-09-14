@@ -232,6 +232,26 @@ func TestSensitiveScopeJustificationChecks(t *testing.T) {
 			want: nil,
 		},
 		{
+			// posts:write:self publishes a PUBLIC post under the viewer's byline.
+			// It must behave like every other sensitive scope: unjustified is a
+			// hard local failure, matching the 400 the server would return.
+			name: "posts:write:self unjustified → hard error",
+			generic: map[string]any{
+				"scopes": []any{"posts:write:self"},
+			},
+			want: []string{prefix + "posts:write:self"},
+		},
+		{
+			name: "posts:write:self WITH a real justification → no error",
+			generic: map[string]any{
+				"scopes": []any{"posts:write:self"},
+				"scopeJustifications": map[string]any{
+					"posts:write:self": "lets the viewer publish the images this app generated for them",
+				},
+			},
+			want: nil,
+		},
+		{
 			name: "multiple sensitive, some unjustified → lists all offenders in declaration order",
 			generic: map[string]any{
 				"scopes": []any{
@@ -281,11 +301,12 @@ func TestSensitiveScopeJustificationChecks(t *testing.T) {
 	}
 }
 
-// TestIsSensitiveBlockScope pins the sensitive set to the server's 5 scopes.
+// TestIsSensitiveBlockScope pins the sensitive set to the server's 6 scopes.
 func TestIsSensitiveBlockScope(t *testing.T) {
 	sensitive := []string{
 		"ai:write:budgeted", "social:tip:self", "buzz:read:self",
 		"collections:read:private", "apps:storage:shared:write",
+		"posts:write:self",
 	}
 	if len(SENSITIVE_BLOCK_SCOPES) != len(sensitive) {
 		t.Fatalf("SENSITIVE_BLOCK_SCOPES has %d entries, want %d", len(SENSITIVE_BLOCK_SCOPES), len(sensitive))
