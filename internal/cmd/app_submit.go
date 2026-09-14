@@ -68,6 +68,42 @@ func printSubmitSizeDiagnosis(w io.Writer, zipBytes []byte, prov appapi.Provenan
 		ui.Code("civitai app submit --package-only"))
 }
 
+// printSubmitSizeRefusal writes what the CLI WOULD have sent, for a bundle it
+// declined to upload at all.
+//
+// 🔴 THE TENSE IS THE WHOLE POINT. printSubmitSizeDiagnosis says "What this CLI
+// sent" and "it cannot tell whether that is why the submit failed" — both true
+// on the upload-failed path and both FALSE here: nothing was sent, and the CLI
+// knows exactly why, because it decided. Reusing that block for this case was a
+// measured defect (the server received 0 bytes while the CLI reported
+// 12,587,785 on the wire), so this is a separate function rather than a flag on
+// that one — the two blocks disagree about the facts, not just the wording.
+//
+// It keeps the entry list, because the refusal's own message tells the author
+// that `civitai app submit` lists the largest entries; dropping it would make
+// that sentence false in the other direction.
+func printSubmitSizeRefusal(w io.Writer, zipBytes []byte, prov appapi.Provenance) {
+	fmt.Fprintf(w, "\nWhat this CLI would have sent (nothing was uploaded — it stopped before contacting the server):\n")
+	fmt.Fprintf(w, "  %d bytes on the wire — a %d-byte zip, base64-encoded into a JSON body.\n",
+		appapi.SubmitBodySize(len(zipBytes), prov), len(zipBytes))
+
+	entries, err := pkgzip.LargestEntries(zipBytes, submitDiagnosisEntries)
+	if err == nil && len(entries) > 0 {
+		fmt.Fprintf(w, "  largest entries in the bundle (compressed / original):\n")
+		for _, e := range entries {
+			fmt.Fprintf(w, "    %10d / %-10d  %s\n", e.Compressed, e.Uncompressed, e.Name)
+		}
+	}
+
+	for _, line := range wrapRunes("The first number is what the limit applies to, not the zip. Drop what the "+
+		"platform build does not need and retry. If you believe the server now accepts more than this CLI "+
+		"expects, --allow-oversize submits anyway:", 78) {
+		fmt.Fprintf(w, "  %s\n", line)
+	}
+	fmt.Fprintf(w, "    %s   # writes the exact .zip, so you can list it before retrying\n",
+		ui.Code("civitai app submit --package-only"))
+}
+
 // skippedListCap is how many skipped paths the `Skipped …` line names before it
 // truncates. Measured over six real Vite-shaped block projects the skipped set
 // was 3–4 entries (`node_modules/`, `dist/`, usually `.git/` or `.venv/`, plus
@@ -247,6 +283,7 @@ func newAppSubmitCmd() *cobra.Command {
 	var assumeYes bool
 	var allowDowngrade bool
 	var allowDirty bool
+	var allowOversize bool
 
 	cmd := &cobra.Command{
 		Use:   "submit [dir]",
@@ -325,6 +362,7 @@ Defaults to the current directory.`,
   civitai app submit --package-only     # just write the .zip (safe preview, never submits)
   civitai app submit --allow-downgrade  # deliberate rollback below the approved version
   civitai app submit --allow-dirty      # submit uncommitted working-tree changes on purpose
+  civitai app submit --allow-oversize   # submit past the vendored body-size ceiling
   civitai app submit -o my-block.zip ./my-block`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -408,6 +446,10 @@ Defaults to the current directory.`,
 			var client *appapi.Client
 			if canUpload {
 				client = appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), submitPath)
+				// The body ceiling is a vendored framework default, not a probe of the
+				// server; this is the way out when it goes stale. See the field's doc
+				// comment and claudedocs/decisions/31.
+				client.AllowOversizeBody = allowOversize
 
 				// 2a. DIRTY-WORK-TREE GUARD (issue #411), BEFORE the
 				// confirmation prompt.
@@ -544,6 +586,7 @@ Defaults to the current directory.`,
 	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "skip the confirmation prompt and submit (for scripts/CI)")
 	cmd.Flags().BoolVar(&allowDowngrade, "allow-downgrade", false, "submit even when the version is not above the highest approved one (deliberate rollback)")
 	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "submit even when the packaged directory has uncommitted git changes")
+	cmd.Flags().BoolVar(&allowOversize, "allow-oversize", false, "submit even when the body exceeds the size the server is expected to accept")
 	return cmd
 }
 
@@ -616,7 +659,20 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 		// invite-only Apps beta is the most common submit failure and has
 		// nothing to do with the bundle) or a 429, where an entry list is noise
 		// on top of an error that already says what to do.
-		if !errors.Is(err, civitai.ErrUnauthorized) && !errors.Is(err, civitai.ErrRateLimited) {
+		//
+		// 🔴 AND NOT FOR OUR OWN PREFLIGHT REFUSAL, which is the case this block
+		// is most tempting for and the one it lies about. The diagnosis opens
+		// "What this CLI sent … N bytes on the wire"; on ErrBundleTooLarge the
+		// server was never contacted. Measured before this branch existed: the
+		// server received 0 bytes while the CLI reported 12,587,785 on the wire,
+		// and its next sentence — "it cannot tell whether that is why the submit
+		// failed" — was false too, because it had just decided. The entry list
+		// is still worth printing (the refusal tells you to look at it), so the
+		// refusal gets its own block with honest tense rather than none.
+		switch {
+		case errors.Is(err, appapi.ErrBundleTooLarge):
+			printSubmitSizeRefusal(cmd.ErrOrStderr(), zipBytes, prov)
+		case !errors.Is(err, civitai.ErrUnauthorized) && !errors.Is(err, civitai.ErrRateLimited):
 			printSubmitSizeDiagnosis(cmd.ErrOrStderr(), zipBytes, prov)
 		}
 		return err

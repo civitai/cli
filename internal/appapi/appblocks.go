@@ -682,6 +682,61 @@ func submitEnvelopeLen(prov Provenance) int {
 // and the envelope is a constant. Do not substitute a 1.37 multiplier for it —
 // the point of printing the number is that the author can compare it with a
 // limit, and a rounded number cannot be compared with anything.
+//
+// 🔴 THIS COMMENT DOCUMENTS SubmitBodySize, WHICH IS ~40 LINES BELOW. Everything
+// between here and it — MaxSubmitBodyBytes, ErrBundleTooLarge — was inserted
+// into the middle of this block, which handed godoc the whole thing as the
+// CONSTANT's comment and left the exported function with none. `go doc
+// appapi.SubmitBodySize` printed nothing. staticcheck cannot see it: .golangci.yml
+// disables ST1020-ST1022. Keep the blank-line separations below.
+
+// MaxSubmitBodyBytes is the largest request body the submit endpoint can actually
+// RECEIVE, in bytes.
+//
+// 🔴 This IS the server's number, unlike the caps in `internal/pkgzip` — which is
+// exactly the claim `pkgzip/caps_claim_test.go` exists to keep OUT of that file, and
+// the reason this constant lives here instead. It is stated with its evidence so the
+// next reader can re-derive it rather than trust it:
+//
+//   - `/api/v1/blocks/submit-version` is matched by the platform's proxy matcher
+//     (`/api/v1/:path*`), and a proxy-matched request body is capped at the framework's
+//     `proxyClientMaxBodySize`, which defaults to 10485760 and is not overridden.
+//   - Above that the body is TRUNCATED, not refused — the stream simply ends, the
+//     server parses half a JSON document, and the author gets `400: Invalid JSON`.
+//     That is issue #423, and it is why a bundle that clears every local cap can still
+//     fail with an error that names nothing about size.
+//   - The server cannot answer it with a size error either: measured, no body-parser
+//     limit is reachable on such a path, because truncation lands at a chunk boundary
+//     BELOW any usable limit. (civitai/civitai#4793, closed unmerged, carries the
+//     executed matrix; #4800 tried the server-side fix and was closed in favour of
+//     this one.)
+//
+// So the ONLY place this can be caught before an author waits out an 11 MB upload is
+// here, in the client, against the body it is about to send.
+//
+// ⚠ It bounds the BODY, not the zip. A zip is base64-encoded (4/3) into a JSON
+// envelope, so the usable zip is roughly 7.5 MiB — but do not hardcode that number
+// anywhere: use SubmitBodySize, which is exact.
+// ErrBundleTooLarge tags the preflight refusal above MaxSubmitBodyBytes.
+//
+// 🔴 IT EXISTS SO CALLERS CAN TELL "WE DECLINED" FROM "THE UPLOAD FAILED", and
+// the first version of this guard did not have it — so `app submit` ran its
+// post-failure diagnosis, which prints "What this CLI sent … N bytes on the
+// wire", for a submit where the server was never contacted. Measured: the
+// server received 0 bytes while the CLI reported 12,587,785 on the wire.
+//
+// It also pins the exit code. Untagged, the refusal reached exit 1 only by
+// falling through exitCode's default — right by accident, and AGENTS.md item 7
+// is explicit that an untagged return unpins a published code. This sentinel
+// matches no arm of that switch, so the 1 is unchanged AND now assertable.
+var ErrBundleTooLarge = errors.New("bundle too large to upload")
+
+const MaxSubmitBodyBytes = 10485760
+
+// SubmitBodySize is the exact number of bytes the submit request body will carry
+// for a zip of zipLen with provenance prov: base64 of the zip, plus the JSON
+// envelope. See the derivation block above — it is exact, not an estimate, and it
+// is the quantity a request-body limit applies to.
 func SubmitBodySize(zipLen int, prov Provenance) int {
 	return base64.StdEncoding.EncodedLen(zipLen) + submitEnvelopeLen(prov)
 }
@@ -735,6 +790,24 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 	})
 	if err != nil {
 		return nil, err
+	}
+	// 🔴 Refuse locally rather than uploading a body the server will truncate.
+	//
+	// `len(body)` is the exact bytes about to go on the wire — not an estimate and not
+	// SubmitBodySize's arithmetic, but the marshalled document itself — so this cannot
+	// drift from what is sent. Sending it anyway costs the author the whole upload and
+	// returns `400: Invalid JSON`, which names nothing about size (#423).
+	//
+	// The message reports the BODY size, because that is the quantity the limit applies
+	// to and the one an author could otherwise not observe: `app submit` prints the
+	// compressed zip size, which is ~3/4 of this and clears the local cap comfortably.
+	if !c.AllowOversizeBody && len(body) > MaxSubmitBodyBytes {
+		return nil, fmt.Errorf(
+			"%w: submit body is %d bytes, over the %d the server can receive. "+
+				"Reduce it and try again — `civitai app submit` lists the largest entries. "+
+				"If you believe the server now accepts more than this, --allow-oversize submits anyway. "+
+				"(The compressed zip is smaller than this number; base64 encoding adds ~1/3.)",
+			ErrBundleTooLarge, len(body), MaxSubmitBodyBytes)
 	}
 	build := func() (*http.Request, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+c.SubmitPath, bytes.NewReader(body))
