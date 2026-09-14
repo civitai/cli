@@ -238,8 +238,9 @@ still cannot and truthfully refuses, and the item is the split between them.
 Item 30 is the one listing change deliberately left STAGED rather than
 published, and why the command that publishes it exits NON-ZERO on a refusal the
 attach path reports as progress.
-Item 31 is a deliberate non-mirror on the submit path: the packager's own size
-caps, and the server ceiling behind them that #423 bracketed but could not pin.
+Item 31 is a SPLIT: `pkgzip`'s caps stay a non-mirror; the submit-BODY ceiling
+#423 could only bracket is now vendored from a sourced framework default, with
+--allow-oversize for when it goes stale.
 Item 32 is what a submit may CLAIM about the source it was built from.
 Item 33 is the source-repository URL: a deliberate NON-mirror, because the
 one mirror of that rule this repo already ships is measurably wrong in BOTH

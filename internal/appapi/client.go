@@ -39,6 +39,19 @@ type Client struct {
 	// maxResponseBody) when > 0. Tests set a small value to exercise the over-cap
 	// guard without allocating 64 MiB.
 	MaxResponseBody int64
+	// AllowOversizeBody skips the MaxSubmitBodyBytes preflight refusal, so a
+	// submit is attempted whatever its size. Set by `app submit --allow-oversize`.
+	//
+	// 🔴 THIS EXISTS BECAUSE THE CEILING IS VENDORED AND UNGUARDED. The number is
+	// the framework default civitai's proxy runs under, not a probe of the
+	// server, and nothing local notices the day that default is raised —
+	// civitai/civitai#4793 names raising it as the change to make if larger
+	// bundles are ever wanted. Without this flag, every already-shipped CLI would
+	// keep refusing at the old number with nothing the author could do, which is
+	// the failure claudedocs/decisions/31 was written to prevent. The refusal is
+	// the default because it is right today; the override is what makes being
+	// wrong tomorrow survivable.
+	AllowOversizeBody bool
 }
 
 // New builds a Client with sane defaults from a static token (personal API key

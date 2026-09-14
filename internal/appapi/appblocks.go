@@ -775,10 +775,11 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 	// The message reports the BODY size, because that is the quantity the limit applies
 	// to and the one an author could otherwise not observe: `app submit` prints the
 	// compressed zip size, which is ~3/4 of this and clears the local cap comfortably.
-	if len(body) > MaxSubmitBodyBytes {
+	if !c.AllowOversizeBody && len(body) > MaxSubmitBodyBytes {
 		return nil, fmt.Errorf(
 			"submit body is %d bytes, over the %d the server can receive: the bundle is too large to upload. "+
 				"Reduce it and try again — `civitai app submit` lists the largest entries. "+
+				"If you believe the server now accepts more than this, --allow-oversize submits anyway. "+
 				"(The compressed zip is smaller than this number; base64 encoding adds ~1/3.)",
 			len(body), MaxSubmitBodyBytes)
 	}

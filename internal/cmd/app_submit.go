@@ -247,6 +247,7 @@ func newAppSubmitCmd() *cobra.Command {
 	var assumeYes bool
 	var allowDowngrade bool
 	var allowDirty bool
+	var allowOversize bool
 
 	cmd := &cobra.Command{
 		Use:   "submit [dir]",
@@ -325,6 +326,7 @@ Defaults to the current directory.`,
   civitai app submit --package-only     # just write the .zip (safe preview, never submits)
   civitai app submit --allow-downgrade  # deliberate rollback below the approved version
   civitai app submit --allow-dirty      # submit uncommitted working-tree changes on purpose
+  civitai app submit --allow-oversize   # submit past the vendored body-size ceiling
   civitai app submit -o my-block.zip ./my-block`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -408,6 +410,10 @@ Defaults to the current directory.`,
 			var client *appapi.Client
 			if canUpload {
 				client = appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), submitPath)
+				// The body ceiling is a vendored framework default, not a probe of the
+				// server; this is the way out when it goes stale. See the field's doc
+				// comment and claudedocs/decisions/31.
+				client.AllowOversizeBody = allowOversize
 
 				// 2a. DIRTY-WORK-TREE GUARD (issue #411), BEFORE the
 				// confirmation prompt.
@@ -544,6 +550,7 @@ Defaults to the current directory.`,
 	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "skip the confirmation prompt and submit (for scripts/CI)")
 	cmd.Flags().BoolVar(&allowDowngrade, "allow-downgrade", false, "submit even when the version is not above the highest approved one (deliberate rollback)")
 	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "submit even when the packaged directory has uncommitted git changes")
+	cmd.Flags().BoolVar(&allowOversize, "allow-oversize", false, "submit even when the body exceeds the size the server is expected to accept")
 	return cmd
 }
 
