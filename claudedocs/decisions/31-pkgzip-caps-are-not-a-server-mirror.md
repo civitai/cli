@@ -1,4 +1,4 @@
-# AGENTS.md item 31 — `pkgzip`'s size caps are the CLI's own, and the server's bundle ceiling is not vendored
+# AGENTS.md item 31 — `pkgzip`'s size caps are the CLI's own; the submit-BODY ceiling IS vendored (amended)
 
 Evidence for item 31 of the *Intentional decisions that look wrong* list in
 [`AGENTS.md`](../../AGENTS.md). AGENTS.md carries only this item's TRIGGER —
@@ -72,9 +72,14 @@ now does, and it is not a probe of the bracket:
 - That number is external to this CLI *and* to civitai — it is Next.js's, read
   from its documentation, not chosen from inside `(2.32 MB, 8.20 MB]`.
 
-🔴 **AND IT CORRECTLY PREDICTS BOTH OF `#423`'s MEASURED SUBMISSIONS, which is
-the evidence that matters more than its provenance.** A body limit bites on
-~4/3 of the compressed size:
+⚠ **IT IS ALSO CONSISTENT WITH `#423`'s TWO MEASURED SUBMISSIONS — and that is
+WORTH ALMOST NOTHING, which an earlier draft of this section got backwards.** It
+billed the agreement as "the evidence that matters more than its provenance".
+10485760 bytes of body ÷ 4/3 is a **7,864,320-byte zip**, which lies INSIDE
+`(2.32 MB, 8.20 MB]` — so *every* number in that bracket reproduces both
+observations, by definition of a bracket. The table below is a sanity check that
+the provenance is not absurd, not a confirmation of it. **The sound argument is
+the provenance alone**, and it has to carry the whole weight:
 
 | `#423` observation | zip | implied body | vs 10485760 | predicted | actual |
 |---|---|---|---|---|---|
@@ -111,6 +116,16 @@ refusal names it, and this file and `README.md` now name it too.
   satisfied. Stated rather than fixed: widening it to the whole tree would
   require deciding what every future size constant may claim, which is a larger
   question than this change.
+- 🔴 **THE ITEM TEXT PRESERVED AT THE BOTTOM OF THIS FILE STILL SAYS THE OPPOSITE,
+  AND IT CANNOT BE EDITED.** It reads *"the server's bundle ceiling is
+  deliberately NOT vendored"* and ends *"Name no server ceiling"* — the verbatim
+  AGENTS.md item as it stood when this file was split out, pinned byte-for-byte
+  by `agents_split_preserved_test.go` so nobody can quietly rewrite history
+  during a split. That guard is working as designed; the cost is that this file
+  permanently contains its own negation. **Everything above supersedes it.** Do
+  not "fix" the tail — the test will refuse it, and the refusal will look like a
+  bug rather than the pin it is. Read the tail as *what the rule was*, and this
+  section as *what it is*.
 
 ---
 
