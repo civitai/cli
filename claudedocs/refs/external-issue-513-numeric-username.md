@@ -435,3 +435,27 @@ Verbatim, including its original as-of line. CLOSED: read as recall, not live st
   every shape, one line each.
 - **Next probe:** none for #80. The residual is `devdocs#81`.
 
+
+
+---
+
+## Demoted from the handoff 2026-09-14 (third eviction, to fit this update)
+
+### 🔴 A TAB is a worse forgery vector than a newline, because tabwriter's delimiter IS the tab
+
+- **Symptom + exact repro:** at #554 HEAD, `images search` (no `--meta`) with
+  `username = "alice\tSDXL\t9x9\tNone\t0\t0\thttps://evil.example/steal"` emits a **fully
+  aligned**, entirely attacker-controlled row, pushing the real values past column 80.
+- **Observed (with values), verified first-hand not just by the auditor:**
+  `safeTermSingle` (`safeterm.go:59-65`) replaces **only `"\n"`**; `saferune.go:219` reads
+  `if r == '\n' || r == '\t'` — tab is **deliberately kept**. Survival through
+  `safeTermSingle`: `\n`→space; `\r`, `\v`, `\f`, U+0085 **stripped**; **`\t`, U+2028,
+  U+2029 SURVIVE**.
+- 🔴 **The generalisable part: "reach column zero" was never the whole hazard.** In a
+  `tabwriter`, a tab lets the attacker **inject a column**, so alignment — the thing that
+  makes output look trustworthy — becomes the attack surface. Any replacement predicate must
+  cover both.
+- **Ruled out:** that this is new in #554 — the tab behaviour predates it. What is new is the
+  CLAIM: `safeterm.go:49-55` justifies the helper by naming column-alignment and tabwriter
+  row-forging, while guarding only `\n`. `via: code`
+
