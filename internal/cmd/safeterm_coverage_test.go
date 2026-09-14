@@ -374,8 +374,19 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"place this PR did not move a gate to its render site (civitai/cli#575 R1). The named test drives " +
 			"the real upload seam and is watched red both ways: deleting the gate, and flattening the whole " +
 			"composed line (the #393 direction, which its ZWNJ-bearing fixture path is what makes visible)"},
-	"waitAndCollect": {notCovered,
-		"the terminal-status and dead-end lines naming the workflow and its status"},
+	"waitAndCollect": {"TestWaitAndCollectReReadHintCannotForgeALine",
+		"ONE of this function's four surfaces, and the row says which because the other three are still " +
+			"open: the `Output URLs expire — re-read the workflow for fresh links` hint, printed after a " +
+			"transfer FAILED, i.e. the last advice a user gets about outputs they have already been " +
+			"charged for. civitai/cli#596 upgraded it to safeTermSingle and shipped it UNPINNED — round " +
+			"2's delta audit reverted that one expression to plain safeTerm and the whole package stayed " +
+			"green — which is what the named test now closes. 🔴 STILL UNGATED FOR \\n AND \\t, ON " +
+			"PURPOSE AND TRACKED ELSEWHERE: the two terminal-status/dead-end errors and printSubmitted's " +
+			"two lines print the SAME server id through plain safeTerm, so a hostile workflow id can " +
+			"still forge a flush-left line there. They are pre-existing and outside #574's closing " +
+			"condition; they are a follow-up issue, not a silent inclusion. Read this row as 'the " +
+			"function is no longer wholesale-unpinned', never as 'the workflow id is safe everywhere " +
+			"here'"},
 	"substitutionRefusal": {notCovered,
 		"the server's reason inside the refusal that ABORTS a spend"},
 	"joinQuoted": {notCovered,
@@ -387,13 +398,24 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"target (civitai/cli#574). Its `create output directory` line is deliberately UNGATED " +
 			"and pinned the OTHER way by TestCreateOutputDirectoryStaysUngated, because that value " +
 			"is the user's own --out-dir"},
-	"downloadOutputs": {"TestDownloadOutputsRefusalCannotForgeALine",
-		"the overwrite refusal that users actually reach (it pre-checks every job, so downloadBlobTo's " +
-			"own refusal is TOCTOU-only), the no-URL error and the duplicate-target hint — all naming " +
-			"a target whose {workflowId} comes off the wire. 🔴 The refusal was FULLY RAW until " +
-			"civitai/cli#574's round-0 audit: raw ESC, not merely an ungated newline. This row " +
-			"previously read \"the multi-output progress line and the no-URL error\" and named a " +
-			"progress line this function does not have"},
+	"downloadOutputs": {"TestDownloadOutputsErrorsCannotForgeALine",
+		"all THREE of this function's error surfaces, one subtest each, each mutation-verified alone. " +
+			"They do NOT carry the same value, and saying they did is what let two of them go " +
+			"unmeasured: (a) the overwrite refusal names `j.target` — planOutputTarget's output, so the " +
+			"server's {workflow} placeholder expands into the LEAF while the directory is the user's " +
+			"own --out-dir, a MIXED origin no ledger in this package can key (see the selector-blind-spot " +
+			"note beside bareIdentArgs); (b) the no-URL error names `o.ID`, the server's blob id, and no " +
+			"path at all; (c) the duplicate-target hint renders the target through %q, which Go escapes, " +
+			"so the workflow id is its only unquoted operand. 🔴 The overwrite refusal was FULLY RAW " +
+			"until civitai/cli#574's round-0 audit — raw ESC, not merely an ungated newline — and it is " +
+			"the branch users actually reach, since it pre-checks every job and leaves downloadBlobTo's " +
+			"own refusal TOCTOU-only. 🔴 THIS ROW HAS NOW BEEN WRONG TWICE IN THE REASSURING DIRECTION: " +
+			"it once named a progress line this function does not have, and civitai/cli#596 round 1 " +
+			"rewrote it to claim all three surfaces as one target while the named test drove ONE — the " +
+			"no-URL error was still on plain safeTerm and forging a line, and the duplicate hint's gate " +
+			"could be reverted with no behavioural test going red. Both are driven now, and the test was " +
+			"renamed off …RefusalCannotForgeALine because that name is what made a one-surface test read " +
+			"as a three-surface one"},
 	"printAppMetrics": {"TestTabwriterRenderersCannotBeForged",
 		"the scope and endpoint tokens — kept RAW on purpose (AGENTS.md item 8), which makes the " +
 			"strip the ONLY thing between an uploader-shaped token and the terminal — plus the window " +
@@ -489,7 +511,16 @@ const (
 	// this paragraph as the authority on what the number should be, so it is
 	// amended rather than search-and-replaced: each bullet now says which tree its
 	// figure belonged to.
-	maxUncoveredSafeTermFuncs = 18
+	// 🔴 LOWERED 18 -> 17 BY civitai/cli#596 ROUND 2, AND BANKED IN THE SAME
+	// COMMIT, which is what the RATCHET HEADROOM paragraph above demands.
+	// waitAndCollect moved from notCovered to covered when
+	// TestWaitAndCollectReReadHintCannotForgeALine started driving its re-read
+	// hint through the real command. MEASURED, not derived: this test reported
+	// "RATCHET HEADROOM: 17 … but maxUncoveredSafeTermFuncs is 18" on the tree
+	// that changed the row, and 17 is the number it printed. Its `why` states
+	// which ONE of that function's four surfaces is driven and which three are
+	// not — a row does not become a claim about every call inside it.
+	maxUncoveredSafeTermFuncs = 17
 )
 
 // TestSafeTermCallSitesAreCoveredByANamedTest is civitai/cli#399.

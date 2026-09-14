@@ -69,8 +69,15 @@ func safeTerm(s string) string {
 //
 // 🔴 USE IT ONLY ON A SINGLE-LINE ERROR PATH — not at just any site
 // that wraps server bytes. (An earlier draft of this line opened "DO NOT use it
-// at ANY site", which skims as "never call this function" and is false of five
-// live call sites — the same read-the-bold-line failure this comment exists to
+// at ANY site", which skims as "never call this function" and is false of SEVEN
+// live call sites — five in download.go and two in generate_output.go's blob
+// transfer. It read "five" from civitai/cli#590, which is the commit that wrote
+// it and the tree where five was right; the two generate_output.go callers
+// arrived later, in this branch's own first commit, and civitai/cli#596 round 1
+// then corrected two neighbouring stale sentences in this same block without
+// re-counting this one. Re-derived by grepping `safeTermErr(` across the
+// package's non-test sources, not carried through
+// — the same read-the-bold-line failure this comment exists to
 // fix.) The two halves of the sentence it replaced pull in opposite directions. An
 // earlier draft said "use it at ANY site where `%w` carries a cause built from
 // server-derived bytes" in the same comment that justifies collapsing \n and \t

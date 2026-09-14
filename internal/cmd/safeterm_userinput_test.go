@@ -66,6 +66,31 @@ var userTypedArgs = map[string]string{
 // It fails in both directions: an unclassified name (the set grew) and a
 // classified name that no longer appears (the set shrank, so the note is stale
 // and the next reader would trust it).
+//
+// 🔴 KNOWN BLIND SPOT, STATED RATHER THAN PAPERED OVER: A SELECTOR EXPRESSION
+// IS STRUCTURALLY INVISIBLE TO THIS LEDGER, AND ALWAYS HAS BEEN.
+// scanSafeTermCallSites sets `bareIdent` from
+// `_, bare := ce.Args[0].(*ast.Ident)`, and classifyBareIdents `continue`s on
+// every site where that is false. So `safeTermSingle(j.target)` — the overwrite
+// refusal in generate_output.go's downloadOutputs, a MIXED-ORIGIN path whose
+// leaf carries the server's {workflowId} and whose directory is the user's own
+// --out-dir — can never be keyed here, and no row was ever demanded for it.
+// userTypedArgs does not reach it either: that map is consulted by the rendered
+// argument string and holds the shapes somebody thought to FORBID, not every
+// selector that exists.
+//
+// Read the silence correctly: for a selector it means UNASKED, never
+// CLASSIFIED. That is exactly the reassuring-direction reading this file exists
+// to prevent, so civitai/cli#596 round 2 wrote that particular decision — the
+// mixed origin, the documented saferune exception it rests on, and the open
+// --out-dir residual it accepts — into a comment AT THE CALL SITE instead.
+//
+// Deliberately NOT fixed by widening the parser. A selector has no obvious key
+// (`downloadOutputs::j.target` invents a second key format), and the thing it
+// would classify is a struct FIELD whose origin is decided by whoever FILLS the
+// struct rather than by the renderer — so the row would be a claim about a
+// different function than the one it is filed under. Recorded as the shape to
+// reconsider if a second mixed-origin selector argument ever appears.
 var bareIdentArgs = map[string]string{
 	// --- download path ------------------------------------------------------
 	"checkTargetCollisions::target":  "MIXED: --out verbatim, else filepath.Base(SERVER file name) — see targetPath. The refusal that is the only thing between the user and a silent overwrite",
@@ -78,7 +103,7 @@ var bareIdentArgs = map[string]string{
 	"blobStatusError::name":          "SERVER: filepath.Base of a generate-output target built by planOutputTarget, whose {workflowId} comes off the wire (renderOutName). Re-assigned through the gate in place, exactly as downloadStatusError does — the two are structural twins and #566 exists because two spellings of one rule drifted (civitai/cli#574)",
 	"downloadBlobTo::name":           "🔴 MIXED, AND MOSTLY SERVER — filepath.Base(target) off planOutputTarget, so the LEAF is where the user's --out-name template lands and the server's {workflowId} expands INTO that leaf. An earlier draft of this row called it SERVER and explained that the sibling `target` row is MIXED 'because it carries the --out-name template too' — backwards: the template lands in the leaf, --out-dir lands in the directory. That is exactly the reassuring-direction error writePart::name below warns about, in the ledger whose purpose is stopping one value acquiring two spellings. Gated because mostly-server wins, as download.go does for its own MIXED target",
 	"emitPreDownloadNotes::name":     "SERVER: a published file name, in the no-SHA256 warning",
-	"writePart::name":                "🔴 MIXED, AND MOSTLY SERVER — an earlier draft of this row called the second origin \"the USER's --out-name template\", which is wrong in the reassuring direction and would excuse leaving a sibling raw. writePart has TWO callers: download.go:926 passes the SERVER's f.Name, and generate_output.go:427 passes filepath.Base(target) off planOutputTarget(o.outName,…). That second value is SERVER-DERIVED BY DEFAULT: renderOutName expands the default template \"{workflow}-{n}{ext}\" with {workflow} = the server's workflow id and {ext} = a bounded URL extension, so with no --out-name the whole basename is the server's. The user half is only the literal text AROUND the placeholders when --out-name is passed. A (function, name) key cannot express two callers with two origins at all, which is why this row is MIXED by necessity rather than by measurement — recorded as R6 on civitai/cli#575",
+	"writePart::name":                "🔴 MIXED, AND MOSTLY SERVER — an earlier draft of this row called the second origin \"the USER's --out-name template\", which is wrong in the reassuring direction and would excuse leaving a sibling raw. writePart has TWO callers: download.go:935 passes the SERVER's f.Name, and generate_output.go:449 passes filepath.Base(target) off planOutputTarget(o.outName,…). That second value is SERVER-DERIVED BY DEFAULT: renderOutName expands the default template \"{workflow}-{n}{ext}\" with {workflow} = the server's workflow id and {ext} = a bounded URL extension, so with no --out-name the whole basename is the server's. The user half is only the literal text AROUND the placeholders when --out-name is passed. A (function, name) key cannot express two callers with two origins at all, which is why this row is MIXED by necessity rather than by measurement — recorded as R6 on civitai/cli#575",
 	"printDownloadPlan::note":        "🔴 MIXED, not SERVER — an earlier draft of this row said SERVER and was wrong. routeDir (layout.go:145) interpolates `root`, the USER's --root, alongside the server file name. MEASURED: --root with a U+2800 in it prints the path without it, so the line whose whole job is to say WHERE THE FILE GOES names a directory that is not the directory",
 	"downloadSelected::note":         "🔴 MIXED, not SERVER — the same routeDir note at its other call site, carrying the user's --root the same way",
 	"printDownloadPlan::sha":         "SERVER: a published hash",

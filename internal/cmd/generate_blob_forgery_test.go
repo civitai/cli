@@ -266,72 +266,253 @@ func TestCreateOutputDirectoryStaysUngated(t *testing.T) {
 	}
 }
 
-// TestDownloadOutputsRefusalCannotForgeALine drives the refusal users ACTUALLY
-// reach — the one #574's six-site table missed.
+// TestDownloadOutputsErrorsCannotForgeALine drives ALL THREE of downloadOutputs'
+// own error surfaces, each as its own subtest, each mutation-verified alone:
+// the overwrite refusal, the no-URL error and the duplicate-target hint.
 //
-// 🔴 IT WAS FULLY RAW, NOT MERELY UNGATED FOR `\n`. `j.target` is
-// planOutputTarget's output, whose `{workflowId}` comes off the wire, and it was
-// joined into the message with no sanitiser at all — so this is the #566 class
-// (raw ANSI) rather than the #577 one. Measured before the fix: `esc=true`, two
-// forged newlines and a tab, with `\x1b[1A\x1b[2K` — cursor-up plus erase-line —
-// intact.
+// 🔴 IT WAS NAMED …RefusalCannotForgeALine AND DROVE ONE OF THE THREE, WHILE THE
+// LEDGER ROW CLAIMED ALL THREE. civitai/cli#596 round 2's delta audit measured
+// it: the no-URL error at generate_output.go was still on plain `safeTerm` (so
+// it forged a line with the whole suite green), and the duplicate-target hint's
+// gate could be reverted with no BEHAVIOURAL test going red — only
+// bareIdentArgs' shrank-direction bookkeeping noticed, which is a deletion
+// detector, not an assertion about the screen. Renamed rather than re-scoped,
+// because the old name is what made a one-surface test look like a three-surface
+// one.
 //
-// 🔴 AND IT IS THE REACHABLE BRANCH. downloadOutputs pre-checks every job here
-// before any bytes move, so downloadBlobTo's own `!force` refusal (which #574
-// DID name) fires only in a TOCTOU window. The requirement's table was built by
-// reading two functions; it hardened the branch users almost never hit and left
-// this one raw. Found by this PR's round-0 audit, which is the round that asks
-// whether the requirement itself is right.
-func TestDownloadOutputsRefusalCannotForgeALine(t *testing.T) {
-	// 🔴 DRIVE THE REAL FUNCTION. A first draft of this test rebuilt the message
-	// inline with safeTermSingle(target) hardcoded — so it asserted on the
-	// HELPER, not on the production line, and ungating that line left it GREEN.
-	// Caught by its own mutation check. A guard that reconstructs the thing it
-	// is guarding is testing its own arithmetic.
-	dir := t.TempDir()
-	// A cursor-control payload, not merely a newline: this surface had NO gate
-	// at all, so a `\n`-only fixture could not distinguish "gated for lines"
-	// from "gated".
-	hostileID := "wf1\x1b[1A\x1b[2K\nSaved out.png (2.0 MiB)\tDONE"
-	url := "https://example.invalid/blob.png"
-	outs := []genapi.Output{{Blob: genapi.Blob{URL: &url}}}
+// 🔴 THE OVERWRITE REFUSAL WAS FULLY RAW, NOT MERELY UNGATED FOR `\n`.
+// `j.target` is planOutputTarget's output, whose `{workflow}` placeholder is
+// filled from the wire, and it was joined into the message with no sanitiser at
+// all — so that one is the #566 class (raw ANSI) rather than the #577 one.
+//
+// RE-MEASURED AT ROUND 2, because this header and the call site both carried a
+// number nobody had re-derived: reverting that one expression to `j.target` and
+// running the overwrite-refusal subtest reports `esc=true`, THREE newlines where
+// the gated message has two, and 1 tab. The message writes both of its own
+// newlines (header, then the trailer after the row), so the server forged
+// exactly ONE line, not the "two forged newlines" this comment claimed for two
+// rounds.
+//
+// 🔴 AND THE OVERWRITE REFUSAL IS THE REACHABLE BRANCH. downloadOutputs
+// pre-checks every job here before any bytes move, so downloadBlobTo's own
+// `!force` refusal (which #574 DID name) fires only in a TOCTOU window. The
+// requirement's table was built by reading two functions; it hardened the branch
+// users almost never hit and left this one raw. Found by this PR's round-0
+// audit, which is the round that asks whether the requirement itself is right.
+func TestDownloadOutputsErrorsCannotForgeALine(t *testing.T) {
+	// A cursor-control payload, not merely a newline: these surfaces had NO gate
+	// or a \n-keeping one, so a `\n`-only fixture could not distinguish "gated
+	// for lines" from "gated".
+	const hostileID = "wf1\x1b[1A\x1b[2K\nSaved out.png (2.0 MiB)\tDONE"
 
-	// Pre-create what planOutputTarget will choose, so the refusal fires.
-	target, err := planOutputTarget("", dir, hostileID, 1, url)
-	if err != nil {
-		t.Fatalf("CONTROL failure, not a finding: planOutputTarget refused the fixture: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		t.Fatalf("CONTROL failure, not a finding: %v", err)
-	}
-	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
-		t.Fatalf("CONTROL failure, not a finding: %v", err)
-	}
-	// POSITIVE CONTROL on the fixture: the hostile id must actually reach the
-	// target, or the refusal below cannot carry it.
-	if !strings.Contains(target, "wf1") {
-		t.Fatalf("CONTROL failure, not a finding: planOutputTarget dropped the id; target=%q", target)
+	t.Run("overwrite refusal", func(t *testing.T) {
+		// 🔴 DRIVE THE REAL FUNCTION. A first draft of this test rebuilt the
+		// message inline with safeTermSingle(target) hardcoded — so it asserted
+		// on the HELPER, not on the production line, and ungating that line left
+		// it GREEN. Caught by its own mutation check. A guard that reconstructs
+		// the thing it is guarding is testing its own arithmetic.
+		dir := t.TempDir()
+		url := "https://example.invalid/blob.png"
+		outs := []genapi.Output{{Blob: genapi.Blob{URL: &url}}}
+
+		// Pre-create what planOutputTarget will choose, so the refusal fires.
+		target, err := planOutputTarget("", dir, hostileID, 1, url)
+		if err != nil {
+			t.Fatalf("CONTROL failure, not a finding: planOutputTarget refused the fixture: %v", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatalf("CONTROL failure, not a finding: %v", err)
+		}
+		if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
+			t.Fatalf("CONTROL failure, not a finding: %v", err)
+		}
+		// POSITIVE CONTROL on the fixture: the hostile id must actually reach the
+		// target, or the refusal below cannot carry it.
+		if !strings.Contains(target, "wf1") {
+			t.Fatalf("CONTROL failure, not a finding: planOutputTarget dropped the id; target=%q", target)
+		}
+
+		_, err = downloadOutputs(context.Background(), nil, io.Discard, io.Discard,
+			hostileID, outs, dir, "", false)
+		if err == nil {
+			t.Fatal("CONTROL failure, not a finding: an existing target produced no refusal")
+		}
+		got := err.Error()
+		if !strings.Contains(got, "refusing to overwrite") {
+			t.Fatalf("CONTROL failure, not a finding: reached a different error: %v", err)
+		}
+		if strings.Contains(got, "\x1b") {
+			t.Errorf("#566 FORGERY in downloadOutputs (refusing to overwrite): a raw ESC survived into "+
+				"the one error standing between the user and an overwrite:\n%q", got)
+		}
+		// Header + one line per clash. A forged newline breaks that relationship.
+		if n := strings.Count(strings.TrimRight(got, "\n"), "\n"); n != 2 {
+			t.Errorf("#574 FORGERY in downloadOutputs (refusing to overwrite): %d newline(s) for ONE "+
+				"clash, want 2 (header, the row, the trailer) — the server chose the geometry:\n%s", n, got)
+		}
+		if strings.Contains(got, "\t") {
+			t.Errorf("#574 FORGERY in downloadOutputs (refusing to overwrite): a TAB survived:\n%s", got)
+		}
+	})
+
+	// 🔴 THE SURFACE ROUND 1 CLAIMED AND DID NOT GATE. This error names `o.ID` —
+	// the SERVER's own blob id — not a target, and it was on plain `safeTerm`,
+	// which keeps \n and \t by design. Measured on the unfixed line with this
+	// fixture: esc=false (safeTerm did strip the escape), 1 forged newline and 1
+	// surviving tab, printed by cmd/civitai/main.go as `Error: <err>` with no
+	// renderer in front of it.
+	//
+	// 🔴 REACHABLE WITHOUT ANY TOCTOU WINDOW, which is why it is not a
+	// theoretical arm: genapi.Deliverable is `Available && !blocked && !hidden`
+	// and says nothing about a URL, so `"available": true` with `"url": null`
+	// is partitioned into `kept` and handed straight to this loop. The fixture
+	// sets Available so it is the payload the server can actually send, not a
+	// value only this test can construct.
+	t.Run("no-URL error", func(t *testing.T) {
+		outs := []genapi.Output{{Blob: genapi.Blob{ID: hostileID, Available: true}}}
+		_, err := downloadOutputs(context.Background(), nil, io.Discard, io.Discard,
+			"wf-clean", outs, t.TempDir(), "", false)
+		if err == nil {
+			t.Fatal("CONTROL failure, not a finding: an available output with no URL produced no error")
+		}
+		got := err.Error()
+		if !strings.Contains(got, "carries no URL") {
+			t.Fatalf("CONTROL failure, not a finding: reached a different error: %v", err)
+		}
+		// POSITIVE CONTROL: the id must actually reach the message, or the
+		// assertions below pass on a string that never carried the payload.
+		if !strings.Contains(got, "wf1") {
+			t.Fatalf("CONTROL failure, not a finding: the output id never reached the message:\n%q", got)
+		}
+		assertOneLine(t, "downloadOutputs (marked available but carries no URL)", got)
+		if strings.Contains(got, "\x1b") {
+			t.Errorf("#566 FORGERY in downloadOutputs (no URL): a raw ESC survived:\n%q", got)
+		}
+	})
+
+	// 🔴 THE THIRD SURFACE THE ROW CLAIMED. Reverting its gate reddened NO
+	// behavioural test at round 2 — only bareIdentArgs noticed the identifier had
+	// stopped appearing, which is bookkeeping seeing a deletion, not an assertion
+	// that the class stays off the screen. The target is rendered with `%q`, so
+	// Go escapes whatever it holds; `workflowID` is the operand that reaches the
+	// terminal unquoted, and it is the one this drives.
+	t.Run("duplicate-target hint", func(t *testing.T) {
+		url := "https://example.invalid/blob.png"
+		// An --out-name with no {n}: both outputs render the SAME name, which is
+		// the collision this hint exists for. {workflow} is deliberately absent
+		// so the hostile bytes reach the message ONLY through the `%s` operand.
+		outs := []genapi.Output{
+			{Blob: genapi.Blob{ID: "a", URL: &url}},
+			{Blob: genapi.Blob{ID: "b", URL: &url}},
+		}
+		_, err := downloadOutputs(context.Background(), nil, io.Discard, io.Discard,
+			hostileID, outs, t.TempDir(), "img{ext}", false)
+		if err == nil {
+			t.Fatal("CONTROL failure, not a finding: two outputs sharing one target produced no error")
+		}
+		got := err.Error()
+		if !strings.Contains(got, "would both be written to") {
+			t.Fatalf("CONTROL failure, not a finding: reached a different error: %v", err)
+		}
+		// POSITIVE CONTROL on the operand: the workflow id must reach the hint.
+		if !strings.Contains(got, "wf1") {
+			t.Fatalf("CONTROL failure, not a finding: the workflow id never reached the hint:\n%q", got)
+		}
+		assertOneLine(t, "downloadOutputs (duplicate target hint)", got)
+		if strings.Contains(got, "\x1b") {
+			t.Errorf("#566 FORGERY in downloadOutputs (duplicate target hint): a raw ESC survived:\n%q", got)
+		}
+	})
+}
+
+// TestWaitAndCollectReReadHintCannotForgeALine pins the ONE gate civitai/cli#596
+// moved inside waitAndCollect, and it exists because that gate was UNPINNED when
+// it shipped: round 2's delta audit reverted generate.go's
+// `safeTermSingle(workflowID)` on the re-read hint to plain `safeTerm` and the
+// whole internal/cmd suite stayed green.
+//
+// The hint is printed on the path where a transfer FAILED after a spend — so it
+// is the last thing a user reads about outputs they have already paid for and
+// can still fetch, and `workflowID` is the server's own id in it.
+//
+// 🔴 WHAT THIS TEST DELIBERATELY DOES NOT CLAIM. waitAndCollect prints the same
+// id through PLAIN safeTerm at four other places (the two terminal-status
+// errors, and printSubmitted's two lines), and printReattach prints it through
+// plain safeTerm twice more — all of which keep \n and \t, so a hostile id still
+// forges counterfeit `Re-attach:` lines there. Those are pre-existing, are
+// honestly ledgered notCovered in safeTermCoveredBy, and are outside #574's
+// closing condition; they are tracked separately rather than silently swept in
+// here. The slice below starts at the hint's own marker precisely so this test
+// cannot accidentally pass or fail on their behaviour.
+//
+// It drives the REAL command — runGenerate down through waitAndCollect — rather
+// than calling the print, because the value under test is one the poll path
+// threads through several frames.
+func TestWaitAndCollectReReadHintCannotForgeALine(t *testing.T) {
+	withStdinTTY(t, false)
+	// The server's workflow id, carrying the two runes saferune deliberately
+	// keeps. No path separator: the id also lands in the output FILE NAME via
+	// renderOutName, and a slash there would make outputTarget refuse before the
+	// transfer seam is ever reached — a different error, printed by a different
+	// line.
+	const hostileWF = "wf1\nSaved out.png (2.0 MiB)\tDONE"
+
+	payload := `{"id":"wf_123","status":"succeeded","steps":[{
+	  "$type":"textToImage","name":"s","status":"succeeded","metadata":{},
+	  "output":{"images":[{"id":"a","type":"image","available":true,"url":"https://example.invalid/o/a.jpeg"}]}}]}`
+
+	clock := newFakeClock()
+	calls := 0
+	var s genSeams
+	s.poll = clock.cfg()
+	s.getWorkflow = scriptedWorkflows(&calls, payload)
+	s.submitReply = &genapi.SubmitResult{ID: hostileWF, Status: "queued"}
+	// The transfer must FAIL: the hint is only printed when downloadOutputs
+	// returns an error. Counted, so "the seam was reached" is measured rather
+	// than assumed.
+	fetched := 0
+	s.downloadBlob = func(context.Context, string) (*http.Response, error) {
+		fetched++
+		return nil, errors.New("FIXTURE transfer failure")
 	}
 
-	_, err = downloadOutputs(context.Background(), nil, io.Discard, io.Discard,
-		hostileID, outs, dir, "", false)
+	c, _, errb := genCmd("")
+	err := runGenerate(c, s.deps(t), waitOpts(t.TempDir()))
 	if err == nil {
-		t.Fatal("CONTROL failure, not a finding: an existing target produced no refusal")
+		t.Fatal("CONTROL failure, not a finding: a failing transfer reported success")
 	}
-	got := err.Error()
-	if !strings.Contains(got, "refusing to overwrite") {
-		t.Fatalf("CONTROL failure, not a finding: reached a different error: %v", err)
+	if fetched == 0 {
+		t.Fatalf("CONTROL failure, not a finding: the blob seam was never reached, so the hint under "+
+			"test was printed for some other reason (or not at all): %v", err)
 	}
-	if strings.Contains(got, "\x1b") {
-		t.Errorf("#566 FORGERY in downloadOutputs (refusing to overwrite): a raw ESC survived into "+
-			"the one error standing between the user and an overwrite:\n%q", got)
+
+	all := errb.String()
+	const marker = "Output URLs expire"
+	i := strings.Index(all, marker)
+	if i < 0 {
+		t.Fatalf("CONTROL failure, not a finding: the re-read hint was never printed:\n%s", all)
 	}
-	// Header + one line per clash. A forged newline breaks that relationship.
-	if n := strings.Count(strings.TrimRight(got, "\n"), "\n"); n != 2 {
-		t.Errorf("#574 FORGERY in downloadOutputs (refusing to overwrite): %d newline(s) for ONE "+
-			"clash, want 2 (header, the row, the trailer) — the server chose the geometry:\n%s", n, got)
+	// The hint is the LAST thing waitAndCollect writes before returning the
+	// transfer error, so everything from the marker on is exactly one Fprintln.
+	tail := all[i:]
+	// POSITIVE CONTROL: the id must actually reach the hint, or the counts below
+	// are being taken on a string that never carried the payload.
+	if !strings.Contains(tail, "wf1") {
+		t.Fatalf("CONTROL failure, not a finding: the workflow id never reached the hint:\n%q", tail)
 	}
-	if strings.Contains(got, "\t") {
-		t.Errorf("#574 FORGERY in downloadOutputs (refusing to overwrite): a TAB survived:\n%s", got)
+	if n := strings.Count(tail, "\n"); n != 1 {
+		t.Errorf("#574 FORGERY in waitAndCollect (re-read hint): the hint occupies %d line(s), want 1 — "+
+			"a server-chosen workflow id forged %d extra flush-left line(s) on the last advice a user "+
+			"gets about outputs they have already been charged for:\n%q", n, n-1, tail)
 	}
+	// 🔴 NO TAB ASSERTION HERE, AND ITS ABSENCE IS MEASURED RATHER THAN AN
+	// OVERSIGHT. This hint goes through ui's Dim style, and lipgloss EXPANDS \t
+	// to four spaces before the bytes reach the buffer — measured on this tree:
+	// ui.For(w).Dim("a\tb") == "a    b", same for Info and Warn. So a
+	// `Contains(tail, "\t")` guard here could never fire whether or not the gate
+	// exists, which is the unreachable-guard shape this repo counts as worse
+	// than no guard. The sibling assertions on the UNSTYLED error strings
+	// (downloadOutputs, downloadBlobTo, reportExcludedOutputs) are the ones that
+	// can see a tab, and they are watched red. The \n above is what
+	// discriminates on THIS surface: lipgloss does not eat newlines.
 }

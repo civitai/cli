@@ -483,7 +483,23 @@ func downloadOutputs(ctx context.Context, fetch blobFetcher, out, errw io.Writer
 	byTarget := make(map[string]int, len(outputs))
 	for i, o := range outputs {
 		if o.URL == nil || strings.TrimSpace(*o.URL) == "" {
-			return nil, fmt.Errorf("output %s is marked available but carries no URL — nothing to download", safeTerm(dashIfEmpty(o.ID)))
+			// 🔴 safeTermSingle, NOT safeTerm — THIS IS A SINGLE-LINE ERROR
+			// SURFACE AND `o.ID` IS THE SERVER'S OWN BLOB ID. saferune keeps \n
+			// and \t by design, so safeTerm alone lets the id forge a whole
+			// line, and cmd/civitai/main.go prints `Error: <err>` to stderr with
+			// no renderer in front of it. MEASURED on this line before the
+			// change, with an id carrying `\x1b[1A\x1b[2K`, a newline and a tab:
+			// esc=false (safeTerm did strip the escape), 1 forged newline, 1
+			// surviving tab — i.e. half-closed exactly as civitai/cli#577
+			// describes one command over.
+			//
+			// 🔴 IT IS REACHABLE WITHOUT ANY TOCTOU WINDOW, and round 1 of
+			// civitai/cli#596 claimed it was already gated when what that commit
+			// actually moved was reportExcludedOutputs' id one function away.
+			// genapi.Deliverable is `Available && !blocked && !hidden` and says
+			// nothing about a URL, so a payload with `"available": true` and
+			// `"url": null` is partitioned into `kept` and arrives right here.
+			return nil, fmt.Errorf("output %s is marked available but carries no URL — nothing to download", safeTermSingle(dashIfEmpty(o.ID)))
 		}
 		target, err := planOutputTarget(outName, outDir, workflowID, i+1, *o.URL)
 		if err != nil {
@@ -506,14 +522,52 @@ func downloadOutputs(ctx context.Context, fetch blobFetcher, out, errw io.Writer
 				// output, whose {workflowId} comes off the wire, so an uploader
 				// could put `\x1b[1A\x1b[2K` — cursor-up plus erase-line, the
 				// exact primitive safeTerm exists for — into the one error
-				// standing between the user and an overwrite. Measured before
-				// this line: esc=true, 2 forged newlines, 1 tab.
+				// standing between the user and an overwrite.
+				//
+				// 🔴 RE-MEASURED AT civitai/cli#596 ROUND 2: esc=true, ONE
+				// forged newline, 1 tab. This comment and the test's header both
+				// said "2 forged newlines" for two rounds. The message writes
+				// two newlines of its OWN (header, then the trailer after the
+				// row), so the ungated fixture renders THREE and only the third
+				// is the server's. Method: revert this one expression to
+				// `j.target` and run TestDownloadOutputsErrorsCannotForgeALine's
+				// overwrite-refusal subtest — its counter reports "3 newline(s)
+				// … want 2", on the `\x1b[1A\x1b[2K\nSaved …\tDONE` id this PR
+				// ships. A count in a comment is a claim; this one was carried,
+				// not re-derived.
 				//
 				// 🔴 AND THIS IS THE REACHABLE ONE. downloadBlobTo's own !force
 				// refusal, which #574's table named, fires only in a TOCTOU
 				// window because THIS check runs first over every job. #574's
 				// six-row table was built by reading two functions and hardened
 				// the branch users almost never hit while leaving this one raw.
+				//
+				// 🔴 `j.target` IS MIXED-ORIGIN AND GATING IT COSTS USER BYTES —
+				// SAID HERE BECAUSE NO LEDGER CAN SAY IT. It is
+				// planOutputTarget(outName, outDir, …): the server's
+				// {workflowId} expands into the leaf, and the directory is the
+				// user's own --out-dir. So this is the documented saferune
+				// exception, not an oversight — AGENTS.md names "download's
+				// mixed-origin target path" as one of the two, downloadBlobTo's
+				// own :420 refusal already resolves it the same way, and
+				// bareIdentArgs records the twin `downloadBlobTo::target` as
+				// MIXED for the same trade.
+				//
+				// RESIDUAL, OPEN AND NOT CLOSED BY THIS: an --out-dir containing
+				// a rune saferune strips (a U+2800, a variation selector) is
+				// printed WITHOUT it, so the refusal names a directory that is
+				// not the directory and a user who pastes it gets a path that
+				// does not exist. That is the same papercut targetPath's comment
+				// accepts on the download path, and it is accepted here for the
+				// same reason: the leaf is mostly server bytes and this is the
+				// one error standing in front of an overwrite.
+				//
+				// 🔴 THE LEDGER IS STRUCTURALLY BLIND TO THIS ARGUMENT, which is
+				// why the decision is written in the code. bareIdentArgs
+				// (safeterm_userinput_test.go) keys BARE IDENTIFIERS only;
+				// `j.target` is a selector expression, so it never reaches
+				// classifyBareIdents and no row was ever required. See the note
+				// beside bareIdentArgs recording that blind spot.
 				clashes = append(clashes, safeTermSingle(j.target))
 			}
 		}
