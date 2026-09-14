@@ -1275,7 +1275,7 @@ about **70 bytes larger**. The printed number accounts for it: it is computed
 from the body *this run* will send, not from a fixed envelope — and the
 `--package-only` and no-token paths stamp nothing, so they run no `git` at all.
 
-🔴 **The ceiling is 10485760 bytes of body, and `app submit` refuses above it.**
+🔴 **The ceiling is 10485760 bytes of body, and `app submit` refuses at or above it.**
 The refusal costs no upload — it is checked against the marshalled document
 itself, before the request is built. The number is not this CLI's: it is
 Next.js's `proxyClientMaxBodySize` default, which applies because civitai's
@@ -1285,6 +1285,20 @@ proxy matches `/api/v1/:path*` and sets no override.
 are generous (2000 files, 10 MiB per file, 50 MiB compressed, 200 MiB
 decompressed) and clearing them is **not** a prediction that the submit will be
 accepted.
+
+**Why "at or above" and not "above".** A body of *exactly* 10485760 is reachable in practice —
+the JSON envelope for a `--allow-dirty` submit is 96 bytes, base64 output is always a multiple
+of 4, so a 7,864,246-byte zip lands on the ceiling to the byte. Which side of it the platform
+sits on is genuinely unresolved: Next.js's source reads `bytesRead > bodySizeLimit`, which would
+accept that body, while an end-to-end measurement of the real endpoint answered `413` at exactly
+10485760 (and `401` — i.e. the body got through to auth — one byte below). One of those is wrong
+and this CLI cannot settle it without spending a real submission.
+
+It does not need to. The two mistakes are not equally priced: refusing one byte early costs an
+author a flag they are already told about, and accepting one byte too many costs the whole
+upload and returns an error naming nothing about size. So the guard takes the cheap side, and
+this paragraph records that it is a choice under uncertainty rather than a fact about the
+server.
 
 ⚠ **The ceiling is vendored, so `--allow-oversize` is the way out.** Nothing in
 this CLI notices the day civitai raises that default, and on that day a shipped
@@ -3875,7 +3889,7 @@ context rather than instructions.
 | `(token scope not reported by the server — Buzz capabilities unknown)` | The server reported no `tokenScope`, so the two **Buzz** rows are omitted rather than printed as `no`. **Submit Apps** above it is unaffected. | [Submit & auth](#submit--auth) |
 | `not permitted to read this app's analytics (403)` | `app metrics` needs the **Apps submit scope**. Re-run `civitai login` if your token predates it; a full-scope personal API key also works. | [App metrics](#app-metrics) |
 | `block lacks ai:write:budgeted scope` | Printed by your app at runtime under `dev:live`: the dev token was minted **without** `--spend`, and that scope is never requested implicitly, manifest or not. | [Local dev loop](#local-dev-loop-harness-mock-vs-live) |
-| `the server can receive` | The submit body exceeds **10485760 bytes** and `app submit` refused **before uploading**, so it cost you nothing. Shrink the bundle, or pass `--allow-oversize` — the ceiling is vendored, not measured. | [Submit & auth](#submit--auth) — *How big can a bundle be?* |
+| `the server can receive` | The submit body reached or exceeded **10485760 bytes** and `app submit` refused **before uploading**, so it cost you nothing. Shrink the bundle, or pass `--allow-oversize` — the ceiling is vendored, not measured. | [Submit & auth](#submit--auth) — *How big can a bundle be?* |
 | `insufficient Buzz` / `generation disabled` | Not credential problems, which is why they exit `1` rather than `3` — a script must not loop on `civitai login` for either. | [Exit codes specific to `generate`](#exit-codes-specific-to-generate) |
 | `rate limited (429)` | 🔴 **One message, TWO exit codes — branch on the code, never the text.** `2` for the deep-paging cap, which is structurally doomed (`--cursor`, not `--page`); `6` for a genuine throttle, which you retry. | [Exit codes](#exit-codes) |
 | `Civitai returned HTTP` | **A retriable status that survived every read retry** — `502`/`503`/`504`, or a `429` carrying `Retry-After` — exiting **`5`** in every case. Read the number in the message to know which you hit. | [Exit codes](#exit-codes) |

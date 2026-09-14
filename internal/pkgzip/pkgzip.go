@@ -67,20 +67,36 @@ import (
 // because caps_claim_test.go bans those phrasings from this file outright, and
 // a quotation the guard has to make an exception for is a guard with a hole.
 //
-// 🔴 THE SERVER'S REAL BUNDLE CEILING IS NOT KNOWN HERE, AND MUST NOT BE
-// GUESSED. #423's measurement bounds it to the interval (2.32 MB, 8.20 MB] and
+// 🔴 NO CEILING FOR THE COMPRESSED BUNDLE IS KNOWN HERE, AND NONE MAY BE
+// GUESSED. Read "bundle" strictly: the archive these caps measure, not the
+// base64 JSON request body built from it — the CLI does vendor a limit for that
+// one, and the last paragraph below says why the two do not collide.
+// #423's measurement bounds a bundle ceiling to the interval (2.32 MB, 8.20 MB] and
 // no further — each additional probe costs a real submission. Vendoring a
 // number picked from inside that bracket would refuse bundles the server
 // accepts, with no appeal and nothing to tell the author it was the CLI's guess
 // rather than a real limit: strictly worse than the failure it would be fixing.
 // (Same reasoning as AGENTS.md item 25, one layer up.)
 //
-// So these caps stay generous, and the CLI REPORTS instead of refusing:
-// appapi.SubmitBodySize is the size a body limit would actually apply to (the
-// zip is base64-encoded into a JSON document before it is sent, so the server
-// sees ~4/3 of the number below), and LargestEntries names what to delete
-// first. Both are printed by `civitai app submit` — the second only when a
-// submit has already failed.
+// So these caps stay generous, and nothing in THIS package refuses on a platform
+// limit; it reports. appapi.SubmitBodySize is the size a body limit actually
+// applies to (the zip is base64-encoded into a JSON document before it is sent,
+// so what crosses the wire is ~4/3 of the number below), and LargestEntries names
+// what to delete first. Both are printed by `civitai app submit` — the second
+// only when a submit has already failed.
+//
+// ⚠ SINCE #585 THE CLI DOES REFUSE — ONE LAYER UP, ON A DIFFERENT QUANTITY. An
+// earlier version of this paragraph said flatly that the CLI reports instead of
+// refusing, and that is no longer true of the CLI as a whole: `civitai app
+// submit` declines before uploading when the JSON BODY would reach
+// appapi.MaxSubmitBodyBytes, with `--allow-oversize` as the way past it.
+//
+// That does not license a number here, and it is not a contradiction of the
+// paragraph above. It bounds the request BODY, not the archive; it is a framework
+// default the CLI vendors rather than anything measured about a bundle; and the
+// interval above is still the whole of what is known about the compressed
+// archive. The two limits are independent — a bundle can clear every cap in this
+// file and still be refused up there, which is exactly what #423 was.
 const (
 	MaxFiles            = 2000
 	MaxFileSizeBytes    = 10 * 1024 * 1024  // 10 MiB per file
@@ -777,12 +793,22 @@ func Build(dir string) (*Result, error) {
 	}
 
 	if int64(len(buf.b)) > MaxBundleSizeBytes {
-		// MaxBundleSizeBytes is this CLI's own cap, and the server's real
-		// ceiling is LOWER and unknown here (#423). The wording this replaced
+		// MaxBundleSizeBytes is this CLI's own cap. The wording this replaced
 		// attributed the number to the platform, which told an author that
-		// clearing this bar meant the server would take the bundle — the claim
-		// #423 disproved. caps_claim_test.go keeps that attribution out.
-		return nil, fmt.Errorf("package is %d bytes compressed (the CLI's own cap is %d; the server's own limit is lower and is not known to this CLI — see issue #423)", len(buf.b), MaxBundleSizeBytes)
+		// clearing this bar meant the bundle would be taken — the claim #423
+		// disproved. caps_claim_test.go keeps that attribution out.
+		//
+		// ⚠ IT ALSO SAID "the server's own limit is lower and is not known to
+		// this CLI", AND THE SECOND HALF STOPPED BEING TRUE AT #585. The CLI now
+		// vendors a request-BODY limit and refuses on it before uploading, so an
+		// author reading "not known to this CLI" would conclude no local ceiling
+		// exists when one had just refused them. What genuinely remains unknown
+		// is a ceiling on the COMPRESSED ARCHIVE, which is what this message is
+		// about — so it says that, and points at the limit that does exist.
+		return nil, fmt.Errorf("package is %d bytes compressed (the CLI's own cap is %d). "+
+			"No platform limit on the compressed archive is known to this CLI — see issue #423. "+
+			"A separate and much lower ceiling applies to the base64 JSON request body `civitai app submit` "+
+			"uploads, and that one is enforced before the upload", len(buf.b), MaxBundleSizeBytes)
 	}
 
 	return &Result{

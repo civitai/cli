@@ -83,6 +83,23 @@ func TestAppSubmitOversizeEndToEnd(t *testing.T) {
 				"`civitai app submit` lists the largest entries, so dropping the list makes that "+
 				"sentence false.\nstderr:\n%s", stderr)
 		}
+		// 🔴 STDOUT IS A SEPARATE SURFACE AND THIS TEST WAS BLIND TO IT. Every
+		// assertion above reads stderr. `Submitting demo@1.0.0` is written to
+		// STDOUT by the spinner, before SubmitVersion is called — so the CLI
+		// announced an upload on one stream and reported on the other that
+		// nothing had been uploaded, and the whole suite was green. A reader of
+		// a captured stdout log saw only the announcement.
+		if strings.Contains(stdout, "Submitting") {
+			t.Errorf("stdout announced the upload for a bundle that was never uploaded. `Submitting …` "+
+				"goes to stdout and the refusal goes to stderr, so this line is contradicted by a stream "+
+				"the reader may not have.\nstdout:\n%s", stdout)
+		}
+		// POSITIVE CONTROL on that assertion: it must be able to see the word at
+		// all, or it is a check against a stream nothing is written to.
+		if !strings.Contains(stdout, "Packaged") {
+			t.Fatalf("CONTROL failure, not a finding: stdout carries no `Packaged …` line, so the "+
+				"`Submitting` check above is reading an empty stream and proves nothing.\nstdout:\n%s", stdout)
+		}
 	})
 
 	t.Run("--allow-oversize reaches the client and the upload happens", func(t *testing.T) {

@@ -658,47 +658,31 @@ func submitEnvelopeLen(prov Provenance) int {
 	return len(env)
 }
 
-// SubmitBodySize returns the exact size, in bytes, of the HTTP request body
-// SubmitVersion sends for a zip of zipLen bytes carrying provenance prov.
-//
-// 🔴 IT TAKES THE PROVENANCE BECAUSE THE BODY DOES. This number is PRINTED TO
-// USERS — on the `Packaged …` line and again under a failed submit — as "what
-// this CLI sent", and #411's stamp makes a submit that carries provenance ~70
-// bytes larger than one that does not. A signature that could not see the
-// provenance would have kept reporting the smaller number, which is a small
-// error in the quantity and a total one in the claim: the point of the line is
-// that it is EXACT (see below), so it may not be an estimate the moment a
-// feature lands. Pass a zero Provenance for a path that sends none
-// (--package-only, the no-token fallback) and the number is unchanged.
-//
-// 🔴 THE ZIP IS NOT WHAT GOES ON THE WIRE, AND THE DIFFERENCE IS THE WHOLE OF
-// ISSUE #423. SubmitVersion base64-encodes the archive into a JSON document, so
-// the bytes the server receives — and the bytes any request-body limit is
-// applied to — are ~4/3 of the compressed size. An author reading
-// `8201270 bytes compressed` off `app submit` had no way to see the ~10.9 MB
-// that was actually sent, so nothing they could measure locally corresponded to
-// the quantity that was refused.
-//
-// It is EXACT, not an estimate: base64's alphabet (A–Z a–z 0–9 + / =) contains
-// no character encoding/json escapes, so the payload is copied through verbatim
-// and the envelope is a constant. Do not substitute a 1.37 multiplier for it —
-// the point of printing the number is that the author can compare it with a
-// limit, and a rounded number cannot be compared with anything.
-//
-// 🔴 THIS COMMENT DOCUMENTS SubmitBodySize, WHICH IS ~40 LINES BELOW. Everything
-// between here and it — MaxSubmitBodyBytes, ErrBundleTooLarge — was inserted
-// into the middle of this block, which handed godoc the whole thing as the
-// CONSTANT's comment and left the exported function with none. `go doc
-// appapi.SubmitBodySize` printed nothing. staticcheck cannot see it: .golangci.yml
-// disables ST1020-ST1022. Keep the blank-line separations below.
-
 // MaxSubmitBodyBytes is the largest request body the submit endpoint can actually
 // RECEIVE, in bytes.
 //
-// 🔴 This IS the server's number, unlike the caps in `internal/pkgzip` — which is
-// exactly the claim `pkgzip/caps_claim_test.go` exists to keep OUT of that file, and
-// the reason this constant lives here instead. It is stated with its evidence so the
-// next reader can re-derive it rather than trust it:
+// 🔴 EVERY DECLARATION BELOW CARRIES ITS OWN DOC, AND THE BLANK LINES BETWEEN THEM
+// ARE LOAD-BEARING. A doc block runs into the next one without a blank line and
+// godoc silently hands the WHOLE thing to whichever declaration comes first in
+// source order. That shipped: this block and ErrBundleTooLarge's were glued
+// together, so `go doc appapi.MaxSubmitBodyBytes` printed the bare const line and
+// `go doc appapi.ErrBundleTooLarge` printed this entire evidence chain as if it
+// were the sentinel's. staticcheck cannot see it — .golangci.yml disables
+// ST1020-ST1022 — so `go doc` is the only check. Run it, do not read for it.
+//
+// 🔴 This IS the server's number, unlike the caps in `internal/pkgzip`, and that is
+// why it lives here: `appapi` is what builds the body, so the body's limit belongs
+// beside SubmitBodySize. ⚠ That placement is an architectural decision held by
+// review, NOT by a test. `pkgzip/caps_claim_test.go` bans four literal phrases from
+// pkgzip.go (`server max`, `server per-file max`, `caps mirror the server`, `will
+// not be rejected on size grounds`); measured with both controls, a fully
+// server-attributed constant using none of those four PASSES it, and appending one
+// makes it fail with its own message. So the guard stops the four spellings #423
+// disproved — it does not force this constant to live here. An earlier version of
+// this comment said it did.
+//
+// It is stated with its evidence so the next reader can re-derive it rather than
+// trust it:
 //
 //   - `/api/v1/blocks/submit-version` is matched by the platform's proxy matcher
 //     (`/api/v1/:path*`), and a proxy-matched request body is capped at the framework's
@@ -719,7 +703,9 @@ func submitEnvelopeLen(prov Provenance) int {
 // ⚠ It bounds the BODY, not the zip. A zip is base64-encoded (4/3) into a JSON
 // envelope, so the usable zip is roughly 7.5 MiB — but do not hardcode that number
 // anywhere: use SubmitBodySize, which is exact.
-// ErrBundleTooLarge tags the preflight refusal above MaxSubmitBodyBytes.
+const MaxSubmitBodyBytes = 10485760
+
+// ErrBundleTooLarge tags the preflight refusal at or above MaxSubmitBodyBytes.
 //
 // 🔴 IT EXISTS SO CALLERS CAN TELL "WE DECLINED" FROM "THE UPLOAD FAILED", and
 // the first version of this guard did not have it — so `app submit` ran its
@@ -781,8 +767,6 @@ var ErrBundleTooLarge = errors.New("bundle too large to upload")
 // doUpload's switch, so the two never compete.
 var ErrNothingSent = errors.New("the request never reached the connection")
 
-const MaxSubmitBodyBytes = 10485760
-
 // submitRequestSentTrace returns the httptrace hook that records, into sent,
 // whether the request was put on the connection at all. It is a named function
 // rather than a literal inside SubmitVersion so the decision it encodes is
@@ -816,10 +800,48 @@ func submitRequestSentTrace(sent *atomic.Bool) *httptrace.ClientTrace {
 	}
 }
 
-// SubmitBodySize is the exact number of bytes the submit request body will carry
-// for a zip of zipLen with provenance prov: base64 of the zip, plus the JSON
-// envelope. See the derivation block above — it is exact, not an estimate, and it
-// is the quantity a request-body limit applies to.
+// SubmitBodySize returns the exact size, in bytes, of the HTTP request body
+// SubmitVersion sends for a zip of zipLen bytes carrying provenance prov:
+// base64 of the zip, plus the JSON envelope.
+//
+// 🔴 IT TAKES THE PROVENANCE BECAUSE THE BODY DOES. This number is PRINTED TO
+// USERS — on the `Packaged …` line and again under a failed submit — as "what
+// this CLI sent", and #411's stamp makes a submit that carries provenance ~70
+// bytes larger than one that does not. A signature that could not see the
+// provenance would have kept reporting the smaller number, which is a small
+// error in the quantity and a total one in the claim: the point of the line is
+// that it is EXACT (see below), so it may not be an estimate the moment a
+// feature lands. Pass a zero Provenance for a path that sends none
+// (--package-only, the no-token fallback) and the number is unchanged.
+//
+// 🔴 THE ZIP IS NOT WHAT GOES ON THE WIRE, AND THE DIFFERENCE IS THE WHOLE OF
+// ISSUE #423. SubmitVersion base64-encodes the archive into a JSON document, so
+// the bytes the server receives — and the bytes any request-body limit is
+// applied to — are ~4/3 of the compressed size. An author reading
+// `8201270 bytes compressed` off `app submit` had no way to see the ~10.9 MB
+// that was actually sent, so nothing they could measure locally corresponded to
+// the quantity that was refused.
+//
+// It is EXACT, not an estimate: base64's alphabet (A–Z a–z 0–9 + / =) contains
+// no character encoding/json escapes, so the payload is copied through verbatim
+// and the envelope is a constant. Do not substitute a 1.37 multiplier for it —
+// the point of printing the number is that the author can compare it with a
+// limit, and a rounded number cannot be compared with anything.
+//
+// 🔴 THE ENVELOPE LENGTH DEPENDS ON THE PROVENANCE, AND THAT DECIDES WHETHER A
+// BODY CAN LAND EXACTLY ON MaxSubmitBodyBytes. base64 output length is always a
+// multiple of 4, so only an envelope whose own length is ≡ 0 (mod 4) can reach
+// the ceiling at all. Measured through this function:
+//
+//	provenance                envelope  mod 4  zipLen hitting the ceiling exactly
+//	none                            19      3  unreachable
+//	commit only                     77      1  unreachable
+//	commit + Dirty=false            97      1  unreachable
+//	commit + Dirty=true             96      0  7864246
+//
+// The last row is what `civitai app submit --allow-dirty` produces on a dirty
+// tree, so the boundary is reachable in production. See the guard in
+// SubmitVersion for which way it is resolved.
 func SubmitBodySize(zipLen int, prov Provenance) int {
 	return base64.StdEncoding.EncodedLen(zipLen) + submitEnvelopeLen(prov)
 }
@@ -889,9 +911,36 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 	// The message reports the BODY size, because that is the quantity the limit applies
 	// to and the one an author could otherwise not observe: `app submit` prints the
 	// compressed zip size, which is ~3/4 of this and clears the local cap comfortably.
-	if !c.AllowOversizeBody && len(body) > MaxSubmitBodyBytes {
+	//
+	// 🔴 `>=`, NOT `>`, AND THE REASON IS AN ASYMMETRY — NOT A SETTLED FACT ABOUT THE
+	// SERVER. There is an unresolved contradiction here and it is stated rather than
+	// papered over:
+	//
+	//   - Next.js's own source reads `bytesRead > bodySizeLimit`, which would ACCEPT a
+	//     body of exactly 10485760.
+	//   - A prior end-to-end measurement against the real endpoint read
+	//     10485759 -> 401 (the body reached auth), 10485760 -> 413 (rejected as too
+	//     large), 12000000 -> 400.
+	//
+	// One of those is wrong and neither can be re-measured here — it needs credentials
+	// and a real submit. Do NOT write down a mechanism for it; nobody has one.
+	//
+	// The choice does not depend on resolving it. Refusing one byte early costs an
+	// author a flag they are already told about (--allow-oversize); accepting one byte
+	// too many costs them the whole ~10 MB upload and returns an error naming nothing
+	// about size (#423). The consequences are wildly unequal, so the guard takes the
+	// cheap side.
+	//
+	// 🔴 IT IS NOT A HYPOTHETICAL BOUNDARY. `>` vs `>=` was long believed unobservable,
+	// because with a zero Provenance the envelope is 19 bytes and base64 steps by 4, so
+	// no body lands on the ceiling. That is true only for zero provenance. The envelope
+	// for commit + Dirty=true is 96 bytes — ≡ 0 (mod 4) — so a 7,864,246-byte zip
+	// submitted with `--allow-dirty` produces a body of EXACTLY 10485760. Under `>` the
+	// guard did not fire and the full body was uploaded. See SubmitBodySize's table, and
+	// TestSubmitBodyExactlyAtCeilingIsRefused, which pins this operator.
+	if !c.AllowOversizeBody && len(body) >= MaxSubmitBodyBytes {
 		return nil, fmt.Errorf(
-			"%w: submit body is %d bytes, over the %d the server can receive. "+
+			"%w: submit body is %d bytes, at or over the %d the server can receive. "+
 				"Reduce it and try again — `civitai app submit` lists the largest entries. "+
 				"If you believe the server now accepts more than this, --allow-oversize submits anyway. "+
 				"(The compressed zip is smaller than this number; base64 encoding adds ~1/3.)",

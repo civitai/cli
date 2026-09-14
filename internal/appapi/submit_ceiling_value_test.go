@@ -63,7 +63,23 @@ func TestSubmitCeilingValueAndBoundary(t *testing.T) {
 		want := strconv.Itoa(MaxSubmitBodyBytes)
 		// A number of this shape in these files is the ceiling; there is no
 		// other 8-digit literal starting 104 or 209 in them today.
-		suspicious := regexp.MustCompile(`\b(?:10485760|20971520|10 ?MiB|10 ?MB)\b`)
+		//
+		// 🔴 UNIT-SPELLED FORMS ARE DELIBERATELY NOT POLICED, AND THE LIST NO
+		// LONGER PRETENDS THEY ARE. It used to read
+		// `10485760|20971520|10 ?MiB|10 ?MB` and then exempt matches with
+		// `!strings.HasPrefix(m, "10 ")` — which disagreed with itself about one
+		// number written two ways: the SPACED forms could never be reported while
+		// the UNSPACED `10MiB` could. Neither half was reachable coverage.
+		//
+		// They are dropped rather than repaired because a MiB spelling here is
+		// AMBIGUOUS, not merely unchecked. Enumerated over both files at this
+		// revision: `10 MiB` appears in each, and in both it is pkgzip's per-FILE
+		// cap, not this ceiling — alongside `2 MiB`, `50 MiB`, `200 MiB`, `32 MB`
+		// and others, none of which are the submit body limit. A rule that
+		// reported them would be wrong, and one that exempted them by prefix only
+		// looks like a rule. The byte literal is the unambiguous spelling and is
+		// what these surfaces quote; that is what this checks.
+		suspicious := regexp.MustCompile(`\b(?:10485760|20971520)\b`)
 		for _, rel := range []string{
 			"README.md",
 			"claudedocs/decisions/31-pkgzip-caps-are-not-a-server-mirror.md",
@@ -79,7 +95,7 @@ func TestSubmitCeilingValueAndBoundary(t *testing.T) {
 				continue
 			}
 			for _, m := range suspicious.FindAllString(body, -1) {
-				if m != want && !strings.HasPrefix(m, "10 ") {
+				if m != want {
 					t.Errorf("%s still quotes %q alongside the current ceiling %s — one of them is stale.",
 						rel, m, want)
 				}
@@ -89,35 +105,33 @@ func TestSubmitCeilingValueAndBoundary(t *testing.T) {
 
 	// ── The BOUNDARY, driven through the REAL guard ────────────────────────
 	//
-	// Next.js refuses on `bytesRead > bodySizeLimit`, so a body of EXACTLY the
-	// ceiling is delivered intact and must NOT be refused here. `>=` would
-	// silently reject a submit the server accepts.
-	//
 	// 🔴 THIS CALLS SubmitVersion. The first version of this subtest asserted
 	// `tc.size > MaxSubmitBodyBytes` — a RE-IMPLEMENTATION of the predicate in
 	// the test, which mutating production could not affect. Measured: the `>=`
 	// mutant SURVIVED it. An expectation derived from the implementation is not
 	// a test of the implementation; the only thing that works here is running it.
 	//
-	// 🔴 AND EVEN SO, `>` vs `>=` IS UNOBSERVABLE THROUGH THIS API — SAID PLAINLY
-	// RATHER THAN LEFT AS FALSE COVERAGE. Measured: the envelope is 19 bytes and
-	// base64 steps by 4, so body sizes go … 10485759, 10485763 — nothing lands on
-	// 10485760 at all. There is no input that distinguishes the two operators, so
-	// the `>=` mutant survives this subtest too, and that is a fact about the
-	// arithmetic rather than a hole in the test. `>` is still the correct operator
-	// (Next.js refuses on `bytesRead > bodySizeLimit`), it is simply not reachable
-	// from here. What IS pinned below is the reachable boundary — the largest body
-	// accepted and the next one refused — which catches a removed guard and a
-	// changed constant. The envelope assertion guards the claim itself: if a
-	// future envelope makes the ceiling reachable, this stops being true and you
-	// should come back and pin the operator directly.
-	t.Run("a body of exactly the ceiling is accepted; one byte more is refused", func(t *testing.T) {
-		// Find the largest zip length whose body lands exactly on the ceiling or
-		// just under it. base64 is 3-byte granular, so not every body size is
-		// reachable — take the boundary pair that IS.
+	// 🔴 THIS SUBTEST IS ZERO-PROVENANCE, AND THAT MAKES IT BLIND TO THE OPERATOR.
+	// With Provenance{} the envelope is 19 bytes and base64 steps by 4, so body
+	// sizes go … 10485759, 10485763 — nothing lands on 10485760, and `>` vs `>=`
+	// is genuinely unobservable FROM HERE. What it pins is the reachable pair
+	// either side of the ceiling, which catches a removed guard and a changed
+	// constant.
+	//
+	// ⚠ AN EARLIER VERSION OF THIS COMMENT GENERALISED THAT INTO "there is no
+	// input that distinguishes the two operators", AND THAT WAS FALSE. It
+	// measured one provenance and spoke for all of them. The envelope depends on
+	// the provenance, and commit + Dirty=true gives 96 bytes — ≡ 0 (mod 4) — so
+	// the ceiling IS reachable, at a zip of 7,864,246 bytes, on exactly the
+	// invocation `--allow-dirty` produces. The operator is pinned by
+	// TestSubmitBodyExactlyAtCeilingIsRefused below, not here.
+	t.Run("a body just under the ceiling is accepted; one step more is refused", func(t *testing.T) {
+		// Find the largest zip length whose body stays strictly under the ceiling.
+		// base64 is 3-byte granular, so not every body size is reachable — take
+		// the boundary pair that IS.
 		zipAt := 0
 		for n := 0; ; n++ {
-			if SubmitBodySize(n, Provenance{}) > MaxSubmitBodyBytes {
+			if SubmitBodySize(n, Provenance{}) >= MaxSubmitBodyBytes {
 				zipAt = n - 1
 				break
 			}
@@ -127,17 +141,19 @@ func TestSubmitCeilingValueAndBoundary(t *testing.T) {
 		}
 		underBody := SubmitBodySize(zipAt, Provenance{})
 		overBody := SubmitBodySize(zipAt+1, Provenance{})
-		if !(underBody <= MaxSubmitBodyBytes && overBody > MaxSubmitBodyBytes) {
+		if !(underBody < MaxSubmitBodyBytes && overBody > MaxSubmitBodyBytes) {
 			t.Fatalf("CONTROL failure: the bracket is wrong — %d bytes of zip gives a %d-byte body and "+
 				"%d gives %d, against a %d ceiling", zipAt, underBody, zipAt+1, overBody, MaxSubmitBodyBytes)
 		}
 
-		// The claim above, pinned. If this ever fails, a body CAN land exactly on
-		// the ceiling and `>` vs `>=` became observable — pin the operator here.
-		if underBody == MaxSubmitBodyBytes {
-			t.Errorf("a body of exactly %d is now reachable (zip %d). The comment above says it is not, "+
-				"and on that basis this test does NOT pin `>` vs `>=`. It can now: assert that this exact "+
-				"size is ACCEPTED, which `>=` would refuse.", MaxSubmitBodyBytes, zipAt)
+		// CONTROL on this subtest's own stated scope: with zero provenance the
+		// ceiling must be UNREACHABLE, which is why this subtest cannot see the
+		// operator. If it ever becomes reachable here, this subtest's comment is
+		// wrong and it should pin the operator directly like the test below does.
+		if overBody == MaxSubmitBodyBytes || underBody == MaxSubmitBodyBytes {
+			t.Errorf("a zero-provenance body of exactly %d is now reachable (zip %d/%d). This subtest's "+
+				"comment says it is not, and on that basis it does not pin `>` vs `>=`.",
+				MaxSubmitBodyBytes, zipAt, zipAt+1)
 		}
 
 		srv, hits := acceptingSubmitServer(t)
@@ -145,13 +161,12 @@ func TestSubmitCeilingValueAndBoundary(t *testing.T) {
 		c := NewWithSource(srv.URL, civitai.StaticToken("t"), "/api/blocks/submit-version")
 
 		if _, err := c.SubmitVersion(context.Background(), make([]byte, zipAt), "slug", "1.0.0", Provenance{}); err != nil {
-			t.Errorf("a %d-byte body — at or under the %d ceiling — was REFUSED: %v\n"+
-				"The comparison must be `>`, not `>=`: Next.js refuses on `bytesRead > bodySizeLimit`, so a "+
-				"body of exactly the ceiling is delivered intact, and refusing it rejects a submit the "+
-				"server accepts.", underBody, MaxSubmitBodyBytes, err)
+			t.Errorf("a %d-byte body — strictly UNDER the %d ceiling — was REFUSED: %v\n"+
+				"Only a body AT or over the ceiling may be refused; refusing one below it rejects a submit "+
+				"nothing suggests the server would.", underBody, MaxSubmitBodyBytes, err)
 		}
 		if *hits != 1 {
-			t.Errorf("the at-ceiling case contacted the server %d time(s), want 1 — it must actually upload", *hits)
+			t.Errorf("the under-ceiling case contacted the server %d time(s), want 1 — it must actually upload", *hits)
 		}
 
 		before := *hits
@@ -166,6 +181,107 @@ func TestSubmitCeilingValueAndBoundary(t *testing.T) {
 			t.Errorf("the over-ceiling case contacted the server; the refusal must be a PREFLIGHT")
 		}
 	})
+}
+
+// dirtyProvenance is the provenance `civitai app submit --allow-dirty` produces on
+// a dirty tree: a real 40-hex commit plus Dirty=true. It is the ONLY one of the
+// four shapes the CLI can send whose JSON envelope length is ≡ 0 (mod 4), which is
+// what makes a body of exactly MaxSubmitBodyBytes reachable.
+func dirtyProvenance() Provenance {
+	dirty := true
+	return Provenance{Commit: "0123456789abcdef0123456789abcdef01234567", Dirty: &dirty}
+}
+
+// TestSubmitBodyExactlyAtCeilingIsRefused pins `>=` against `>` at the ONE input
+// that can distinguish them, driven through the real SubmitVersion.
+//
+// 🔴 WHY THIS EXISTS. #585 shipped with `len(body) > MaxSubmitBodyBytes` and a
+// sibling subtest asserting in prose that the operator was unobservable — "there
+// is no input that distinguishes the two operators". That generalised a
+// measurement taken at Provenance{} to every provenance, and it is false. base64
+// output is always a multiple of 4, so the body can land on the ceiling only when
+// the envelope length is too. Measured through SubmitBodySize:
+//
+//	provenance                envelope  mod 4  zipLen hitting the ceiling exactly
+//	none                            19      3  unreachable
+//	commit only                     77      1  unreachable
+//	commit + Dirty=false            97      1  unreachable
+//	commit + Dirty=true             96      0  7864246
+//
+// So `civitai app submit --allow-dirty` on a 7,864,246-byte zip produced a body of
+// exactly 10485760 and `>` let the whole thing upload. The `>` mutant SURVIVED the
+// entire suite before this test; it must not now.
+//
+// ⚠ WHAT THIS TEST DOES NOT CLAIM. It does not assert the server rejects exactly
+// the cap. There is an unresolved contradiction — Next.js's source reads
+// `bytesRead > bodySizeLimit` (which would accept it), while an end-to-end
+// measurement read 413 at exactly 10485760 — and neither can be re-measured from a
+// unit test. This pins the CLI's chosen side of an ASYMMETRY: refusing one byte
+// early costs an author a documented flag, accepting one byte too many costs the
+// full upload and an error naming nothing about size.
+func TestSubmitBodyExactlyAtCeilingIsRefused(t *testing.T) {
+	prov := dirtyProvenance()
+
+	// CONTROL: the fixture must actually sit ON the boundary, or every assertion
+	// below is about an ordinary over-ceiling body and the operator is untested.
+	const zipAtCeiling = 7864246
+	if got := SubmitBodySize(zipAtCeiling, prov); got != MaxSubmitBodyBytes {
+		t.Fatalf("CONTROL failure, not a finding: a %d-byte zip with --allow-dirty provenance gives a "+
+			"%d-byte body, not exactly %d. The envelope arithmetic moved, so this test no longer sits on "+
+			"the boundary and cannot distinguish `>` from `>=`. Re-derive the zip length: it is the n for "+
+			"which SubmitBodySize(n, dirtyProvenance()) == MaxSubmitBodyBytes.",
+			zipAtCeiling, got, MaxSubmitBodyBytes)
+	}
+	// CONTROL: and the provenance must be the one that survives sanitisation, or
+	// the envelope silently collapses to the zero-provenance 19 bytes.
+	if commit, dirty := prov.sanitised(); commit == "" || dirty == nil || !*dirty {
+		t.Fatalf("CONTROL failure, not a finding: dirtyProvenance() does not survive sanitised() "+
+			"(commit=%q dirty=%v), so the body carries the zero-provenance envelope and the boundary "+
+			"is unreachable", commit, dirty)
+	}
+
+	srv, hits := acceptingSubmitServer(t)
+	defer srv.Close()
+	c := NewWithSource(srv.URL, civitai.StaticToken("t"), "/api/blocks/submit-version")
+
+	_, err := c.SubmitVersion(context.Background(), make([]byte, zipAtCeiling), "slug", "1.0.0", prov)
+	if err == nil {
+		t.Fatalf("a submit body of EXACTLY %d bytes was uploaded. The guard must refuse at the ceiling, "+
+			"not one byte above it: the comparison is `>=`, and `>` lets this exact body through. This is "+
+			"reachable in production — it is what `civitai app submit --allow-dirty` sends for a "+
+			"%d-byte zip.", MaxSubmitBodyBytes, zipAtCeiling)
+	}
+	if !errors.Is(err, ErrBundleTooLarge) {
+		t.Fatalf("the at-ceiling body was refused, but not by the size guard — so this test would stay "+
+			"green with the guard deleted: %v", err)
+	}
+	// The refusal must be a PREFLIGHT, which is the entire point of the guard.
+	if *hits != 0 {
+		t.Errorf("the at-ceiling case contacted the server %d time(s); it must refuse before uploading", *hits)
+	}
+	// The message must report the real body size, not the zip.
+	if !strings.Contains(err.Error(), strconv.Itoa(MaxSubmitBodyBytes)) {
+		t.Errorf("the refusal names neither the body size nor the ceiling (both are %d here):\n  %v",
+			MaxSubmitBodyBytes, err)
+	}
+
+	// 🔴 NEGATIVE CONTROL, and it is the half that makes the assertion above mean
+	// `>=` rather than "refuses everything". One base64 quantum BELOW the ceiling
+	// must still upload — `>=` accepts it and a guard that had drifted to `>=-4`
+	// or to an unconditional refusal would not.
+	belowZip := zipAtCeiling - 3
+	belowBody := SubmitBodySize(belowZip, prov)
+	if belowBody >= MaxSubmitBodyBytes {
+		t.Fatalf("CONTROL failure, not a finding: the below-ceiling fixture is %d bytes, not under %d",
+			belowBody, MaxSubmitBodyBytes)
+	}
+	if _, err := c.SubmitVersion(context.Background(), make([]byte, belowZip), "slug", "1.0.0", prov); err != nil {
+		t.Errorf("a %d-byte body — under the %d ceiling — was refused: %v\n"+
+			"The guard must be `>=` on the ceiling, not a blanket refusal.", belowBody, MaxSubmitBodyBytes, err)
+	}
+	if *hits != 1 {
+		t.Errorf("the under-ceiling case reached the server %d time(s), want 1 — it must actually upload", *hits)
+	}
 }
 
 // acceptingSubmitServer returns a server that accepts any submit, plus a counter
