@@ -205,6 +205,15 @@ func TestRead429WithRetryAfterExhaustsGeneric(t *testing.T) {
 // The VENDORED assumption (the server never attaches Retry-After to a cap 429)
 // is genuinely unguardable here. The CLI's own ordering is not, and this is it.
 //
+// 🔴 WHY the header should win is argued in retry.go's 429 branch, not here, and
+// that argument is what a maintainer tempted to invert this needs — a test that
+// only says "the published contract, inverted" asserts a contract exists without
+// saying why. Read it before changing this; it also names the four surfaces that
+// move if the precedence ever does.
+//
+// This owns the SENTINEL. cmd/civitai's TestCapWorded429WithRetryAfterExitsFiveNotTwo
+// owns the exit code a script reads from `$?`.
+//
 // Asserted by errors.Is per AGENTS.md item 7: the sentinels carry no visible
 // text, so the message assertions below cannot see a classification swap.
 func TestCapWorded429WithRetryAfterIsRetriedNotReclassified(t *testing.T) {
@@ -239,6 +248,13 @@ func TestCapWorded429WithRetryAfterIsRetriedNotReclassified(t *testing.T) {
 		t.Errorf("must NOT be reclassified to ErrBadRequest (exit 2) — that is the "+
 			"published contract inverted, got %v", err)
 	}
+	// 🔴 AN INVARIANT GUARD, LABELLED AS ONE — it is NOT regression coverage and
+	// must not be counted as such. Measured: under the ordering mutant this
+	// assertion does NOT fire, because errkind.go attaches exactly one sentinel
+	// and the cap matcher still matches, so the mutant produces ErrBadRequest and
+	// ErrRateLimited is unreachable by construction on this input. It is kept
+	// because "exit 6" is the OTHER thing a 429 can be and a future third branch
+	// could reach it; it pins an invariant the ordering bug never violated.
 	if errors.Is(err, ErrRateLimited) {
 		t.Errorf("must NOT be ErrRateLimited (exit 6), got %v", err)
 	}

@@ -113,17 +113,17 @@ func exitCodeContractClaims() []contractClaim {
 			// the server", and that CONFLATED TWO CLAIMS. Only one of them is
 			// unguardable, and telling the next maintainer no guard was possible
 			// is the description-reads-as-coverage failure this table exists to
-			// stop. Measured with the mutant applied — inverting the ordering in
-			// pkg/civitai/retry.go (consult the cap wording before the header,
-			// return terminal, flipping the published bullet from 5 to 2): 20 ok
-			// packages and exactly ONE `--- FAIL`, the guard named below. So every
-			// pre-existing test in the repo stays green under it, which is the
-			// round-4 reading (21 ok / 0 FAIL before this guard existed) confirmed
-			// from the other side.
-			pinnedBy: "the ORDERING: pkg/civitai's TestCapWorded429WithRetryAfterIsRetriedNotReclassified " +
-				"(cap-worded body + Retry-After → 4 requests and errors.Is ErrNetwork, NOT ErrBadRequest). " +
-				"The REACHABILITY is what nothing local can pin — whether the server ever attaches Retry-After " +
-				"to a cap 429 is a vendored assumption about the server, and that half is why this is published",
+			// stop. Inverting the ordering in pkg/civitai/retry.go flips the
+			// published bullet from 5 to 2, and before the guards named below
+			// nothing in the repo went red on it. The measurement is in the commit
+			// that added them, not restated here where it cannot be checked and
+			// would go stale on the next package.
+			pinnedBy: "the ORDERING, twice: pkg/civitai's TestCapWorded429WithRetryAfterIsRetriedNotReclassified " +
+				"owns the SENTINEL (cap-worded body + Retry-After → retried, and errors.Is ErrNetwork, NOT " +
+				"ErrBadRequest); cmd/civitai's TestCapWorded429WithRetryAfterExitsFiveNotTwo owns the NUMBER a " +
+				"script reads from $?. The REACHABILITY is what nothing local can pin — whether the server ever " +
+				"attaches Retry-After to a cap 429 is a vendored assumption about the server, and that half is " +
+				"why this is published",
 		},
 		{
 			code: 5,
