@@ -1,10 +1,11 @@
 package appapi
 
 import (
-	"go/doc"
+	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -33,46 +34,67 @@ import (
 // identifier it documents — is what makes the misattribution mechanically
 // visible, so that is what is checked.
 func TestExportedSubmitCeilingDeclsCarryTheirOwnDoc(t *testing.T) {
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, parser.ParseComments)
+	// Walked file by file rather than with parser.ParseDir (deprecated in Go
+	// 1.25) or go/packages (a dependency this repo does not carry for tests).
+	// Only the doc comment attached to each declaration is needed, and that is
+	// on the AST directly.
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("CONTROL failure, not a finding: parse: %v", err)
+		t.Fatalf("CONTROL failure, not a finding: readdir: %v", err)
 	}
-	astPkg, ok := pkgs["appapi"]
-	if !ok {
-		t.Fatalf("CONTROL failure, not a finding: package appapi not found in the parsed dir (got %v) — "+
-			"every assertion below would iterate nothing", parsedPkgNames(pkgs))
-	}
-	d := doc.New(astPkg, "github.com/civitai/cli/internal/appapi", doc.AllDecls)
-
-	// name -> doc text, for the declaration kinds this file cares about.
+	fset := token.NewFileSet()
 	docs := map[string]string{}
-	for _, c := range d.Consts {
-		for _, n := range c.Names {
-			docs[n] = c.Doc
+	parsed := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
 		}
-	}
-	for _, v := range d.Vars {
-		for _, n := range v.Names {
-			docs[n] = v.Doc
+		f, err := parser.ParseFile(fset, filepath.Clean(name), nil, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("CONTROL failure, not a finding: parse %s: %v", name, err)
 		}
-	}
-	for _, f := range d.Funcs {
-		docs[f.Name] = f.Doc
+		parsed++
+		for _, decl := range f.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil {
+					docs[d.Name.Name] = d.Doc.Text()
+				}
+			case *ast.GenDecl:
+				for _, spec := range d.Specs {
+					vs, ok := spec.(*ast.ValueSpec)
+					if !ok {
+						continue
+					}
+					// A spec's own doc wins; an ungrouped decl's doc belongs to
+					// its single spec.
+					text := vs.Doc.Text()
+					if text == "" && len(d.Specs) == 1 {
+						text = d.Doc.Text()
+					}
+					for _, n := range vs.Names {
+						docs[n.Name] = text
+					}
+				}
+			}
+		}
 	}
 
 	want := []string{"MaxSubmitBodyBytes", "ErrBundleTooLarge", "SubmitBodySize"}
 
 	// POSITIVE CONTROL: the extractor must actually be finding these
-	// declarations. A parse that silently matched nothing would satisfy every
+	// declarations. A walk that silently matched nothing would satisfy every
 	// loop below by iterating an empty map — the reassuring zero.
+	if parsed == 0 {
+		t.Fatal("CONTROL failure, not a finding: no non-test .go files were parsed, so this test is " +
+			"measuring nothing")
+	}
 	for _, n := range want {
 		if _, ok := docs[n]; !ok {
-			t.Fatalf("CONTROL failure, not a finding: %s was not found among the package's parsed "+
-				"declarations, so this test is measuring nothing. Parsed %d consts, %d vars, %d funcs.",
-				n, len(d.Consts), len(d.Vars), len(d.Funcs))
+			t.Fatalf("CONTROL failure, not a finding: %s was not found among the declarations of the "+
+				"%d parsed file(s), so this test is measuring nothing. Found %d named declarations.",
+				n, parsed, len(docs))
 		}
 	}
 
@@ -114,12 +136,4 @@ func firstLine(s string) string {
 		s = s[:72] + "…"
 	}
 	return s
-}
-
-func parsedPkgNames[T any](m map[string]T) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }
