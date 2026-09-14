@@ -85,6 +85,8 @@ var exitCodeClaimsFloor = []string{
 	"a validation VERDICT is 1, and a manifest-less directory is a verdict",
 	"`app validate --json` publishes a result only when it produced one",
 	"5 is the retry code and a filesystem failure never lands there",
+	"a bundle the platform cannot receive is 1, not 2",
+	"the oversize refusal MOVED from 2 to 1, and scripts must follow",
 	"a 429 is not always 6 — the deep-paging cap is a usage error and exits 2",
 	"a retried 429 that never cleared exits 5, and prints a different message",
 	"the Retry-After header is consulted before the message, so a cap 429 carrying it exits 5",
@@ -92,6 +94,52 @@ var exitCodeClaimsFloor = []string{
 
 func exitCodeContractClaims() []contractClaim {
 	return []contractClaim{
+		{
+			code: 1,
+			name: "a bundle the platform cannot receive is 1, not 2",
+			phrases: []string{
+				// Chosen so a reversal cannot keep them. "refuses BEFORE
+				// uploading" is the preflight promise — the whole point of the
+				// code being a verdict rather than a transport outcome — and
+				// "the project is too big" is the sentence that places it with
+				// the other `app submit` verdicts rather than with usage errors.
+				"refuses BEFORE uploading", "the project is too big",
+			},
+			why: "this refusal reaches exit 1 through exitCode's `default` arm — it matches no case in that " +
+				"switch — so nothing about the code is chosen by the mapper, and AGENTS.md item 7 is explicit " +
+				"that an untagged return unpins a published code. Right by accident is not the same as pinned: " +
+				"tagging the refusal with civitai.ErrBadRequest (the only route from a command error to 2) " +
+				"moves it silently. Measured at the commit that shipped #585, that mutation survived the " +
+				"entire suite",
+			pinnedBy: "TestOversizeBundleExitsGeneric in cmd/civitai, which takes the REAL error from the real " +
+				"`app submit` rather than a hand-tagged fixture, plus TestOversizeSentinelIsNotAnAPIKind",
+		},
+		{
+			code: 2,
+			name: "the oversize refusal MOVED from 2 to 1, and scripts must follow",
+			phrases: []string{
+				// The migration notice, not the classification. A rewrite that
+				// dropped the history would keep code 1's bullet entirely
+				// intact while deleting the only warning an existing script has.
+				//
+				// 🔴 SPELLED SO ANOTHER BULLET CANNOT SATISFY THEM. A first draft
+				// used the bare "used to reach" and "must branch on", and the
+				// second was WALKABLE: code 2's `--json` bullet already contains
+				// "must branch on the exit code first", so rewording this bullet
+				// to "Scripts may need updating." left the row GREEN. Measured.
+				// Both phrases now carry the `1`/`2` the claim is actually about.
+				"is now refused LOCALLY and exits `1`", "must branch on `1`",
+			},
+			why: "this is a BREAKING CHANGE to a published contract, and the only surface that says so. Before " +
+				"#585 an over-ceiling bundle reached the server, came back `400: Invalid JSON`, and exited 2 " +
+				"as a usage error; it is now refused locally and exits 1. A script that branches on 2 to " +
+				"report a too-large bundle silently stops matching — it does not error, it just never fires " +
+				"again. Code 1's own bullet states the new behaviour and cannot carry this: the reader who " +
+				"needs it is looking at 2, which is where their script is looking",
+			pinnedBy: "TestOversizeBundleExitsGeneric pins the destination (1). Nothing pins the ORIGIN, and " +
+				"nothing can — 2 was the server's answer, not a local decision, and it is no longer reachable " +
+				"from here. That is why the history is published rather than tested",
+		},
 		{
 			code: 6,
 			name: "the Retry-After header is consulted before the message, so a cap 429 carrying it exits 5",

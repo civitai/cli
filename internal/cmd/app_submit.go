@@ -39,7 +39,11 @@ const submitDiagnosisEntries = 5
 // this same block prints under a 500 that has nothing to do with the bundle.
 // What it can say is true of every one of those cases: here is what left this
 // machine. See issue #423 for the failure that made the distinction matter, and
-// pkgzip's cap comment for why the honest move is to report rather than refuse.
+// pkgzip's cap comment for why no ceiling on the compressed archive is guessed
+// there. (That comment used to be summarised here as "the honest move is to
+// report rather than refuse", which stopped describing the CLI at #585: the
+// request BODY does have a vendored ceiling and is refused on it. Reaching this
+// block means that ceiling did not fire.)
 //
 // It is on the FAILURE path only. On a success there is nothing to diagnose,
 // and the size already appears on the `Packaged …` line for anyone who wants
@@ -58,10 +62,26 @@ func printSubmitSizeDiagnosis(w io.Writer, zipBytes []byte, prov appapi.Provenan
 		}
 	}
 
-	for _, line := range wrapRunes("The size the server applies any request-body limit to is the first number, "+
-		"not the zip. This CLI's own size caps are not the server's and are much higher, so clearing them is "+
-		"not a prediction that a submit will be accepted (issue #423). If the bundle carries files the platform "+
-		"build does not need, drop them and retry:", 78) {
+	// 🔴 THIS BLOCK RUNS ONLY WHEN THE VENDORED CEILING DID NOT FIRE, WHICH IS
+	// PRECISELY WHEN THE CEILING MAY BE WRONG. The paragraph below used to say
+	// only that the CLI's packaging caps are not the platform's and are much
+	// higher — true, and since #585 badly incomplete, because there is now a
+	// vendored request-body ceiling too and a body that got here cleared it.
+	//
+	// If the platform ever LOWERS proxyClientMaxBodySize below the number this
+	// CLI vendors, that is exactly the shape #423 had: the body clears the local
+	// guard, is truncated in transit, and comes back `400: Invalid JSON` — an
+	// error about the parse, naming nothing about size. An author told at that
+	// moment that the CLI has no idea what the platform accepts has been pointed
+	// away from the one number that could explain it. So the ceiling is named,
+	// with the direction it can be wrong in.
+	for _, line := range wrapRunes(fmt.Sprintf("The size a request-body limit applies to is the first number, "+
+		"not the zip. This CLI's packaging caps are its own and are much higher, so clearing them is not a "+
+		"prediction that a submit will be accepted (issue #423). It does refuse a body of %d bytes or more "+
+		"before uploading, so this body was under that — but that ceiling is a vendored default, not "+
+		"something the platform told us, and if the real limit has been lowered since it is now too high. "+
+		"If the bundle carries files the platform build does not need, drop them and retry:",
+		appapi.MaxSubmitBodyBytes), 78) {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
 	fmt.Fprintf(w, "    %s   # writes the exact .zip, so you can list it before retrying\n",
@@ -95,13 +115,22 @@ func printSubmitSizeRefusal(w io.Writer, zipBytes []byte, prov appapi.Provenance
 		}
 	}
 
+	// 🔴 EACH SENTENCE'S COLON INTRODUCES THE COMMAND THAT DOES WHAT IT SAID. The
+	// wording this replaced ended "--allow-oversize submits anyway:" and then
+	// printed `civitai app submit --package-only`, which never submits — the one
+	// command an author reaching for the escape hatch must not copy. Two claims
+	// were being made and only one command was offered, so the trailing colon
+	// attached the wrong one.
 	for _, line := range wrapRunes("The first number is what the limit applies to, not the zip. Drop what the "+
-		"platform build does not need and retry. If you believe the server now accepts more than this CLI "+
-		"expects, --allow-oversize submits anyway:", 78) {
+		"platform build does not need and retry — this writes the exact .zip, so you can list it first:", 78) {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
-	fmt.Fprintf(w, "    %s   # writes the exact .zip, so you can list it before retrying\n",
-		ui.Code("civitai app submit --package-only"))
+	fmt.Fprintf(w, "    %s\n", ui.Code("civitai app submit --package-only"))
+	for _, line := range wrapRunes("If you believe the platform now accepts more than this CLI expects, "+
+		"submit anyway:", 78) {
+		fmt.Fprintf(w, "  %s\n", line)
+	}
+	fmt.Fprintf(w, "    %s\n", ui.Code("civitai app submit --allow-oversize"))
 }
 
 // skippedListCap is how many skipped paths the `Skipped …` line names before it
@@ -558,7 +587,7 @@ Defaults to the current directory.`,
 			// 3a. Programmatic submit if we have a token (OAuth or personal key).
 			// The gate above already confirmed (or --yes bypassed) it.
 			if canUpload {
-				return doUpload(cmd, client, pkg.Zip, m, cfg.BaseURL(), prov)
+				return doUpload(cmd, client, pkg.Zip, m, cfg.BaseURL(), prov, allowOversize)
 			}
 
 			// 3b. Fallback: write the canonical .zip + print next steps.
@@ -624,23 +653,46 @@ func confirmSubmit(cmd *cobra.Command, m *manifest.Manifest, baseURL string, ass
 	}
 }
 
-func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *manifest.Manifest, baseURL string, prov appapi.Provenance) error {
+func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *manifest.Manifest, baseURL string, prov appapi.Provenance, allowOversize bool) error {
 	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
+	var r *appapi.SubmitResult
+	submit := func(ctx context.Context) error {
+		var e error
+		r, e = client.SubmitVersion(ctx, zipBytes, m.BlockID, m.Version, prov)
+		return e
+	}
+
+	// 🔴 DO NOT ANNOUNCE AN UPLOAD THAT WILL NOT HAPPEN. `Submitting …` goes to
+	// STDOUT and the refusal goes to STDERR, so an author over the ceiling read
+	// "Submitting demo@1.0.0" and then, from the other stream, that nothing was
+	// uploaded. The two are interleaved on a terminal and separated in a pipe;
+	// either way the first line is a claim the second contradicts.
+	//
+	// 🔴 THIS PREDICTS, IT DOES NOT DECIDE. appapi.SubmitVersion remains the only
+	// place the refusal is made — one rule, one place. SubmitBodySize is exact
+	// (pinned by TestSubmitBodySizeMatchesRealMarshal against json.Marshal
+	// itself), so the two agree; but if they ever did not, the whole consequence
+	// is a spinner shown or withheld. Nothing here can refuse a submit the
+	// library would have sent, or send one it would have refused.
+	//
+	// allowOversize short-circuits because that flag makes the guard inert, and
+	// an upload really is about to start.
+	spin := allowOversize || appapi.SubmitBodySize(len(zipBytes), prov) < appapi.MaxSubmitBodyBytes
+
 	// Spin (on a TTY) while the bundle uploads — a real network wait. On a non-TTY
 	// (pipe/CI/tests) WithSpinner prints one plain "Submitting …" line and runs the
 	// upload inline, so scripted/captured output stays deterministic.
-	var r *appapi.SubmitResult
-	err := ui.WithSpinner(ctx, out, fmt.Sprintf("Submitting %s@%s", m.BlockID, m.Version),
-		func(ctx context.Context) error {
-			var e error
-			r, e = client.SubmitVersion(ctx, zipBytes, m.BlockID, m.Version, prov)
-			return e
-		})
+	var err error
+	if spin {
+		err = ui.WithSpinner(ctx, out, fmt.Sprintf("Submitting %s@%s", m.BlockID, m.Version), submit)
+	} else {
+		err = submit(ctx)
+	}
 	if err != nil {
 		// 🔴 THE SERVER'S MESSAGE IS ALREADY VERBATIM, AND FOR #423 IT NAMES
 		// NOTHING. appapi.serverError prints the response body as it arrived, so
