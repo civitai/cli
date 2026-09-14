@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -92,8 +93,15 @@ func TestBlobStatusErrorCannotForgeALine(t *testing.T) {
 	}
 }
 
-// TestDownloadBlobToErrorsCannotForgeALine drives the overwrite refusal, the
-// two `%s: %w` pairs, and the `Saved` line.
+// TestDownloadBlobToErrorsCannotForgeALine drives all four surfaces — the
+// overwrite refusal, both `%s: %w` pairs and the `Saved` line — each as its own
+// subtest, each mutation-verified alone.
+//
+// 🔴 IT CLAIMED ALL FOUR AND DROVE TWO. An audit measured it: ungating `install
+// %s`'s operand alone SURVIVED the whole suite, and ungating the `Saved` line
+// entirely SURVIVED it too, while this doc and the safeTermCoveredBy row both
+// listed them. `Saved` had been honestly ledgered notCovered BEFORE this PR, so
+// the row made its coverage look better than the tree's. Both are driven now.
 func TestDownloadBlobToErrorsCannotForgeALine(t *testing.T) {
 	t.Run("overwrite refusal", func(t *testing.T) {
 		dir := t.TempDir()
@@ -113,6 +121,70 @@ func TestDownloadBlobToErrorsCannotForgeALine(t *testing.T) {
 			t.Fatalf("CONTROL failure, not a finding: reached a different error: %v", err)
 		}
 		assertOneLine(t, "downloadBlobTo (refusing to overwrite)", err.Error())
+	})
+
+	// 🔴 THESE TWO SUBTESTS EXIST BECAUSE THE DOC ABOVE CLAIMED THEM AND THE
+	// TEST DID NOT DRIVE THEM. Measured by this PR's nine-axis audit: ungating
+	// `install %s`'s operand alone SURVIVED the whole suite, and ungating the
+	// `Saved` line entirely SURVIVED it too — while this file's header and the
+	// safeTermCoveredBy row both listed them as covered. A row that reads as
+	// coverage while providing none is the class this repo treats as worse than
+	// no row, because it stops the next reader looking.
+	t.Run("install %s: %w — both halves", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, gbfHostileName)
+		// os.Rename fails when the destination is a DIRECTORY, and the error is
+		// an *os.LinkError carrying both paths — so the cause repeats the
+		// hostile bytes the operand already holds.
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			t.Fatalf("CONTROL failure, not a finding: %v", err)
+		}
+		fetch := func(context.Context, string) (*http.Response, error) {
+			return &http.Response{
+				StatusCode:    http.StatusOK,
+				Body:          io.NopCloser(strings.NewReader("payload")),
+				ContentLength: 7,
+			}, nil
+		}
+		err := downloadBlobTo(context.Background(), fetch, io.Discard, io.Discard,
+			"https://example.invalid/blob", target, true)
+		if err == nil {
+			t.Fatal("CONTROL failure, not a finding: renaming onto a directory succeeded")
+		}
+		if !strings.Contains(err.Error(), "install ") {
+			t.Fatalf("CONTROL failure, not a finding: reached a different error: %v", err)
+		}
+		assertOneLine(t, "downloadBlobTo (install %s: %w)", err.Error())
+	})
+
+	t.Run("the Saved line", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, gbfHostileName)
+		fetch := func(context.Context, string) (*http.Response, error) {
+			return &http.Response{
+				StatusCode:    http.StatusOK,
+				Body:          io.NopCloser(strings.NewReader("payload")),
+				ContentLength: 7,
+			}, nil
+		}
+		var out bytes.Buffer
+		if err := downloadBlobTo(context.Background(), fetch, &out, io.Discard,
+			"https://example.invalid/blob", target, true); err != nil {
+			t.Fatalf("CONTROL failure, not a finding: the transfer failed: %v", err)
+		}
+		got := out.String()
+		if !strings.Contains(got, "Saved ") {
+			t.Fatalf("CONTROL failure, not a finding: no Saved line was written:\n%s", got)
+		}
+		// The success line is ONE line. A forged newline here is the worst of
+		// the set: it is the line the user reads as "this finished".
+		if n := strings.Count(strings.TrimRight(got, "\n"), "\n"); n != 0 {
+			t.Errorf("#574 FORGERY in downloadBlobTo (Saved): %d forged line(s) on the success "+
+				"line:\n%s", n, got)
+		}
+		if strings.Contains(got, "\t") {
+			t.Errorf("#574 FORGERY in downloadBlobTo (Saved): a TAB survived:\n%s", got)
+		}
 	})
 
 	t.Run("download %s: %w — both halves", func(t *testing.T) {

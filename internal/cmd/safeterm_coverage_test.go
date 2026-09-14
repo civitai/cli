@@ -381,7 +381,8 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	"joinQuoted": {notCovered,
 		"the quoted key list in an --input parse error"},
 	"downloadBlobTo": {"TestDownloadBlobToErrorsCannotForgeALine",
-		"generate's blob transfer — the overwrite refusal, both `%s: %w` pairs (operand AND wrapped " +
+		"generate's blob transfer — all four surfaces DRIVEN, not merely listed: the overwrite " +
+			"refusal, both `%s: %w` pairs (operand AND wrapped " +
 			"cause) and the `Saved` line, carrying the server-derived leaf and the mixed-origin " +
 			"target (civitai/cli#574). Its `create output directory` line is deliberately UNGATED " +
 			"and pinned the OTHER way by TestCreateOutputDirectoryStaysUngated, because that value " +

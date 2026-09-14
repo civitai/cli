@@ -1573,7 +1573,7 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 				fmt.Fprintln(errw, ui.For(errw).Warn(fmt.Sprintf("%d of %d output(s) were saved before this failed", len(paths), len(kept))))
 			}
 			fmt.Fprintln(errw, ui.For(errw).Dim(fmt.Sprintf(
-				"Output URLs expire — re-read the workflow for fresh links: civitai workflows get %s", workflowID)))
+				"Output URLs expire — re-read the workflow for fresh links: civitai workflows get %s", safeTermSingle(workflowID))))
 			return derr
 		}
 	}
