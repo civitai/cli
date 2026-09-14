@@ -333,12 +333,27 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"the `already present (SHA256 verified)` lines, which assert an integrity result"},
 	"pickleArchiveNote": {notCovered,
 		"the pickle/archive EXECUTION WARNING, whose text embeds the server's file name"},
-	"printOutputURLs": {notCovered,
-		"the generated output URLs printed for piping"},
-	"printSubmitted": {notCovered,
-		"the submitted-workflow id and its civitai.com link"},
-	"printReattach": {notCovered,
-		"the re-attach block: workflow id and last status"},
+	"printOutputURLs": {"TestPrintOutputURLsRowCountIsNotServerChosen",
+		"the --no-download URL listing, the one #604 surface on STDOUT. The named test drives the renderer " +
+			"with three outputs, the middle URL hostile, and asserts the ROW COUNT (one per kept output) plus " +
+			"exactly two tab-separated fields per row numbered by the CLI — so a URL carrying \\n2\\t<other> " +
+			"cannot write a numbered row of its own onto the surface documented for piping. The TAB half is " +
+			"live here: this is bare fmt.Fprintf, not ui-styled. The `These URLs are presigned` trailer on " +
+			"stderr carries no server text and is not asserted"},
+	"printSubmitted": {"TestPrintSubmittedCannotForgeALine",
+		"the submitted-workflow receipt. The named test calls the renderer with cost nil and asserts the " +
+			"block occupies the 2 lines the function writes, differentially against a benign id. 🔴 IT " +
+			"DELIBERATELY ASSERTS NOTHING ABOUT TABS: both lines go through ui (Success/Dim) and lipgloss " +
+			"expands \\t to four spaces before the bytes reach the writer (re-measured), so such a guard " +
+			"could never fire. The `Charged N Buzz` line is not driven — cost is nil — and it carries a " +
+			"number, not a server string"},
+	"printReattach": {"TestPrintReattachBlockGeometryIsNotServerChosen",
+		"the recovery block a user reads after a wait ended without a result. The named test calls the " +
+			"renderer with a hostile id AND a hostile status and asserts the block is the 6 lines it writes " +
+			"(⚠ header + 4 rows + trailer), that no TAB survives, and that each of the four labelled rows — " +
+			"`Re-attach:` included — begins exactly ONE line. #604 measured two counterfeit `Re-attach:` " +
+			"lines, the first ABOVE the genuine one. The `External ID:` row is the CLI's own value and is " +
+			"deliberately ungated, so nothing here pins it"},
 	"printSubmitResult": {"TestTabwriterRenderersCannotBeForged",
 		"the submit result's id and status — the receipt for money already spent"},
 	"printCostMap": {"TestTabwriterRenderersCannotBeForged",
@@ -365,8 +380,12 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"Watched red, not read: deleting the Checkpoint gate here fails the named test with two " +
 			"column-zero findings. Everything the USER typed on this screen stays unsanitised on purpose " +
 			"(civitai/cli#393) — this row is about the two SERVER-derived labels only"},
-	"classifyGenerateError": {notCovered,
-		"the server's own error message, shown verbatim when generation is refused"},
+	"classifyGenerateError": {"TestClassifyGenerateErrorCannotForgeALine",
+		"the server's own message, sanitised ONCE at the top and interpolated into the error each matching " +
+			"arm rebuilds. The named test drives ALL FIVE matching arms through a real tRPC error server and " +
+			"asserts one line each — tabs included, since these are plain fmt.Errorf with no ui styling in " +
+			"front of them — with a control that the arm MATCHED rather than falling through. The " +
+			"fall-through returns the transport's own error unchanged, which is not this function's surface"},
 	"buildGenerateGraph": {"TestImageDisclosureLineIsGatedAtComposition",
 		"the uploaded image URL echoed back into the img2img disclosure line. It composes the USER's own " +
 			"--image path (echoed byte-for-byte, civitai/cli#393) with the SERVER's blob URL, and only the " +
@@ -375,31 +394,24 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"the real upload seam and is watched red both ways: deleting the gate, and flattening the whole " +
 			"composed line (the #393 direction, which its ZWNJ-bearing fixture path is what makes visible)"},
 	"waitAndCollect": {"TestWaitAndCollectReReadHintCannotForgeALine",
-		"ONE of this function's four surfaces, and the row says which because the other three are still " +
-			"open: the `Output URLs expire — re-read the workflow for fresh links` hint, printed after a " +
-			"transfer FAILED, i.e. the last advice a user gets about outputs they have already been " +
-			"charged for. civitai/cli#596 upgraded it to safeTermSingle and shipped it UNPINNED — round " +
-			"2's delta audit reverted that one expression to plain safeTerm and the whole package stayed " +
-			"green — which is what the named test now closes. 🔴 STILL UNGATED FOR \\n AND \\t, ON " +
-			"PURPOSE AND TRACKED ELSEWHERE — and this list is THIS function's OWN call sites, counted " +
-			"in generate.go:1436-1585: safeTerm(wf.Status) AND safeTerm(workflowID) in the " +
-			"terminal-status error (:1514), plus safeTerm(workflowID) in the succeeded-but-no-" +
-			"deliverables error (:1558). 🔴 An earlier draft named `printSubmitted's two lines` instead, " +
-			"which this function NEVER REACHES — runGenerate calls emitSubmitHandle (:1362) BEFORE " +
-			"waitAndCollect (:1367), and printSubmitted carries its own notCovered row above. That draft " +
-			"also enumerated the workflow id only, so safeTerm(wf.Status) — a SERVER STATUS STRING on " +
-			"the same line, keeping \\n and \\t exactly as the id does — was missing from the list of " +
-			"what is still open HERE. Both corrected in round 3. 🔴 THIS ROW COUNTS ONLY THE CALL SITES " +
-			"INSIDE waitAndCollect, AND THAT SCOPE IS NOW EXPLICIT BECAUSE TWICE IT WAS READ AS THE " +
-			"COMPLETE RESIDUAL FOR THE WAIT PATH. More surfaces are reachable THROUGH callees — " +
-			"printReattach, printOutputURLs, classifyGenerateError and both poll reporters — each " +
-			"rendering server text through plain safeTerm. 🔴 DO NOT ENUMERATE THEM HERE: three " +
-			"successive drafts tried, and named 3, then 6, then still missed printOutputURLs (whose " +
-			"safeTerm(*o.URL) writes a TAB-separated row to STDOUT on --no-download) and the poll " +
-			"reporters (which run on EVERY waiting generate, not only the timeout path). The " +
-			"authoritative list is the notCovered rows in THIS map plus civitai/cli#604. All are " +
-			"pre-existing and outside #574's closing condition. Read this row as 'the function is no " +
-			"longer wholesale-unpinned', never as 'the workflow id is safe everywhere here'"},
+		"THIS FUNCTION'S OWN call sites, which is the scope this row has and the scope it keeps — a " +
+			"surface reached through a CALLEE answers to that callee's row, and three successive drafts " +
+			"that tried to enumerate the reachable set here were each incomplete in the reassuring " +
+			"direction. The named test drives the `Output URLs expire — re-read the workflow for fresh " +
+			"links` hint, printed after a transfer FAILED: civitai/cli#596 upgraded it to safeTermSingle " +
+			"and shipped it UNPINNED, and round 2's delta audit reverted that one expression with the " +
+			"whole package staying green. The other two surfaces are driven by " +
+			"TestWaitAndCollectTerminalStatusErrorCannotForgeALine (the non-succeeded terminal-status " +
+			"error, generate.go:1514) and TestWaitAndCollectNoDeliverablesErrorCannotForgeALine (the " +
+			"succeeded-but-no-deliverables error, :1558) — civitai/cli#604, which moved all three off " +
+			"plain safeTerm. 🔴 THE TERMINAL-STATUS ERROR HAS TWO OPERANDS AND ONLY ONE OF THEM IS " +
+			"LINE-FORGEABLE, so they take two different assertions and neither is a claim about the " +
+			"other: safeTermSingle(workflowID) renders through %s and assertOneLine sees a forged line " +
+			"there, while safeTermSingle(wf.Status) renders through %q, which ESCAPES \\n and \\t — that " +
+			"operand is pinned by assertNoControlEscapes instead, and its gate buys independence from " +
+			"the verb rather than closing a reachable forgery (genapi.IsTerminalStatus TrimSpace-bounds " +
+			"the value to a whitespace-padded known status, so the server cannot put words of its own in " +
+			"it and still exit the poll loop)"},
 	"substitutionRefusal": {notCovered,
 		"the server's reason inside the refusal that ABORTS a spend"},
 	"joinQuoted": {notCovered,
@@ -435,14 +447,27 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"timestamps and granularity, which had no gate at all until #552"},
 	"newUsersGetCmd": {notCovered,
 		"the `closest matches` usernames printed when a user lookup misses"},
-	"(*quietPollReporter).tick": {notCovered,
-		"the server status echoed on every poll of a running generation"},
-	"(*quietPollReporter).finish": {notCovered,
-		"the final status line of a quiet poll"},
-	"(*ttyPollReporter).tick": {notCovered,
-		"the same status inside a \\r-rewritten spinner line, where a cursor escape is worth most"},
-	"(*ttyPollReporter).finish": {notCovered,
-		"the spinner's final status line"},
+	"(*quietPollReporter).tick": {"TestPollReportersCannotForgeALine",
+		"the server status echoed on every poll of a running generation. The named test's `quiet` subtest " +
+			"drives a NON-TERMINAL status through the real pollWorkflow — non-terminal because that is what " +
+			"a waiting generate displays — and reaches BOTH of tick's gated branches: the no-error one on " +
+			"attempt 1 and the retryable-error one on attempt 2 (a scripted 500). It asserts the line count " +
+			"matches a benign render, that every line begins with one of this reporter's own two prefixes, " +
+			"and that no TAB survives (bare fmt.Fprintf, so that half is live). tick's 429 branch renders no " +
+			"server text and is not driven"},
+	"(*quietPollReporter).finish": {"TestPollReportersCannotForgeALine",
+		"the final status line of a quiet poll. The same `quiet` subtest reaches it through a TIMEOUT, so " +
+			"finish() is called with the last NON-TERMINAL status rather than a terminal one, and the same " +
+			"line-count, row-prefix and TAB assertions cover it"},
+	"(*ttyPollReporter).tick": {"TestPollReportersCannotForgeALine",
+		"the same status inside a \\r-rewritten spinner line, where a cursor escape is worth most. The `tty` " +
+			"subtest constructs this reporter directly — newPollReporter picks it only for a real TTY, so a " +
+			"buffer-driven test never gets it otherwise — drives the same non-terminal status through " +
+			"pollWorkflow, and asserts the whole run emits exactly ONE newline and no TAB, so a forged " +
+			"newline cannot strand attacker text above the rewrite point"},
+	"(*ttyPollReporter).finish": {"TestPollReportersCannotForgeALine",
+		"the spinner's final status line, reached by the same `tty` subtest through the timeout path with " +
+			"the last non-terminal status; the one-newline and no-TAB assertions cover it"},
 }
 
 const (
@@ -533,7 +558,20 @@ const (
 	// that changed the row, and 17 is the number it printed. Its `why` states
 	// which ONE of that function's four surfaces is driven and which three are
 	// not — a row does not become a claim about every call inside it.
-	maxUncoveredSafeTermFuncs = 17
+	// 🔴 LOWERED 17 -> 9 BY civitai/cli#604, BANKED IN THE SAME COMMIT. Eight
+	// functions moved from notCovered to covered at once — printOutputURLs,
+	// printSubmitted, printReattach, classifyGenerateError and all four poll
+	// reporter methods — because #604 is one CLASS (server text on a generate
+	// surface, rendered through plain safeTerm, which keeps \n and \t) and
+	// gating a subset of a class is the mechanism that regenerates the defect at
+	// the ungated members. 9 is what this test PRINTED for the tree this commit
+	// ships ("RATCHET HEADROOM: 9 … but maxUncoveredSafeTermFuncs is 17"), not a
+	// number derived by subtracting eight from the old one. Each of those rows
+	// says which surfaces its named test drives and which it does not; four of
+	// them also say which assertions are deliberately absent because ui's
+	// lipgloss styles expand \t before the bytes reach the writer, so a tab
+	// guard on a styled surface could not fire.
+	maxUncoveredSafeTermFuncs = 9
 )
 
 // TestSafeTermCallSitesAreCoveredByANamedTest is civitai/cli#399.

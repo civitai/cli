@@ -310,16 +310,16 @@ func (r *quietPollReporter) tick(e pollEvent) {
 	r.lastPrint, r.printed = now, true
 	if e.err != nil {
 		fmt.Fprintf(r.w, "  waiting… status %s after %s (the last status check failed: %v; retrying in %s)\n",
-			safeTerm(e.status), e.elapsed.Round(time.Second), e.err, e.wait.Round(time.Second))
+			safeTermSingle(e.status), e.elapsed.Round(time.Second), e.err, e.wait.Round(time.Second))
 		return
 	}
 	fmt.Fprintf(r.w, "  waiting… status %s after %s (next check in %s)\n",
-		safeTerm(e.status), e.elapsed.Round(time.Second), e.wait.Round(time.Second))
+		safeTermSingle(e.status), e.elapsed.Round(time.Second), e.wait.Round(time.Second))
 }
 
 func (r *quietPollReporter) finish(status string) {
 	if r.printed {
-		fmt.Fprintf(r.w, "  status %s\n", safeTerm(status))
+		fmt.Fprintf(r.w, "  status %s\n", safeTermSingle(status))
 	}
 }
 
@@ -339,12 +339,12 @@ func (r *ttyPollReporter) tick(e pollEvent) {
 	} else if e.err != nil {
 		suffix = fmt.Sprintf("status check failed, retrying in %s", e.wait.Round(time.Second))
 	}
-	fmt.Fprintf(r.w, "\r  generating… %s  [%s]  %s   ", fmtMMSS(e.elapsed), safeTerm(e.status), suffix)
+	fmt.Fprintf(r.w, "\r  generating… %s  [%s]  %s   ", fmtMMSS(e.elapsed), safeTermSingle(e.status), suffix)
 }
 
 func (r *ttyPollReporter) finish(status string) {
 	if !r.live {
 		return
 	}
-	fmt.Fprintf(r.w, "\r  generation %s%s\n", safeTerm(status), "                                        ")
+	fmt.Fprintf(r.w, "\r  generation %s%s\n", safeTermSingle(status), "                                        ")
 }

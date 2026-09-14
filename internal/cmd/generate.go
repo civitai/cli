@@ -1511,7 +1511,7 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 		// the fate sentence above is untouched and still selects between the
 		// disclaimer and the printed settlement.
 		return fmt.Errorf("the generation finished with status %q and produced no usable result; %s. Inspect the run with `civitai workflows get %s`%s",
-			safeTerm(wf.Status), fate, safeTerm(workflowID), serverReasonSuffix(wf))
+			safeTermSingle(wf.Status), fate, safeTermSingle(workflowID), serverReasonSuffix(wf))
 	}
 
 	kept, excluded := genapi.PartitionOutputs(wf)
@@ -1555,7 +1555,7 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 		// The one measured `succeeded` workflow carried an empty array, which is
 		// why this reads exactly as it did before on that path.
 		return fmt.Errorf("the generation succeeded but produced no deliverable outputs — it was charged; inspect it with `civitai workflows get %s`%s",
-			safeTerm(workflowID), serverReasonSuffix(wf))
+			safeTermSingle(workflowID), serverReasonSuffix(wf))
 	}
 
 	if o.noDownload {
@@ -1588,7 +1588,7 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 func printOutputURLs(out, errw io.Writer, kept []genapi.Output) {
 	for i, o := range kept {
 		if o.URL != nil {
-			fmt.Fprintf(out, "%d\t%s\n", i+1, safeTerm(*o.URL))
+			fmt.Fprintf(out, "%d\t%s\n", i+1, safeTermSingle(*o.URL))
 		}
 	}
 	fmt.Fprintln(errw, ui.For(errw).Dim(
@@ -1607,13 +1607,13 @@ func printOutputURLs(out, errw io.Writer, kept []genapi.Output) {
 // rather than printing a fabricated 0.
 func printSubmitted(errw io.Writer, workflowID, externalID, baseURL string, cost *genapi.WorkflowCost) {
 	st := ui.For(errw)
-	fmt.Fprintln(errw, st.Success(fmt.Sprintf("Generation submitted — workflow %s", safeTerm(workflowID))))
+	fmt.Fprintln(errw, st.Success(fmt.Sprintf("Generation submitted — workflow %s", safeTermSingle(workflowID))))
 	if cost != nil {
 		fmt.Fprintln(errw, st.Info(fmt.Sprintf("Charged %s Buzz", buzzAmount(cost.Total))))
 	}
 	fmt.Fprintln(errw, st.Dim(fmt.Sprintf(
 		"External ID %s · watch it at %s/generate · re-attach any time with `civitai workflows get %s`",
-		externalID, strings.TrimRight(baseURL, "/"), safeTerm(workflowID))))
+		externalID, strings.TrimRight(baseURL, "/"), safeTermSingle(workflowID))))
 }
 
 // printReattach is the recovery block for a wait that ended without a result.
@@ -1625,10 +1625,10 @@ func printReattach(errw io.Writer, o generateOpts, workflowID, externalID, statu
 	st := ui.For(errw)
 	fmt.Fprintln(errw, st.Warn(fmt.Sprintf(
 		"%s The generation was NOT cancelled — it is still running server-side and has already been charged.", lead)))
-	fmt.Fprintf(errw, "  Workflow ID: %s\n", safeTerm(workflowID))
+	fmt.Fprintf(errw, "  Workflow ID: %s\n", safeTermSingle(workflowID))
 	fmt.Fprintf(errw, "  External ID: %s\n", externalID)
-	fmt.Fprintf(errw, "  Last status: %s\n", safeTerm(status))
-	fmt.Fprintf(errw, "  Re-attach:   civitai workflows get %s\n", safeTerm(workflowID))
+	fmt.Fprintf(errw, "  Last status: %s\n", safeTermSingle(status))
+	fmt.Fprintf(errw, "  Re-attach:   civitai workflows get %s\n", safeTermSingle(workflowID))
 	fmt.Fprintln(errw, st.Dim(fmt.Sprintf("Or watch it at %s/generate", strings.TrimRight(o.baseURL, "/"))))
 }
 
@@ -2044,7 +2044,7 @@ func classifyGenerateError(err error) error {
 		return err
 	}
 	msg := strings.ToLower(apiErr.ServerMessage)
-	shown := safeTerm(strings.TrimSpace(apiErr.ServerMessage))
+	shown := safeTermSingle(strings.TrimSpace(apiErr.ServerMessage))
 	has := func(needles ...string) bool {
 		for _, n := range needles {
 			if strings.Contains(msg, n) {
