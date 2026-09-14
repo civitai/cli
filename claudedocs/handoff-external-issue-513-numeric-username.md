@@ -17,8 +17,13 @@ answered — starting with #513, and fix the API-side root cause behind it.
 
 ## State now
 
-- **`civitai/cli` `main` @ `7467c62`**, clean, `make ci` rc=0 / 22 package lines / 0 FAIL /
-  golangci-lint 0 issues — measured on `main` itself, not on a branch.
+- **`civitai/cli` `main` @ `426288f`** (was `7467c62`; `#601`, `#596`, `#603` landed since), clean,
+  `make ci` rc=0 / 21 ok / 0 FAIL / golangci-lint 0 issues — measured on `main` itself.
+  🔴 **This repo has a SECOND live handoff doc**, `claudedocs/handoff-agent-setup-onboarding.md`,
+  maintained by a concurrent session (`#603`). It has its OWN ranked list, so **"rank 23 closes"
+  in a commit subject may not mean this doc's rank 23** — #603's meant `cli#596`, this doc's is
+  `cli#593`. The `claim-work` slug is derived from the DOC path, so the locks do not collide; only
+  human readers do.
 - **`civitai-developer-docs` `main` @ `cced3e2`**, drift sweep green.
 - **No `clawgate-task:` field.** `resolve` exited **5** — 0 tasks for this session, with its
   positive control answering 2 links for a DIFFERENT session, so the board was reached and the
@@ -215,50 +220,58 @@ there as recall rather than live state.
   every shape, one line each.
 - **Next probe:** none for #80. The residual is `devdocs#81`.
 
-### The drift streak's end is INFERRED, not observed — no scheduled run has fired against the fix
-- as-of: 2026-09-13
+### 🔴 RESOLVED: the drift streak's end is now OBSERVED in a scheduled run, not inferred
+- as-of: 2026-09-14
 
 - **Symptom + exact repro:** rank 9's forcing function was stated in SCHEDULED runs ("red for 34
-  consecutive scheduled runs, last green 2026-08-11"). The green run is a `workflow_dispatch`.
-  `gh run list --repo civitai/civitai-developer-docs --workflow appblocks-drift.yml --limit 4
-  --json createdAt,conclusion,event`
-- **Observed (with values):** as of **2026-09-14T04:26 UTC** the four most recent runs are
-  `09-13T15:21 success (workflow_dispatch)` — mine, against merged `main`, 0 failing steps with
-  **15 executed** — then `09-13T12:14 failure (schedule)`, `09-13T05:24 failure (dispatch)`,
-  `09-13T04:17 failure (dispatch)`. The cron is `37 6 * * *`, so the last SCHEDULED run predates
-  the merge and the next fires ~**06:37 UTC on 09-14**.
-- **Ruled out:** *"the streak has ended"* — **via: measurement**. The dispatched run is the same
-  workflow and the same `drift` job against the same tree, so it is strong evidence; it is not the
-  observation the claim was stated in terms of.
-- **Leading hypothesis:** the 06:37 run passes for the same reason the dispatched one did.
-- **Next probe:** after 06:37 UTC, `gh api repos/civitai/civitai-developer-docs/actions/runs/<id>/jobs
-  -q '[.jobs[]|select(.name=="drift")|.steps[]|select(.conclusion=="failure")]|length'` — expect 0,
-  **and** check the step count is non-zero, because a green run that SKIPPED is not a green sweep.
+  consecutive scheduled runs, last green 2026-08-11"), and the green run that motivated closing it
+  was a `workflow_dispatch` — the same workflow and job against the same tree, but not the
+  observation the claim was made in terms of.
+- **Observed (with values):** run **`34848144324`**, `event=schedule`, **2026-09-14T13:15 UTC**:
+  `drift=success`, **0 failing steps and 15 steps EXECUTED**, `notify=success`. The step count is
+  the load-bearing half — a run that SKIPPED its steps reports `success` too, which is exactly how
+  `cli-snapshot-refresh` (rank 14) reads green while doing nothing. The prior scheduled run,
+  `09-13T12:14`, was the last `failure`.
+- **Ruled out:** *"a dispatched run closes a claim stated in scheduled runs"* — **via: measurement**.
+  It did not; this run does. The gap was ~22 h and cost nothing but patience.
+- **Next probe:** none. Closing condition met, in the terms it was written in.
 
-### `cli#591` round 4: the header-before-message ordering is published but UNGUARDED
-- as-of: 2026-09-13
+### 🔴 RESOLVED: `cli#591` round-4 F2 — the ordering is pinned at BOTH the sentinel and the code
+- as-of: 2026-09-14 · shipped in **`cli#601`** (`b727a83`)
 
 - **Symptom + exact repro:** `exitcodes_doc.go`'s code-6 bullet publishes 🔴 *"THE HEADER IS
   CONSULTED BEFORE THE MESSAGE, so a cap-worded 429 that carries `Retry-After` exits `5`, NOT
-  `2`."* Swap the order in `pkg/civitai/retry.go` (~`:240-247`, consult the message before the
-  header) and run `go test ./...`.
-- **Observed (with values):** the round-4 auditor measured that mutant **21 ok / 0 FAIL** — the
-  whole suite green while the published contract flips. Its positive control: stock binary → rc
-  **5**, `Civitai returned HTTP 429 after 4 attempts …`; mutant → rc **2**,
-  `rate limited (429): You've requested too many pages …`. No test anywhere combines a cap-worded
-  body with `Retry-After`: `retry_test.go:172`'s exhaustion case uses an **empty** body, so it
-  cannot distinguish the orderings.
-- **Ruled out:** *"nothing local can pin this"* — **via: code**. My own `pinnedBy` field says
-  `"nothing local — the assumption is about the server"`, and that CONFLATES two things. The
-  vendored assumption (the server never attaches `Retry-After` to a cap 429) is genuinely
-  unguardable. The CLI's own ORDERING is local, trivially observable, and unguarded. The field as
-  written tells the next maintainer no guard is possible, which is the description-reads-as-
-  coverage failure.
-- **Leading hypothesis:** a ~15-line `httptest` case pinning rc-5-for-cap-body-with-`Retry-After`
-  closes it, and would have killed that mutant.
-- **Next probe:** write it in `pkg/civitai`, then re-run the ordering mutant and confirm it goes
-  red; then correct the `pinnedBy` string to name the new guard and keep only the server half as
-  unguardable.
+  `2`."* Consult the message first in `pkg/civitai/retry.go`'s 429 branch (return terminal on cap
+  wording, whatever the header) and run `go test ./...`.
+- **Observed (with values):** round 4's *21 ok / 0 FAIL* under that mutant was **independently
+  reproduced** — mutant applied with both of #601's files reverted to `7467c62` → 21 ok / 0 FAIL.
+  The gap was real. **Why nothing could see it:** `retry_test.go`'s two 429 neighbours each hold
+  one half of the input fixed — the exhaustion case sends an EMPTY body, the terminal case sends
+  no header. It takes both at once, which nothing sent. After #601: under the same mutant, **19 ok
+  packages and exactly TWO `--- FAIL`s**, both new guards.
+- 🔴 **Round 0 of the audit found the delivered guard was ONE HOP SHORT, and that is the durable
+  part.** It pinned the SENTINEL (`errors.Is` ErrNetwork, not ErrBadRequest). The requirement of
+  record and the published bullet are about an **EXIT CODE**, and nothing anywhere composed
+  cap-body + `Retry-After` → `exitCode()`. The repo already owned the idiom one directory over:
+  `cmd/civitai/read_error_stderr_test.go` says it in words for the adjacent 429 row — *"pkg/civitai
+  owns the sentinel; this owns the number a script reads from `$?`."* **A classification test and
+  an exit-code test are two claims; a published `rc` needs the second.**
+- **Ruled out:** *"nothing local can pin this"* — **via: code**. The old `pinnedBy` read
+  `"nothing local — the assumption is about the server"`, conflating the **ORDERING** (local,
+  trivially observable, now pinned twice) with the **REACHABILITY** (whether the server ever
+  attaches `Retry-After` to a cap 429 — genuinely unguardable, and the reason the case is
+  published). Telling the next maintainer no guard is possible is the description-reads-as-coverage
+  failure.
+- **Also fixed, and the cheaper lesson:** the precedence was **described in three surfaces and
+  argued in none**, so a maintainer reading the bullet call it *"the exact hazard the 2
+  reclassification exists to prevent"* would reasonably invert it and hit a test that asserts a
+  contract without saying why. `retry.go` now argues it — a `Retry-After` header is a STRUCTURED
+  signal the server sent deliberately; `isDeepPagingCap` is a three-phrase substring match over
+  prose its own doc comment calls *"deliberately narrow"*, which any proxy or copy-edit can produce
+  or destroy — and names the four surfaces that move if the precedence ever changes.
+- **Next probe:** none. Round 1 (the nine correctness axes) was **NOT** run on #601; it merged on
+  round 0 plus my own verification. Test-and-comment-only and green on `main`, but that is a
+  judgement, not an audit.
 
 ## Next steps (ranked)
 
@@ -268,19 +281,22 @@ there as recall rather than live state.
 2. **`developer-docs#61`** — awaiting the reporter's blue balance at the time of their 500. Still
    OPEN, 1 comment, untouched since 2026-09-12. Genuinely blocked on a third party.
    forcing: user — external reporter, waiting since 2026-09-11.
-3. 🔴 **`civitai/civitai#4768` is NOT blocked — it is UNROUTED.** Still **0 comments** as of
-   2026-09-14T04:26, untouched since 09-11. Nothing is stopping it except a decision to ping a
-   platform owner, which is outward-facing and unasked-for. **Of the objectives named at kickoff
-   this is the only one where progress is available and not taken.** forcing: none
+3. **`civitai/civitai#4768` — PICKED UP 2026-09-14, agent dispatched to fix + PR.** Still 0
+   comments / untouched since 09-11 at dispatch time; the operator chose "dispatch to pick it up
+   and PR" over merely routing it. Working in `/home/zach/workspace/civit/civitai-4768-username`
+   off `civitai/civitai`, claim slug `civitai-4768-numeric-username`. 🔴 **The brief's load-bearing
+   constraint: a serialization-boundary `String(...)` cast is NOT the fix** — `"0222"` is already
+   `222` by the time the read path sees it, so a cast repeats #532's mistake on the server side.
+   The PR must state which half it ships (stored representation + reindex/backfill vs defensive
+   read) and use a BARE reference if partial. forcing: none — but see rank 25 for the outcome.
 4. **DONE — stale branch deleted** (`12818a3`). forcing: none
 5. **DONE — `#545` merged.** forcing: none
 6. **DONE — `#554` closed by @xsvm.** forcing: none
 7. **DONE — AGENTS.md item 37 corrected** via `#556`. forcing: none
 8. **DONE — `#552` CLOSED.** forcing: none
-9. **`developer-docs#76` CLOSED; the sweep is green on a DISPATCHED run and NOT YET on a
-   scheduled one.** See the investigation block. Closes at ~06:37 UTC 09-14.
-   forcing: gate — the forcing function was stated in scheduled runs and the streak's end is not
-   yet observed in one.
+9. **DONE — the drift streak's end is OBSERVED.** Scheduled run `34848144324` (2026-09-14T13:15
+   UTC): `drift=success`, **0 failing steps / 15 executed**, `notify=success`. See the resolved
+   investigation block. forcing: none
 10. **DONE — vendored mirrors measured CLEAN.** forcing: none
 11. **`home-manager switch`** so `devrc#1498`'s lesson is live. Operator's call — restarts
     collector/keylog/i3 on both hosts. forcing: none
@@ -313,13 +329,23 @@ there as recall rather than live state.
     alone. (b) the `/apps/installed` → `/apps/activity` prose rename. (c) `apps/guide/concepts.md`'s
     NSFW gating advice (`isSfwCeiling(maxBrowsingLevel)`) is now the LESS safe option.
     forcing: none
-22. **`cli#591` round-4 F2 — the header-before-message ordering is unguarded.** See the
-    investigation block; the fix is known and unwritten. `pkg/civitai/retry_test.go`.
-    forcing: regression — a published 🔴 contract can be inverted with the suite fully green.
+22. **DONE — `cli#601` merged** (`b727a83`). The ordering is pinned twice: the SENTINEL in
+    `pkg/civitai/retry_test.go` and the EXIT CODE in `cmd/civitai/read_error_stderr_test.go`.
+    Round 0 ran BEFORE the merge decision and changed what shipped (2 payload findings);
+    round 1 did not run. forcing: none
 23. **`cli#593`** — `closedLoopbackAddr` binds an ephemeral port, closes it, and assumes nothing
     rebinds it. Flaked once on `#590`; re-run passed. It guards two POSITIVE CONTROLS, and a
     control that flakes trains the reflex of dismissing the one assertion that proves the harness
     works. forcing: none
+25. **`civitai/civitai#4768`'s fix PR — outcome not yet known.** The agent dispatched under
+    rank 3 had not reported when this doc was written. **Check for the PR before re-dispatching
+    anything at #4768**, and `claim-work --list` for `civitai-4768-numeric-username`.
+    forcing: none
+26. **`cli#602` merged-tree re-run — DELIBERATELY SKIPPED, operator's call 2026-09-14.** It shares
+    `internal/cmd/exitcodes_claims_test.go` with the merged `#601` and was 1 commit behind at the
+    time. `gh pr view` said `MERGEABLE`/`CLEAN`, which is the TEXTUAL claim only. The mechanical
+    check is posted as a comment on #602. Recorded as skipped, not absent — `#585` dropped
+    `#591`'s rows on a resolution that conflicted nowhere. forcing: none
 24. 🔴 **`claudedocs/handoff-index-store-claims-accuracy.md` is 7,091 B OVER its ceiling and is
     reddening a SHARED gate** — `test_no_handoff_doc_exceeds_its_budget` fails for everyone, and
     the next unrelated PR inherits it. It is in a `devrc-*` worktree, not this repo, and it GREW
@@ -328,6 +354,35 @@ there as recall rather than live state.
     forcing: gate — a permanently-red gate trains everyone to click through.
 
 ## Gotchas / decisions / dead-ends
+
+- 🔴 **A TIMED-OUT MUTATION BATTERY LEAVES THE MUTANT IN THE TREE, AND THE RESTORE LINE IS THE ONE
+  THAT DIES.** A `make ci` + mutate + full-suite + restore chain hit the 2-minute tool timeout
+  (`rc=143`, SIGTERM) after the measurement printed but before the `cp -a` restore ran. Every
+  number I wanted was already on screen, so the run read as a success. **The mutant sat in
+  `retry.go` until an explicit `grep` for it before committing.** Put the restore in its own call,
+  or re-check for the mutant by name after ANY battery — a clean-looking transcript is not a clean
+  tree, and `git status` shows the file as modified either way because the fix modified it too.
+- 🔴 **A GREP FOR "THE OLD TEXT IS GONE" CANNOT SEE THE DIFFERENCE BETWEEN REMOVED AND QUOTED.**
+  Verifying the `pinnedBy` correction landed, `grep -c 'nothing local — the assumption is about'`
+  returned **1** on the merged `main` — and the hit was **my own retraction comment quoting the old
+  text**. Read as "the fix did not land". When a fix RETRACTS a sentence by quoting it, grep for
+  the live construct (`pinnedBy: "nothing local`), never the prose.
+- 🔴 **`| head` ATE grep's EXIT STATUS AGAIN, IN THE SAME SESSION THAT RECORDED THE LESSON.** A
+  closing-keyword audit on the merge commit printed nothing and its `|| echo "0 hits"` never fired,
+  so the pipeline was silently indistinguishable from "no output because the command failed".
+  Re-run as `hits=$(… | grep -c …)` **with a positive control on the same pattern** — a contrived
+  `fixes #513` string returned 1, which is what makes the real 0 a reading.
+- 🔴 **THE MERGE DROP-CHECK HAS A PREMISE, AND IT IS NOT ALWAYS TRUE.**
+  `diff <(git show origin/main:<file>) <file>` reported **103 lines main has that we lack** on the
+  handoff branch — which reads exactly like the `#585` regression. It was not: `main`'s copy was
+  simply OLDER, because the three commits it had gained never touched that file, and the 103 lines
+  were what this PR itself deliberately replaced. **The check only means "drop" when `main`
+  actually changed that path** — establish that first (`git diff <merge-base> origin/main -- <path>`),
+  or the alarm fires on every ordinary rewrite and trains you to ignore it.
+- **Round-0 trial ledger, this session: `ran: 1 · changed the outcome: 1`.** It ran BEFORE the
+  merge decision (the `audit-pr-nudge.py` routing working) and produced two payload findings, one
+  of which — the sentinel-vs-exit-code seam — closed the requirement of record that the delivered
+  guard had missed.
 
 - 🔴 **`--json` is NOT the surface to reason about here.** Every read command's `--json`
   emits the raw server bytes; only the typed SDK and the human/table path see the Go
@@ -531,7 +586,8 @@ FLOOR, not a guarantee — and the structural fix is to keep the record where no
 | `#569` tab vector + #564 reconciliation | `e3f2608` | MERGED |
 | **`#573` tabwriter ledger + 20 renderers gated** | **`6f0a8d8`** | MERGED |
 | `devrc#1498` mentions-id-collision lesson | `550de40` | MERGED — ⚠ NOT live until `home-manager switch` |
-| `civitai/civitai#4768` (server-side #513) | new | FILED, 0 comments |
+| **`#601` 429 ordering: sentinel + exit code** | **`b727a83`** | MERGED |
+| `civitai/civitai#4768` (server-side #513) | new | FILED → agent dispatched 09-14 to fix + PR |
 | stale branch `fix/flexstring-numeric-username` | — | DELETED, recovery sha `12818a3` |
 
 
@@ -766,11 +822,15 @@ grep -c "Throttled; exit \`6\`\. For deep paging" README.md       # 0  (the regr
 go test ./internal/cmd/ -run TestAppSubmitOversizeEndToEnd -count=1 -v
 go test ./internal/appapi/ -run 'TestAllowOversizeBody|TestSubmitCeilingValue' -count=1 -v
 
-# 3. rank 22 — the ordering mutant that SHOULD be red and is not.
-#    Swap the header/message order in pkg/civitai/retry.go's 429 branch, then:
-go test ./... -count=1 | grep -c '^FAIL'   # currently 0 — that is the finding
+# 3. rank 22 — BOTH guards must go red on the ordering mutant. Insert, in the 429
+#    branch of pkg/civitai/retry.go's getWithRetry, ahead of the retryAfterDelay call:
+#        if isDeepPagingCap(string(raw)) { return status, raw, nil }
+#    Restore from a `cp -a` copy afterwards, and grep the mutant out by name to
+#    confirm it is gone — a timed-out battery leaves it behind.
+go test ./... -count=1 | grep -c '^--- FAIL'   # 2: the sentinel guard AND the rc guard
+go test ./... -count=1 | grep -c '^ok '        # 19 (21 minus pkg/civitai and cmd/civitai)
 
-# 4. rank 9 — after 06:37 UTC, a SCHEDULED drift run, read per-step not per-run
+# 4. rank 9 — CLOSED, but this is how it was closed; re-run reads the NEWEST scheduled run
 rid=$(gh run list --repo civitai/civitai-developer-docs --workflow appblocks-drift.yml \
         --limit 5 --json databaseId,event -q '[.[]|select(.event=="schedule")][0].databaseId')
 gh api "repos/civitai/civitai-developer-docs/actions/runs/$rid/jobs" \
