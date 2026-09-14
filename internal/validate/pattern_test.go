@@ -342,7 +342,8 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 		"scopes[1]": "scopes[1]: value must be one of 'models:read:self', 'user:read:self', " +
 			"'ai:write:budgeted', 'buzz:read:self', 'social:tip:self', 'apps:storage:read', " +
 			"'apps:storage:write', 'apps:storage:shared:read', 'apps:storage:shared:write', " +
-			"'collections:read:self', 'collections:write:self', 'collections:read:private'",
+			"'collections:read:self', 'collections:write:self', 'collections:read:private', " +
+			"'posts:write:self'",
 	}
 	for field, wantMsg := range want {
 		if got[field] != wantMsg {
@@ -353,6 +354,47 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	// loop above compares two absent values and reports nothing.
 	if len(got) == 0 {
 		t.Fatal("the fixture produced no findings — this control observes nothing")
+	}
+}
+
+// TestPostsWriteSelfScopeAccepted is the ACCEPT arm for the scope the vendored
+// schema gained with the App Blocks → Post bridge.
+//
+// The enum-wording test above only proves the string appears in a REJECTION
+// message; a schema could list a value there and still refuse it (the message is
+// built from the enum, the acceptance is a separate code path). This asserts the
+// thing an app author actually depends on: a manifest declaring the scope, with
+// its required justification, produces no manifest error at all.
+//
+// The rejection arm is the pre-release binary, which is exercised outside the
+// test suite — a suite compiled against the NEW schema cannot observe the old
+// one.
+func TestPostsWriteSelfScopeAccepted(t *testing.T) {
+	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
+		`"scopes":["models:read:self","posts:write:self"],` +
+		`"scopeJustifications":{"posts:write:self":"lets the viewer publish the images this app generated for them"},` +
+		`"kind":"page",` +
+		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
+	for _, f := range manifestOnlyFindings(t, body) {
+		t.Errorf("unexpected finding on %q: %s", f.Field, f.Message)
+	}
+
+	// NEGATIVE CONTROL for this fixture specifically: the SAME manifest with the
+	// justification removed MUST fail, and fail for the justification's own
+	// reason. Without this, a fixture that silently stopped reaching the
+	// validator would pass the loop above by producing nothing.
+	const unjustified = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
+		`"scopes":["models:read:self","posts:write:self"],"kind":"page",` +
+		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
+	var hit bool
+	for _, f := range manifestOnlyFindings(t, unjustified) {
+		if strings.Contains(f.Message, "posts:write:self") &&
+			strings.Contains(f.Message, "scopeJustifications") {
+			hit = true
+		}
+	}
+	if !hit {
+		t.Fatal("removing the justification produced no scopeJustifications finding naming posts:write:self")
 	}
 }
 
