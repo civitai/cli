@@ -927,10 +927,29 @@ func TestReportExcludedOutputs_MultiLineReasonCannotForgeARefundClaim(t *testing
 // F10: the output ID is server-origin too, and it is on the same line as the
 // reason. The claim that every site printing server text is covered here has to
 // include it.
+//
+// 🔴 IT ASSERTED ONLY THE INVISIBLE CLASS, SO IT COULD NOT SEE THE UPGRADE
+// civitai/cli#596 MADE. That PR moved this id from safeTerm to safeTermSingle;
+// round 2's delta audit reverted exactly that — safeTermSingle -> safeTerm, the
+// narrowest expression — and the whole suite stayed GREEN, because an ESC-only
+// fixture cannot tell the two apart: saferune strips the escape either way and
+// deliberately KEEPS \n and \t. Full ungating still died here, so what was
+// pinned was "some gate exists", not "the single-line gate exists". The fixture
+// now carries all three runes and the geometry is counted.
+//
+// The geometry is the assertion because this is a LIST: one warn header, one
+// `    - <id>: <reason>` row per excluded output, one dim trailer. The id
+// choosing how many rows that list has is the forgery — indentContinuation
+// handles the REASON's own newlines (its own test, above), and the id sits in
+// front of it where nothing re-indents.
 func TestReportExcludedOutputs_OutputIDIsSanitized(t *testing.T) {
 	var b bytes.Buffer
+	// ESC pins the invisible class; \n and \t pin the single-line collapse that
+	// safeTerm alone does NOT do. The payload reads as a complete, plausible row
+	// so a survivor looks like the lie it is rather than like mangled text.
+	const hostileID = "out\x1b[2K_1\n    - out_2: saved (2.0 MiB)\tOK"
 	reportExcludedOutputs(&b, []genapi.Output{
-		{Blob: genapi.Blob{ID: "out\x1b[2K_1"}},
+		{Blob: genapi.Blob{ID: hostileID}},
 	}, false, nil)
 	got := b.String()
 	if strings.ContainsRune(got, 0x1b) {
@@ -938,6 +957,18 @@ func TestReportExcludedOutputs_OutputIDIsSanitized(t *testing.T) {
 	}
 	if !strings.Contains(got, "out") || !strings.Contains(got, "_1") {
 		t.Errorf("CONTROL failure, not a finding: the id did not render at all: %q", got)
+	}
+	// Header + ONE row + trailer, each ended by its own newline. One excluded
+	// output means exactly three.
+	if n := strings.Count(got, "\n"); n != 3 {
+		t.Errorf("#574/#577 FORGERY in reportExcludedOutputs: the list occupies %d line(s) for ONE "+
+			"excluded output, want 3 (header, the row, the trailer). safeTerm KEEPS \\n by design, so a "+
+			"server-chosen output id that carries one invents rows in a list about a charge the user "+
+			"already paid — safeTermSingle is what closes it:\n%s", n, got)
+	}
+	if strings.Contains(got, "\t") {
+		t.Errorf("#574/#577 FORGERY in reportExcludedOutputs: a TAB in the SERVER-supplied output id "+
+			"survived:\n%q", got)
 	}
 }
 

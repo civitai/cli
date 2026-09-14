@@ -67,10 +67,17 @@ func safeTerm(s string) string {
 // chain, so the exit-code classifier (AGENTS.md items 7 and 24) still sees
 // whatever sentinel or concrete type it was going to see.
 //
-// 🔴 USE IT ONLY ON download.go's SINGLE-LINE ERROR PATH — not at just any site
+// 🔴 USE IT ONLY ON A SINGLE-LINE ERROR PATH — not at just any site
 // that wraps server bytes. (An earlier draft of this line opened "DO NOT use it
-// at ANY site", which skims as "never call this function" and is false of five
-// live call sites — the same read-the-bold-line failure this comment exists to
+// at ANY site", which skims as "never call this function" and is false of SEVEN
+// live call sites — five in download.go and two in generate_output.go's blob
+// transfer. It read "five" from civitai/cli#590, which is the commit that wrote
+// it and the tree where five was right; the two generate_output.go callers
+// arrived later, in this branch's own first commit, and civitai/cli#596 round 1
+// then corrected two neighbouring stale sentences in this same block without
+// re-counting this one. Re-derived by grepping `safeTermErr(` across the
+// package's non-test sources, not carried through
+// — the same read-the-bold-line failure this comment exists to
 // fix.) The two halves of the sentence it replaced pull in opposite directions. An
 // earlier draft said "use it at ANY site where `%w` carries a cause built from
 // server-derived bytes" in the same comment that justifies collapsing \n and \t
@@ -97,7 +104,12 @@ func safeTerm(s string) string {
 // SAME shape this function's own history records from #566 — "one value,
 // printed twice, sanitised on one half" — one class down, and a first pass at
 // #577 shipped three comments claiming the residual was closed while it was not.
-// Every caller is on download.go's single-line error path, so the whole
+// Every caller is on a single-line error path — download.go's, and since
+// civitai/cli#574 generate_output.go's blob download, which is the same shape
+// one command over (same writePart, same presigned transfer, same one-line
+// errors). TestSafeTermErrCallersAreLedgered pins that set in both directions,
+// and it is what caught this sentence still saying "download.go" after the
+// second caller arrived. So the whole
 // function takes the single-line rule.
 func safeTermErr(err error) error {
 	if err == nil {

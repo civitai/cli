@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/civitai/cli/pkg/civitai"
 )
@@ -108,5 +109,64 @@ func TestThrottle429KeepsExitSixThroughTheMessageFilter(t *testing.T) {
 			"The deep-paging-cap reclassification is reading the FILTERED message, so "+
 			"the CLI's own strip synthesised the cap phrase and turned a retryable "+
 			"throttle into a usage error:\n%q", got, exitRateLimited, err)
+	}
+}
+
+// TestCapWorded429WithRetryAfterExitsFiveNotTwo is the THIRD 429 exit code, and
+// the one the published contract calls out in 🔴: a cap-worded 429 that carries
+// Retry-After exits 5, NOT 2, because the HEADER is consulted before the
+// MESSAGE. See `exitcodes_doc.go`'s code-6 bullet and README's exit-code rows.
+//
+// 🔴 THE SENTINEL AND THE NUMBER ARE TWO CLAIMS, AND THIS FILE OWNS THE NUMBER.
+// pkg/civitai's TestCapWorded429WithRetryAfterIsRetriedNotReclassified pins the
+// sentinel (ErrNetwork, not ErrBadRequest) and kills the ordering mutant. It
+// stops one hop short of `$?`, which is what a scripter actually branches on and
+// what the bullet publishes — the same division of labour the test above states
+// for the 6-vs-2 pair. Nothing composed cap-body + Retry-After -> exitCode()
+// until this test, so the seam between the classification and the number was
+// unowned for the one 429 case the contract marks 🔴.
+func TestCapWorded429WithRetryAfterExitsFiveNotTwo(t *testing.T) {
+	// Cap wording AND Retry-After on every response, so the request exhausts.
+	// Retry-After: 0 makes backoffFor return 0 (it clamps the override), and
+	// RetryBackoffBase is pinned to 0 as well so the test cannot sleep even if
+	// the override path changes.
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(
+			`{"message":"You've requested too many pages, please use cursors instead"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := civitai.New(srv.URL, "")
+	zero := time.Duration(0)
+	c.RetryBackoffBase = &zero
+
+	_, _, err := c.GetModelVersion(context.Background(), "31708")
+	if err == nil {
+		t.Fatal("a persistent 429 must be an error; without it this test asserts on nothing")
+	}
+	// Positive control on the INSTRUMENT: exitCode must be able to return 2 —
+	// the very code this test claims was NOT reached — or "it returned 5" says
+	// nothing about whether exitCode discriminates at all.
+	if got := exitCode(civitai.Tag(civitai.ErrBadRequest, errors.New("bad enum"))); got != exitUsage {
+		t.Fatalf("CONTROL failure, not a finding: exitCode(ErrBadRequest) = %d, want %d",
+			got, exitUsage)
+	}
+	// The header decided, so the request was RETRIED rather than reclassified.
+	// Asserted here too because it is what makes the 5 meaningful: a 5 reached
+	// after ONE request would be a different bug with the same exit code.
+	if hits < 2 {
+		t.Errorf("the header must win, which means retrying: got %d request(s) — "+
+			"1 means the cap wording was consulted first", hits)
+	}
+	if got := exitCode(err); got != exitNetwork {
+		t.Errorf("a cap-worded 429 carrying Retry-After exits %d, want %d (exitNetwork).\n"+
+			"Getting %d (exitUsage) means the MESSAGE was consulted before the HEADER, "+
+			"inverting the 🔴 bullet in exitcodes_doc.go and README:\n%q",
+			got, exitNetwork, exitUsage, err)
 	}
 }

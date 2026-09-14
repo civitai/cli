@@ -3,6 +3,7 @@ package civitai
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -185,6 +186,87 @@ func TestRead429WithRetryAfterExhaustsGeneric(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "temporarily unavailable") {
 		t.Errorf("persistent throttle should surface the generic message, got %v", err)
+	}
+}
+
+// 🔴 THE ORDERING ITSELF — the header is consulted BEFORE the message, so a
+// CAP-WORDED 429 that carries Retry-After is retried to exhaustion and exits 5,
+// NOT reclassified to 2. That is published as a 🔴 bullet in README's exit-code
+// rows and in exitcodes_doc.go, and until this test it was UNGUARDED. Consulting
+// the message first — return terminal on cap wording, whatever the header —
+// inverts the bullet from 5 to 2, and with the mutant applied the ONLY `--- FAIL`
+// in the whole repo is this test (20 ok packages otherwise), so nothing that
+// existed before it could see the swap. Why not: retry_test.go's two neighbours
+// each hold one half of the input fixed —
+// TestRead429WithRetryAfterExhaustsGeneric sends an EMPTY body and
+// TestRead429WithoutRetryAfterIsTerminalWithCursorHint sends no header — so
+// neither can distinguish the two orderings. It takes BOTH at once.
+//
+// The VENDORED assumption (the server never attaches Retry-After to a cap 429)
+// is genuinely unguardable here. The CLI's own ordering is not, and this is it.
+//
+// 🔴 WHY the header should win is argued in retry.go's 429 branch, not here, and
+// that argument is what a maintainer tempted to invert this needs — a test that
+// only says "the published contract, inverted" asserts a contract exists without
+// saying why. Read it before changing this; it also names the four surfaces that
+// move if the precedence ever does.
+//
+// This owns the SENTINEL. cmd/civitai's TestCapWorded429WithRetryAfterExitsFiveNotTwo
+// owns the exit code a script reads from `$?`.
+//
+// Asserted by errors.Is per AGENTS.md item 7: the sentinels carry no visible
+// text, so the message assertions below cannot see a classification swap.
+func TestCapWorded429WithRetryAfterIsRetriedNotReclassified(t *testing.T) {
+	// Cap wording (isDeepPagingCap matches "too many pages" / "use cursors")
+	// AND a Retry-After header, on every response. countingServer cannot express
+	// this: its failure body is fixed.
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Retry-After", "0") // 0 exercises the header path sleeplessly
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"You've requested too many pages, please use cursors instead"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c, _ := retryClient(srv)
+
+	_, _, err := c.GetModel(context.Background(), "42")
+	if err == nil {
+		t.Fatal("a persistent cap-worded 429 + Retry-After should surface an error")
+	}
+	// The header decided: retried to the cap, not terminal on the first try.
+	if hits != readMaxAttempts {
+		t.Errorf("header-before-message means this is RETRIED: expected %d requests, got %d "+
+			"(1 would mean the cap wording was consulted first)", readMaxAttempts, hits)
+	}
+	// Exit 5, not 2. ErrNetwork is what retryExhaustedError tags; ErrBadRequest
+	// is what readError's isDeepPagingCap branch would tag if the message won.
+	if !errors.Is(err, ErrNetwork) {
+		t.Errorf("must stay ErrNetwork (exit 5), got %v", err)
+	}
+	if errors.Is(err, ErrBadRequest) {
+		t.Errorf("must NOT be reclassified to ErrBadRequest (exit 2) — that is the "+
+			"published contract inverted, got %v", err)
+	}
+	// 🔴 AN INVARIANT GUARD, LABELLED AS ONE — it is NOT regression coverage and
+	// must not be counted as such. Measured: under the ordering mutant this
+	// assertion does NOT fire, because errkind.go attaches exactly one sentinel
+	// and the cap matcher still matches, so the mutant produces ErrBadRequest and
+	// ErrRateLimited is unreachable by construction on this input. It is kept
+	// because "exit 6" is the OTHER thing a 429 can be and a future third branch
+	// could reach it; it pins an invariant the ordering bug never violated.
+	if errors.Is(err, ErrRateLimited) {
+		t.Errorf("must NOT be ErrRateLimited (exit 6), got %v", err)
+	}
+	// And the message the README's exit-5 row tells a reader to grep for, not
+	// the exit-2/6 one. The cap wording still appears via snippet(raw), which is
+	// why `rate limited (429)` and `--cursor` — readError's text, absent from the
+	// body — are the discriminating absences.
+	if !strings.Contains(err.Error(), "Civitai returned HTTP 429 after 4 attempts") {
+		t.Errorf("should print the exhaustion message, got %v", err)
+	}
+	if strings.Contains(err.Error(), "rate limited (429)") || strings.Contains(err.Error(), "--cursor") {
+		t.Errorf("must not print readError's 429 text — that is the terminal path, got %v", err)
 	}
 }
 

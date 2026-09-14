@@ -15,7 +15,7 @@ import (
 //
 // 🔴 WHY A LEDGER AND NOT A DOC COMMENT. safeTermErr collapses \n and \t, not
 // just the invisible class. That is only safe because every caller is on
-// download.go's SINGLE-LINE error path — and for a while the function's own doc
+// a SINGLE-LINE error path — and for a while the function's own doc
 // comment said both "use it at ANY site where %w carries server-derived bytes"
 // AND "every caller is on download.go's single-line error path", in the same
 // paragraph. Both cannot be the contract, and nothing in the suite decided it.
@@ -36,7 +36,14 @@ func attributedIn(found map[string][]string, file string) int { return len(found
 
 func TestSafeTermErrCallersAreLedgered(t *testing.T) {
 	// file -> enclosing function, for every permitted safeTermErr call site.
-	// Every entry is on download.go's single-line error path.
+	//
+	// Every entry is on a SINGLE-LINE error path. That used to read "on
+	// download.go's single-line error path", and civitai/cli#574 widened it:
+	// generate's blob download path is the same shape one command over — the
+	// same writePart, the same presigned-blob transfer, the same one-line
+	// errors — and gating its `%s` operands while leaving the `%w` causes raw
+	// would have reproduced, on the money-spending path, exactly the half-fix
+	// #577 shipped and #590 had to repair.
 	ledger := map[string][]string{
 		"download.go": {
 			"downloadOne",
@@ -44,6 +51,10 @@ func TestSafeTermErrCallersAreLedgered(t *testing.T) {
 			"writePart",
 			"writePart",
 			"writePart",
+		},
+		"generate_output.go": {
+			"downloadBlobTo", // download %s: %w
+			"downloadBlobTo", // install %s: %w
 		},
 	}
 
@@ -158,7 +169,8 @@ func TestSafeTermErrCallersAreLedgered(t *testing.T) {
 			t.Errorf("safeTermErr is called in %s, which is NOT on the ledger (functions: %v).\n"+
 				"safeTermErr COLLAPSES \\n and \\t, so it is only safe where the message is a single line by "+
 				"construction. If %s's call sites really are single-line, add them here AND widen safeTermErr's "+
-				"doc comment, which currently scopes itself to download.go. If any of them can carry a "+
+				"doc comment, which scopes itself to a single-line error path — widen the LEDGER first, "+
+				"then the sentence, in that order. If any of them can carry a "+
 				"legitimately multi-line server string — an orchestrator failure reason — use safeTerm and "+
 				"indentContinuation instead.", file, fns, file)
 		}

@@ -233,10 +233,39 @@ func (c *Client) getWithRetry(ctx context.Context, path string, build func() (*h
 			//     anything this branch knows;
 			//   - a cap-worded 429 that DOES carry Retry-After is retried by the
 			//     code below and exits 5, not 2. That is a structurally doomed
-			//     request landing on the code to RETRY on. It rests entirely on
-			//     the vendored assumption that the server never attaches
-			//     Retry-After to a cap 429 — there is no local guard on it, so it
-			//     is published in README's exit-code rows rather than left here.
+			//     request landing on the code to RETRY on, so it is published in
+			//     README's exit-code rows rather than left here.
+			//
+			// 🔴 WHY THE HEADER WINS — the precedence is CHOSEN, not merely the
+			// order the code happens to be written in, and until this was written
+			// down it was described in three surfaces and argued in none. A
+			// Retry-After header is a STRUCTURED signal the server sent
+			// deliberately: it says "transient, come back in N". isDeepPagingCap
+			// is a THREE-PHRASE SUBSTRING MATCH over prose its own doc comment
+			// calls "deliberately narrow", and that prose is not a contract —
+			// any proxy, edge worker or future copy-edit can produce or destroy
+			// those phrases. Letting the heuristic outrank the structured signal
+			// trades this case's hazard for a worse one in the direction that
+			// matters: a GENUINE throttle refused as a usage error, which a
+			// scripter's backoff loop will never retry. So the header wins, and
+			// the residual — a doomed request on the retry code — is published.
+			//
+			// TWO CLAIMS, AND ONLY ONE IS UNGUARDABLE. The ORDERING is local and
+			// is now pinned twice: pkg/civitai's
+			// TestCapWorded429WithRetryAfterIsRetriedNotReclassified (the
+			// sentinel) and cmd/civitai's
+			// TestCapWorded429WithRetryAfterExitsFiveNotTwo (the exit code a
+			// script reads). The REACHABILITY — whether the server ever attaches
+			// Retry-After to a cap 429 — is a VENDORED assumption about the
+			// server with no local guard, and that half is why the case is
+			// published rather than relied on in silence.
+			//
+			// IF THIS PRECEDENCE EVER CHANGES, four surfaces move with it: the
+			// 🔴 bullet in internal/cmd/exitcodes_doc.go's code-6 entry, its
+			// generated twin in README's exit-code rows, the claim row named
+			// "the Retry-After header is consulted before the message …" in
+			// internal/cmd/exitcodes_claims_test.go, and that row's entry in
+			// exitCodeClaimsFloor. Plus the two guards above.
 			var override *time.Duration
 			if status == http.StatusTooManyRequests {
 				if d, ok := retryAfterDelay(hdr, retryAfterCap); ok {

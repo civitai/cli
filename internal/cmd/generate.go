@@ -1573,7 +1573,7 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 				fmt.Fprintln(errw, ui.For(errw).Warn(fmt.Sprintf("%d of %d output(s) were saved before this failed", len(paths), len(kept))))
 			}
 			fmt.Fprintln(errw, ui.For(errw).Dim(fmt.Sprintf(
-				"Output URLs expire — re-read the workflow for fresh links: civitai workflows get %s", workflowID)))
+				"Output URLs expire — re-read the workflow for fresh links: civitai workflows get %s", safeTermSingle(workflowID))))
 			return derr
 		}
 	}
@@ -1878,11 +1878,19 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 	// residual on civitai/cli#575 R5. Every clause of that is false since R5
 	// closed — the ledger is keyed `enclosingFunction::argument`, so no key is
 	// package-wide and a short name allowlists one (function, name) PAIR. Not
-	// "exactly one site", which an earlier draft said: six of the 35 rows govern
-	// two call sites each, and that ten one-letter-keyed rows happen to govern one
-	// apiece today is an accident nothing asserts. The rule the
+	// "exactly one site", which an earlier draft said: a pair can occur several
+	// times in its function, and that the one-letter-keyed rows happen to govern
+	// one apiece today is an accident nothing asserts. The rule the
 	// comment was really about survives in one line: a row should be a claim about
 	// ONE function's value.
+	//
+	// 🔴 A ROW/SITE COUNT USED TO SIT IN THIS SENTENCE AND IS DELETED, NOT
+	// UPDATED — the THIRD copy of it, missed by the commit whose own title was
+	// deleting the other two, and found by `git grep "35 rows"`. It was exact at
+	// this PR's merge base and falsified by this PR's own new rows, which also
+	// pushed a pair to three sites, so its implicit "two is the maximum" broke as
+	// well. Nothing asserts on those numbers, so nothing would ever report the
+	// drift. A number kept beside what it counts drifts; the property does not.
 	//
 	// ⚠ WHAT IS ENFORCED IS THE KEY, NOT THE CLAIM — an earlier draft of this
 	// sentence said "which is now enforced rather than requested", and that is
