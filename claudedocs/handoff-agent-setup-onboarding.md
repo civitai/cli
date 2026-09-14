@@ -403,25 +403,30 @@ before those rounds' commits were read back.
 
 🔴 **Ranks 1–14, 18–22 and 24 are DONE — numbering preserved** so live `claim-work` slugs keep
 pointing at what they were taken for. Open: **15, 16, 17, 23 (in flight), 25, 26, 27, 28, 29,
-30 (new)**.
+30**.
 
 🔴 **Re-verify every item against live state before trusting it** — this list went stale
-*within twenty minutes* on a previous pass, and this session found rank 23's own entry
-describing a ladder state two rounds behind reality.
+*within twenty minutes* on a previous pass, this session found rank 23's own entry describing a
+ladder state two rounds behind reality, and it found rank 29 asserting a gate that does not
+exist.
 
-23. **IN FLIGHT: civitai/cli#596** — rank 23 / cli#574. Round 0 ✅, round 1 ✅, **round 2 ✅
-    with findings**; a fix round is in flight and **round 3 (delta, `19455c0c..<new head>`) is
-    owed** before merge. Then merge, then close #574 BY HAND against its own stated check (see
-    *How to verify*). Worktree `cli-596b`; mind the `-r0` push refspec above.
+23. **IN FLIGHT: civitai/cli#596** — rank 23 / cli#574. Round 0 ✅, round 1 ✅, round 2 ✅ (with
+    findings, one of them proving a round-1 claim false), fix round ✅ at `a3a8ca0`, **round 3
+    dispatched**. All 13 checks SUCCESS at `a3a8ca0`; `MERGEABLE`/`CLEAN`. A `audit-claims
+    round=2 audited=19455c0c..a3a8ca0` block is posted. Next: read round 3 — **a clean round
+    ENDS the ladder** — then merge, then close #574 BY HAND against its own stated check (see
+    *How to verify*). Worktree `cli-596b`; mind the `-r0` push refspec.
     forcing: security — uploader-influenced text on the path that spends money.
-30. **NEW — `generate.go`'s sibling `workflowID` sites forge lines.** Deferred out of #596 by
-    operator decision (narrow fix round). `printReattach` (`:1628`/`:1631`) plus `:1514`,
-    `:1558`, `:1610`, `:1616` print the server-supplied workflow id through plain `safeTerm`,
-    which keeps `\n`/`\t`. Measured by the round-2 auditor: **two counterfeit column-zero
-    `Re-attach:` lines** pointing at `wf-ATTACKER`, on the recovery block for money already
-    spent. The in-flight fix round was told to file this as an issue — **get its number and
-    put it here.** Closing condition: those six sites gated with `safeTermSingle` and pinned
-    by a named test that dies when each gate is reverted.
+30. **civitai/cli#604 — `generate.go`'s sibling `workflowID` sites forge lines.** FILED.
+    Deferred out of #596 by operator decision (narrow fix scope). Seven sites; the issue carries
+    the measured forgery (two counterfeit `Re-attach:` lines pointing at `wf-ATTACKER`, the
+    first one ABOVE the genuine line) and a mechanical closing condition. ⚠ The seventh site
+    (`:1630`, `safeTerm(status)`) was added by the filer on "one rule, one place" grounds and is
+    flagged in the issue as a judgement call to trim if you disagree.
+    ⚠ **Read the issue's closing note before writing any tab guard there:** `ui`'s lipgloss
+    styles expand `\t` to four spaces before bytes reach the writer (measured:
+    `ui.For(w).Dim("a\tb") == "a    b"`), so a tab assertion is INERT on `:1610`/`:1616` and
+    live only on the bare-`Fprintf` sites.
     forcing: security — a forged recovery instruction on a money-spending path.
 15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT
     re-verified this session. `/home/zach/workspace/civit/civitai-developer-docs`.
@@ -431,8 +436,8 @@ describing a ladder state two rounds behind reality.
     happened and will be loud when it does.
     forcing: none
 17. **Most of this arc's PRs were not adversarially audited.** ⚠ **RECOMMENDED FOR
-    CONVERSION, not work:** the base rate (now five for five) argues for auditing at MERGE
-    time, which is a practice, not a backlog item.
+    CONVERSION, not work:** the base rate argues for auditing at MERGE time, which is a
+    practice, not a backlog item.
     forcing: none
 25. **cli#579 — `saferune.Strip`'s doc claims a byte-for-byte subsequence.** Explicitly
     inert. Unchanged.
@@ -449,17 +454,24 @@ describing a ladder state two rounds behind reality.
     writing in `decisions/38` with the measurement.
     forcing: security — a forged `(SHA256 verified)` the user reads as an integrity result,
     reachable with no control runes at all.
-29. 🔴 **THIS DOC IS OVER ITS OWN CEILING AND THE TEST FAILS FOR EVERYONE.** Unchanged this
-    session and this update makes it slightly worse, not better (97,170 B against a 65,536 B
-    ceiling, +3,576 B from this update). The playbook, in the order the test's own failure
-    prescribes and with raising the number LAST: evict what has CLOSED (the `Open
-    investigations` section is mostly `✅ RESOLVED` / `❌ SUPERSEDED` blocks whose work
-    shipped), then demote dated evidence to `claudedocs/refs/agent-setup-onboarding.md`
-    leaving a pointer — the pattern already exists as
-    `claudedocs/refs/external-issue-513-numeric-username.md` — then split by initiative. 🔴 Do NOT satisfy it by deleting an open investigation,
-    a gotcha or a ruled-out theory. ⚠ A delta cannot do this — `Open investigations` and
-    `Gotchas` are APPEND-only through `handoff_doc.py`, so the prune is its own commit.
-    forcing: gate — a red `main` that every unrelated PR inherits.
+29. **This doc is 97,170 B and that is a real per-session cost — but it is NOT gated, and every
+    prior version of this item said it was.** ❌ **RETRACTED: "the test reds `main` and the next
+    unrelated PR inherits it."** `test_no_handoff_doc_exceeds_its_budget` lives in **devrc**,
+    its `REPO_ROOT` is devrc's root, and its corpus function is `this_repos_corpus()` — it never
+    scans `civitai/cli`. Measured 2026-09-14 three ways: the test RUNS GREEN (9 passed); no such
+    test exists anywhere in `civitai/cli`; and cli#603 carried this doc at 97 KB through **all
+    13** checks SUCCESS. So the honest forcing function is `none` — nothing external will ever
+    fail because of this file.
+    The reason to do it anyway is unchanged and is the one that was always true: this doc is
+    read first thing by every `/resume`, so its size is paid in context on every single session.
+    Playbook, raising a number LAST: evict what has CLOSED (the `Open investigations` section is
+    mostly `✅ RESOLVED` / `❌ SUPERSEDED` blocks whose work shipped), then demote dated evidence
+    to `claudedocs/refs/agent-setup-onboarding.md` leaving a pointer — the pattern already exists
+    as `claudedocs/refs/external-issue-513-numeric-username.md` — then split by initiative.
+    🔴 Do NOT satisfy it by deleting an open investigation, a gotcha or a ruled-out theory.
+    ⚠ A delta cannot do this: `Open investigations` and `Gotchas` are APPEND-only through
+    `handoff_doc.py`, so the prune is its own commit.
+    forcing: none
 
 ## Gotchas / decisions / dead-ends
 
@@ -1330,6 +1342,28 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
 - ⚠ **The base clone was switched to another session's branch for the SECOND session running**
   (`test/pin-429-header-before-message` this time, `docs/handoff-sweep-scope` last). Neither
   was noticed by a survey — both by a command that happened to print the branch.
+
+### Added 2026-09-14 — a gate that does not exist, asserted for several sessions
+
+- 🔴 **RANK 29 CLAIMED A RED GATE THAT NOTHING RUNS, AND THE CLAIM CAME FROM A TOOL'S WARNING
+  TEXT.** `handoff_doc.py` prints *"`test_no_handoff_doc_exceeds_its_budget` will go RED on
+  `main`, and it fails for EVERYONE"* whenever a doc exceeds 65,536 B — but that test is
+  **devrc's**, rooted at devrc via `Path(__file__)...parent.parent.parent`, with a corpus
+  function named `this_repos_corpus()`. A handoff doc living in `civitai/cli` is outside its
+  corpus entirely. The warning is correct about the BYTES and wrong about the CONSEQUENCE, and
+  the consequence is the half that got written into the ranked list as `forcing: gate`.
+  **Measured three ways before retracting:** the test runs green (9 passed); `command grep -r`
+  plus `find` over the `civitai/cli` checkout find no such test; and cli#603 took the 97 KB doc
+  through all 13 civitai/cli checks SUCCESS. `via: command`
+- 🔴 **THE TRANSFERABLE SHAPE: a tool's warning is a claim about the TOOL'S OWN REPO unless it
+  says otherwise.** This one names a test by function name, which reads as a specific,
+  checkable fact and is exactly why nobody checked it. A cross-repo handoff inherits the
+  warning verbatim and the falsity is invisible at the point of writing.
+- ⚠ **Consequence for the queue, stated because it is not obviously good:** `forcing: none`
+  items are declared not eligible to be worked, so correcting this makes rank 29 LESS likely to
+  be picked up, not more. That is the honest state — the cost is real (~24k tokens of context
+  on every `/resume`) but no external signal is asking for it. Do not re-mint a fake gate to
+  raise its priority.
 
 ## How to verify
 
