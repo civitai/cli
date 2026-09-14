@@ -46,10 +46,19 @@ import (
 // #566 exists because two spellings of one rule drifted apart, and #572 gated
 // `downloadStatusError` once at the top for the same reason. Fixing the four
 // reported sites and leaving their structural siblings raw is that mechanism
-// again. Every `safeTerm(` in download.go is a single-line context, so all 32
-// became `safeTermSingle(` — verified by the origin ledger, which scans BOTH
-// spellings (its own comment records why) and reports the same 199 sites before
-// and after, so no call site left its view.
+// again. Almost every `safeTerm(` in download.go is a single-line context, so
+// **31 of the 32 became `safeTermSingle(`** — verified by the origin ledger,
+// which scans BOTH spellings (its own comment records why) and reports the same
+// 199 sites before and after, so no call site left its view.
+//
+// 🔴 THE 32nd IS DELIBERATE AND THIS SENTENCE USED TO DENY IT. `targetPath`'s
+// `unusable filename %q` refusal (download.go, see its own comment) keeps bare
+// `safeTerm`: it renders through `%q`, which ESCAPES `\n` and `\t` rather than
+// passing them through, so the line cannot be forged there — and collapsing them
+// would destroy the one thing that message exists to convey, that the server
+// sent a newline. An earlier draft of this header said "all 32", which is the
+// reading three other files in this tree spend paragraphs warning against; this
+// is the file a reader opens FIRST for #577, so it was the worst place to say it.
 
 // dlNewlineName is the fixture. It is deliberately NOT dlHostileName: that one
 // carries invisible and bidi runes, which `safeTerm` already strips, so it
