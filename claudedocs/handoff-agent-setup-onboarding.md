@@ -19,139 +19,52 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 
 ## State now
 
-**Rank 19 is DONE and merged — `#542`'s second clause is discharged, and the issue
-was already closed before this arc touched it.** Ranks 20 and 22 were done in earlier
-passes. What remains of this safeTerm seam is **five open issues** — #574, #575, #577,
-#579 and the newly filed **#586** — all filed rather than folded in.
+**Ranks 19, 24 and 11 are DONE and merged. Rank 23 is IN FLIGHT as cli#596.** The
+safeTerm seam took **eight PRs** this pass; what remains of it is three open issues
+(#574 in flight, #579, #586) plus #575's R2–R4.
 
-- **Branch `main`, clean, synced.** `civitai/cli` at `af3194b`.
-  (`civitai/civitai-developer-docs` was at `d5b34c8` and was **not re-verified** this
-  session — treat that SHA as recalled, not measured.)
-- **Merged this pass:** **cli#583** (`af3194b`, squash, merged 2026-09-13T04:54:58Z) —
-  rank 19. Verified by CONTENT, not ancestry: `git diff <verified-head> origin/main`
-  was empty, which is what licenses "what landed is what I verified" after a squash.
-  Issue **#542 was left CLOSED and untouched**; the evidence was pasted on it by hand.
-  Claim `agent-setup-onboarding-19` **released** (verified absent from
-  `claim-work --list`, not assumed). 🔴 **Two of its five commits shipped UNAUDITED —
-  see the honest-limits entry.**
-- **Earlier pass, kept for the trail:** **cli#572** (`f0cb748`, squash, merged
-  2026-09-12T20:04:11Z) — rank 20. Issue **#566 was CLOSED BY HAND** at 20:06:46Z with the evidence pasted on
-  it, never by a commit keyword. Claim `agent-setup-onboarding-20` **released**
-  (verified absent from `claim-work --list`, not assumed).
-- **What #572 actually shipped** — the three surfaces #566 named, plus **three more
-  found by sweep**: `checkTargetCollisions`' group-line target, `downloadOne`'s
-  `install %s`, and `downloadStatusError`. The last is gated **once at the top**
-  (`name = safeTerm(name)`) rather than at each of its four returns, because four
-  returns spelling one rule is the mechanism that produced #566 in the first place.
-  Also `writePart`'s three error strings and `targetPath`'s unusable-filename refusal.
-  Plus **`safeTermErr`** (`internal/cmd/safeterm.go:72`): it strips a **wrapped
-  cause's** message while `Unwrap`ing to the original, so `errors.Is` / `errors.As`
-  and the published exit-code classifier are unaffected. Five call sites in
-  `download.go` (`:912, :941, :1019, :1038, :1042`).
-- 🔴 **Rank 22 landed in parallel — cli#573 (`6f0a8d8`), issue #552 CLOSED 17:30:31Z**,
-  by the `external-issue-513-numeric-username` session, not this one. **It filed a
-  successor, cli#575**, carrying four residuals of its own, and **cli#578 is OPEN
-  against #575's R1** right now (claimed `external-issue-513-numeric-username-12`).
-  Reading "#552 closed" as "that seam is finished" loses all four — see rank 26.
-- **`maxUncoveredSafeTermFuncs` is 21 on `main`.** That number was read off the
-  assertion's own failure output while resolving the #572/#573 collision, **not
-  computed** — the three trees disagreed (25 base / 22 main / 24 PR) and every one of
-  them was wrong. See the gotcha below.
-- **Claims:** `agent-setup-onboarding-20` released. No `agent-setup-onboarding-*` claim
-  is held. `external-issue-513-numeric-username-12` is HELD by another session for
-  #575 R1 — do not take that work.
-- ⚠ **16 stale agent worktrees are registered in this repo** (`git worktree list`: 17
-  under `.claude/worktrees/`, one of which is live). Several hold branches whose remote
-  has moved on. Worth a `git worktree prune` sweep — see the gotcha about the stale
-  local ref below, which is the harm they actually cause.
-
-### Carried forward — still true, keeps being dropped under this REPLACE heading
-
-- **Rank 4 LIVE and verified**: `/.well-known/ai-catalog.json` → 200,
-  `application/ai-catalog+json; charset=utf-8`; `check-ai-catalog.mjs` against production
-  → 7 URLs, 0 failed, 0 skipped. Shipped NARROWED (catalog + `Link:` only) by operator
-  decision.
-- **Rank 6 verified against PROD**: `/apps/examples` → 200, `/apps/examples/` → 404 with
-  the CLI shipping the no-slash spelling; `llms.txt` 215 → **192** lines.
-- **The `Python-urllib` 403 is GONE** — root-caused to Cloudflare Browser Integrity
-  Check, fixed by a Configuration Rule scoped to `developer.civitai.com`. The two
-  `⚠ STILL OPEN` headings above its RESOLVED block are superseded; do not act on them.
-- **`bump-scaffold-pins` is fixed** (cli#540, node 22 → 24), exercised deliberately by
-  run 34559798234. A green *scheduled* run could not have proved it.
-- **Subsystem index**: `cli/civitai`'s stale `OPEN:` bullet reads `RESOLVED d0d1805`.
+- **Branch `main`, clean, synced.** `civitai/cli` at `e9c51b1`.
+  ⚠ **The base clone was found checked out on ANOTHER SESSION'S BRANCH mid-session**
+  (`docs/handoff-sweep-scope`), and `git merge --ff-only origin/main` REFUSED, which is
+  the only reason it was noticed. It has since moved back to `main`. Their commit was
+  pushed and was left untouched. **Check `git branch --show-current` in the base clone
+  before any write** — this is the shared-checkout hazard, observed live.
+- **Merged this pass, all verified by CONTENT and not by `gh pr merge`'s rc:**
+  - **cli#583** (`af3194b`) — rank 19, #542's clause 2.
+  - **cli#587** (`da13614`) — handoff delta + decisions/38 numeric fix.
+  - **cli#588** (`e7cd7f3`) — 🔴 the relocation property #583's reduction deleted.
+  - **cli#589** (`a6395ef`) — the audit result recorded.
+  - **cli#590** (`3b222c6`) — rank 24 / #577, the `\n` forgery on the download path.
+  - **cli#591** (`2c6fc4a`) — rank 11, the exit-code contract.
+  - **cli#594** (`e3a7635`) — the header that still denied the 32nd site.
+- **In flight: cli#596** (`fix/generate-blob-forgery`, worktree
+  `/home/zach/workspace/civit/cli-574`) — rank 23 / #574. CLEAN, gated, **not audited**.
+- **Issues closed BY HAND with evidence, never by keyword:** #542 (clause 2), #577
+  (its own stated check re-run against `origin/main`: rc=1, named assertion, no build
+  error). **#574 is still OPEN and is what #596 closes.**
+- **Claims:** `agent-setup-onboarding-23` HELD (rank 23, until #596 merges).
+  `-19`, `-24` and `-19-closeout` released and verified absent.
+- **NEW issue: cli#586** — three near-identical AST expression renderers, two still
+  carrying a claim #583's audit demonstrated false.
 
 ### Honest limits
 
-- 🔴 **TWO OF cli#583's FIVE COMMITS SHIPPED UNAUDITED, AND THE REASONING THAT
-  SKIPPED THE AUDIT IS WHAT REQUIRED IT.** The ladder covered `fe509f4 → dc88b8e →
-  86bfc4c` (round 0 plus three delta rounds; claims blocks exist for rounds 1 and 2).
-  **`5db4fce` (the round-3 fixes) and `4408bf6` (the REDUCTION — a 520-line deletion,
-  the single largest change in the PR) were never read by any round.** The stated
-  reason for stopping was that the reduction "deleted the surface every finding came
-  from, so a delta frame would be stale and the honest version is a first-full audit"
-  — a sentence that concludes an audit is needed, followed by a merge without one.
-  **That audit then ran, and it found a 🔴 on merged `main` — fixed by cli#588
-  (`e7cd7f3`).** The unaudited commit had deleted a property nobody noticed it
-  carried; see the entry below. **Every commit in this arc that shipped without an
-  audit round contained a defect. That is four for four.**
-- 🔴 **A DELETION JUSTIFIED BY A MEASUREMENT INHERITS THAT MEASUREMENT'S SCOPE, AND
-  THAT IS HOW cli#583 SHIPPED A LIVE COVERAGE HOLE.** The reduction deleted the
-  guard's owner key on the measurement *"every package has had exactly ONE saferune
-  call site, always"* — true, and about COLLISIONS only. The key also carried
-  RELOCATION: it named the enclosing function, so moving the reference into a
-  different wrapper was red. Measured on merged `main`: rename `safeTerm`'s body to
-  delegate to a new `stripInvisible` → count still 1, `safeTerm` still resolves,
-  `pinnedBy` still resolves, `go test ./...` **fully green**; then route
-  `o.aspectRatio` — listed at `safeterm_userinput_test.go:43` as "a typed flag value",
-  i.e. must NEVER be stripped — through it, and the suite is **still green**, while the
-  same line spelled `safeTerm(o.aspectRatio)` is red with the #393 message. Red
-  pre-reduction (`5db4fce`), green after (`af3194b`). Restored by cli#588 as `inFunc`
-  — an asserted VALUE, not a key, so none of the collision machinery came back: ~30
-  lines against the 160 that were cut. **Before removing a mechanism, enumerate what
-  it DOES — not what the measurement covers.**
-- ⚠ **TWO MORE FOUND BY THE SAME AUDIT, both fixed in cli#588:** `internal/genapi`'s
-  positive-control floors equalled the live counts, so the SHRINK direction was
-  unreachable — removing a `dedupeReasons` caller produced *"CONTROL failure, not a
-  finding: found 2 … want >= 3"* and `t.Fatalf`'d before the stale-row report that
-  exists for that case (the masking-control class, a second instance). And the wrapper
-  reached as a FUNCTION VALUE escaped both genapi walks, invisible to the totality
-  control because `flat` and `sites` move together.
-- 🔴 **`pinnedBy` PROVES THE NAMED GUARD LIVES WHERE THE HAZARD IS, NOT THAT IT
-  WORKS.** Measured: gutting `TestHasPrintableContentArgumentsAreServerBytes`' body to
-  `_ = …` leaves `go test ./...` fully green while the module-root ledger keeps
-  asserting that `internal/genapi`'s site is covered. Package scoping killed the
-  wrong-package stub; no static scan can see a gutted test. Do not read a green
-  `saferuneRefs` as evidence the delegated guards are effective.
-- ⚠ **THE COUNT REPLACED IDENTITY KEYING BECAUSE THE HAZARD HAD NEVER OCCURRED, NOT
-  BECAUSE THE KEYING WAS FINISHED.** Three rounds each fixed "no two sites share a
-  row" and each fix was beaten by a shape it had not foreseen (`vs.Names[0]` vs a
-  multi-name spec; a refusal spelled into a key, which a row spelled; a blank flag in
-  one branch, which `func _()` and `func init()` walked past). The measurement that
-  ended it: **every package has had exactly ONE `saferune` call site for the whole
-  history**. If that ever stops being true, the count still catches it — but the
-  reasoning for the simpler shape expires with the measurement, so re-measure before
-  citing it.
-
-- **The notifier's cross-run paths are still fake-only**: update-in-place,
-  comment-on-fingerprint-change, comment-then-close. The **create** path is real.
-- 🔴 **#564's ledger blind spot is NOT fixed by #572, and rank 20 closing does not
-  close it.** `GREW` still only fires for enclosing functions that **already call**
-  `safeTerm`; a renderer that calls it zero times stays invisible. #572 gated the
-  specific functions #566 named — it did not change what the instrument can see. The
-  harder instrument (keyed on *rendering a server-supplied struct field*) is #573's
-  tabwriter ledger, and #575 R1 records that one of ITS two gate states resolved a
-  function **name** rather than a relationship.
-- 🔴 **#572's audit ladder was STOPPED on the prose-payload criterion, not on a clean
-  round.** Rounds 0–4 ran; **no round ever returned no findings**. Round 3's range
-  shipped zero executable change and round 4's shipped one test-fixture line, so the
-  attribution gate structurally could not fire. The rationale was posted to the PR.
-  **Do not read "five rounds" as "converged".**
-- 🔴 **`\n` line forgery is still live on four download surfaces** (#577). `saferune`
-  retains `\n` and `\t` by design, so `safeTerm` does not stop a server-supplied
-  `files[].name` from forging whole lines. #572 is a **strict improvement** on
-  surfaces that were fully raw before it — it is not a closure of that class.
-- **The `1010` Cloudflare UA block was never re-provoked**; the 403/301 arms of the CLI
-  link probe remain locally simulated.
+- 🔴 **FIVE commits in this arc shipped without an audit round, and FOUR of the four
+  that were later audited contained a defect.** The fifth is cli#588, merged at the
+  operator's explicit direction after the audit was offered and declined. That is the
+  base rate to weigh before skipping the next one, and it is why it is recorded here
+  rather than in a commit message.
+- 🔴 **cli#596 IS NOT AUDITED.** It changes production error paths on the
+  money-spending command, and its own invariant guard was VACUOUS on first draft.
+- 🔴 **The soft-wrap forgery is LIVE on `main` and is not #577's scope.** `p.name` is
+  length-unbounded, so a name padded to the terminal width strands a forged
+  `(SHA256 verified)` at column zero with **no `\n` and no `\t`** — measured at widths
+  80/100/120/132: 14 display rows, **12 forged**, before any bytes are verified.
+  `safeTermSingle` is a no-op on it. `hardSplitOverlong` is the existing machinery.
+  **No issue tracks this yet.**
+- 🔴 **`pinnedBy` proves the named guard LIVES where the hazard is, not that it works.**
+  Gutting a delegated test's body leaves `go test ./...` green.
+- **The notifier's cross-run paths are still fake-only** (carried forward, unchanged).
 
 ## Open investigations — live diagnosis state
 
@@ -475,184 +388,65 @@ repo. Rank 15. The block below is the diagnosis as of 2026-09-11.
 
 ## Next steps (ranked)
 
-🔴 **Ranks 1–10, 12, 13, 14, 18, 20, 21 and 22 are DONE — numbering is preserved
-deliberately** so any live `claim-work` slug keeps pointing at the item it was taken
-for. **Rank 11 is NOT done** (2 of 3; the previous wording "Ranks 1–14 … are DONE"
-swept it up and was wrong). Open: **11, 15, 16, 17, 23, 24, 25, 26.** New items
-continue from 27. **Rank 19 closed 2026-09-13** (cli#583).
+🔴 **Ranks 1–10, 12–14, 18–22 and 24 are DONE — numbering preserved** so live
+`claim-work` slugs keep pointing at what they were taken for. **Rank 11 and rank 19 are
+now DONE too.** Open: **15, 16, 17, 23 (in flight), 25, 26**, and new items from 27.
 
-🔴 **Every item below was re-verified against live state on 2026-09-12, immediately
-before this list was written** — `gh issue list --state all`, `gh pr list --state open`
-and `gh pr view` — not carried over from the previous delta. Do the same before you
-trust it: this list has gone stale **within twenty minutes** while parallel sessions
-drained it, and a stale list is a duplicate-work generator.
+🔴 **Re-verify every item against live state before trusting it** — this list went stale
+*within twenty minutes* on a previous pass, and this session had a PR merged out from
+under it by a parallel session mid-audit.
 
-1. ~~**Unfreeze `civitai/cli`**~~ — **DONE**, cli#529.
-   forcing: none
-2. ~~**Land the two draft agent-setup PRs**~~ — **DONE** (cli#528, docs#67).
-   forcing: none
-3. ~~**PR `civitai/cli#526`**~~ — **DONE**, merged `517fc76`.
-   forcing: none
-4. ~~**P2 of the onboarding work**~~ — **DONE**, docs#73 (`c84684a`), live and verified.
-   forcing: none
-5. ~~**Delete or gitignore `node_modules/`**~~ — **DONE**, cli#537.
-   forcing: none
-6. ~~**Example apps**~~ — **DONE**: docs#71 + cli#549, audit-fixed by docs#72 + cli#553.
-   forcing: none
-7. ~~**cli#530**~~ — **DONE**, cli#540, verified by run 34559798234.
-   forcing: none
-8. ~~**A hard byte ceiling on `prompt.md`**~~ — **DONE**, docs#74 (`11311ab`).
-   forcing: none
-9. ~~**cli#542**~~ — **DONE**, cli#557 (`6fce127`), issue CLOSED.
-   forcing: none
-10. ~~**cli#543** — the read `--help` rune budget~~ — **DONE**, cli#559 (`a33daed`).
-    The binding constraint MOVED rather than disappearing — see rank 16.
+23. **IN FLIGHT: civitai/cli#596** — rank 23 / cli#574, generate's blob download path.
+    Gated, `make ci` green, `make lint` 0 issues, four mutants verified. **Not audited.**
+    Next action is round 0 + the nine axes, then merge and close #574 by hand.
+    forcing: security — uploader-influenced text on the path that spends money.
+15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT
+    re-verified this session. `/home/zach/workspace/civit/civitai-developer-docs`.
+    forcing: gate
+16. **`images search --help` sits 14 runes under the 1400 budget.** The guard PASSES.
+    ⚠ **RECOMMENDED FOR RETIREMENT** — pre-emptive work against a failure that has not
+    happened and will be loud when it does.
     forcing: none
-11. **NOT ASSESSED on 2026-09-12** — this session did not look at it; the text below is
-    carried forward unchanged from the previous delta, not re-measured.
-    **Residuals of decisions item 38 — 2 of 3 DONE** (cli#560, `44a5b94`). **STILL OPEN:
-    the README documents no 429 → exit 2 reclassification.** Left deliberately — both
-    README exit-code blocks are **generated** from `exitCodeDocs` in
-    `internal/cmd/exitcodes_doc.go`, so writing the row means editing the generator and
-    republishing the exit-code contract. Closing condition in
-    `claudedocs/decisions/38-…md`.
+17. **Most of this arc's PRs were not adversarially audited.** ⚠ **RECOMMENDED FOR
+    CONVERSION, not work:** the four-for-four datum argues for auditing at MERGE time,
+    which is a practice, not a backlog item.
     forcing: none
-12. ~~**Nothing notifies on a red daily example-app drift run**~~ — **DONE**, docs#75.
+25. **cli#579 — `saferune.Strip`'s doc claims a byte-for-byte subsequence.** Explicitly
+    inert. Unchanged.
     forcing: none
-13. ~~**Per-repo SCOPE/HOOK rot guard**~~ — **DONE for scopes**, docs#75. Hooks are
-    date-stamped, not machine-verified, deliberately.
+26. **cli#575 R2–R4.** ⚠ **R2/R3 RECOMMENDED FOR DEFERRAL** — guard-refinement in the
+    seam that produced nine self-inflicted defects for one real one. R4 (~60
+    `label: value` sites) is the one with real coverage value.
     forcing: none
-14. ~~**cli#399 — `safeTerm` unpinned at most call sites**~~ — **DONE**, cli#564
-    (`4dbcda3`), issue CLOSED with the condition demonstrated.
-    🔴 **Does NOT cover the download path — see rank 20.**
+27. **cli#586 — three near-identical AST expression renderers**, two carrying the
+    "cannot collide with a ledgered key" sentence #583's audit demonstrated FALSE.
+    Recommended scope: fix the two comments and record why three copies are kept; the
+    consolidation needs a non-test package `pkg/civitai` would import.
     forcing: none
-15. **The docs repo does not build from a pristine `main` locally.** Blocks any local
-    `npm run build` / `check:built-site`; CI unaffected. Repo:
-    `/home/zach/workspace/civit/civitai-developer-docs`. Closing condition: the local
-    build exits 0 on a clean checkout, or the divergence is explained in that repo's
-    `CLAUDE.md`.
-    forcing: gate — `check:built-site` and `build-site` cannot be run locally before
-    pushing, so that job's failures are only ever discovered in CI.
-16. **`images search --help` sits 14 runes under the 1400 budget.** PRE-EXISTING (1386
-    before and after #541), untouched by rank 10's fix because it does not interpolate
-    `readJSONNote`. Files: `internal/cmd/images.go`. Levers: `serverOwnedEnumNote`,
-    `deepPagingNote`, or the body.
-    🔴 **The guard PASSES — re-run 2026-09-12,
-    `TestReadAPIHelpStaysWithinTheBudget` → `--- PASS`.** This item is **thin headroom,
-    not a failure**: 14 runes of slack on the binding body. It is ranked because the
-    next edit to any of the five shared constants spends that slack silently and reds
-    a command nobody touched. Do not read it as a broken gate.
-    forcing: none
-17. **Most of this arc's PRs were not adversarially audited.** The ones that WERE
-    (rank 6's two, #564's, and #569's) each found real defects in PRs that were fully
-    green and mutation-tested. Unaudited with the most judgement in them: docs#73,
-    docs#74, cli#559.
-    forcing: none
-18. ~~**`drift-notify.mjs` has never talked to the REAL GitHub API**~~ — **DONE**,
-    verified live by `gh workflow run appblocks-drift.yml`: ALERT path, docs#76 opened,
-    label applied. **Residual**: the cross-run paths are still fake-only.
-    forcing: none
-19. ~~**`#542`'s stated closing condition is not discharged**~~ — **DONE**, cli#583
-    (`af3194b`, squash, merged 2026-09-13T04:54:58Z). #542 named "any `saferune.*` call
-    site outside `internal/cmd`"; #557's `snippetArgs` covers `snippet(` sites in
-    `pkg/civitai` only, and the issue was closed on it. **A closed issue is not a
-    discharged condition** — that is the durable line.
-    Shipped `saferune_arg_origins_test.go` (module root) and
-    `internal/genapi/saferune_origins_test.go`, the guard the delegation points at,
-    which did not exist. The genapi half found a live stale claim on its first run:
-    `dedupeReasons`' doc said "four callers … the two step types' `failureReasons`";
-    there are **three**, and `ListedStep.failureReasons` has never existed.
-    Issue **#542 left CLOSED and untouched**; evidence pasted by hand, no keyword.
-    🔴 **Read the two honest-limits entries before trusting this as finished** — two
-    commits shipped unaudited, and `pinnedBy` is weaker than it looks.
-    forcing: none
-20. ~~**cli#566 — three uploader-controlled surfaces on the download path reach the
-    terminal raw**~~ — **DONE**, cli#572 (`f0cb748`, merged 2026-09-12T20:04:11Z).
-    Issue **#566 CLOSED BY HAND** 20:06:46Z with evidence; no commit keyword was used.
-    Shipped the three named surfaces **plus three more found by sweep**, plus
-    `safeTermErr`. Ran a **five-round audit ladder (0–4)** that ended on the
-    prose-payload criterion, **not** on a clean round — see the gotchas.
-    🔴 **This did NOT fix the blind spot that caused it**: `GREW` still only fires for
-    functions that already call `safeTerm`. Residuals filed rather than folded in:
-    **ranks 23, 24, 25.**
-    forcing: none
-21. ~~**cli#554 was broken by merging #564**~~ — **DONE**, cli#569 (`e3f2608`), merged
-    with a squash body that deliberately drops the inherited closing keyword. #554 left
-    OPEN for xsvm to close; issue #552 left OPEN and holding the residuals.
-    forcing: none
-22. ~~**The widened-ledger work on issue #552 — a ledger keyed on RENDERING a
-    server-supplied struct field**~~ — **DONE**, cli#573 (`6f0a8d8`, merged
-    2026-09-12T07:24:07Z) by the parallel `external-issue-513-numeric-username`
-    session, **not by this arc**. Issue **#552 CLOSED** 17:30:31Z with its condition
-    verified. It shipped `tabwriter_ledger_test.go` + `tabwriter_forgery_test.go` over
-    ~13 renderers. 🔴 **It filed a successor, cli#575, carrying four residuals — see
-    rank 26.** Closing #552 did not close that seam.
-    forcing: none
-23. **cli#574 — `generate`'s blob download path prints the server-derived workflow id
-    raw in six error strings, while its own `Saved` line is gated.** OPEN, verified
-    2026-09-12. Found by the round-1 audit of #572; **pre-existing, not introduced by
-    it.** `internal/cmd/generate_output.go`: `:408` `refusing to overwrite …` (`target`),
-    `:419` `download %s` (`name`), `:433` `install %s` (`target`), and `blobStatusError`'s
-    three arms at `:388/:390/:392` (`name`). **`blobStatusError` (`:382`) is the
-    structural twin of the `downloadStatusError` that #572 gated** — same signature,
-    same `defer civitai.TagStatus`, same arms — and #572 gated that one **once at the
-    top**. The id is genuinely server-supplied: `renderOutName`'s own doc comment says so.
-    🔴 **`:413` `create output directory %s: %w` is CORRECTLY UNGATED and must stay that
-    way** — `dir` is `filepath.Dir(target)`, i.e. the user's `--out-dir`, never the
-    server's leaf, because `outputTarget` refuses any `name != filepath.Base(name)`.
-    Sanitizing it would strip **user-typed** bytes, which `internal/saferune`'s rule
-    forbids. #572's round 0 **removed** the byte-equivalent gate from `download.go` for
-    exactly this reason (`download.go:906` is now ungated, matching). A future reader
-    will see one gated twin and one ungated one and "fix" it. Do not.
-    forcing: security — the same uploader-controlled-text class as rank 20, one command
-    over, on the path that spends money.
-24. **cli#577 — a `\n` in a server-supplied file name still forges lines on four
-    download surfaces.** OPEN, verified 2026-09-12. `internal/saferune` **deliberately
-    retains** `\n` and `\t` (`Cc, minus \n and \t`), so `safeTerm` does not stop it.
-    Sites: `(*progressWriter).line` (the `\r`-rewritten progress line, re-emitted at
-    10 Hz on a TTY), `checkTargetCollisions`, `downloadOne`'s SHA256-mismatch message
-    (the CLI asserting an integrity **failure**), and `downloadStatusError`'s 401/403/404
-    arms. Measured: a name ending
-    `"\nSaved /home/u/legit.safetensors (4.0 GiB)  (SHA256 verified)"` renders the forged
-    line **before any transfer completes**, and `done()` leaves it standing.
-    🔴 **NOT a regression — all four were fully RAW before #572**, which is a strict
-    improvement that states this residual rather than hiding it. #552's closure by #573
-    **orphaned** this: #573's measured scope was ~13 **tabwriter** renderers and
-    `download.go` was never on that table, so as of #552 closing it had no tracking
-    object at all. The work is **deciding which transform each surface takes** — a
-    `\r`-rewritten progress line and a multi-line refusal do not want the cell rule —
-    and the issue deliberately does not prescribe one.
-    forcing: security — a forged `(SHA256 verified)` line is the CLI lying about an
-    integrity result on a surface the user is watching.
-25. **cli#579 — `saferune.Strip`'s doc claims a byte-for-byte subsequence, but its two
-    paths disagree on invalid UTF-8.** OPEN, verified 2026-09-12. The fast path
-    (`if !strings.ContainsFunc(s, Stripped) { return s }`) returns the input **untouched**,
-    invalid bytes and all; the rewrite path ranges over the string, where Go yields
-    `utf8.RuneError` per invalid byte and writes **U+FFFD** back out. Measured:
-    `Strip("\xff")` → `"\xff"` (identical), `Strip("\xff" + ZWSP)` → `"�"` (3 B, not
-    a subsequence). **A trailing zero-width space decides the fate of a leading `0xff`.**
-    🔴 **Inert today** — but it is a **false comment on the one function every `safeTerm`
-    call site in this repo funnels through**, and `AGENTS.md` treats a comment as a claim.
-    The cheap fix is the doc; the real question is which path is correct.
-    forcing: none
-26. 🔴 **cli#575 — four recorded residuals of the tabwriter ledger, and cli#578 is OPEN
-    against R1 RIGHT NOW.** Filed by the #573 session as #552's successor; **this arc's
-    brief did not know it existed.** Each residual is stated in
-    `internal/cmd/tabwriter_ledger_test.go` rather than implied. **R1 (the only plain
-    defect):** `gatePreSanitised` resolves a function **NAME**, never a relationship —
-    a renderer writing a raw server string into a cell, ledgered as
-    `{…, gatePreSanitised, "printTagList", …}` (an unrelated renderer that merely happens
-    to sanitise), **passes the whole `internal/cmd` package**. R2: `sanitizerReach` stops
-    at depth 4 (measured: 4 hops reported, 5 hops missed). R3: an all-CLI-owned renderer
-    has no honest row — the choice is deferred, not made. R4: ~60 single-line
-    `label: value` `Fprintf` sites one line **outside** a cell.
-    ⚠ **Claimed by another session** as `external-issue-513-numeric-username-12`, and
-    **cli#578 is open against R1** (it deletes the gate state rather than making it
-    cleverer). **Do not take R1.** R2–R4 are unclaimed, and R2–R4 may legitimately be
-    *accepted in writing* rather than fixed — that is in the closing condition.
-    forcing: security — same seam as ranks 19, 23 and 24; R1 is a hole any ledger row
-    can be moved into, which makes the guard's verdict unreliable rather than merely
-    incomplete.
+28. **The soft-wrap forgery has no tracking object.** Live on `main`, measured, outside
+    #577's scope. Closing condition: either `p.name` is bounded and a test drives a
+    terminal-width-padded name asserting the display-row count, or the residual is
+    accepted in writing in `decisions/38` with the measurement.
+    forcing: security — a forged `(SHA256 verified)` the user reads as an integrity
+    result, reachable with no control runes at all.
+
+29. 🔴 **THIS DOC IS 40 KB OVER ITS OWN CEILING AND THE TEST FAILS FOR EVERYONE.**
+    Measured on `origin/main` BEFORE this session's update: **105,958 B against a
+    65,536 B ceiling**, so `test_no_handoff_doc_exceeds_its_budget` reds `main` and the
+    next unrelated PR inherits it. This session's update takes it to ~92 KB — a 13.7 KB
+    improvement, still 27 KB over. **Pre-existing, not introduced here, and untracked
+    until now.**
+    The playbook, in the order the test's own failure prescribes and with raising the
+    number LAST: evict what has CLOSED (the `Open investigations` section is mostly
+    `✅ RESOLVED` / `❌ SUPERSEDED` blocks whose work shipped), then demote dated
+    evidence to `claudedocs/refs/agent-setup-onboarding.md` leaving a pointer — the
+    pattern already exists as `claudedocs/refs/external-issue-513-numeric-username.md`
+    — then split by initiative.
+    🔴 **Do NOT satisfy it by deleting an open investigation, a gotcha or a ruled-out
+    theory**; those are the sections whose whole value is that a future session does not
+    repeat the work. ⚠ A delta cannot do this: `Open investigations` and `Gotchas` are
+    APPEND-only through `handoff_doc.py`, so the prune is its own commit.
+    forcing: gate — a red `main` that every unrelated PR inherits.
 
 ## Gotchas / decisions / dead-ends
 
@@ -1430,68 +1224,95 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   unknown session id also answers `200` with an empty array. No `clawgate-task:` field is
   recorded on this doc, and none should be invented to fill the blank. `via: command`
 
+### Added 2026-09-14 — eight PRs, five audit rounds, and a reduction that deleted coverage
+
+- 🔴 **A DELETION JUSTIFIED BY A MEASUREMENT INHERITS THAT MEASUREMENT'S SCOPE.** cli#583's
+  reduction removed a guard's owner key on the measurement *"every package has had exactly
+  ONE saferune call site, always"* — true, and about COLLISIONS only. The key also carried
+  RELOCATION. Renaming `safeTerm`'s body to delegate to a new function then walked
+  `o.aspectRatio` — which the repo's own ledger names as must-never-be-stripped — into
+  `saferune.Strip` with `go test ./...` **fully green**. Red pre-reduction, green after.
+  **Before removing a mechanism, enumerate what it DOES — not what the measurement covers.**
+- 🔴 **A `str.replace` WITH NO ASSERT IS A SILENT NO-OP THAT GETS LAUNDERED INTO A CLAIM.**
+  An edit did not match (`"rather than being silently treated"` vs `"rather than silently
+  treated"`), the script printed `ok`, and the next round's claims block asserted it as
+  done. Caught by `git grep` at three shas: byte-identical. **Assert every scripted
+  replace and exit non-zero on a miss** — one did on the very next round and caught a
+  second miss.
+- 🔴 **A GUARD THAT KEEPS FAILING ITS OWN PROPERTY IS EVIDENCE ABOUT THAT PROPERTY'S COST.**
+  Three attempts at "no two sites share a row" each enumerated NAMES and each was beaten by
+  the next shape (`vs.Names[0]` → a multi-name spec; `_` as a key SENTENCE → a row spelling
+  it; `_` as a FLAG in one branch → `func _()` and `func init()`). What ended it was asking
+  whether the hazard had ever occurred: it had not, and the property was replaced by a
+  COUNT. **Ask before paying for the fourth attempt.**
+- 🔴 **ONE VALUE, PRINTED TWICE, GATED ON ONE HALF — THREE TIMES IN ONE SESSION.** #566's
+  original shape; then `safeTermErr` leaving the `%w` cause raw while the `%s` operand was
+  gated; then **in a test**, where `Contains(err, userDir)` was satisfied by the wrapped
+  cause and the mutant SURVIVED. The fix in each case is to COUNT occurrences, not to
+  `Contains`.
+- 🔴 **A POSITIVE CONTROL THAT SHARES THE WALK IT CHECKS IS NOT A CONTROL**, and **a control
+  placed BEFORE the arms it guards can MASK them** — a `t.Fatalf` on "this package resolved
+  zero tests" was a strict subset of the arm below it, so a real finding was relabelled
+  *"CONTROL failure, not a finding"*. Split by WHICH cases are empty: all ⇒ instrument,
+  some ⇒ finding.
+- 🔴 **`make ci` GREEN while `make lint` RED, twice** — once on two dead struct fields, once
+  on staticcheck **ST1018** (a raw U+200B in a fixture). ST1018 is the exact rule AGENTS.md
+  records as invisible to `make ci`. **Run both, every time.**
+- 🔴 **A MUTANT CAN DIE OF A COMPILE ERROR FOR TWO ROUNDS.** A SHRANK-arm mutant referenced
+  a constant a previous round had deleted, so it failed `undefined:` rather than firing the
+  arm it was named for. **Read the failure TEXT, never just rc=1.**
+- 🔴 **`grep -c` COUNTS LINES, `grep -o | wc -l` COUNTS OCCURRENCES.** A count of the same
+  thing came back 27 and 31 from the two spellings, and the number was about to be written
+  into a comment. Third counting pipeline to mislead in this arc.
+- 🔴 **`git worktree prune` DOES NOT REMOVE WORKTREES** — it only clears entries whose
+  directories are already gone. Remove by path: `git worktree remove --force <path>`.
+- 🔴 **THE BASE CLONE WAS ON ANOTHER SESSION'S BRANCH, AND `--ff-only` IS WHAT CAUGHT IT.**
+  Without that flag the merge would have landed `origin/main` **into their branch**. Their
+  commit was pushed, so nothing was at risk — but the class is live in this repo.
+- 🔴 **A PR MERGED OUT FROM UNDER A RUNNING AUDIT.** cli#590 was merged by a parallel
+  session, which had run its own delta round 2 and fixed two of three findings post-range.
+  The third was still live on `main` and became cli#594. **A delta round's range can be
+  overtaken; re-read the PR's state before acting on the report.**
+- ⚠ **A SCRATCH BATTERY SCRIPT HARD-CODED A LIVE WORKTREE PATH AND RAN `git checkout --`
+  AGAINST IT** — which its own second line forbade. An auditor re-ran it and wrote into the
+  PR's tree. **Brief auditors to build their own probes and never re-run another round's
+  scratch scripts.**
+- ⚠ **A TIMING TEST FLAKED UNDER FIVE CONCURRENT `go test` PROCESSES**
+  (`TestAppStatusDriftLookupGetsADeadlineOfItsOwn`). Passes in isolation, at base, and on
+  re-run. **Discriminate load from an assertion by running the control at base**, not by
+  re-running.
+- ⚠ **`gh pr merge` RETURNS rc 0 SILENTLY.** Verify by CONTENT — and when the base has
+  MOVED, `git diff <verified-head> origin/main` is the WRONG check (it shows every parallel
+  change). Verify the payload's own markers are present instead.
+
 ## How to verify
 
-Rank 20, against the merged tree (`f0cb748`):
+Rank 24 / #577, against `origin/main` — the issue's OWN stated check:
+
+```bash
+cd $(mktemp -d) && git -C /home/zach/workspace/civit/cli archive origin/main | tar -x
+# revert the ONE call site, then:
+go test ./internal/cmd -count=1     # expect rc=1, "FORGERY in (*progressWriter).line", NOT a build error
+```
+
+Rank 19 / #542, against `origin/main`:
 
 ```bash
 cd /home/zach/workspace/civit/cli
-go test ./internal/cmd -count=1                 # expect: ok
-# the download-path ledger and the ratchet, by name
-go test ./internal/cmd -count=1 -v \
-  -run 'TestDownloadOneErrorsSanitizeTheServerName|SafeTermCoverage'
+go test . ./internal/genapi -count=1 -run 'SaferuneReference|HasPrintableContent|DedupeReasonsCallers|SaferuneCallers'
+# positive control — plant a second call site in an existing pair:
+#   echo 'func zz(u string) string { return saferune.Strip(u) }' >> internal/cmd/zz.go
+# expect: "COUNT moved: internal/cmd:Strip — ledgered as 1 reference(s), found 2"
 ```
 
-🔴 **The ratchet is an EQUALITY assertion, so it fails in BOTH directions.**
-`maxUncoveredSafeTermFuncs` is **21** on `main`. If you cover a row without lowering it,
-the test says so by name and prints the number to write — **read the value off that
-failure rather than computing it**, which is how the #572/#573 collision was resolved
-after three trees disagreed (25 / 22 / 24, all wrong).
-
-🔴 **Two things #572 did NOT do**, both easy to misread as closed:
-`safeTerm` does **not** strip `\n` or `\t` (rank 24, #577), and the `GREW` ledger still
-cannot demand a row from a function that never calls `safeTerm` (the blind spot that
-produced #566 in the first place). The `create output directory` line at
-`download.go:906` is **deliberately ungated** — see rank 23 before "fixing" it.
-
-Rank 21, against the merged tree — the controls that matter, each re-derivable:
+Rank 23 / #596, in its worktree:
 
 ```bash
-cd /home/zach/workspace/civit/cli
-go test ./internal/cmd -count=1                 # expect: ok, ~35s
-# the two tab guards, by name
-go test ./internal/cmd -count=1 -v \
-  -run 'TestSafeTermSingleNeutralisesTheTabColumnVector|TestTabForgeryIsNeutralisedInTheRealImagesTable'
-# the composer ledger, both directions
-go test ./internal/cmd -count=1 -run 'TestSanitizerComposersAreLedgered'
+cd /home/zach/workspace/civit/cli-574
+make ci                                       # 21 packages ok
+nix-shell -p golangci-lint --run "make lint"  # 0 issues — make ci does NOT run lint
+go test ./internal/cmd -count=1 -run 'BlobStatusError|DownloadBlobToErrors|CreateOutputDirectory'
 ```
 
-🔴 **The mutation controls are the real verification and they are NOT committed.** Run
-them in a detached worktree, restoring from a `cp` of the file rather than
-`git checkout --`:
-
-| mutant | expected |
-|---|---|
-| `safeTermSingle` back to `\n`-only (drop `\t` from the `ContainsAny` guard AND the `NewReplacer`) | compiles; reddens **exactly** the two tab guards, each with its own message; the behavioural one reports the forged row at **14 columns against an 8-column header** |
-| add `"s": …` to `bareIdentArgs`, then append `func zzProbeRenderer(u string) string { s := u; return safeTerm(s) }` to `images.go` | **PASSES** — the injection survives (this is #554's shape) |
-| same probe, `"s"` absent | **FAILS** naming `images.go:<line>: safeTerm(s)`; scanner reports **154** = 153 real calls + the probe |
-| append an unledgered func calling `safeTerm` to `safeterm.go` | `UNLEDGERED COMPOSER` |
-| add a `sanitizerComposers` entry for a function that does not exist | `STALE COMPOSER` |
-
-Ranks 9–11 and the repo gates:
-
-```bash
-cd /home/zach/workspace/civit/cli
-make ci                                         # 21 packages report ok
-nix-shell -p golangci-lint --run "make lint"    # make ci does NOT run lint
-```
-
-Rank 4, against production:
-
-```bash
-cd /home/zach/workspace/civit/civitai-developer-docs
-node scripts/check-ai-catalog.mjs --verbose     # expect: 7 URLs, 0 failed, 0 skipped
-```
-
-🔴 Read `rc` directly — `$?` after a pipe is the pipe's status. This repo has been
-misled by that four times now; the newest instance is in the gotchas below.
+🔴 The ratchet `maxUncoveredSafeTermFuncs` is **19** on #596's branch (20 on `main`).
+It is an EQUALITY — **read the number off the assertion's own failure**, never compute it.
