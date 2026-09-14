@@ -381,12 +381,18 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"charged for. civitai/cli#596 upgraded it to safeTermSingle and shipped it UNPINNED — round " +
 			"2's delta audit reverted that one expression to plain safeTerm and the whole package stayed " +
 			"green — which is what the named test now closes. 🔴 STILL UNGATED FOR \\n AND \\t, ON " +
-			"PURPOSE AND TRACKED ELSEWHERE: the two terminal-status/dead-end errors and printSubmitted's " +
-			"two lines print the SAME server id through plain safeTerm, so a hostile workflow id can " +
-			"still forge a flush-left line there. They are pre-existing and outside #574's closing " +
-			"condition; they are a follow-up issue, not a silent inclusion. Read this row as 'the " +
-			"function is no longer wholesale-unpinned', never as 'the workflow id is safe everywhere " +
-			"here'"},
+			"PURPOSE AND TRACKED ELSEWHERE — and this list is THIS function's OWN call sites, counted " +
+			"in generate.go:1436-1585: safeTerm(wf.Status) AND safeTerm(workflowID) in the " +
+			"terminal-status error (:1514), plus safeTerm(workflowID) in the succeeded-but-no-" +
+			"deliverables error (:1558). 🔴 An earlier draft named `printSubmitted's two lines` instead, " +
+			"which this function NEVER REACHES — runGenerate calls emitSubmitHandle (:1362) BEFORE " +
+			"waitAndCollect (:1367), and printSubmitted carries its own notCovered row above. That draft " +
+			"also enumerated the workflow id only, so safeTerm(wf.Status) — a SERVER STATUS STRING on " +
+			"the same line, keeping \\n and \\t exactly as the id does — was missing from the list of " +
+			"what is still open HERE. Both corrected in round 3. The three above are pre-existing and " +
+			"outside #574's closing condition; they are civitai/cli#604, not a silent inclusion. Read " +
+			"this row as 'the function is no longer wholesale-unpinned', never as 'the workflow id is " +
+			"safe everywhere here'"},
 	"substitutionRefusal": {notCovered,
 		"the server's reason inside the refusal that ABORTS a spend"},
 	"joinQuoted": {notCovered,

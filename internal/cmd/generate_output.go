@@ -383,7 +383,7 @@ func blobStatusError(status int, name string) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
 	// 🔴 THE NAME IS SERVER-DERIVED AND main.go PRINTS err.Error() RAW —
 	// civitai/cli#574. `name` is filepath.Base of a target built from
-	// renderOutName, whose `{workflowId}` comes off the wire. Gated ONCE here
+	// renderOutName, whose `{workflow}` comes off the wire. Gated ONCE here
 	// rather than at each of the three returns below: they are three spellings
 	// of one rule, and #566 exists because two spellings of one rule drifted
 	// apart. This is the structural twin of download.go's downloadStatusError,
@@ -519,7 +519,7 @@ func downloadOutputs(ctx context.Context, fetch blobFetcher, out, errw io.Writer
 			if info, err := os.Stat(j.target); err == nil && !info.IsDir() {
 				// 🔴 SANITISED HERE, NOT AT THE JOIN — civitai/cli#574 round 0.
 				// This refusal was fully RAW: j.target is planOutputTarget's
-				// output, whose {workflowId} comes off the wire, so an uploader
+				// output, whose {workflow} comes off the wire, so an uploader
 				// could put `\x1b[1A\x1b[2K` — cursor-up plus erase-line, the
 				// exact primitive safeTerm exists for — into the one error
 				// standing between the user and an overwrite.
@@ -545,7 +545,7 @@ func downloadOutputs(ctx context.Context, fetch blobFetcher, out, errw io.Writer
 				// 🔴 `j.target` IS MIXED-ORIGIN AND GATING IT COSTS USER BYTES —
 				// SAID HERE BECAUSE NO LEDGER CAN SAY IT. It is
 				// planOutputTarget(outName, outDir, …): the server's
-				// {workflowId} expands into the leaf, and the directory is the
+				// {workflow} expands into the leaf, and the directory is the
 				// user's own --out-dir. So this is the documented saferune
 				// exception, not an oversight — AGENTS.md names "download's
 				// mixed-origin target path" as one of the two, downloadBlobTo's

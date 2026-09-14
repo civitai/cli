@@ -18,7 +18,7 @@ import (
 // name raw in six error strings, while its own `Saved` line was gated.
 //
 // `downloadBlobTo`'s `name` is `filepath.Base(target)`, and `target` comes from
-// `planOutputTarget(o.outName, …)` whose `{workflowId}` is read off the wire —
+// `planOutputTarget(o.outName, …)` whose `{workflow}` is read off the wire —
 // `renderOutName`'s own doc comment says so. So every one of those strings is a
 // terminal surface carrying uploader-influenced text, on the ONE path in this
 // CLI that spends the user's money.
@@ -435,15 +435,23 @@ func TestDownloadOutputsErrorsCannotForgeALine(t *testing.T) {
 // is the last thing a user reads about outputs they have already paid for and
 // can still fetch, and `workflowID` is the server's own id in it.
 //
-// 🔴 WHAT THIS TEST DELIBERATELY DOES NOT CLAIM. waitAndCollect prints the same
-// id through PLAIN safeTerm at four other places (the two terminal-status
-// errors, and printSubmitted's two lines), and printReattach prints it through
-// plain safeTerm twice more — all of which keep \n and \t, so a hostile id still
-// forges counterfeit `Re-attach:` lines there. Those are pre-existing, are
-// honestly ledgered notCovered in safeTermCoveredBy, and are outside #574's
-// closing condition; they are tracked separately rather than silently swept in
-// here. The slice below starts at the hint's own marker precisely so this test
-// cannot accidentally pass or fail on their behaviour.
+// 🔴 WHAT THIS TEST DELIBERATELY DOES NOT CLAIM. Inside waitAndCollect itself
+// there are THREE other safeTerm-family sites, all keeping \n and \t:
+// safeTerm(wf.Status) and safeTerm(workflowID) in the terminal-status error
+// (generate.go:1514), and safeTerm(workflowID) in the succeeded-but-no-
+// deliverables error (:1558). Note the FIRST of those carries the server's
+// STATUS, not the id. Separately, printSubmitted and printReattach print the id
+// through plain safeTerm — a hostile id forges counterfeit `Re-attach:` lines
+// there — but those are DIFFERENT FUNCTIONS this one never calls: runGenerate
+// reaches emitSubmitHandle (:1362) before waitAndCollect (:1367). An earlier
+// draft of this paragraph credited printSubmitted's two lines to waitAndCollect
+// and omitted wf.Status; corrected in round 3.
+//
+// All of them are pre-existing, are honestly ledgered notCovered in
+// safeTermCoveredBy, and are outside #574's closing condition — they are
+// civitai/cli#604 rather than a silent sweep. The slice below starts at the
+// hint's own marker precisely so this test cannot accidentally pass or fail on
+// their behaviour.
 //
 // It drives the REAL command — runGenerate down through waitAndCollect — rather
 // than calling the print, because the value under test is one the poll path
