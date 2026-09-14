@@ -24,8 +24,12 @@ answered — starting with #513, and fix the API-side root cause behind it.
   and not a job that ran nothing. **`developer-docs#76` auto-CLOSED** by the notify job, which also
   demonstrates `#77`'s reporting fix works in the GREEN direction and not only the red one.
   Trajectory across the arc: **7 failing steps (09-13 00:00) → 2 (09-13 12:14) → 0 (09-13 15:2x)**.
-  Last green scheduled run before today was **2026-08-11**; **34 consecutive red scheduled runs**
-  ended.
+  Last green **scheduled** run before today was **2026-08-11**, and there had been **34 consecutive
+  red scheduled runs**. 🔴 **THAT STREAK IS NOT YET OBSERVED TO HAVE ENDED, and an earlier version
+  of this line said it had.** The green run is a `workflow_dispatch` — same workflow, same `drift`
+  job, run against merged `main` — which is strong evidence but is not the scheduled run the
+  forcing function was stated in terms of. The cron is `37 6 * * *` (daily, 06:37 UTC). **Confirm
+  at the next scheduled run** before calling the streak broken.
 - **`devdocs#80` MERGED** (`cced3e2`), verified by CONTENT not ancestry — a squash is never an
   ancestor, so `scripts/test-appblocks-hooks.mjs`, `scripts/lib/description-has-table.mjs` and the
   `blocks-react@0.49.0` / `app-sdk@0.39.0` pins were each confirmed present in `origin/main`.
@@ -235,8 +239,9 @@ there as recall rather than live state.
 6. **DONE — `#554` closed by @xsvm.** forcing: none
 7. **DONE — AGENTS.md item 37 corrected** via `#556`. forcing: none
 8. **DONE — `#552` CLOSED.** forcing: none
-9. **DONE — `developer-docs#76` CLOSED and the sweep is GREEN** (0 failing steps, run
-   `34765344965`). All seven drifts cleared; `#80` took the last two. **Still unstarted and now
+9. **`developer-docs#76` CLOSED and the sweep is GREEN on a DISPATCHED run** (0 failing steps, 15
+   executed, run `34765344965`). Not yet confirmed on a SCHEDULED run — cron `37 6 * * *`; the
+   forcing function was stated in scheduled runs, so read the next one before closing this out. All seven drifts cleared; `#80` took the last two. **Still unstarted and now
    tracked at rank 21**, not here: the `/apps/installed` → `/apps/activity` prose rename and the
    `WorkflowStep.jobs` spec residual. forcing: none
 10. **DONE — vendored mirrors measured CLEAN.** forcing: none
