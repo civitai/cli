@@ -440,12 +440,29 @@ func TestDownloadOutputsErrorsCannotForgeALine(t *testing.T) {
 // safeTerm(wf.Status) and safeTerm(workflowID) in the terminal-status error
 // (generate.go:1514), and safeTerm(workflowID) in the succeeded-but-no-
 // deliverables error (:1558). Note the FIRST of those carries the server's
-// STATUS, not the id. Separately, printSubmitted and printReattach print the id
-// through plain safeTerm — a hostile id forges counterfeit `Re-attach:` lines
-// there — but those are DIFFERENT FUNCTIONS this one never calls: runGenerate
-// reaches emitSubmitHandle (:1362) before waitAndCollect (:1367). An earlier
-// draft of this paragraph credited printSubmitted's two lines to waitAndCollect
-// and omitted wf.Status; corrected in round 3.
+// STATUS, not the id.
+//
+// 🔴 AND THREE MORE ARE REACHABLE FROM HERE, THROUGH printReattach.
+// waitAndCollect CALLS IT — generate.go:1447 on errWaitTimeout and :1451 on
+// context.Canceled/DeadlineExceeded — and it prints safeTerm(workflowID) at
+// :1628, safeTerm(status) at :1630 and safeTerm(workflowID) at :1631. So a
+// server-chosen id forges counterfeit column-zero `Re-attach:` lines on the
+// timeout path, the first one ABOVE the genuine line. That is the repro in
+// civitai/cli#604, and it is reachable from THIS function.
+//
+// Only printSubmitted is unreachable from here: runGenerate calls
+// emitSubmitHandle (:1362), which calls printSubmitted (:1399), before it calls
+// waitAndCollect (:1367).
+//
+// 🔴 TWO DRAFTS OF THIS PARAGRAPH WERE WRONG IN THE REASSURING DIRECTION, IN
+// OPPOSITE WAYS. The first credited printSubmitted's two lines to waitAndCollect
+// and omitted wf.Status (round 3). The fix for it then asserted that BOTH
+// printSubmitted and printReattach are "different functions this one never
+// calls" — true of the former, false of the latter — which pointed a reader
+// closing #604 away from the exact path that issue measured a forgery on, and
+// again said only "the id", omitting safeTerm(status) at :1630. Round 4 caught
+// it. The pre-round-3 text had no unreachability claim at all and was, on this
+// point, less wrong than its correction.
 //
 // All of them are pre-existing, are honestly ledgered notCovered in
 // safeTermCoveredBy, and are outside #574's closing condition — they are

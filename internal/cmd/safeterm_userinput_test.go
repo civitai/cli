@@ -151,9 +151,21 @@ var bareIdentArgs = map[string]string{
 // package, so one `"s"` blinded the harness everywhere — this paragraph used to
 // say "in all ~67 files at once", and civitai/cli#575 R5 made that false by
 // re-keying to `enclosingFunction::argument`. A row now blinds ONE (function,
-// name) PAIR — one call site for 29 of the 35 rows and two for the other six,
-// not "exactly one site", which is what an earlier draft of this very sentence
-// said while the same commit retracted that wording 200 lines below.
+// name) PAIR, which may still be SEVERAL call sites — most rows govern one, some
+// govern two, and at least one governs three.
+//
+// 🔴 NO COUNT IS QUOTED HERE ON PURPOSE, AND THAT IS THE FIX RATHER THAN A NEW
+// NUMBER. This sentence has now been wrong three times in the same direction:
+// "exactly one site" (retracted 200 lines below by the commit that wrote it),
+// then "one call site for 29 of the 35 rows and two for the other six" — exact
+// at this PR's merge base and falsified by this PR's OWN new rows, which added
+// a third site to an existing pair. Nothing asserts on these totals: they are
+// `t.Logf`-ed, under a comment that says so, so they can never go red and
+// nothing will ever tell you they drifted. A number kept beside what it counts
+// drifts; the property does not. For the live figures read the harness's own log
+// line at the bottom of this file ("scanned N safeTerm call site(s); … bare-
+// identifier origins are pinned") — it is computed from the tree you are
+// standing in, which no sentence here can be.
 // What still holds is why composers are a LEDGER: a file-wide exemption would
 // pass every future function added to safeterm.go without anyone naming it.
 //
@@ -351,12 +363,23 @@ func safeTermFuncKey(fd *ast.FuncDecl) string {
 // and true at printAppDetail. Pick the unguarded site, and make the plant
 // reachable.
 //
-// 🔴 AND THE ROW COUNT IS NOT A SITE COUNT. 35 rows govern 41 bare-identifier
-// call sites: six rows cover two sites each (downloadOne::target,
-// presentTargetSatisfies::target, printReattach::workflowID,
-// printSubmitted::workflowID, waitAndCollect::workflowID, writePart::partPath).
-// A row is a claim about one (function, name) PAIR — not about one call site,
-// which an earlier draft of this comment said.
+// 🔴 AND THE ROW COUNT IS NOT A SITE COUNT. A row is a claim about one
+// (function, name) PAIR — not about one call site, which an earlier draft of
+// this comment said. One pair can occur several times in its function, so the
+// site total is always >= the row total, and a single row can be covering more
+// sites than the day it was written.
+//
+// 🔴 THE TOTALS AND THE ENUMERATED LIST THAT USED TO SIT HERE ARE DELETED, NOT
+// UPDATED. They read "35 rows govern 41 bare-identifier call sites: six rows
+// cover two sites each (…)" and named the six. Every part was exact at this PR's
+// merge base and every part was falsified by this PR's own new rows — which also
+// pushed one of those pairs from two sites to three, so the list's implicit
+// "two is the maximum" became false as well. The enumeration is the worst part:
+// it reads as exhaustive, so a reader auditing ledger completeness against it
+// goes hunting for a row that does not exist.
+// Nothing asserts on any of it — see the `t.Logf` at the bottom of this file and
+// the comment above it saying LOGGED, NOT ASSERTED — so it cannot go red and
+// nothing will tell you it drifted. Read the live numbers off that log line.
 func bareIdentKey(s safeTermSite) string { return s.enclosing + "::" + s.arg }
 
 // classifyBareIdents is the unclassified half of the guard, as a pure function of
