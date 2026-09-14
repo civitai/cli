@@ -127,6 +127,10 @@ var SENSITIVE_BLOCK_SCOPES = map[string]struct{}{
 	"buzz:read:self":            {},
 	"collections:read:private":  {},
 	"apps:storage:shared:write": {},
+	// posts:write:self publishes a PUBLIC post under the viewer's own byline —
+	// the "write data other users see" arm of the server's criterion, and the
+	// most consequential member of it.
+	"posts:write:self": {},
 }
 
 // isSensitiveBlockScope reports whether scope is in SENSITIVE_BLOCK_SCOPES.
