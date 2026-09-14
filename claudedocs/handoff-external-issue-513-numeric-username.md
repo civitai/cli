@@ -15,38 +15,30 @@ Non-blocking: if it exits non-zero, print the stderr line and carry on.
 Clear the queue of **externally-reported** issues on `civitai/cli` — three open, none
 answered — starting with #513, and fix the API-side root cause behind it.
 
+- **closing-condition:** `check` — no externally-authored `civitai/cli` issue is left unanswered,
+  AND `#513`'s server-side half has a fix MERGED (`civitai/event-engine-common#13`, then
+  `civitai/civitai#4839`). 🔴 **Frozen at round 1** — the audit ladders, the doc-ceiling work and
+  the drift threads are arcs this one SPAWNED; closing them does not close this.
+
 ## State now
 
-- **`civitai/cli` `main` @ `426288f`** (was `7467c62`; `#601`, `#596`, `#603` landed since), clean,
-  `make ci` rc=0 / 21 ok / 0 FAIL / golangci-lint 0 issues — measured on `main` itself.
-  🔴 **This repo has a SECOND live handoff doc**, `claudedocs/handoff-agent-setup-onboarding.md`,
-  maintained by a concurrent session (`#603`). It has its OWN ranked list, so **"rank 23 closes"
-  in a commit subject may not mean this doc's rank 23** — #603's meant `cli#596`, this doc's is
-  `cli#593`. The `claim-work` slug is derived from the DOC path, so the locks do not collide; only
-  human readers do.
-- **`civitai-developer-docs` `main` @ `cced3e2`**, drift sweep green.
-- **No `clawgate-task:` field.** `resolve` exited **5** — 0 tasks for this session, with its
-  positive control answering 2 links for a DIFFERENT session, so the board was reached and the
-  token accepted. A wrong id also answers 200 with an empty array, so that zero is narrower than
-  a clean bill of health. No field written.
-
-### Merged this session — all verified by CONTENT, not ancestry
-
-| what | sha |
-|---|---|
-| `cli#590` — download line-forgery (3 audit rounds) | `3b222c6` |
-| `cli#591` — the 429 exit-code contract (4 rounds; merged by a CONCURRENT session at 02:51) | `2c6fc4a` |
-| `cli#592` — handoff + 15 closed blocks demoted to `claudedocs/refs/` | `e39250b` |
-| `cli#595` — the dispatched-vs-scheduled correction | `e9c51b1` |
-| `cli#585` — submit-body ceiling + `--allow-oversize` (round 0 + round 1) | `61be65e` |
-| `cli#598` — **restores a regression I shipped in `61be65e`** | `7467c62` |
-| `devdocs#80` — the last two drifts (7 rounds) | `cced3e2` |
-
-🔴 **`cli#591` was merged by another session while I was mid-work on it.** Its PR head froze at
-`c355274`, so a merge-with-main I pushed afterwards (`02b0f50`) could never land, and CI reported
-**0 checks** on it — which reads as "pending", not as "the PR is closed". `gh pr close` is what
-finally said so. **Treat a PR object's head as a claim; the remote branch tip and `mergedAt` are
-the facts.**
+- **`civitai/cli` `main` @ `0d25f7b`** (was `426288f`), clean, `make ci` rc=0 / 21 ok / 0 FAIL,
+  `golangci-lint` 0 issues — measured on `main`, not a branch.
+- 🔴 **This doc is at its 65,536 B ceiling and hit it TWICE on 09-14.** The next session must evict
+  a CLOSED block to `claudedocs/refs/external-issue-513-numeric-username.md` before adding
+  anything. Gone that way: `devdocs#76`, the `devdocs#80` ladder — each left a headline pointer.
+- **Open, `civitai/cli`:** `#602` (shares `exitcodes_claims_test.go` with merged `#601` — rank 26)
+  · `#608` (13 generate forgery sites), claimed by a concurrent session under
+  `handoff-agent-setup-onboarding.md`'s rank 30, **not this doc's**.
+- **Open, platform — UNAUDITED and ORDER-DEPENDENT:** `event-engine-common#13` must merge BEFORE
+  `civitai#4839` re-pins it (rank 25).
+- 🔴 **A SECOND live handoff doc exists here** (`handoff-agent-setup-onboarding.md`, concurrent
+  session) with its OWN ranked list: **"rank N" in a commit subject may not mean this doc's rank
+  N.** `claim-work` slugs derive from the DOC path, so the locks do not collide; readers do.
+- **`devdocs`:** `#5` merged `23c6d46`; drift sweep green on SCHEDULED run `34848144324`.
+- **No `clawgate-task:` field.** `resolve` exited **5** — 0 tasks, and an unknown session id also
+  answers `200` with an empty array, so the zero cannot distinguish "touched no task" from "wrong
+  id". Not a clean bill of health. None written, none invented.
 
 ## Open investigations — live diagnosis state
 
@@ -120,23 +112,12 @@ lesson.
   **suspected, not measured**: it returns `401 Block token required`, and calls the same
   `runImageSearch` (`blocks/images.ts:198`), so it is covered by code identity only.
 
-### 🔴 A TAB is a worse forgery vector than a newline, because tabwriter's delimiter IS the tab
+### 🔴 A TAB is a worse forgery vector than a newline — CLOSED. Block demoted 2026-09-14
 
-- **Symptom + exact repro:** at #554 HEAD, `images search` (no `--meta`) with
-  `username = "alice\tSDXL\t9x9\tNone\t0\t0\thttps://evil.example/steal"` emits a **fully
-  aligned**, entirely attacker-controlled row, pushing the real values past column 80.
-- **Observed (with values), verified first-hand not just by the auditor:**
-  `safeTermSingle` (`safeterm.go:59-65`) replaces **only `"\n"`**; `saferune.go:219` reads
-  `if r == '\n' || r == '\t'` — tab is **deliberately kept**. Survival through
-  `safeTermSingle`: `\n`→space; `\r`, `\v`, `\f`, U+0085 **stripped**; **`\t`, U+2028,
-  U+2029 SURVIVE**.
-- 🔴 **The generalisable part: "reach column zero" was never the whole hazard.** In a
-  `tabwriter`, a tab lets the attacker **inject a column**, so alignment — the thing that
-  makes output look trustworthy — becomes the attack surface. Any replacement predicate must
-  cover both.
-- **Ruled out:** that this is new in #554 — the tab behaviour predates it. What is new is the
-  CLAIM: `safeterm.go:49-55` justifies the helper by naming column-alignment and tabwriter
-  row-forging, while guarding only `\n`. `via: code`
+Shipped in `#569`/`#573`; `#552` CLOSED. Moved VERBATIM to
+`claudedocs/refs/external-issue-513-numeric-username.md`. The transferable half is kept in
+Gotchas below: **a tab is `tabwriter`'s DELIMITER, so "reach column zero" was never the
+whole hazard** — server text can INJECT a column and forge an ALIGNED row.
 
 ### #513's server half — the fix is OPEN, and the filed root cause was WRONG
 
@@ -803,6 +784,21 @@ FLOOR, not a guarantee — and the structural fix is to keep the record where no
   so four "combinations" of a 429 fixture all ran as one, returning a uniform `rc=6` — twice, read
   past twice. **Validate a fixture server with `curl` and confirm both switches VARY before
   trusting any row of a matrix.**
+
+- 🔴 **THE `Merged this session` SHA TABLE WAS CARRIED OUT OF `State now` BY HAND, BECAUSE THE
+  DROP-WARNING CANNOT SEE A TABLE — the doc says so and it happened anyway.** `State now` is a
+  REPLACE heading; the 09-14 update's diff silently dropped all seven rows with **no durable-line
+  warning printed**. Rescued here, under an APPEND heading: `cli#590` `3b222c6` · `cli#591`
+  `2c6fc4a` (merged by a CONCURRENT session mid-work — its PR head froze at `c355274`, a later
+  push could never land, and CI reported **0 checks**, which reads as "pending" not "closed"; on a
+  surprising 0-checks read `mergedAt` first) · `cli#592` `e39250b` · `cli#595` `e9c51b1` ·
+  `cli#585` `61be65e` · `cli#598` `7467c62` (restores a regression `61be65e` shipped) ·
+  `devdocs#80` `cced3e2`. **Read the REPLACE diff for tables yourself; the tool reads prose.**
+- 🔴 **HAND-EDITING THIS DOC MAKES THE WRITE-BACK GUARD BLIND, AND THE GUARD IS RIGHT TO FIRE.**
+  The 09-14 update was written, committed, pushed and MERGED (`#600`, `0d25f7b`) via `Edit` rather
+  than `handoff_doc.py`, so the Stop hook measured **no handoff written**. Both halves were true:
+  the work WAS recorded, and the instrument could not see it. Drive `handoff_doc.py` — it is also
+  what enforces the ceiling, the drop warning, the `forcing:`/`via:` gates and the rank ratchet.
 
 ## How to verify
 
