@@ -385,3 +385,53 @@ as-of: 2026-09-13
   fails in its own refresh workflow. `via: assumed`
 - **Next probe:** `gh run view --repo civitai/civitai-developer-docs --log-failed` on the latest
   `cli-snapshot-refresh` run, and compare its failing step to the drift sweep's CLI-snapshot step.
+
+
+---
+
+## Demoted from the handoff 2026-09-14 (doc hit its byte ceiling)
+
+Verbatim, including its original as-of line. CLOSED: read as recall, not live state.
+
+### 🔴 RESOLVED: `developer-docs#76` — all seven drifts cleared, sweep green
+- as-of: 2026-09-13
+
+- **Symptom + exact repro:** the scheduled `appblocks-drift` sweep had been red for 34 consecutive
+  scheduled runs. `gh workflow run appblocks-drift.yml --repo civitai/civitai-developer-docs`, then
+  count failing steps in the `drift` job.
+- **Observed (with values):** run `34765344965` — `conclusion=success`, **0 failing steps, 15 steps
+  executed**. Issue `#76` state `CLOSED`, `updated=2026-09-13T15:21`, closed by the `notify` job
+  (`job notify: success`). The last two drifts were `check:pins` (step *"Generation-bridge pin drift
+  — pinned SDK devDeps vs npm latest"*) and `check:ds-pins` (step *"Design-system pin drift — docs
+  CDN literals vs the declared pin"*); the step→script mapping was read out of the workflow, not
+  assumed from the step names.
+- **Ruled out:** *"the branch passing the two checks proves the sweep will go green"* — **via:
+  measurement**. The branch result is a claim about the branch; the sweep was re-run against merged
+  `main` before this was called done.
+- **Next probe:** none. Closing condition met.
+
+
+
+---
+
+## Demoted from the handoff 2026-09-14 (second eviction, same ceiling)
+
+### The `devdocs#80` audit ladder — 7 rounds, and what it actually found
+- as-of: 2026-09-13
+
+- **Symptom + exact repro:** a hook description carrying a GFM table flattened into one
+  1853-codepoint run of literal pipes on `apps/reference/hooks.html`.
+- **Observed (with values):** the shipped page was **correct from round 2 onward**. Rounds 3–7 found
+  **only scaffolding defects**. The one that justifies the whole ladder is round 4's: with the flag
+  misspelled generator-side, the page built with **0 `<pre>` elements** — the original bug, fully
+  restored — while `check:built-site` **rc=0** and `test:appblocks:hooks` **rc=0**. Round 7 was
+  clean and the ladder stopped.
+- **Ruled out:** *"a replacement assertion is at least as strong as the one it replaces"* — **via:
+  measurement**. Twice, a replacement silently dropped coverage: rounds 4 and 5 were a **trade**,
+  each catching a mutant the other missed. Nothing checks this.
+- **Leading hypothesis (the arc's durable lesson):** the recurring defect was **a guard's
+  DESCRIPTION claiming more than its implementation** — four of seven rounds' findings. The fix
+  shape that ended it was to **stop replacing assertions and start accumulating** them: every level,
+  every shape, one line each.
+- **Next probe:** none for #80. The residual is `devdocs#81`.
+

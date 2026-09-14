@@ -86,13 +86,24 @@ lesson.
   `s-maxage=300` served stale correct-looking copies. **A probe that does not report
   `cf-cache-status` is not measuring the origin**, and "I read the raw bytes" does not save you
   — the bytes were real, they were just the wrong server's.
-- **Root cause (`via: code` + `via: measurement`):** `runImageSearch`
-  (`image-search.service.ts:127`) forks — `imageId`, or `modelId` without `modelVersionId`, take
-  the legacy Postgres path (`getAllImages`); everything else takes the **Meilisearch feed path**
-  (`getImagesFromFeedSearch`). `image-search.service.ts:255` passes `image.user.username` through
-  verbatim. The Meilisearch index has stored `user.username` with Meili's dynamic JSON typing, so
-  an all-digit username is a **JSON number in the index document**. Path, not user, not
-  cardinality, not the CDN.
+- 🔴 **ROOT CAUSE — RETRACTED AND REPLACED 2026-09-14. IT IS NOT MEILISEARCH.** Every
+  MEASUREMENT above holds; the ATTRIBUTION did not survive contact with the code. The index
+  document's `user.username` **never reaches the response**: `getImagesFromFeedSearch` →
+  `ImagesFeed.populatedQuery` builds `user` from the Postgres-backed `userData` **Redis cache** and
+  spreads it AFTER the doc, overriding it. The coercion is in
+  `event-engine-common/caches/base.ts` — a Redis hash stores only strings, so `createCache`
+  serialised each field on write and **guessed the type back** on read:
+  `item[key] = isNaN(Number(value)) ? value : Number(value)`. `Number('0222')` is `222`. Same
+  observable, different mechanism. (It also read a stored `false` back as the truthy string
+  `'false'`, `null` as `'null'`, and `''` as `0`.)
+- 🔴 **THE OBSERVATION THAT SEPARATES THE TWO — and why the old attribution was UNFALSIFIED, not
+  confirmed:** cache-busted, `cf-cache-status: MISS` on every row,
+  `?username=0222&limit=11` → `"username":"0222"` (a Redis MISS returning the raw Postgres row),
+  then `limit=12,13,…,16` → `"username":222` (Redis HIT, decoded). **A Meilisearch document cannot
+  change between two requests seconds apart.** The original probe never varied anything that would
+  make the two mechanisms disagree, so it read the symptom and attached the first plausible cause —
+  the `via: code` tag on that bullet made a reading of ONE file look like a derivation. **`via:
+  code` means "I read code", not "I read the code that runs."**
 - **Ruled out:** that it was fixed server-side since 2026-08-30 — 51/51 fresh origin responses
   coerce, measured 2026-09-11. `via: measurement` · That other surfaces are affected —
   `/api/v1/models` (`creator.username`), `/api/v1/models/{id}`, `/api/v1/users?query=` and
@@ -103,10 +114,11 @@ lesson.
   It makes the CLI decode a number cleanly, which is correct and still wanted. But `"0222"`
   arrives as `222`, so the CLI now prints a **wrong username that looks right**. A decode fix
   cannot recover information the wire already lost.
-- **Next probe:** none needed for diagnosis. The open work is outward: reply to Rochet2, and
-  file against `civitai/civitai`. `via: code` (not measured): `/api/v1/blocks/images` shares
-  `runImageSearch` per the comment at `index.ts:167`, so it is almost certainly affected too —
-  worth one cache-busted check before asserting it in a bug report.
+- **Next probe:** none for diagnosis. Fix is open as **`civitai/civitai#4839`** (pins the
+  submodule) + **`civitai/event-engine-common#13`** (the real fix). 🔴 **Merge `#13` FIRST, then
+  re-pin `#4839`** — it currently points at #13's branch commit. `/api/v1/blocks/images` is still
+  **suspected, not measured**: it returns `401 Block token required`, and calls the same
+  `runImageSearch` (`blocks/images.ts:198`), so it is covered by code identity only.
 
 ### 🔴 A TAB is a worse forgery vector than a newline, because tabwriter's delimiter IS the tab
 
@@ -126,15 +138,13 @@ lesson.
   CLAIM: `safeterm.go:49-55` justifies the helper by naming column-alignment and tabwriter
   row-forging, while guarding only `\n`. `via: code`
 
-### #513's server half — FILED, and the CLI cannot do more
+### #513's server half — the fix is OPEN, and the filed root cause was WRONG
 
-- **State:** `civitai/civitai#4768` carries the root cause (Meilisearch feed path stores
-  `user.username` under dynamic JSON typing), the 8-row path-fork table, the 51/51 sweep and
-  a closing condition. `civitai/cli#513` deliberately **stays open**; Rochet2 was told
+- **State:** `civitai/civitai#4768` still carries the SUPERSEDED Meilisearch attribution in its
+  body; the correction is a COMMENT on it (an issue body is what the next reader acts on, so
+  this is the weaker placement — see the Gotcha on that). Fix PRs: `civitai#4839` +
+  `event-engine-common#13`. `civitai/cli#513` deliberately stays OPEN; Rochet2 was told
   directly that `FlexString` does not make the value correct.
-- **Ruled out:** that `/api/v1/blocks/images` could be confirmed — it returns
-  `401 Block token required`, so it is labelled *suspected, not verified* in #4768 rather
-  than asserted. `via: command`
 
 ### `developer-docs#61` does NOT reproduce — but at the WRONG end of the reporter's own dimension
 
@@ -165,22 +175,12 @@ CLOSED — each was either superseded by a block still below, or resolved by a m
 SHA ledger. **Read them before re-deriving anything about those threads**, and treat every value
 there as recall rather than live state.
 
-### 🔴 RESOLVED: `developer-docs#76` — all seven drifts cleared, sweep green
-- as-of: 2026-09-13
+### `developer-docs#76` — CLOSED, all seven drifts cleared. Block demoted 2026-09-14
 
-- **Symptom + exact repro:** the scheduled `appblocks-drift` sweep had been red for 34 consecutive
-  scheduled runs. `gh workflow run appblocks-drift.yml --repo civitai/civitai-developer-docs`, then
-  count failing steps in the `drift` job.
-- **Observed (with values):** run `34765344965` — `conclusion=success`, **0 failing steps, 15 steps
-  executed**. Issue `#76` state `CLOSED`, `updated=2026-09-13T15:21`, closed by the `notify` job
-  (`job notify: success`). The last two drifts were `check:pins` (step *"Generation-bridge pin drift
-  — pinned SDK devDeps vs npm latest"*) and `check:ds-pins` (step *"Design-system pin drift — docs
-  CDN literals vs the declared pin"*); the step→script mapping was read out of the workflow, not
-  assumed from the step names.
-- **Ruled out:** *"the branch passing the two checks proves the sweep will go green"* — **via:
-  measurement**. The branch result is a claim about the branch; the sweep was re-run against merged
-  `main` before this was called done.
-- **Next probe:** none. Closing condition met.
+Moved VERBATIM to `claudedocs/refs/external-issue-513-numeric-username.md` when this doc hit
+its 65,536 B ceiling. Headline: sweep run `34765344965`, `conclusion=success`, **0 failing
+steps / 15 executed**; the last two drifts were `check:pins` and `check:ds-pins`. Rank 9's
+scheduled-run confirmation is the separate RESOLVED block below.
 
 ### 🔴 `cli-snapshot-refresh`'s GREEN means "skipped", not "unblocked" — and it WILL go red again
 - as-of: 2026-09-13
@@ -201,24 +201,14 @@ there as recall rather than live state.
   Filed as `devdocs#82` with exactly that closing condition — **a green run with `refresh: skipped`
   does not close it.**
 
-### The `devdocs#80` audit ladder — 7 rounds, and what it actually found
-- as-of: 2026-09-13
+### The `devdocs#80` audit ladder — CLOSED. Block demoted 2026-09-14
 
-- **Symptom + exact repro:** a hook description carrying a GFM table flattened into one
-  1853-codepoint run of literal pipes on `apps/reference/hooks.html`.
-- **Observed (with values):** the shipped page was **correct from round 2 onward**. Rounds 3–7 found
-  **only scaffolding defects**. The one that justifies the whole ladder is round 4's: with the flag
-  misspelled generator-side, the page built with **0 `<pre>` elements** — the original bug, fully
-  restored — while `check:built-site` **rc=0** and `test:appblocks:hooks` **rc=0**. Round 7 was
-  clean and the ladder stopped.
-- **Ruled out:** *"a replacement assertion is at least as strong as the one it replaces"* — **via:
-  measurement**. Twice, a replacement silently dropped coverage: rounds 4 and 5 were a **trade**,
-  each catching a mutant the other missed. Nothing checks this.
-- **Leading hypothesis (the arc's durable lesson):** the recurring defect was **a guard's
-  DESCRIPTION claiming more than its implementation** — four of seven rounds' findings. The fix
-  shape that ended it was to **stop replacing assertions and start accumulating** them: every level,
-  every shape, one line each.
-- **Next probe:** none for #80. The residual is `devdocs#81`.
+Moved VERBATIM to `claudedocs/refs/external-issue-513-numeric-username.md`. Headline: the page
+was correct from round 2; rounds 3–7 found only scaffolding defects, and round 4's justified the
+ladder — with the flag misspelled generator-side the page built with **0 `<pre>` elements**
+while two checks returned rc=0. Durable lesson: **a guard's DESCRIPTION claiming more than its
+implementation** was four of seven rounds' findings, and the fix shape that ended it was to stop
+REPLACING assertions and start ACCUMULATING them. Residual: `devdocs#81`.
 
 ### 🔴 RESOLVED: the drift streak's end is now OBSERVED in a scheduled run, not inferred
 - as-of: 2026-09-14
@@ -337,10 +327,13 @@ there as recall rather than live state.
     rebinds it. Flaked once on `#590`; re-run passed. It guards two POSITIVE CONTROLS, and a
     control that flakes trains the reflex of dismissing the one assertion that proves the harness
     works. forcing: none
-25. **`civitai/civitai#4768`'s fix PR — outcome not yet known.** The agent dispatched under
-    rank 3 had not reported when this doc was written. **Check for the PR before re-dispatching
-    anything at #4768**, and `claim-work --list` for `civitai-4768-numeric-username`.
-    forcing: none
+25. 🔴 **`civitai/civitai#4839` + `civitai/event-engine-common#13` are OPEN and MERGE ORDER
+    MATTERS.** #4839 pins the submodule to #13's BRANCH commit: **merge #13 first, then re-pin
+    #4839**. Neither has been audited — `/audit-pr` round 0 was offered and not run. Claim
+    `civitai-4768-numeric-username` is RELEASED. **Not verified by anyone: nothing was exercised
+    against a real Redis or a deploy** — the live probes measured the BUG, not the fix — and
+    `pnpm typecheck` does not cover `apps/event-engine` (that tree has its own command).
+    forcing: user — two open PRs on the main platform repo awaiting a merge decision.
 26. **`cli#602` merged-tree re-run — DELIBERATELY SKIPPED, operator's call 2026-09-14.** It shares
     `internal/cmd/exitcodes_claims_test.go` with the merged `#601` and was 1 commit behind at the
     time. `gh pr view` said `MERGEABLE`/`CLEAN`, which is the TEXTUAL claim only. The mechanical
@@ -355,6 +348,15 @@ there as recall rather than live state.
 
 ## Gotchas / decisions / dead-ends
 
+- 🔴 **`via: code` MEANS "I READ CODE", NOT "I READ THE CODE THAT RUNS" — and that tag is what let
+  a wrong root cause sit in this doc for three days reading as derived.** #4768's Meilisearch
+  attribution was tagged `via: code` + `via: measurement`. The measurements were all real; the
+  attribution came from reading ONE file on the path and stopping at the first plausible mechanism.
+  The actual coercion is two repos away, in a Redis cache decoder, and the value from the index is
+  **overwritten before it is ever serialised**. **Before tagging a cause `via: code`, follow the
+  value to the line that WRITES the response** — and name the rival mechanism, then find the
+  request that makes the two disagree. Here that was trivial once asked: a Redis MISS and a Redis
+  HIT seconds apart return different types, which no index document can do.
 - 🔴 **A TIMED-OUT MUTATION BATTERY LEAVES THE MUTANT IN THE TREE, AND THE RESTORE LINE IS THE ONE
   THAT DIES.** A `make ci` + mutate + full-suite + restore chain hit the 2-minute tool timeout
   (`rc=143`, SIGTERM) after the measurement printed but before the `cp -a` restore ran. Every
@@ -513,8 +515,6 @@ there as recall rather than live state.
   training job. Make the dangerous case unreachable rather than trusting yourself to type it.
 - **An auto-generated issue's BODY is overwritten by the next run; COMMENTS persist.** #76
   says so explicitly. Put diagnosis in a comment.
-- **Round-0 trial ledger, cumulative: `ran: 1 · changed the outcome: 0`.** Two more runs
-  needed before the retire/promote decision. Recorded here, not on external contributors' PRs.
 - **Both #545 and #554 came from the same external contributor within two weeks, and BOTH sat
   unreviewed** (#545 for 13h; #554 until this arc). External PRs here are rare enough that
   nothing routes them to a human. That is the recurring failure, not any individual defect.
@@ -561,8 +561,6 @@ there as recall rather than live state.
   condition was corrected in a comment on 2026-09-11 while its body still described the narrow
   predicate and "8 fields". The body is what the next reader acts on; it was rewritten
   2026-09-12 with the original preserved in a `<details>`.
-- **Round-0 trial ledger, cumulative: `ran: 1 · changed the outcome: 0`.** Two more runs before
-  the retire/promote decision.
 - **Blind audits paid for themselves twice.** #545's audit and #569's each refuted claims made
   by the work they reviewed — #569's refuted **three of my own**, including a comment asserting
   "the only thing that says so", a stale count, and a guard that checked an identifier's NAME
@@ -587,6 +585,8 @@ FLOOR, not a guarantee — and the structural fix is to keep the record where no
 | **`#573` tabwriter ledger + 20 renderers gated** | **`6f0a8d8`** | MERGED |
 | `devrc#1498` mentions-id-collision lesson | `550de40` | MERGED — ⚠ NOT live until `home-manager switch` |
 | **`#601` 429 ordering: sentinel + exit code** | **`b727a83`** | MERGED |
+| `devdocs#5` creators totalItems lower bounds | `23c6d46` | MERGED 09-14, claim re-verified live first |
+| `cli#575` R2/R3/R4 accepted in writing | comment `5671768753` | issue rests on R6 alone |
 | `civitai/civitai#4768` (server-side #513) | new | FILED → agent dispatched 09-14 to fix + PR |
 | stale branch `fix/flexstring-numeric-username` | — | DELETED, recovery sha `12818a3` |
 
@@ -615,9 +615,6 @@ FLOOR, not a guarantee — and the structural fix is to keep the record where no
 - **A CLOSING CONDITION THAT IS MET SHOULD CLOSE, even if you said otherwise an hour ago.** An
   open issue whose body describes fixed work is worse than a closed one with an accurate record.
   Reverse it in the open and say why.
-- **Round-0 trial ledger, cumulative: `ran: 3 · changed the outcome: 1`.** The one that changed
-  it produced four deletion candidates and a dropped requirement, none of which the nine
-  correctness axes would have asked about. One more run before the retire/promote decision.
 
 - 🔴 **FOUR AUDIT LADDERS RAN THIS SESSION AND EVERY SINGLE FINDING WAS IN MY OWN EVIDENCE, NOT
   IN THE CODE.** #578: a coverage reduction whose opposite the PR body asserted. #582: three
