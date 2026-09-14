@@ -115,6 +115,9 @@ const notCovered = ""
 // the screen, and writing it down as ordinary coverage would overstate what
 // those two surfaces have.
 var safeTermCoveredBy = map[string]safeTermCoverage{
+	// --- generate: the blob download path (civitai/cli#574) -----------------
+	"blobStatusError": {"TestBlobStatusErrorCannotForgeALine",
+		"generate's blob 401/403/404/default arms: a server-derived output name, gated once at the top like its twin downloadStatusError"},
 	// --- read path: models / versions -------------------------------------
 	"printModelList": {"TestModelsSearchSanitizesControlChars",
 		"`models search` rows: an uploader's model name, type and creator username"},
@@ -377,8 +380,12 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"the server's reason inside the refusal that ABORTS a spend"},
 	"joinQuoted": {notCovered,
 		"the quoted key list in an --input parse error"},
-	"downloadBlobTo": {notCovered,
-		"the `Saved <target>` line on the generate output path"},
+	"downloadBlobTo": {"TestDownloadBlobToErrorsCannotForgeALine",
+		"generate's blob transfer — the overwrite refusal, both `%s: %w` pairs (operand AND wrapped " +
+			"cause) and the `Saved` line, carrying the server-derived leaf and the mixed-origin " +
+			"target (civitai/cli#574). Its `create output directory` line is deliberately UNGATED " +
+			"and pinned the OTHER way by TestCreateOutputDirectoryStaysUngated, because that value " +
+			"is the user's own --out-dir"},
 	"downloadOutputs": {notCovered,
 		"the multi-output progress line and the no-URL error, both naming server ids"},
 	"printAppMetrics": {"TestTabwriterRenderersCannotBeForged",
@@ -476,7 +483,7 @@ const (
 	// this paragraph as the authority on what the number should be, so it is
 	// amended rather than search-and-replaced: each bullet now says which tree its
 	// figure belonged to.
-	maxUncoveredSafeTermFuncs = 20
+	maxUncoveredSafeTermFuncs = 19
 )
 
 // TestSafeTermCallSitesAreCoveredByANamedTest is civitai/cli#399.

@@ -36,7 +36,14 @@ func attributedIn(found map[string][]string, file string) int { return len(found
 
 func TestSafeTermErrCallersAreLedgered(t *testing.T) {
 	// file -> enclosing function, for every permitted safeTermErr call site.
-	// Every entry is on download.go's single-line error path.
+	//
+	// Every entry is on a SINGLE-LINE error path. That used to read "on
+	// download.go's single-line error path", and civitai/cli#574 widened it:
+	// generate's blob download path is the same shape one command over — the
+	// same writePart, the same presigned-blob transfer, the same one-line
+	// errors — and gating its `%s` operands while leaving the `%w` causes raw
+	// would have reproduced, on the money-spending path, exactly the half-fix
+	// #577 shipped and #590 had to repair.
 	ledger := map[string][]string{
 		"download.go": {
 			"downloadOne",
@@ -44,6 +51,10 @@ func TestSafeTermErrCallersAreLedgered(t *testing.T) {
 			"writePart",
 			"writePart",
 			"writePart",
+		},
+		"generate_output.go": {
+			"downloadBlobTo", // download %s: %w
+			"downloadBlobTo", // install %s: %w
 		},
 	}
 

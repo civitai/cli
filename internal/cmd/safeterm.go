@@ -67,7 +67,7 @@ func safeTerm(s string) string {
 // chain, so the exit-code classifier (AGENTS.md items 7 and 24) still sees
 // whatever sentinel or concrete type it was going to see.
 //
-// 🔴 USE IT ONLY ON download.go's SINGLE-LINE ERROR PATH — not at just any site
+// 🔴 USE IT ONLY ON A SINGLE-LINE ERROR PATH — not at just any site
 // that wraps server bytes. (An earlier draft of this line opened "DO NOT use it
 // at ANY site", which skims as "never call this function" and is false of five
 // live call sites — the same read-the-bold-line failure this comment exists to
@@ -97,7 +97,12 @@ func safeTerm(s string) string {
 // SAME shape this function's own history records from #566 — "one value,
 // printed twice, sanitised on one half" — one class down, and a first pass at
 // #577 shipped three comments claiming the residual was closed while it was not.
-// Every caller is on download.go's single-line error path, so the whole
+// Every caller is on a single-line error path — download.go's, and since
+// civitai/cli#574 generate_output.go's blob download, which is the same shape
+// one command over (same writePart, same presigned transfer, same one-line
+// errors). TestSafeTermErrCallersAreLedgered pins that set in both directions,
+// and it is what caught this sentence still saying "download.go" after the
+// second caller arrived. So the whole
 // function takes the single-line rule.
 func safeTermErr(err error) error {
 	if err == nil {

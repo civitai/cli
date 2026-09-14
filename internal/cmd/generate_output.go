@@ -381,6 +381,18 @@ func reportOutputCountMismatch(errw io.Writer, requested, delivered int) {
 // the answer, re-reading the workflow for a fresh URL is.
 func blobStatusError(status int, name string) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
+	// 🔴 THE NAME IS SERVER-DERIVED AND main.go PRINTS err.Error() RAW —
+	// civitai/cli#574. `name` is filepath.Base of a target built from
+	// renderOutName, whose `{workflowId}` comes off the wire. Gated ONCE here
+	// rather than at each of the three returns below: they are three spellings
+	// of one rule, and #566 exists because two spellings of one rule drifted
+	// apart. This is the structural twin of download.go's downloadStatusError,
+	// which #572 gated exactly this way — the two must not diverge.
+	//
+	// safeTermSingle, not safeTerm: every arm is one line, and saferune keeps
+	// \n and \t by design, so safeTerm alone would let the server forge a line
+	// (civitai/cli#577, the same lesson one command over).
+	name = safeTermSingle(name)
 	switch {
 	case status >= 200 && status < 300:
 		return nil
@@ -405,18 +417,28 @@ func downloadBlobTo(ctx context.Context, fetch blobFetcher, out, errw io.Writer,
 	name := filepath.Base(target)
 	if !force {
 		if info, err := os.Stat(target); err == nil && !info.IsDir() {
-			return fmt.Errorf("refusing to overwrite the existing file %s — pass --force to replace it, or --out-dir <dir> to write somewhere else", target)
+			return fmt.Errorf("refusing to overwrite the existing file %s — pass --force to replace it, or --out-dir <dir> to write somewhere else", safeTermSingle(target))
 		}
 	}
 	if dir := filepath.Dir(target); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
+			// 🔴 `dir` IS DELIBERATELY UNGATED AND MUST STAY THAT WAY. It is
+			// filepath.Dir(target) — the user's own `--out-dir`, never the
+			// server's leaf, because outputTarget refuses any name that is not
+			// its own filepath.Base. Sanitising it would strip USER-TYPED bytes,
+			// which internal/saferune's rule forbids (civitai/cli#393).
+			//
+			// download.go carries the byte-identical line, also ungated, for the
+			// same reason — #572 round 0 REMOVED a gate someone had added here.
+			// A reader seeing one gated twin and one ungated one will try to
+			// "fix" this. Do not. Pinned by TestCreateOutputDirectoryStaysUngated.
 			return fmt.Errorf("create output directory %s: %w", dir, err)
 		}
 	}
 
 	resp, err := fetch(ctx, fileURL)
 	if err != nil {
-		return fmt.Errorf("download %s: %w", name, err)
+		return fmt.Errorf("download %s: %w", safeTermSingle(name), safeTermErr(err))
 	}
 	defer resp.Body.Close()
 	if err := blobStatusError(resp.StatusCode, name); err != nil {
@@ -430,9 +452,9 @@ func downloadBlobTo(ctx context.Context, fetch blobFetcher, out, errw io.Writer,
 	}
 	if err := os.Rename(partPath, target); err != nil {
 		_ = os.Remove(partPath)
-		return fmt.Errorf("install %s: %w", target, err)
+		return fmt.Errorf("install %s: %w", safeTermSingle(target), safeTermErr(err))
 	}
-	fmt.Fprintf(out, "Saved %s (%s)\n", safeTerm(target), humanBytes(written))
+	fmt.Fprintf(out, "Saved %s (%s)\n", safeTermSingle(target), humanBytes(written))
 	return nil
 }
 
