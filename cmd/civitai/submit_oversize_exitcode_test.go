@@ -53,7 +53,7 @@ import (
 // repository (the scaffolded-app path), so this fixture reaches the size guard
 // without the dirty guard firing first — and the submit carries zero provenance,
 // which is the shape --package-only and the no-token fallback also send.
-func realOversizeRefusal(t *testing.T) (error, string, string) {
+func realOversizeRefusal(t *testing.T) (string, string, error) {
 	t.Helper()
 
 	dir, err := filepath.EvalSymlinks(t.TempDir())
@@ -128,11 +128,11 @@ func realOversizeRefusal(t *testing.T) (error, string, string) {
 		t.Fatalf("the error is not the size refusal (so this test would be about the wrong error "+
 			"entirely): %v", runErr)
 	}
-	return runErr, out.String(), errb.String()
+	return out.String(), errb.String(), runErr
 }
 
 func TestOversizeBundleExitsGeneric(t *testing.T) {
-	err, _, _ := realOversizeRefusal(t)
+	_, _, err := realOversizeRefusal(t)
 
 	// The sentinel must be the one the contract names, on the REAL error.
 	if !errors.Is(err, appapi.ErrBundleTooLarge) {
