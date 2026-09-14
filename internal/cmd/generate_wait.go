@@ -309,8 +309,26 @@ func (r *quietPollReporter) tick(e pollEvent) {
 	}
 	r.lastPrint, r.printed = now, true
 	if e.err != nil {
-		fmt.Fprintf(r.w, "  waiting… status %s after %s (the last status check failed: %v; retrying in %s)\n",
-			safeTermSingle(e.status), e.elapsed.Round(time.Second), e.err, e.wait.Round(time.Second))
+		// 🔴 THE ERROR IS SERVER TEXT TOO, AND IT SITS ON THE SAME LINE AS A
+		// VALUE THIS FILE ALREADY GATES (civitai/cli#604 round 0). genapi's
+		// generateError embeds the server's own `message` into every arm and
+		// APIError.Error() returns that verbatim, so `%v` here puts an
+		// attacker-chosen string on a single-line surface. Measured with a 500
+		// whose message was "boom\n  status succeeded\tSaved out.png (2.0 MiB)":
+		// three forged lines, each opening with `  status ` — byte-identical in
+		// prefix to finish()'s own line one frame down, each claiming a status
+		// the workflow never had. Gating e.status and leaving e.err raw is the
+		// "six of seven gated lines in one block" shape this package keeps
+		// re-finding; both operands on one Fprintf take the same gate.
+		//
+		// safeTermSingle(err.Error()) rather than safeTermErr: nothing here
+		// WRAPS the cause with %w and nothing downstream classifies it — the
+		// string is formatted and dropped — so the chain preservation
+		// safeTermErr exists for buys nothing, while adding a caller would widen
+		// both its ledger and the single-line-error-PATH scope its doc comment
+		// draws around `%s: %w` pairs.
+		fmt.Fprintf(r.w, "  waiting… status %s after %s (the last status check failed: %s; retrying in %s)\n",
+			safeTermSingle(e.status), e.elapsed.Round(time.Second), safeTermSingle(e.err.Error()), e.wait.Round(time.Second))
 		return
 	}
 	fmt.Fprintf(r.w, "  waiting… status %s after %s (next check in %s)\n",

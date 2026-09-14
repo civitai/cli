@@ -335,11 +335,18 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"the pickle/archive EXECUTION WARNING, whose text embeds the server's file name"},
 	"printOutputURLs": {"TestPrintOutputURLsRowCountIsNotServerChosen",
 		"the --no-download URL listing, the one #604 surface on STDOUT. The named test drives the renderer " +
-			"with three outputs, the middle URL hostile, and asserts the ROW COUNT (one per kept output) plus " +
-			"exactly two tab-separated fields per row numbered by the CLI — so a URL carrying \\n2\\t<other> " +
-			"cannot write a numbered row of its own onto the surface documented for piping. The TAB half is " +
-			"live here: this is bare fmt.Fprintf, not ui-styled. The `These URLs are presigned` trailer on " +
-			"stderr carries no server text and is not asserted"},
+			"with four outputs — one of them URL-LESS and one of the rest hostile — and asserts the ROW COUNT " +
+			"plus exactly two tab-separated fields per row, each numbered by the CLI. 🔴 THE INVARIANT IS ONE " +
+			"ROW PER KEPT OUTPUT THAT HAS A URL, NUMBERED BY ITS INDEX IN kept, NOT `one per kept output` — " +
+			"which is what this row and the assertion both said until #604 round 0, and it is FALSE: the " +
+			"loop numbers by index but skips a nil URL, and genapi.Deliverable (Available && " +
+			"!hasBlockedReason && !Hidden) does not require one, so a legitimate `url: null` in the middle " +
+			"yields rows numbered 1 and 3 and the old assertion would have reported the CLI forging its own " +
+			"output. Gaps are legitimate; server-chosen, duplicated or displaced numbers are not, which is " +
+			"what still catches a URL carrying \\n2\\t<other>. The fixture's nil URL drives the gap case so " +
+			"the widened assertion cannot pass vacuously. The TAB half is live here: this is bare " +
+			"fmt.Fprintf, not ui-styled. The `These URLs are presigned` trailer on stderr carries no server " +
+			"text and is not asserted"},
 	"printSubmitted": {"TestPrintSubmittedCannotForgeALine",
 		"the submitted-workflow receipt. The named test calls the renderer with cost nil and asserts the " +
 			"block occupies the 2 lines the function writes, differentially against a benign id. 🔴 IT " +
@@ -448,13 +455,21 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	"newUsersGetCmd": {notCovered,
 		"the `closest matches` usernames printed when a user lookup misses"},
 	"(*quietPollReporter).tick": {"TestPollReportersCannotForgeALine",
-		"the server status echoed on every poll of a running generation. The named test's `quiet` subtest " +
-			"drives a NON-TERMINAL status through the real pollWorkflow — non-terminal because that is what " +
-			"a waiting generate displays — and reaches BOTH of tick's gated branches: the no-error one on " +
-			"attempt 1 and the retryable-error one on attempt 2 (a scripted 500). It asserts the line count " +
-			"matches a benign render, that every line begins with one of this reporter's own two prefixes, " +
-			"and that no TAB survives (bare fmt.Fprintf, so that half is live). tick's 429 branch renders no " +
-			"server text and is not driven"},
+		"TWO server operands on the retryable-error branch's single Fprintf — the status echoed on every " +
+			"poll of a running generation, AND the failed check's own error, whose text is the server's " +
+			"`message` verbatim (genapi's generateError interpolates it into every arm; APIError.Error() " +
+			"returns it unchanged). 🔴 THE ERROR OPERAND WAS UNGATED, AND THIS ROW ONCE DESCRIBED THE " +
+			"BRANCH AS IF IT WERE NOT: #604 round 0 measured a 500 whose message was " +
+			"\"boom\\n  status succeeded\\tSaved out.png (2.0 MiB)\" printing THREE forged lines, each " +
+			"opening `  status ` — the prefix (*quietPollReporter).finish writes for the line that reports " +
+			"how a paid-for generation ended. The named test's `quiet` subtest drives a NON-TERMINAL status " +
+			"through the real pollWorkflow — non-terminal because that is what a waiting generate displays " +
+			"— and reaches BOTH of tick's gated branches: the no-error one on attempt 1 and the " +
+			"retryable-error one on attempt 2 (a scripted 500 carrying that message). It asserts the line " +
+			"count matches a benign render, that no TAB survives (bare fmt.Fprintf, so that half is live), " +
+			"and — instead of the permitted-prefix SET it asserted first, which allowed `  status ` and so " +
+			"could not tell a counterfeit from finish()'s own line — the SEQUENCE: waiting… lines, then " +
+			"exactly one `  status ` line, LAST. tick's 429 branch renders no server text and is not driven"},
 	"(*quietPollReporter).finish": {"TestPollReportersCannotForgeALine",
 		"the final status line of a quiet poll. The same `quiet` subtest reaches it through a TIMEOUT, so " +
 			"finish() is called with the last NON-TERMINAL status rather than a terminal one, and the same " +
@@ -464,7 +479,10 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"subtest constructs this reporter directly — newPollReporter picks it only for a real TTY, so a " +
 			"buffer-driven test never gets it otherwise — drives the same non-terminal status through " +
 			"pollWorkflow, and asserts the whole run emits exactly ONE newline and no TAB, so a forged " +
-			"newline cannot strand attacker text above the rewrite point"},
+			"newline cannot strand attacker text above the rewrite point. It also routes the SAME hostile " +
+			"server error message down this path, which is what makes \"this tick drops e.err, so its " +
+			"suffix is a fixed string\" a measured claim rather than one read off the source: rendering that " +
+			"message here ungated is red in this subtest"},
 	"(*ttyPollReporter).finish": {"TestPollReportersCannotForgeALine",
 		"the spinner's final status line, reached by the same `tty` subtest through the timeout path with " +
 			"the last non-terminal status; the one-newline and no-TAB assertions cover it"},

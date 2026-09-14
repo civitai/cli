@@ -3430,10 +3430,13 @@ collision is refused *before any bytes move*.
 
 - `--no-wait` submits, prints the workflow id and exits `0`.
 - `--no-download` waits and prints the output URLs instead of writing files. One
-  row per output on **stdout**, the CLI's own number and the URL separated by a
-  tab, so `cut -f2` is the intended read. The URL is the **server's**, so it is
-  flattened to one line and one tab-separated field first: a presigned URL
-  cannot add a numbered row of its own, or an extra field, to that listing.
+  row on **stdout** per output that came back **with a URL**, the CLI's own
+  number and the URL separated by a tab, so `cut -f2` is the intended read. The
+  number is that output's position among the run's kept outputs, so it skips an
+  output the server returned without one — a gap in the numbering is the CLI's
+  own, not a dropped row. The URL is the **server's**, so it is flattened to one
+  line and one tab-separated field first: a presigned URL cannot add a numbered
+  row of its own, or an extra field, to that listing.
 - `--timeout` bounds how long the CLI waits, and defaults to **30m**. That is
   deliberately generous: the wait has to outlast the **queue**, not just the
   execution. A healthy job has been measured sitting in `scheduled` for
@@ -3806,10 +3809,10 @@ it reaches your terminal, and this is what that gate promises:
 - **`label: value` lines are a narrower promise.** The single-line metadata fields
   — `images … --meta`'s model / sampler / seed / resources, `app status --id`'s
   live URL and block id, `app listing status`'s screenshot ids and captions, the
-  `--no-wait` re-attach hint, and every line `generate` writes while it waits
-  (the submit receipt, the status line the poll redraws, the re-attach block it
-  prints when a wait ends without a result, and the errors it builds around a
-  server's own message) — are flattened the same way. Other one-off detail
+  `--no-wait` re-attach hint, and `generate`'s wait-path lines (the submit
+  receipt, the status line the poll prints or redraws, the server's own message
+  when a status check fails and is retried, and the re-attach block printed when
+  a wait ends without a result) — are flattened the same way. Other one-off detail
   lines outside a table (for example the header block above `models get`'s version
   table, `collections get`, `app view`) have their escapes stripped but **may still
   carry a newline**, so a hostile value there can start a line at column zero.

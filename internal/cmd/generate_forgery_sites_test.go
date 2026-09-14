@@ -73,6 +73,22 @@ const gfsHostileStatus = "processing\nqueued position 1\tETA 2s"
 
 const gfsBenignStatus = "processing"
 
+// gfsHostileServerMessage is the SERVER's own error message, which the quiet
+// poll reporter renders beside the status on the same Fprintf.
+//
+// 🔴 ITS TAIL IMPERSONATES finish()'s OWN LINE, WHICH IS THE POINT. genapi's
+// generateError interpolates this string into every arm and APIError.Error()
+// returns it verbatim, so an ungated `%v` lets the server write whole lines into
+// a waiting generate's output. `  status <terminal>` is exactly what
+// (*quietPollReporter).finish prints one frame later — same two-space indent,
+// same word — so a survivor is not mangled text, it is the CLI appearing to
+// report a finished, saved generation that never happened.
+const gfsHostileServerMessage = "boom\n  status succeeded\tSaved out.png (2.0 MiB)"
+
+// gfsBenignServerMessage is the differential control: same construction, none of
+// the retained class.
+const gfsBenignServerMessage = "boom"
+
 // gfsHostileTerminalStatus is the most hostile value that can REACH the
 // terminal-status error, and the bound is worth stating: genapi.IsTerminalStatus
 // lowercases and TrimSpace's before matching its set, so a server can pad a
@@ -305,16 +321,50 @@ func TestPrintReattachBlockGeometryIsNotServerChosen(t *testing.T) {
 // PAYLOAD. `fmt.Fprintf(out, "%d\t%s\n", …)` means a URL carrying
 // "\n2\t<other>" writes a second, fully attacker-written numbered row; a guard
 // checking for the attacker's host is walkable by choosing a different one,
-// while "one row per kept output, two tab-separated fields each" is not.
+// while the geometry is not.
+//
+// 🔴 AND THE GEOMETRY IS NOT `len(rows) == len(kept)`, WHICH IS WHAT THIS TEST
+// ASSERTED FIRST AND WOULD HAVE FIRED A FALSE FORGERY ON (civitai/cli#604 round
+// 0). printOutputURLs numbers by INDEX INTO kept but only prints an output that
+// HAS a URL, and `genapi.Deliverable` — `Available && !hasBlockedReason &&
+// !Hidden` — does not require one. So a server returning `url: null` on the
+// middle of three deliverable outputs legitimately yields two rows numbered 1
+// and 3, and the old assertion would have reported the CLI forging its own
+// output. The real invariant, and the one below: ONE ROW PER KEPT OUTPUT THAT
+// HAS A URL, NUMBERED BY ITS INDEX IN kept — so the numbers may legitimately
+// have GAPS, but they are never server-chosen, never duplicated and never out of
+// order. The attack is still caught, because it is an EXTRA row carrying a
+// DISPLACED number, and the fixture drives the gap case so the widened
+// assertion cannot be satisfied vacuously.
 //
 // The tab assertion is live here — this is bare fmt.Fprintf with no ui styling
 // in front of it — and it is the one that catches the extra-row forgery.
 func TestPrintOutputURLsRowCountIsNotServerChosen(t *testing.T) {
 	urlOf := func(s string) *string { return &s }
+	// The hostile URL forges the row number the nil-URL output left UNUSED, which
+	// is the most convincing number it could choose: the listing has a visible gap
+	// at 2 and the counterfeit fills it.
 	kept := []genapi.Output{
 		{Blob: genapi.Blob{ID: "a", URL: urlOf("https://example.invalid/o/a.jpeg")}},
-		{Blob: genapi.Blob{ID: "b", URL: urlOf("https://example.invalid/o/b.jpeg\n2\thttps://evil.invalid/steal")}},
-		{Blob: genapi.Blob{ID: "c", URL: urlOf("https://example.invalid/o/c.jpeg")}},
+		{Blob: genapi.Blob{ID: "b", URL: nil}},
+		{Blob: genapi.Blob{ID: "c", URL: urlOf("https://example.invalid/o/c.jpeg\n2\thttps://evil.invalid/steal")}},
+		{Blob: genapi.Blob{ID: "d", URL: urlOf("https://example.invalid/o/d.jpeg")}},
+	}
+
+	// wantNumbers is the invariant, DERIVED FROM THE FIXTURE rather than written
+	// down: the 1-based index in kept of every output that has a URL.
+	var wantNumbers []string
+	for i, o := range kept {
+		if o.URL != nil {
+			wantNumbers = append(wantNumbers, strconv.Itoa(i+1))
+		}
+	}
+	// POSITIVE CONTROL on the fixture: the numbering must actually have a GAP, or
+	// this test is back to asserting one row per kept output and the nil-URL case
+	// — the one the first version of this assertion got wrong — goes undriven.
+	if len(wantNumbers) == len(kept) {
+		t.Fatalf("CONTROL failure, not a finding: every fixture output has a URL, so the numbering has no "+
+			"gap and the nil-URL case this assertion exists to get right is not driven (want %v)", wantNumbers)
 	}
 
 	var out, errw bytes.Buffer
@@ -326,10 +376,10 @@ func TestPrintOutputURLsRowCountIsNotServerChosen(t *testing.T) {
 	if !strings.Contains(out.String(), "evil.invalid") {
 		t.Fatalf("CONTROL failure, not a finding: the hostile URL never reached stdout:\n%s", out.String())
 	}
-	if len(rows) != len(kept) {
-		t.Errorf("#604 FORGERY in printOutputURLs: %d row(s) on STDOUT for %d kept output(s) — a "+
+	if len(rows) != len(wantNumbers) {
+		t.Errorf("#604 FORGERY in printOutputURLs: %d row(s) on STDOUT for %d kept output(s) WITH A URL — a "+
 			"server-chosen URL wrote %d extra numbered row(s) onto the surface this CLI documents for "+
-			"piping:\n%s", len(rows), len(kept), len(rows)-len(kept), out.String())
+			"piping:\n%s", len(rows), len(wantNumbers), len(rows)-len(wantNumbers), out.String())
 	}
 	for i, row := range rows {
 		fields := strings.Split(row, "\t")
@@ -339,9 +389,15 @@ func TestPrintOutputURLsRowCountIsNotServerChosen(t *testing.T) {
 				"wrote:\n%q", i+1, len(fields), row)
 			continue
 		}
-		if want := strconv.Itoa(i + 1); fields[0] != want {
+		if i >= len(wantNumbers) {
+			// The count assertion above already reported this row; naming it again
+			// as a numbering failure would blame the wrong half.
+			continue
+		}
+		if fields[0] != wantNumbers[i] {
 			t.Errorf("#604 FORGERY in printOutputURLs: row %d is numbered %q, want %q — the numbering is the "+
-				"CLI's own and a server value has displaced it:\n%q", i+1, fields[0], want, row)
+				"CLI's own index into the kept outputs (gaps where an output arrived with no URL are "+
+				"legitimate) and a server value has displaced it:\n%q", i+1, fields[0], wantNumbers[i], row)
 		}
 	}
 }
@@ -359,16 +415,30 @@ func TestPrintOutputURLsRowCountIsNotServerChosen(t *testing.T) {
 // 500), and the wait then times out, which calls finish() with the LAST status —
 // the hostile one — rather than a terminal value.
 //
+// 🔴 THE SCRIPTED 500 CARRIES A HOSTILE SERVER MESSAGE, AND WITHOUT THAT THIS
+// TEST WAS BLIND TO HALF ITS OWN SURFACE (civitai/cli#604 round 0). tick's error
+// branch renders TWO server operands on one Fprintf — the status and the
+// error — and the error was ungated while the status was not. The fixture's
+// message was the literal "scripted", which holds no newline and no tab, so the
+// assertions below passed identically with the gate present and absent. The
+// row-prefix check made it worse than merely blind: it PERMITTED `  status ` as
+// a legitimate prefix, which is exactly the line finish() writes and exactly the
+// line an ungated message forges. So the assertion now pins the SEQUENCE — the
+// `  status ` line must be the LAST line and there must be exactly one of it —
+// rather than a set of allowed words, and the fixture drives a message whose
+// tail is built to impersonate it.
+//
 // Both reporters write with bare fmt.Fprintf, so the tab assertions here are
 // live.
 func TestPollReportersCannotForgeALine(t *testing.T) {
-	drive := func(t *testing.T, rep pollReporter, status string) {
+	drive := func(t *testing.T, rep pollReporter, status, serverMessage string) {
 		t.Helper()
 		clock := newFakeClock()
 		cfg := clock.cfg()
 		cfg.timeout = 30 * time.Second
 		calls := 0
-		get := scriptedWorkflows(&calls, gfsWorkflowJSON(status), apiErrorWithStatus(t, http.StatusInternalServerError))
+		get := scriptedWorkflows(&calls, gfsWorkflowJSON(status),
+			apiErrorWithMessage(t, http.StatusInternalServerError, serverMessage))
 		_, _, err := pollWorkflow(context.Background(), get, "wf_1", cfg, rep)
 		if err == nil {
 			t.Fatalf("CONTROL failure, not a finding: a poll that never reaches a terminal status returned "+
@@ -381,52 +451,96 @@ func TestPollReportersCannotForgeALine(t *testing.T) {
 	}
 
 	t.Run("quiet", func(t *testing.T) {
-		render := func(status string) string {
+		render := func(status, serverMessage string) string {
 			var b bytes.Buffer
 			// heartbeat 0 prints every tick: the throttle is not what is under
 			// test, and a suppressed tick renders nothing to assert on.
-			drive(t, &quietPollReporter{w: &b, now: newFakeClock().Now, heartbeat: 0}, status)
+			drive(t, &quietPollReporter{w: &b, now: newFakeClock().Now, heartbeat: 0}, status, serverMessage)
 			return b.String()
 		}
 
-		benign := gfsLines(render(gfsBenignStatus))
+		// assertRowSequence pins the SHAPE of a quiet poll's output: some number
+		// of `  waiting… status ` lines, then exactly one `  status ` line, last.
+		// Stated as an order rather than as a permitted vocabulary, because
+		// `  status ` is a prefix an ungated operand can spell for itself and the
+		// only thing that separates the real one from a counterfeit is WHERE it
+		// sits and HOW MANY there are.
+		assertRowSequence := func(t *testing.T, fail func(string, ...any), lines []string) {
+			t.Helper()
+			joined := strings.Join(lines, "\n")
+			for i, l := range lines {
+				last := i == len(lines)-1
+				switch {
+				case strings.HasPrefix(l, "  waiting… status "):
+					if last {
+						fail("#604 FORGERY in the quiet poll reporter: the LAST line is a `waiting…` line, "+
+							"so finish()'s own `  status ` line is missing or has been displaced:\n%s", joined)
+					}
+				case strings.HasPrefix(l, "  status "):
+					if !last {
+						fail("#604 FORGERY in the quiet poll reporter: a `  status ` line appears at "+
+							"position %d of %d instead of last. finish() writes that line ONCE, at the end; "+
+							"one in the middle is a counterfeit wearing the prefix of the line that reports "+
+							"how a paid-for generation ended:\n%s", i+1, len(lines), joined)
+					}
+				default:
+					fail("#604 FORGERY in the quiet poll reporter: a line the reporter did not write "+
+						"appeared in its output:\n%q\nfull output:\n%s", l, joined)
+				}
+			}
+		}
+
+		benign := gfsLines(render(gfsBenignStatus, gfsBenignServerMessage))
 		if len(benign) < 2 {
 			t.Fatalf("CONTROL failure, not a finding: the benign quiet poll printed %d line(s); this test "+
 				"compares geometries and needs a real one:\n%s", len(benign), strings.Join(benign, "\n"))
 		}
+		// POSITIVE CONTROL on the sequence assertion: it must hold on a benign
+		// render, or a red below says nothing about the hostile one. Fatal, not
+		// Error — a broken expectation is not a finding.
+		assertRowSequence(t, func(f string, a ...any) {
+			t.Fatalf("CONTROL failure, not a finding: the BENIGN quiet poll does not have the shape this "+
+				"test asserts, so the hostile verdict below would be about the assertion, not the gate.\n"+
+				f, a...)
+		}, benign)
 
-		got := gfsLines(render(gfsHostileStatus))
+		got := gfsLines(render(gfsHostileStatus, gfsHostileServerMessage))
 		joined := strings.Join(got, "\n")
 		if !strings.Contains(joined, "processing") {
 			t.Fatalf("CONTROL failure, not a finding: the server status never reached the quiet poll "+
 				"lines:\n%s", joined)
 		}
+		// POSITIVE CONTROL on the OTHER operand. Without this the assertions below
+		// could be measuring a render the server's error message never reached —
+		// which is the state this test shipped in.
+		if !strings.Contains(joined, "boom") {
+			t.Fatalf("CONTROL failure, not a finding: the server's own error message never reached the "+
+				"quiet poll lines, so nothing here measures whether it is gated:\n%s", joined)
+		}
 		if len(got) != len(benign) {
-			t.Errorf("#604 FORGERY in the quiet poll reporter: a hostile status printed %d line(s) where a "+
-				"benign one prints %d — the server chose how many lines a waiting generate emits:\n%s",
-				len(got), len(benign), joined)
+			t.Errorf("#604 FORGERY in the quiet poll reporter: a hostile status and server error message "+
+				"printed %d line(s) where benign ones print %d — the server chose how many lines a waiting "+
+				"generate emits:\n%s", len(got), len(benign), joined)
 		}
-		// The row set: every line this reporter writes begins with one of its own
-		// two prefixes. A forged continuation begins with neither.
-		for _, l := range got {
-			if !strings.HasPrefix(l, "  waiting… status ") && !strings.HasPrefix(l, "  status ") {
-				t.Errorf("#604 FORGERY in the quiet poll reporter: a line the reporter did not write "+
-					"appeared in its output:\n%q\nfull output:\n%s", l, joined)
-			}
-		}
+		assertRowSequence(t, t.Errorf, got)
 		if strings.Contains(joined, "\t") {
 			t.Errorf("#604 FORGERY in the quiet poll reporter: a TAB survived into a status line:\n%s", joined)
 		}
 	})
 
 	t.Run("tty", func(t *testing.T) {
-		render := func(status string) string {
+		// The hostile SERVER MESSAGE is routed down this path too, and the
+		// one-newline check below is what turns "ttyPollReporter.tick drops e.err"
+		// from a claim read off the source into a measured one: the message can
+		// only stay invisible while the suffix stays a fixed string. Someone
+		// rendering it ungated later is red HERE, not at the next audit.
+		render := func(status, serverMessage string) string {
 			var b bytes.Buffer
-			drive(t, &ttyPollReporter{w: &b}, status)
+			drive(t, &ttyPollReporter{w: &b}, status, serverMessage)
 			return b.String()
 		}
 
-		benign := render(gfsBenignStatus)
+		benign := render(gfsBenignStatus, gfsBenignServerMessage)
 		// POSITIVE CONTROL: the spinner rewrites ONE line with \r and ends it with
 		// the single newline finish() writes. If that is not what the benign render
 		// does, the count below is not the property it claims.
@@ -435,14 +549,15 @@ func TestPollReportersCannotForgeALine(t *testing.T) {
 				"finish() writes:\n%q", n, benign)
 		}
 
-		got := render(gfsHostileStatus)
+		got := render(gfsHostileStatus, gfsHostileServerMessage)
 		if !strings.Contains(got, "processing") {
 			t.Fatalf("CONTROL failure, not a finding: the server status never reached the spinner:\n%q", got)
 		}
 		if n := strings.Count(got, "\n"); n != 1 {
-			t.Errorf("#604 FORGERY in the tty poll reporter: a hostile status emitted %d newline(s) where a "+
-				"benign one emits 1 — the spinner rewrites ONE line with \\r, so a forged newline strands "+
-				"attacker text above the rewrite point where nothing ever overwrites it:\n%q", n, got)
+			t.Errorf("#604 FORGERY in the tty poll reporter: a hostile status and server error message "+
+				"emitted %d newline(s) where benign ones emit 1 — the spinner rewrites ONE line with \\r, so "+
+				"a forged newline strands attacker text above the rewrite point where nothing ever "+
+				"overwrites it:\n%q", n, got)
 		}
 		if strings.Contains(got, "\t") {
 			t.Errorf("#604 FORGERY in the tty poll reporter: a TAB survived into the spinner line:\n%q", got)
