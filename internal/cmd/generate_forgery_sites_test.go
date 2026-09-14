@@ -177,7 +177,27 @@ func TestWaitAndCollectTerminalStatusErrorCannotForgeALine(t *testing.T) {
 	if !strings.Contains(got, "failed") {
 		t.Fatalf("CONTROL failure, not a finding: the server status never reached the message:\n%s", got)
 	}
-	assertOneLine(t, "waitAndCollect (terminal-status error, workflow id)", got)
+	// 🔴 ONE-LINE IS ASSERTED ON THE HEAD, NOT ON THE WHOLE ERROR. This message
+	// ends in serverReasonSuffix, which is DELIBERATELY multi-line when the server
+	// supplied a failure reason: generate.go:144 renders it through
+	// indentContinuation(safeTerm(reason)) so a multi-line reason stays readable,
+	// and indentcontinuation_ledger_test.go pins that by name.
+	//
+	// The first draft ran assertOneLine over the whole string, and passed only
+	// because THIS fixture's `"steps":[]` carries no failure reason — a
+	// precondition nothing stated. Measured by round 1: a legitimate reason of
+	// "the model could not be loaded:\nout of memory on the worker" turned it red
+	// with "#577 FORGERY … forged 1 extra terminal line(s)", accusing the one
+	// surface this repo keeps multi-line ON PURPOSE. A guard that cries forgery at
+	// correct behaviour gets deleted by the next person, and takes its real
+	// coverage with it.
+	//
+	// The head carries both gated operands and must be one line. The suffix is the
+	// reason's own surface and is not this test's business. Control escapes are
+	// asserted over the WHOLE string, because no surface here may carry them,
+	// multi-line or not.
+	head, _, _ := strings.Cut(got, ". The server reported:")
+	assertOneLine(t, "waitAndCollect (terminal-status error, workflow id)", head)
 	assertNoControlEscapes(t, "waitAndCollect (terminal-status error, server status)", got)
 }
 
