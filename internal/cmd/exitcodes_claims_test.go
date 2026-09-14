@@ -85,10 +85,73 @@ var exitCodeClaimsFloor = []string{
 	"a validation VERDICT is 1, and a manifest-less directory is a verdict",
 	"`app validate --json` publishes a result only when it produced one",
 	"5 is the retry code and a filesystem failure never lands there",
+	"a 429 is not always 6 — the deep-paging cap is a usage error and exits 2",
+	"a retried 429 that never cleared exits 5, and prints a different message",
+	"the Retry-After header is consulted before the message, so a cap 429 carrying it exits 5",
 }
 
 func exitCodeContractClaims() []contractClaim {
 	return []contractClaim{
+		{
+			code: 6,
+			name: "the Retry-After header is consulted before the message, so a cap 429 carrying it exits 5",
+			phrases: []string{
+				// The reversal has to delete these. "cap-worded" and "NOT `2`"
+				// exist nowhere else in the contract, and a rewrite that put the
+				// cap back on 2 could not keep either.
+				"THE HEADER IS CONSULTED BEFORE THE MESSAGE", "cap-worded", "NOT `2`",
+			},
+			why: "this is the one place the 2-reclassification does NOT hold, and round 3 measured that deleting " +
+				"the bullet from BOTH published surfaces left the whole suite green — the agreement guard moves " +
+				"them together, so it sees nothing. A cap 429 that carries Retry-After is retried and exits 5, " +
+				"which puts a structurally doomed request on the code the README tells scripts to RETRY on: the " +
+				"exact hazard the reclassification to 2 exists to prevent, in the one shape it misses. It is " +
+				"reachable only if the server ever attaches Retry-After to a cap 429, which pkg/civitai assumes " +
+				"it never does — a VENDORED assumption with no local guard, which is why it is published rather " +
+				"than relied on in silence",
+			pinnedBy: "nothing local — the assumption is about the server. That is the point of publishing it",
+		},
+		{
+			code: 5,
+			name: "a retried 429 that never cleared exits 5, and prints a different message",
+			phrases: []string{
+				// 🔴 CHOSEN SO A REVERSAL CANNOT KEEP THEM. An earlier set was
+				// "Civitai returned HTTP 429 after", "service-availability",
+				// "Retry-After" — and the last two were ALREADY in exit code 5's text
+				// before this claim existed, so the row was one phrase deep. Worse, a
+				// rewrite that restored the retracted "reaches 2, 5 or 6" wording kept
+				// all three intact and the suite stayed green. These say the thing the
+				// reversal has to delete.
+				"Civitai returned HTTP 429 after", "not `rate limited (429)`", "The MESSAGE does not",
+			},
+			why: "the 429 STATUS reaches three codes but the `rate limited (429)` MESSAGE reaches only two, and " +
+				"an earlier draft of this contract said otherwise — \"this one message has THREE exit codes\". " +
+				"Measured against a local server: Retry-After present exits 5 after 4 requests and prints " +
+				"\"Civitai returned HTTP 429 after 4 attempts\"; absent, it exits 2 (cap wording) or 6 (generic) and " +
+				"prints \"rate limited (429)\". A reader who greps the Troubleshooting index for the message they saw " +
+				"must land on a row that names the code they got, so the two messages need two rows. The header is " +
+				"also consulted BEFORE the message, so a cap-worded 429 carrying Retry-After exits 5 rather than 2 — " +
+				"a structurally doomed request on the code to RETRY on, published rather than left implicit",
+			pinnedBy: "pkg/civitai's retryExhaustedError tagging ErrNetwork (retry.go:173-180), reached from retry.go:249. " +
+				"🔴 Re-check these numbers if you touch retry.go: the commit that first wrote them inserted ~19 lines " +
+				"into that file and copied the citations forward unchanged, so both were stale on arrival — and they are " +
+				"printed verbatim in this guard's failure message, which is the moment someone follows them",
+		},
+		{
+			code: 6,
+			name: "a 429 is not always 6 — the deep-paging cap is a usage error and exits 2",
+			phrases: []string{
+				"genuine throttle", "deep-paging cap", "structurally doomed",
+				"--cursor", "Branch on the exit code",
+			},
+			why: "the published table said \"Rate limited — throttled by the API (HTTP 429)\" flatly while " +
+				"pkg/civitai reclassified the deep-paging cap to ErrBadRequest (exit 2), so the contract was " +
+				"WRONG in the dangerous direction: a scripter reading it writes `if rc == 6: backoff; retry`, " +
+				"gets 2, and reads 2's row as \"you passed a bad flag\". The reclassification is deliberate — " +
+				"the capped request is permanent, so a generic 429 retry loop spins forever on it — and the " +
+				"VISIBLE MESSAGE IS IDENTICAL in both cases, which is why the row insists on branching by code",
+			pinnedBy: "pkg/civitai's TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne",
+		},
 		{
 			code:    1,
 			name:    "a filesystem failure is 1, not 2 and not 5",

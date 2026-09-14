@@ -53,8 +53,27 @@ import (
 // says how many references it covers; a package that gains a second one fails
 // because 2 != 1, and the failure names every position. A count cannot collide
 // with itself, cannot be out-spelled, and needs no owner key, no argument
-// rendering and no uniqueness proof. It is strictly stronger in the direction
-// #542 asks about and has no surface in the direction it does not.
+// rendering and no uniqueness proof.
+//
+// 🔴 THAT ARGUMENT WAS STATED TOO WIDELY AND AN AUDIT OF THE MERGED CODE
+// FALSIFIED IT. The original read "strictly stronger in the direction #542 asks
+// about and has no surface in the direction it does not". The deleted owner key
+// carried TWO properties, and the measurement that justified deleting it —
+// every package has had exactly one call site, so sites never collide — spoke to
+// only one of them. The other was RELOCATION: the key named the enclosing
+// function, so moving the reference into a different wrapper was red.
+//
+// Demonstrated on merged `main`: rename `safeTerm`'s body to delegate to a new
+// `stripInvisible`, and the count is still 1, `safeTerm` still resolves,
+// `pinnedBy` still resolves — `go test ./...` fully green. Then route
+// `o.aspectRatio` (listed in safeterm_userinput_test.go as "a typed flag value",
+// i.e. must NEVER be stripped) through `stripInvisible`, and the suite is STILL
+// green, while the same line spelled `safeTerm(o.aspectRatio)` is red with the
+// #393 message. Red at the pre-reduction tree, green after it.
+//
+// So the relocation property is restored below — as an ASSERTED VALUE, not as a
+// key. `inFunc` records which function holds the references; it does not have to
+// identify them uniquely, so none of the collision machinery comes back with it.
 //
 // # WHAT THIS ASSERTS
 //
@@ -101,11 +120,23 @@ type saferuneRefOrigin struct {
 	// 🔴 IT WAS RESOLVED MODULE-WIDE AT FIRST, WHICH IS THE NAME-NOT-A-
 	// RELATIONSHIP STATE civitai/cli#578 DELETED FROM THIS REPO SHORTLY BEFORE
 	// THIS BRANCH WAS CUT — a stub of the right name in any package satisfied
-	// it. Package scoping kills that. RESIDUAL, STATED: it does NOT catch a
-	// GUTTED test in the right package, and no static scan can. `pinnedBy` is
-	// not evidence the delegated guard is effective; it is evidence the guard
-	// named lives where the hazard is.
+	// it. Package scoping kills that. RESIDUAL, STATED — and WIDER than an
+	// earlier draft of this paragraph admitted, which said only the first half:
+	//   (a) a GUTTED test in the right package still satisfies it, and no static
+	//       scan can see that;
+	//   (b) it can also be broken from the CODE side — the named guard
+	//       enumerates one spelling (`safeTerm(`), so moving the reference into a
+	//       wrapper that guard does not enumerate leaves `pinnedBy` resolving
+	//       against a test that can no longer see the site. `inFunc` below is
+	//       what closes (b); nothing closes (a).
+	// `pinnedBy` is not evidence the delegated guard is effective; it is evidence
+	// the guard named lives where the hazard is.
 	pinnedBy string
+	// inFunc is the function the references live in — the RELOCATION property
+	// the deleted owner key used to carry. It is an asserted VALUE, not a key:
+	// it never has to identify a site uniquely, so it brings none of the
+	// collision machinery back with it. Empty means "at package level".
+	inFunc string
 	// why is the provenance, checkable by reading the named function.
 	why string
 }
@@ -118,6 +149,7 @@ var saferuneRefs = map[string]saferuneRefOrigin{
 	"internal/cmd:Strip": {
 		kind:     originDelegated,
 		sites:    1,
+		inFunc:   "safeTerm",
 		pinnedBy: "TestSafeTermIsNeverAppliedToUserTypedInput",
 		why: "safeTerm's own parameter. This site cannot be classified server/user here and MUST " +
 			"NOT BE: internal/cmd routes two deliberately non-server values through safeTerm — " +
@@ -131,6 +163,7 @@ var saferuneRefs = map[string]saferuneRefOrigin{
 	"internal/genapi:HasVisibleContent": {
 		kind:     originDelegated,
 		sites:    1,
+		inFunc:   "hasPrintableContent",
 		pinnedBy: "TestHasPrintableContentArgumentsAreServerBytes",
 		why: "hasPrintableContent's own parameter. Its only call site is dedupeReasons, over a " +
 			"trimmed element of the server's `errors` array — a relationship that was prose until " +
@@ -140,6 +173,7 @@ var saferuneRefs = map[string]saferuneRefOrigin{
 	"pkg/civitai:Strip": {
 		kind:     originDelegated,
 		sites:    1,
+		inFunc:   "snippet",
 		pinnedBy: "TestSnippetArgumentsAreAllServerBytes",
 		why: "snippet's own parameter. read.go claims over every present and future call site that " +
 			"it is the server's own bytes; the named guard makes that claim checkable, keyed per " +
@@ -151,7 +185,7 @@ var saferuneRefs = map[string]saferuneRefOrigin{
 // reports nothing unledgered, and passes serenely; a floor makes that state red
 // by construction.
 const (
-	minSaferuneRefs              = 3
+	minSaferuneRefs              = 1
 	minTestDeclsForPinResolution = 100
 	minGoFilesWalked             = 100
 )
@@ -162,6 +196,11 @@ type saferuneRef struct {
 	pos  string
 	pkg  string
 	bare bool
+	// inFunc is the top-level function this reference sits in, "" at package
+	// level. A METHOD renders as "(Recv).Name" so a method and a function of one
+	// name are distinguishable — this is a value to compare, not a key, so that
+	// is all the precision it needs.
+	inFunc string
 }
 
 func TestSaferuneReferenceArgumentsAreLedgered(t *testing.T) {
@@ -229,7 +268,7 @@ func TestSaferuneReferenceArgumentsAreLedgered(t *testing.T) {
 			len(delegated))
 	}
 
-	var grew, shrank, miscounted, userTyped, unpinned, bare []string
+	var grew, shrank, miscounted, userTyped, unpinned, bare, relocated []string
 
 	for key, group := range seen {
 		origin, known := saferuneRefs[key]
@@ -251,6 +290,11 @@ func TestSaferuneReferenceArgumentsAreLedgered(t *testing.T) {
 		for _, r := range group {
 			if r.bare {
 				bare = append(bare, fmt.Sprintf("%s: %s", r.pos, key))
+			}
+			if r.inFunc != origin.inFunc {
+				relocated = append(relocated, fmt.Sprintf(
+					"%s: %s — ledgered as living in %s, found in %s",
+					r.pos, key, saferuneFuncLabel(origin.inFunc), saferuneFuncLabel(r.inFunc)))
 			}
 		}
 		switch origin.kind {
@@ -316,6 +360,16 @@ func TestSaferuneReferenceArgumentsAreLedgered(t *testing.T) {
 			"every delegation rests on: the guard named by pinnedBy answers for the wrapper's call "+
 			"sites, and a function value has none it can see. Call it directly, or wrap it in a "+
 			"named function whose callers a guard can enumerate.")
+
+	report(relocated, fmt.Sprintf("%d reference(s) that MOVED to a different function:", len(relocated)),
+		"The count did not change, so nothing above sees this — and the guard named by pinnedBy "+
+			"enumerates ONE spelling, so a reference moved into a wrapper it does not enumerate is "+
+			"no longer covered by it while still resolving.\n"+
+			"Measured on the tree this check was added to: renaming safeTerm's body to delegate to "+
+			"a new function left `go test ./...` fully green, and a user-typed flag value — one "+
+			"safeterm_userinput_test.go itself lists as must-never-be-stripped — then reached "+
+			"saferune with the suite still green. Either move the row's inFunc and confirm the "+
+			"named guard still reaches the new home, or move the reference back.")
 
 	report(shrank, fmt.Sprintf("%d row(s) with no matching reference:", len(shrank)),
 		"SHRANK. Delete the row, or fix the key if the package or the saferune function was "+
@@ -385,23 +439,50 @@ func saferuneRefsInFile(t *testing.T, path string) ([]saferuneRef, error) {
 	})
 
 	var out []saferuneRef
-	ast.Inspect(f, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok || !isSaferuneQualifier(sel.X, locals) {
-			return true
+	for _, decl := range f.Decls {
+		enclosing := ""
+		if fd, ok := decl.(*ast.FuncDecl); ok {
+			enclosing = fd.Name.Name
+			if fd.Recv != nil && len(fd.Recv.List) > 0 {
+				enclosing = "(" + saferuneRecvName(fd.Recv.List[0].Type) + ")." + fd.Name.Name
+			}
 		}
-		// The key spells the package by its DIRECTORY and the function by its
-		// own name, whatever the file called the import: the ledger is about the
-		// class, and an alias must not mint a second identity for one pair.
-		out = append(out, saferuneRef{
-			key:  pkgDir + ":" + sel.Sel.Name,
-			pos:  fset.Position(sel.Pos()).String(),
-			pkg:  pkgDir,
-			bare: !calls[sel.Pos()],
+		ast.Inspect(decl, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok || !isSaferuneQualifier(sel.X, locals) {
+				return true
+			}
+			// The key spells the package by its DIRECTORY and the function by its
+			// own name, whatever the file called the import: the ledger is about the
+			// class, and an alias must not mint a second identity for one pair.
+			out = append(out, saferuneRef{
+				key:    pkgDir + ":" + sel.Sel.Name,
+				pos:    fset.Position(sel.Pos()).String(),
+				pkg:    pkgDir,
+				bare:   !calls[sel.Pos()],
+				inFunc: enclosing,
+			})
+			return true
 		})
-		return true
-	})
+	}
 	return out, nil
+}
+
+// saferuneRecvName renders a method receiver's type for inFunc. It only has to
+// be stable and readable — inFunc is compared, never used as an identity — so an
+// unhandled shape rendering by type is harmless here in a way it was not when
+// this was a key.
+func saferuneRecvName(e ast.Expr) string {
+	switch v := e.(type) {
+	case *ast.Ident:
+		return v.Name
+	case *ast.StarExpr:
+		return "*" + saferuneRecvName(v.X)
+	case *ast.IndexExpr:
+		return saferuneRecvName(v.X)
+	default:
+		return fmt.Sprintf("%T", e)
+	}
 }
 
 // isSaferuneQualifier reports whether e is one of the local names this file
@@ -477,4 +558,13 @@ func moduleTestDeclsByPackage(t *testing.T) map[string]map[string]bool {
 		}
 	}
 	return out
+}
+
+// saferuneFuncLabel renders an inFunc value for a failure message, naming the
+// package-level case rather than printing an empty string.
+func saferuneFuncLabel(name string) string {
+	if name == "" {
+		return "<package level>"
+	}
+	return name
 }

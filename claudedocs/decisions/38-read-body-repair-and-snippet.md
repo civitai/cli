@@ -470,14 +470,43 @@ package has had exactly ONE `saferune` call site, always.** The set has only eve
 grown by *package* (two to three, when `snippet` arrived), and that direction was
 already covered bidirectionally by `TestSaferuneCallersAreLedgered` before this
 file existed. Not one of the colliding shapes those rounds fixed has ever
-occurred here — 741 lines that found **zero** defects in this repository's code
-and **nine** in themselves.
+occurred here. The identity machinery was **~160 of the file's 741 lines**, and
+it is what the count below replaces: it found **zero** defects in this
+repository's code and **nine** in itself across the three rounds.
+
+⚠ **That sentence conflated two subjects in its first draft** — it read "741
+lines that found zero defects in this repository's code and nine in themselves",
+attaching the machinery's defect count to the whole file. The nine were in the
+~160 lines of keying, not in the 741. It shipped in the one commit of that PR
+that no audit round read, which is the argument for this correction being made
+rather than the arithmetic being re-litigated.
 
 The identity machinery is gone. What replaces it is a **COUNT**: a row records
 how many references it covers, so a package that gains a second call site fails
 because 2 ≠ 1 and the failure names every position. A count cannot collide with
 itself, cannot be out-spelled, and needs no owner key, no argument rendering and
-no uniqueness proof. Verified: every shape that beat the old machinery —
+no uniqueness proof.
+
+🔴 **AND THE ARGUMENT ABOVE WAS TOO WIDE — A FIRST-FULL AUDIT OF THE MERGED
+ARTIFACT FALSIFIED IT.** The owner key carried **two** properties, and the
+measurement that justified deleting it spoke to only one. The other was
+**relocation**: the key named the enclosing function, so moving the reference
+into a different wrapper was red. Measured on merged `main`: rename `safeTerm`'s
+body to delegate to a new `stripInvisible` and the count is still 1, `safeTerm`
+still resolves, `pinnedBy` still resolves — `go test ./...` fully green; then
+route `o.aspectRatio` (listed at `safeterm_userinput_test.go:43` as *"a typed
+flag value"*, i.e. must never be stripped) through it, and the suite is **still
+green**, while the same line spelled `safeTerm(o.aspectRatio)` is red with the
+#393 message. Red pre-reduction, green after.
+
+Restored as `inFunc` — an asserted **value**, not a key, so it needs no
+uniqueness and brings none of the collision machinery back: ~30 lines against
+the 160 that were cut. **The transferable half:** a deletion justified by a
+measurement inherits that measurement's SCOPE. This one measured collisions and
+was used to delete something that also did relocation. Before removing a
+mechanism, enumerate what it does — not what the measurement covers.
+
+Verified: every shape that beat the old machinery —
 `func _()` ×2, `func init()` ×2, `var _ =` ×2, a multi-name spec, two
 `BinaryExpr` arguments, an aliased import — now dies on that one comparison.
 480 lines, down from 741.
@@ -552,16 +581,47 @@ can; `pinnedBy` is not evidence the delegated guard is effective.
   Nothing asserts that the filter cannot move a code the CLI does not yet
   classify from text. Today there is no such code — §4 records the grep — but
   that is a measurement of the tree, not a guard on it.
-- **The README does not document the 429 → exit 2 reclassification at all**, so
-  neither the round-3 change nor round 4's bound has a published counterpart to
-  keep in sync. Its Troubleshooting row reads "`rate limited (429)` | Throttled;
-  exit `6`", and §4 above is the only statement anywhere that some 429s exit 2.
-  This gap PRE-DATES this PR — `isDeepPagingCap` and its reclassification are
-  live at `517fc76` — and is recorded rather than fixed here, because writing the
-  row is a change to the published exit-code contract's wording and belongs with
-  whoever owns AGENTS.md item 7's table, not with a follow-up audit. Closing
-  condition: the Troubleshooting row and the exit-code table both name the
-  deep-paging case, and `readme_troubleshooting_test.go` still passes.
+- **RESOLVED by `#591` — and the closing condition below was NOT met by that PR's
+  first pass, which is worth recording because it is the same half-done shape
+  twice.** This bullet used to read *"The README does not document the 429 → exit
+  2 reclassification at all"*. It now does: `exitcodes_doc.go` (the generator),
+  the generated exit-code table, a generated `### Exit code 6` section, and
+  `civitai --help` all name it.
+
+  🔴 **`#591` as first pushed updated four surfaces and left the FIFTH** — the
+  hand-written Troubleshooting row, which still read "`rate limited (429)` |
+  Throttled; exit `6`". That is the row `README.md`'s own Troubleshooting preamble
+  tells the reader to look up, and the message a capped user greps matches it — so
+  the one surface a scripter reaches said the opposite of the four that had been
+  fixed. Exactly the "#371 shipped having updated two of three" failure AGENTS.md
+  warns about, in a PR whose entire purpose was to close a contract gap. Caught by
+  the audit round on `#591` and fixed there.
+
+  🔴 **A THIRD code was found while fixing it — and then the obvious reading of it
+  was REFUTED.** A throttle carrying `Retry-After` is retried, and if it survives
+  `readMaxAttempts` then `retryExhaustedError` tags it `ErrNetwork`
+  (`pkg/civitai/retry.go:173-180`, reached from `:249`). An earlier draft of this
+  bullet concluded "so one message — `rate limited (429)` — reaches **2, 5 or 6**".
+
+  **That is false, and it was measured false before it shipped.** The 429 STATUS
+  reaches 2, 5 and 6; the MESSAGE `rate limited (429)` reaches **2 or 6, never
+  5** — because `retryExhaustedError` returns before `readError`'s 429 branch
+  runs, so exit 5 prints `Civitai returned HTTP 429 after N attempts …` instead.
+  A `5` limb on a Troubleshooting row keyed to `rate limited (429)` sends a user
+  who saw the *other* string to a row that cannot be theirs.
+
+  ⚠ **The correction shipped in `README.md` and `exitcodes_doc.go` one commit
+  before it shipped here, and the intervening edit to this bullet APPENDED to the
+  false sentence** — "Both the exit-5 and exit-6 rows now state it", where *it*
+  was the refuted claim. So the decision record briefly asserted the opposite of
+  the published contract while claiming to describe it. Recorded rather than
+  quietly overwritten, because "the fix round's own prose is the likeliest next
+  finding" is the pattern this whole ladder kept producing.
+
+  **Nothing ties a Troubleshooting row's stated exit code to `exitCodeDocs`.**
+  `readme_troubleshooting_test.go` asserts only that the row's left-column string
+  exists in the source, which is why this went stale and can again. That is the
+  open residual now — not the prose.
 - **`TestRawDocCommentsDisclaimByteIdentity` covers doc comments on struct
   fields, not prose.** The detail getters (`GetModel`, `GetArticle`,
   `GetCollection`, `GetApp`, `GetModelVersion`, `GetModelVersionByHash`) return

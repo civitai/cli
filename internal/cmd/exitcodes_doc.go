@@ -159,6 +159,7 @@ var exitCodeDocs = []ExitCodeDoc{
 		Detail: []string{
 			"Usage error — a bad flag, a **missing required flag or argument** (e.g. `civitai app withdraw` with no publish-request id), a bad flag **value** (`--limit` out of range, a non-integer id, `--template nope`), or a request the API rejected as malformed (HTTP 400, e.g. a bad `--period`/`--sort` enum).",
 			"This does not depend on where the refusal happens: a mistake the CLI catches locally and one the server rejects both exit `2`. ⚠ **One exception, added by [#585](https://github.com/civitai/cli/issues/585):** a bundle too large to upload used to reach `2` via the server's `400: Invalid JSON`, and is now refused LOCALLY and exits `1` — a verdict about the project, like the other `app submit` refusals. A script branching on `2` for that case must branch on `1`.",
+			"**A 429 can land here.** The API's deep-paging cap (`page*limit` past its fixed offset ceiling) arrives as HTTP 429, but it is permanent rather than transient — retrying the same page loops forever — so it is classified as a usage error and exits `2` rather than `6`. The fix is `--cursor` instead of `--page`. A genuine throttle still exits `6`; see [exit code 6](#exit-code-6).",
 			"A local image the CLI refuses before uploading anything (`civitai app listing set-icon <file>`, `civitai generate --image`) exits `2` when the file is " + joinPhrases(imageUsageRefusals) + " — but a file that exists and cannot be **read** (permissions, an I/O error) is a filesystem failure rather than a mistake about the invocation, and exits `1`, not `2`.",
 			"That split is not images-only and it is not flags-only — it holds for **a flag's value and a positional argument alike**, over the paths listed here: `civitai generate --input <file>` likewise exits `2` for a path that is not there or is a directory, and `1` when the file is there and the read fails.",
 			"The project commands take a positional path and refuse it the same way: `civitai app validate <dir>` and `civitai app submit <dir>` exit `2` when the path does not exist **or is not a directory**, because both are mistakes about the invocation. A directory that **does** exist but holds no `block.manifest.json` is a validation verdict instead, and exits `1`.",
@@ -193,12 +194,20 @@ var exitCodeDocs = []ExitCodeDoc{
 		Summary: "Network/transport failure or service unavailable — the code to **retry** on.",
 		Detail: []string{
 			"Network/transport failure or service unavailable — dial/timeout, or HTTP 502/503/504 after retries.",
+			"**A 429 can land here too**, which no surface used to say: a throttle that carries `Retry-After` is retried, and when it persists through every attempt the failure is tagged as service-availability rather than rate-limiting. The 429 STATUS therefore reaches `2` (the deep-paging cap), `5` (a retried throttle that never cleared) or `6` (a throttle terminal on the first response). The MESSAGE does not: this case prints `Civitai returned HTTP 429 after N attempts — the service is temporarily unavailable, try again shortly`, not `rate limited (429)`, so do not look for the latter here — see [exit code 6](#exit-code-6).",
 			"This is the code to **retry** on, so a **filesystem** failure never lands here however retryable its errno looks: a permissions or I/O problem does not fix itself, and a loop that sleeps and re-runs would never terminate. Those exit `1`.",
 		},
 	},
 	{
 		Code:    6,
-		Summary: "Rate limited — throttled by the API (HTTP 429).",
+		Summary: "Rate limited — throttled by the API (HTTP 429). **Not every 429 lands here**: the deep-paging cap is a usage error and exits `2`.",
+		Detail: []string{
+			"A **genuine throttle** — the API asking you to slow down — exits `6` **when it is terminal on the first response**. Retry with backoff.",
+			"🔴 **A throttle carrying `Retry-After` is RETRIED for you, and if it survives every attempt it exits `5`, not `6`** — and it prints a DIFFERENT message (`Civitai returned HTTP 429 after N attempts …`), so the `rate limited (429)` text you are reading about never appears. Measured: `rate limited (429)` reaches **`2` or `6`, never `5`**; the 429 STATUS reaches all three.",
+			"🔴 **THE HEADER IS CONSULTED BEFORE THE MESSAGE, so a cap-worded 429 that carries `Retry-After` exits `5`, NOT `2`.** Measured on a local server: body `You\u0027ve requested too many pages …` plus `Retry-After: 1` exits `5` after 4 requests. That is a structurally doomed request landing on the code to RETRY on — the exact hazard the `2` reclassification exists to prevent. It is reachable only if the server ever attaches `Retry-After` to a cap 429, which `pkg/civitai/retry.go` assumes it does not; that assumption is vendored and has no local guard, so it is published here rather than relied on silently.",
+			"🔴 **A 429 that is really the deep-paging cap exits `2`, not `6`, and this row exists because the contract used to say otherwise.** The API caps `page*limit` at a fixed offset ceiling and phrases the refusal as a 429 (\"too many pages\", \"use cursors instead\"). That request is **structurally doomed**: retrying the same page loops forever. It is reclassified to `2` so a generic 429 backoff-and-retry loop does not spin on it — the remedy is `--cursor` instead of `--page`, which is a change to the invocation, which is what `2` means.",
+			"The distinction is drawn from the server's own message, deliberately narrowly, so a real throttle is never misclassified as a usage error. The **visible message is unchanged** in both cases: `rate limited (429): … — for deep paging use --cursor instead of --page`. **Branch on the exit code, not the text.**",
+		},
 	},
 }
 
