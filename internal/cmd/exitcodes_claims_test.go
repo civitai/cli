@@ -87,15 +87,42 @@ var exitCodeClaimsFloor = []string{
 	"5 is the retry code and a filesystem failure never lands there",
 	"a 429 is not always 6 — the deep-paging cap is a usage error and exits 2",
 	"a retried 429 that never cleared exits 5, and prints a different message",
+	"the Retry-After header is consulted before the message, so a cap 429 carrying it exits 5",
 }
 
 func exitCodeContractClaims() []contractClaim {
 	return []contractClaim{
 		{
+			code: 6,
+			name: "the Retry-After header is consulted before the message, so a cap 429 carrying it exits 5",
+			phrases: []string{
+				// The reversal has to delete these. "cap-worded" and "NOT `2`"
+				// exist nowhere else in the contract, and a rewrite that put the
+				// cap back on 2 could not keep either.
+				"THE HEADER IS CONSULTED BEFORE THE MESSAGE", "cap-worded", "NOT `2`",
+			},
+			why: "this is the one place the 2-reclassification does NOT hold, and round 3 measured that deleting " +
+				"the bullet from BOTH published surfaces left the whole suite green — the agreement guard moves " +
+				"them together, so it sees nothing. A cap 429 that carries Retry-After is retried and exits 5, " +
+				"which puts a structurally doomed request on the code the README tells scripts to RETRY on: the " +
+				"exact hazard the reclassification to 2 exists to prevent, in the one shape it misses. It is " +
+				"reachable only if the server ever attaches Retry-After to a cap 429, which pkg/civitai assumes " +
+				"it never does — a VENDORED assumption with no local guard, which is why it is published rather " +
+				"than relied on in silence",
+			pinnedBy: "nothing local — the assumption is about the server. That is the point of publishing it",
+		},
+		{
 			code: 5,
 			name: "a retried 429 that never cleared exits 5, and prints a different message",
 			phrases: []string{
-				"Civitai returned HTTP 429 after", "service-availability", "Retry-After",
+				// 🔴 CHOSEN SO A REVERSAL CANNOT KEEP THEM. An earlier set was
+				// "Civitai returned HTTP 429 after", "service-availability",
+				// "Retry-After" — and the last two were ALREADY in exit code 5's text
+				// before this claim existed, so the row was one phrase deep. Worse, a
+				// rewrite that restored the retracted "reaches 2, 5 or 6" wording kept
+				// all three intact and the suite stayed green. These say the thing the
+				// reversal has to delete.
+				"Civitai returned HTTP 429 after", "not `rate limited (429)`", "The MESSAGE does not",
 			},
 			why: "the 429 STATUS reaches three codes but the `rate limited (429)` MESSAGE reaches only two, and " +
 				"an earlier draft of this contract said otherwise — \"this one message has THREE exit codes\". " +
@@ -105,7 +132,10 @@ func exitCodeContractClaims() []contractClaim {
 				"must land on a row that names the code they got, so the two messages need two rows. The header is " +
 				"also consulted BEFORE the message, so a cap-worded 429 carrying Retry-After exits 5 rather than 2 — " +
 				"a structurally doomed request on the code to RETRY on, published rather than left implicit",
-			pinnedBy: "pkg/civitai's retryExhaustedError tagging ErrNetwork (retry.go:170-178), reached from retry.go:226-234",
+			pinnedBy: "pkg/civitai's retryExhaustedError tagging ErrNetwork (retry.go:173-180), reached from retry.go:249. " +
+				"🔴 Re-check these numbers if you touch retry.go: the commit that first wrote them inserted ~19 lines " +
+				"into that file and copied the citations forward unchanged, so both were stale on arrival — and they are " +
+				"printed verbatim in this guard's failure message, which is the moment someone follows them",
 		},
 		{
 			code: 6,

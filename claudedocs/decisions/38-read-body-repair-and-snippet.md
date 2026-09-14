@@ -597,12 +597,26 @@ can; `pinnedBy` is not evidence the delegated guard is effective.
   warns about, in a PR whose entire purpose was to close a contract gap. Caught by
   the audit round on `#591` and fixed there.
 
-  🔴 **A THIRD code was found while fixing it: a 429 can also exit `5`.** A
-  throttle carrying `Retry-After` is retried, and if it survives `readMaxAttempts`
-  then `retryExhaustedError` tags it `ErrNetwork` (`pkg/civitai/retry.go:170-178`,
-  reached from `:226-234`). So one message — `rate limited (429)` — reaches **2, 5
-  or 6**, and before `#591` no surface published any of that. Both the exit-5 and exit-6 rows now state it — the exit-5 row no longer
-  lists only "HTTP 502/503/504 after retries".
+  🔴 **A THIRD code was found while fixing it — and then the obvious reading of it
+  was REFUTED.** A throttle carrying `Retry-After` is retried, and if it survives
+  `readMaxAttempts` then `retryExhaustedError` tags it `ErrNetwork`
+  (`pkg/civitai/retry.go:173-180`, reached from `:249`). An earlier draft of this
+  bullet concluded "so one message — `rate limited (429)` — reaches **2, 5 or 6**".
+
+  **That is false, and it was measured false before it shipped.** The 429 STATUS
+  reaches 2, 5 and 6; the MESSAGE `rate limited (429)` reaches **2 or 6, never
+  5** — because `retryExhaustedError` returns before `readError`'s 429 branch
+  runs, so exit 5 prints `Civitai returned HTTP 429 after N attempts …` instead.
+  A `5` limb on a Troubleshooting row keyed to `rate limited (429)` sends a user
+  who saw the *other* string to a row that cannot be theirs.
+
+  ⚠ **The correction shipped in `README.md` and `exitcodes_doc.go` one commit
+  before it shipped here, and the intervening edit to this bullet APPENDED to the
+  false sentence** — "Both the exit-5 and exit-6 rows now state it", where *it*
+  was the refuted claim. So the decision record briefly asserted the opposite of
+  the published contract while claiming to describe it. Recorded rather than
+  quietly overwritten, because "the fix round's own prose is the likeliest next
+  finding" is the pattern this whole ladder kept producing.
 
   **Nothing ties a Troubleshooting row's stated exit code to `exitCodeDocs`.**
   `readme_troubleshooting_test.go` asserts only that the row's left-column string
