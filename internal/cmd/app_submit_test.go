@@ -41,7 +41,7 @@ func TestDoUploadHandsBytesToSubmitter(t *testing.T) {
 	c.SetOut(&out)
 
 	m := &manifest.Manifest{BlockID: "demo", Version: "0.1.0", Name: "Demo"}
-	if err := doUpload(c, fs, []byte("ZIPBYTES"), m, "https://civitai.com/", appapi.Provenance{}); err != nil {
+	if err := doUpload(c, fs, []byte("ZIPBYTES"), m, "https://civitai.com/", appapi.Provenance{}, false); err != nil {
 		t.Fatalf("doUpload: %v", err)
 	}
 	if string(fs.got) != "ZIPBYTES" {
@@ -69,7 +69,7 @@ func TestDoUploadSuccessOutput(t *testing.T) {
 
 	m := &manifest.Manifest{BlockID: "my-block", Version: "0.2.0", Name: "My Block"}
 	// trailing slash on baseURL must be trimmed when composing the link.
-	if err := doUpload(c, fs, []byte("ZIP"), m, "https://civitai.com/", appapi.Provenance{}); err != nil {
+	if err := doUpload(c, fs, []byte("ZIP"), m, "https://civitai.com/", appapi.Provenance{}, false); err != nil {
 		t.Fatalf("doUpload: %v", err)
 	}
 	s := out.String()
