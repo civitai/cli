@@ -274,7 +274,17 @@ So the rule is about **audience**, not file size:
 ⚠ **Five of the six existing relative links already 404 for a non-checkout reader**
 (`internal/scaffold/…`, `examples/`, `schema/…`). The guard covers only three named
 files by design, and its own control comment names the uncovered ones without
-checking them. Convert all five to absolute URLs.
+checking them.
+
+🔴 **DO NOT "convert all five to absolute URLs" — this doc said to, and that would
+BREAK the guard enforcing the absolute-link rule.** `readme_contributor_links_test.go`
+carries a `checkedTargets >= 3` CONTROL that counts relative **file** link targets
+surviving normalisation; it exists to catch a normaliser that has stopped seeing
+anything, so an empty set is indistinguishable from a broken instrument and it
+`t.Fatal`s. **Measured 2026-09-15: exactly 5 survive, floor 3** — converting all five
+drives it to 0 and reddens the suite. Fixing the 404s therefore requires widening that
+control *first*, which is a code change, and it must keep a positive control that can
+still fail. Until then, leave the relative links alone.
 
 ## How far to go
 
