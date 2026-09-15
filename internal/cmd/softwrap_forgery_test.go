@@ -124,35 +124,46 @@ func swRowsBeginningWith(s string, width int, prefix string) int {
 	return n
 }
 
+// swMaxRowsAt80 is the ABSOLUTE anchor — the only expectation in this file that
+// does NOT scale with maxServerLineRunes.
+//
+// 🔴 WITHOUT IT EVERY ASSERTION HERE IS BLIND TO THE CAP BEING WIDENED, WHICH IS
+// THE ONE EDIT MOST LIKELY TO UNDO #605/#624. Every other expectation is DERIVED
+// from maxServerLineRunes, so a wider cap silently raises the bar it is checked
+// against. With this constant REMOVED and the cap set to 5000, both geometry
+// assertions stay green while the surfaces occupy 63 and 64 display rows at 80
+// columns — the forgery essentially fully restored (66 before the bound). The
+// realistic edit is not malice but tidiness: "two budgets is confusing,
+// harmonise with pkg/civitai's snippet at 500".
+//
+// ⚠ NO PER-SURFACE ROW OR RUNE TOTAL IS QUOTED HERE, AND THREE DRAFTS OF THIS
+// COMMENT ARE WHY. One said the cap-500 edit costs "7 rows directly above
+// `Generate? [y/N]:`" — 7 is the DOWNLOAD line's figure; that surface costs 8
+// (overhead 104 vs 21), i.e. a row count attached to the wrong surface, the
+// exact defect round 1 fixed one file over. One quoted "225 runes / 142 runes"
+// while safeterm.go, added by this same PR, forbids exactly that because 142 is
+// one fixture's overhead and the same line reaches 155. One said "the only red
+// at 5000 is …/multi-byte", which was true before this anchor existed and false
+// in the tree it was written into — the anchor itself reds two more.
+//
+// So: the assertion computes every figure at run time and PRINTS it. Read the
+// test output for today's numbers; do not carry them here. 3 is the value at
+// which both surfaces pass today, and raising it is a deliberate act that has to
+// be justified in this comment — which is the entire point of the constant.
+//
+// ⚠ IT PINS ROWS, NOT THE CAP, so it has slack and "the cap is pinned" would be
+// the wrong sentence: the first cap value that reds the package is 136, because
+// 135 still costs 3 rows on both surfaces. That is the contract working as
+// stated, not a hole — but the headroom is real and worth knowing before anyone
+// quotes this guard as pinning 120.
+const swMaxRowsAt80 = 3
+
 // assertRowsBounded is the ONE geometry assertion, shared by both surfaces so
 // they cannot disagree about what "bounded" means (the repo's one-rule-one-place
 // rule; a predicate open-coded at two sites is typically wrong at one of them).
 //
 // overhead is the rendered line's rune count with a ZERO-LENGTH operand, MEASURED
 // by the caller off a benign render.
-// swMaxRowsAt80 is the ABSOLUTE anchor — the only expectation in this file that
-// does NOT scale with maxServerLineRunes.
-//
-// 🔴 WITHOUT IT EVERY ASSERTION HERE IS BLIND TO THE CAP BEING WIDENED, WHICH IS
-// THE ONE EDIT MOST LIKELY TO UNDO #605/#624. Every other expectation is DERIVED
-// from maxServerLineRunes, so a wider cap simply raises the bar it is checked
-// against. MEASURED, not reasoned: set the constant to 5000 and run
-// ./internal/cmd — both geometry assertions stay GREEN while the two surfaces
-// occupy 63 and 64 display rows at 80 columns, the forgery essentially fully
-// restored (it was 66 before the bound). The only red at 5000 is
-// TestSafeTermBoundedBoundsTheOperand/multi-byte, and that is a FIXTURE-SIZE
-// control whose message points a maintainer at the fixture rather than the cap,
-// so growing the fixture returns the suite to fully green at 64 forged rows.
-//
-// The realistic edit is not malice, it is tidiness: "two budgets is confusing,
-// harmonise with pkg/civitai's snippet at 500". That is 7 rows at 80 columns
-// directly above `Generate? [y/N]:`, and nothing here would have said a word.
-//
-// 3 is what the two surfaces cost TODAY at 80 columns — the warning is 225 runes
-// (3 rows), the progress line 142 (2). Raising it is a deliberate act that has to
-// be justified here, which is the entire point.
-const swMaxRowsAt80 = 3
-
 func assertRowsBounded(t *testing.T, issue, surface, got string, overhead int) {
 	t.Helper()
 	wantRunes := overhead + maxServerLineRunes + len([]rune(serverTextEllipsis))
