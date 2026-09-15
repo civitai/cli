@@ -1717,7 +1717,9 @@ Entries are ranked by **compressed** size, because that is what the upload is
 made of — a large text file that deflates to nothing is not what to delete. The
 usual culprit is a directory of screenshots or sample assets that `app submit`
 packages along with everything else. That block prints under **any** submit
-failure except a `401`/`403` (a credential problem, unrelated) or a `429`.
+failure except a `401`/`403` (a credential problem, unrelated), a `429`, or the
+CLI's own ceiling refusal above — which stopped before contacting the server, so
+it prints the same entry list under `What this CLI would have sent` instead.
 
 #### What the packager left out
 
