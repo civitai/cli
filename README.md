@@ -4078,8 +4078,10 @@ fi
 
 **Look up the message you got.** Every row's left column is a fragment of a
 string this CLI really prints, so searching this page for a few words of your
-error should land you on the right row, and the third column links the section
-that explains it in full.
+error should land you on the right row. The third column links the most relevant
+section — for most rows that is the full explanation, but where the message
+itself already names the remedy the row is deliberately terse and the link is
+context rather than instructions.
 
 ### Credentials and access
 
@@ -4119,8 +4121,8 @@ that explains it in full.
 | `the server rejected the image-upload request (400)` | The **image** was refused while being ingested — the presigned upload mint, the inline icon upload, or the row that records the file. **No listing was changed** by any of the three: nothing is attached until `set-icon` / `set-cover` / `add-screenshot` runs. Read the server's own reason after the code for the bound it applied, rather than guessing. Exit `2`. | [Listing media requirements](#listing-media-requirements) |
 | `image upload PUT failed` | Storage refused the **bytes themselves** (e.g. `EntityTooLarge`), between minting the presigned URL and recording the row. No listing was changed, and it exits **`1`, not `2`** unlike the ingest steps above — a known inconsistency ([#388](https://github.com/civitai/cli/issues/388)). | [Listing media requirements](#listing-media-requirements) |
 | `the server rejected this store-listing change (400)` | The **listing** was refused and may have **partially applied** — check `civitai app listing status`. It covers an attach, a removal, a reorder, opening a revision and submitting one, and names no value to fix because those seven routes do not all carry one: the three attaches report the **file** you sent (never the `--caption`) on the lines below, while the other four print this line alone — *opening* a revision in particular sends nothing but a listing id the CLI derived. Exit `2`, except for a staged change refused only by the publish floor, which reports `staged on an open revision` and exits `0`. | [After you submit](#after-you-submit-review--approve--deploy) |
-| `there is no open revision to submit` | Exit `1`. | [Listing media requirements](#listing-media-requirements) |
-| `this listing is not live` | Exit `1`. | [Listing media requirements](#listing-media-requirements) |
+| `there is no open revision to submit` | Exit `1`. | [After you submit](#after-you-submit-review--approve--deploy) |
+| `this listing is not live` | Exit `1`. | [After you submit](#after-you-submit-review--approve--deploy) |
 | `pass a URL or --clear, not both` | Exit `2`, and nothing is sent. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
 | `nothing to do — pass a repository URL to set the link, or --clear` | `set-source-repo` with neither a URL nor `--clear`. The server would reject the empty patch too, but as a `400` costing a round trip and one of your ~30/hour listing edits. Exit `2`. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
 | `the source-repository URL is blank` | Exit `2`, and nothing is sent — there is no "set it to empty" state to reach. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
@@ -4164,7 +4166,7 @@ that explains it in full.
 | `SHA256 mismatch for` | A download's hash did not match, and the partial file was deleted. Retry — this is integrity checking working, not a bug. The file name is the **uploader's**, so invisible, terminal-controlling, newline and tab characters are removed from it first: this line is the CLI asserting an integrity *failure*, and an escape sequence in a file name must not be able to rewrite it. | [Download model files](#download-model-files) |
 | `checksum mismatch for` | The row above, during `civitai upgrade`. | [Upgrading](#upgrading) |
 | ``git is required for `civitai app pull` `` | Exit `1`, reached only after the server has already answered. | [Pull your app's repository](#pull-your-apps-repository-app-pull) |
-| `unexpected response from` | A public read endpoint answered **`200`** with a body this CLI could not decode — not your request, credential or network, which is why it exits `1`. Two causes are known and fixed ([#513](https://github.com/civitai/cli/issues/513), [#525](https://github.com/civitai/cli/issues/525)). | [Exit code 1](#exit-code-1) |
+| `unexpected response from` | A public read endpoint answered **`200`** with a body this CLI could not decode — not your request, credential or network, which is why it exits `1`. Two causes are known and fixed ([#513](https://github.com/civitai/cli/issues/513), [#525](https://github.com/civitai/cli/issues/525)); hitting a third means the body is a shape the SDK does not model — **please open an issue with the snippet**. | [Scripting with `--json`](#scripting-with---json) |
 
 Still stuck? Every command takes `--help`, `civitai --help` prints the exit-code
 contract, and failures are differentiated by [exit code](#exit-codes) — so a
