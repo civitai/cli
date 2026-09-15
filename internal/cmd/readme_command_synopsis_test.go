@@ -276,7 +276,7 @@ func TestREADMECommandSynopsesNameRealFlags(t *testing.T) {
 	// parser that extracts nothing — a renamed heading, a changed table header,
 	// a row shape this splitter does not understand — makes the whole test pass
 	// while checking not one flag. These three floors are what make the green
-	// above mean something; measured 25 rows / 33 command resolutions / 89 flag
+	// above mean something; measured 25 rows / 33 command resolutions / 90 flag
 	// checks on the day this landed, so each floor sits well below today's
 	// value and far above zero.
 	t.Logf("command-reference synopses: %d rows, %d command resolutions, %d flag checks", rows, resolved, checks)
@@ -293,7 +293,7 @@ func TestREADMECommandSynopsesNameRealFlags(t *testing.T) {
 	// separate subcommands.
 	//
 	// MEASURED: with the splitter simplified, this test reports 25 rows / 25
-	// resolutions / 75 checks and PASSES, against real values of 25 / 33 / 89.
+	// resolutions / 75 checks and PASSES, against real values of 25 / 33 / 90.
 	// Fourteen flag checks and eight command resolutions vanish — agent-setup's
 	// --agent/--dir/--check/--json/--dry-run, app create's --dir/--name/--slug/
 	// --yes, and the whole app listing subcommand chain — so the README could
