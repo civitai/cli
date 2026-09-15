@@ -1565,13 +1565,6 @@ Capabilities:
 for *that* credential — `civitai login --scopes generate` for an OAuth login, a
 full-scope personal key otherwise.)
 
-The credential type is deliberately **not** filed under Capabilities: it says
-what the token *is*, not what it may *do*. (Renaming the header to "Granted
-Capabilities" was considered and rejected — `Submit Apps: yes` for a personal
-API key is not a granted bit at all, because the server does not scope-gate
-submit for personal keys; for an OAuth token it genuinely *is* the
-`AppBlocksSubmit` bit.)
-
 **Submit Apps is a tri-state — `yes` / `no` / `unknown` — and `unknown` is not
 `no`.** The server scope-gates submit **only** on OAuth tokens (the opt-in
 `AppBlocksSubmit` bit, which `ScopeFull` deliberately excludes); a personal API
@@ -1586,11 +1579,8 @@ key is not scope-gated for submit at all. So:
 
 When the server reports no scope mask, the two **Buzz** rows are omitted rather
 than printed as `no`, and the output says *"(token scope not reported by the
-server — **Buzz** capabilities unknown)"*. That caveat sits **inside the
-Capabilities section, below the rows** — it explains why two capability rows are
-missing, and says nothing about the credential's identity. It is scoped to Buzz
-on purpose: the Submit Apps row above it may well be a known answer, and a
-blanket "capabilities unknown" would have been false. So the degraded output is:
+server — **Buzz** capabilities unknown)"*. It is scoped to Buzz because the
+Submit Apps row above it may well be a known answer:
 
 ```
 Logged in as zach (id 1) at https://civitai.com
@@ -1614,9 +1604,7 @@ raw `/api/v1/me` body.** It is a hand-built projection of fourteen keys, and the
 two the server sends that never appear are **`email` and `emailVerified`**.
 Those are PII this command does not print, so passing the body through would be
 a privacy regression, not a fix
-([#377](https://github.com/civitai/cli/issues/377)). The gap between "raw" and
-"curated" is now exactly that PII — which is why the CLI will not call this
-output raw.
+([#377](https://github.com/civitai/cli/issues/377)).
 
 ```json
 {
@@ -1646,24 +1634,20 @@ for `null` before reading any of the four. `subscriptions` is a list of strings
 🔴 **The four degrade together.** They come from one strict parse, so if *any*
 of them arrives in an unexpected shape, **all four** become `null` rather than
 some of them being dropped silently — `whoami` still prints your identity and
-capabilities normally. That is deliberate: the CLI publishes only fields it
-models, so an unrecognised shape is withheld rather than passed through to your
-terminal. `isMember` is the one worth branching on: a member and a free account
-do not see the same usable generation ecosystems, so it predicts whether
-`civitai generate`'s defaults are even available to this credential.
+capabilities normally. `isMember` is the one worth branching on: a member and a
+free account do not see the same usable generation ecosystems, so it predicts
+whether `civitai generate`'s defaults are even available to this credential.
 
 Two more fields carry a **third state a script must branch on**, exactly as
 `app metrics` requires for `views.unavailable`:
 
 - **`canSubmitApps` is `true` / `false` / `null`.** `null` means *unknowable*
-  (the two rows above), and a consumer must not read it as `false`. ⚠️ **This
-  field used to be a plain boolean**; a script doing `if (!j.canSubmitApps)`
-  now treats `null` the same as `false` and will report a dead end that may not
-  exist. Test `j.canSubmitApps === null` first.
+  (the two rows above), and a consumer must not read it as `false`: a script
+  doing `if (!j.canSubmitApps)` treats `null` the same as `false` and will
+  report a dead end that may not exist. Test `j.canSubmitApps === null` first.
 - **`scopes` is a list, `[]`, or `null`.** `null` means the scope mask was not
   reported (`scopesKnown: false`); `[]` means the mask **was** reported and had
-  no bits set. These used to both serialise as `null`, which no consumer could
-  tell apart.
+  no bits set.
 
 `scopesKnown` disambiguates `canReadBalance` and `canSpend`, which stay plain
 booleans: when it is `false`, both are `false` because nothing is known, not
@@ -1689,9 +1673,8 @@ you cannot submit.
 A submit that carries [build provenance](#build-provenance-which-commit-is-live)
 sends `sourceCommit` and `sourceDirty` in that same document, so its body is
 about **70 bytes larger**. The printed number accounts for it: it is computed
-from the body *this run* will send, not from a fixed envelope — which is why the
-`--package-only` and no-token paths, which stamp nothing, print exactly the
-number they always did.
+from the body *this run* will send, not from a fixed envelope — and the
+`--package-only` and no-token paths stamp nothing, so they run no `git` at all.
 
 🔴 **The ceiling is 10485760 bytes of body, and `app submit` refuses above it.**
 The refusal costs no upload — it is checked against the marshalled document
@@ -1712,14 +1695,12 @@ CLI would refuse bundles the server would now take:
 civitai app submit --allow-oversize     # submit anyway; the ceiling may be stale
 ```
 
-**What the refusal looks like.** The CLI refuses first, naming the body size and
-the ceiling, so the `400` below is what you see only when you pass
-`--allow-oversize` (or when the server's real limit turns out to be lower than
-the vendored one). The server answers
-`400: Invalid JSON` — an error about the *parse*, downstream of the cause, naming nothing
-size-shaped.
-(That string is the server's own, printed verbatim; there is no better message
-hiding inside the response.) The CLI adds what it knows on top:
+**What a rejected upload looks like.** The CLI's own refusal never reaches the
+server: it names the body size and the ceiling and stops. The `400` below is
+what you see only when you pass `--allow-oversize` (or when the server's real
+limit turns out to be lower than the vendored one). The server answers
+`400: Invalid JSON` — an error about the *parse*, downstream of the cause,
+naming nothing size-shaped. The CLI adds what it knows on top:
 
 ```
 Error: server returned 400: Invalid JSON
@@ -1735,9 +1716,14 @@ What this CLI sent (it cannot tell whether that is why the submit failed):
 Entries are ranked by **compressed** size, because that is what the upload is
 made of — a large text file that deflates to nothing is not what to delete. The
 usual culprit is a directory of screenshots or sample assets that `app submit`
-packages along with everything else. The account is printed for any refusal that
-might be about the bundle, and deliberately **not** for a `401`/`403` (a
-credential problem, unrelated) or a `429`.
+packages along with everything else. That block prints under **any error the
+upload call reports**, except a `401`/`403` (a credential problem, unrelated) or
+a `429`. It is keyed on how the error *classifies*, not on whether bytes left the
+machine — an error raised before the request is even built lands here too, so
+read `sent` as the CLI's account and not a guarantee. A refusal that stops the
+submit **before** the upload step prints nothing at all: no `--yes`, a dirty work
+tree, the version guard, a validation failure. The ceiling refusal above is the
+one refusal with an entry list of its own, under `What this CLI would have sent`.
 
 #### What the packager left out
 
@@ -1763,9 +1749,6 @@ Skipped 4 path(s): public/environment.env (*.env), .git/, dist/, node_modules/
   verbatim.
 - Past 12 entries the list is elided with `… and K more`; the count before the
   colon still counts every one.
-
-This does not change what is packaged. It changes an exclusion from something
-you meet at runtime in the deployed app into something you read at submit time.
 
 **The same list decides what the dirty-work-tree guard counts** (the refusal is
 in [exit code 1](#exit-code-1)). Paths the packager never ships — `dist/`,
@@ -1949,16 +1932,11 @@ Packaged 5 file(s) (858 bytes compressed, 110 decompressed; 1163 bytes as the ba
 ```
 
 - **It warns. It never drops a file, never refuses, and never changes the exit
-  code** — a `--yes`/CI submit that warned still exits `0`. Matching too much in
-  a *name* rule costs one file a rename; matching too much in a *content*
-  heuristic would delete app source, and a `.ts` file containing the word
-  `password` is ordinary code. So this reports and does nothing else.
+  code** — a `--yes`/CI submit that warned still exits `0`.
 - ⚠️ **On a real `submit` it reports a leak; it cannot prevent one.** The line is
   printed between the confirmation prompt and the upload, so by the time you read
   it the bundle is on its way. `--package-only` writes the `.zip` and sends
-  nothing, which is the path where the warning is actionable. (The confirmation
-  deliberately runs before packaging, so moving the warning in front of it is a
-  larger change than this feature carries.)
+  nothing, which is the path where the warning is actionable.
 - **It prints `path:line` and the key name, never the value.** This output lands
   in CI logs and terminal scrollback: printing the secret would move it into a
   second durable place. Open the file to see what matched. A key that *itself*
@@ -4063,7 +4041,7 @@ context rather than instructions.
 | `nothing index.html loads reaches it` | The **strong** tier: the emitter is in your project but nothing the browser loads reaches it. Copying `civitai-host.js` in is only half the fix — it has to be referenced too. | [The host handshake](#the-host-handshake-block_ready) |
 | `no lockfile is committed` / `is not a lockfile` | The platform build installs **strictly** from the committed lockfile, so a missing one, or a zero-byte one from `touch`, fails the build server-side. Generate it with the package manager. | [Validate fidelity](#validate-fidelity) |
 | `refusing to submit without --yes` | Exit `1`. `--package-only` and the no-token fallback never reach it. | [Command reference](#command-reference) |
-| `What this CLI sent` / `largest entries in the bundle` | Not an error of its own: the CLI's account of what left your machine — the bytes on the wire, and the largest entries they were made of — printed **under** a failed submit whose server message may name nothing actionable. **It does not claim to know why the submit failed.** Not printed for a `401`/`403`/`429`. | [Submit & auth](#submit--auth) — *How big can a bundle be?* |
+| `What this CLI sent` / `What this CLI would have sent` / `largest entries in the bundle` | Not an error of its own: the CLI's account of the bundle, and the largest entries it was made of. `What this CLI **sent**` prints under any error the upload call reports — **it does not claim to know why** — and not on a `401`/`403`/`429`. ⚠ It is keyed on how the error *classifies*, not on whether bytes left the machine, so a failure raised before the request was built still prints the past tense. `What this CLI **would have** sent` is the ceiling refusal alone, and that one is exact: nothing was uploaded. A refusal that stops the submit before the upload step (no `--yes`, a dirty tree, the version guard, a validation failure) prints neither. | [Submit & auth](#submit--auth) — *How big can a bundle be?* |
 | `Your repo may be behind what was last released` / `Resubmitting the version that is already live is almost always an accident` / `That version is approved but not live` | The **monotonic-version guard**: the manifest version is not strictly above the highest **approved** version, and approving an older or identical one supersedes the newer. Exit `1`; `--allow-downgrade` submits anyway. The second line names which of four cases you are in. | [Exit code 1](#exit-code-1), [Is your repo behind?](#is-your-repo-behind-what-you-shipped) |
 | `from a dirty git work tree` / `that go into the bundle are not committed` | The **dirty-work-tree guard**: files that go into the bundle are uncommitted, so approving one deploys code that exists in no commit. It names the paths (`git status` spelling, relative to the packaged directory) — commit them, or pass `--allow-dirty`. Exit `1`. | [Exit code 1](#exit-code-1), [Submit & auth](#submit--auth) — *What the dirty-work-tree guard counts as a change* |
 | `look like they hold credentials` | A **warning**, not a refusal — the exit code is unchanged. A file the packager KEPT holds a line shaped like a credential, and a submitted bundle cannot be recalled. It prints `path:line` and the key name, never the value — open the file to see what matched. | [Submit & auth](#submit--auth) — *What looks like a credential* |
