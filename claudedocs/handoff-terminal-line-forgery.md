@@ -149,56 +149,56 @@ this one says plainly that it has not been ratified.
 | cli#608 | 30 | `a29abb7` | 16 server operands on `generate`; closed `#604` |
 | cli#619 | 31 | `7c5a39c` | three operands with NO gate at all; closed `#612` |
 | cli#628 | 28 | `b4acda5` | the LENGTH class — bounded two operands; closed `#605` + `#624` |
+| cli#632 | 29 | `b017353` | this doc; the split, and the effort's first closing condition |
 
 Every one verified by **CONTENT** with a working positive control, never by ancestry: a squash
 merge makes the branch head a non-ancestor forever, so `merge-base --is-ancestor` returns false
 after every one of these and means nothing.
 
-🔴 **IN FLIGHT — `civitai/cli#632`, branch `docs/split-forgery-initiative`.
-OPEN, UNMERGED, and NO audit round has run on it.** It is the PR that created this doc: it
-splits the effort out of `handoff-agent-setup-onboarding.md` (rank 29's "split by initiative")
-and writes the closing condition in `## Goal`. `make ci` green, 21 packages.
+**Nothing is in flight.** All claims released and verified absent (`agent-setup-onboarding-23`,
+`-28`, `-29`, `-30`, `-31`). The two open PRs in the repo (#623, #602) belong to other efforts.
 
-🔴 **THE CLOSING CONDITION IS UNRATIFIED, AND THAT IS THE BLOCKING QUESTION FOR THIS EFFORT.**
-It was written by the session that closed ranks 28 and 31, not by the operator. The immediately
-preceding lesson on this arc is that a fork resolved without an operator author of record is
-itself an audit finding — so this one is flagged rather than presented as settled. **Ratify it,
-replace it, or reject it before starting a fifth point-fix**, because every rank below is
-otherwise worked under a done-state nobody agreed to.
+### 🔴 THE ONE BLOCKING DECISION
 
-- **Claim:** `agent-setup-onboarding-29` is HELD at the time of writing (taken for the split).
-  Release it when #632 lands. Ranks 23/28/30/31/32 released and verified absent.
-- **Not established:** whether an operator agrees the writer-keyed ledger is the right
-  done-state; whether it is buildable at acceptable cost. No prototype exists.
+**The closing condition in `## Goal` is UNRATIFIED, and round 0 of #632 already broke one
+version of it.** It was rewritten in `00c5fec` and is better — bounded, costed, with #624
+excluded — but it is still a proposal by the session that wrote it.
+
+🔴 **The recommendation on the table is NOT "ratify it". It is "run one measurement first",**
+because the measurement can make the condition unnecessary:
+
+- If the server's `message` never echoes caller-supplied text, the whole class is
+  **defence-in-depth against a backend bug** — exploitation needs a compromised backend — and
+  the right closure is plausibly *accept the residual in writing and stop*, which RETIRES ranks
+  2 and 3 instead of working them.
+- If it does echo, this is **uploader → victim with no server compromise**, the severity on
+  #629/#620 moves from a floor to a measurement, and the instrument is clearly worth building.
+
+The probe is free and the machinery is already here — see the open investigation below.
 
 ### Honest limits
 
-<!-- CARRIED FORWARD deliberately: `## State now` is a REPLACE section, so this subsection
-     is deleted by any update that omits it. The write gate printed no durable-drop warning
-     for it, and that silence is not evidence — it was caught by reading the `-` lines. -->
+<!-- CARRIED FORWARD deliberately: `## State now` is a REPLACE section, so this subsection is
+     deleted by any update that omits it. Caught twice now by reading the `-` lines; the write
+     gate printed no durable-drop warning either time. -->
 
-- 🔴 **EVERY CLOSURE SO FAR HAS PRODUCED ITS OWN SUCCESSOR: `#604` → `#612` → `#624` →
-  `#629`.** Four rewrites of the same "not wholly gated" sentence. That chain is the
-  strongest argument for the closing condition above, and the reason a fifth point-fix
-  should not start before someone decides whether that condition is right.
-- 🔴 **The threat model is OPEN**, recorded on `#612`. Nobody has established whether the
-  server's `message` ever carries uploader-controlled text. The classifier matching on
-  `has("unknown ecosystem")` implies the server echoes requested values, which would make
-  this uploader→victim with **no server compromise**. The cheap probe is a **`whatIf`/quote**
-  call's raw error body — **never a submit, which charges**. Severity on those issues is a
-  **floor, not a measurement**.
-- 🔴 **The audit base rate is FIFTEEN FOR FIFTEEN.** Every round that ran found something.
-  Ranks 28 and 31 each ran three rounds and **not one came back clean**; both ladders ended
-  on the **attribution gate** (two consecutive rounds whose fixes changed zero payload
-  lines), never on convergence.
-- 🔴 **Three consecutive rounds found the PREVIOUS round's own prose** — not code, but
-  sentences a fix wrote to explain itself. Twice a false absolute was replaced by a
-  narrower absolute that was also false.
-- ⚠ **This doc's own closing condition shipped UNPARSEABLE** in its first commit — written
-  as a `###` heading, which `handoff_doc.py` does not read, so the doc declared NONE while
-  its PR headline said it added one. Fixed in `02f4795`; kept here because it is the
-  effort's own defect class (reads as coverage, provides none) committed in the document
-  that names it.
+- 🔴 **EVERY CLOSURE SO FAR HAS PRODUCED ITS OWN SUCCESSOR: `#604` → `#612` → `#624` → `#629`.**
+  Four rewrites of the same "not wholly gated" sentence. That chain is the strongest argument
+  for having a closing condition at all, and the reason a fifth point-fix should not start
+  before the decision above is made.
+- 🔴 **The threat model is OPEN** — the blocking decision above, and the open investigation
+  below. Severity on #629/#620 is a **floor, not a measurement**.
+- 🔴 **The audit base rate is EIGHTEEN FOR EIGHTEEN.** Every round that ran found something.
+  Ranks 28, 29 and 31 each ran audit rounds and **not one came back clean**.
+- 🔴 **Three consecutive rounds found the PREVIOUS round's own prose** — not code, but sentences
+  a fix wrote to explain itself. Twice a false absolute was replaced by a narrower absolute that
+  was also false.
+- 🔴 **THIS DOC'S OWN CLOSING CONDITION HAS NOW FAILED TWICE, IN TWO DIFFERENT WAYS**, and both
+  were caught by instruments rather than by reading: (1) it shipped **unparseable** — written as
+  a `###` heading, which `handoff_doc.py` does not read, so the doc declared none while its PR
+  headline said it added one; (2) rewritten, it was **unmeetable** — control 3 tested #624
+  against a predicate structurally incapable of seeing it. Assume the third version is also
+  wrong somewhere and look for it.
 
 ## How to verify
 
@@ -304,49 +304,140 @@ closing condition is keyed on the writer instead.
 - ⚠ **An issue number is not reserved until the issue exists.** `#623` was written into two
   source comments and taken by another session before the file was created; the real number was
   #624. Assert the count, then verify the number resolves to what you think it does.
+
+### Added 2026-09-15 (second half) — round 0 on the doc itself
+
+- 🔴 **A CLOSING CONDITION CAN BE ARRANGED TO FAIL ON ITS OWN EVIDENCE.** #632's first
+  condition said *"run it at the parents of the #566/#612/#624 fixes … if it misses them, the
+  condition is not met"* while its predicate keyed on the ABSENCE of a gate. Measured at
+  `b4acda5^`: both #624 operands were **already gated** — #624 was an *insufficiency*-of-gate
+  defect. So control 3 returned MISS by construction and the condition refuted itself,
+  permanently, since #624 is closed and history is fixed. **When a condition names historical
+  cases, check each one is of a kind the predicate can SEE.**
+- 🔴 **"RETIRE THE MANUAL PROCESS" IS A CLAIM ABOUT COST THAT NEEDS A COUNT.** The same draft
+  said the hand enumeration was "retired"; measured, the instrument it proposed spans **1,023**
+  non-test non-comment writer sites in `internal/cmd` against the **9** rows of the ledger it
+  would replace. Bounded to the four money/verification files it is ~150. **Count the sites
+  before writing the verb.**
+- 🔴 **A GUARD'S SCALE CAN REINSTATE THE DEFECT IT REPLACES.** None of the three controls checks
+  whether a classification is TRUE — a wrong label passes all of them, which is #621's mechanism
+  at 150 rows instead of 9. Ask of any new ledger: *what happens if a row is simply wrong?*
+- 🔴 **A DUPLICATED RECIPE IS A SECOND THING TO KEEP TRUE, AND THIS ONE WAS NOT KEPT TRUE FOR
+  THREE COMMITS.** `## How to verify` existed in both handoff docs; the older copy's `-run`
+  filter omitted `IsLengthBounded`, the guard #628 added for #605/#624, so a reader following it
+  would have reported the forgery guards green **having never run the newest one**. Deleted in
+  favour of a pointer.
+- 🔴 **A `-run` FILTER ALTERNATIVE THAT MATCHES NO TEST IS SILENT.** `SoftWrap` matched zero —
+  the file is `softwrap_forgery_test.go` but its funcs are `BoundsTheOperand` and
+  `IsLengthBounded`. Verify a filter by counting `=== RUN` lines, never by its exit code; the
+  corrected filter yields 57.
+- 🔴 **SPLITTING A HANDOFF MINTS A SECOND `claim-work` SLUG FOR THE SAME ITEM**, and the lock is
+  per-slug: `agent-setup-onboarding-32` and `terminal-line-forgery-1` both resolve to #629 and
+  both compare-and-swaps succeed. A forwarding map is the human half; the `gh pr list` sweep is
+  the only mechanical one.
+- 🔴 **CREATE A HANDOFF DOC THROUGH THE GATE, EVEN THE FIRST TIME.** `handoff_doc.py` rule (m)
+  REFUSES a new doc with no `closing-condition:` — but "new" means untracked at HEAD, and this
+  file was `Write`-ten and committed by hand first, so the gate took its **advisory** arm
+  instead. That is why the condition shipped unparseable. The skill says step 5 is the only step
+  that commits; doing it by hand converted a refusal into a warning.
+- ⚠ **`… | head; echo "rc=$?"` READS THE PIPE'S STATUS, NOT THE SCRIPT'S** — the exact trap the
+  `/handoff` skill documents, hit anyway in this session on
+  `clawgate_handoff.sh field`. It printed `rc=0` ("a field is already there") for a real
+  `rc=1` ("there is none"). Use `out=$(cmd 2>&1); rc=$?`.
 ## Next steps (ranked)
 
-🔴 **Re-verify every item against live state before trusting it** — and `claim-work` the rank
-before acting on it, in EITHER runtime, plus a `gh pr list --state open` sweep, which is the
-only thing that catches an UNCLAIMED duplicate.
+🔴 **`claim-work` the rank before acting on it, in EITHER runtime, plus a
+`gh pr list --state open` sweep** — the sweep is the only thing that catches an UNCLAIMED
+duplicate. ⚠ **Rank 1 of this doc is also reachable as the retired slug
+`agent-setup-onboarding-32`** — see the forwarding map in `handoff-agent-setup-onboarding.md`;
+two slugs, one item, and both compare-and-swaps succeed.
 
-1. **civitai/cli#629 — `civitai buzz` is COMPLETELY ungated on the error the bounded warning
+1. **Settle the threat model, then ratify / narrow / RETIRE the closing condition.** One free
+   `--dry-run` probe (the open investigation above), then a decision that is the operator's and
+   not a session's. 🔴 **"Retire" is a live outcome, not a courtesy option**: if server messages
+   do not echo caller input, the honest closure may be *accept the residual in writing* — which
+   removes ranks 2 and 3 rather than scheduling them. Do this BEFORE any fifth point-fix.
+   forcing: security — two open issues (#629, #620) whose severity is an unmeasured floor, and
+   the measurement that would settle it costs nothing.
+
+2. **civitai/cli#629 — `civitai buzz` is COMPLETELY ungated on the error the bounded warning
    points users at.** `internal/cmd/buzz.go` has **zero** `safeTerm` calls and returns the error
    unwrapped; `cmd/civitai/main.go`'s `errorLine` prints `"Error: " + err.Error()` raw, ESC
-   included. Reached via `internal/appapi/appblocks.go:1185`, which interpolates the entire raw
-   body on a non-envelope 200. This is the **raw-ANSI** class, not the length class — and the
-   surface that was *just* bounded names this command in its own text as the recovery path.
-   It is the other half of `#624`'s option (a), which asked to cap the operand **and** `:1185`;
-   only the first was done. Closing condition is on the issue.
-   ⚠ **Decide the effort's own closing condition first** — this is the fifth successor in the
-   chain #604 → #612 → #624 → #629, and starting it before that decision is the pattern the
-   whole arc documents.
+   included. Reached via `internal/appapi/appblocks.go:1185`. The **raw-ANSI** class, not the
+   length class — and the surface just bounded by #628 names this command in its own text as the
+   recovery path. The other half of #624's option (a).
    forcing: security — raw ANSI on the path a bounded surface directs users to.
 
-2. **civitai/cli#620 — seven `internal/genapi` sites interpolate an UNPARSED HTTP body.**
+3. **civitai/cli#620 — seven `internal/genapi` sites interpolate an UNPARSED HTTP body.**
    `blobs.go:73`/`:155`, `generate.go:214`/`:265`/`:288`, `status.go:489`, `workflows.go:221`.
-   A non-envelope 200 puts raw ANSI on stderr. `classifyGenerateError`'s `!errors.As` early
-   return is where some of them surface, and #619 deliberately left it ungated because gating
-   there closes a SUBSET of one class — `blobs.go`'s two reach `resolveImages` instead. Fix at
-   the seven interpolations, not at the one return.
+   Fix at the seven interpolations, not at `classifyGenerateError`'s `!errors.As` return — #619
+   left that deliberately ungated because gating there closes a SUBSET of one class
+   (`blobs.go`'s two reach `resolveImages` instead).
    forcing: security — same raw-ANSI class, on the dominant generate error path.
 
 ## Defects (batched)
 
 Fixed as a BATCH, never one rank per finding. Closing one buys room for one rank.
 
-- **#621** — a `safeTermCoveredBy` `why` can still scope a surface OUT in free text, with nothing
-  checking it beyond non-empty. **This is the mechanism that concealed `#612` F2 for a full PR
-  cycle**, and it is the nearest existing thing to this doc's closing condition — a structural
-  check on a RELATIONSHIP rather than a grep for a phrase.
+- **#621** — a `safeTermCoveredBy` `why` can still scope a surface OUT in free text with nothing
+  checking it. It is **part (i) of the closing condition**, not an aside.
 - **#627** — `pkg/civitai`'s `snippet` truncates on a BYTE index; 3 of 4 alignments return
   invalid UTF-8. Measured on the real function with synthetic bodies; reachability on a live
-  endpoint is NOT verified.
-- **#622** — this arc has no `claudedocs/decisions/` entry, so its rationale is inlined across
-  ~6,600 lines of `internal/cmd`. `AGENTS.md`'s own policy says the body belongs in a decisions
-  file with a one-line trigger.
-- **#397** — runes are not display cells; a double-width (CJK) rune takes two columns, so every
-  row count this arc quotes doubles. Explicitly OUT of the closing condition's scope.
+  endpoint NOT verified.
+- **#622** — no `claudedocs/decisions/` entry for the arc.
+- **#397** — runes are not display cells; every row count this arc quotes doubles for CJK.
+  Explicitly OUT of the closing condition's scope.
 - **The `## Gotchas` section of `handoff-agent-setup-onboarding.md` is still not split** — filed
-  by date, so forgery and agent-setup lessons interleave. The forgery ones are restated here;
-  the originals are deliberately left there. Remaining half of rank 29.
+  by date, so forgery and agent-setup lessons interleave. Remaining half of rank 29.
+- 🔴 **The writer-keyed ledger's labels would be UNCHECKED FREE TEXT** — round 0's F2 residual,
+  left standing. All three controls check that classification *happens*, never that it is
+  *true*; #621 hardens the OLD gate-keyed ledger, not the new one. Same disease at ~150 rows
+  instead of 1,023. If the condition is ratified, this belongs IN it.
+## Open investigations — live diagnosis state
+
+### Does the orchestrator's error `message` ever echo CALLER- or UPLOADER-supplied text?
+
+- as-of: 2026-09-15
+
+This is not a bug report — it is the unresolved question that sets the **severity** of every
+remaining item in this effort, and it has been open since #612 was filed. It is recorded here
+with its live state because the next session should run the probe, not re-derive the question.
+
+- **Symptom + exact repro:** there is no failing command. The question is whether a hostile
+  value can reach the CLI's error surfaces from an **uploader or a caller**, or only from a
+  **compromised backend**. Everything downstream — whether #629 is urgent or is defence in
+  depth — turns on it.
+- **Observed (with values):**
+  - `classifyGenerateError` (`internal/cmd/generate.go`) matches on
+    `has("unknown ecosystem")` as one of five needles, gated `apiErr.Status >= 500`. A server
+    message containing the phrase "unknown ecosystem" **only makes sense if the server names
+    the ecosystem it did not recognise** — i.e. echoes the value the caller sent.
+  - The other four needles are status-agnostic and name server-side conditions
+    (`enough funds`, `prompt was flagged`, `generation is disabled`,
+    `account has been restricted`) — none implies an echo.
+  - `appapi.serverMessage` (`internal/appapi/appblocks.go`) returns the server's `message`
+    **verbatim**, and falls back to `strings.TrimSpace(string(raw))` — the whole body — when
+    neither `message` nor `error` is present.
+  - `genapi.serverMessage` (`internal/genapi/errors.go`) unwraps the tRPC envelope and
+    likewise ends `return strings.TrimSpace(string(raw))`.
+- **Ruled out:** that it can be settled from this repository — the orchestrator's message
+  construction is server-side and no part of it is vendored here. `via: code`
+- **Ruled out:** that settling it requires a SUBMIT, which would charge Buzz irreversibly.
+  `generate --dry-run` routes through `deps.whatIf` (`internal/cmd/generate.go:1201`) and
+  returns at `:1230` before the spend; the flag's own help text reads *"print the cost estimate
+  and exit without submitting (spends nothing)"*. `via: code`
+- **Ruled out:** that no credential is available to run it — `~/.config/civitai/config.yaml`
+  exists on this host. `via: command`
+- **Leading hypothesis:** the server **does** echo caller-supplied values, because the
+  `unknown ecosystem` needle is hard to explain otherwise. If so the severity on #629 and #620
+  is higher than filed, and neither is merely defence in depth.
+- **Next probe — one command, spends nothing:**
+  ```bash
+  civitai generate "a cat" --ecosystem ZZPROBE-DISTINCTIVE-123 --dry-run
+  ```
+  Read the error text. **If it contains `ZZPROBE-DISTINCTIVE-123`, the server echoes caller
+  input and the question is settled in the direction that raises severity.** If it names no
+  such value, try the same with a nonexistent `--checkpoint <id>` before concluding — one
+  endpoint's behaviour is not the surface's.
+  ⚠ This hits the live API with the operator's credentials. It is outward-facing, so it is the
+  operator's call to run it, not a session's to run unasked.
