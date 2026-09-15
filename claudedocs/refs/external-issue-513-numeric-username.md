@@ -481,3 +481,46 @@ Verbatim, including its original as-of line. CLOSED: read as recall, not live st
   It did not; this run does. The gap was ~22 h and cost nothing but patience.
 - **Next probe:** none. Closing condition met, in the terms it was written in.
 
+
+
+---
+
+## Demoted from the handoff 2026-09-15 (fifth eviction)
+
+### 🔴 RESOLVED: `cli#591` round-4 F2 — the ordering is pinned at BOTH the sentinel and the code
+- as-of: 2026-09-14 · shipped in **`cli#601`** (`b727a83`)
+
+- **Symptom + exact repro:** `exitcodes_doc.go`'s code-6 bullet publishes 🔴 *"THE HEADER IS
+  CONSULTED BEFORE THE MESSAGE, so a cap-worded 429 that carries `Retry-After` exits `5`, NOT
+  `2`."* Consult the message first in `pkg/civitai/retry.go`'s 429 branch (return terminal on cap
+  wording, whatever the header) and run `go test ./...`.
+- **Observed (with values):** round 4's *21 ok / 0 FAIL* under that mutant was **independently
+  reproduced** — mutant applied with both of #601's files reverted to `7467c62` → 21 ok / 0 FAIL.
+  The gap was real. **Why nothing could see it:** `retry_test.go`'s two 429 neighbours each hold
+  one half of the input fixed — the exhaustion case sends an EMPTY body, the terminal case sends
+  no header. It takes both at once, which nothing sent. After #601: under the same mutant, **19 ok
+  packages and exactly TWO `--- FAIL`s**, both new guards.
+- 🔴 **Round 0 of the audit found the delivered guard was ONE HOP SHORT, and that is the durable
+  part.** It pinned the SENTINEL (`errors.Is` ErrNetwork, not ErrBadRequest). The requirement of
+  record and the published bullet are about an **EXIT CODE**, and nothing anywhere composed
+  cap-body + `Retry-After` → `exitCode()`. The repo already owned the idiom one directory over:
+  `cmd/civitai/read_error_stderr_test.go` says it in words for the adjacent 429 row — *"pkg/civitai
+  owns the sentinel; this owns the number a script reads from `$?`."* **A classification test and
+  an exit-code test are two claims; a published `rc` needs the second.**
+- **Ruled out:** *"nothing local can pin this"* — **via: code**. The old `pinnedBy` read
+  `"nothing local — the assumption is about the server"`, conflating the **ORDERING** (local,
+  trivially observable, now pinned twice) with the **REACHABILITY** (whether the server ever
+  attaches `Retry-After` to a cap 429 — genuinely unguardable, and the reason the case is
+  published). Telling the next maintainer no guard is possible is the description-reads-as-coverage
+  failure.
+- **Also fixed, and the cheaper lesson:** the precedence was **described in three surfaces and
+  argued in none**, so a maintainer reading the bullet call it *"the exact hazard the 2
+  reclassification exists to prevent"* would reasonably invert it and hit a test that asserts a
+  contract without saying why. `retry.go` now argues it — a `Retry-After` header is a STRUCTURED
+  signal the server sent deliberately; `isDeepPagingCap` is a three-phrase substring match over
+  prose its own doc comment calls *"deliberately narrow"*, which any proxy or copy-edit can produce
+  or destroy — and names the four surfaces that move if the precedence ever changes.
+- **Next probe:** none. Round 1 (the nine correctness axes) was **NOT** run on #601; it merged on
+  round 0 plus my own verification. Test-and-comment-only and green on `main`, but that is a
+  judgement, not an audit.
+
