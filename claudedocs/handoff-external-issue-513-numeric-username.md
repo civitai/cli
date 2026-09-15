@@ -18,6 +18,11 @@ answered — starting with #513, and fix the API-side root cause behind it.
 - **closing-condition:** `check` — `cli#513` is CLOSED, which requires the rank-25 probe to return
   **`"username":"0222"` QUOTED on a `cf-cache-status: MISS`**; plus no HUMAN-authored `civitai/cli`
   issue left unanswered.
+- ✅ **MET 2026-09-15.** `cli#513` is CLOSED (`COMPLETED`) after the probe returned quoted on MISS
+  for the reporter's own case and the leading-zero case, with the round-trip restored. The arc is
+  closed on its own terms. **What it spawned is not in it and does not reopen it:** the devdocs
+  threads, the audit ladders, `cli#575` R6, `cli#593`, and the `budget_warning()` repo-awareness
+  bug this session's round 0 surfaced.
   🔴 **TIGHTENED 2026-09-15; THE FIRST DRAFT WAS WRONG IN THE REASSURING DIRECTION.** It read
   "…has a fix MERGED", which the 09-15 merges SATISFY — so the arc was closable while the
   reporter's symptom was still live, and while he had been told on #513 that it closes on the
@@ -32,9 +37,17 @@ answered — starting with #513, and fix the API-side root cause behind it.
 
 - **`civitai/cli` `main` @ `0d25f7b`** (was `426288f`), clean, `make ci` rc=0 / 21 ok / 0 FAIL,
   `golangci-lint` 0 issues — measured on `main`, not a branch.
-- 🔴 **This doc is at its 65,536 B ceiling and hit it TWICE on 09-14.** The next session must evict
-  a CLOSED block to `claudedocs/refs/external-issue-513-numeric-username.md` before adding
-  anything. Gone that way: `devdocs#76`, the `devdocs#80` ladder — each left a headline pointer.
+- 🔴 **THE 65,536 B CEILING DOES NOT BIND IN THIS REPO, AND THE "EVICT BEFORE ADDING" INSTRUCTION
+  THAT USED TO SIT HERE WAS FALSE.** Measured: **nothing** in `civitai/cli` enforces a handoff byte
+  budget — the only such gate is devrc's `test_handoff_doc_size.py`, whose corpus is `REPO_ROOT`-
+  rooted at `/home/zach/workspace/devrc` and structurally cannot see this repo. What reaches here
+  is `handoff_doc.py`'s `budget_warning()`, which gates on **relpath alone** (`claudedocs/` +
+  `/handoff-`) and is repo-agnostic, so it prints *"will go RED on `main`, and it fails for
+  EVERYONE"* about a gate that will never run. **That is rank 24's error one level up**, and it
+  cost five evictions in two days, 35,517 B moved to `refs/`, and the 27,991 B near-loss in the
+  Gotchas below. Keeping the doc tight is still worth doing — **as judgement, not as a gate.**
+  Evicted so far: `devdocs#76`, the `devdocs#80` ladder, the tab-forgery block, the drift-streak
+  block, `cli#591` round-4 F2 — each left a headline pointer.
 - **Open, `civitai/cli`:** `#602` (shares `exitcodes_claims_test.go` with merged `#601` — rank 26)
   · `#608` (13 generate forgery sites), claimed by a concurrent session under
   `handoff-agent-setup-onboarding.md`'s rank 30, **not this doc's**.
@@ -261,7 +274,10 @@ delivered guard pinned only the first.
 19. **DONE — `developer-docs#5` MERGED** `23c6d46` (2026-09-14), after re-verifying its claim
     against the live API rather than trusting a two-month-old PR: `?query=a` totals grow
     **4 → 7 → 10** across pages while the unfiltered listing is a stable 88,901, exactly what it
-    documents. (This row said "open since 2026-07-13"; the real date was 08-10.) forcing: none
+    documents. 🔴 **An earlier draft of this row "corrected" the open date to 08-10 and was
+    WRONG** — `createdAt` is **2026-07-13**; 08-10 was `updatedAt` at the time I read it, i.e. the
+    last push. The original "two months stale" was exactly right. **`updatedAt` is not an open
+    date, and a comment of your own moves it.** forcing: none
 20. **`developer-docs#81`** — a transitive `ERR_MODULE_NOT_FOUND` misrouted to the retirement
     message. Filed rather than fixed so round 7 stayed the ladder's last. forcing: none
 21. **The `developer-docs#76` residuals that are NOT drift-checked, none started.**
@@ -280,17 +296,16 @@ delivered guard pinned only the first.
     rebinds it. Flaked once on `#590`; re-run passed. It guards two POSITIVE CONTROLS, and a
     control that flakes trains the reflex of dismissing the one assertion that proves the harness
     works. forcing: none
-25. 🔴 **MERGED, NOT DEPLOYED — `cli#513` closes on a PROBE, never on the merge.**
-    `event-engine-common#13` `5da5cc6467`, then `civitai#4839` `d2218f54da` (re-pinned first —
-    #4839 pinned #13's BRANCH head, which the squash orphans). `#4768` auto-closed on the merge
-    and its body is amended in place: the Meilisearch root cause is RETRACTED there now.
-    **Still coercing at 02:1x UTC 09-15**, cache-busted MISS. Neither PR was audited.
-    **The closing probe — and the ONLY deploy signal available, since there is no version
-    endpoint and Cloudflare strips build headers, so BEHAVIOUR is all we get:**
-    `curl -sA '<UA>' 'https://civitai.com/api/v1/images?username=0222&limit=<vary>'` →
-    want **`"username":"0222"` QUOTED** with `cf-cache-status: MISS`. **Vary `limit` every run**
-    or you are reading the CDN, not the origin. Then close `cli#513`.
-    forcing: user — an external reporter waiting on a deploy nobody here controls.
+25. **DONE — DEPLOYED AND VERIFIED 2026-09-15; `cli#513` is CLOSED.** `event-engine-common#13`
+    `5da5cc6467` + `civitai#4839` `d2218f54da`. Probed cache-busted, `cf-cache-status: MISS`,
+    `limit` varied per run: the reporter's own case `?username=2428023993` → **`"2428023993"`
+    QUOTED** (twice), and `?username=0222` → **`"0222"` QUOTED** (twice). **Round-trip restored,
+    which is the real test:** `?username=0222` returns 18 items while `?username=222` returns 0 —
+    before the fix the printed name was `222` and `?username=222` found nothing, so the value the
+    API gave you could not be used against the API. 🔴 **This row said "MERGED, NOT DEPLOYED" and
+    was stale within ~90 minutes** — a round-0 auditor ran the probe this row itself prescribes and
+    found the deploy had landed. **A "waiting on someone else" row is the kind that rots silently:
+    run its own probe before believing it.** forcing: none
 26. **`cli#602` merged-tree re-run — DELIBERATELY SKIPPED, operator's call 2026-09-14.** It shares
     `internal/cmd/exitcodes_claims_test.go` with the merged `#601` and was 1 commit behind at the
     time. `gh pr view` said `MERGEABLE`/`CLEAN`, which is the TEXTUAL claim only. The mechanical
@@ -316,20 +331,6 @@ delivered guard pinned only the first.
   SIZE is in the range you expect, and assert the result still contains the sections you did not
   mean to touch.** Nothing was committed; `git restore` on both files undid it, at the cost of
   redoing the edits.
-- 🔴 **`forcing:` IS A CLAIM, AND NOTHING VALIDATES IT — rank 24 asserted a RED shared gate that
-  is GREEN.** It was inherited from a previous handoff, carried through a whole session, and cited
-  the "a permanently-red gate trains everyone to click through" rule while being its inverse: a
-  gate claimed red that is green spends attention on nothing. Measured only when someone finally
-  asked what was outstanding — the doc on devrc's `origin/main` is 59,764 B, under the ceiling; the
-  oversize copies are all in WORKTREES the gate never reads. **Re-measure an inherited `forcing:`
-  before acting on it, and treat `gate` as the kind most worth checking, since it sounds automatic.**
-- 🔴 **A CLOSING CONDITION A MERGE CAN SATISFY IS A CONDITION ABOUT YOU, NOT THE REPORTER.** The
-  one written this session read "…has a fix MERGED" — met the moment the platform PRs landed, while
-  the endpoint still coerced and while the reporter had been told on #513 that it closes on a probe.
-  Two bars for one thing, and the published one was the stricter. **Write the condition in terms of
-  the SYMPTOM being gone**, and check whether a literal reading lets in something you did not mean
-  (this one admitted a bot-authored issue under "externally-authored").
-
 - 🔴 **`via: code` MEANS "I READ CODE", NOT "I READ THE CODE THAT RUNS" — and that tag is what let
   a wrong root cause sit in this doc for three days reading as derived.** #4768's Meilisearch
   attribution was tagged `via: code` + `via: measurement`. The measurements were all real; the
