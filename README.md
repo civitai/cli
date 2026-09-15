@@ -1098,7 +1098,7 @@ Behavior:
 - **Integrity (default on)** — the streamed bytes are verified against the file's `SHA256`; a mismatch deletes the `.part` and fails. `--no-verify` skips it; a file with no published SHA256 downloads with a warning (not a hard failure). Note that **SHA256 verifies integrity (the bytes match what the API advertised), not authenticity** — it proves the download wasn't corrupted or truncated in transit, but a compromised source that advertises a matching hash for malicious bytes cannot be detected by the hash alone. Only download models from creators you trust.
 - **Pickle/archive safety note** — when a downloaded file has a pickle/executable extension (`.ckpt`, `.pt`, `.pth`, `.bin`, `.pickle`, `.pkl`) or an archive extension (`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.rar`, `.7z`), the CLI prints a one-line stderr note: these formats **can execute arbitrary code when loaded** by ComfyUI/A1111/`torch.load`, and they land in folders those apps auto-scan. `safetensors` and image files are inert and get no note. The note is informational — it never blocks the download.
 - **ControlNet preprocessor note** — when the parent model is a **ControlNet**, the CLI prints a one-line stderr note: a ControlNet model needs a matching **preprocessor/annotator** (e.g. the ComfyUI `comfyui_controlnet_aux` custom node — OpenPose/Canny/Depth) to derive the control image from your input, and that preprocessor is a **separate install, not hosted on Civitai**. The note is informational — it never blocks the download.
-- **Server-supplied text is sanitised on every message here** — the file name in a `SHA256 mismatch` line is the *uploader's*, and so is most of what these messages carry, so invisible and terminal-controlling characters are removed first. The list is notable rather than exhaustive: the download progress line, the same-target overwrite refusal, the `401`/`403`/`404` download errors, the `server returned an unusable filename` refusal (which reaches both stderr and, as the download plan's `target: (unresolved)` note, stdout), the `download …`, `install …`, `create …`, `streaming …` and `finalize …` errors, and the `Saved …` line. **Newlines and tabs are removed too**, on every one of them: each is a single-line surface, so a newline in a file name would let the uploader write a whole line of their own — a forged `Saved … (SHA256 verified)` above a transfer that never finished, say. A newline or tab becomes a space, exactly as it does in a table cell (see [What a table cell can contain](#what-a-table-cell-can-contain)). **Two deliberate exceptions, and they do NOT share a reason** — an earlier version of this claim said they did, which was true of only the first. (1) The `server returned an unusable filename` refusal renders through `%q`, which **escapes** the newline to a visible `\n`; it is already harmless there, and collapsing it would hide what the server actually sent. (2) Multi-line server text outside this path — a `prompt`, a generation failure reason — is printed **raw** and **indented**, not escaped: its newlines are real, and the indentation is what stops a continuation line reaching column zero. Do not read reason (1) as covering case (2); acting on that would remove the indentation guard, which is the forgery it exists to prevent.
+- **Server-supplied text is sanitised on every message here** — the file name in a `SHA256 mismatch` line is the *uploader's*, and so is most of what these messages carry, so invisible and terminal-controlling characters are removed first. The list is notable rather than exhaustive: the download progress line, the same-target overwrite refusal, the `401`/`403`/`404` download errors, the `server returned an unusable filename` refusal (which reaches both stderr and, as the download plan's `target: (unresolved)` note, stdout), the `download …`, `install …`, `create …`, `streaming …` and `finalize …` errors, and the `Saved …` line. **Newlines and tabs are removed too**, on every one of them: each is a single-line surface, so a newline in a file name would let the uploader write a whole line of their own — a forged `Saved … (SHA256 verified)` above a transfer that never finished, say. A newline or tab becomes a space, exactly as it does in a table cell (see [What a table cell can contain](#what-a-table-cell-can-contain)). **On the progress line the name is also shortened** — cut at 120 characters and marked with a `…` — because removing newlines does not stop a name long enough to **wrap**: the terminal, not the CLI, puts the overflow at column zero, and a wrap has no character in it to remove. That shortening is the progress line **only**; the `Saved …` line, the `SHA256 mismatch` line and the download plan still print the name in full. **Two deliberate exceptions, and they do NOT share a reason** — an earlier version of this claim said they did, which was true of only the first. (1) The `server returned an unusable filename` refusal renders through `%q`, which **escapes** the newline to a visible `\n`; it is already harmless there, and collapsing it would hide what the server actually sent. (2) Multi-line server text outside this path — a `prompt`, a generation failure reason — is printed **raw** and **indented**, not escaped: its newlines are real, and the indentation is what stops a continuation line reaching column zero. Do not read reason (1) as covering case (2); acting on that would remove the indentation guard, which is the forgery it exists to prevent.
 - **Idempotency** — an already-present target (that verifies, or with `--no-verify`) is skipped with a note; `--force` re-downloads.
 - **Any file type downloads** — the selected/primary file is downloaded whatever its `type` (`Model` weights, a `type: Workflows` model's `Archive`, training data, or other artifacts). The human `models get` / `model-versions get` output tags a non-weights primary file with its type (e.g. `[Archive]`) purely for information; it never blocks a download.
 
@@ -3929,19 +3929,32 @@ it reaches your terminal, and this is what that gate promises:
   exclusion reasons (`generate`), and the reviewer's rejection reason / approval
   notes (`app status --id`). If a field you expect to be multi-line arrives on one
   line, it was in a cell.
-- **Known limits.** A long value is not shortened, so your terminal can still
-  soft-wrap it to column zero, and one hostile value widens a column for every
-  row. Only `workflows list` wraps its reason text to a fixed budget; the other
-  multi-line surfaces do not — and that budget is a **fixed 79 columns**, never
-  a question about how wide your terminal is. Wrapping collapses runs of
-  whitespace and breaks a token longer than the line, but **no words are
-  dropped**; in a *narrower* terminal, or with wide (CJK) characters, your
-  terminal re-wraps and the overflow can still reach column zero. Generation
-  prompts are the deliberate opposite: they are **not** soft-wrapped at all,
-  because collapsing whitespace runs and splitting tokens would alter prompt
-  weights and syntax, so in a narrow terminal the terminal's own soft-wrap is
-  what reaches column zero there. `U+2028` / `U+2029` are passed through (no terminal
-  is known to break lines on them).
+- **Two values are shortened, and the rest are not.** The download **progress
+  line** and `generate`'s **`could not read your Buzz balance`** warning cut the
+  server's text at **120 characters** and mark the cut with a `…`. Both sit
+  directly above something the CLI itself asserts — a `Saved … (SHA256 verified)`
+  line, and the `Cost: … Buzz` line you approve a spend on — and a value long
+  enough to wrap lets the server write extra rows of your terminal that read as
+  the CLI's own, with no invisible character involved. Nothing else is shortened:
+  the `Saved …` line, the download plan and every table cell still print the
+  value in full.
+- **Known limits.** Shortening bounds **how many** rows a value can take, not
+  whether one of them starts at column zero — the CLI never asks how wide your
+  terminal is, so it cannot know where a line breaks — and the 120-character
+  budget counts **characters, not screen columns**, so wide (CJK) text takes
+  twice the space it accounts for. Every **other** long value is not shortened at
+  all, so your terminal can still soft-wrap it to column zero, and one hostile
+  value widens a column for every row. Only `workflows list` wraps its reason
+  text to a fixed budget; the other multi-line surfaces do not — and that budget
+  is a **fixed 79 columns**, never a question about how wide your terminal is.
+  Wrapping collapses runs of whitespace and breaks a token longer than the line,
+  but **no words are dropped**; in a *narrower* terminal, or with wide (CJK)
+  characters, your terminal re-wraps and the overflow can still reach column
+  zero. Generation prompts are the deliberate opposite: they are **not**
+  soft-wrapped at all, because collapsing whitespace runs and splitting tokens
+  would alter prompt weights and syntax, so in a narrow terminal the terminal's
+  own soft-wrap is what reaches column zero there. `U+2028` / `U+2029` are passed
+  through (no terminal is known to break lines on them).
 
 🔴 **None of this applies to `--json`.** That output is emitted raw, because JSON
 already escapes control characters and rewriting the bytes would corrupt what a
@@ -4144,6 +4157,7 @@ context rather than instructions.
 
 | You saw | What it means | Where to read more |
 | --- | --- | --- |
+| `could not read your Buzz balance` | A **warning**, not a refusal — the estimate and the confirmation went ahead without the balance check; `civitai buzz` shows the real balance. The reason after it is the **server's**, and it is cut at 120 characters with a `…`: this warning prints immediately above the `Cost: … Buzz` line and `Generate? [y/N]:`, so a message long enough to **wrap** could fill that screen with counterfeit `Cost:` lines using no invisible character at all. | [Confirmation](#confirmation) |
 | `refusing to spend Buzz without --yes` | The same gate on the money path. `--dry-run` prices the job without spending anything. | [Confirmation](#confirmation) |
 | `--image requires --ecosystem` | Without an ecosystem the server never promotes the job to image-to-image: your images are silently dropped and you pay for a plain text-to-image run. Hence a refusal, not a warning. | [Image-to-image](#image-to-image---image-and---ecosystem) |
 | `interrupted while waiting` | **The generation is still running and has already been charged.** Ctrl-C stopped the wait, not the job. Re-attach with `civitai workflows get <id>`. | [Waiting, downloading, and re-attaching](#waiting-downloading-and-re-attaching) |
@@ -4163,7 +4177,7 @@ context rather than instructions.
 | `no such submission` | Nothing has been submitted for that app yet — `civitai app submit` creates the submission **and** the draft store listing — or, with `--id`, no publish request carries that id. An **offsite** app should no longer reach this row from `civitai app listing`; from `civitai app status` it still can, and there the advice it carries cannot work — the row below is the confirmed version. | [Submit & auth](#submit--auth) |
 | `is an OFFSITE app` | The app exists and is **offsite** — a registered URL, not a block bundle — so it has no block submission to resolve through. Normal from `civitai app status`; from `civitai app listing` it means the by-slug fallback *also* answered not found. The message names `civitai app view <slug>` for what the CLI can still show and the **App-store listing UI on civitai.com** for where that media is managed — without promising you can edit it there — and never `civitai app submit`, which cannot exist here. Exit `4`. | [Exit code 4](#exit-code-4), [After you submit](#after-you-submit-review--approve--deploy) |
 | `is ambiguous — it matches` | Your `--file` value matched as a **substring**; an exact same-name collision is a different message. Exit `2`. | [Download model files](#download-model-files) |
-| `SHA256 mismatch for` | A download's hash did not match, and the partial file was deleted. Retry — this is integrity checking working, not a bug. The file name is the **uploader's**, so invisible, terminal-controlling, newline and tab characters are removed from it first: this line is the CLI asserting an integrity *failure*, and an escape sequence in a file name must not be able to rewrite it. | [Download model files](#download-model-files) |
+| `SHA256 mismatch for` | A download's hash did not match, and the partial file was deleted. Retry — this is integrity checking working, not a bug. The file name is the **uploader's**, so invisible, terminal-controlling, newline and tab characters are removed from it first: this line is the CLI asserting an integrity *failure*, and an escape sequence in a file name must not be able to rewrite it. 🔴 The **progress line** is also **shortened** — the name on it is cut at 120 characters with a `…` — because removing newlines does not stop a name long enough to **wrap** from stranding a forged `Saved … (SHA256 verified)` at column zero: a wrap has no character in it to remove. The `Saved …` line and the download plan still print the full name. | [Download model files](#download-model-files) |
 | `checksum mismatch for` | The row above, during `civitai upgrade`. | [Upgrading](#upgrading) |
 | ``git is required for `civitai app pull` `` | Exit `1`, reached only after the server has already answered. | [Pull your app's repository](#pull-your-apps-repository-app-pull) |
 | `unexpected response from` | A public read endpoint answered **`200`** with a body this CLI could not decode — not your request, credential or network, which is why it exits `1`. Two causes are known and fixed ([#513](https://github.com/civitai/cli/issues/513), [#525](https://github.com/civitai/cli/issues/525)); hitting a third means the body is a shape the SDK does not model — **please open an issue with the snippet**. | [Scripting with `--json`](#scripting-with---json) |

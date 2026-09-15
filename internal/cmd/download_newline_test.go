@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/civitai/cli/pkg/civitai"
 )
@@ -72,6 +73,32 @@ const dlNewlineName = "weights.safetensors\nSaved /home/u/legit.safetensors (4.0
 // merely misaligning them (civitai/cli#552).
 const dlTabName = "weights.safetensors\tSaved\t(SHA256 verified)"
 
+// dlSoftWrapPad + dlSoftWrapRepeats build civitai/cli#605's fixture, and the two
+// numbers do DIFFERENT jobs — conflating them is how a soft-wrap fixture stops
+// discriminating.
+//
+// dlSoftWrapPad ALIGNS: `line()` writes two spaces before the name, so 78 runes
+// of padding put the first forged claim exactly on an 80-column row boundary.
+// The same payload WITHOUT it begins no display row at 80, 100, 120 or 132
+// columns — that is the negative control the `soft-wrap` subtest asserts, and it
+// is what makes this a deliberate construction rather than an accident of long
+// names.
+//
+// dlSoftWrapRepeats SCALES: 64 copies of an 80-column row is 5,120 runes, the
+// same order as civitai/cli#624's measured Buzz payload, so an UNBOUNDED render
+// occupies ~66 display rows at 80 columns. Without the repeats the padded
+// fixture is two rows either way and the row-count assertion could not go red.
+const (
+	dlSoftWrapPad     = 78
+	dlSoftWrapRepeats = 64
+)
+
+// dlSoftWrapName is that fixture: aligned padding, then a screen's worth of
+// complete, plausible counterfeit success lines. It carries NO control rune —
+// no `\n`, no `\t`, no `\x1b` — which is precisely why every guard written for
+// civitai/cli#566 and civitai/cli#577 is a no-op against it.
+var dlSoftWrapName = strings.Repeat("A", dlSoftWrapPad) + strings.Repeat(swForgedRow, dlSoftWrapRepeats)
+
 // assertOneLine is the shared assertion: the rendered text must occupy exactly
 // one line, and must not still contain the forged claim as a separate line.
 func assertOneLine(t *testing.T, surface, got string) {
@@ -92,21 +119,24 @@ func assertOneLine(t *testing.T, surface, got string) {
 // does not merely add a line — it strands the forged text ABOVE the rewrite
 // point, where nothing ever overwrites it.
 //
-// 🔴 THE NAME CLAIMS MORE THAN THE TEST, AND THE GAP IS STATED RATHER THAN
-// RENAMED AWAY. What is pinned is that no LINE-BREAK RUNE survives — #577's
-// whole scope. It is NOT true that this line cannot be forged: `p.name` is
-// length-unbounded (nothing in pkg/civitai caps it), and a name padded to the
-// terminal width SOFT-WRAPS, which produces the identical stranded
-// `(SHA256 verified)` at column zero with no `\n` and no `\t` anywhere.
-// Measured by the audit of this PR at widths 80/100/120/132: one logical line
-// occupying 14 display rows, 12 of them beginning with the forged text.
-// safeTermSingle is a no-op on it and assertOneLine is green.
+// 🔴 THE PARAGRAPH THAT STOOD HERE SAID THE NAME CLAIMS MORE THAN THE TEST,
+// AND IT WAS RIGHT UNTIL civitai/cli#605 CLOSED THE HALF IT NAMED. It read:
+// "`p.name` is length-unbounded … a name padded to the terminal width
+// SOFT-WRAPS, which produces the identical stranded `(SHA256 verified)` at
+// column zero with no `\n` and no `\t` anywhere … safeTermSingle is a no-op on
+// it and assertOneLine is green." Every word of that was true of the tree it was
+// written on. What changed is the gate: `line()` calls safeTermBounded now, so
+// the operand is capped at maxServerLineRunes and the `soft-wrap` subtest below
+// asserts the resulting DISPLAY-ROW COUNT at four widths.
 //
-// That is a DIFFERENT primitive (display width, not control runes) and out of
-// #577's scope, but the machinery already exists — safeterm.go's
-// hardSplitOverlong treats soft-wrap as the same forgery elsewhere. Bounding
-// p.name is its own change; until then, do not read this test's name as the
-// outcome.
+// 🔴 THE NAME STILL CLAIMS MORE THAN THE TEST, FOR TWO DIFFERENT REASONS, AND
+// NEITHER IS RENAMED AWAY. (1) The cap counts RUNES, not display cells, so a
+// CJK-padded name occupies twice the columns this test models — civitai/cli#397.
+// (2) Bounding caps how many rows the server authors, NOT whether a bounded tail
+// begins at column zero; the CLI cannot see the width, so one forged
+// continuation row remains reachable. What the pair of subtests pins is: no
+// line-break rune survives (#577), and the row count is bounded (#605). Neither
+// is "cannot be forged".
 func TestProgressLineCannotForgeALine(t *testing.T) {
 	for _, tc := range []struct{ name, payload string }{
 		{"newline", dlNewlineName},
@@ -124,6 +154,55 @@ func TestProgressLineCannotForgeALine(t *testing.T) {
 			}
 		})
 	}
+
+	// --- civitai/cli#605: the LENGTH class, which the two subtests above cannot
+	// see ---------------------------------------------------------------------
+	t.Run("soft-wrap", func(t *testing.T) {
+		render := func(name string) string {
+			return (&progressWriter{name: name, total: 1000, written: 1}).line()
+		}
+		// The overhead is MEASURED, not hand-counted: what `line()` emits around
+		// a ZERO-LENGTH name is the only thing the derived row bound needs, and
+		// hand-counting it would be a second claim that can be wrong on its own.
+		overhead := utf8.RuneCountInString(render(""))
+		if overhead < 1 {
+			t.Fatalf("CONTROL failure, not a finding: line() rendered %d rune(s) with an empty name, so "+
+				"the overhead measurement behind every bound below is wrong", overhead)
+		}
+
+		got := render(dlSoftWrapName)
+		if !strings.Contains(got, strings.Repeat("A", 20)) {
+			t.Fatalf("CONTROL failure, not a finding: the hostile name never reached the rendered line, "+
+				"so this subtest proves nothing:\n%q", got)
+		}
+		assertRowsBounded(t, "#605", "(*progressWriter).line", got, overhead)
+
+		// --- THE NEGATIVE CONTROL #605 DOCUMENTS, AND IT IS LOAD-BEARING ------
+		// Unpadded, the SAME payload does not land at column zero at any of these
+		// widths: the 78-rune pad is what aligns the forged claim with a row
+		// boundary, so the construction is deliberate rather than an accident of
+		// long names. Measured on the UNGATED render (dlSoftWrapName fed through
+		// the format directly), because the gate truncates the payload before the
+		// distinction can be observed — the control is about the FIXTURE, not
+		// about the fix.
+		padded := "  " + dlSoftWrapName
+		unpadded := "  " + strings.Repeat(swForgedRow, dlSoftWrapRepeats)
+		for _, w := range swWidths {
+			p := swRowsBeginningWith(padded, w, swForgedClaim)
+			u := swRowsBeginningWith(unpadded, w, swForgedClaim)
+			if p < 1 {
+				t.Errorf("CONTROL failure, not a finding: at %d columns the PADDED payload begins %d "+
+					"display row(s) with the forged claim, want >= 1 — the fixture is not reproducing "+
+					"the forgery #605 measured, so the bound above is being asserted against nothing", w, p)
+			}
+			if u != 0 {
+				t.Errorf("CONTROL failure, not a finding: at %d columns the UNPADDED payload already "+
+					"begins %d display row(s) with the forged claim. The padding is supposed to be what "+
+					"aligns it; if it is not, this fixture no longer shows a deliberate construction", w, u)
+			}
+			t.Logf("#605 fixture control: width %3d -> padded begins %d forged row(s), unpadded %d", w, p, u)
+		}
+	})
 }
 
 // TestCheckTargetCollisionsCannotForgeARow drives surface 2.

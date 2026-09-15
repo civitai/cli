@@ -182,8 +182,9 @@ var bareIdentArgs = map[string]string{
 // named here, and TestSanitizerComposersAreLedgered fails if this set names a
 // function that no longer exists.
 var sanitizerComposers = map[string]string{
-	"safeTermSingle": "collapses \\n to a space for single-line/tabwriter fields; delegates to safeTerm first",
-	"safeTermErr":    "strips a WRAPPED CAUSE's message while leaving errors.Is/As reaching the original; delegates to safeTermSingle, because download.go's `%s: %w` pairs are single-line surfaces on both halves (civitai/cli#577)",
+	"safeTermSingle":  "collapses \\n to a space for single-line/tabwriter fields; delegates to safeTerm first",
+	"safeTermErr":     "strips a WRAPPED CAUSE's message while leaving errors.Is/As reaching the original; delegates to safeTermSingle, because download.go's `%s: %w` pairs are single-line surfaces on both halves (civitai/cli#577)",
+	"safeTermBounded": "caps a single-line server operand at maxServerLineRunes AFTER the strip, so a soft wrap cannot author an unbounded number of display rows; delegates to safeTermSingle, because the rune class still has to go (civitai/cli#605, civitai/cli#624)",
 }
 
 // sanitizerFile is the one file whose safeTerm calls are composition rather than
@@ -332,9 +333,14 @@ func isSafeTermCall(n ast.Node) *ast.CallExpr {
 // tree is not as blind to it as this paragraph claimed.
 //
 // So: a new wrapper around safeTerm belongs HERE, in the same commit that adds it.
+// civitai/cli#605 / #624 add the third — safeTermBounded, safeTermSingle plus a
+// LENGTH cap — and this is that same commit. Without the entry its two call sites
+// leave this harness's view and both enclosing functions read as having stopped
+// sanitising, which is the "CALL REMOVED" direction of the paragraph above.
 var scannedSanitizers = map[string]bool{
-	"safeTerm":       true,
-	"safeTermSingle": true,
+	"safeTerm":        true,
+	"safeTermSingle":  true,
+	"safeTermBounded": true,
 }
 
 // safeTermFuncKey is the ledger key for a function declaration.
