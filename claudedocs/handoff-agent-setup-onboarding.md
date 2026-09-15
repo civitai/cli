@@ -49,9 +49,10 @@ Consequences a reader needs, because they change what a close-check means here:
 
 ## State now
 
-**Ranks 23, 30 and 31 are all DONE and merged.** `generate`'s forgery class is closed to the
-extent its three issues defined it — and deliberately not further; see **#624**, which is the
-successor #612 was to #604, and is LIVE on `main`.
+**Ranks 23, 28, 30 and 31 are all DONE and merged.** The forgery class is closed to the extent
+its five issues defined it — and deliberately not further; see **#629**, which is to #624 what
+#624 was to #612 and #612 was to #604, and is LIVE on `main`. 🔴 **That chain is the thing to
+notice about this effort: every closure so far has produced its own successor.**
 
 - **cli#596** — rank 23, merged `752bf50`. **cli#574 CLOSED** by hand against its own stated
   check re-run on post-merge `origin/main`.
@@ -69,30 +70,35 @@ successor #612 was to #604, and is LIVE on `main`.
   both `%w` resolve causes. **F3 REPRODUCED** end-to-end, having been filed DERIVED-not-measured,
   and the measurement narrowed the fix. Exit codes measured at the PROCESS boundary: base binary
   2 lines, head 1, **both exit 4**.
-- **Claims:** `agent-setup-onboarding-23`, `-30` and `-31` all RELEASED and verified absent.
-- **Filed and OPEN:** **#605** (soft-wrap forgery on `download`'s progress line), **#620**,
-  **#621**, **#622**, **#624** — see rank 32. **#609 CLOSED as a duplicate** of #606.
+- **cli#628** — rank 28, merged **`b4acda5`**. **cli#605 AND cli#624 CLOSED together**, the fork
+  resolved **(a) bound it** by the OPERATOR. `safeTermBounded` at two sites; forged rows 66 → 2
+  and 66 → 3. Three rounds, none clean, stopped on the attribution gate.
+- **Claims:** `agent-setup-onboarding-23`, `-28`, `-30` and `-31` all RELEASED and verified absent.
+- **Filed and OPEN:** **#620**, **#621**, **#622**, **#627**, **#629**, **#397** — see rank 32.
+  **#609 CLOSED as a duplicate** of #606.
 - 🔴 **The base clone was on another session's branch FOUR times this session.** All work was
   done in dedicated worktrees; nothing was written to it. Check `git branch --show-current`
   there before any operation.
 
 ### Honest limits
 
-- 🔴 **`generate` is STILL NOT wholly gated, and the #612 closure must not be read as saying so
-  — this is the THIRD time this sentence has had to be rewritten for a successor issue.** The
-  gate bounds the RUNE CLASS, not LENGTH: **#624** is live on `main`, where a 5,120-char balance
-  error renders as one logical line of 5,224 runes — **passing every assertion #612 F1's test
-  makes** — which 80 columns lay out as ~66 rows starting at column zero with a counterfeit
-  `Cost:` line above the spend confirmation. The operand is unbounded on EVERY route
-  (`appapi.serverMessage` ends `return strings.TrimSpace(string(raw))`), so a fix must bound it
-  at the PRINT site; capping one `appapi` arm leaves it reachable through the others. Also
-  **#620** — the `!errors.As` return, whose real defect is seven `internal/genapi` sites.
+- 🔴 **`generate` is STILL NOT wholly gated, and the #624 closure must not be read as saying so
+  — this is the FOURTH rewrite of this sentence for a successor issue, and the count is now the
+  point.** #604 → #612 → #624 → **#629**: each closure has produced the next. The live one is
+  **#629**, and it is nastier than its predecessors because the bounded surface *points at it*:
+  `civitai buzz`, named in the warning's own text as the recovery path, is COMPLETELY ungated —
+  `buzz.go` has zero `safeTerm` calls and `main.go` prints the error raw, ESC included. Also
+  **#620** (the `!errors.As` return, real defect seven `internal/genapi` sites), **#627**
+  (`snippet`'s byte-index cut) and **#397** (runes are not display cells).
+  ⚠ **Before starting a fifth, ask what would have to be true for this effort to be finished** —
+  it has no closing condition of its own anywhere (see the header), and four successors is
+  evidence about the shape of the work, not just about each defect.
 - 🔴 **The threat model is STILL OPEN and that is recorded on #612.** Never established whether
   the server's `message` carries uploader-controlled text; the classifier matching on
   `has("unknown ecosystem")` implies the server echoes requested values. The cheap probe is a
   **`whatIf`/quote** call's raw error body — never a submit, which charges. The severity is a
   **floor, not a measurement**.
-- **The audit base rate for this arc is now TWELVE FOR TWELVE.** Every round that ran found
+- **The audit base rate for this arc is now FIFTEEN FOR FIFTEEN.** Every round that ran found
   something. Rank 31's three rounds: round 0 found a false coverage claim and a
   measured-redundant test; round 1 found #624 and a wrong status enumeration; **round 2's five
   findings were ALL defects round 1's own fix introduced** — including a false absolute replaced
@@ -440,8 +446,8 @@ before those rounds' commits were read back.
 
 ## Next steps (ranked)
 
-🔴 **Ranks 1–14, 18–24, 30 and 31 are DONE — numbering preserved** so live `claim-work` slugs keep
-pointing at what they were taken for. Open: **15, 16, 17, 25, 26, 27, 28, 29, 32**.
+🔴 **Ranks 1–14, 18–24, 28, 30 and 31 are DONE — numbering preserved** so live `claim-work` slugs
+keep pointing at what they were taken for. Open: **15, 16, 17, 25, 26, 27, 29, 32**.
 
 31. ✅ **DONE — cli#612 CLOSED, cli#619 merged `7c5a39c`.** All three operands gated
     (`safeTermSingle` on the Buzz-balance warning, `safeTermErr` on `classifyGenerateError`'s
@@ -457,22 +463,29 @@ pointing at what they were taken for. Open: **15, 16, 17, 25, 26, 27, 28, 29, 32
     consecutive zero-payload rounds), not on convergence. Round 2's five findings were all
     defects round 1's own fix introduced.
 
-32. **The four objects rank 31 spawned — none of them closed.** 🔴 Read #624 before treating
-    `generate` as done: the gate bounds the RUNE CLASS, **not length**, and a 5,120-char balance
-    error still renders as one logical line of 5,224 runes — **passing every assertion the F1
-    test makes** — which 80 columns lay out as ~66 rows starting at column zero with a
-    counterfeit `Cost:` line. Live on `main`, reproduced by two rounds. Its fork is the same one
-    **#605** carries, and one decision governs both — do not resolve them apart.
-    Also **#620** (the `!errors.As` return; the real defect is seven `internal/genapi`
-    interpolation sites), **#621** (a ledger `why` can still scope a surface OUT in free text
-    with nothing checking it — the mechanism that concealed #612 F2 for a full PR cycle; #619
-    repaired the instance only), **#622** (this 11-PR arc still has no `claudedocs/decisions/`
-    entry, so its rationale is inlined across ~6,600 lines).
+32. **The objects ranks 31 and 28 spawned — NONE of them closed.** ❌ This entry previously led
+    with #624 as the thing to read first; **#624 is CLOSED** (rank 28, cli#628 `b4acda5`).
+    🔴 **#629 replaces it as the one to read first, and it is the sharper finding.**
+    `civitai buzz` — the command the now-bounded balance warning NAMES as its recovery path — is
+    **completely ungated**: `buzz.go` has zero `safeTerm` calls and `main.go` prints the error
+    raw, ESC included. So the bound shrinks the forgery on the screen above the spend
+    confirmation and does nothing for the screen it recommends. It is the other half of #624's
+    option (a), which asked to cap the operand **and** `appblocks.go:1185`; only the first was
+    done, deliberately.
+    Also **#627** (`snippet` truncates on a BYTE index — 3 of 4 alignments return invalid UTF-8),
+    **#620** (the `!errors.As` return; the real defect is seven `internal/genapi` interpolation
+    sites), **#621** (a ledger `why` can still scope a surface OUT in free text with nothing
+    checking it — the mechanism that concealed #612 F2 for a full PR cycle; #619 repaired the
+    instance only), **#622** (no `claudedocs/decisions/` entry for the arc, so its rationale is
+    inlined across ~6,600 lines), **#397** (runes are NOT display cells, so every row count this
+    arc quotes doubles for CJK — explicitly not claimed closed).
     ⚠ **Do NOT quote the operand-enumeration TOTAL** — it counts its own prose. It read
     102 → 103 → 102 again on merged `main`, purely from comments being added and removed. A
     literal beside it sends the next reader hunting an operand that does not exist. The
     instrument is the enumeration and the trace.
-    forcing: security — #624 is a forged price line before an irreversible spend, still live.
+    ⚠ **And do not quote `swMaxRowsAt80` as pinning the cap** — it pins ROWS. Boundary measured:
+    cap 135 green, 136 red.
+    forcing: security — #629 is raw ANSI on the path a bounded surface points users at.
 15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT re-verified
     for three sessions. `/home/zach/workspace/civit/civitai-developer-docs`. One command
     settles it either way; a gate nobody has checked in three sessions is a claim, not a fact.
@@ -489,13 +502,21 @@ pointing at what they were taken for. Open: **15, 16, 17, 25, 26, 27, 28, 29, 32
     forcing: none
 27. **cli#586 — three near-identical AST expression renderers.**
     forcing: none
-28. **The soft-wrap forgery — now TRACKED as #605, but NOT closed.** ⚠ Filing the issue closed
-    the *tracking* gap only; the residual is still live on `main`. Its condition is a FORK the
-    operator must pick: bound `p.name` and pin the display-row count, **or** accept the
-    residual in writing in `decisions/38` with the measurement. Re-measured this session with a
-    negative control (unpadded payload does NOT land at column zero at widths 100/120/132), so
-    the padding is load-bearing and this is a deliberate construction.
-    forcing: security — a forged `(SHA256 verified)` reachable with no control runes at all.
+28. ✅ **DONE — cli#605 AND cli#624 CLOSED TOGETHER, cli#628 merged `b4acda5`.** The FORK was
+    resolved **(a) bound it**, ratified by the OPERATOR and recorded with its pricing on both
+    issues — round 0 caught that the PR had taken (a) with no operator author of record, which is
+    the finding worth remembering from this rank. Pricing that closed the implementer's own
+    stated evidence gap: **2,141 real Civitai file names** pulled live (100 most-downloaded + 100
+    newest), median 38, max 99, **zero over the 120-rune cap**.
+    `safeTermBounded` at two sites; forged rows 66 → 2 (download) and 66 → 3 (generate).
+    🔴 **The guard that matters is `swMaxRowsAt80`, and it exists because round 1 found every
+    geometry assertion DERIVED from the cap it was meant to constrain** — at cap 5000 both
+    assertions stayed GREEN while the surfaces occupied 63 and 64 rows. It pins **ROWS, not the
+    cap**: boundary measured 135 green / 136 red, so "the cap is pinned" is the wrong sentence.
+    Three rounds, **none clean**; stopped on the attribution gate (two consecutive zero-payload
+    rounds). Round 2's three findings were all prose round 1's own fix wrote.
+    ⚠ What it does NOT buy is in rank 32 — read #629 before treating either surface as safe.
+
 29. **This doc is over its byte ceiling — a real per-session cost, NOT a gate.** ❌ The "reds
     `main`" claim is RETRACTED (see the 2026-09-14 gotcha). Playbook, raising a number LAST:
     evict what has CLOSED, demote dated evidence to `claudedocs/refs/agent-setup-onboarding.md`
