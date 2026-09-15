@@ -228,8 +228,16 @@ func safeTermSingle(s string) string {
 // would call a line. Two different surfaces, two budgets, one rule each.
 const maxServerLineRunes = 120
 
-// serverTextEllipsis marks a bounded operand as abbreviated. One rune, so it
-// costs one of the budget's display cells and the arithmetic above stays simple.
+// serverTextEllipsis marks a bounded operand as abbreviated.
+//
+// ⚠ IT SITS OUTSIDE THE BUDGET, NOT INSIDE IT, and an earlier draft of this line
+// said the opposite ("costs one of the budget's display cells").
+// safeTermBounded returns `string(r[:maxServerLineRunes]) + serverTextEllipsis`,
+// so a truncated value is maxServerLineRunes+1 runes — which is exactly why every
+// derived bound in this package reads `overhead + N + 1` and not `overhead + N`.
+// The natural assertion `len([]rune(safeTermBounded(s))) <= maxServerLineRunes`
+// is RED for every truncated value; the correct one adds
+// len([]rune(serverTextEllipsis)).
 const serverTextEllipsis = "…"
 
 // safeTermBounded is safeTermSingle plus a LENGTH bound: it is the gate for a

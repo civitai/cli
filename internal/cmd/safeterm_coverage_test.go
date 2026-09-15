@@ -214,7 +214,7 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	// named test is one that puts this function's OUTPUT on a screen.
 	// 🔴 WATCHED, NOT READ: rewriting `s = safeTermSingle(s)` inside
 	// safeTermBounded to `s = s` reddens TestProgressWriterLineSanitizesServerName
-	// (3 subtests) and TestProgressLineCannotForgeALine's newline and tab
+	// (2 subtests: `known total` and `unknown total`) and TestProgressLineCannotForgeALine's newline and tab
 	// subtests. The LENGTH half of this function is pinned separately — by
 	// TestProgressLineCannotForgeALine/soft-wrap and
 	// TestGenerateBuzzBalanceWarningIsLengthBounded — because deleting the cap
@@ -260,7 +260,7 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"to the terminal width SOFT-WRAPPED and stranded `(SHA256 verified)` at column zero with no " +
 			"\\n, no \\t and no \\x1b — the one forgery on this path that misleads about whether the bytes " +
 			"are the bytes, rendered before any bytes are verified. The named test covers the STRIP half " +
-			"(watched red: rewriting safeTermBounded's delegation to `s = s` fails its three subtests); the " +
+			"(watched red: rewriting safeTermBounded's delegation to `s = s` fails BOTH its subtests — an earlier draft said THREE; the table has two); the " +
 			"LENGTH half is covered by TestProgressLineCannotForgeALine/soft-wrap, which asserts the " +
 			"DISPLAY-ROW COUNT at 80/100/120/132 and carries the issue's negative control. Two tests, two " +
 			"claims — a row naming only the first would read as coverage of both"},

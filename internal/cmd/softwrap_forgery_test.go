@@ -130,9 +130,40 @@ func swRowsBeginningWith(s string, width int, prefix string) int {
 //
 // overhead is the rendered line's rune count with a ZERO-LENGTH operand, MEASURED
 // by the caller off a benign render.
+// swMaxRowsAt80 is the ABSOLUTE anchor — the only expectation in this file that
+// does NOT scale with maxServerLineRunes.
+//
+// 🔴 WITHOUT IT EVERY ASSERTION HERE IS BLIND TO THE CAP BEING WIDENED, WHICH IS
+// THE ONE EDIT MOST LIKELY TO UNDO #605/#624. Every other expectation is DERIVED
+// from maxServerLineRunes, so a wider cap simply raises the bar it is checked
+// against. MEASURED, not reasoned: set the constant to 5000 and run
+// ./internal/cmd — both geometry assertions stay GREEN while the two surfaces
+// occupy 63 and 64 display rows at 80 columns, the forgery essentially fully
+// restored (it was 66 before the bound). The only red at 5000 is
+// TestSafeTermBoundedBoundsTheOperand/multi-byte, and that is a FIXTURE-SIZE
+// control whose message points a maintainer at the fixture rather than the cap,
+// so growing the fixture returns the suite to fully green at 64 forged rows.
+//
+// The realistic edit is not malice, it is tidiness: "two budgets is confusing,
+// harmonise with pkg/civitai's snippet at 500". That is 7 rows at 80 columns
+// directly above `Generate? [y/N]:`, and nothing here would have said a word.
+//
+// 3 is what the two surfaces cost TODAY at 80 columns — the warning is 225 runes
+// (3 rows), the progress line 142 (2). Raising it is a deliberate act that has to
+// be justified here, which is the entire point.
+const swMaxRowsAt80 = 3
+
 func assertRowsBounded(t *testing.T, issue, surface, got string, overhead int) {
 	t.Helper()
 	wantRunes := overhead + maxServerLineRunes + len([]rune(serverTextEllipsis))
+	if rows := ceilDivRows(wantRunes, 80); rows > swMaxRowsAt80 {
+		t.Errorf("%s: the DERIVED bound for %s is now %d display rows at 80 columns, and the anchor allows "+
+			"at most %d. Every other expectation in this file scales with maxServerLineRunes (currently %d), "+
+			"so widening the cap raises them all — this is the one check that does not move. A cap costing "+
+			"more than %d rows at 80 columns hands the SERVER back control of how much screen it writes; if "+
+			"that is intended, change swMaxRowsAt80 deliberately and say why.",
+			issue, surface, rows, swMaxRowsAt80, maxServerLineRunes, swMaxRowsAt80)
+	}
 	if n := utf8.RuneCountInString(got); n > wantRunes {
 		t.Errorf("%s FORGERY in %s: the emitted line is %d runes, and the operand cap allows at most %d "+
 			"(%d of overhead + %d of operand + %d of ellipsis). An unbounded operand is what lets a SOFT "+
