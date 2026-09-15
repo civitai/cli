@@ -1799,15 +1799,17 @@ you meet at runtime in the deployed app into something you read at submit time.
 **The same list decides what the dirty-work-tree guard counts** (the refusal is
 in [exit code 1](#exit-code-1)). Paths the packager never ships — `dist/`,
 `node_modules/`, a stray `.zip`, a `.env.local`, anything `.gitignore`d, and any
-symlink, since the packager bundles regular files only — are **not** counted,
-because they are not in the bundle. Two cases surprise people:
+symlink (it bundles regular files only) — are **not** counted: they are not in
+the bundle.
+
+##### What the dirty-work-tree guard counts as a change
 
 - 🔴 **A repository with no commits yet refuses *everything*,
   `block.manifest.json` included.** A `git init` you have not committed into
-  means nothing in the bundle is in a commit, which is exactly what the guard
-  checks. That is the row between "no repo" and "repo, dirty": make the first
-  commit, or pass `--allow-dirty`. Scaffolding never puts you here —
-  `civitai app create` / `app init` run no `git init`.
+  puts nothing in the bundle in a commit, which is what the guard checks. That
+  is the row between "no repo" and "repo, dirty": make the first commit, or pass
+  `--allow-dirty`. Scaffolding never puts you here — `civitai app create` /
+  `app init` run no `git init`.
 - **A `git mv` counts as two changes**, because the bundle gains the destination
   and loses the original. Both are named, even when the destination is a path
   the packager drops (`git mv src/App.tsx dist/App.tsx` is refused, naming
@@ -4102,10 +4104,10 @@ that explains it in full.
 
 | You saw | What it means | Where to read more |
 | --- | --- | --- |
-| `cannot derive a slug from` / `cannot appear in a blockId` | The name holds characters the blockId alphabet cannot carry, and dropping them would mint a **different permanent public id** than you typed. Choose one with `--slug <slug>`. | [The blockId](#the-blockid) |
-| `is not valid UTF-8` | The same refusal one step earlier: the name's bytes cannot be read at all. Pass `--slug`, and a `--name` that is valid UTF-8. | [The blockId](#the-blockid) |
-| `… and the limit is …` | The blockId the name derives is past the 40-character cap, and it is **not** truncated — two names sharing 40 characters would get the same un-renameable id. Pick a shorter one. | [The blockId](#the-blockid) |
-| `refusing to overwrite. Scaffold somewhere else` | `app create` / `app init` will not clobber a non-empty directory, and there is deliberately **no `--force`**. Use `--dir <new path>`, or remove the directory first. | [Templates](#templates) |
+| `cannot derive a slug from` / `cannot appear in a blockId` | Exit `2`. | [The blockId](#the-blockid) |
+| `is not valid UTF-8` | Exit `2`, and `--slug` does not rescue it: the refusal is about the **display name**, which is written into the manifest as you typed it. | [The blockId](#the-blockid) |
+| `… and the limit is …` | Exit `2`. | [The blockId](#the-blockid) |
+| `refusing to overwrite. Scaffold somewhere else` | From `app create` and `app init` alike. Exit `1` — a verdict about the directory, not about your invocation. | [Templates](#templates) |
 
 ### Validating and submitting
 
@@ -4117,21 +4119,21 @@ that explains it in full.
 | `the server rejected the image-upload request (400)` | The **image** was refused while being ingested — the presigned upload mint, the inline icon upload, or the row that records the file. **No listing was changed** by any of the three: nothing is attached until `set-icon` / `set-cover` / `add-screenshot` runs. Read the server's own reason after the code for the bound it applied, rather than guessing. Exit `2`. | [Listing media requirements](#listing-media-requirements) |
 | `image upload PUT failed` | Storage refused the **bytes themselves** (e.g. `EntityTooLarge`), between minting the presigned URL and recording the row. No listing was changed, and it exits **`1`, not `2`** unlike the ingest steps above — a known inconsistency ([#388](https://github.com/civitai/cli/issues/388)). | [Listing media requirements](#listing-media-requirements) |
 | `the server rejected this store-listing change (400)` | The **listing** was refused and may have **partially applied** — check `civitai app listing status`. It covers an attach, a removal, a reorder, opening a revision and submitting one, and names no value to fix because those seven routes do not all carry one: the three attaches report the **file** you sent (never the `--caption`) on the lines below, while the other four print this line alone — *opening* a revision in particular sends nothing but a listing id the CLI derived. Exit `2`, except for a staged change refused only by the publish floor, which reports `staged on an open revision` and exits `0`. | [After you submit](#after-you-submit-review--approve--deploy) |
-| `there is no open revision to submit` | `app listing submit-revision` found nothing staged on your live listing, so it refuses rather than sending a moderator an empty revision. Stage the change first. Exit `1`. | [Listing media requirements](#listing-media-requirements) |
-| `this listing is not live` | `app listing submit-revision` on a draft or pending listing. Only an approved listing has revisions — everything else is edited directly, so your change is already applied. Exit `1`. | [Listing media requirements](#listing-media-requirements) |
-| `pass a URL or --clear, not both` | `civitai app listing set-source-repo` was given a repository URL **and** `--clear`; it refuses rather than editing a public page in a way you did not ask for. Exit `2`, and nothing is sent. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
+| `there is no open revision to submit` | Exit `1`. | [Listing media requirements](#listing-media-requirements) |
+| `this listing is not live` | Exit `1`. | [Listing media requirements](#listing-media-requirements) |
+| `pass a URL or --clear, not both` | Exit `2`, and nothing is sent. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
 | `nothing to do — pass a repository URL to set the link, or --clear` | `set-source-repo` with neither a URL nor `--clear`. The server would reject the empty patch too, but as a `400` costing a round trip and one of your ~30/hour listing edits. Exit `2`. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
-| `the source-repository URL is blank` | `set-source-repo ""` — almost always an unset shell variable. There is no "set it to empty" state to reach; pass `--clear` to **remove** the link. Exit `2`. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
+| `the source-repository URL is blank` | Exit `2`, and nothing is sent — there is no "set it to empty" state to reach. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
 | `source-repository link comes from the` | `set-source-repo` on an on-site app, whose link the platform re-syncs from `block.manifest.json` at **every** approved version. Set `repository` there and run `civitai app submit`. Exit `1`. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
-| `no such directory — pass the path to an App project root` | The path does not exist. This is a **usage** error: exit `2`, and `--json` prints nothing at all. | [Exit codes](#exit-codes) |
-| `is not a directory — pass the App project ROOT` | You pointed at a file — often the manifest itself. Pass the directory holding it. Exit `2`. | [Exit codes](#exit-codes) |
+| `no such directory — pass the path to an App project root` | A **usage** error: exit `2`, and `--json` prints nothing at all. | [Exit codes](#exit-codes) |
+| `is not a directory — pass the App project ROOT` | A **usage** error too: exit `2`, and `--json` prints nothing at all. | [Exit codes](#exit-codes) |
 | `it did NOT check that the file is loaded` | The `BLOCK_READY` advisory on its **weak** tier: it could not resolve what your `index.html` loads, so it checked only that *some* file mentions the message. The lines after it say what it could not follow. | [The host handshake](#the-host-handshake-block_ready) |
 | `nothing index.html loads reaches it` | The **strong** tier: the emitter is in your project but nothing the browser loads reaches it. Copying `civitai-host.js` in is only half the fix — it has to be referenced too. | [The host handshake](#the-host-handshake-block_ready) |
 | `no lockfile is committed` / `is not a lockfile` | The platform build installs **strictly** from the committed lockfile, so a missing one, or a zero-byte one from `touch`, fails the build server-side. Generate it with the package manager. | [Validate fidelity](#validate-fidelity) |
-| `refusing to submit without --yes` | A submit that would really upload asked for confirmation and found no TTY. Pass `--yes` in CI, or `--package-only` to just write the .zip. | [Command reference](#command-reference) |
+| `refusing to submit without --yes` | Exit `1`. `--package-only` and the no-token fallback never reach it. | [Command reference](#command-reference) |
 | `What this CLI sent` / `largest entries in the bundle` | Not an error of its own: the CLI's account of what left your machine — the bytes on the wire, and the largest entries they were made of — printed **under** a failed submit whose server message may name nothing actionable. **It does not claim to know why the submit failed.** Not printed for a `401`/`403`/`429`. | [Submit & auth](#submit--auth) — *How big can a bundle be?* |
 | `Your repo may be behind what was last released` / `Resubmitting the version that is already live is almost always an accident` / `That version is approved but not live` | The **monotonic-version guard**: the manifest version is not strictly above the highest **approved** version, and approving an older or identical one supersedes the newer. Exit `1`; `--allow-downgrade` submits anyway. The second line names which of four cases you are in. | [Exit code 1](#exit-code-1), [Is your repo behind?](#is-your-repo-behind-what-you-shipped) |
-| `from a dirty git work tree` / `that go into the bundle are not committed` | The **dirty-work-tree guard**: files that go into the bundle are uncommitted, so approving one deploys code that exists in no commit. It names the paths (`git status` spelling, relative to the packaged directory) — commit them, or pass `--allow-dirty`. Exit `1`. | [Exit code 1](#exit-code-1), [Submit & auth](#submit--auth) |
+| `from a dirty git work tree` / `that go into the bundle are not committed` | The **dirty-work-tree guard**: files that go into the bundle are uncommitted, so approving one deploys code that exists in no commit. It names the paths (`git status` spelling, relative to the packaged directory) — commit them, or pass `--allow-dirty`. Exit `1`. | [Exit code 1](#exit-code-1), [Submit & auth](#submit--auth) — *What the dirty-work-tree guard counts as a change* |
 | `look like they hold credentials` | A **warning**, not a refusal — the exit code is unchanged. A file the packager KEPT holds a line shaped like a credential, and a submitted bundle cannot be recalled. It prints `path:line` and the key name, never the value — open the file to see what matched. | [Submit & auth](#submit--auth) — *What looks like a credential* |
 | `HEAD is on no remote` | A **warning**, not a refusal. The packaged tree is clean, but its commit exists only on this machine, so the deployed version traces back to nothing anyone can fetch. Push the branch. | [Command reference](#command-reference) |
 | `refusing to withdraw without --yes` | A withdraw asked for confirmation and found no TTY. It gates because withdrawing a **first-version** submission deletes that app's store listing — icon, cover and every screenshot. Pass `--yes`; nothing was withdrawn. 🔴 **BREAKING** for a scripted `civitai app withdraw <id>` that used to exit `0`. | [After you submit](#after-you-submit-review--approve--deploy) |
@@ -4158,10 +4160,10 @@ that explains it in full.
 | `has no approved version yet` | `civitai app pull` clones a repository that exists only once a version has been **approved**. The app is real; the message names the latest submission's state. Exit `4`. | [Pull your app's repository](#pull-your-apps-repository-app-pull) |
 | `no such submission` | Nothing has been submitted for that app yet — `civitai app submit` creates the submission **and** the draft store listing — or, with `--id`, no publish request carries that id. An **offsite** app should no longer reach this row from `civitai app listing`; from `civitai app status` it still can, and there the advice it carries cannot work — the row below is the confirmed version. | [Submit & auth](#submit--auth) |
 | `is an OFFSITE app` | The app exists and is **offsite** — a registered URL, not a block bundle — so it has no block submission to resolve through. Normal from `civitai app status`; from `civitai app listing` it means the by-slug fallback *also* answered not found. The message names `civitai app view <slug>` for what the CLI can still show and the **App-store listing UI on civitai.com** for where that media is managed — without promising you can edit it there — and never `civitai app submit`, which cannot exist here. Exit `4`. | [Exit code 4](#exit-code-4), [After you submit](#after-you-submit-review--approve--deploy) |
-| `is ambiguous — it matches` | A model version has several files sharing that name. Select one by its numeric file id with `--file <id>`. | [Download model files](#download-model-files) |
+| `is ambiguous — it matches` | Your `--file` value matched as a **substring**; an exact same-name collision is a different message. Exit `2`. | [Download model files](#download-model-files) |
 | `SHA256 mismatch for` | A download's hash did not match, and the partial file was deleted. Retry — this is integrity checking working, not a bug. The file name is the **uploader's**, so invisible, terminal-controlling, newline and tab characters are removed from it first: this line is the CLI asserting an integrity *failure*, and an escape sequence in a file name must not be able to rewrite it. | [Download model files](#download-model-files) |
-| `checksum mismatch for` | The same, during `civitai upgrade`. The binary was **not** replaced. | [Upgrading](#upgrading) |
-| ``git is required for `civitai app pull` `` | `app pull` shells out to `git`, which is not on your `PATH`. | [Pull your app's repository](#pull-your-apps-repository-app-pull) |
+| `checksum mismatch for` | The row above, during `civitai upgrade`. | [Upgrading](#upgrading) |
+| ``git is required for `civitai app pull` `` | Exit `1`, reached only after the server has already answered. | [Pull your app's repository](#pull-your-apps-repository-app-pull) |
 | `unexpected response from` | A public read endpoint answered **`200`** with a body this CLI could not decode — not your request, credential or network, which is why it exits `1`. Two causes are known and fixed ([#513](https://github.com/civitai/cli/issues/513), [#525](https://github.com/civitai/cli/issues/525)). | [Exit code 1](#exit-code-1) |
 
 Still stuck? Every command takes `--help`, `civitai --help` prints the exit-code
