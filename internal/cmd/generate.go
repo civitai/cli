@@ -2097,9 +2097,13 @@ func classifyGenerateError(err error) error {
 		// TestClassifyGenerateError_PassesThroughForeignErrors pins that the error
 		// comes back IDENTICAL — not merely carrying the same message. Wrapping it
 		// is a deliberate change to a pinned property, and the errors arriving
-		// here are a mixed bag (transport failures, a missing token, the body-size
-		// cap, a graph that would not marshal) rather than the
-		// server-message-bearing set the fall-through below handles.
+		// here are a mixed bag — transport failures, a missing token, the
+		// body-size cap, genapi's unparsed-body errors — rather than the
+		// server-message-bearing set the fall-through below handles. (Graph
+		// marshalling can fail into this seam too, echoing a byte of the user's
+		// OWN --input file into the message; parseGraphInput compacts that file
+		// first, so the path looks unreachable today — NOT measured, and recorded
+		// as the open question it is rather than leaned on as a reason.)
 		return err
 	}
 	msg := strings.ToLower(apiErr.ServerMessage)
