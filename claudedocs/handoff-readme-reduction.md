@@ -16,9 +16,18 @@ Make `README.md` high-level: trim stale/maintainer noise, compress the two refer
 tables that have grown essay-length cells, reorganise so the reader paths stop
 interleaving, and link out what does not belong in a shipped file.
 
-closing-condition: check — `README.md` is at or below 250,000 bytes on `origin/main`
-AND `go test ./internal/cmd/ -run 'README|Readme|readme' -count=1` exits 0. Both are
-mechanical; run them and the arc is answerable without a judgement call.
+closing-condition: check — `README.md` is at or below **270,000** bytes on `origin/main`
+AND `go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme'
+-count=1` exits 0. Both are mechanical; run them and the arc is answerable without a
+judgement call.
+
+⚠ **Two operator amendments, 2026-09-15, both recorded so the original is not
+re-derived.** (1) The threshold was **250,000** and was moved *after* the phase-3 trial
+edit showed Option A lands at ~266,261 — changed deliberately rather than quietly
+missed; the arithmetic is in `claudedocs/readme-reduction-plan.md`. (2) The gate filter
+was `-run 'README|Readme|readme'`, which matches **zero** of the guards on the
+Troubleshooting table's two frozen cells — measured, and confirmed by a live mutant the
+narrow filter reported `ok` on.
 
 🔴 **The full measured plan is `claudedocs/readme-reduction-plan.md`** — constraint
 map, size map, cut list, compression targets, link-out policy, sequencing. Read it

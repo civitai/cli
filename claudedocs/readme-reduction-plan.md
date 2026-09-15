@@ -12,18 +12,41 @@ corrections, a behaviour fix and four guards. No reduction has shipped yet. Phas
 |---|---:|---:|
 | arc start (`426288f`) | 4,179 | 310,647 |
 | after phase 1 (`f284d89`) | 4,234 | 314,712 |
-| after phase 3 (`#625`, measured) | 4,123 | 306,073 |
-| projected end of Option A | — | **~266,261** |
+| **after phase 3 (`e3c5bd0`, MERGED)** | 4,123 | **305,329** |
+| projected end of Option A | — | ~266,261 |
+| **closing condition (amended)** | — | **≤ 270,000** |
 
-🔴 **THE CLOSING CONDITION IS NOT REACHABLE UNDER OPTION A, and this is a measured
-correction to an earlier projection of ~249,000.** The handoff's closing condition is
-README ≤ 250,000 bytes. Recomputing from the phase-3 *measurement* rather than from the
-original estimate: 306,073 − 20,500 (phase 2 cuts) − 13,312 (command reference) − 6,000
-(Submit & auth preamble) = **266,261, a shortfall of 16,261**. The gap opened for two
-reasons: phase 1 *added* 4,065 bytes, and Troubleshooting floored at 20,229 rather than
-the 13,000 this doc projected (see Phase 3). **Either the closing condition moves to
-~270,000, or part of Option B is needed. That is an operator decision and has not been
-taken.**
+## 🔴 The method changed after phase 3 — DELETE-FIRST, not relocate
+
+**Operator decisions, 2026-09-15.** Recorded here because the original method is what a
+later reader would otherwise re-derive from the phase descriptions below.
+
+**1. Relocation is no longer the default — it is the exception.** Phase 3 removed 15,021
+bytes from Troubleshooting and **6,377 came back in five other sections** (Submit & auth
++1,932, Download +1,796, Submission status +1,179, Scripting +859, Global flags +616) —
+a **39.7% give-back**, against an ask that said *link-out*. The method preserved the
+*string*, not the *reader*: a cause cell is read at the moment of failure, a paragraph
+three sections away is read by someone browsing. **The order is now: DELETE what the
+binary already says or what is maintainer history → LINK OUT with an absolute
+`https://github.com/civitai/cli/blob/main/<doc>` URL → relocate only when a fact is
+user-facing, unique, and has a section that genuinely owns it.** The evidence that this
+works is the D1 trim: **−1,103 bytes, zero give-back, and MORE correct**, because an
+unpinned prose mirror of an error string can drift while the source string cannot.
+
+**2. The closing condition moved 250,000 → 270,000, deliberately.** Option A lands at
+~266,261: 305,329 − 20,500 (phase 2) − 13,312 (command reference) − 6,000 (Submit & auth
+preamble). The 250,000 bar was set before any trial edit and was missed by 16,261. ⚠ **That
+projection is itself optimistic** — it subtracts phases 2 and 4 *gross* while using phase
+3's *net*; if those give back at phase 3's rate the real figure is higher. The bar was
+changed rather than quietly missed, and Option B was declined.
+
+**3. CLI error messages are now IN SCOPE (new phase 5).** Round 0 on #625 measured that
+**14 of 19 sampled cause cells were near-verbatim copies of strings the binary already
+prints**, and `AGENTS.md` says *"Make errors actionable — name the next command to
+run."* Where the README says more than the binary, the fix is to improve the Go error
+string and delete the row — the message then reaches the user at the moment of failure
+and is pinned by tests, unlike the prose. This widens the arc beyond documentation; it
+was chosen explicitly.
 
 ## How it got here
 
@@ -200,6 +223,33 @@ and should be **cross-linked** from the scripting section.
 `## Set up your coding agent` is 16,972 bytes with **zero subsections** — 265 unbroken
 lines, no internal map, no Contents sub-entries. Giving it 4–5 `###` also raises the
 subsection count, which helps the floor.
+
+🔴 **Phase 4 must fix a contradiction at TWO sites, not one.** `### Exit code 1` says
+the dirty-work-tree guard *"degrades rather than enforcing"*, which reads as the
+opposite of the no-commits-yet refusal that now lives under `##### What the
+dirty-work-tree guard counts as a change`. **The same clause exists a second time in the
+`app submit` command-reference row.** Fixing only the first leaves the contradiction
+live in the command table — the exact surface AGENTS.md says goes stale alone.
+
+## Phase 5 — improve the error messages, then delete the rows (NEW, operator-approved)
+
+Round 0 on #625 sampled 19 Troubleshooting rows and found **14 whose cause cell merely
+restated the string the binary already prints**. Phase 3 trimmed those cells; phase 5
+attacks the other end. For each row where the README still says more than the binary
+does, move the difference **into the Go error string** and delete the row.
+
+Why this is the better half of the fix, in the repo's own words (`AGENTS.md`): *"Make
+errors actionable — name the next command to run."* The message then reaches the user at
+the moment of failure rather than requiring them to find a table, and it is **pinned by
+tests**, where the prose mirror is not — column 2 of that table is checked against
+nothing, so it can drift from the binary silently while column 1 cannot.
+
+🔴 **Constraints.** `TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit` puts
+**7 rows on an incident floor** — those rows may not be deleted whatever their cell
+says; re-derive the list rather than trusting this sentence. Column 1 is pinned to the
+source string, so changing an error message means changing the symptom column with it,
+in the same commit. And this phase changes **CLI behaviour**, so it needs its own audit
+round and its own PR — do not fold it into a prose PR.
 
 ## Link-out policy
 
