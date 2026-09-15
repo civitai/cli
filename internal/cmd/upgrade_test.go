@@ -817,22 +817,25 @@ func readReleaseArchivePlan(t *testing.T) releaseArchivePlan {
 //     green (21 packages, 0 FAIL), because every guard read code and none read
 //     the prose.
 //
-// 🔴 ATTRIBUTION, AS MEASURED — not as assumed. Each mutant below reddens
-// exactly the legs named, no more:
-//   - upgrade.go reverted to a hardcoded `tar.gz` extension → leg (1) only, on
+// 🔴 ATTRIBUTION, AS MEASURED ON THIS TREE — not as assumed. Each mutant below
+// reddens exactly the legs named, no more:
+//   - upgrade.go reverted to a hardcoded `tar.gz` extension → leg (1) ALONE, on
 //     windows. Leg (1)'s `continue` short-circuits (2) and (3) for the very
-//     GOOS that failed, so they never run.
+//     GOOS that failed, so they never run; the prose still matches the release,
+//     so (4) is silent. This is a CODE-ONLY defect.
 //   - a `format_overrides` entry upgrade.go does not honour (e.g. adding
-//     `darwin: [zip]`) → leg (1) only, on darwin. Same `continue`.
+//     `darwin: [zip]`) → legs (1) AND (4), on darwin: the same `continue` hides
+//     (2) and (3), but the RELEASE moved, so all three prose surfaces are now
+//     wrong about darwin too. A release change is a code AND a prose defect.
 //   - `releaseAssetName` dropping the extension → leg (2), on every GOOS.
 //   - the zip case deleted from `extractBinaryFromArchive`'s switch → leg (3),
 //     on windows.
-//   - any of the three prose surfaces naming the wrong format → leg (4). It
-//     runs in its OWN pass, after the loop below, so leg (1)'s `continue`
-//     cannot suppress it.
+//   - any of the three prose surfaces inverted, release and code untouched →
+//     leg (4) alone. It runs in its OWN pass, after the loop below, so leg (1)'s
+//     `continue` cannot suppress it.
 //
-// So legs (2), (3) and (4) are reachable, each by a different mutant — they are
-// simply not the legs a format DISAGREEMENT fires.
+// So legs (2), (3) and (4) are all reachable, each by a different mutant — they
+// are simply not all the legs a format DISAGREEMENT fires.
 func TestUpgradeArchiveFormatsMatchTheReleaseConfig(t *testing.T) {
 	plan := readReleaseArchivePlan(t)
 
