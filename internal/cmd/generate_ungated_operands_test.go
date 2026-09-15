@@ -28,9 +28,21 @@ import (
 // call safeTerm", so `runGenerate`, which called it zero times, could never have
 // a row DEMANDED of it. The instrument was an enumeration of every value
 // interpolated into a writer or an `fmt.Errorf` on generate.go and
-// generate_wait.go (102 sites), each operand traced to its origin. The
-// `runGenerate` row this change adds to safeTermCoveredBy is what makes the next
-// absence recordable.
+// generate_wait.go — 102 sites at e4d4996, 103 at this commit, the +1 being a
+// comment below that quotes `fmt.Errorf(`. Re-run it and expect 103; a number
+// other than that is enumeration drift and not this comment's own line.
+//
+// 🔴 THE ROW THIS CHANGE ADDS FOR `runGenerate` DOES NOT CLOSE THAT BLIND SPOT,
+// and an earlier draft of this comment claimed it did. GREW iterates the
+// functions that CALL safeTerm and demands a row only for those, so once
+// `runGenerate` has ONE call and ONE row the predicate is satisfied no matter
+// how many further ungated operands the function grows. A second ungated
+// operand added to `runGenerate` tomorrow passes GREW, passes SHRANK, and
+// passes the test below, which drives only the balance seam. The row buys the
+// narrower thing its own tail states: it covers `runGenerate`'s ONE safeTerm
+// call. Finding the NEXT one still takes the hand enumeration above — that is a
+// cost of this design, recorded rather than papered over, because a comment
+// that reads as coverage while providing none stops anyone looking.
 //
 // # WHICH ASSERTIONS ARE LIVE IN THIS FILE
 //
@@ -260,6 +272,30 @@ func TestClassifyGenerateErrorFallThroughCannotForgeALine(t *testing.T) {
 // It asserts errors.As for *genapi.APIError too: classifyGenerateError is itself
 // an errors.As consumer, and a wrapper that broke it would silently turn every
 // generate error into an unclassified one on the NEXT call.
+//
+// 🔴 THIS IS AN INVARIANT GUARD AND IT IS REDUNDANT FOR DETECTION — it is GREEN
+// at e4d4996 and it CANNOT FAIL ALONE. Do not read it as regression coverage,
+// and do not cite it alone in a mutation matrix; an earlier draft of this PR's
+// matrix credited M5 to it and that attribution was false. MEASURED on this
+// commit, one mutant at a time:
+//
+//   - sanitizedCause.Unwrap -> nil: 11 tests go red, NINE of them pre-existing —
+//     TestClassifyGenerateError_UnknownMessageKeepsStatusKind,
+//     TestGenerate_ErrorRowsClassification,
+//     TestGenerate_NonexistentVersionIDFailsBeforeAnySubmit,
+//     TestDownloadOneErrorsSanitizeTheServerName,
+//     TestDownloadBlobToErrorsCannotForgeALine, TestWorkflowsGet_NotFound,
+//     TestWorkflowsList_ErrorIsClassified, TestWorkflowsCancel_NotFound,
+//     TestWorkflowsCancel_UnknownIDClassifiesLikeWorkflowsGet.
+//   - the realistic site-local mutant, `return errors.New(safeTermSingle(
+//     err.Error()))` — the non-unwrapping form a later "simplification" would
+//     reach for: SEVEN of those go red, plus TestSafeTermErrCallersAreLedgered.
+//
+// So closing condition 4 was already satisfied by the tree before this test
+// existed. It is kept for one reason only: it is the sole test whose NAME states
+// the property, so a reader changing safeTermErr finds it by grep instead of
+// discovering the constraint from nine unrelated failures. That is its whole
+// value, and it is documentation, not detection.
 func TestClassifyGenerateErrorFallThroughPreservesClassification(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
