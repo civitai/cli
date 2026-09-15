@@ -49,8 +49,9 @@ Consequences a reader needs, because they change what a close-check means here:
 
 ## State now
 
-**Ranks 23 and 30 are both DONE and merged.** `generate`'s forgery class is closed to the
-extent its two issues defined it — and deliberately not further; see #612.
+**Ranks 23, 30 and 31 are all DONE and merged.** `generate`'s forgery class is closed to the
+extent its three issues defined it — and deliberately not further; see **#624**, which is the
+successor #612 was to #604, and is LIVE on `main`.
 
 - **cli#596** — rank 23, merged `752bf50`. **cli#574 CLOSED** by hand against its own stated
   check re-run on post-merge `origin/main`.
@@ -62,29 +63,41 @@ extent its two issues defined it — and deliberately not further; see #612.
   Only two plain `safeTerm(` remain in those two files: `generate.go:144` (the deliberately
   multi-line `serverReasonSuffix`) and `:1838` (a comment). `generate_wait.go` is fully gated.
 - **cli#615** — the pin bump, merged `652ba75`, **unfroze the repo** (below).
-- **Claims:** `agent-setup-onboarding-23` and `-30` both RELEASED and verified absent.
-- **Filed and OPEN:** **#605** (soft-wrap forgery on `download`'s progress line), **#612**
-  (three `generate` operands with NO gate at all). **#609 CLOSED as a duplicate** of #606.
+- **cli#619** — rank 31, merged **`7c5a39c`**, **cli#612 CLOSED** against its operand
+  enumeration (never `git grep 'safeTerm('` — that instrument is what missed all three). Four
+  gates: `safeTermSingle` on the Buzz-balance warning, `safeTermErr` on the fall-through and on
+  both `%w` resolve causes. **F3 REPRODUCED** end-to-end, having been filed DERIVED-not-measured,
+  and the measurement narrowed the fix. Exit codes measured at the PROCESS boundary: base binary
+  2 lines, head 1, **both exit 4**.
+- **Claims:** `agent-setup-onboarding-23`, `-30` and `-31` all RELEASED and verified absent.
+- **Filed and OPEN:** **#605** (soft-wrap forgery on `download`'s progress line), **#620**,
+  **#621**, **#622**, **#624** — see rank 32. **#609 CLOSED as a duplicate** of #606.
 - 🔴 **The base clone was on another session's branch FOUR times this session.** All work was
   done in dedicated worktrees; nothing was written to it. Check `git branch --show-current`
   there before any operation.
 
 ### Honest limits
 
-- 🔴 **`generate` is NOT wholly gated, and the #604 closure must not be read as saying so.**
-  #612 carries a WIDER class — raw ANSI, not just `\n`/`\t` — including `generate.go:1255`,
-  where the Buzz-balance warning forges a `Cost:` line **directly above the spend
-  confirmation**, and `:2108`, `classifyGenerateError`'s fall-through on the dominant error
-  path. Both live on `main`.
-- 🔴 **#612's threat model is OPEN and that is recorded on the issue.** I first assumed those
-  operands were server-minted (so exploitation needs a compromised backend). Not established:
-  the classifier matches on `has("unknown ecosystem")`, implying the server echoes requested
-  values, so an uploader-controlled resource name may reach the ungated fall-through with no
-  compromise at all. The cheap probe is a **`whatIf`/quote** call's raw error body — never a
-  submit, which charges.
-- **The audit base rate for this arc is now NINE FOR NINE.** Every round that ran found
-  something, including three that found a defect in the previous round's own fix — one of
-  them mine.
+- 🔴 **`generate` is STILL NOT wholly gated, and the #612 closure must not be read as saying so
+  — this is the THIRD time this sentence has had to be rewritten for a successor issue.** The
+  gate bounds the RUNE CLASS, not LENGTH: **#624** is live on `main`, where a 5,120-char balance
+  error renders as one logical line of 5,224 runes — **passing every assertion #612 F1's test
+  makes** — which 80 columns lay out as ~66 rows starting at column zero with a counterfeit
+  `Cost:` line above the spend confirmation. The operand is unbounded on EVERY route
+  (`appapi.serverMessage` ends `return strings.TrimSpace(string(raw))`), so a fix must bound it
+  at the PRINT site; capping one `appapi` arm leaves it reachable through the others. Also
+  **#620** — the `!errors.As` return, whose real defect is seven `internal/genapi` sites.
+- 🔴 **The threat model is STILL OPEN and that is recorded on #612.** Never established whether
+  the server's `message` carries uploader-controlled text; the classifier matching on
+  `has("unknown ecosystem")` implies the server echoes requested values. The cheap probe is a
+  **`whatIf`/quote** call's raw error body — never a submit, which charges. The severity is a
+  **floor, not a measurement**.
+- **The audit base rate for this arc is now TWELVE FOR TWELVE.** Every round that ran found
+  something. Rank 31's three rounds: round 0 found a false coverage claim and a
+  measured-redundant test; round 1 found #624 and a wrong status enumeration; **round 2's five
+  findings were ALL defects round 1's own fix introduced** — including a false absolute replaced
+  by a narrower absolute that was also false. That ladder stopped on the **attribution gate**
+  (two consecutive zero-payload rounds), NOT on a clean round.
 
 ## Open investigations — live diagnosis state
 
@@ -427,19 +440,39 @@ before those rounds' commits were read back.
 
 ## Next steps (ranked)
 
-🔴 **Ranks 1–14, 18–24 and 30 are DONE — numbering preserved** so live `claim-work` slugs keep
-pointing at what they were taken for. Open: **15, 16, 17, 25, 26, 27, 28, 29, 31**.
+🔴 **Ranks 1–14, 18–24, 30 and 31 are DONE — numbering preserved** so live `claim-work` slugs keep
+pointing at what they were taken for. Open: **15, 16, 17, 25, 26, 27, 28, 29, 32**.
 
-31. **civitai/cli#612 — three `generate` operands with NO gate at all.** The successor to
-    rank 30 and a wider class than it. `:1255` (Buzz-balance warning, forges a `Cost:` line
-    above the spend confirmation), `:2108` (`classifyGenerateError`'s fall-through — every
-    401/403/404/429/503 and 5xx), and `:995`/`:1007` (flagged **DERIVED, not measured** —
-    reproduce before fixing, close in writing if it does not reproduce).
-    🔴 **Do NOT close it against `git grep 'safeTerm('`** — that instrument is what missed all
-    three, because it only finds operands that already have a gate. The issue's condition is
-    the operand enumeration (every `fmt.*` site, each origin traced); hold the implementer to
-    it.
-    forcing: security — a forged price line on the screen before an irreversible spend.
+31. ✅ **DONE — cli#612 CLOSED, cli#619 merged `7c5a39c`.** All three operands gated
+    (`safeTermSingle` on the Buzz-balance warning, `safeTermErr` on `classifyGenerateError`'s
+    fall-through and on both `%w` resolve causes). Closed against the **operand enumeration**,
+    never `git grep 'safeTerm('`. Verified by CONTENT with a working positive control (the same
+    comparison at `e4d4996` reports 120 insertions, so the zeros were earned).
+    **F3 REPRODUCED** end-to-end through the real `pkg/civitai` client — it had been filed
+    DERIVED-not-measured — and the measurement NARROWED the fix: ESC is stripped by `snippet`,
+    only `\n` survives, so `safeTermErr` and not a wider gate.
+    🔴 **Exit codes measured at the PROCESS boundary**, which the in-package test cannot do:
+    base binary prints 2 lines (second attacker-written at column zero), head prints 1, **both
+    exit 4**. Three audit rounds, **none clean**; stopped on the attribution gate (two
+    consecutive zero-payload rounds), not on convergence. Round 2's five findings were all
+    defects round 1's own fix introduced.
+
+32. **The four objects rank 31 spawned — none of them closed.** 🔴 Read #624 before treating
+    `generate` as done: the gate bounds the RUNE CLASS, **not length**, and a 5,120-char balance
+    error still renders as one logical line of 5,224 runes — **passing every assertion the F1
+    test makes** — which 80 columns lay out as ~66 rows starting at column zero with a
+    counterfeit `Cost:` line. Live on `main`, reproduced by two rounds. Its fork is the same one
+    **#605** carries, and one decision governs both — do not resolve them apart.
+    Also **#620** (the `!errors.As` return; the real defect is seven `internal/genapi`
+    interpolation sites), **#621** (a ledger `why` can still scope a surface OUT in free text
+    with nothing checking it — the mechanism that concealed #612 F2 for a full PR cycle; #619
+    repaired the instance only), **#622** (this 11-PR arc still has no `claudedocs/decisions/`
+    entry, so its rationale is inlined across ~6,600 lines).
+    ⚠ **Do NOT quote the operand-enumeration TOTAL** — it counts its own prose. It read
+    102 → 103 → 102 again on merged `main`, purely from comments being added and removed. A
+    literal beside it sends the next reader hunting an operand that does not exist. The
+    instrument is the enumeration and the trace.
+    forcing: security — #624 is a forged price line before an irreversible spend, still live.
 15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT re-verified
     for three sessions. `/home/zach/workspace/civit/civitai-developer-docs`. One command
     settles it either way; a gate nobody has checked in three sessions is a claim, not a fact.
@@ -1451,20 +1484,37 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
 
 ## How to verify
 
-**#612's work, when it starts** — the closing condition's own check, which is NOT a grep for a
-helper name:
+**Finding the NEXT ungated operand** (#612 is closed; this is the instrument that found it, and
+it is NOT a grep for a helper name — `git grep 'safeTerm('` only finds operands that ALREADY
+have a gate, which is why it missed all three):
 
 ```bash
-# enumerate every rendered operand on the two paths and trace its origin
-command grep -nE 'fmt\.(Fprint[^(]*|Errorf|Sprintf)\(' internal/cmd/generate.go internal/cmd/generate_wait.go | wc -l   # ~102
+# enumerate every rendered operand on the two paths, then TRACE EACH ONE to its origin
+command grep -nE 'fmt\.(Fprint[^(]*|Errorf|Sprintf)\(' internal/cmd/generate.go internal/cmd/generate_wait.go
 ```
+
+🔴 **Do not pipe it to `wc -l` and compare against a remembered number.** The enumeration counts
+its own prose: it read 102 → 103 → 102 again across #619's three commits, purely because comment
+lines quoting `fmt.Errorf(` were added and then removed. A literal beside it sends the reader
+hunting an ungated operand that does not exist — that tripwire falsified itself inside a single
+PR and was deleted rather than renumbered. The instrument is the enumeration **and the trace**.
+
+⚠ And the `safeTermCoveredBy` ledger will NOT demand a row for the next one: GREW iterates the
+functions that already CALL `safeTerm`, so a function with one call and one row passes however
+many further ungated operands it grows. **#621** is the structural repair.
 
 **The forgery guards on `generate`, after any change there:**
 
 ```bash
-go test ./internal/cmd -count=1 -run 'ForgeALine|GeometryIsNotServerChosen|RowCountIsNotServerChosen|StaysMultiLine'
+go test ./internal/cmd -count=1 -run 'ForgeALine|GeometryIsNotServerChosen|RowCountIsNotServerChosen|StaysMultiLine|PreservesClassification'
 # then revert ONE gate to plain safeTerm and confirm the named test dies with ITS OWN message
 ```
+
+⚠ Two traps in that loop, both measured: a TAB assertion is **inert** on a `ui`-styled surface
+(lipgloss expands `\t` to four spaces before the bytes reach the writer), so it is live only on
+bare `fmt.Fprintf`; and `TestClassifyGenerateErrorFallThroughPreservesClassification` is an
+**invariant guard that cannot fail alone** — nine pre-existing tests catch the same mutant, so do
+not cite it alone in a matrix.
 
 **The repo freeze, when `pins-vs-published` is red:**
 
