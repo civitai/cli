@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -17,15 +16,22 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// These three guards tie README claims about INSTALLING and CONFIGURING the CLI
-// to the artifacts that decide them: `.goreleaser.yaml` (what the release
-// actually publishes), `internal/cmd/upgrade.go` (what the self-updater asks
-// for) and `strconv.ParseBool` (what the CIVITAI_* colour variables accept).
+// These guards tie README claims about INSTALLING and CONFIGURING the CLI to the
+// artifacts that decide them: `.goreleaser.yaml` (what the release actually
+// publishes), `internal/cmd/upgrade.go` (what the self-updater asks for) and
+// `strconv.ParseBool` (what the CIVITAI_* colour variables accept).
 //
-// All three defects they pin shipped for months in the reassuring direction —
-// the README promised a platform or a value that does not work, and nothing was
-// red. A drift guard is the only thing that notices, because none of these
-// claims can be falsified by running the CLI on the machine CI runs on.
+// Both defects they pin shipped for months in the reassuring direction — the
+// README promised a platform or a value that does not work, and nothing was red.
+// A drift guard is the only thing that notices, because neither claim can be
+// falsified by running the CLI on the machine CI runs on.
+//
+// A THIRD guard used to live here: it demanded the README carry a caveat saying
+// `civitai upgrade` cannot work on Windows. That caveat is gone because the bug
+// it described is FIXED (#613) — upgrade.go now derives the archive extension
+// per GOOS. The durable claim is the extension PARITY between the two files, and
+// it is pinned by TestUpgradeArchiveFormatsMatchTheReleaseConfig in
+// upgrade_test.go, where it can drive the real code path instead of the prose.
 
 // readGoreleaserConfig returns the parsed `.goreleaser.yaml` as a top-level key
 // map plus the raw bytes. It Fatals on a read or parse failure rather than
@@ -360,198 +366,6 @@ func TestREADMEHomebrewSectionMatchesTheReleaseConfig(t *testing.T) {
 			".goreleaser.yaml publishes a CASK and no `brews:` formula, so that delegation resolves on "+
 			"macOS only. An unscoped sentence in help text is the version most users see — the README "+
 			"being right does not fix it.", upgradeLongBrewMacOSScope)
-	}
-}
-
-// windowsUpgradeCaveat is the README's Windows refusal for `civitai upgrade`,
-// pinned whole for the same reason as homebrewMacOSOnlyClaim.
-const windowsUpgradeCaveat = "🔴 **`civitai upgrade` does not work on Windows — use the manual path.**"
-
-// windowsUpgradeRowCaveat is the SAME claim as it has to appear in the
-// command-reference table's `civitai upgrade` row — a separate published
-// surface, pinned whole for the same reason.
-const windowsUpgradeRowCaveat = "🔴 **Not on Windows**: the `.tar.gz` asset it looks for is never published " +
-	"there, so it fails and replaces nothing — upgrade by hand."
-
-// upgradeAssetNameRe finds the ONE release-asset name `runUpgrade` builds. The
-// extension is captured, because the extension is the entire defect.
-var upgradeAssetNameRe = regexp.MustCompile(`"civitai_%s_%s_%s\.([a-z.]+)"`)
-
-// TestREADMEWindowsUpgradeCaveatMatchesTheReleaseFormats ties the README's
-// Windows caveat to the SEAM between two files that are each individually
-// correct: `.goreleaser.yaml` publishes Windows as a `.zip`
-// (`format_overrides`), while `internal/cmd/upgrade.go` asks for a `.tar.gz`
-// unconditionally. Neither file is wrong on its own; together they mean
-// `civitai upgrade` can never succeed on Windows, and §Install advertises
-// Windows binaries.
-//
-// 🔴 IT FAILS IN BOTH DIRECTIONS, and it compares the two derived names rather
-// than grepping each file for a keyword — a keyword pair would stay green if one
-// side changed to some third format.
-//   - The names disagree (today): the README must carry the caveat.
-//   - The names agree (someone gave upgrade.go a per-GOOS extension, or the
-//     release stopped overriding Windows): the caveat must be REMOVED. That is
-//     the silent direction — a stale "does not work on Windows" tells users to
-//     do by hand what the command would now do for them.
-//
-// What it does NOT check: that a real Windows `civitai upgrade` produces that
-// error. `runtime.GOOS` is fixed at compile time, so the only honest place to
-// confirm the end-to-end symptom is a Windows machine.
-func TestREADMEWindowsUpgradeCaveatMatchesTheReleaseFormats(t *testing.T) {
-	_, raw := readGoreleaserConfig(t)
-
-	var cfg struct {
-		Archives []struct {
-			ID              string `yaml:"id"`
-			Formats         []string
-			FormatOverrides []struct {
-				Goos    string   `yaml:"goos"`
-				Formats []string `yaml:"formats"`
-			} `yaml:"format_overrides"`
-		} `yaml:"archives"`
-	}
-	if err := yaml.Unmarshal(raw, &cfg); err != nil {
-		t.Fatalf("parse .goreleaser.yaml archives: %v", err)
-	}
-	if len(cfg.Archives) < 2 {
-		t.Fatalf("CONTROL failure: parsed %d archive(s) from .goreleaser.yaml, want at least 2 "+
-			"(the tar.gz archive and the raw binary) — the `archives:` key moved", len(cfg.Archives))
-	}
-
-	// The extension the RELEASE publishes for Windows, for the archive the
-	// self-updater downloads (id `civitai`, the tar/zip one — not `civitai-raw`).
-	winExt := ""
-	found := false
-	for _, a := range cfg.Archives {
-		if a.ID != "civitai" {
-			continue
-		}
-		found = true
-		for _, fo := range a.FormatOverrides {
-			if fo.Goos == "windows" && len(fo.Formats) > 0 {
-				winExt = fo.Formats[0]
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("CONTROL failure: .goreleaser.yaml has no archive with id `civitai` — that is the archive " +
-			"`civitai upgrade` downloads, so without it this guard is comparing nothing")
-	}
-	if winExt == "" {
-		winExt = "tar.gz" // no override: Windows gets the default archive format.
-	}
-
-	// The extension the CLI ASKS FOR, read out of the production source.
-	upgradeSrc := readUpgradeSource(t)
-	m := upgradeAssetNameRe.FindAllStringSubmatch(upgradeSrc, -1)
-	if len(m) != 1 {
-		t.Fatalf("CONTROL failure: found %d asset-name template(s) matching %s in internal/cmd/upgrade.go, want exactly 1. "+
-			"Either the name is now built some other way (in which case re-derive this comparison rather than "+
-			"deleting it) or this regex has stopped matching and every verdict below is vacuous",
-			len(m), upgradeAssetNameRe)
-	}
-	cliExt := m[0][1]
-
-	// A per-GOOS branch would make the single template above an incomplete read.
-	if regexp.MustCompile(`runtime\.GOOS\s*==\s*"windows"`).MatchString(upgradeSrc) {
-		t.Fatalf("internal/cmd/upgrade.go now branches on runtime.GOOS == \"windows\", so the single asset-name " +
-			"template this guard reads is no longer the whole story. Re-derive the comparison against the new code.")
-	}
-
-	md := readREADME(t)
-	body := readmeSectionByAnchor(t, md, "upgrading")
-	if len(strings.TrimSpace(body)) < 500 {
-		t.Fatalf("CONTROL failure: the README's `## Upgrading` section is only %d byte(s) long — "+
-			"the extractor is reading the wrong block", len(strings.TrimSpace(body)))
-	}
-	hasCaveat := strings.Contains(flattenWS(body), flattenWS(windowsUpgradeCaveat))
-
-	// 🔴 THE SAME CLAIM ON A SECOND SURFACE. AGENTS.md: the command section, the
-	// exit-code table and the Troubleshooting index each state the contract and
-	// each goes stale ALONE — #371 shipped having updated two of three. The
-	// `civitai upgrade` row sat unscoped for the whole life of the §Upgrading
-	// caveat, so a reader of the command table was told the command self-updates
-	// the binary, full stop.
-	row := ""
-	for _, line := range strings.Split(md, "\n") {
-		if strings.HasPrefix(line, "| `civitai upgrade") {
-			if row != "" {
-				t.Fatalf("the command-reference table has two `civitai upgrade` rows; this guard would pin "+
-					"whichever came first:\n%s\n%s", row, line)
-			}
-			row = line
-		}
-	}
-	if row == "" {
-		t.Fatal("CONTROL failure: the README has no `| `civitai upgrade` command-reference row — the row " +
-			"scan is reading the wrong document, so its verdict below is about nothing")
-	}
-	hasRowCaveat := strings.Contains(flattenWS(row), flattenWS(windowsUpgradeRowCaveat))
-
-	// 🔴 AND A THIRD: `civitai upgrade --help` itself. It is the surface a user
-	// reaches without opening the README at all, and it carried the unscoped
-	// claim for the entire life of the §Upgrading caveat. The expected sentence
-	// is BUILT from the two extensions derived above rather than hardcoded, so
-	// changing either side moves the expectation with it instead of leaving this
-	// asserting a string nothing produces.
-	longCaveat := fmt.Sprintf("This command asks for a .%s release asset, but Windows is published "+
-		"as a .%s, so the lookup never matches", cliExt, winExt)
-	flatUpgradeLong := flattenWS(upgradeLongText(t, upgradeSrc))
-	hasLongCaveat := strings.Contains(flatUpgradeLong, longCaveat) &&
-		strings.Contains(flatUpgradeLong, "Not on Windows.")
-
-	if cliExt == winExt {
-		if hasCaveat {
-			t.Errorf("internal/cmd/upgrade.go now asks for a .%s asset and .goreleaser.yaml publishes Windows as "+
-				".%s — they AGREE, so `civitai upgrade` can find its Windows asset. Delete the README caveat %q.\n\n"+
-				"A stale refusal tells Windows users to do by hand what the command now does for them.",
-				cliExt, winExt, windowsUpgradeCaveat)
-		}
-		if hasRowCaveat {
-			t.Errorf("the extensions AGREE (.%s asked, .%s published) but the `civitai upgrade` command-reference "+
-				"row still says %q. Delete it there too — the row and the §Upgrading section state the same "+
-				"contract and go stale independently.", cliExt, winExt, windowsUpgradeRowCaveat)
-		}
-		if hasLongCaveat {
-			t.Errorf("the extensions AGREE (.%s asked, .%s published) but `civitai upgrade --help` still "+
-				"refuses Windows (%q). Delete it from upgrade.go's Long too — help text is the surface a "+
-				"user reads without opening the README, so a stale refusal there tells Windows users to "+
-				"do by hand what the command now does for them.", cliExt, winExt, longCaveat)
-		}
-		return
-	}
-	if !hasLongCaveat {
-		t.Errorf("`civitai upgrade --help` does not scope its own contract to the platforms it holds "+
-			"on.\n\nwant in internal/cmd/upgrade.go's Long (normalised): \"Not on Windows.\" … %q\n\n"+
-			"got (normalised, upgrade.go's Long):\n%s\n\nThe command asks for a `.%s` asset that is never "+
-			"published for Windows. AGENTS.md: the command surface, the README section and the "+
-			"Troubleshooting index each state the contract and each goes stale ALONE — this one did.",
-			longCaveat, flatUpgradeLong, cliExt)
-	}
-	if !hasRowCaveat {
-		t.Errorf("the `civitai upgrade` command-reference row does not scope the claim to the platforms it "+
-			"holds on:\n  %s\n\nwant (normalised): %s\n\n`civitai upgrade` asks for a `.%s` asset that is never "+
-			"published for Windows, so the row's \"self-update this binary in place\" is false there. The row "+
-			"and the §Upgrading section are separate surfaces and go stale alone.",
-			flattenWS(row), flattenWS(windowsUpgradeRowCaveat), cliExt)
-	}
-
-	if !hasCaveat {
-		t.Errorf("`civitai upgrade` asks for a `.%s` release asset (internal/cmd/upgrade.go) but .goreleaser.yaml "+
-			"publishes Windows as `.%s` (archives[civitai].format_overrides, goos: windows). The asset lookup can "+
-			"never match on Windows, and §Install advertises Windows binaries — yet the README's `## Upgrading` "+
-			"section carries no caveat.\n\nwant (normalised): %s\n\ngot:\n%s",
-			cliExt, winExt, flattenWS(windowsUpgradeCaveat), flattenWS(body))
-		return
-	}
-	// The caveat must name the two facts it is derived from AND the way out.
-	flat := flattenWS(body)
-	for _, want := range []string{"." + cliExt, "." + winExt, "upgrade manually", "nothing is replaced"} {
-		if !strings.Contains(strings.ToLower(flat), strings.ToLower(want)) {
-			t.Errorf("the README's Windows upgrade caveat does not mention %q. It is derived from a `.%s` ask "+
-				"against a `.%s` publish, and its whole value to a reader is the manual path plus the fact that "+
-				"the failed lookup leaves the binary untouched.", want, cliExt, winExt)
-		}
 	}
 }
 

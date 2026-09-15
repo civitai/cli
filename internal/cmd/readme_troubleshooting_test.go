@@ -1865,13 +1865,6 @@ func TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit(t *testing.T) 
 			"the dev:live money-path dead end, reached with a credential that looks entirely valid"},
 		{"it did NOT check that the file is loaded",
 			"the ready-ack advisory's weak tier — the disclosure that keeps `valid` from reading as `wired`"},
-		{"no release asset",
-			"the string a Windows user lands on when `civitai upgrade` asks for a `.tar.gz` that is never " +
-				"published there. The section opens \"Look up the message you got\", and this one is " +
-				"PERMANENT rather than a transient bad release — without a row, the reader's only next " +
-				"step is to retry a command that can never work. It is on the floor because the SIBLING " +
-				"guard above is one-directional (row -> source), so a MISSING row is invisible to it: " +
-				"deleting this row reddens nothing else in the suite"},
 	}
 	for _, tc := range cases {
 		if !strings.Contains(section, tc.want) {

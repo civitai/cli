@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
@@ -14,8 +15,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // makeTarGz builds an in-memory gzip'd tar containing a single regular file
@@ -41,6 +45,74 @@ func makeTarGz(t *testing.T, name string, content []byte) []byte {
 	return buf.Bytes()
 }
 
+// makeZip builds an in-memory zip containing a single file `name` with the given
+// content — the shape `.goreleaser.yaml` publishes for `goos: windows`.
+func makeZip(t *testing.T, name string, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// makeReleaseArchive builds the archive kind named by format.
+func makeReleaseArchive(t *testing.T, format, name string, content []byte) []byte {
+	t.Helper()
+	switch format {
+	case "zip":
+		return makeZip(t, name, content)
+	case "tar.gz":
+		return makeTarGz(t, name, content)
+	default:
+		t.Fatalf("test fixture cannot build a %q archive", format)
+		return nil
+	}
+}
+
+// wantArchiveFormat and wantBinaryName are the TEST's own statement of what the
+// release publishes for a GOOS, written out literally here rather than read back
+// from `archiveFormatForGOOS` / `releaseBinaryName`.
+//
+// 🔴 That duplication is deliberate. A fixture built from the production
+// functions agrees with them by construction: a hardcoded `.tar.gz` in
+// `releaseAssetName` would make the fixture serve a `.tar.gz` too and the
+// end-to-end Windows test would pass while #613 was fully reopened. Stating it
+// independently is what makes "the server offered a zip and the CLI asked for
+// one" an assertion rather than a tautology. `.goreleaser.yaml` remains the
+// authority: TestUpgradeArchiveFormatsMatchTheReleaseConfig reads it and fails
+// if EITHER of these two copies drifts from it.
+func wantArchiveFormat(goos string) string {
+	if goos == "windows" {
+		return "zip"
+	}
+	return "tar.gz"
+}
+
+func wantBinaryName(goos string) string {
+	if goos == "windows" {
+		return "civitai.exe"
+	}
+	return "civitai"
+}
+
+// withGOOS pins the runtimeGOOS seam for a test. runtime.GOOS is fixed at
+// compile time, so this is the only way the Windows branch runs on CI.
+func withGOOS(t *testing.T, goos string) {
+	t.Helper()
+	orig := runtimeGOOS
+	runtimeGOOS = goos
+	t.Cleanup(func() { runtimeGOOS = orig })
+}
+
 func sha256Of(b []byte) string {
 	s := sha256.Sum256(b)
 	return hex.EncodeToString(s[:])
@@ -60,16 +132,48 @@ type upgradeServer struct {
 	checksumHits int
 }
 
+// upgradeFixture describes the release a test server should publish. Every field
+// is stated by the test, never read back from the production name/format
+// helpers, so a wrong helper cannot make a fixture agree with itself.
+type upgradeFixture struct {
+	tag              string
+	goos, goarch     string
+	format           string // "tar.gz" or "zip" — what the RELEASE uploads
+	binName          string // the executable's name INSIDE the archive
+	binContent       []byte
+	checksumOverride string              // non-empty => written into checksums.txt instead of the real digest
+	corrupt          func([]byte) []byte // applied to the archive BEFORE the checksum is computed
+}
+
 func newUpgradeServer(t *testing.T, tag string, binContent []byte, tarChecksumOverride string) *upgradeServer {
 	t.Helper()
+	// runtimeGOOS, not runtime.GOOS: a test that pinned the seam gets a server
+	// publishing for the platform it pinned.
+	return newUpgradeServerFor(t, upgradeFixture{
+		tag:              tag,
+		goos:             runtimeGOOS,
+		goarch:           runtime.GOARCH,
+		format:           wantArchiveFormat(runtimeGOOS),
+		binName:          wantBinaryName(runtimeGOOS),
+		binContent:       binContent,
+		checksumOverride: tarChecksumOverride,
+	})
+}
+
+func newUpgradeServerFor(t *testing.T, fx upgradeFixture) *upgradeServer {
+	t.Helper()
 	us := &upgradeServer{}
-	verNoV := strings.TrimPrefix(tag, "v")
-	us.tarName = fmt.Sprintf("civitai_%s_%s_%s.tar.gz", verNoV, runtime.GOOS, runtime.GOARCH)
-	us.tarBytes = makeTarGz(t, "civitai", binContent)
+	verNoV := strings.TrimPrefix(fx.tag, "v")
+	tag := fx.tag
+	us.tarName = fmt.Sprintf("civitai_%s_%s_%s.%s", verNoV, fx.goos, fx.goarch, fx.format)
+	us.tarBytes = makeReleaseArchive(t, fx.format, fx.binName, fx.binContent)
+	if fx.corrupt != nil {
+		us.tarBytes = fx.corrupt(us.tarBytes)
+	}
 
 	sum := sha256Of(us.tarBytes)
-	if tarChecksumOverride != "" {
-		sum = tarChecksumOverride
+	if fx.checksumOverride != "" {
+		sum = fx.checksumOverride
 	}
 	checksums := fmt.Sprintf("%s  %s\n", sum, us.tarName)
 
@@ -559,5 +663,447 @@ func TestUpgrade_MissingAssetForPlatform(t *testing.T) {
 	err := runUpgrade(&out, false, false)
 	if err == nil || !strings.Contains(err.Error(), "no release asset") {
 		t.Errorf("expected a missing-asset error, got: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// #613: the archive-format seam between `.goreleaser.yaml` and upgrade.go.
+// ---------------------------------------------------------------------------
+
+// goreleaserDefaultArchiveFormat is what goreleaser publishes for an `archives:`
+// entry that declares no `formats:` key. It is `tar.gz` (goreleaser v2's
+// documented default), and `archives[civitai]` relies on it for every GOOS that
+// has no `format_overrides` entry.
+const goreleaserDefaultArchiveFormat = "tar.gz"
+
+// releaseArchivePlan is `.goreleaser.yaml`, read as the question this seam turns
+// on: for each GOOS the release BUILDS, which archive format does it PUBLISH?
+type releaseArchivePlan struct {
+	goos          []string          // every GOOS in `builds:`
+	formatFor     map[string]string // goos -> published archive format
+	overrideCount int               // how many `format_overrides` entries were read
+}
+
+// readReleaseArchivePlan parses `.goreleaser.yaml` into that plan, Fataling on
+// anything that would make the comparison vacuous.
+func readReleaseArchivePlan(t *testing.T) releaseArchivePlan {
+	t.Helper()
+	_, raw := readGoreleaserConfig(t)
+
+	var cfg struct {
+		Builds []struct {
+			ID   string   `yaml:"id"`
+			Goos []string `yaml:"goos"`
+		} `yaml:"builds"`
+		Archives []struct {
+			ID              string   `yaml:"id"`
+			Formats         []string `yaml:"formats"`
+			FormatOverrides []struct {
+				Goos    string   `yaml:"goos"`
+				Formats []string `yaml:"formats"`
+			} `yaml:"format_overrides"`
+		} `yaml:"archives"`
+	}
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("parse .goreleaser.yaml builds/archives: %v", err)
+	}
+
+	// POSITIVE CONTROL on the builds half. An empty or single-entry goos list
+	// would make the per-GOOS loop below run zero or one times and report a
+	// confident green about a comparison it never made.
+	var goos []string
+	for _, b := range cfg.Builds {
+		if b.ID == "civitai" {
+			goos = b.Goos
+		}
+	}
+	if len(goos) < 3 {
+		t.Fatalf("CONTROL failure: .goreleaser.yaml's `civitai` build declares %d goos value(s) (%v), want at least 3 "+
+			"(linux, darwin, windows). Either the build id moved or the parse is wrong — every per-GOOS verdict "+
+			"below would be about a list this guard never read", len(goos), goos)
+	}
+	for _, want := range []string{"linux", "darwin", "windows"} {
+		if !slices.Contains(goos, want) {
+			t.Fatalf("CONTROL failure: .goreleaser.yaml's `civitai` build does not list goos %q (got %v). "+
+				"If a platform really was dropped from the release, drop it from upgrade.go too and "+
+				"re-derive this control", want, goos)
+		}
+	}
+
+	// POSITIVE CONTROL on the archives half: the archive `civitai upgrade`
+	// downloads is id `civitai` (not `civitai-raw`, the bare binary).
+	if len(cfg.Archives) < 2 {
+		t.Fatalf("CONTROL failure: parsed %d archive(s) from .goreleaser.yaml, want at least 2 "+
+			"(the tar.gz/zip archive and the raw binary) — the `archives:` key moved", len(cfg.Archives))
+	}
+	plan := releaseArchivePlan{goos: goos, formatFor: map[string]string{}}
+	found := false
+	for _, a := range cfg.Archives {
+		if a.ID != "civitai" {
+			continue
+		}
+		found = true
+		def := goreleaserDefaultArchiveFormat
+		if len(a.Formats) > 0 {
+			def = a.Formats[0]
+		}
+		for _, g := range goos {
+			plan.formatFor[g] = def
+		}
+		for _, fo := range a.FormatOverrides {
+			if len(fo.Formats) == 0 {
+				t.Fatalf("CONTROL failure: .goreleaser.yaml has a `format_overrides` entry for goos %q with an "+
+					"empty `formats:` list — this guard cannot say what that platform publishes", fo.Goos)
+			}
+			plan.overrideCount++
+			plan.formatFor[fo.Goos] = fo.Formats[0]
+		}
+	}
+	if !found {
+		t.Fatal("CONTROL failure: .goreleaser.yaml has no archive with id `civitai` — that is the archive " +
+			"`civitai upgrade` downloads, so without it this guard is comparing nothing")
+	}
+	// POSITIVE CONTROL on the override list. With none, every GOOS resolves to the
+	// same default and the comparison below could not tell a per-GOOS function
+	// from a hardcoded constant — the exact mutant #613 was.
+	if plan.overrideCount == 0 {
+		t.Fatalf("CONTROL failure: `archives[civitai]` declares no `format_overrides` at all, so every one of "+
+			"%v publishes %q. This guard exists to catch a per-GOOS format the CLI does not honour; with a "+
+			"uniform release it cannot distinguish `archiveFormatForGOOS` from `return %q`. If the override "+
+			"really was removed, re-derive this guard rather than deleting the control",
+			plan.goos, goreleaserDefaultArchiveFormat, goreleaserDefaultArchiveFormat)
+	}
+	// And the formats really must differ across the platform set, for the same
+	// reason: a uniform map is a fixture that cannot see the mutant.
+	distinct := map[string]bool{}
+	for _, g := range plan.goos {
+		distinct[plan.formatFor[g]] = true
+	}
+	if len(distinct) < 2 {
+		t.Fatalf("CONTROL failure: all %d built platforms publish the same archive format (%v) — "+
+			"a uniform expectation cannot see a hardcoded extension in upgrade.go", len(plan.goos), sortedKeys(distinct))
+	}
+	return plan
+}
+
+// TestUpgradeArchiveFormatsMatchTheReleaseConfig is the #613 parity guard.
+//
+// 🔴 IT PINS A RELATIONSHIP, NOT A COMPONENT. `.goreleaser.yaml` was right on
+// its own (Windows ships a `.zip`, by `format_overrides`) and upgrade.go was
+// self-consistent on its own (build a name, look it up, fail loudly if absent).
+// The defect lived in the seam nobody owned: the name carried a hardcoded
+// `.tar.gz`, so `civitai upgrade` on Windows could only ever print
+// `no release asset "civitai_…_windows_amd64.tar.gz"`. No component test could
+// see it, and `runtime.GOOS` being compile-time meant no test ON CI could
+// execute the branch at all.
+//
+// For EVERY GOOS `.goreleaser.yaml` builds, this asserts three things about the
+// production code, through the real functions rather than the source text:
+//  1. `archiveFormatForGOOS(goos)` equals the format the release publishes.
+//  2. `releaseAssetName(...)` ends in that extension — so an extension inlined
+//     somewhere other than archiveFormatForGOOS is still caught.
+//  3. `extractBinaryFromArchive` can actually OPEN that format — so an override
+//     naming a format the CLI has no reader for fails here rather than on a
+//     user's machine after a verified download.
+//
+// It fails in both directions: adding a `format_overrides` entry upgrade.go does
+// not honour reddens (1) and (3); reverting upgrade.go to a hardcoded extension
+// reddens (1) and (2).
+func TestUpgradeArchiveFormatsMatchTheReleaseConfig(t *testing.T) {
+	plan := readReleaseArchivePlan(t)
+
+	for _, goos := range plan.goos {
+		want := plan.formatFor[goos]
+
+		// (1) The format the CLI derives.
+		if got := archiveFormatForGOOS(goos); got != want {
+			t.Errorf("archiveFormatForGOOS(%q) = %q, but .goreleaser.yaml publishes %q for that platform.\n\n"+
+				"That disagreement IS issue #613: the asset lookup asks for a name the release never uploaded, "+
+				"so `civitai upgrade` fails on %s with `no release asset …` and replaces nothing. "+
+				"Teach archiveFormatForGOOS about the format, and give extractBinaryFromArchive a reader for it.",
+				goos, got, want, goos)
+			continue
+		}
+
+		// (2) The name the CLI actually asks the GitHub API for.
+		name := releaseAssetName("9.9.9", goos, "amd64")
+		wantName := "civitai_9.9.9_" + goos + "_amd64." + want
+		if name != wantName {
+			t.Errorf("releaseAssetName(\"9.9.9\", %q, \"amd64\") = %q, want %q.\n\n"+
+				"The extension is derived per GOOS precisely so this cannot be hardcoded again (#613); "+
+				"a name built anywhere other than releaseAssetName reopens it.", goos, name, wantName)
+		}
+
+		// (3) Reachability: the extractor must handle the format end-to-end. A
+		// format the CLI can name but not open fails AFTER a verified download,
+		// which is the worst place to find out.
+		const marker = "CIVITAI-TEST-BINARY-BYTES"
+		archive := makeReleaseArchive(t, want, wantBinaryName(goos), []byte(marker))
+		got, err := extractBinaryFromArchive(archive, want, wantBinaryName(goos))
+		if err != nil {
+			t.Errorf("extractBinaryFromArchive cannot read the %q archive .goreleaser.yaml publishes for %s: %v\n\n"+
+				"The format is named by archiveFormatForGOOS but has no reader, so an upgrade on %s would "+
+				"download and verify the archive and then fail at the last step.", want, goos, err, goos)
+			continue
+		}
+		if string(got) != marker {
+			t.Errorf("extractBinaryFromArchive(%s, %q) returned %q, want %q — the reader found the entry but "+
+				"returned the wrong bytes", goos, want, got, marker)
+		}
+	}
+
+	// NEGATIVE CONTROL on the extractor's dispatch: an unknown format must be
+	// refused, not silently treated as one of the two known kinds.
+	//
+	// 🔴 THE ARCHIVE HERE IS A VALID tar.gz ON PURPOSE. Measured: with a zip as
+	// the payload, a `default:` branch falling through to extractBinaryFromTarGz
+	// SURVIVED this assertion — the tar reader rejected the zip, so the error came
+	// from the wrong place and the control went green for a reason unrelated to
+	// the dispatch. A well-formed tar.gz makes that fall-through SUCCEED, which is
+	// the only shape that can see the mutant.
+	const wellFormed = "WELL-FORMED-BUT-WRONGLY-LABELLED"
+	if got, err := extractBinaryFromArchive(makeTarGz(t, "civitai", []byte(wellFormed)), "7z", "civitai"); err == nil {
+		t.Errorf("extractBinaryFromArchive accepted the unknown format \"7z\" and returned %q — it must refuse "+
+			"a format it has no reader for. A `default:` that falls through to one of the known readers makes "+
+			"leg (3) above vacuous: every format would 'have a reader'.", got)
+	}
+}
+
+// TestExtractBinaryFromZip is the component half of the new code path: a real
+// zip, built by archive/zip, containing the binary under the name goreleaser
+// gives it on Windows.
+func TestExtractBinaryFromZip(t *testing.T) {
+	want := []byte("MZ\x00\x00fake-windows-civitai-binary")
+	data := makeZip(t, "civitai.exe", want)
+
+	got, err := extractBinaryFromZip(data, "civitai.exe")
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("extracted %q, want %q", got, want)
+	}
+	// Through the dispatcher too — that is the function production calls.
+	got, err = extractBinaryFromArchive(data, "zip", "civitai.exe")
+	if err != nil {
+		t.Fatalf("extractBinaryFromArchive(zip): %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("dispatcher extracted %q, want %q", got, want)
+	}
+	// A directory prefix must not matter (the goreleaser archive is flat, but
+	// matching on the base name is what makes that true rather than lucky).
+	nested := makeZip(t, "civitai_0.1.11_windows_amd64/civitai.exe", want)
+	if got, err := extractBinaryFromZip(nested, "civitai.exe"); err != nil || !bytes.Equal(got, want) {
+		t.Errorf("nested entry: got %q, err %v", got, err)
+	}
+	// A missing member is an error, not empty bytes.
+	if _, err := extractBinaryFromZip(data, "civitai"); err == nil {
+		t.Error("expected an error extracting a name the zip does not contain")
+	}
+}
+
+// TestExtractBinaryFromArchive_CorruptInput proves BOTH readers fail on a
+// truncated archive instead of returning a partial binary. The bytes handed back
+// on success are what gets written over the user's executable, so "returns
+// something" and "returns the whole thing" are not the same claim.
+func TestExtractBinaryFromArchive_CorruptInput(t *testing.T) {
+	payload := bytes.Repeat([]byte("CIVITAI-BINARY-PAYLOAD-"), 512)
+
+	for _, tc := range []struct {
+		format, binName string
+	}{
+		{"tar.gz", "civitai"},
+		{"zip", "civitai.exe"},
+	} {
+		t.Run(tc.format, func(t *testing.T) {
+			full := makeReleaseArchive(t, tc.format, tc.binName, payload)
+			// POSITIVE CONTROL: the intact archive must extract, or "the truncated
+			// one failed" says nothing about truncation.
+			got, err := extractBinaryFromArchive(full, tc.format, tc.binName)
+			if err != nil {
+				t.Fatalf("CONTROL failure: the INTACT %s archive did not extract: %v", tc.format, err)
+			}
+			if !bytes.Equal(got, payload) {
+				t.Fatalf("CONTROL failure: the intact %s archive extracted %d byte(s), want %d",
+					tc.format, len(got), len(payload))
+			}
+
+			for _, cut := range []struct {
+				name string
+				data []byte
+			}{
+				{"truncated to half", full[:len(full)/2]},
+				{"truncated to 10 bytes", full[:10]},
+				{"empty", nil},
+				{"header bytes replaced with noise", append([]byte("NOT-AN-ARCHIVE-AT-ALL"), full[21:]...)},
+			} {
+				t.Run(cut.name, func(t *testing.T) {
+					got, err := extractBinaryFromArchive(cut.data, tc.format, tc.binName)
+					if err == nil {
+						t.Fatalf("a %s %s archive extracted cleanly and returned %d byte(s) — a corrupt "+
+							"archive must fail, because these bytes are what overwrites the user's binary",
+							cut.name, tc.format, len(got))
+					}
+					if bytes.Equal(got, payload) {
+						t.Errorf("a %s %s archive returned the FULL payload alongside its error", cut.name, tc.format)
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestUpgrade_WindowsUsesTheZipAsset is the end-to-end #613 regression test: the
+// whole runUpgrade path with GOOS pinned to windows, against a release server
+// that publishes ONLY what the real release publishes there — a `.zip` holding
+// `civitai.exe`.
+//
+// Measured RED before the fix: runUpgrade asked for
+// `civitai_0.1.11_windows_<arch>.tar.gz`, the server (like the real release)
+// offered only the `.zip`, and the run died with `no release asset` having
+// replaced nothing.
+func TestUpgrade_WindowsUsesTheZipAsset(t *testing.T) {
+	withParseableVersion(t, "v0.1.10")
+	withGOOS(t, "windows")
+	newBin := []byte("MZ\x00\x00BRAND-NEW-WINDOWS-CIVITAI")
+	us := newUpgradeServerFor(t, upgradeFixture{
+		tag: "v0.1.11", goos: "windows", goarch: runtime.GOARCH,
+		format: "zip", binName: "civitai.exe", binContent: newBin,
+	})
+	pointAtServer(t, us.releaseURL())
+	target := captureApply(t)
+
+	exe := filepath.Join(t.TempDir(), "civitai.exe")
+	if err := os.WriteFile(exe, []byte("OLD-WINDOWS-BINARY"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withExecutable(t, exe)
+
+	var out bytes.Buffer
+	if err := runUpgrade(&out, false, false); err != nil {
+		t.Fatalf("upgrade on windows: %v", err)
+	}
+	// The server only ever answers for the .zip name, so a hit proves the CLI
+	// asked for the zip — not merely that it did not crash.
+	if !strings.HasSuffix(us.tarName, ".zip") {
+		t.Fatalf("CONTROL failure: the fixture published %q, which is not a zip — this test cannot "+
+			"say anything about the Windows asset", us.tarName)
+	}
+	if us.tarHits != 1 || us.checksumHits != 1 {
+		t.Errorf("expected exactly one download of %s and of checksums.txt, got asset=%d sums=%d",
+			us.tarName, us.tarHits, us.checksumHits)
+	}
+	if *target != exe {
+		t.Errorf("applyUpdate target = %q, want the resolved exe %q", *target, exe)
+	}
+	got, _ := os.ReadFile(exe)
+	if !bytes.Equal(got, newBin) {
+		t.Errorf("the binary was not swapped to the zip's civitai.exe bytes, got %q", got)
+	}
+	if !strings.Contains(out.String(), "Upgraded civitai v0.1.10 → v0.1.11") {
+		t.Errorf("expected the success line, got %q", out.String())
+	}
+}
+
+// TestUpgrade_ChecksumMismatchAbortsForBothFormats keeps the integrity gate
+// pinned on the path the fix added. The zip half is the new claim: a verified
+// download is a precondition of extraction for BOTH archive kinds, and nothing
+// about adding a second reader may let an unverified archive through.
+func TestUpgrade_ChecksumMismatchAbortsForBothFormats(t *testing.T) {
+	for _, tc := range []struct{ goos, format, binName, exeName string }{
+		{"linux", "tar.gz", "civitai", "civitai"},
+		{"windows", "zip", "civitai.exe", "civitai.exe"},
+	} {
+		t.Run(tc.goos, func(t *testing.T) {
+			withParseableVersion(t, "v0.1.10")
+			withGOOS(t, tc.goos)
+			us := newUpgradeServerFor(t, upgradeFixture{
+				tag: "v0.1.11", goos: tc.goos, goarch: runtime.GOARCH,
+				format: tc.format, binName: tc.binName,
+				binContent:       []byte("REPLACEMENT-THAT-MUST-NOT-LAND"),
+				checksumOverride: strings.Repeat("0", 64),
+			})
+			pointAtServer(t, us.releaseURL())
+			target := captureApply(t)
+
+			exe := filepath.Join(t.TempDir(), tc.exeName)
+			original := []byte("ORIGINAL-UNTOUCHED")
+			if err := os.WriteFile(exe, original, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			withExecutable(t, exe)
+
+			var out bytes.Buffer
+			err := runUpgrade(&out, false, false)
+			if err == nil {
+				t.Fatalf("a %s archive with a bogus checksums.txt entry must abort the upgrade", tc.format)
+			}
+			if !strings.Contains(err.Error(), "checksum mismatch") {
+				t.Errorf("error should name the checksum mismatch, got: %v", err)
+			}
+			// POSITIVE CONTROL: the archive really was fetched, so the refusal is the
+			// checksum gate firing and not an earlier asset-lookup failure that would
+			// pass this test for the wrong reason.
+			if us.tarHits != 1 {
+				t.Errorf("expected the %s archive to be downloaded once before the checksum gate, got %d hits",
+					tc.format, us.tarHits)
+			}
+			if *target != "" {
+				t.Errorf("checksum mismatch must NOT call applyUpdate, got target %q", *target)
+			}
+			if got, _ := os.ReadFile(exe); !bytes.Equal(got, original) {
+				t.Errorf("the original binary must be untouched on mismatch, got %q", got)
+			}
+		})
+	}
+}
+
+// TestUpgrade_CorruptArchiveLeavesTheBinaryAlone drives a corrupt archive whose
+// checksums.txt entry MATCHES — so the integrity gate passes and extraction is
+// what fails. That is the only way to reach the extractor's error path through
+// runUpgrade, and the claim under test is that it still leaves the user with a
+// working binary.
+func TestUpgrade_CorruptArchiveLeavesTheBinaryAlone(t *testing.T) {
+	for _, tc := range []struct{ goos, format, binName string }{
+		{"linux", "tar.gz", "civitai"},
+		{"windows", "zip", "civitai.exe"},
+	} {
+		t.Run(tc.goos, func(t *testing.T) {
+			withParseableVersion(t, "v0.1.10")
+			withGOOS(t, tc.goos)
+			us := newUpgradeServerFor(t, upgradeFixture{
+				tag: "v0.1.11", goos: tc.goos, goarch: runtime.GOARCH,
+				format: tc.format, binName: tc.binName,
+				binContent: bytes.Repeat([]byte("NEW-BINARY-"), 256),
+				// Truncate, THEN hash: checksums.txt agrees with what is served, so
+				// the run gets past the integrity gate and dies in the extractor.
+				corrupt: func(b []byte) []byte { return b[:len(b)/3] },
+			})
+			pointAtServer(t, us.releaseURL())
+			target := captureApply(t)
+
+			exe := filepath.Join(t.TempDir(), tc.binName)
+			original := []byte("ORIGINAL-UNTOUCHED")
+			if err := os.WriteFile(exe, original, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			withExecutable(t, exe)
+
+			var out bytes.Buffer
+			err := runUpgrade(&out, false, false)
+			if err == nil {
+				t.Fatalf("a truncated %s archive must abort the upgrade", tc.format)
+			}
+			if !strings.Contains(err.Error(), "extract binary") {
+				t.Errorf("the failure should come from the extractor (it got past the verified checksum), got: %v", err)
+			}
+			if *target != "" {
+				t.Errorf("a corrupt archive must NOT call applyUpdate, got target %q", *target)
+			}
+			if got, _ := os.ReadFile(exe); !bytes.Equal(got, original) {
+				t.Errorf("the original binary must survive a corrupt archive, got %q", got)
+			}
+		})
 	}
 }
