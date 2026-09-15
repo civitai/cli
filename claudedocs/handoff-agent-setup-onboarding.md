@@ -17,6 +17,36 @@ pastes into any coding agent, which then sets that agent up to build Civitai
 Apps. Concretely — `developer.civitai.com/agent-setup/prompt.md` (a thin router)
 plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 
+- **closing-condition:** `check` — a BLIND dogfood run reaches a working setup:
+  an agent given only the hosted URL, allowed to work from the tool's own errors
+  and `--help` but **not** from reading source, ends with `civitai agent-setup
+  --check` reporting `ok: true` **and** `zsh -lic 'civitai --version'` printing
+  that same version in the USER's login shell, on a machine that did not build
+  it. 🔴 Both halves, because the doc already records the failure where only the
+  first held: `--check` returned `ok: true` from inside the agent's shell while
+  the login shell still printed 0.1.101. The `authenticated` sub-check is
+  reported and must NOT fail `ok` — stopping before auth is deliberate.
+  This is frozen as the condition this arc was opened on.
+
+🔴 **A SECOND EFFORT HAS ACCRETED IN THIS DOC AND IS NOT PART OF THAT CONDITION.**
+The `safeTerm` / terminal-line-forgery work — ranks 23, 28, 30, 31; issues #574,
+#604, #605, #612; ten merged PRs across #596…#616 — shares no code, no goal and
+no closing condition with agent-setup onboarding. It rode in because this doc was
+the queue every `/resume` drew from, and nothing refused it.
+
+Consequences a reader needs, because they change what a close-check means here:
+
+- **A close-check against the line above will read NOT ADDRESSED for reasons that
+  have nothing to do with the forgery work**, and vice versa. Do not resolve that
+  by widening the condition — later audits and asks open a NEW arc, they do not
+  extend a frozen one.
+- **The forgery effort has no closing condition of its own anywhere.** Its ranks
+  are individually closable (each issue carries a mechanical condition) but the
+  effort as a whole has no stated done-state. That is why "is this arc finished?"
+  has been answerable only by enumerating ranks.
+- This is the concrete form of rank 29's **"split by initiative"** step, and the
+  strongest argument for doing it: the prune is not only about bytes.
+
 ## State now
 
 **Ranks 23 and 30 are both DONE and merged.** `generate`'s forgery class is closed to the
