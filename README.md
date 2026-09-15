@@ -1716,10 +1716,13 @@ What this CLI sent (it cannot tell whether that is why the submit failed):
 Entries are ranked by **compressed** size, because that is what the upload is
 made of — a large text file that deflates to nothing is not what to delete. The
 usual culprit is a directory of screenshots or sample assets that `app submit`
-packages along with everything else. That block prints under **any** submit
-failure except a `401`/`403` (a credential problem, unrelated), a `429`, or the
-CLI's own ceiling refusal above — which stopped before contacting the server, so
-it prints the same entry list under `What this CLI would have sent` instead.
+packages along with everything else. That block prints when **the upload itself**
+fails, except on a `401`/`403` (a credential problem, unrelated) or a `429`. It
+does **not** print for a refusal that fires *before* the upload — no `--yes`, a
+dirty work tree, the version guard, a validation failure — because those never
+reach the server to fail against. The one pre-upload refusal that does print an
+entry list is the ceiling refusal above, under its own heading
+`What this CLI would have sent`.
 
 #### What the packager left out
 
@@ -4037,7 +4040,7 @@ context rather than instructions.
 | `nothing index.html loads reaches it` | The **strong** tier: the emitter is in your project but nothing the browser loads reaches it. Copying `civitai-host.js` in is only half the fix — it has to be referenced too. | [The host handshake](#the-host-handshake-block_ready) |
 | `no lockfile is committed` / `is not a lockfile` | The platform build installs **strictly** from the committed lockfile, so a missing one, or a zero-byte one from `touch`, fails the build server-side. Generate it with the package manager. | [Validate fidelity](#validate-fidelity) |
 | `refusing to submit without --yes` | Exit `1`. `--package-only` and the no-token fallback never reach it. | [Command reference](#command-reference) |
-| `What this CLI sent` / `largest entries in the bundle` | Not an error of its own: the CLI's account of what left your machine — the bytes on the wire, and the largest entries they were made of — printed **under** a failed submit whose server message may name nothing actionable. **It does not claim to know why the submit failed.** Not printed for a `401`/`403`/`429`. | [Submit & auth](#submit--auth) — *How big can a bundle be?* |
+| `What this CLI sent` / `What this CLI would have sent` / `largest entries in the bundle` | Not an error of its own: the CLI's account of the bundle, and the largest entries it was made of. **The tense tells you whether anything left your machine.** `What this CLI **sent**` prints when the upload itself failed and the server message may name nothing actionable — **it does not claim to know why** — and not on a `401`/`403`/`429`. `What this CLI **would have** sent` is the ceiling refusal: nothing was uploaded. A refusal that fires before the upload at all (no `--yes`, a dirty tree, the version guard, a validation failure) prints neither. | [Submit & auth](#submit--auth) — *How big can a bundle be?* |
 | `Your repo may be behind what was last released` / `Resubmitting the version that is already live is almost always an accident` / `That version is approved but not live` | The **monotonic-version guard**: the manifest version is not strictly above the highest **approved** version, and approving an older or identical one supersedes the newer. Exit `1`; `--allow-downgrade` submits anyway. The second line names which of four cases you are in. | [Exit code 1](#exit-code-1), [Is your repo behind?](#is-your-repo-behind-what-you-shipped) |
 | `from a dirty git work tree` / `that go into the bundle are not committed` | The **dirty-work-tree guard**: files that go into the bundle are uncommitted, so approving one deploys code that exists in no commit. It names the paths (`git status` spelling, relative to the packaged directory) — commit them, or pass `--allow-dirty`. Exit `1`. | [Exit code 1](#exit-code-1), [Submit & auth](#submit--auth) — *What the dirty-work-tree guard counts as a change* |
 | `look like they hold credentials` | A **warning**, not a refusal — the exit code is unchanged. A file the packager KEPT holds a line shaped like a credential, and a submitted bundle cannot be recalled. It prints `path:line` and the key name, never the value — open the file to see what matched. | [Submit & auth](#submit--auth) — *What looks like a credential* |
