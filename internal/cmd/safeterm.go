@@ -193,11 +193,20 @@ func safeTermSingle(s string) string {
 // process that cannot see the terminal.
 //
 // 120 was chosen so the two bounded surfaces stay small at the widths people
-// actually use, MEASURED on this tree rather than reasoned: the download
-// progress line renders at most 148 runes (2 display rows at 80, 100, 120 and
-// 132 columns) and generate's Buzz-balance warning at most 226 (3 rows at 80,
-// 2 at 100/120/132). Before the bound the same surfaces were unbounded — the
-// measured Buzz payload was 5,224 runes, ~66 rows at 80 columns.
+// actually use. Before the bound they were unbounded: the measured Buzz payload
+// was 5,224 runes, ~66 display rows at 80 columns.
+//
+// ⚠ NO PER-SURFACE RUNE TOTAL IS QUOTED HERE, AND THAT IS DELIBERATE. An earlier
+// draft said "the progress line renders at most 148 runes"; that figure came
+// from ONE test fixture's overhead, and the real maximum is larger because
+// line()'s overhead VARIES — humanBytes(written), humanBytes(total) and the
+// %.0f percent all change width, and a 1023.9 GiB / 1023.9 GiB transfer at 100%
+// costs 34 runes of overhead where the fixture costs 21. A second draft quoted
+// 226 for the warning where its own harness prints 225. Both are the class this
+// PR's other commit already retracted for the "~16" call-site figure: a total
+// written beside the thing it counts, pinned by nothing, drifting silently.
+// What holds is the PROPERTY above — overhead + N + 1, whatever the overhead is
+// on the day. The live per-surface numbers are printed by the named tests.
 //
 // 🔴 IT IS RUNES, NOT DISPLAY CELLS, AND THAT GAP IS civitai/cli#397 — DO NOT
 // WRITE A SENTENCE HERE THAT SAYS OTHERWISE. A double-width (CJK) rune occupies

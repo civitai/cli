@@ -1237,9 +1237,15 @@ func (p *progressWriter) done() {
 // "p.name is length-unbounded, so a name padded to the terminal width SOFT-WRAPS
 // and strands the identical forged text at column zero with no \n and no \t".
 // That was true and is no longer: the gate here is safeTermBounded, which caps
-// the operand at maxServerLineRunes, so this line is at most 148 runes — 2
-// display rows at 80, 100, 120 and 132 columns, derived from the cap rather than
-// measured off a terminal the CLI cannot see. Pinned by
+// the operand at maxServerLineRunes, so this line is at most
+// `overhead + maxServerLineRunes + 1` runes — 2 display rows at 80, 100, 120 and
+// 132 columns, derived from the cap rather than measured off a terminal the CLI
+// cannot see. ⚠ `overhead` is NOT a constant, and an earlier draft quoted it as
+// one ("at most 148 runes", taken from a single fixture): humanBytes(written),
+// humanBytes(total) and the %.0f percent all vary in width, so a
+// 1023.9 GiB / 1023.9 GiB transfer at 100% costs 34 runes of overhead where the
+// fixture costs 21. The ROW-COUNT conclusion survives at every overhead this
+// format can produce; the rune TOTAL does not, so it is not quoted. Pinned by
 // TestProgressLineCannotForgeALine's `soft-wrap` subtest, which asserts the ROW
 // COUNT at four widths rather than the absence of a substring, and carries the
 // issue's own negative control: unpadded, the same payload does not reach column

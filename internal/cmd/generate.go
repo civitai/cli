@@ -1300,8 +1300,9 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		// wrap because a soft wrap has no rune. Both halves were true; what changed
 		// is the conclusion it ended on ("recorded rather than fixed"). The gate is
 		// safeTermBounded, which caps the operand at maxServerLineRunes AFTER the
-		// strip, so this warning is at most 226 runes — 3 display rows at 80 columns
-		// and 2 at 100/120/132 — instead of the measured 5,224 runes and ~66 rows,
+		// strip, so this warning is at most `overhead + maxServerLineRunes + 1`
+		// runes — 3 display rows at 80 columns and 2 at 100/120/132 — instead of
+		// the measured 5,224 runes and ~66 rows,
 		// most of them beginning at column zero with a complete counterfeit
 		// `Cost: 1 Buzz (balance 999999).` directly above confirmGenerate's real one.
 		//

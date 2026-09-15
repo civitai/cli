@@ -342,14 +342,31 @@ func TestGenerateBuzzBalanceWarningIsLengthBounded(t *testing.T) {
 			"carries no control rune at all, so this is the #612 escape-class guard firing on something " +
 			"else — the blindness this test demonstrates is about LENGTH")
 	}
-	if strings.Contains(hostileLine, "\t") {
-		t.Error("CONTROL failure, not a finding: a TAB reached the warning line. The payload contains " +
-			"none, and this surface is ui-styled (lipgloss expands \\t to four spaces) so such a guard " +
-			"could not discriminate anyway")
+	// 🔴 TWO PREDICATES WERE DELETED HERE AND ONE ADDED, BECAUSE THE DOCSTRING
+	// ABOVE CLAIMS THIS BLOCK RE-RUNS *EVERY* VERDICT THE #612 GUARD TAKES AND AN
+	// EARLIER DRAFT DID NOT MATCH THAT SENTENCE IN EITHER DIRECTION.
+	//
+	// DELETED — a TAB check, which was UNREACHABLE, and whose own error text
+	// admitted it ("such a guard could not discriminate anyway"). This surface is
+	// ui-styled; lipgloss expands \t to four spaces before the bytes reach the
+	// writer, which is exactly why the #612 guard has no tab predicate either. A
+	// check that cannot go red for ANY input is not a control.
+	//
+	// DELETED — the `!Contains(hostileLine, gupBalanceOpen)` half. warningLine
+	// SELECTS the line by containing gupBalanceOpen, so that half was tautological.
+	// The gupBalanceClose half does real work and is kept.
+	//
+	// ADDED — the opener COUNT. The #612 guard takes a verdict from `opens != 1`;
+	// warningLine returns the first match and never counts, so this block was
+	// NARROWER than its own docstring until now.
+	if !strings.Contains(hostileLine, gupBalanceClose) {
+		t.Errorf("CONTROL failure, not a finding: the CLI's own sentence no longer CLOSES on the line it "+
+			"opens on. That is the #612 logical-line guard, which this payload is supposed to PASS:\n%q", hostileLine)
 	}
-	if !strings.Contains(hostileLine, gupBalanceOpen) || !strings.Contains(hostileLine, gupBalanceClose) {
-		t.Errorf("CONTROL failure, not a finding: the CLI's own sentence no longer opens AND closes on one "+
-			"line. That is the #612 logical-line guard, which this payload is supposed to PASS:\n%q", hostileLine)
+	if opens := strings.Count(hostile, gupBalanceOpen); opens != 1 {
+		t.Errorf("CONTROL failure, not a finding: the render opens the balance warning %d time(s), want 1. "+
+			"That is the #612 opener-count verdict, which this payload is supposed to PASS; a red here means "+
+			"the payload is exercising the rune-class defect rather than the LENGTH one", opens)
 	}
 
 	// --- the new assertion: the GEOMETRY the old guard cannot see -----------
