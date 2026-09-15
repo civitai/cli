@@ -428,7 +428,8 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"resolve through the wrapper, so the published exit codes are untouched. 🔴 THE OTHER RETURN — " +
 			"the !errors.As early exit — IS STILL UNGATED AND THAT IS NOT A CLAIM THAT IT IS SAFE: it is " +
 			"MEASURED to carry raw ANSI, because genapi interpolates the unparsed HTTP body into " +
-			"`unexpected %s response: %s`. It is left alone because that same raw body reaches SEVEN " +
+			"`unexpected %s response: %s` (civitai/cli#620). It is left alone because that same raw body " +
+			"reaches SEVEN " +
 			"genapi sites of which only some come back through here — so a gate here would close a subset " +
 			"of one class — and because this return is a pass-through pinned by identity. Read the " +
 			"comment at that return, not this sentence, before acting on it"},

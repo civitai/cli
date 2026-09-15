@@ -2073,7 +2073,7 @@ func classifyGenerateError(err error) error {
 	var apiErr *genapi.APIError
 	if !errors.As(err, &apiErr) {
 		// 🔴 DELIBERATELY UNGATED, AND THE HOLE HERE IS MEASURED RATHER THAN
-		// ASSUMED ABSENT (civitai/cli#612, and filed as its own issue).
+		// ASSUMED ABSENT (found by civitai/cli#612, filed as civitai/cli#620).
 		// A 200 whose BODY is not a tRPC envelope reaches genapi's
 		// `unexpected %s response: %s`, which interpolates `string(raw)` — the raw
 		// HTTP body, unparsed, with no strip of any kind. Measured: that puts raw

@@ -77,11 +77,11 @@ func TestSafeTermErrCallersAreLedgered(t *testing.T) {
 		// 🔴 ONE entry for classifyGenerateError, not two, and the missing one is
 		// deliberate: its !errors.As early return is MEASURED to carry raw ANSI
 		// (genapi interpolates the unparsed HTTP body into `unexpected %s
-		// response: %s`) and is still left ungated, because the same raw body is
-		// interpolated at SEVEN genapi sites of which only some come back through
-		// this function — so the fix belongs there, not here — and because that
-		// return is a pass-through pinned by identity. Read the comment at that
-		// return before "completing" this row.
+		// response: %s` — civitai/cli#620) and is still left ungated, because the
+		// same raw body is interpolated at SEVEN genapi sites of which only some
+		// come back through this function — so the fix belongs there, not here —
+		// and because that return is a pass-through pinned by identity. Read the
+		// comment at that return before "completing" this row.
 		"generate.go": {
 			"buildGenerateGraph",    // --checkpoint %d: %w
 			"buildGenerateGraph",    // --lora %s: %w
