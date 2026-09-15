@@ -44,7 +44,7 @@ before touching prose. This doc is state; that doc is the plan.
 
 ## State now
 
-**Five PRs merged this session. README is 282,312 bytes on `main` — down 28,335 (−9.1%) from the arc's start. The byte threshold that used to sit here is GONE (see the closing condition above); size is still reported because it is the cheapest progress signal, but it is no longer a gate and no PR should be shaped to hit a number.**
+**Eight PRs merged across this arc. README is 281,439 bytes on `main` — down 29,208 (−9.4%) from the arc's start. The byte threshold that used to sit here is GONE (see the closing condition above); size is still reported because it is the cheapest progress signal, but it is no longer a gate and no PR should be shaped to hit a number.**
 
 | | bytes |
 |---|---:|
@@ -53,8 +53,13 @@ before touching prose. This doc is state; that doc is the plan.
 | after phase 3 — Troubleshooting, #625 | 305,329 |
 | after phase 2 — cuts, #630 | 293,378 |
 | after phase 3b — command table, #633 | 282,312 |
-| **on `main` now** | **282,312** |
-| phase 3c in flight (#635) | 280,571 |
+| after phase 3c — preamble, #635 | 281,439 |
+| **on `main` now (`c7ea087`)** | **281,439** |
+
+⚠ **#635 landed at −873, not the −1,741 its body advertises.** Four audit rounds added
+868 B back, every byte of it buying a contract claim that is now true. Under the
+threshold this arc used to carry, that would have read as the PR failing; it is the PR
+working, and it is the clearest single vindication of deleting the threshold.
 
 ### Merged
 - **#611** (`f284d89`) phase 1, accuracy. Six corrections each pinned by a guard watched to fail, **plus a behaviour fix**: `civitai upgrade` now derives the release-asset extension per GOOS and works on Windows. Closed **#613** (Windows `upgrade`). Four audit rounds.
@@ -62,11 +67,13 @@ before touching prose. This doc is state; that doc is the plan.
 - **#630** phase 2 cuts, −14,279, **give-back 0** — the PR that proved delete-first.
 - **#633** command table 21,391 → 9,664 (−54.8%), **plus a new guard**: `TestREADMECommandSynopsesNameRealFlags` drives the live Cobra tree, 25 rows / 33 resolutions / 90 flag checks, floors 30/85.
 - **#615** the automated pin bump (not this session's) — unfroze the repo and satisfied the previous arc's cli#530 closing condition.
+- **#623** (`868fff6`) the plan + this handoff, and the commit that **deleted the byte closing condition**.
+- **#636** (`ada6699`) two comments that claimed coverage they did not have — see the ladder record below.
+- **#635** (`c7ea087`) phase 3c, the preamble. **Four audit rounds**; the record is below and it is the most useful thing this session produced.
 
-### In flight
-- **#635 `fix/readme-submit-preamble` @ `d1361c3`** — CLEAN, 13/13 green, **no audit round run yet**. Preamble 29,500 → 27,759 (−1,741), give-back 0. Repairs two claims that were false on `main` before this arc.
-- **#623 `docs/readme-reduction-plan`** — the plan + this handoff. CLEAN, unmerged. 🔴 **The plan on `origin/main` is STALE; read the branch copy.**
-- **#602** (another session's) — `CONFLICTING`/`DIRTY`, 17+ commits behind, conflicts with merged work *on its own*. A collision note is posted on it.
+### Open
+- **#637** — 🔴 **NEW, and it is a CODE defect, not a docs one.** `printSubmitSizeDiagnosis` prints `What this CLI sent` for errors raised *before any HTTP request is built*, so the past tense can be false. Measured against a real `httptest` server: **0 requests received**, block printed, with a positive control on the hit counter. `appblocks.go:570` returns on `Token()` before `doOnceWith` builds anything; `auth/source.go:115` returns `persist refreshed tokens` untagged. A second comment on it carries the mirror case — `auth/source.go:90` tags `ErrUnauthorized` onto a purely *local* error, suppressing the block with no HTTP status anywhere. **Its closing condition includes reverting the two README surfaces #635 had to weaken.**
+- **#602** (another session's) — now **22 commits behind** `origin/main` and still degrading. Not ours to rebase.
 - **#614** open and optional — the `CIVITAI_NO_COLOR` value-parsing asymmetry, documented and guarded.
 
 ### Honest limits
@@ -100,11 +107,11 @@ also disagrees with itself: a comment near the error says "ANY model file".
 0. ~~**DECIDE THE CLOSING CONDITION.**~~ **CLOSED 2026-09-15** — the threshold was deleted, not re-set. See the closing condition at the top and the two retraction blocks under Gotchas. The measurement that killed option (a) is recorded below as "what phase 5 can actually yield".
 1. **Trial-cut `## Set up your coding agent (agent-setup)` — the strongest surviving step-2 candidate, and it is UNMEASURED.** 16,971 bytes, 264 lines, **zero subheadings**, documenting ONE command — 55% the size of the whole Command reference, which covers ~25. Meanwhile 103,879 bytes of rationale for the same command already sit correctly placed in `claudedocs/decisions/34`, `/35` and `/36` (maintainer content, GitHub-only). 🔴 **Do not turn that into a byte estimate — that is the mistake this arc made three times.** Do the trial edit, then report the number. Two constraints known up front: it is read by `readme_command_synopsis_test.go`, and giving it 4–5 `###` is worth doing on its own merits (265 unbroken lines have no internal map).
    forcing: none — no gate rides on it now
-2. **Run the ladder on #635, then merge.** Round 0 + round 1; merge when a round returns no high-sev. Same grant as #611/#625/#630/#633.
-   forcing: gate
-3. **Merge #623** so the plan and this handoff stop living only on a branch. No audit round has run on it (docs-only, no test surface — stated, not skipped silently).
-   forcing: gate
-4. **#602** — operator's. Green on its own checks but `DIRTY` against main and degrading; its inclusive-ceiling correction must survive the rebase (see the note posted on it).
+2. ~~**Run the ladder on #635, then merge.**~~ **CLOSED** — merged `c7ea087` after **four** rounds. The record is under Gotchas; read it before running any ladder in this repo.
+3. ~~**Merge #623.**~~ **CLOSED** — merged `868fff6`. (#636 also merged, `ada6699`.)
+3b. 🔴 **PIN THE PROSE #635 REPAIRED — this is the real follow-up, and nothing currently guards it.** Four rounds fixed four false claims in one paragraph and its Troubleshooting row, and **not one of those sentences is asserted on by any test**; only the left-hand symptom column is. The arc's own phase-1 pattern (a guard per repaired claim, watched to fail) was not applied here, which is why it took four rounds. Do it the way `readme_troubleshooting_test.go` already does for row 20 — pin the WHOLE normalised sentence, not a keyword, since a guard on words is walkable by rewording. Closing condition: reverting any one of the four repairs turns a test red **with that test's own error naming the claim**, and the PR records which mutant it watched for each.
+   forcing: none
+4. **#602** — operator's. Green on its own checks but `DIRTY` against main and **now 22 commits behind**; its inclusive-ceiling correction must survive the rebase (see the note posted on it).
    forcing: gate
 5. **Phase 4 — the reorder.** Byte-neutral. Fixes the measured reader paths: the CI/`--json` reader currently travels 81% of the file to reach the exit-code contract, and the `listing status`-is-not-a-read warning sits ~36% in where a `--json` reader never passes it. **This is now the highest-value remaining phase**, because with the byte target gone the arc's goal is legibility, which is what a reorder buys and what a byte count never measured.
    forcing: none
@@ -112,10 +119,73 @@ also disagrees with itself: a comment near the error says "ANY model file".
    forcing: none
 7. **#614** — `CIVITAI_NO_COLOR` value parsing. Genuinely optional.
    forcing: none
-8. **23 stale agent worktrees under `.claude/worktrees/`** (41 total in `git worktree list`). Noticed, not acted on: they make a whole-repo `grep` return a dozen copies of every hit, which is how one measurement in this session nearly got read off the wrong tree. `git worktree prune` plus removing the dead ones. Closing condition: `git worktree list | wc -l` returns a number the operator recognises as live-only.
+8. **41 worktrees on this clone — 23 agent (`.claude/worktrees/`) + 18 named.** ⚠ **`git worktree prune` was RUN and removed NOTHING**: every directory still exists, so they are live entries, not orphans, and the cheap fix does not apply. **Not acted on further, deliberately** — several named ones hold *other sessions'* branches, and removing 18 of those is high-blast-radius and the operator's call. Two measured costs: a whole-repo `grep` returns a dozen copies of every hit (one measurement this session was nearly read off the wrong tree, and #635's round 3 actually did produce a false 🔴 that way), and a worktree holding a merged branch blocks `--delete-branch`, which failed on all three merges today. Closing condition: `git worktree list | wc -l` returns a number the operator recognises as live-only.
+   forcing: none
+9. 🔴 **`README.md:1679`/`:1728` state a body size that is arithmetically impossible**, under a sentence asserting *"That number is exact, not an estimate."* Pre-existing since #452, unpinned by construction (`10935065` appears only in `README.md`). Either re-derive it from `SubmitBodySize` and pin it, or stop quoting an exact number. Closing condition: the printed figure equals `base64.EncodedLen(zip) + len(envelope)` for a stated provenance case, and a test asserts it.
+   forcing: none
    forcing: none
 
 ## Gotchas / decisions / dead-ends
+
+### Added 2026-09-15 — #635's four-round ladder, and what it measured about ladders
+
+🔴 **THREE OF THE FOUR FINDINGS WERE DEFECTS IN THE PREVIOUS ROUND'S FIX, ALL IN ONE
+PARAGRAPH.** Not a restatement of the skill's warning — a fresh instance, and the
+cleanest one this repo has.
+
+| round | finding | authored by |
+|---|---|---|
+| 0 | the sentence over-claimed by one case (the ceiling refusal prints a *different* block) | the PR |
+| 1 | still over-claimed, by **nine** more early-`return err` sites; **and** the Troubleshooting row now disagreed | round 0's fix |
+| 2 | the fix over-corrected into a **bytes-shaped** claim the code does not model | round 1's fix |
+| 3 | clean — ladder stopped | — |
+
+**The direction of travel is the lesson, and it is counter-intuitive.** The *base* wording
+was a claim about how the error **classifies**, which is what `app_submit.go:672` actually
+switches on, and it was **true** of the pre-contact case. Round 1 "narrowed" it into a
+claim about whether bytes left the machine — a property the code never computes. **A fix
+that makes a sentence more specific can make it false**, and it will read as an
+improvement in review because specificity looks like rigour.
+
+- 🔴 **When a claim loses its reason, DELETE the reason — do not source a new one.** Round
+  2's fix dropped *"because those never reach the server to fail against"* (false for the
+  version guard, which calls `ListSubmissions`) rather than substituting a better because.
+  Reaching for a fresh justification under pressure is what regenerates the error; the
+  enumeration did not need a why.
+- 🔴 **Stop on the FINDINGS, and say out loud that the streak is not evidence.** Round 3
+  volunteered: *"I felt the pull to sustain the three-round streak and am declining it."*
+  Three consecutive productive rounds create real pressure to manufacture a fourth finding.
+- 🔴 **A FOURTH edit to that paragraph was deliberately NOT made.** Round 3's 🟢 was real
+  and went to #637 instead. Rationale worth reusing: after three of my own edits each
+  introduced a defect, an unaudited fourth resets the verification gate with **no round
+  left to catch it**. Filing beat fixing.
+- **The auditor RETRACTED a would-be 🔴 before reporting it** — it had grepped `README.md`
+  from a worktree standing on `main` rather than the PR head, and "found" a second unfixed
+  row. Re-measured via `git show <head>:README.md`: exactly one row, already fixed. Same
+  family as the `ci-shallow.sh` trap in this repo's `AGENTS.md`. **Resolve a range in a tree
+  that contains the PR head**, and note the retraction is worth more than the findings kept.
+- 🔴 **THE COVERAGE GAP THAT MADE ALL OF THIS POSSIBLE, AND IT IS STILL OPEN.** **No test
+  pins the prose of that paragraph or that table row.**
+  `TestREADMETroubleshootingSymptomsExistInTheSource` guards only the **left-hand symptom
+  column**. Every behavioural sentence rounds 0–3 rewrote is unguarded, which is exactly how
+  each round shipped a defect with the suite green. The arc's phase-1 pattern — pin each
+  repaired claim with a guard watched to fail — was **not** applied here, and that is why it
+  took four rounds instead of one.
+
+### Added 2026-09-15 — two numbers nothing asserts on
+
+Found by #635's once-per-ladder sweep, **neither attributable to that PR**; both still live
+on `main`.
+
+- 🔴 **`README.md:1679`/`:1728` — the transcript's body size is arithmetically
+  unreachable.** The lines state the zip as `8201270` B.
+  `base64.EncodedLen(8201270)` + envelope = **10935047** (no provenance) or **10935125**
+  (40-hex commit + `sourceDirty:false`). The README prints **10935065** — neither — directly
+  under a paragraph asserting *"That number is exact, not an estimate."* Pre-existing since
+  `509babc` (#452). **`10935065` appears only in `README.md`**, so it is unpinned by
+  construction and no test can ever catch it drifting.
+- **`d1361c3`'s commit message claims `10485760` "still appears exactly once".** It appears
+  **twice**, and did so already at the PR base. Commit-message only.
 
 ### Added 2026-09-15 — what phase 5 can actually yield (the measurement that closed rank 1)
 
