@@ -152,13 +152,11 @@ brew install civitai/tap/civitai
 ```
 
 🔴 **macOS only — there is no Linux Homebrew install.** `civitai/homebrew-tap`
-ships a Homebrew **cask**, and casks are a macOS-only Homebrew concept; the
-release pipeline renders `homebrew_casks:` and publishes no `brews:` (formula)
-stanza at all, so the tap names `darwin` archives and nothing else. On Linux —
-including Linuxbrew — `brew install civitai/tap/civitai` has nothing to install.
-Use [npm](#npm-node), the [Nix flake](#nix-flake), a
-[prebuilt binary](#prebuilt-binary) or
-[`go install`](#go-install-from-source-go-125) instead.
+ships a Homebrew **cask** — a macOS-only concept — and publishes no `brews:`
+(formula) stanza at all, so it names `darwin` archives only; on Linux,
+Linuxbrew included, there is nothing to install. Use [npm](#npm-node), the
+[Nix flake](#nix-flake), a [prebuilt binary](#prebuilt-binary) or
+[`go install`](#go-install-from-source-go-125).
 
 ### Nix flake
 
@@ -634,7 +632,7 @@ README. For the end-to-end walkthrough, see
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Where the server recorded **an account of what happened** to a workflow, it is printed in full on indented lines under that workflow's row. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps, outputs, the Buzz transactions the server recorded for it, and **the account the orchestrator recorded** for the run where there is one (printed under *The server reported:*). This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with why they were excluded** rather than omitted — and where the excluded outputs died of *different* server-reported causes, each line names its own. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching) and [Reading a workflow's Buzz transactions](#reading-a-workflows-buzz-transactions). |
 | `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **You are billed for what it already delivered**; the orchestrator re-prices the rest server-side and this CLI cannot report the figure. Cancel because you no longer want the output. Asks for confirmation (default **no**); `--yes` skips the prompt and a non-TTY without it refuses. See [Generate](#listing-and-cancelling-workflows). |
-| `civitai upgrade [--force]` | **Self-update this binary in place** — resolve the latest GitHub release, verify its SHA-256 against `checksums.txt`, and replace the running executable. A Homebrew install delegates to `brew upgrade` instead; `--force` reinstalls anyway (and self-replaces a Homebrew install). See [Upgrading](#upgrading). |
+| `civitai upgrade [--force]` | **Self-update this binary in place** — resolve the latest GitHub release, verify its SHA-256 against `checksums.txt`, and replace the running executable. 🔴 **Not on Windows**: the `.tar.gz` asset it looks for is never published there, so it fails and replaces nothing — upgrade by hand. A **macOS** Homebrew install (the tap is macOS-only) delegates to `brew upgrade` instead; `--force` reinstalls anyway (and self-replaces a Homebrew install). See [Upgrading](#upgrading). |
 | `civitai version` | Print version / commit / build date. |
 | `civitai completion [shell]` | Generate a shell-completion script. |
 
@@ -3759,15 +3757,13 @@ you to run `brew upgrade civitai/tap/civitai`, so the package manager keeps
 owning the file. `--force` overrides that and self-replaces anyway. That path is
 **macOS-only**, because [the tap is macOS-only](#homebrew-macos).
 
-🔴 **`civitai upgrade` does not work on Windows — use the manual path.** The
-command looks for a `civitai_<version>_windows_<arch>.tar.gz` release asset, but
-Windows is published as a **`.zip`** (the release config overrides the archive
-format for `goos: windows`). No such asset exists, so the command fails with
-`no release asset "civitai_…_windows_….tar.gz" for windows/<arch> — upgrade
-manually from https://github.com/civitai/cli/releases/latest` and **nothing is
-replaced**. On Windows, upgrade by downloading that release's `.zip` yourself and
-replacing the binary on your `PATH` — or, if you installed through npm, with
-`npm install -g @civitai/cli@latest`. Linux and macOS are unaffected.
+🔴 **`civitai upgrade` does not work on Windows — use the manual path.** It asks
+for a `civitai_<version>_windows_<arch>.tar.gz` release asset, but Windows is
+published as a **`.zip`** (the release config overrides the archive format for
+`goos: windows`), so the lookup can never match: `no release asset … — upgrade
+manually from https://github.com/civitai/cli/releases/latest`, and **nothing is
+replaced**. Download that release's `.zip` and replace the binary on your
+`PATH`, or `npm install -g @civitai/cli@latest`. Linux and macOS are unaffected.
 
 The other install paths update the way they normally do — `npm install -g
 @civitai/cli@latest`, `nix profile upgrade`, or re-running `go install …@latest`.
@@ -3802,21 +3798,18 @@ Off always beats on, so a `NO_COLOR` in the environment cannot be re-enabled by
 a `--color` further down a pipeline.
 
 🔴 **The `CIVITAI_*` pair is NOT interchangeable with the standard pair — it
-parses its value, and silently ignores anything it cannot parse.**
-
-- `NO_COLOR` follows the [no-color.org](https://no-color.org) convention:
-  *present and non-empty* is what counts, **not** the value — so even
-  `NO_COLOR=0` disables colour.
-- `CLICOLOR_FORCE` counts as set when it is present, non-empty and **not** `0`.
-- `CIVITAI_NO_COLOR` and `CIVITAI_COLOR` are read as **booleans**, so only these
-  twelve spellings mean anything: `1`, `t`, `T`, `TRUE`, `true`, `True` (on) and
-  `0`, `f`, `F`, `FALSE`, `false`, `False` (off).
-
-Any other value — `yes`, `on`, `y`, `enabled`, `2`, or an empty string — parses
-as **false** and does nothing at all, with no warning. `CIVITAI_NO_COLOR=yes`
-does **not** disable colour; `CIVITAI_NO_COLOR=1` does. And unlike `NO_COLOR=0`,
-an explicit `CIVITAI_NO_COLOR=0` is a real *false* and leaves colour alone.
-**When in doubt use `1`, or use the plain `NO_COLOR` spelling.**
+parses its value, and silently ignores anything it cannot parse.** `NO_COLOR`
+follows [no-color.org](https://no-color.org): *present and non-empty* is what
+counts, **not** the value, so even `NO_COLOR=0` disables colour.
+`CLICOLOR_FORCE` counts when present, non-empty and **not** `0`. But
+`CIVITAI_NO_COLOR` and `CIVITAI_COLOR` are read as **booleans**, so only twelve
+spellings mean anything — `1`, `t`, `T`, `TRUE`, `true`, `True` (on) and `0`,
+`f`, `F`, `FALSE`, `false`, `False` (off). Anything else — `yes`, `on`, `y`,
+`enabled`, `2`, an empty string — parses as **false** and does nothing at all,
+with no warning: `CIVITAI_NO_COLOR=yes` does **not** disable colour,
+`CIVITAI_NO_COLOR=1` does, and an explicit `CIVITAI_NO_COLOR=0` is a real
+*false* that leaves colour alone (unlike `NO_COLOR=0`). **When in doubt use
+`1`, or the plain `NO_COLOR` spelling.**
 
 🔴 **`--json` output is never styled**, at any of those settings. It is written
 without passing through the presentation layer at all, so `--json` is always
@@ -3890,22 +3883,20 @@ human output only.
 | Force colour | — | `CLICOLOR_FORCE` (non-empty, not `0`), `CIVITAI_COLOR` (**boolean only**: `1`/`true`/…) | unset |
 | ⚠️ dev-tunnel channel debug log — **debug only, not supported surface** | — | `CIVITAI_DEVTUNNEL_DEBUG` | unset (no debug output) |
 
-🔴 **Precedence is decided per setting — there is no single "the flag wins over
-the environment" rule.** Of the four flags below, only the first follows it:
+🔴 **Precedence is decided per setting; no one rule covers all four flags.** Only
+the first of them is a plain flag-beats-environment override:
 
-- **`--tunnel-endpoint`** (on `app dev-tunnel`) *does* win. The flag is read
-  first, and `CIVITAI_DEV_TUNNEL_ENDPOINT` is consulted only when it is empty.
-- **`--token`** is **not** a per-command override at all. It is a
-  `civitai login` flag that **writes** the key into the config file. Afterwards
-  `CIVITAI_TOKEN` beats that file on every command — including the key
-  `login --token` just stored. To use a different key for one invocation, set
-  `CIVITAI_TOKEN` for that invocation.
-- **The colour flags** follow the precedence list in
-  [Global flags](#global-flags) instead: *off beats on*, so `--color` **loses**
-  to a `NO_COLOR` / `CIVITAI_NO_COLOR` in the environment.
-- **`--no-update-check`** is OR'd with `CIVITAI_NO_UPDATE_CHECK` — either one
-  disables the check, and there is **no** flag that re-enables it once the
-  environment variable is set.
+- **`--tunnel-endpoint`** (`app dev-tunnel`) wins —
+  `CIVITAI_DEV_TUNNEL_ENDPOINT` is read only when the flag is empty.
+- **`--token`** is no override at all: it is a `civitai login` flag that
+  **writes** the key into the config file, and `CIVITAI_TOKEN` then beats that
+  file on every command — including the key `login --token` just stored. For a
+  one-off key, set `CIVITAI_TOKEN` for that invocation.
+- **The colour flags** invert it — *off beats on*
+  ([Global flags](#global-flags)), so `--color` **loses** to a `NO_COLOR` /
+  `CIVITAI_NO_COLOR` in the environment.
+- **`--no-update-check`** is OR'd with `CIVITAI_NO_UPDATE_CHECK`: either one
+  disables the check, and no flag re-enables it once the variable is set.
 
 Everything in this table except the last row is supported surface.
 `CIVITAI_DEVTUNNEL_DEBUG` is listed only so it is findable: it is a diagnostic

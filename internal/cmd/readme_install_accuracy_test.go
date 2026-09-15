@@ -242,6 +242,12 @@ func TestREADMEHomebrewSectionMatchesTheReleaseConfig(t *testing.T) {
 // pinned whole for the same reason as homebrewMacOSOnlyClaim.
 const windowsUpgradeCaveat = "🔴 **`civitai upgrade` does not work on Windows — use the manual path.**"
 
+// windowsUpgradeRowCaveat is the SAME claim as it has to appear in the
+// command-reference table's `civitai upgrade` row — a separate published
+// surface, pinned whole for the same reason.
+const windowsUpgradeRowCaveat = "🔴 **Not on Windows**: the `.tar.gz` asset it looks for is never published " +
+	"there, so it fails and replaces nothing — upgrade by hand."
+
 // upgradeAssetNameRe finds the ONE release-asset name `runUpgrade` builds. The
 // extension is captured, because the extension is the entire defect.
 var upgradeAssetNameRe = regexp.MustCompile(`"civitai_%s_%s_%s\.([a-z.]+)"`)
@@ -338,6 +344,28 @@ func TestREADMEWindowsUpgradeCaveatMatchesTheReleaseFormats(t *testing.T) {
 	}
 	hasCaveat := strings.Contains(flattenWS(body), flattenWS(windowsUpgradeCaveat))
 
+	// 🔴 THE SAME CLAIM ON A SECOND SURFACE. AGENTS.md: the command section, the
+	// exit-code table and the Troubleshooting index each state the contract and
+	// each goes stale ALONE — #371 shipped having updated two of three. The
+	// `civitai upgrade` row sat unscoped for the whole life of the §Upgrading
+	// caveat, so a reader of the command table was told the command self-updates
+	// the binary, full stop.
+	row := ""
+	for _, line := range strings.Split(md, "\n") {
+		if strings.HasPrefix(line, "| `civitai upgrade") {
+			if row != "" {
+				t.Fatalf("the command-reference table has two `civitai upgrade` rows; this guard would pin "+
+					"whichever came first:\n%s\n%s", row, line)
+			}
+			row = line
+		}
+	}
+	if row == "" {
+		t.Fatal("CONTROL failure: the README has no `| `civitai upgrade` command-reference row — the row " +
+			"scan is reading the wrong document, so its verdict below is about nothing")
+	}
+	hasRowCaveat := strings.Contains(flattenWS(row), flattenWS(windowsUpgradeRowCaveat))
+
 	if cliExt == winExt {
 		if hasCaveat {
 			t.Errorf("internal/cmd/upgrade.go now asks for a .%s asset and .goreleaser.yaml publishes Windows as "+
@@ -345,7 +373,19 @@ func TestREADMEWindowsUpgradeCaveatMatchesTheReleaseFormats(t *testing.T) {
 				"A stale refusal tells Windows users to do by hand what the command now does for them.",
 				cliExt, winExt, windowsUpgradeCaveat)
 		}
+		if hasRowCaveat {
+			t.Errorf("the extensions AGREE (.%s asked, .%s published) but the `civitai upgrade` command-reference "+
+				"row still says %q. Delete it there too — the row and the §Upgrading section state the same "+
+				"contract and go stale independently.", cliExt, winExt, windowsUpgradeRowCaveat)
+		}
 		return
+	}
+	if !hasRowCaveat {
+		t.Errorf("the `civitai upgrade` command-reference row does not scope the claim to the platforms it "+
+			"holds on:\n  %s\n\nwant (normalised): %s\n\n`civitai upgrade` asks for a `.%s` asset that is never "+
+			"published for Windows, so the row's \"self-update this binary in place\" is false there. The row "+
+			"and the §Upgrading section are separate surfaces and go stale alone.",
+			flattenWS(row), flattenWS(windowsUpgradeRowCaveat), cliExt)
 	}
 
 	if !hasCaveat {
@@ -584,5 +624,364 @@ func TestREADMECommandReferencePointsAtTheReadCommandTable(t *testing.T) {
 		t.Fatalf("CONTROL failure: only %d root command(s) are missing from the command-reference table. "+
 			"The pointer exists because the read commands are omitted; if that is no longer true the pointer "+
 			"is stale and this guard is checking nothing", undocumented)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The two claims below shipped in this same README pass and were NOT pinned by
+// the guards above: reverting either one restored published falsehood with the
+// whole suite still green. Both are pinned as WHOLE NORMALISED STRINGS, for the
+// reason homebrewMacOSOnlyClaim states — the artifact under test is prose, and a
+// keyword guard is walkable by rewording.
+// ---------------------------------------------------------------------------
+
+// readmeCivitaiCommandTable is one markdown table whose header's first column is
+// `Command` AND whose rows document `civitai …` invocations, recorded with the
+// `##` section holding it and its whole header row — the table's SCHEMA.
+//
+// The `civitai` row requirement is what keeps `### Local dev loop`'s
+// `| Command | Mode | What it does |` table (its rows are `npm run …`) out of
+// the count: it is a table of npm scripts, not a table of CLI commands, and
+// counting it would make "there are two command tables" true for the wrong
+// reason.
+type readmeCivitaiCommandTable struct {
+	sectionSlug string
+	section     string
+	header      string
+	rows        int
+}
+
+func readmeCivitaiCommandTables(t *testing.T, md string) []readmeCivitaiCommandTable {
+	t.Helper()
+	lines := strings.Split(stripFencedCode(md), "\n")
+	var out []readmeCivitaiCommandTable
+	section, slug := "", ""
+	for i := 0; i < len(lines); i++ {
+		if m := anyHeadingRe.FindStringSubmatch(lines[i]); m != nil {
+			if len(m[1]) == 2 {
+				section, slug = m[2], readmeAnchorSlug(m[2])
+			}
+			continue
+		}
+		if !strings.HasPrefix(lines[i], "| Command |") {
+			continue
+		}
+		tbl := readmeCivitaiCommandTable{sectionSlug: slug, section: section, header: strings.TrimSpace(lines[i])}
+		for j := i + 1; j < len(lines) && strings.HasPrefix(lines[j], "|"); j++ {
+			cells := strings.Split(lines[j], "|")
+			if len(cells) > 1 && strings.Contains(cells[1], "`civitai ") {
+				tbl.rows++
+			}
+		}
+		if tbl.rows > 0 {
+			out = append(out, tbl)
+		}
+	}
+	return out
+}
+
+// readmeTOCEntry returns the `## Contents` list item linking `anchor`, including
+// its wrapped continuation lines (a TOC entry with a qualifier spans two lines,
+// and reading only the first would make the qualifier invisible to every
+// assertion below — the exact shape of a guard that reads as coverage while
+// providing none).
+func readmeTOCEntry(t *testing.T, md, anchor string) string {
+	t.Helper()
+	toc := readmeSectionByAnchor(t, md, "contents")
+	lines := strings.Split(toc, "\n")
+	start := -1
+	for i, l := range lines {
+		if !strings.HasPrefix(strings.TrimSpace(l), "- [") || !strings.Contains(l, "("+anchor+")") {
+			continue
+		}
+		if start >= 0 {
+			t.Fatalf("the `## Contents` list has two entries linking %s (lines %q and %q) — "+
+				"this guard would pin whichever came first and silently ignore the other", anchor, lines[start], l)
+		}
+		start = i
+	}
+	if start < 0 {
+		t.Fatalf("the `## Contents` list has no entry linking %s. Either the TOC lost the entry this guard "+
+			"pins, or the section walk is reading the wrong text", anchor)
+	}
+	end := start + 1
+	for end < len(lines) {
+		s := strings.TrimSpace(lines[end])
+		if s == "" || strings.HasPrefix(s, "- ") || strings.HasPrefix(s, "* ") || strings.HasPrefix(s, "**") {
+			break
+		}
+		end++
+	}
+	return strings.Join(lines[start:end], "\n")
+}
+
+// tocCommandReferenceEntry is the `## Contents` entry for `## Command
+// reference`, pinned whole and already normalised (flattenWS form).
+const tocCommandReferenceEntry = "- [Command reference](#command-reference) — one table of the authoring & " +
+	"account commands (the public-API reads have their own)"
+
+// tocCommandReferenceRetracted is the claim that shipped in that slot and was
+// false: the section's table has never covered the public-API read commands.
+const tocCommandReferenceRetracted = "every command, one table"
+
+// TestREADMETOCCommandReferenceEntryNamesTheTableSplit pins the Contents entry
+// for `## Command reference` against a fact derived from the document itself:
+// there is MORE THAN ONE `civitai …` command table, they carry DIFFERENT schemas
+// (`| Command | What it does |` vs `| Command | What it does | Notable flags |`)
+// and they sit in DIFFERENT `##` sections.
+//
+// 🔴 IT FAILS IN BOTH DIRECTIONS.
+//   - The tables are split (today): the entry must not tell a reader the section
+//     holds "every command, one table", and must carry the qualifier naming the
+//     split. The TOC is the first thing a reader meets, so a wrong entry here
+//     sends them to the wrong section before any other prose can correct it.
+//   - The tables are merged into one (someone folded the read commands into the
+//     reference table): the split qualifier must be REMOVED. That is the silent
+//     direction — an entry promising a second table that no longer exists.
+func TestREADMETOCCommandReferenceEntryNamesTheTableSplit(t *testing.T) {
+	md := readREADME(t)
+	tables := readmeCivitaiCommandTables(t, md)
+
+	// POSITIVE CONTROL ON THE DERIVATION. An extractor that found nothing — a
+	// changed header spelling, a fence-stripping bug — would take the "merged"
+	// branch below and report a serene pass on a document it never read.
+	if len(tables) == 0 {
+		t.Fatalf("CONTROL failure: found no `| Command | … |` table with any `civitai …` row in README.md. " +
+			"The table extractor is reading the wrong text, so every verdict below is about nothing")
+	}
+	sections := map[string]readmeCivitaiCommandTable{}
+	schemas := map[string]bool{}
+	for _, tb := range tables {
+		sections[tb.sectionSlug] = tb
+		schemas[tb.header] = true
+	}
+	if _, ok := sections["command-reference"]; !ok {
+		var got []string
+		for s := range sections {
+			got = append(got, s)
+		}
+		sort.Strings(got)
+		t.Fatalf("CONTROL failure: no `civitai …` command table was found under `## Command reference` "+
+			"(sections with one: %v). The entry this guard pins describes that table; without it the "+
+			"guard is checking a claim about a table it cannot see", got)
+	}
+
+	entry := readmeTOCEntry(t, md, "#command-reference")
+	flat := flattenWS(entry)
+
+	if len(sections) < 2 || len(schemas) < 2 {
+		// Reverse direction: one table, or two that are really the same table.
+		if strings.Contains(flat, "have their own") {
+			t.Errorf("README.md now has %d `civitai …` command table(s) in %d section(s) with %d distinct "+
+				"schema(s), but the `## Contents` entry still says the public-API reads \"have their own\":\n  %s\n\n"+
+				"The tables were merged; the entry now promises a second table a reader cannot find. Re-derive it.",
+				len(tables), len(sections), len(schemas), flat)
+		}
+		return
+	}
+
+	// Forward direction: the tables really are split.
+	if regexp.MustCompile(`(?i)every command,?\s+one table`).MatchString(flat) {
+		var where []string
+		for slug, tb := range sections {
+			where = append(where, slug+" "+tb.header)
+		}
+		sort.Strings(where)
+		t.Errorf("the `## Contents` entry for `## Command reference` claims %q:\n  %s\n\n"+
+			"It is false. README.md carries %d `civitai …` command tables, with %d different schemas, in "+
+			"%d different sections:\n    %s\n\nThe Contents list is the first thing a reader meets; an entry "+
+			"promising one complete table sends anyone looking for `civitai models` or `civitai download` to "+
+			"a section that does not document them.",
+			tocCommandReferenceRetracted, flat, len(tables), len(schemas), len(sections), strings.Join(where, "\n    "))
+	}
+	if flat != tocCommandReferenceEntry {
+		t.Errorf("the `## Contents` entry for `## Command reference` is not the pinned statement.\n\n"+
+			"want (normalised): %s\n\ngot  (normalised): %s\n\n"+
+			"It is pinned WHOLE rather than by keyword because the artifact is prose: \"Command reference\", "+
+			"\"table\" and \"commands\" all appear just as readily in an entry that re-claims completeness. "+
+			"If the wording is genuinely being improved, change the constant and this message together — and "+
+			"re-run the revert proof, which is what makes the new string a claim rather than a restatement.",
+			tocCommandReferenceEntry, flat)
+	}
+}
+
+// configPrecedenceClaim is the README's per-setting precedence block, pinned as
+// one WHOLE normalised string. Every bullet is a separate contract an operator
+// acts on, and three of the four are counter-intuitive, so the block is pinned
+// entire rather than bullet by bullet: a reword that drops one bullet reads as a
+// tidy-up and is a silent loss of the only place that behaviour is written down.
+const configPrecedenceClaim = "🔴 **Precedence is decided per setting; no one rule covers all four flags.** " +
+	"Only the first of them is a plain flag-beats-environment override: " +
+	"- **`--tunnel-endpoint`** (`app dev-tunnel`) wins — `CIVITAI_DEV_TUNNEL_ENDPOINT` is read only when " +
+	"the flag is empty. " +
+	"- **`--token`** is no override at all: it is a `civitai login` flag that **writes** the key into the " +
+	"config file, and `CIVITAI_TOKEN` then beats that file on every command — including the key " +
+	"`login --token` just stored. For a one-off key, set `CIVITAI_TOKEN` for that invocation. " +
+	"- **The colour flags** invert it — *off beats on* ([Global flags](#global-flags)), so `--color` " +
+	"**loses** to a `NO_COLOR` / `CIVITAI_NO_COLOR` in the environment. " +
+	"- **`--no-update-check`** is OR'd with `CIVITAI_NO_UPDATE_CHECK`: either one disables the check, and " +
+	"no flag re-enables it once the variable is set."
+
+// retractedFlagWinsClaim is the single sentence the block above replaced. It
+// was published for months, it is wrong for three of the four flags it covered,
+// and it is the one an operator acts on — so its ABSENCE is asserted separately
+// from the new block's presence. (Restoring it elsewhere in the document would
+// be just as wrong, so the check is over the whole README.)
+const retractedFlagWinsClaim = "the flag wins over the environment"
+
+// TestREADMEConfigPrecedenceIsPerSetting ties the `## Configuration` precedence
+// block to the four independent mechanisms that decide it. Each leg reads the
+// real production rule, so the prose cannot drift into agreeing with code that
+// no longer behaves that way:
+//
+//   - `--tunnel-endpoint`: internal/cmd/app_dev_tunnel.go — flag first, env only
+//     when the flag is empty. The one plain flag-beats-environment case.
+//   - `--token`: internal/config/config.go binds `CIVITAI_TOKEN` over `keyToken`,
+//     which is the SAME key `login.go`'s `cfg.SetToken(token)` writes. That seam
+//     is the whole claim — neither file is surprising alone.
+//   - colour: internal/ui/ui.go resolves force-OFF before force-ON, so `--color`
+//     loses to `NO_COLOR`. Exercised through ui.Configure, not by reading source.
+//   - update check: internal/cmd/update_check.go ORs the flag with the variable,
+//     so no flag re-enables it. `noFlag` is a bool, so both values ARE the whole
+//     input space and the "no flag re-enables it" claim is proven, not sampled.
+func TestREADMEConfigPrecedenceIsPerSetting(t *testing.T) {
+	root := repoRootDir(t)
+	readSrc := func(parts ...string) string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join(append([]string{root}, parts...)...))
+		if err != nil {
+			t.Fatalf("read %s: %v", filepath.Join(parts...), err)
+		}
+		return string(b)
+	}
+
+	// --- Leg 1: `--tunnel-endpoint` wins. ------------------------------------
+	tunnelSrc := flattenWS(readSrc("internal", "cmd", "app_dev_tunnel.go"))
+	const tunnelOrder = `ep := strings.TrimSpace(endpoint) if ep == "" { ep = strings.TrimSpace(os.Getenv(devTunnelEndpointEnv)) }`
+	if !strings.Contains(tunnelSrc, tunnelOrder) {
+		t.Errorf("internal/cmd/app_dev_tunnel.go no longer resolves the endpoint as `%s`.\n\n"+
+			"The README's first bullet is the ONLY plain flag-beats-environment case in the table, and it is "+
+			"that ordering. If the resolution changed, the bullet is now wrong — re-derive both.", tunnelOrder)
+	}
+
+	// --- Leg 2: `--token` writes the key `CIVITAI_TOKEN` then overrides. ------
+	// 2a. The SEAM, as a ledger: the key login writes is the key the env binds.
+	configSrc := readSrc("internal", "config", "config.go")
+	for _, want := range []string{
+		`v.BindEnv(keyToken, "CIVITAI_TOKEN")`,
+		`func (c *Config) SetToken(token string) error {`,
+		`c.v.Set(keyToken, token)`,
+		`if t := c.v.GetString(keyToken); t != ""`,
+	} {
+		if !strings.Contains(configSrc, want) {
+			t.Errorf("internal/config/config.go no longer contains %s. The README says `CIVITAI_TOKEN` beats "+
+				"the config file \"including the key `login --token` just stored\" — a claim that holds only "+
+				"while the env binds over the SAME key SetToken writes and Token() reads. Re-derive both.", want)
+		}
+	}
+	if !strings.Contains(readSrc("internal", "cmd", "login.go"), "cfg.SetToken(token)") {
+		t.Error("internal/cmd/login.go no longer calls cfg.SetToken(token), so `login --token` may no longer " +
+			"write the key the README says CIVITAI_TOKEN overrides. Re-derive the bullet against the new writer.")
+	}
+
+	// 2b. BEHAVIOURAL, through the same viper mechanism config.Load builds: a
+	// bound env var beats a value present in the config file.
+	vp := viper.New()
+	vp.SetConfigType("yaml")
+	if err := vp.ReadConfig(strings.NewReader("token: from-login-flag\n")); err != nil {
+		t.Fatalf("read in-memory config: %v", err)
+	}
+	if err := vp.BindEnv("token", "CIVITAI_TOKEN"); err != nil {
+		t.Fatalf(`BindEnv("token", "CIVITAI_TOKEN"): %v`, err)
+	}
+	t.Setenv("CIVITAI_TOKEN", "placeholder-so-t-Setenv-restores-it")
+	// POSITIVE CONTROL: with the variable unset the FILE value must win. Without
+	// this, an env read that returned the file value for some unrelated reason
+	// would look like the override working.
+	os.Unsetenv("CIVITAI_TOKEN")
+	if got := vp.GetString("token"); got != "from-login-flag" {
+		t.Fatalf("CONTROL failure: with CIVITAI_TOKEN unset the config-file token resolves to %q, want "+
+			"\"from-login-flag\" — the in-memory config did not load, so the override assertion below "+
+			"would be comparing nothing", got)
+	}
+	t.Setenv("CIVITAI_TOKEN", "from-environment")
+	if got := vp.GetString("token"); got != "from-environment" {
+		t.Errorf("CIVITAI_TOKEN does not override the config file's `token` key (got %q). The README tells "+
+			"operators to set CIVITAI_TOKEN for a one-off key precisely because it beats what "+
+			"`login --token` stored; if that stopped being true the bullet is wrong.", got)
+	}
+
+	// --- Leg 3: the colour flags invert it — `--color` loses to NO_COLOR. -----
+	t.Cleanup(func() { ui.Configure(ui.Options{Writer: io.Discard}) })
+	t.Setenv("CLICOLOR_FORCE", "placeholder")
+	os.Unsetenv("CLICOLOR_FORCE")
+	t.Setenv("NO_COLOR", "placeholder")
+	os.Unsetenv("NO_COLOR")
+	// POSITIVE CONTROL: --color alone really does force colour on, so the
+	// assertion below cannot pass because colour was off for some other reason.
+	ui.Configure(ui.Options{ForceColor: true, Writer: io.Discard})
+	if !ui.EnabledFor(io.Discard) {
+		t.Fatalf("CONTROL failure: --color (ui.Options{ForceColor: true}) does not force colour on with no " +
+			"NO_COLOR set. The \"--color loses to NO_COLOR\" assertion below would then pass for the wrong " +
+			"reason — colour would be off either way")
+	}
+	t.Setenv("NO_COLOR", "1")
+	ui.Configure(ui.Options{ForceColor: true, Writer: io.Discard})
+	if ui.EnabledFor(io.Discard) {
+		t.Error("--color (ui.Options{ForceColor: true}) now WINS over NO_COLOR in the environment. The " +
+			"README's third bullet says it loses — off beats on. Re-derive both.")
+	}
+
+	// --- Leg 4: --no-update-check is OR'd with the variable. -----------------
+	if !strings.Contains(flattenWS(readSrc("internal", "cmd", "update_check.go")),
+		`return noFlag || os.Getenv("CIVITAI_NO_UPDATE_CHECK") != ""`) {
+		t.Error(`internal/cmd/update_check.go no longer computes updateCheckDisabled as ` +
+			`"noFlag || os.Getenv(\"CIVITAI_NO_UPDATE_CHECK\") != \"\"". The README's fourth bullet is that OR ` +
+			`— and the "no flag re-enables it" half is a property of the OR specifically. Re-derive both.`)
+	}
+	t.Setenv("CIVITAI_NO_UPDATE_CHECK", "placeholder")
+	os.Unsetenv("CIVITAI_NO_UPDATE_CHECK")
+	// POSITIVE CONTROL: with the variable unset the flag decides, both ways.
+	if updateCheckDisabled(false) {
+		t.Fatal("CONTROL failure: the update check reports itself disabled with neither the flag nor " +
+			"CIVITAI_NO_UPDATE_CHECK set — the env-set assertions below would pass without the variable " +
+			"doing anything")
+	}
+	if !updateCheckDisabled(true) {
+		t.Fatal("CONTROL failure: --no-update-check alone does not disable the update check")
+	}
+	t.Setenv("CIVITAI_NO_UPDATE_CHECK", "1")
+	// `noFlag` is a bool, so these two cases are the ENTIRE input space: this is
+	// a proof that no flag value re-enables the check, not a sample of one.
+	for _, noFlag := range []bool{false, true} {
+		if !updateCheckDisabled(noFlag) {
+			t.Errorf("CIVITAI_NO_UPDATE_CHECK=1 with --no-update-check=%v leaves the update check ENABLED. "+
+				"The README says either one disables it and no flag re-enables it.", noFlag)
+		}
+	}
+
+	// --- Leg 5: the document. ------------------------------------------------
+	md := readREADME(t)
+	if strings.Contains(md, retractedFlagWinsClaim) {
+		t.Errorf("README.md still contains the retracted claim %q. It is true of `--tunnel-endpoint` and "+
+			"false of the other three flags in the same table: `--token` is not a per-command override at "+
+			"all, `--color` LOSES to NO_COLOR, and `--no-update-check` is OR'd with its variable. An "+
+			"operator who reads that sentence and sets a flag to beat the environment gets the environment.",
+			retractedFlagWinsClaim)
+	}
+	body := readmeSectionByAnchor(t, md, "configuration")
+	if len(strings.TrimSpace(body)) < 800 {
+		t.Fatalf("CONTROL failure: the README's `## Configuration` section is only %d byte(s) long — "+
+			"the extractor is reading the wrong block", len(strings.TrimSpace(body)))
+	}
+	if !strings.Contains(flattenWS(body), configPrecedenceClaim) {
+		t.Errorf("the README's `## Configuration` section does not carry the per-setting precedence block.\n\n"+
+			"want (normalised): %s\n\ngot:\n%s\n\n"+
+			"It is pinned WHOLE, not by keyword: the words \"flag\", \"environment\" and every variable name "+
+			"appear just as readily in a sentence that re-asserts a single blanket rule. Each bullet is a "+
+			"separate contract an operator acts on and three of the four are counter-intuitive, so dropping "+
+			"one is a silent loss of the only place that behaviour is written down. If the wording is being "+
+			"improved, change the constant and re-run the revert proof.",
+			configPrecedenceClaim, flattenWS(body))
 	}
 }
