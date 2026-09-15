@@ -286,6 +286,39 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"assertion about what reaches the terminal"},
 
 	// --- generate path ------------------------------------------------------
+	// 🔴 THIS ROW IS THE POINT OF civitai/cli#612, NOT A BY-PRODUCT OF IT. Until
+	// it existed, runGenerate called safeTerm ZERO times — so GREW could never
+	// demand a row for it, and the absence of a gate on the Buzz-balance warning
+	// was not merely unrecorded, it was UNRECORDABLE. That is the same blind spot
+	// the five download-path rows below are annotated with, reappearing on the
+	// money-spending path. The instrument that FOUND it was not a grep for this
+	// helper's name (that can only enumerate operands which already have a gate)
+	// but an enumeration of every value interpolated into a writer or an
+	// fmt.Errorf on generate.go and generate_wait.go, each traced to its origin.
+	"runGenerate": {"TestGenerateBuzzBalanceWarningCannotForgeALine",
+		"the Buzz-balance read FAILURE warning — appapi.GetBuzzAccount's error, whose text is " +
+			"server-chosen on EVERY route (serverMessage ends `return strings.TrimSpace(string(raw))`, so a " +
+			"body with no message/error key yields the WHOLE body; the non-envelope-200 path interpolates " +
+			"string(raw) directly), and which had NO gate at all, so " +
+			"raw ANSI passed through. It is printed directly above confirmGenerate's real `Cost: … Buzz` " +
+			"line and `Generate? [y/N]:`, and the measured payload erased its own line and left a " +
+			"counterfeit `Cost:` line the SERVER wrote on the last screen before an IRREVERSIBLE spend. " +
+			"🔴 THE NAMED TEST ASSERTS GEOMETRY AND THE ESCAPE CLASS, NOT THE ABSENCE OF A WORD: one " +
+			"stderr line opens AND closes the CLI's own sentence, the line count matches a benign render, " +
+			"and no ESC byte survives. It DELIBERATELY ASSERTS NOTHING ABOUT TABS — this surface goes " +
+			"through ui.Warn, and lipgloss expands \\t to four spaces before the bytes reach the writer, " +
+			"so such a guard could never fire. Not reached under --dry-run. This row covers runGenerate's " +
+			"ONE safeTerm call; the function's many other surfaces answer to their own callees' rows. " +
+			"🔴 AND THE GATE BOUNDS THE RUNE CLASS, NOT THE LENGTH — RESIDUAL, MEASURED, STILL LIVE " +
+			"(civitai/cli#624, same class as #605). A soft wrap has no line-break rune, so safeTermSingle " +
+			"cannot see it: a 5,120-char balance error renders as ONE logical line of 5,224 runes with " +
+			"zero ESC and zero TAB, PASSING EVERY ASSERTION THE NAMED TEST MAKES, which an 80-column " +
+			"terminal lays out as ~66 rows mostly beginning at column zero with a counterfeit `Cost:` " +
+			"line. Uncapped on EVERY route, not via one arm — see the call site; a fix must bound the " +
+			"operand HERE, since capping a single appapi site leaves the identical forgery reachable " +
+			"through the others. This row does NOT claim length coverage, and the " +
+			"named test does not assert it — bounding the operand is #605's operator fork, not a #612 gate",
+	},
 	// 🔴 REPOINTED BY civitai/cli#575 R1, AND THE OLD NAME IS WHY THIS FIELD EXISTS.
 	// This row read TestGenerate_SanitisesServerStrings, which was TRUE until this
 	// same PR gave printGenerateQuote its own cell gate — that gate sanitises the
@@ -391,8 +424,28 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"the server's own message, sanitised ONCE at the top and interpolated into the error each matching " +
 			"arm rebuilds. The named test drives ALL FIVE matching arms through a real tRPC error server and " +
 			"asserts one line each — tabs included, since these are plain fmt.Errorf with no ui styling in " +
-			"front of them — with a control that the arm MATCHED rather than falling through. The " +
-			"fall-through returns the transport's own error unchanged, which is not this function's surface"},
+			"front of them — with a control that the arm MATCHED rather than falling through. 🔴 THIS ROW " +
+			"ENDED IN A DISCLAIMER — \"the fall-through returns the transport's own error unchanged, which " +
+			"is not this function's surface\" — AND THAT SENTENCE IS RETRACTED (civitai/cli#612). It was " +
+			"the thing that kept the defect invisible: the fall-through is not an edge, it is the DOMINANT " +
+			"path (the set is whatever the five arms do not take, and TWO drafts that tried to restate it as " +
+			"a status list or a message list were each false on a different axis — the arms above " +
+			"classifyGenerateError's own comment are the only authority), the error it returned " +
+			"embedded genapi.serverMessage(raw) with no strip of ANY kind, and main.go prints it as " +
+			"`Error: <it>` — so raw ESC deleted that line and left a counterfeit `✓ Generation submitted` " +
+			"banner in its place. A ledger row that scopes a surface OUT is a claim, and this one was " +
+			"false. The fall-through is safeTermErr'd now and is driven by " +
+			"TestClassifyGenerateErrorFallThroughCannotForgeALine, which uses a 503/429/500 — never one of " +
+			"the five arms, since an arm-matching case passes without executing the defective path at all. " +
+			"TestClassifyGenerateErrorFallThroughPreservesClassification pins that errors.Is/As still " +
+			"resolve through the wrapper, so the published exit codes are untouched. 🔴 THE OTHER RETURN — " +
+			"the !errors.As early exit — IS STILL UNGATED AND THAT IS NOT A CLAIM THAT IT IS SAFE: it is " +
+			"MEASURED to carry raw ANSI, because genapi interpolates the unparsed HTTP body into " +
+			"`unexpected %s response: %s` (civitai/cli#620). It is left alone because that same raw body " +
+			"reaches SEVEN " +
+			"genapi sites of which only some come back through here — so a gate here would close a subset " +
+			"of one class — and because this return is a pass-through pinned by identity. Read the " +
+			"comment at that return, not this sentence, before acting on it"},
 	"buildGenerateGraph": {"TestImageDisclosureLineIsGatedAtComposition",
 		"the uploaded image URL echoed back into the img2img disclosure line. It composes the USER's own " +
 			"--image path (echoed byte-for-byte, civitai/cli#393) with the SERVER's blob URL, and only the " +

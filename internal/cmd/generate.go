@@ -992,7 +992,18 @@ func buildGenerateGraph(ctx context.Context, deps generateDeps, o generateOpts) 
 	if o.checkpointSet {
 		rv, err := deps.resolveVersion(ctx, o.checkpoint)
 		if err != nil {
-			return nil, fmt.Errorf("--checkpoint %d: %w", o.checkpoint, err)
+			// 🔴 safeTermErr, NOT safeTermSingle, AND NOT NOTHING (civitai/cli#612
+			// F3). The cause comes from pkg/civitai's readError, whose `snippet`
+			// strips the invisible class but deliberately KEEPS \n — so before this
+			// a 404 body of `{"error":"no such version\nError: --checkpoint 999: …"}`
+			// rendered TWO lines under main.go's `Error: ` prefix, the second a
+			// complete counterfeit of the first at column zero. #612 filed this as
+			// DERIVED; it is measured now by
+			// TestResolveVersionErrorCannotForgeALine, which drives the real
+			// pkg/civitai client rather than this package's faked resolve seam.
+			// safeTermErr keeps errors.Is/As reaching civitai.ErrNotFound, so the
+			// published exit code (AGENTS.md items 7 and 24) is unchanged.
+			return nil, fmt.Errorf("--checkpoint %d: %w", o.checkpoint, safeTermErr(err))
 		}
 		out.graph.Model = genapi.Ptr(rv.Resource(nil))
 		out.checkpoint = describeVersion(rv, nil)
@@ -1004,7 +1015,11 @@ func buildGenerateGraph(ctx context.Context, deps generateDeps, o generateOpts) 
 		}
 		rv, err := deps.resolveVersion(ctx, spec.versionID)
 		if err != nil {
-			return nil, fmt.Errorf("--lora %s: %w", raw, err)
+			// The LITERAL TWIN of the --checkpoint return above, gated the same way
+			// for the same reason — one rule, one place. `raw` is the user's own
+			// --lora argument and stays unsanitised (civitai/cli#393); only the
+			// server-derived CAUSE goes through the gate.
+			return nil, fmt.Errorf("--lora %s: %w", raw, safeTermErr(err))
 		}
 		out.graph.Resources = append(out.graph.Resources, rv.Resource(spec.strength))
 		out.loras = append(out.loras, describeVersion(rv, spec.strength))
@@ -1252,8 +1267,49 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		// Advisory: a balance we cannot read must not block a user who can
 		// generate — but it must never be shown as a number either, or an
 		// unreadable balance reads as "you have 0".
+		//
+		// 🔴 `berr` IS SERVER-CHOSEN TEXT AND HAD NO GATE AT ALL (civitai/cli#612
+		// F1), so raw ANSI passed straight through — a wider class than #604's
+		// retained \n. This line prints immediately above confirmGenerate's real
+		// `Cost: … Buzz` line and `Generate? [y/N]:`, so a `\x1b[1A\x1b[2K` pair
+		// erased this warning and left a counterfeit `Cost:` line the SERVER wrote
+		// on the last screen before an IRREVERSIBLE spend.
+		//
+		// safeTermSingle rather than safeTerm: ui.Warn passes \n through
+		// unchanged (it only expands \t), so safeTerm alone would leave the line
+		// forgery open. Pinned by
+		// TestGenerateBuzzBalanceWarningCannotForgeALine, which asserts the
+		// geometry and the escape class rather than the absence of any word.
+		//
+		// 🔴 THE OPERAND IS UNBOUNDED ON EVERY PATH, AND TWO EARLIER DRAFTS OF
+		// THIS COMMENT GOT THE ENUMERATION WRONG IN BOTH DIRECTIONS — first naming
+		// only appapi's non-2xx arm, then naming :1185 as the one uncapped route.
+		// So state the PROPERTY instead of the routes, because the property is
+		// what is actually true: `appapi.serverMessage` ends
+		// `return strings.TrimSpace(string(raw))`, so ANY response lacking a
+		// `message`/`error` key yields the WHOLE BODY — and the non-envelope-200
+		// path interpolates `string(raw)` directly. Every route to `berr` can
+		// therefore carry an arbitrary-length server string. (Bounded only far
+		// upstream, by transport: readResponseBody caps at 64 MiB.) Do not
+		// re-derive a route list here; read serverMessage.
+		//
+		// 🔴 RESIDUAL, MEASURED AND STILL LIVE — THE GATE BOUNDS THE RUNE CLASS,
+		// NOT THE LENGTH (civitai/cli#624, the same class as #605). safeTermSingle
+		// guarantees one line per line-break rune it can SEE, and a terminal's
+		// SOFT WRAP has no rune. Measured driving runGenerate: a 5,120-char
+		// balance error renders as ONE logical line of 5,224 runes, zero ESC, zero
+		// TAB — passing every assertion the named test makes — which an 80-column
+		// terminal lays out as ~66 rows, most starting at column zero with a
+		// complete counterfeit `Cost: 1 Buzz (balance 999999).` a few rows above
+		// the real one. 🔴 A FIX MUST BOUND THE OPERAND HERE, NOT ONE ARM
+		// UPSTREAM: capping a single appapi site leaves the identical forgery
+		// reachable through the others. The repo owns a remedy it does not apply
+		// here — wrapServerText, used at exactly ONE production site
+		// (workflows_list.go:253) — and cannot measure the width anyway, since
+		// x/term.GetSize appears nowhere. Recorded rather than fixed: bounding
+		// this is the operator FORK #605 already carries, not a #612 gate.
 		fmt.Fprintln(errw, ui.For(errw).Warn(fmt.Sprintf(
-			"could not read your Buzz balance (%v) — continuing without the balance check; verify with `civitai buzz`", berr)))
+			"could not read your Buzz balance (%v) — continuing without the balance check; verify with `civitai buzz`", safeTermSingle(berr.Error()))))
 	} else {
 		balance, balanceKnown = b, true
 	}
@@ -2041,6 +2097,38 @@ func buzzAmount(f float64) string {
 func classifyGenerateError(err error) error {
 	var apiErr *genapi.APIError
 	if !errors.As(err, &apiErr) {
+		// 🔴 DELIBERATELY UNGATED, AND THE HOLE HERE IS MEASURED RATHER THAN
+		// ASSUMED ABSENT (found by civitai/cli#612, filed as civitai/cli#620).
+		// A 200 whose BODY is not a tRPC envelope reaches genapi's
+		// `unexpected %s response: %s`, which interpolates `string(raw)` — the raw
+		// HTTP body, unparsed, with no strip of any kind. Measured: that puts raw
+		// `\x1b[1A\x1b[2K` on stderr through main.go's `Error: <it>`.
+		//
+		// It is NOT fixed by a safeTermErr here, for two reasons that both point
+		// one layer down.
+		//
+		// (a) THE DEFECT IS NOT IN THIS FUNCTION. Seven sites in internal/genapi
+		// interpolate an unparsed body or payload into an error — blobs.go:73 and
+		// :155, generate.go:214, :265 and :288, status.go:489, workflows.go:221 —
+		// and only some of them come back through here at all: blobs.go's two are
+		// on the reference-image upload path and reach resolveImages instead.
+		// Gating this one return would close a SUBSET of one class and leave the
+		// rest, which is the shape this package keeps re-finding as the reason a
+		// defect regenerates at its ungated members. The fix belongs at those
+		// seven interpolations.
+		//
+		// (b) THIS RETURN IS A PASS-THROUGH BY CONTRACT, not by omission. It is
+		// the classifier's "I do not understand this error" exit, and
+		// TestClassifyGenerateError_PassesThroughForeignErrors pins that the error
+		// comes back IDENTICAL — not merely carrying the same message. Wrapping it
+		// is a deliberate change to a pinned property, and the errors arriving
+		// here are a mixed bag — transport failures, a missing token, the
+		// body-size cap, genapi's unparsed-body errors — rather than the
+		// server-message-bearing set the fall-through below handles. (Graph
+		// marshalling can fail into this seam too, echoing a byte of the user's
+		// OWN --input file into the message; parseGraphInput compacts that file
+		// first, so the path looks unreachable today — NOT measured, and recorded
+		// as the open question it is rather than leaned on as a reason.)
 		return err
 	}
 	msg := strings.ToLower(apiErr.ServerMessage)
@@ -2105,5 +2193,33 @@ func classifyGenerateError(err error) error {
 	// condition — the ids exist, the COMBINATION is not runnable — and folding
 	// the two together would make exit 4 unactionable: a script could no longer
 	// tell "fix the id" from "pick a different resource".
-	return err
+	//
+	// 🔴 GATED — AND THIS IS THE DOMINANT PATH, NOT AN EDGE (civitai/cli#612 F2).
+	// civitai/cli#604 gated `shown` at the top of this function, but `shown` is
+	// read only by the five MATCHING arms above; everything else reached this
+	// return, where
+	// `err` is a *genapi.APIError whose Error() embeds genapi.serverMessage(raw)
+	// with NO strip at all and cmd/civitai/main.go prints it as `Error: <it>`.
+	// Measured: a cursor-up + erase-line pair deleted that `Error:` line and
+	// replaced it with a counterfeit `✓ Generation submitted` banner, so a FAILED
+	// generation read as a submitted one.
+	//
+	// ⚠ DO NOT RESTATE THE FALL-THROUGH SET AS A RULE — TWO DRAFTS TRIED AND BOTH
+	// WERE FALSE, each narrower than the truth on a different axis. "Every
+	// 401/403/404/429/503, every 5xx, every unmatched 400" is wrong because four
+	// of the five arms match status-agnostically, so an expected 403 carrying
+	// "account has been restricted" is caught by an ARM. "Every status whose
+	// MESSAGE matches none of the five needles" is wrong because the fifth arm is
+	// a CONJUNCTION (`apiErr.Status >= 500 && has("unknown ecosystem")`), so a 400
+	// carrying "unknown ecosystem" matches a needle AND still lands here. Neither
+	// a status list nor a message list can describe this set; only the five arms
+	// can, and they are directly above. What matters, and all that ever did: this
+	// is the DOMINANT path, not an edge, and it must stay gated.
+	//
+	// safeTermErr, not safeTermSingle(err.Error()): it leaves errors.Is/As
+	// reaching the original, so civitai.TagStatus's sentinel and the
+	// *genapi.APIError handle both still resolve and the published exit codes
+	// (AGENTS.md items 7 and 24) are unchanged — pinned by
+	// TestClassifyGenerateErrorFallThroughPreservesClassification.
+	return safeTermErr(err)
 }

@@ -69,14 +69,18 @@ func safeTerm(s string) string {
 //
 // 🔴 USE IT ONLY ON A SINGLE-LINE ERROR PATH — not at just any site
 // that wraps server bytes. (An earlier draft of this line opened "DO NOT use it
-// at ANY site", which skims as "never call this function" and is false of SEVEN
-// live call sites — five in download.go and two in generate_output.go's blob
-// transfer. It read "five" from civitai/cli#590, which is the commit that wrote
+// at ANY site", which skims as "never call this function" and is false of TEN
+// live call sites — five in download.go, two in generate_output.go's blob
+// transfer, and three in generate.go since civitai/cli#612: buildGenerateGraph's
+// two model-version resolution failures and classifyGenerateError's
+// FALL-THROUGH (not its !errors.As early return, which is deliberately left
+// ungated — the comment there says why, and it is not "it is safe").
+// It read "five" from civitai/cli#590, which is the commit that wrote
 // it and the tree where five was right; the two generate_output.go callers
 // arrived later, in this branch's own first commit, and civitai/cli#596 round 1
 // then corrected two neighbouring stale sentences in this same block without
-// re-counting this one. Re-derived by grepping `safeTermErr(` across the
-// package's non-test sources, not carried through
+// re-counting this one. Every figure here is RE-DERIVED by grepping
+// `safeTermErr(` across the package's non-test sources, never carried through
 // — the same read-the-bold-line failure this comment exists to
 // fix.) The two halves of the sentence it replaced pull in opposite directions. An
 // earlier draft said "use it at ANY site where `%w` carries a cause built from
@@ -104,12 +108,19 @@ func safeTerm(s string) string {
 // SAME shape this function's own history records from #566 — "one value,
 // printed twice, sanitised on one half" — one class down, and a first pass at
 // #577 shipped three comments claiming the residual was closed while it was not.
-// Every caller is on a single-line error path — download.go's, and since
+// Every caller is on a single-line error path — download.go's; since
 // civitai/cli#574 generate_output.go's blob download, which is the same shape
 // one command over (same writePart, same presigned transfer, same one-line
-// errors). TestSafeTermErrCallersAreLedgered pins that set in both directions,
-// and it is what caught this sentence still saying "download.go" after the
-// second caller arrived. So the whole
+// errors); and since civitai/cli#612 generate.go's three, whose causes are
+// pkg/civitai's `not found (404): <snippet>` and genapi's
+// `<what> (<status>): <server message>` — one-line sentences, printed by
+// cmd/civitai/main.go as a single `Error: …` line with no indentation baseline
+// to preserve. 🔴 The one thing on the generate path that is legitimately
+// MULTI-LINE — the orchestrator's failure reason — does NOT reach any of them:
+// it is rendered by serverReasonSuffix and printWorkflow, which stay on
+// safeTerm + indentContinuation. TestSafeTermErrCallersAreLedgered pins that set
+// in both directions, and it is what caught this sentence still saying
+// "download.go" after the second caller arrived. So the whole
 // function takes the single-line rule.
 func safeTermErr(err error) error {
 	if err == nil {
