@@ -142,7 +142,14 @@ current binary untouched.
 
 If this binary was installed via Homebrew, upgrade delegates to:
     brew upgrade civitai/tap/civitai
-(use --force to self-replace anyway).`,
+(use --force to self-replace anyway). The release publishes a Homebrew CASK,
+which is macOS-only, so that delegation only leads anywhere on macOS.
+
+Not on Windows. This command asks for a .tar.gz release asset, but Windows is
+published as a .zip, so the lookup never matches: it fails with "no release
+asset ..." and nothing is replaced. Upgrade by hand from
+https://github.com/civitai/cli/releases/latest, or with
+npm install -g @civitai/cli@latest.`,
 		Example: `  civitai upgrade
   civitai upgrade --force`,
 		Args: cobra.NoArgs,

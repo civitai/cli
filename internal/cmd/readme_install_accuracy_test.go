@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/viper"
@@ -132,26 +134,96 @@ const homebrewMacOSOnlyClaim = "🔴 **macOS only — there is no Linux Homebrew
 
 // homebrewNoFormulaClaim is the README's statement of WHY, tied to the stanza
 // this guard reads out of `.goreleaser.yaml`.
-const homebrewNoFormulaClaim = "publishes no `brews:` (formula) stanza at all"
+//
+// 🔴 It NAMES THE FILE, and that is the correction, not decoration. An earlier
+// wording credited the missing stanza to `civitai/homebrew-tap`; `brews:` and
+// `homebrew_casks:` are goreleaser stanzas in THIS repo's `.goreleaser.yaml`,
+// which is the file this guard parses, so a reader following the "why" was sent
+// to the wrong repository to check it.
+const homebrewNoFormulaClaim = "`.goreleaser.yaml` carries no `brews:` (formula) stanza at all"
+
+// homebrewMacOSExclusivityIntro is the `## Install` intro's macOS-exclusivity
+// clause, pinned whole and required in the FORWARD direction so that forbidding
+// it in the reverse direction is a real assertion rather than a vacuous one.
+const homebrewMacOSExclusivityIntro = "it is the only platform the tap covers"
+
+// upgradeLongBrewMacOSScope is the SAME macOS-only fact as it has to appear in
+// what `civitai upgrade --help` prints.
+//
+// 🔴 A THIRD SURFACE, pinned for AGENTS.md's reason: the command's own help
+// text, the README section and the command-reference row each state this
+// contract and each goes stale ALONE. This one did — the README was scoped to
+// macOS while `upgrade --help` still told users on every platform, flat, that a
+// Homebrew install delegates to `brew upgrade civitai/tap/civitai`.
+const upgradeLongBrewMacOSScope = "The release publishes a Homebrew CASK, which is macOS-only, " +
+	"so that delegation only leads anywhere on macOS."
+
+// readUpgradeSource returns internal/cmd/upgrade.go. `Long` is a raw backquoted
+// literal, so its prose appears verbatim in the file and flattenWS makes it
+// matchable across the wrapping.
+func readUpgradeSource(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(repoRootDir(t), "internal", "cmd", "upgrade.go"))
+	if err != nil {
+		t.Fatalf("read internal/cmd/upgrade.go: %v", err)
+	}
+	// POSITIVE CONTROL: the delegation sentence the callers reason about has to
+	// be in the file at all, or every verdict is about text that moved.
+	if !strings.Contains(string(b), "brew upgrade civitai/tap/civitai") {
+		t.Fatalf("CONTROL failure: internal/cmd/upgrade.go no longer mentions " +
+			"`brew upgrade civitai/tap/civitai` — the Homebrew delegation moved, so a verdict about how " +
+			"its help text scopes that delegation would be about nothing")
+	}
+	return string(b)
+}
+
+// upgradeLongText returns the `Long:` raw string literal from upgrade.go — the
+// exact prose `civitai upgrade --help` prints. Extracted rather than printing
+// the whole file, so a failure message shows the surface under test.
+func upgradeLongText(t *testing.T, src string) string {
+	t.Helper()
+	i := strings.Index(src, "Long: `")
+	if i < 0 {
+		t.Fatalf("CONTROL failure: internal/cmd/upgrade.go has no `Long: ` + raw string literal — " +
+			"the help text moved or changed form, so a verdict about its wording is about nothing")
+	}
+	rest := src[i+len("Long: `"):]
+	j := strings.Index(rest, "`")
+	if j <= 0 {
+		t.Fatal("CONTROL failure: upgrade.go's Long literal is unterminated or empty")
+	}
+	return rest[:j]
+}
 
 // TestREADMEHomebrewSectionMatchesTheReleaseConfig ties the README's Homebrew
 // section to what the release pipeline actually publishes.
 //
-// `.goreleaser.yaml` carries `homebrew_casks:` and NO `brews:` stanza. A
-// Homebrew *cask* is a macOS-only concept and the rendered cask names darwin
-// archives only (see tools/caskcheck/testdata/drill-broken-cask.rb), so there is
-// no Linux Homebrew install — yet the README advertised
+// `.goreleaser.yaml` carries `homebrew_casks:` and NO `brews:` stanza, and a
+// Homebrew *cask* is macOS-only BY DEFINITION — Homebrew implements casks on
+// macOS only, so the artifact type alone settles it. (An earlier version of this
+// comment cited tools/caskcheck/testdata/drill-broken-cask.rb as evidence that
+// the rendered cask names darwin archives. That file is a hand-written FIRE-DRILL
+// FIXTURE whose own header says it is "not the tap, not shipped to anyone", so it
+// evidences nothing about goreleaser's output: right conclusion, wrong witness.)
+// So there is no Linux Homebrew install — yet the README advertised
 // `### Homebrew (macOS / Linux)` and told Linux readers it was "quickest" for
 // them.
 //
-// 🔴 IT FAILS IN BOTH DIRECTIONS.
+// 🔴 IT FAILS IN BOTH DIRECTIONS, AND BOTH DIRECTIONS COVER THE SAME THREE
+// SURFACES. The forward branch used to demand three things (heading, Install
+// intro, section refusal) while the reverse branch checked only that the refusal
+// was gone — so adding a `brews:` stanza AND deleting only the refusal left the
+// suite green with the heading still scoped `(macOS)` and the intro still saying
+// Homebrew is macOS-only, which is the exact steering-Linux-users-away failure
+// this guard's own summary claims to prevent.
 //   - No `brews:` stanza (today): the heading must not name Linux, the Install
-//     intro must not pitch Homebrew at Linux, and the section must carry the
-//     refusal above.
-//   - A `brews:` stanza appears (a real Linux formula is published): the refusal
-//     must be REMOVED. That is the silent direction — a stale "Linux is not
-//     supported" paragraph reads as a current rule and would send Linux users
-//     away from an install that works.
+//     intro must carry the macOS-exclusivity clause and must not pitch Homebrew
+//     at Linux, and the section must carry the refusal above plus its reason.
+//   - A `brews:` stanza appears (a real Linux formula is published): the refusal,
+//     its `.goreleaser.yaml` reason, the intro's exclusivity clause and a
+//     macOS-scoped heading must ALL be gone. That is the silent direction — a
+//     stale "Linux is not supported" claim on ANY of those surfaces reads as a
+//     current rule and would send Linux users away from an install that works.
 func TestREADMEHomebrewSectionMatchesTheReleaseConfig(t *testing.T) {
 	top, _ := readGoreleaserConfig(t)
 	_, hasBrews := top["brews"]
@@ -194,14 +266,46 @@ func TestREADMEHomebrewSectionMatchesTheReleaseConfig(t *testing.T) {
 			"'wrong text read', not 'claim corrected'", intro)
 	}
 
+	flatIntro := flattenWS(intro)
+	// The help text itself, not the whole file: a match anywhere in upgrade.go
+	// would count a code comment as a user-facing claim.
+	flatUpgradeLong := flattenWS(upgradeLongText(t, readUpgradeSource(t)))
+
 	if hasBrews {
-		// Reverse direction: a Linux formula now exists.
+		// Reverse direction: a Linux formula now exists. Every surface the forward
+		// direction pins has to be un-pinned, not just the refusal sentence.
+		const because = ".goreleaser.yaml now carries a top-level `brews:` stanza — a Homebrew FORMULA, " +
+			"which DOES install on Linux"
 		if strings.Contains(flatBody, flattenWS(homebrewMacOSOnlyClaim)) {
-			t.Errorf(".goreleaser.yaml now carries a top-level `brews:` stanza — a Homebrew FORMULA, which "+
-				"does install on Linux — but README's `### %s` section still says %q.\n\n"+
+			t.Errorf("%s — but README's `### %s` section still says %q.\n\n"+
 				"Delete that refusal and re-advertise Linux. A stale 'not supported' paragraph is worse than "+
 				"none: it reads as a current rule and steers Linux users away from an install that works.",
-				heading, homebrewMacOSOnlyClaim)
+				because, heading, homebrewMacOSOnlyClaim)
+		}
+		if strings.Contains(flatBody, homebrewNoFormulaClaim) {
+			t.Errorf("%s — but README's `### %s` section still states the old reason %q, which is now "+
+				"FALSE about the very file this guard just parsed.\n\n"+
+				"The reason is what makes the refusal checkable; leaving it behind gives a reader a "+
+				"verifiable-looking claim that the config contradicts.", because, heading, homebrewNoFormulaClaim)
+		}
+		if strings.Contains(flatIntro, homebrewMacOSExclusivityIntro) {
+			t.Errorf("%s — but the `## Install` intro still says %q:\n  %s\n\n"+
+				"The intro and the Homebrew section are separate surfaces and go stale ALONE (AGENTS.md; "+
+				"#371 shipped a two-of-three fix). A reader who never scrolls to the section is told here "+
+				"that Homebrew is macOS-only.", because, homebrewMacOSExclusivityIntro, flatIntro)
+		}
+		if regexp.MustCompile(`(?i)mac\s*os|macos|darwin`).MatchString(heading) &&
+			!regexp.MustCompile(`(?i)linux`).MatchString(heading) {
+			t.Errorf("%s — but README's Homebrew heading is still `### %s`, which scopes the install to "+
+				"macOS and never names Linux.\n\n"+
+				"The heading is the first and most-linked surface (`#homebrew-macos` is referenced from "+
+				"§Upgrading), so a Linux reader stops there. Widen it, or drop the platform from it.",
+				because, heading)
+		}
+		if strings.Contains(flatUpgradeLong, flattenWS(upgradeLongBrewMacOSScope)) {
+			t.Errorf("%s — but `civitai upgrade --help` still says %q.\n\n"+
+				"Help text is the surface a user reads INSTEAD of the README. Delete the macOS scoping "+
+				"there too.", because, upgradeLongBrewMacOSScope)
 		}
 		return
 	}
@@ -232,9 +336,30 @@ func TestREADMEHomebrewSectionMatchesTheReleaseConfig(t *testing.T) {
 				"a refusal with no next step is where a reader stops", heading, want)
 		}
 	}
-	if regexp.MustCompile(`(?i)homebrew[^.]*\blinux\b`).MatchString(flattenWS(intro)) {
+	if regexp.MustCompile(`(?i)homebrew[^.]*\blinux\b`).MatchString(flatIntro) {
 		t.Errorf("the `## Install` intro still pitches Homebrew at Linux:\n%s\n\n"+
-			"Only a cask is published; there is no Linux Homebrew install.", flattenWS(intro))
+			"Only a cask is published; there is no Linux Homebrew install.", flatIntro)
+	}
+	// 🔴 The POSITIVE half of the reverse branch's ban. Without this, "the intro
+	// must not claim macOS-exclusivity once a formula exists" is a check on a
+	// string that need never have been there — the shape that reads as coverage
+	// while providing none. Requiring it here makes the pair a real bidirectional
+	// pin on the ONE sentence a reader meets before any heading.
+	if !strings.Contains(flatIntro, homebrewMacOSExclusivityIntro) {
+		t.Errorf("the `## Install` intro does not scope Homebrew to macOS.\n\nwant (normalised, verbatim): %s\n\ngot:\n%s\n\n"+
+			".goreleaser.yaml has no `brews:` stanza, so `brew install civitai/tap/civitai` installs nothing "+
+			"off macOS. The intro is where a reader chooses an install method, and it has to say so there — "+
+			"not only in the section further down, which they may never reach.",
+			homebrewMacOSExclusivityIntro, flatIntro)
+	}
+	// 🔴 THE THIRD SURFACE. `civitai upgrade --help` announces the same Homebrew
+	// delegation and is what a user reads INSTEAD of the README.
+	if !strings.Contains(flatUpgradeLong, flattenWS(upgradeLongBrewMacOSScope)) {
+		t.Errorf("`civitai upgrade --help` announces the `brew upgrade civitai/tap/civitai` delegation "+
+			"without scoping it to macOS.\n\nwant (normalised, verbatim, in upgrade.go's Long): %s\n\n"+
+			".goreleaser.yaml publishes a CASK and no `brews:` formula, so that delegation resolves on "+
+			"macOS only. An unscoped sentence in help text is the version most users see — the README "+
+			"being right does not fix it.", upgradeLongBrewMacOSScope)
 	}
 }
 
@@ -317,11 +442,8 @@ func TestREADMEWindowsUpgradeCaveatMatchesTheReleaseFormats(t *testing.T) {
 	}
 
 	// The extension the CLI ASKS FOR, read out of the production source.
-	upgradeSrc, err := os.ReadFile(filepath.Join(repoRootDir(t), "internal", "cmd", "upgrade.go"))
-	if err != nil {
-		t.Fatalf("read internal/cmd/upgrade.go: %v", err)
-	}
-	m := upgradeAssetNameRe.FindAllStringSubmatch(string(upgradeSrc), -1)
+	upgradeSrc := readUpgradeSource(t)
+	m := upgradeAssetNameRe.FindAllStringSubmatch(upgradeSrc, -1)
 	if len(m) != 1 {
 		t.Fatalf("CONTROL failure: found %d asset-name template(s) matching %s in internal/cmd/upgrade.go, want exactly 1. "+
 			"Either the name is now built some other way (in which case re-derive this comparison rather than "+
@@ -331,7 +453,7 @@ func TestREADMEWindowsUpgradeCaveatMatchesTheReleaseFormats(t *testing.T) {
 	cliExt := m[0][1]
 
 	// A per-GOOS branch would make the single template above an incomplete read.
-	if regexp.MustCompile(`runtime\.GOOS\s*==\s*"windows"`).MatchString(string(upgradeSrc)) {
+	if regexp.MustCompile(`runtime\.GOOS\s*==\s*"windows"`).MatchString(upgradeSrc) {
 		t.Fatalf("internal/cmd/upgrade.go now branches on runtime.GOOS == \"windows\", so the single asset-name " +
 			"template this guard reads is no longer the whole story. Re-derive the comparison against the new code.")
 	}
@@ -366,6 +488,18 @@ func TestREADMEWindowsUpgradeCaveatMatchesTheReleaseFormats(t *testing.T) {
 	}
 	hasRowCaveat := strings.Contains(flattenWS(row), flattenWS(windowsUpgradeRowCaveat))
 
+	// 🔴 AND A THIRD: `civitai upgrade --help` itself. It is the surface a user
+	// reaches without opening the README at all, and it carried the unscoped
+	// claim for the entire life of the §Upgrading caveat. The expected sentence
+	// is BUILT from the two extensions derived above rather than hardcoded, so
+	// changing either side moves the expectation with it instead of leaving this
+	// asserting a string nothing produces.
+	longCaveat := fmt.Sprintf("This command asks for a .%s release asset, but Windows is published "+
+		"as a .%s, so the lookup never matches", cliExt, winExt)
+	flatUpgradeLong := flattenWS(upgradeLongText(t, upgradeSrc))
+	hasLongCaveat := strings.Contains(flatUpgradeLong, longCaveat) &&
+		strings.Contains(flatUpgradeLong, "Not on Windows.")
+
 	if cliExt == winExt {
 		if hasCaveat {
 			t.Errorf("internal/cmd/upgrade.go now asks for a .%s asset and .goreleaser.yaml publishes Windows as "+
@@ -378,7 +512,21 @@ func TestREADMEWindowsUpgradeCaveatMatchesTheReleaseFormats(t *testing.T) {
 				"row still says %q. Delete it there too — the row and the §Upgrading section state the same "+
 				"contract and go stale independently.", cliExt, winExt, windowsUpgradeRowCaveat)
 		}
+		if hasLongCaveat {
+			t.Errorf("the extensions AGREE (.%s asked, .%s published) but `civitai upgrade --help` still "+
+				"refuses Windows (%q). Delete it from upgrade.go's Long too — help text is the surface a "+
+				"user reads without opening the README, so a stale refusal there tells Windows users to "+
+				"do by hand what the command now does for them.", cliExt, winExt, longCaveat)
+		}
 		return
+	}
+	if !hasLongCaveat {
+		t.Errorf("`civitai upgrade --help` does not scope its own contract to the platforms it holds "+
+			"on.\n\nwant in internal/cmd/upgrade.go's Long (normalised): \"Not on Windows.\" … %q\n\n"+
+			"got (normalised, upgrade.go's Long):\n%s\n\nThe command asks for a `.%s` asset that is never "+
+			"published for Windows. AGENTS.md: the command surface, the README section and the "+
+			"Troubleshooting index each state the contract and each goes stale ALONE — this one did.",
+			longCaveat, flatUpgradeLong, cliExt)
 	}
 	if !hasRowCaveat {
 		t.Errorf("the `civitai upgrade` command-reference row does not scope the claim to the platforms it "+
@@ -504,6 +652,53 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 		t.Error("NO_COLOR=yes did not disable colour — the README says any non-empty NO_COLOR does, " +
 			"in contrast with CIVITAI_NO_COLOR=yes which does nothing")
 	}
+
+	// --- Leg 1c: `0`, the ONE value where the two contracts give OPPOSITE answers. ---
+	//
+	// 🔴 `yes` above is a value where the two rules AGREE in direction, so it
+	// cannot see the divergence the README's two new sentences state. `0` is the
+	// only value in boolValueCandidates where NO_COLOR (presence-only: it
+	// disables) and CIVITAI_NO_COLOR (parsed boolean: a real false, colour left
+	// alone) disagree, and it is the value the README names twice — "even
+	// `NO_COLOR=0` disables colour" and "an explicit `CIVITAI_NO_COLOR=0` is a
+	// real *false* that leaves colour alone (unlike `NO_COLOR=0`)".
+	//
+	// Mutation-measured: giving internal/ui's envSet the `v != "0"` clause that
+	// envTrue carries — `return ok && v != "" && v != "0"`, a one-clause
+	// "harmonise the two helpers" tidy-up — left the ENTIRE suite green (21 ok,
+	// 0 FAIL) while both of those sentences became false.
+	//
+	// CLICOLOR_FORCE stays `yes` here ON PURPOSE. io.Discard is not a TTY, so
+	// with no force-ON in play resolveMode's auto branch answers "colour off"
+	// regardless of whether NO_COLOR was consulted at all, and this assertion
+	// would pass vacuously under the mutant. The CLICOLOR_FORCE=yes check above
+	// is the positive control that force-ON really is in effect.
+	t.Setenv("NO_COLOR", "0")
+	ui.Configure(ui.Options{Writer: io.Discard})
+	if ui.EnabledFor(io.Discard) {
+		t.Error("NO_COLOR=0 did not disable colour, with CLICOLOR_FORCE=yes forcing it on. internal/ui " +
+			"reads NO_COLOR with envSet — PRESENT and non-empty, the VALUE is not parsed — so `0` " +
+			"disables colour like any other non-empty value. That is the no-color.org contract and the " +
+			"README states it outright. If envSet grew a `v != \"0\"` clause (harmonising it with " +
+			"envTrue, which legitimately has one for CLICOLOR_FORCE), the README is now wrong in two " +
+			"places: re-derive both, do not adjust this test.")
+	}
+	// The OTHER half of the same sentence, at the SAME value: CIVITAI_NO_COLOR is
+	// a parsed boolean, so `0` is a real false and leaves colour alone. Asserted
+	// here beside its counterpart rather than only inside the loop above, because
+	// the published claim is the CONTRAST between the two, not either half.
+	t.Setenv("CIVITAI_NO_COLOR", "0")
+	vpZero := viper.New()
+	if err := vpZero.BindEnv("no_color", "CIVITAI_NO_COLOR"); err != nil {
+		t.Fatalf("BindEnv: %v", err)
+	}
+	if vpZero.GetBool("no_color") {
+		t.Error("CIVITAI_NO_COLOR=0 now disables colour. It is read as a BOOLEAN (GetBool → cast.ToBool " +
+			"→ strconv.ParseBool), so `0` is a real false that leaves colour alone — which is exactly " +
+			"the contrast the README draws against NO_COLOR=0, where the same value DOES disable. " +
+			"Re-derive both.")
+	}
+	t.Setenv("CIVITAI_NO_COLOR", "")
 
 	// --- Leg 2: the ledger, so the mechanism cannot change under the prose. ---
 	rootSrc, err := os.ReadFile(filepath.Join(repoRootDir(t), "internal", "cmd", "root.go"))
@@ -680,6 +875,17 @@ func readmeCivitaiCommandTables(t *testing.T, md string) []readmeCivitaiCommandT
 	return out
 }
 
+// onlySectionSlug renders the section set for the reverse branch's message. It
+// is a message helper, not a predicate: the branch is decided by len(sections).
+func onlySectionSlug(sections map[string]readmeCivitaiCommandTable) string {
+	slugs := make([]string, 0, len(sections))
+	for s := range sections {
+		slugs = append(slugs, s)
+	}
+	sort.Strings(slugs)
+	return strings.Join(slugs, ", ")
+}
+
 // readmeTOCEntry returns the `## Contents` list item linking `anchor`, including
 // its wrapped continuation lines (a TOC entry with a qualifier spans two lines,
 // and reading only the first would make the qualifier invisible to every
@@ -726,9 +932,21 @@ const tocCommandReferenceRetracted = "every command, one table"
 
 // TestREADMETOCCommandReferenceEntryNamesTheTableSplit pins the Contents entry
 // for `## Command reference` against a fact derived from the document itself:
-// there is MORE THAN ONE `civitai …` command table, they carry DIFFERENT schemas
-// (`| Command | What it does |` vs `| Command | What it does | Notable flags |`)
-// and they sit in DIFFERENT `##` sections.
+// there is MORE THAN ONE `civitai …` command table, and they sit in DIFFERENT
+// `##` sections.
+//
+// 🔴 THE SECTION COUNT IS THE WHOLE DERIVATION, and the schema count is
+// reporting detail only. The entry's claim is "the public-API reads have their
+// own [table]", which is true exactly while a `civitai …` command table exists
+// somewhere OTHER than `## Command reference` — a question about WHERE the
+// tables are, not about what columns they carry. The first version of this guard
+// gated the reverse branch on `len(sections) < 2 || len(schemas) < 2`, so
+// collapsing the read table's header from `| Command | What it does | Notable
+// flags |` to `| Command | What it does |` — pure formatting, both tables still
+// present in two sections — fired the reverse branch and told the reader "the
+// tables were merged … Re-derive it". Following that instruction deletes a
+// qualifier that is still true and republishes the defect the entry was written
+// to fix.
 //
 // 🔴 IT FAILS IN BOTH DIRECTIONS.
 //   - The tables are split (today): the entry must not tell a reader the section
@@ -769,13 +987,17 @@ func TestREADMETOCCommandReferenceEntryNamesTheTableSplit(t *testing.T) {
 	entry := readmeTOCEntry(t, md, "#command-reference")
 	flat := flattenWS(entry)
 
-	if len(sections) < 2 || len(schemas) < 2 {
-		// Reverse direction: one table, or two that are really the same table.
+	if len(sections) < 2 {
+		// Reverse direction: every `civitai …` command table now lives in ONE
+		// section, so there is no second table for the entry to point at.
 		if strings.Contains(flat, "have their own") {
-			t.Errorf("README.md now has %d `civitai …` command table(s) in %d section(s) with %d distinct "+
-				"schema(s), but the `## Contents` entry still says the public-API reads \"have their own\":\n  %s\n\n"+
-				"The tables were merged; the entry now promises a second table a reader cannot find. Re-derive it.",
-				len(tables), len(sections), len(schemas), flat)
+			t.Errorf("README.md now has %d `civitai …` command table(s), all inside the single `##` section "+
+				"%q, but the `## Contents` entry still says the public-API reads \"have their own\":\n  %s\n\n"+
+				"There is no longer a command table outside `## Command reference`, so the entry promises a "+
+				"second table a reader cannot find. Re-derive it.\n\n"+
+				"(If the tables are still in two sections and you are reading this, the derivation is wrong, "+
+				"not the prose — do NOT delete the qualifier.)",
+				len(tables), onlySectionSlug(sections), flat)
 		}
 		return
 	}
@@ -828,6 +1050,78 @@ const configPrecedenceClaim = "🔴 **Precedence is decided per setting; no one 
 // from the new block's presence. (Restoring it elsewhere in the document would
 // be just as wrong, so the check is over the whole README.)
 const retractedFlagWinsClaim = "the flag wins over the environment"
+
+// mentionDelims are the characters that, when they bracket an occurrence of
+// retractedFlagWinsClaim, mark it as a MENTION of the claim rather than an
+// ASSERTION of it.
+var mentionDelims = map[rune]bool{'"': true, '“': true, '”': true, '\'': true, '`': true, '‘': true, '’': true}
+
+// flagWinsRe matches retractedFlagWinsClaim case-insensitively. It is a regexp
+// rather than a strings.Index over a lowercased copy so that the match indices
+// address the ORIGINAL string — see readmeAssertsFlagWinsRule.
+var flagWinsRe = regexp.MustCompile(`(?i)` + regexp.QuoteMeta(retractedFlagWinsClaim))
+
+// readmeAssertsFlagWinsRule reports whether `flat` — a flattenWS-normalised
+// document — STATES the retracted rule, and returns the surrounding text of the
+// first such occurrence.
+//
+// 🔴 TWO BUGS IN THE PREDICATE THIS REPLACES, pulling in OPPOSITE directions.
+//
+// Too LOOSE: it ran `strings.Contains` on the RAW README while every other
+// whole-string pin in this file normalises first, so re-inserting "Where a
+// setting also has a flag, the flag wins over the\nenvironment." — the published
+// sentence, merely re-wrapped — restored the falsehood with the whole suite
+// green. Measured. Hence flattenWS, and hence case-insensitivity: the same
+// sentence opening a paragraph is capitalised and would have walked past too.
+//
+// Too STRICT: commit ef06edf legitimately wrote `"the flag wins over the
+// environment" was wrong for three of the four flags it covered` — a correct
+// NEGATION that has to quote the claim in order to retract it, and exactly the
+// sentence a future editor might want in the document itself. A ban on the bare
+// substring forbids the truth alongside the lie.
+//
+// 🔴 WHICH REPAIR, AND WHY. The brief offered two: pin the assertion (ban the
+// retracted SENTENCE whole) or scope the ban to a non-negated context. Pinning
+// the whole sentence was rejected: this file's own thesis is that a prose guard
+// on a fixed string is walkable by rewording, and "the flag wins over the
+// environment" is the CLAIM — republished in any other carrier sentence it is
+// just as false, so a sentence-shaped pin would be narrower than the hazard.
+//
+// So the ban is scoped, and scoped STRUCTURALLY rather than by negation
+// keywords: an occurrence bracketed by quotation delimiters is a mention (the
+// document is talking ABOUT the sentence), anything else is an assertion (the
+// document is telling the reader the rule). That is a property of two adjacent
+// characters, not a keyword search over prose, and it is validated in both
+// directions by TestReadmeAssertsFlagWinsRulePredicate — which is the point: the
+// instrument gets its own negative and positive controls before its verdict is
+// read. It does admit a contrived bypass (quoting the claim and then asserting
+// it anyway); a reworded bare restatement, the thing that actually happens, is
+// caught, and the alternative admitted a TRUE sentence being rejected.
+func readmeAssertsFlagWinsRule(flat string) (bool, string) {
+	// 🔴 The case-insensitive match is done with a regexp over `flat` ITSELF, not
+	// by searching a strings.ToLower COPY. Measured: lowercasing the README
+	// shifts byte offsets — Unicode has runes whose lowercase encodes to a
+	// different number of bytes — so indices taken from the copy pointed a few
+	// bytes off in the original, and the quotation delimiters this function reads
+	// were simply the wrong characters. A correctly-quoted retraction was scored
+	// as an assertion, which is the false-positive direction this whole exemption
+	// exists to remove. Caught by the F4ctl control in the revert matrix, not by
+	// the hand-written fixtures — they are pure ASCII and cannot drift.
+	for _, loc := range flagWinsRe.FindAllStringIndex(flat, -1) {
+		i, end := loc[0], loc[1]
+		before, _ := utf8.DecodeLastRuneInString(flat[:i])
+		after, _ := utf8.DecodeRuneInString(flat[end:])
+		if mentionDelims[before] && mentionDelims[after] {
+			continue // quoted: the document is retracting the claim, not making it.
+		}
+		lo := max(0, i-90)
+		hi := min(len(flat), end+90)
+		// The window is a byte slice of a normalised document, so it can land
+		// mid-rune; the caller only ever prints it.
+		return true, strings.ToValidUTF8(flat[lo:hi], "")
+	}
+	return false, ""
+}
 
 // TestREADMEConfigPrecedenceIsPerSetting ties the `## Configuration` precedence
 // block to the four independent mechanisms that decide it. Each leg reads the
@@ -962,12 +1256,14 @@ func TestREADMEConfigPrecedenceIsPerSetting(t *testing.T) {
 
 	// --- Leg 5: the document. ------------------------------------------------
 	md := readREADME(t)
-	if strings.Contains(md, retractedFlagWinsClaim) {
-		t.Errorf("README.md still contains the retracted claim %q. It is true of `--tunnel-endpoint` and "+
-			"false of the other three flags in the same table: `--token` is not a per-command override at "+
-			"all, `--color` LOSES to NO_COLOR, and `--no-update-check` is OR'd with its variable. An "+
-			"operator who reads that sentence and sets a flag to beat the environment gets the environment.",
-			retractedFlagWinsClaim)
+	if asserted, where := readmeAssertsFlagWinsRule(flattenWS(md)); asserted {
+		t.Errorf("README.md states the retracted claim %q, unquoted:\n  …%s…\n\n"+
+			"It is true of `--tunnel-endpoint` and false of the other three flags in the same table: "+
+			"`--token` is not a per-command override at all, `--color` LOSES to NO_COLOR, and "+
+			"`--no-update-check` is OR'd with its variable. An operator who reads that sentence and sets "+
+			"a flag to beat the environment gets the environment.\n\n"+
+			"Quoting the claim in order to REFUTE it is allowed and is not what fired here — see "+
+			"readmeAssertsFlagWinsRule.", retractedFlagWinsClaim, where)
 	}
 	body := readmeSectionByAnchor(t, md, "configuration")
 	if len(strings.TrimSpace(body)) < 800 {
@@ -983,5 +1279,124 @@ func TestREADMEConfigPrecedenceIsPerSetting(t *testing.T) {
 			"one is a silent loss of the only place that behaviour is written down. If the wording is being "+
 			"improved, change the constant and re-run the revert proof.",
 			configPrecedenceClaim, flattenWS(body))
+	}
+}
+
+// TestReadmeAssertsFlagWinsRulePredicate validates the INSTRUMENT before its
+// verdict above is read. readmeAssertsFlagWinsRule is the only place in this
+// file where a ban on published prose is SCOPED rather than absolute, so "it
+// returned false on today's README" is indistinguishable from "it can never
+// return true" until both controls have been watched to work.
+//
+// Negative control: can it go red at all? Every `wantAsserted: true` case is a
+// document it MUST reject, including the exact re-wrap that walked past the
+// predicate this replaces (measured: suite green, claim republished).
+//
+// Positive control on the exemption: can a true sentence survive? The quoted
+// cases are the shape commit ef06edf wrote — the claim mentioned in order to be
+// retracted — which the old substring ban would have rejected.
+func TestReadmeAssertsFlagWinsRulePredicate(t *testing.T) {
+	cases := []struct {
+		name         string
+		doc          string
+		wantAsserted bool
+	}{
+		{
+			name:         "the published sentence, verbatim",
+			doc:          "Where a setting also has a flag — `--token`, `--tunnel-endpoint`, and the colour and update-check flags — the flag wins over the environment. See",
+			wantAsserted: true,
+		},
+		{
+			name: "the same sentence re-wrapped — the measured walk-past",
+			// flattenWS is what the caller applies; this is its input shape.
+			doc:          flattenWS("Where a setting also has a flag, the flag wins over the\nenvironment.\n\nEverything in this table"),
+			wantAsserted: true,
+		},
+		{
+			name:         "capitalised at the start of a sentence",
+			doc:          "The flag wins over the environment, always.",
+			wantAsserted: true,
+		},
+		{
+			name:         "quoted and refuted — ef06edf's own wording",
+			doc:          `"the flag wins over the environment" was wrong for three of the four flags it covered`,
+			wantAsserted: false,
+		},
+		{
+			name:         "quoted inside a negation",
+			doc:          `There is no single "the flag wins over the environment" rule; precedence is per setting.`,
+			wantAsserted: false,
+		},
+		{
+			name:         "mentioned in typographic quotes",
+			doc:          "The README used to say “the flag wins over the environment”, which it no longer does.",
+			wantAsserted: false,
+		},
+		{
+			name:         "mentioned in backticks",
+			doc:          "The retracted `the flag wins over the environment` rule is gone.",
+			wantAsserted: false,
+		},
+		{
+			name:         "absent entirely — today's README",
+			doc:          "Precedence is decided per setting; no one rule covers all four flags.",
+			wantAsserted: false,
+		},
+		{
+			// \U0001f534 REGRESSION FIXTURE, and every ASCII case above is blind to
+			// it. The first implementation searched a strings.ToLower COPY and used
+			// the indices it got back to read delimiters out of the ORIGINAL.
+			// U+212A KELVIN SIGN lowercases to "k" \u2014 3 bytes to 1 \u2014 so any such
+			// rune earlier in the document slides every later offset, and the
+			// quotation marks the exemption depends on are then read as some other
+			// character entirely. A correct retraction scored as an assertion.
+			// Measured on the real README, by the seam control below.
+			name:         "quoted, behind a rune whose lowercase is SHORTER (index drift)",
+			doc:          "Temperature 300\u212a. There is no single \"the flag wins over the environment\" rule.",
+			wantAsserted: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, where := readmeAssertsFlagWinsRule(tc.doc)
+			if got != tc.wantAsserted {
+				t.Fatalf("readmeAssertsFlagWinsRule(%q) = %v, want %v (context: %q).\n\n"+
+					"This predicate decides whether a published falsehood is allowed to stand. If the "+
+					"expectation here is being changed, say which of the two failure directions "+
+					"(too loose: a reworded restatement slips through; too strict: a correct retraction is "+
+					"rejected) the change accepts.", tc.doc, got, tc.wantAsserted, where)
+			}
+			if got && where == "" {
+				t.Error("the predicate reported an assertion but returned no context — the failure message " +
+					"above it would name no location, which is how a guard gets deleted instead of obeyed")
+			}
+		})
+	}
+
+	// 🔴 SEAM CONTROL. Every case above is a hand-written fixture; none of them
+	// proves the predicate is wired to the DOCUMENT. Feed it today's real README
+	// with the retracted sentence spliced back in, exactly as the mutation did,
+	// and it must fire.
+	md := flattenWS(readREADME(t))
+	if asserted, _ := readmeAssertsFlagWinsRule(md); asserted {
+		t.Fatal("CONTROL failure: today's README already asserts the retracted claim, so the splice " +
+			"below cannot show anything — fix the README first")
+	}
+	spliced := md + " Where a setting also has a flag, the flag wins over the environment."
+	if asserted, where := readmeAssertsFlagWinsRule(spliced); !asserted {
+		t.Errorf("the retracted sentence spliced into the REAL README was not detected (context: %q). "+
+			"The fixtures above pass, so the predicate works on strings it was written against and not "+
+			"on the artifact it guards.", where)
+	}
+	// \U0001f534 AND THE OTHER DIRECTION, on the same artifact. A retraction that
+	// QUOTES the claim must survive being spliced into the real document, not
+	// only into an ASCII fixture \u2014 this is the case that caught the index-drift
+	// bug the fixture above now pins, and it is the difference between a guard
+	// that forbids a lie and one that also forbids the truth.
+	quoted := md + ` There is no single "the flag wins over the environment" rule.`
+	if asserted, where := readmeAssertsFlagWinsRule(quoted); asserted {
+		t.Errorf("a QUOTED retraction spliced into the REAL README was scored as an assertion "+
+			"(context: %q). The ASCII fixtures above accept it, so the predicate disagrees with itself "+
+			"depending on what precedes the match \u2014 which is an indexing bug, not a policy.", where)
 	}
 }
