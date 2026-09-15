@@ -157,6 +157,24 @@ None of this is pinned. All of it is maintainer-facing rather than user-facing.
 **Not on this list, deliberately:** the decision-rationale AGENTS.md sanctions as a
 double statement — the 10485760-byte submit ceiling, the listing media bounds — stays.
 
+🔴 **TWO PASSAGES ARE PERMANENTLY KEEP — do not re-propose them in a later phase.**
+Phase 2 deferred both as "behind an AGENTS.md trigger"; round 0 then read the decision
+files and found the triggers do **more** than require a read:
+- **`### Raw graphs`'s retraction paragraph.** `claudedocs/decisions/13-*.md` records that
+  a false *money* claim survived every green suite because this surface was unpinned. The
+  paragraph is the user-facing record that `"priority": "high"` priced at **28** against
+  **8** — an unmodelled graph key can more than triple a spend, and `--dry-run` is where
+  you would see it. User-facing money evidence, not archaeology.
+- **The icon re-encode measurement.** `claudedocs/decisions/25-*.md` states the CLI's icon
+  byte cap and the server's measure **different bytes** and that "the docs must not
+  conflate them". This paragraph is what prevents the conflation — item 25 requires it,
+  it does not merely permit it.
+
+⚠ **Phase 2's ~20,500 figure was a target and should not have been.** This doc labels its
+own per-cluster byte counts "judgement over sampled reads and **upper bounds**", so being
+"short" against one is meaningless — and chasing the last 6,100 would have cut both
+passages above. **The only binding number in this arc is the closing condition.**
+
 ## Phase 3 — compress (~41,000 bytes, no facts deleted)
 
 **Troubleshooting: 35,250 → 20,229. DONE (#625), and the ~13,000 target this doc
@@ -275,6 +293,15 @@ So the rule is about **audience**, not file size:
 (`internal/scaffold/…`, `examples/`, `schema/…`). The guard covers only three named
 files by design, and its own control comment names the uncovered ones without
 checking them.
+
+🔴 **AND THE SAME HAZARD IS REACHABLE BY DELETION, NOT ONLY BY CONVERSION.** Phase 2
+deleted one relative link as an unopenable `internal/` pointer — sanctioned by this
+doc's own phase-2 row — taking the control from **6 to 5 against a floor of 3**. The
+four remaining deletable ones are `examples/` ×3 and `schema/…`; deleting them leaves
+only `LICENSE` and the control `t.Fatal`s with *"only 1 relative FILE link target(s)
+survived normalisation"*, which reads as a broken normaliser rather than as your own
+cut. **Re-measure `checkedTargets` before deleting any relative link**, or widen the
+control first.
 
 🔴 **DO NOT "convert all five to absolute URLs" — this doc said to, and that would
 BREAK the guard enforcing the absolute-link rule.** `readme_contributor_links_test.go`
