@@ -459,3 +459,25 @@ Verbatim, including its original as-of line. CLOSED: read as recall, not live st
   CLAIM: `safeterm.go:49-55` justifies the helper by naming column-alignment and tabwriter
   row-forging, while guarding only `\n`. `via: code`
 
+
+
+---
+
+## Demoted from the handoff 2026-09-15 (fourth eviction)
+
+### 🔴 RESOLVED: the drift streak's end is now OBSERVED in a scheduled run, not inferred
+- as-of: 2026-09-14
+
+- **Symptom + exact repro:** rank 9's forcing function was stated in SCHEDULED runs ("red for 34
+  consecutive scheduled runs, last green 2026-08-11"), and the green run that motivated closing it
+  was a `workflow_dispatch` — the same workflow and job against the same tree, but not the
+  observation the claim was made in terms of.
+- **Observed (with values):** run **`34848144324`**, `event=schedule`, **2026-09-14T13:15 UTC**:
+  `drift=success`, **0 failing steps and 15 steps EXECUTED**, `notify=success`. The step count is
+  the load-bearing half — a run that SKIPPED its steps reports `success` too, which is exactly how
+  `cli-snapshot-refresh` (rank 14) reads green while doing nothing. The prior scheduled run,
+  `09-13T12:14`, was the last `failure`.
+- **Ruled out:** *"a dispatched run closes a claim stated in scheduled runs"* — **via: measurement**.
+  It did not; this run does. The gap was ~22 h and cost nothing but patience.
+- **Next probe:** none. Closing condition met, in the terms it was written in.
+

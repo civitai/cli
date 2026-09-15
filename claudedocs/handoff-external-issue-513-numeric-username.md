@@ -30,8 +30,9 @@ answered — starting with #513, and fix the API-side root cause behind it.
 - **Open, `civitai/cli`:** `#602` (shares `exitcodes_claims_test.go` with merged `#601` — rank 26)
   · `#608` (13 generate forgery sites), claimed by a concurrent session under
   `handoff-agent-setup-onboarding.md`'s rank 30, **not this doc's**.
-- **Open, platform — UNAUDITED and ORDER-DEPENDENT:** `event-engine-common#13` must merge BEFORE
-  `civitai#4839` re-pins it (rank 25).
+- **Platform PRs MERGED 09-15** (`5da5cc6467`, `d2218f54da`), **not deployed** — rank 25 carries
+  the probe that closes `cli#513`. 🔴 `Submodule Pin Guard` checks pin DIRECTION only, not
+  reachability from the submodule's `main`, so it passed on the orphaned pin too.
 - 🔴 **A SECOND live handoff doc exists here** (`handoff-agent-setup-onboarding.md`, concurrent
   session) with its OWN ranked list: **"rank N" in a commit subject may not mean this doc's rank
   N.** `claim-work` slugs derive from the DOC path, so the locks do not collide; readers do.
@@ -191,21 +192,11 @@ while two checks returned rc=0. Durable lesson: **a guard's DESCRIPTION claiming
 implementation** was four of seven rounds' findings, and the fix shape that ended it was to stop
 REPLACING assertions and start ACCUMULATING them. Residual: `devdocs#81`.
 
-### 🔴 RESOLVED: the drift streak's end is now OBSERVED in a scheduled run, not inferred
-- as-of: 2026-09-14
+### The drift streak — CLOSED and OBSERVED. Block demoted 2026-09-15
 
-- **Symptom + exact repro:** rank 9's forcing function was stated in SCHEDULED runs ("red for 34
-  consecutive scheduled runs, last green 2026-08-11"), and the green run that motivated closing it
-  was a `workflow_dispatch` — the same workflow and job against the same tree, but not the
-  observation the claim was made in terms of.
-- **Observed (with values):** run **`34848144324`**, `event=schedule`, **2026-09-14T13:15 UTC**:
-  `drift=success`, **0 failing steps and 15 steps EXECUTED**, `notify=success`. The step count is
-  the load-bearing half — a run that SKIPPED its steps reports `success` too, which is exactly how
-  `cli-snapshot-refresh` (rank 14) reads green while doing nothing. The prior scheduled run,
-  `09-13T12:14`, was the last `failure`.
-- **Ruled out:** *"a dispatched run closes a claim stated in scheduled runs"* — **via: measurement**.
-  It did not; this run does. The gap was ~22 h and cost nothing but patience.
-- **Next probe:** none. Closing condition met, in the terms it was written in.
+Verbatim in `claudedocs/refs/external-issue-513-numeric-username.md`. Everything load-bearing
+is in rank 9: scheduled run `34848144324`, `drift=success`, **0 failing steps / 15 EXECUTED** —
+the step count being what separates a green sweep from a green SKIP.
 
 ### 🔴 RESOLVED: `cli#591` round-4 F2 — the ordering is pinned at BOTH the sentinel and the code
 - as-of: 2026-09-14 · shipped in **`cli#601`** (`b727a83`)
@@ -308,13 +299,17 @@ REPLACING assertions and start ACCUMULATING them. Residual: `devdocs#81`.
     rebinds it. Flaked once on `#590`; re-run passed. It guards two POSITIVE CONTROLS, and a
     control that flakes trains the reflex of dismissing the one assertion that proves the harness
     works. forcing: none
-25. 🔴 **`civitai/civitai#4839` + `civitai/event-engine-common#13` are OPEN and MERGE ORDER
-    MATTERS.** #4839 pins the submodule to #13's BRANCH commit: **merge #13 first, then re-pin
-    #4839**. Neither has been audited — `/audit-pr` round 0 was offered and not run. Claim
-    `civitai-4768-numeric-username` is RELEASED. **Not verified by anyone: nothing was exercised
-    against a real Redis or a deploy** — the live probes measured the BUG, not the fix — and
-    `pnpm typecheck` does not cover `apps/event-engine` (that tree has its own command).
-    forcing: user — two open PRs on the main platform repo awaiting a merge decision.
+25. 🔴 **MERGED, NOT DEPLOYED — `cli#513` closes on a PROBE, never on the merge.**
+    `event-engine-common#13` `5da5cc6467`, then `civitai#4839` `d2218f54da` (re-pinned first —
+    #4839 pinned #13's BRANCH head, which the squash orphans). `#4768` auto-closed on the merge
+    and its body is amended in place: the Meilisearch root cause is RETRACTED there now.
+    **Still coercing at 02:1x UTC 09-15**, cache-busted MISS. Neither PR was audited.
+    **The closing probe — and the ONLY deploy signal available, since there is no version
+    endpoint and Cloudflare strips build headers, so BEHAVIOUR is all we get:**
+    `curl -sA '<UA>' 'https://civitai.com/api/v1/images?username=0222&limit=<vary>'` →
+    want **`"username":"0222"` QUOTED** with `cf-cache-status: MISS`. **Vary `limit` every run**
+    or you are reading the CDN, not the origin. Then close `cli#513`.
+    forcing: user — an external reporter waiting on a deploy nobody here controls.
 26. **`cli#602` merged-tree re-run — DELIBERATELY SKIPPED, operator's call 2026-09-14.** It shares
     `internal/cmd/exitcodes_claims_test.go` with the merged `#601` and was 1 commit behind at the
     time. `gh pr view` said `MERGEABLE`/`CLEAN`, which is the TEXTUAL claim only. The mechanical
