@@ -224,8 +224,10 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"the shared LENGTH cap on a single-line server operand, applied at exactly two sites — " +
 			"(*progressWriter).line and runGenerate's Buzz-balance warning — because those are the two " +
 			"surfaces with a MEASURED soft-wrap forgery. It is not inside safeTermSingle on purpose: that " +
-			"would truncate ~16 other operands, several of which (a SHA256 mismatch, an `unusable " +
-			"filename %q` refusal) exist to show the user exactly what the server sent"},
+			"would truncate EVERY other safeTermSingle operand in this package — 148 call sites when " +
+			"this was measured, against a draft of this row that said \"~16\" and was wrong by an order " +
+			"of magnitude — several of which (a SHA256 mismatch, an `unusable filename %q` refusal) " +
+			"exist to show the user exactly what the server sent"},
 
 	// --- download path ------------------------------------------------------
 	"printDownloadPlan": {"TestDownloadPlanSanitizesControlChars",

@@ -249,13 +249,20 @@ const serverTextEllipsis = "…"
 // forgery vector.
 //
 // It is applied at exactly TWO sites, and that is deliberate rather than a
-// staging post: putting the bound inside safeTermSingle would truncate ~16 other
-// operands — tabwriter cells, `%q`-rendered values, wrapped error causes — none
-// of which asked for it and several of which would lose information a user needs
-// (a SHA256 mismatch message, an `unusable filename %q` refusal). The two sites
-// are the ones with a measured soft-wrap forgery and an issue each. Widening the
-// set is a decision, not a refactor: add the site, measure its geometry, and give
-// it a row in safeTermCoveredBy.
+// staging post: putting the bound inside safeTermSingle would truncate EVERY
+// OTHER safeTermSingle operand in the package — tabwriter cells, `%q`-rendered
+// values, wrapped error causes — none of which asked for it and several of which
+// would lose information a user needs (a SHA256 mismatch message, an `unusable
+// filename %q` refusal). ⚠ NO FIGURE IS CARRIED HERE, AND A DRAFT THAT SAID
+// "~16" WAS WRONG BY AN ORDER OF MAGNITUDE. Re-derive it instead: the scan in
+// safeterm_userinput_test.go logs the live total across all three sanitizer
+// names (it read 208 when this was written, of which safeTermSingle held 148),
+// and `go test ./internal/cmd -v -run TestSafeTermIsNeverAppliedToUserTypedInput`
+// prints it. The PROPERTY is "all of them", which does not drift.
+//
+// The two sites are the ones with a measured soft-wrap forgery and an issue each.
+// Widening the set is a decision, not a refactor: add the site, measure its
+// geometry, and give it a row in safeTermCoveredBy.
 //
 // Order matters: the strip runs FIRST, so the budget is spent on what will
 // actually be printed rather than on runes safeTerm is about to remove.
