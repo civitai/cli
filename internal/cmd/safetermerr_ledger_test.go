@@ -56,6 +56,37 @@ func TestSafeTermErrCallersAreLedgered(t *testing.T) {
 			"downloadBlobTo", // download %s: %w
 			"downloadBlobTo", // install %s: %w
 		},
+		// civitai/cli#612 widened it again, and the single-line decision for
+		// these THREE was made deliberately rather than inherited:
+		//
+		//   - buildGenerateGraph's two sites wrap pkg/civitai's readError output
+		//     ("not found (404): <snippet>"). snippet KEEPS \n, and the result is
+		//     interpolated into `--checkpoint %d: %w` / `--lora %s: %w`, which
+		//     main.go prints as one `Error: …` line. There is no indentation
+		//     baseline and no block structure to preserve, so a newline there is
+		//     forgery and never layout.
+		//   - classifyGenerateError's FALL-THROUGH is the single chokepoint every
+		//     generate/workflows error with a *genapi.APIError passes through, and
+		//     the messages on the other side are genapi's one-line
+		//     `<what> (<status>): <server message>` sentences. The orchestrator's
+		//     multi-line FAILURE REASON — the one case indentContinuation exists
+		//     for — does NOT come through here: it is rendered by
+		//     serverReasonSuffix and printWorkflow, which stay on safeTerm +
+		//     indentContinuation.
+		//
+		// 🔴 ONE entry for classifyGenerateError, not two, and the missing one is
+		// deliberate: its !errors.As early return is MEASURED to carry raw ANSI
+		// (genapi interpolates the unparsed HTTP body into `unexpected %s
+		// response: %s`) and is still left ungated, because the same raw body is
+		// interpolated at SEVEN genapi sites of which only some come back through
+		// this function — so the fix belongs there, not here — and because that
+		// return is a pass-through pinned by identity. Read the comment at that
+		// return before "completing" this row.
+		"generate.go": {
+			"buildGenerateGraph",    // --checkpoint %d: %w
+			"buildGenerateGraph",    // --lora %s: %w
+			"classifyGenerateError", // the fall-through
+		},
 	}
 
 	// os.ReadDir + ParseFile, matching indentcontinuation_ledger_test.go and
