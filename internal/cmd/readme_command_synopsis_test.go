@@ -284,13 +284,36 @@ func TestREADMECommandSynopsesNameRealFlags(t *testing.T) {
 		t.Fatalf("CONTROL failure: parsed %d command-reference rows (want >= 20). The assertions above are "+
 			"vacuous at this count — the table extractor is reading the wrong block", rows)
 	}
-	if resolved < 25 {
-		t.Fatalf("CONTROL failure: resolved %d command paths against the Cobra tree (want >= 25). The "+
-			"assertions above are vacuous at this count — the synopsis parser is not finding command paths", resolved)
+	// 🔴 THESE TWO FLOORS ARE SET ABOVE THE ONE REGRESSION THIS FILE CALLS
+	// LOAD-BEARING, AND THAT IS THE WHOLE POINT OF THEIR VALUES.
+	//
+	// readmeUnescapeCells splits on UNESCAPED `|` only. It reads like an
+	// over-engineered strings.Split(row, "|") and invites exactly that
+	// "simplification" — which truncates every row whose synopsis uses `\|` to
+	// separate subcommands.
+	//
+	// MEASURED: with the splitter simplified, this test reports 25 rows / 25
+	// resolutions / 75 checks and PASSES, against real values of 25 / 33 / 89.
+	// Fourteen flag checks and eight command resolutions vanish — agent-setup's
+	// --agent/--dir/--check/--json/--dry-run, app create's --dir/--name/--slug/
+	// --yes, and the whole app listing subcommand chain — so the README could
+	// then name flags the CLI does not have, which is the hole this guard exists
+	// to close, reopened on a green suite.
+	//
+	// Hence resolved is floored ABOVE 25 and checks ABOVE 75: the documented
+	// regression has to fall THROUGH these floors rather than land on them. If a
+	// real change legitimately moves these counts, move the floors deliberately
+	// and re-measure the simplified-splitter mutant against the new values.
+	if resolved < 30 {
+		t.Fatalf("CONTROL failure: resolved %d command paths against the Cobra tree (want >= 30). The "+
+			"assertions above are vacuous at this count — the synopsis parser is not finding command paths. "+
+			"Exactly 25 is the signature of readmeUnescapeCells having been simplified to a plain "+
+			"strings.Split, which truncates every `\\|`-separated synopsis", resolved)
 	}
-	if checks < 60 {
-		t.Fatalf("CONTROL failure: checked %d long flags (want >= 60). The assertions above are vacuous at "+
-			"this count — the flag extractor is not seeing the bracketed synopses", checks)
+	if checks < 85 {
+		t.Fatalf("CONTROL failure: checked %d long flags (want >= 85). The assertions above are vacuous at "+
+			"this count — the flag extractor is not seeing the bracketed synopses. Exactly 75 is the "+
+			"signature of the simplified-splitter regression described above", checks)
 	}
 }
 
