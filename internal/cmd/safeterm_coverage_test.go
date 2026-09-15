@@ -306,7 +306,15 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"and no ESC byte survives. It DELIBERATELY ASSERTS NOTHING ABOUT TABS — this surface goes " +
 			"through ui.Warn, and lipgloss expands \\t to four spaces before the bytes reach the writer, " +
 			"so such a guard could never fire. Not reached under --dry-run. This row covers runGenerate's " +
-			"ONE safeTerm call; the function's many other surfaces answer to their own callees' rows",
+			"ONE safeTerm call; the function's many other surfaces answer to their own callees' rows. " +
+			"🔴 AND THE GATE BOUNDS THE RUNE CLASS, NOT THE LENGTH — RESIDUAL, MEASURED, STILL LIVE " +
+			"(civitai/cli#624, same class as #605). A soft wrap has no line-break rune, so safeTermSingle " +
+			"cannot see it: a 5,120-char balance error renders as ONE logical line of 5,224 runes with " +
+			"zero ESC and zero TAB, PASSING EVERY ASSERTION THE NAMED TEST MAKES, which an 80-column " +
+			"terminal lays out as ~66 rows mostly beginning at column zero with a counterfeit `Cost:` " +
+			"line. Reachable uncapped via appblocks.go:1185, which interpolates the WHOLE raw body on a " +
+			"200 that is not the expected envelope. This row does NOT claim length coverage, and the " +
+			"named test does not assert it — bounding the operand is #605's operator fork, not a #612 gate",
 	},
 	// 🔴 REPOINTED BY civitai/cli#575 R1, AND THE OLD NAME IS WHY THIS FIELD EXISTS.
 	// This row read TestGenerate_SanitisesServerStrings, which was TRUE until this
@@ -417,7 +425,9 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"ENDED IN A DISCLAIMER — \"the fall-through returns the transport's own error unchanged, which " +
 			"is not this function's surface\" — AND THAT SENTENCE IS RETRACTED (civitai/cli#612). It was " +
 			"the thing that kept the defect invisible: the fall-through is not an edge, it is the DOMINANT " +
-			"path (every 401/403/404/429/503, every 5xx, every unmatched 400), the error it returned " +
+			"path (every status whose MESSAGE matches none of the five needles — phrased by STATUS, as an " +
+			"earlier draft was, it wrongly implies a 403 reading \"account has been restricted\" lands here, " +
+			"when four of the five arms match status-agnostically and catch it first), the error it returned " +
 			"embedded genapi.serverMessage(raw) with no strip of ANY kind, and main.go prints it as " +
 			"`Error: <it>` — so raw ESC deleted that line and left a counterfeit `✓ Generation submitted` " +
 			"banner in its place. A ledger row that scopes a surface OUT is a claim, and this one was " +

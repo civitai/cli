@@ -195,8 +195,15 @@ const gupHostileTail = "\n\x1b[1A\x1b[2K✓ Generation submitted — workflow wf
 // to stderr. A test driving one of the five arms passes without ever executing
 // the defective path.
 //
-// The fall-through is the DOMINANT path: every 401/403/404/429/503, every 5xx,
-// and every 400 whose message matches none of the five needles.
+// The fall-through is the DOMINANT path: every status whose MESSAGE matches none
+// of the five needles.
+//
+// ⚠ Not "every 401/403/404/429/503, every 5xx, and every unmatched 400", which is
+// how an earlier draft put it in three files. FOUR of the five arms match
+// status-agnostically, so the documented 403 carrying "account has been
+// restricted" is caught by an arm and never arrives here. Only the fifth arm
+// tests a status. The subtests below use 503/429/500 because those messages match
+// no needle — not because those statuses are what reaches the fall-through.
 func TestClassifyGenerateErrorFallThroughCannotForgeALine(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

@@ -1269,10 +1269,18 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		// unreadable balance reads as "you have 0".
 		//
 		// 🔴 `berr` IS SERVER-CHOSEN TEXT AND HAD NO GATE AT ALL (civitai/cli#612
-		// F1). appapi.GetBuzzAccount's non-2xx arm is
-		// `fmt.Errorf("server returned %d: %s", status, serverMessage(raw))` and
-		// serverMessage returns the server's `message` VERBATIM, so raw ANSI
-		// passed straight through here — a wider class than #604's retained \n.
+		// F1). appapi.GetBuzzAccount reaches here by TWO arms, and an earlier
+		// draft of this comment named only the first:
+		//   - appblocks.go:2221, the non-2xx arm — `fmt.Errorf("server returned
+		//     %d: %s", status, serverMessage(raw))`, where serverMessage returns
+		//     the server's `message` VERBATIM.
+		//   - appblocks.go:1185, reached on a 200 whose body is not the expected
+		//     envelope — `fmt.Errorf("unexpected buzz.getBuzzAccount response:
+		//     %s", string(raw))`, which interpolates the ENTIRE RAW BODY with NO
+		//     CAP. #612 F1 named this arm explicitly; the first draft here
+		//     dropped it, which matters for the residual below.
+		// Either way raw ANSI passed straight through — a wider class than #604's
+		// retained \n.
 		// This line is printed immediately above confirmGenerate's real
 		// `Cost: … Buzz` line and `Generate? [y/N]:`, so a `\x1b[1A\x1b[2K` pair
 		// erased this warning and left a counterfeit `Cost:` line the SERVER wrote
@@ -1283,6 +1291,21 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		// forgery open. Pinned by
 		// TestGenerateBuzzBalanceWarningCannotForgeALine, which asserts the
 		// geometry and the escape class rather than the absence of any word.
+		//
+		// 🔴 RESIDUAL, MEASURED AND STILL LIVE — THE GATE BOUNDS THE RUNE CLASS,
+		// NOT THE LENGTH (civitai/cli#624, the same class as #605). safeTermSingle
+		// guarantees one line per line-break rune it can SEE, and a terminal's
+		// SOFT WRAP has no rune. Measured at this commit driving runGenerate: a
+		// 5,120-char balance error renders as ONE logical line of 5,224 runes,
+		// zero ESC, zero TAB — passing every assertion the named test makes —
+		// which an 80-column terminal lays out as ~66 rows, most of them starting
+		// at column zero with a complete counterfeit `Cost: 1 Buzz (balance
+		// 999999).` a few rows above the real one. The :1185 arm above is what
+		// makes it reachable without any cap at all. The repo owns a remedy it
+		// does not apply here — wrapServerText, used at exactly ONE site
+		// (workflows_list.go:253) — and cannot measure the width anyway, since
+		// x/term.GetSize appears nowhere. Recorded rather than fixed: bounding
+		// this is the operator FORK #605 already carries, not a #612 gate.
 		fmt.Fprintln(errw, ui.For(errw).Warn(fmt.Sprintf(
 			"could not read your Buzz balance (%v) — continuing without the balance check; verify with `civitai buzz`", safeTermSingle(berr.Error()))))
 	} else {
@@ -2171,14 +2194,23 @@ func classifyGenerateError(err error) error {
 	//
 	// 🔴 GATED — AND THIS IS THE DOMINANT PATH, NOT AN EDGE (civitai/cli#612 F2).
 	// civitai/cli#604 gated `shown` at the top of this function, but `shown` is
-	// read only by the five MATCHING arms above; everything else — every
+	// read only by the five MATCHING arms above; everything else — EVERY STATUS
+	// WHOSE MESSAGE MATCHES NONE OF THE FIVE NEEDLES — reached this return, where
+	// `err` is a *genapi.APIError whose Error() embeds genapi.serverMessage(raw)
+	// with NO strip at all and cmd/civitai/main.go prints it as `Error: <it>`.
+	// Measured: a cursor-up + erase-line pair deleted that `Error:` line and
+	// replaced it with a counterfeit `✓ Generation submitted` banner, so a FAILED
+	// generation read as a submitted one.
+	//
+	// ⚠ PHRASE IT BY MESSAGE, NOT BY STATUS. An earlier draft said "every
 	// 401/403/404/429/503, every 5xx, and every 400 matching none of the five
-	// needles — reached this return, where `err` is a *genapi.APIError whose
-	// Error() embeds genapi.serverMessage(raw) with NO strip at all and
-	// cmd/civitai/main.go prints it as `Error: <it>`. Measured: a cursor-up +
-	// erase-line pair deleted that `Error:` line and replaced it with a
-	// counterfeit `✓ Generation submitted` banner, so a FAILED generation read as
-	// a submitted one.
+	// needles", which is wrong in the REASSURING direction about which arms are
+	// which: FOUR of the five arms match status-agnostically (`has(...)` with no
+	// status test, deliberately — see their own comments), so the documented,
+	// expected 403 carrying "account has been restricted" is caught by an ARM and
+	// never reaches here. Only the fifth tests a status (`apiErr.Status >= 500 &&
+	// has("unknown ecosystem")`). The path is still dominant; the enumeration of
+	// statuses was never what made it so.
 	//
 	// safeTermErr, not safeTermSingle(err.Error()): it leaves errors.Is/As
 	// reaching the original, so civitai.TagStatus's sentinel and the
