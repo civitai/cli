@@ -12,7 +12,18 @@ corrections, a behaviour fix and four guards. No reduction has shipped yet. Phas
 |---|---:|---:|
 | arc start (`426288f`) | 4,179 | 310,647 |
 | after phase 1 (`f284d89`) | 4,234 | 314,712 |
-| projected after phases 2–3 | ~3,400 | ~249,000 |
+| after phase 3 (`#625`, measured) | 4,123 | 306,073 |
+| projected end of Option A | — | **~266,261** |
+
+🔴 **THE CLOSING CONDITION IS NOT REACHABLE UNDER OPTION A, and this is a measured
+correction to an earlier projection of ~249,000.** The handoff's closing condition is
+README ≤ 250,000 bytes. Recomputing from the phase-3 *measurement* rather than from the
+original estimate: 306,073 − 20,500 (phase 2 cuts) − 13,312 (command reference) − 6,000
+(Submit & auth preamble) = **266,261, a shortfall of 16,261**. The gap opened for two
+reasons: phase 1 *added* 4,065 bytes, and Troubleshooting floored at 20,229 rather than
+the 13,000 this doc projected (see Phase 3). **Either the closing condition moves to
+~270,000, or part of Option B is needed. That is an operator decision and has not been
+taken.**
 
 ## How it got here
 
@@ -85,13 +96,27 @@ scope — about eleven moves of headroom.
 Two exemptions exist, keyed by parent `##` name: `Exit codes` (6 generated children)
 and `Troubleshooting` (5 lookup buckets). That map is itself ledgered both ways.
 
-### 🔴 The unlock
+### 🔴 The unlock — and its two CORRECTIONS, measured by the phase-3 trial edit
 
-The 60 Troubleshooting rows are pinned on **column one only** — the 68 symptom
-strings must exist verbatim in non-test source.
-`internal/cmd/readme_troubleshooting_test.go` states in its own comments that it
-asserts nothing about the middle column. **That 35 KB of essay-length cause cells is
-the largest unpinned region in the file**, and it is where phase 3 operates.
+The 60 Troubleshooting rows are pinned on **column one** — the 68 symptom strings must
+exist verbatim in non-test source — and the cause cells are *mostly* free. That is what
+phase 3 operated on, and it worked: **−15,021 bytes, −42.6%** (#625).
+
+🔴 **CORRECTION 1 — "the middle column is pinned by NOTHING" was FALSE.** This section
+said so on the strength of a comment in `readme_troubleshooting_test.go`. **Rows 19 and
+20 ARE pinned.** Row 20's cause cell carries **nine** exact `strings.Replace` spans that
+`t.Fatal` when absent — including `"because validation reports the row above first. "`,
+*with a trailing space* — and both cells are additionally prose-parsed for positive and
+negative command attribution. They were left verbatim and are 969 bytes of the result.
+**Do not re-derive the original claim from that comment; the comment is narrower than
+the file.**
+
+🔴 **CORRECTION 2 — the gate this doc and every brief specified is TOO NARROW.**
+`go test ./internal/cmd/ -run 'README|Readme|readme'` matches **zero** of the guards on
+row 20's cell (`TestAttributionProseParser`,
+`TestAttributionProseCheckAcceptsCorrectProseAndRejectsMisattribution`) — verified by
+counting matches, which is 0. The narrow filter reports green while those frozen spans
+are unguarded. Use `-run 'Attribution|Troubleshooting|README|Readme|readme'`.
 
 ## Phase 2 — cut (~20,500 bytes)
 
@@ -111,11 +136,20 @@ double statement — the 10485760-byte submit ceiling, the listing media bounds 
 
 ## Phase 3 — compress (~41,000 bytes, no facts deleted)
 
-**Troubleshooting: 35,250 → ~13,000.** Sixty rows in a three-column table averaging
-~350 bytes *per line of file*, with individual cause cells at 2,952, 2,299 and 1,636
-bytes. A lookup table whose cells are essays is no longer a lookup table. Cap each
-cause cell at ~2 sentences plus the anchor it already carries; relocate the detail
-into the owning section. **The symptom column does not move** — it is the pinned half.
+**Troubleshooting: 35,250 → 20,229. DONE (#625), and the ~13,000 target this doc
+originally carried was BELOW THE FLOOR.** Sixty rows averaging ~350 bytes *per line of
+file*, cause cells at 2,952, 2,299 and 1,636. Each cell was capped at ~2 sentences plus
+the anchor it already carries, detail merged into the owning section. Symptom column
+byte-identical.
+
+🔴 **Why 13,000 was unreachable — the arithmetic this doc lacked until a trial edit
+produced it.** **7,081 bytes of the section are not cause cells at all**: the pinned
+symptom column, the link column, 60 row delimiters, five bucket headers, the preamble
+and the footer. A 13,000 target therefore allows 5,919 bytes across 60 cells = 99 bytes
+each — and rows 19–20 are frozen at 969 of that, leaving **85 bytes** for the other 58.
+That is one clause, not "what happened and what you do next". **At two sentences the
+floor is ~19–20 KB.** Every other projection below is of the same kind — derived from
+section sizes, not from a trial edit — so treat them as optimistic until one is run.
 
 **Command reference: 21,812 → ~8,500.** Twenty-five rows in which one cell is
 **3,794 bytes** (`agent-setup`, which inlines a per-agent MCP key table that already
@@ -196,7 +230,7 @@ checking them. Convert all five to absolute URLs.
 
 | option | result | cost |
 |---|---|---|
-| **A (chosen)** — cut, compress, reorder in place; maintainer content linked out | ~249,000 B (−20%) | README stays fully self-contained. No test changes beyond pinned prose being cut. 4–6 reviewable PRs. |
+| **A (chosen)** — cut, compress, reorder in place; maintainer content linked out | **~266,261 B (−14%)** — revised from ~249,000 after the phase-3 trial edit | README stays fully self-contained. No test changes beyond pinned prose being cut. 4–6 reviewable PRs. 🔴 **Does NOT meet the ≤250,000 closing condition.** |
 | B — A, plus deep reference to GitHub-only docs | ~180,000 B (−42%) | Relocates `Generate`'s five deep subsections (~22,900 B) and `Submit & auth`'s `####` blocks (~27,300 B). **Two of those are the golden-file and exact-stdout pins, so the tests must be repointed at the new path** — a docs edit becomes a code change. Tarball and cask readers lose the detail offline. |
 | C — split the read path into its own document | ~120,000 B (−61%) | Not recommended. That track is what a shipped README is for; moving it makes the offline binary's only documentation an App-authoring guide. |
 
