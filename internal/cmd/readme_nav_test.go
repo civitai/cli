@@ -384,11 +384,26 @@ const readmeTOCMinSubsections = 25
 // section, and a count floor that reddens if the exemption set grows enough to
 // hollow the gate out.
 //
-// Depth stops at `###`. `#### Which dotenv files end up in the bundle` is the
-// file's only fourth-level heading and it is NOT required, because the TOC is a
-// map of the document and a map that reproduces every leaf is the document. That
-// bound comes from readmeHeadingRe/readmeSections, so a `####` cannot be required
-// here and cannot be counted either.
+// Depth stops at `###`, and headings below it are NOT required, because the TOC
+// is a map of the document and a map that reproduces every leaf is the document.
+// That bound comes from readmeHeadingRe/readmeSections, so a `####` cannot be
+// required here and cannot be counted either.
+//
+// 🔴 THIS COMMENT USED TO NAME A COUNT, AND THE COUNT WAS FALSE — it said
+// `#### Which dotenv files end up in the bundle` was "the file's only
+// fourth-level heading". Measured 2026-09-15: there are FIVE `####` and TWO
+// `#####`, and every one of the seven sits under `## Submit & auth` — none
+// anywhere else in the file. So the sentence understated the unguarded set
+// sevenfold while reading as a deliberate, surveyed exemption, which is the
+// worse failure: `RULES.md` — "Reading as coverage while providing none is
+// worse than none, because it stops anyone looking."
+//
+// The bound itself is correct and deliberate; only the census was wrong. It is
+// stated WITHOUT a number on purpose. A count in a comment is a claim nothing
+// asserts on, so it goes stale silently the next time a `####` is added or a
+// section is reorganised — which is exactly what happened here. If you want the
+// number, run it: it is one `grep -c '^####' README.md` away, and that is a
+// cheaper and more honest answer than a stale literal.
 //
 // This asserts PRESENCE — that a heading has a TOC line pointing at its anchor.
 // It says nothing about whether the TOC's ORDER matches the document's, or about

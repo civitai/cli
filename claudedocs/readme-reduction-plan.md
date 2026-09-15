@@ -252,12 +252,30 @@ and should be **cross-linked** from the scripting section.
 lines, no internal map, no Contents sub-entries. Giving it 4–5 `###` also raises the
 subsection count, which helps the floor.
 
-🔴 **Phase 4 must fix a contradiction at TWO sites, not one.** `### Exit code 1` says
-the dirty-work-tree guard *"degrades rather than enforcing"*, which reads as the
-opposite of the no-commits-yet refusal that now lives under `##### What the
-dirty-work-tree guard counts as a change`. **The same clause exists a second time in the
-`app submit` command-reference row.** Fixing only the first leaves the contradiction
-live in the command table — the exact surface AGENTS.md says goes stale alone.
+🔴 **RETRACTED 2026-09-15, IN BOTH HALVES. The original read: "Phase 4 must fix a
+contradiction at TWO sites, not one" — there is no contradiction, and there is one site.**
+
+**The count.** Measured on `main`: `degrades rather than enforcing` appears at
+**`README.md:3961`** and nowhere else in the file, plus its generator
+`internal/cmd/exitcodes_doc.go:146`. The second copy this item sent phase 4 to fix was in
+the `app submit` command-reference row, and **#633's command-table rewrite removed it** —
+so the instruction outlived the thing it pointed at.
+
+**The contradiction.** The clause was read as the opposite of the no-commits-yet refusal
+under `##### What the dirty-work-tree guard counts as a change`. Read end to end, they are
+**two different cases and both sentences are true**. "Degrades" is scoped by its own
+em-dash clause to the *absence of git context*: `app_submit_dirty_guard.go:250-257` runs
+`rev-parse --is-inside-work-tree` and returns early when it errors or prints anything but
+`true` — no repo, a bare repo, or no `git` on `PATH`. A `git init` repo with no commits
+prints **`true`**, so the guard proceeds: `headCommit` fails leaving provenance empty
+(`:278`), `git status --porcelain` reports every file as `??`, and it takes the **ordinary
+refusal** branch. That is not a degrade.
+
+🔴 **So phase 4 must NOT "fix" this.** Doing so would mean editing byte-pinned generated
+text in `exitcodes_doc.go` to disambiguate something that is not ambiguous — and the
+former argument against it (*"in a PR whose requirement is give-back 0"*) is itself void
+now that the byte condition is deleted. The reason to leave it alone is that **it is
+correct**, which is the durable one.
 
 ## Phase 5 — improve the error messages, then delete the rows (NEW, operator-approved)
 
