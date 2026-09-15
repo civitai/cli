@@ -28,9 +28,17 @@ import (
 // call safeTerm", so `runGenerate`, which called it zero times, could never have
 // a row DEMANDED of it. The instrument was an enumeration of every value
 // interpolated into a writer or an `fmt.Errorf` on generate.go and
-// generate_wait.go — 102 sites at e4d4996, 103 at this commit, the +1 being a
-// comment below that quotes `fmt.Errorf(`. Re-run it and expect 103; a number
-// other than that is enumeration drift and not this comment's own line.
+// generate_wait.go, each operand traced to its origin.
+//
+// ⚠ DO NOT QUOTE A TOTAL HERE. An earlier draft said "102 sites at e4d4996, 103
+// at this commit … re-run it and expect 103", and the very next commit falsified
+// it by adding two more comment lines that quote `fmt.Errorf(` — the instrument
+// counts its own prose, so any number written beside it drifts the moment
+// anyone edits a comment in these files, and a reader who trusts the literal
+// goes hunting for an ungated operand that does not exist. Nothing asserts on
+// the total, so it is unpinned by construction: either pin it or stop quoting
+// it, and this file stops quoting it. The instrument is the ENUMERATION AND THE
+// TRACE, never the count it happens to produce.
 //
 // 🔴 THE ROW THIS CHANGE ADDS FOR `runGenerate` DOES NOT CLOSE THAT BLIND SPOT,
 // and an earlier draft of this comment claimed it did. GREW iterates the
@@ -94,10 +102,13 @@ func gupLines(s string) []string {
 //
 // It drives the REAL runGenerate with a balance seam that fails, which is the
 // only way to reach this line: it is skipped under --dry-run and fires on every
-// real spend run whose balance read fails. appapi.GetBuzzAccount's non-2xx arm
-// is `fmt.Errorf("server returned %d: %s", status, serverMessage(raw))` and
-// serverMessage returns the server's `message` VERBATIM, so the error's text is
-// server-chosen bytes.
+// real spend run whose balance read fails. The error's text is server-chosen
+// bytes on EVERY route — appapi.serverMessage ends `return
+// strings.TrimSpace(string(raw))`, so a response with no `message`/`error` key
+// yields the whole body, and the non-envelope-200 path interpolates
+// `string(raw)` directly. (An earlier draft named only the non-2xx arm; see the
+// call site in generate.go, which records why a route list is the wrong shape
+// for this claim.)
 func TestGenerateBuzzBalanceWarningCannotForgeALine(t *testing.T) {
 	render := func(t *testing.T, msg string) string {
 		t.Helper()
@@ -195,15 +206,13 @@ const gupHostileTail = "\n\x1b[1A\x1b[2K✓ Generation submitted — workflow wf
 // to stderr. A test driving one of the five arms passes without ever executing
 // the defective path.
 //
-// The fall-through is the DOMINANT path: every status whose MESSAGE matches none
-// of the five needles.
+// The fall-through is the DOMINANT path, not an edge.
 //
-// ⚠ Not "every 401/403/404/429/503, every 5xx, and every unmatched 400", which is
-// how an earlier draft put it in three files. FOUR of the five arms match
-// status-agnostically, so the documented 403 carrying "account has been
-// restricted" is caught by an arm and never arrives here. Only the fifth arm
-// tests a status. The subtests below use 503/429/500 because those messages match
-// no needle — not because those statuses are what reaches the fall-through.
+// ⚠ Two drafts tried to state the fall-through SET as a rule and both were false
+// — see classifyGenerateError's own comment for the pair and why neither a status
+// list nor a message list can describe it. The subtests below use 503/429/500
+// because those three messages match no needle, which is a property of the
+// FIXTURES; it is not a claim about which statuses reach the fall-through.
 func TestClassifyGenerateErrorFallThroughCannotForgeALine(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
