@@ -57,13 +57,14 @@ contract, and **packages/submits** it for review.
 - [Using an AI coding agent? Paste this](#using-an-ai-coding-agent-paste-this)
 - [Install](#install)
   - [npm (Node)](#npm-node)
-  - [Homebrew (macOS / Linux)](#homebrew-macos--linux)
+  - [Homebrew (macOS)](#homebrew-macos)
   - [Nix flake](#nix-flake)
   - [Prebuilt binary](#prebuilt-binary)
   - [Go install (from source, Go 1.25+)](#go-install-from-source-go-125)
 - [Quickstart: browse & download](#quickstart-browse--download)
 - [Quickstart: build an App Block](#quickstart-build-an-app-block)
-- [Command reference](#command-reference) — every command, one table
+- [Command reference](#command-reference) — one table of the authoring &
+  account commands (the public-API reads have their own)
 
 **Author an App**
 
@@ -129,8 +130,9 @@ contract, and **packages/submits** it for review.
 ## Install
 
 Pick whichever fits — **npm** is the most convenient if you already have Node
-(App authors usually do); Homebrew is quickest on macOS/Linux; the prebuilt
-binary needs no toolchain; `go install` builds from source.
+(App authors usually do); Homebrew is quickest **on macOS** (it is the only
+platform the tap covers); the prebuilt binary needs no toolchain; `go install`
+builds from source.
 
 ### npm (Node)
 
@@ -143,11 +145,21 @@ npm install -g @civitai/cli
 npx @civitai/cli --help
 ```
 
-### Homebrew (macOS / Linux)
+### Homebrew (macOS)
 
 ```bash
 brew install civitai/tap/civitai
 ```
+
+🔴 **macOS only — there is no Linux Homebrew install.** What lands in
+`civitai/homebrew-tap` is rendered by this repo's release config, and that
+`.goreleaser.yaml` carries no `brews:` (formula) stanza at all — `brews:` and
+`homebrew_casks:` are **goreleaser** stanzas, so that is the file to check, not
+the tap repository. Only a **cask** is ever published, a cask is a macOS-only
+concept, and the rendered one names `darwin` archives; on Linux, Linuxbrew
+included, there is nothing to install. Use [npm](#npm-node), the
+[Nix flake](#nix-flake), a [prebuilt binary](#prebuilt-binary) or
+[`go install`](#go-install-from-source-go-125).
 
 ### Nix flake
 
@@ -592,6 +604,13 @@ README. For the end-to-end walkthrough, see
 
 ## Command reference
 
+> **This table is the authoring & account half of the CLI — it is not every
+> command.** The **public-API read commands** — `civitai models`,
+> `model-versions`, `images`, `articles`, `collections`, `creators`, `tags` and
+> `users` — have their own table, with their flags, in
+> [Browse the public API](#browse-the-public-api); `civitai download` is
+> documented there and in [Download model files](#download-model-files).
+
 | Command | What it does |
 | --- | --- |
 | `civitai agent-setup [--track app\|api] [--agent <name>] [--dir <path>] [--check] [--json] [--dry-run]` | **Set up the coding agent you are using to build Civitai Apps.** Writes an `AGENTS.md` managed block into the project, a one-line `CLAUDE.md` shim **only when there is none**, and registers the two Civitai MCP servers (`https://mcp.civitai.com/mcp`, `https://orchestration.civitai.com/mcp`) in the detected agent's own config file — the path *and* the key name differ per agent (`servers` for VS Code, `mcp` for opencode, `context_servers` for Zed, `serverUrl` not `url` for Windsurf, a TOML `[mcp_servers.<name>]` for Codex), which is why this is a command. **Nothing is clobbered**: an existing `AGENTS.md` is appended to or has only its managed block replaced, an existing `CLAUDE.md` is never touched, an existing MCP config is merged into **key by key** (a header you added to a Civitai entry survives), a symlinked config is **followed** rather than replaced, and one that does not parse is refused by name — a refusal that no longer stops `AGENTS.md`/`CLAUDE.md` being written (`changes` gets a `blocked` row, `ok` is `false`, exit `1`), and a step that fails at **write** time reports itself the same way rather than exiting with an empty `--json` — as do `AGENTS.md` and `CLAUDE.md`, each with its own `blocked` row, the three writes being independent of one another. `--json` therefore has **three** shapes: `checks`, `changes`, or an `error` string with neither array when a run failed before any row could be built. A **usage** error goes to stderr alone and exits `2`; every other failure gets one of the three, including a `--dir` that cannot be `stat`ed at all, which exits `1`. A **JSONC** config is tolerated — comments **and trailing commas**, which is what Zed and VS Code themselves accept — but re-encoded, so neither survives and nor does key order; the run says so. 🔴 **It never writes a credential into any of those files** — most are project-scoped and get committed. Where the vendor documents environment-variable interpolation the `Authorization` header **references** `CIVITAI_TOKEN` in that vendor's own spelling (`${CIVITAI_TOKEN}` Claude Code, `${env:CIVITAI_TOKEN}` Cursor/VS Code/Windsurf, `{env:CIVITAI_TOKEN}` opencode, `bearer_token_env_var` Codex); where it documents none — **Zed and `--agent other`** — **no `Authorization` key is written at all** and the output names the header to add yourself, because a guessed syntax would send the literal `${CIVITAI_TOKEN}` as a bearer token. Never a placeholder either. 🔴 **The two servers differ on anonymous access**: `https://mcp.civitai.com/mcp` answers without a credential, `https://orchestration.civitai.com/mcp` returns `401` until a header is present — so a header-less config is useful but **not complete**. **It never authenticates** — the last thing it prints is to run `civitai login` yourself, which is a **separate store** from `CIVITAI_TOKEN` (your agent reads the environment, not this CLI's config). `--check` verifies a setup and writes nothing (**exit `1`** when a check failed); 🔴 **Three rows are reported and never fail the verdict** — `authenticated` (a complete but unauthenticated setup is `ok: true` and exits `0`), an **absent `Authorization` header**, and **`claude-md` for a non-`claude` agent** (every other agent reads `AGENTS.md` directly). Paths in `--json` are always absolute. `--track api` is a **recognised** value that exits `2` with a pointer, never a silent fall-back. The one step that does not happen and still exits `0` is `action: manual` — `--agent other`, or a user-scoped agent with no resolvable home — where there is no file for this CLI to write. See [Set up your coding agent](#set-up-your-coding-agent-agent-setup). |
@@ -616,7 +635,7 @@ README. For the end-to-end walkthrough, see
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Where the server recorded **an account of what happened** to a workflow, it is printed in full on indented lines under that workflow's row. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps, outputs, the Buzz transactions the server recorded for it, and **the account the orchestrator recorded** for the run where there is one (printed under *The server reported:*). This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with why they were excluded** rather than omitted — and where the excluded outputs died of *different* server-reported causes, each line names its own. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching) and [Reading a workflow's Buzz transactions](#reading-a-workflows-buzz-transactions). |
 | `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **You are billed for what it already delivered**; the orchestrator re-prices the rest server-side and this CLI cannot report the figure. Cancel because you no longer want the output. Asks for confirmation (default **no**); `--yes` skips the prompt and a non-TTY without it refuses. See [Generate](#listing-and-cancelling-workflows). |
-| `civitai upgrade [--force]` | **Self-update this binary in place** — resolve the latest GitHub release, verify its SHA-256 against `checksums.txt`, and replace the running executable. A Homebrew install delegates to `brew upgrade` instead; `--force` reinstalls anyway (and self-replaces a Homebrew install). See [Upgrading](#upgrading). |
+| `civitai upgrade [--force]` | **Self-update this binary in place** — resolve the latest GitHub release, verify its SHA-256 against `checksums.txt`, and replace the running executable. The asset it downloads follows the platform the release publishes — a `.zip` on Windows, a `.tar.gz` elsewhere. A **macOS** Homebrew install (the tap is macOS-only) delegates to `brew upgrade` instead; `--force` reinstalls anyway (and self-replaces a Homebrew install). See [Upgrading](#upgrading). |
 | `civitai version` | Print version / commit / build date. |
 | `civitai completion [shell]` | Generate a shell-completion script. |
 
@@ -3738,14 +3757,17 @@ civitai upgrade --force   # reinstall anyway
 ```
 
 The release is resolved from the **public** GitHub releases API — no token is
-ever sent — and the downloaded archive is verified against its SHA-256 entry in
-the release's `checksums.txt` before anything is replaced. A mismatch, or a
-release carrying no `checksums.txt` at all, **aborts and leaves the current
+ever sent — and the downloaded archive (a **`.zip`** on Windows, a **`.tar.gz`**
+everywhere else) is verified against its SHA-256 entry in the release's
+`checksums.txt` before anything is replaced. A mismatch, an archive that does not
+open, an archive whose binary is larger than the 64 MiB this upgrader will read,
+or a release carrying no `checksums.txt` at all, **aborts and leaves the current
 binary untouched**: it will not upgrade without integrity verification.
 
 If this binary came from Homebrew, `upgrade` does not self-replace it — it tells
 you to run `brew upgrade civitai/tap/civitai`, so the package manager keeps
-owning the file. `--force` overrides that and self-replaces anyway.
+owning the file. `--force` overrides that and self-replaces anyway. That path is
+**macOS-only**, because [the tap is macOS-only](#homebrew-macos).
 
 The other install paths update the way they normally do — `npm install -g
 @civitai/cli@latest`, `nix profile upgrade`, or re-running `go install …@latest`.
@@ -3763,8 +3785,8 @@ exception — it is **root-only**:
 | --- | --- |
 | `-v`, `--version` | **On the root command only.** `civitai --version` prints the version and exits; on a subcommand it is not a flag at all — `civitai app validate --version` fails with `unknown flag: --version` and exits `2`. From a script, use `civitai version` (version + commit + build date), which works from anywhere. |
 | `-h`, `--help` | Help for any command. `civitai --help` also prints the [exit-code](#exit-codes) contract. |
-| `--no-color` | Disable all colour and styling. Also via `NO_COLOR` or `CIVITAI_NO_COLOR`. |
-| `--color` | Force colour **even when stdout is not a TTY**. Also via `CLICOLOR_FORCE` or `CIVITAI_COLOR`. |
+| `--no-color` | Disable all colour and styling. Also via `NO_COLOR` (**any** non-empty value) or `CIVITAI_NO_COLOR` (**a boolean value only** — `1`/`true`/…; see below). |
+| `--color` | Force colour **even when stdout is not a TTY**. Also via `CLICOLOR_FORCE` (any non-empty value other than `0`) or `CIVITAI_COLOR` (**a boolean value only**). |
 | `--no-update-check` | Skip the background check for a newer release. Also via `CIVITAI_NO_UPDATE_CHECK`. |
 
 **The colour contract, for pipelines.** Colour is **off by default whenever
@@ -3777,9 +3799,21 @@ to override that, the precedence is fixed, highest first:
 3. otherwise: on if stdout is a TTY, off if it is not
 
 Off always beats on, so a `NO_COLOR` in the environment cannot be re-enabled by
-a `--color` further down a pipeline. `NO_COLOR` follows the
-[no-color.org](https://no-color.org) convention — *present and non-empty* is
-what counts, not the value.
+a `--color` further down a pipeline.
+
+🔴 **The `CIVITAI_*` pair is NOT interchangeable with the standard pair — it
+parses its value, and silently ignores anything it cannot parse.** `NO_COLOR`
+follows [no-color.org](https://no-color.org): *present and non-empty* is what
+counts, **not** the value, so even `NO_COLOR=0` disables colour.
+`CLICOLOR_FORCE` counts when present, non-empty and **not** `0`. But
+`CIVITAI_NO_COLOR` and `CIVITAI_COLOR` are read as **booleans**, so only twelve
+spellings mean anything — `1`, `t`, `T`, `TRUE`, `true`, `True` (on) and `0`,
+`f`, `F`, `FALSE`, `false`, `False` (off). Anything else — `yes`, `on`, `y`,
+`enabled`, `2`, an empty string — parses as **false** and does nothing at all,
+with no warning: `CIVITAI_NO_COLOR=yes` does **not** disable colour,
+`CIVITAI_NO_COLOR=1` does, and an explicit `CIVITAI_NO_COLOR=0` is a real
+*false* that leaves colour alone (unlike `NO_COLOR=0`). **When in doubt use
+`1`, or the plain `NO_COLOR` spelling.**
 
 🔴 **`--json` output is never styled**, at any of those settings. It is written
 without passing through the presentation layer at all, so `--json` is always
@@ -3852,13 +3886,24 @@ human output only.
 | Submit endpoint | — | `CIVITAI_SUBMIT_PATH` | `/api/v1/blocks/submit-version` |
 | Skip the update check | — | `CIVITAI_NO_UPDATE_CHECK` | unset (the check runs) |
 | dev-tunnel SSH endpoint | — | `CIVITAI_DEV_TUNNEL_ENDPOINT` | `sish.civitai.com:2224` |
-| Disable colour | — | `NO_COLOR`, `CIVITAI_NO_COLOR` | unset |
-| Force colour | — | `CLICOLOR_FORCE`, `CIVITAI_COLOR` | unset |
+| Disable colour | — | `NO_COLOR` (any non-empty value), `CIVITAI_NO_COLOR` (**boolean only**: `1`/`true`/…) | unset |
+| Force colour | — | `CLICOLOR_FORCE` (non-empty, not `0`), `CIVITAI_COLOR` (**boolean only**: `1`/`true`/…) | unset |
 | ⚠️ dev-tunnel channel debug log — **debug only, not supported surface** | — | `CIVITAI_DEVTUNNEL_DEBUG` | unset (no debug output) |
 
-Where a setting also has a flag — `--token`, `--tunnel-endpoint`, and the colour
-and update-check flags — the flag wins over the environment. See
-[Global flags](#global-flags) for the full colour precedence.
+🔴 **Precedence is decided per setting; no one rule covers all four flags.** Only
+the first of them is a plain flag-beats-environment override:
+
+- **`--tunnel-endpoint`** (`app dev-tunnel`) wins —
+  `CIVITAI_DEV_TUNNEL_ENDPOINT` is read only when the flag is empty.
+- **`--token`** is no override at all: it is a `civitai login` flag that
+  **writes** the key into the config file, and `CIVITAI_TOKEN` then beats that
+  file on every command — including the key `login --token` just stored. For a
+  one-off key, set `CIVITAI_TOKEN` for that invocation.
+- **The colour flags** invert it — *off beats on*
+  ([Global flags](#global-flags)), so `--color` **loses** to a `NO_COLOR` /
+  `CIVITAI_NO_COLOR` in the environment.
+- **`--no-update-check`** is OR'd with `CIVITAI_NO_UPDATE_CHECK`: either one
+  disables the check, and no flag re-enables it once the variable is set.
 
 Everything in this table except the last row is supported surface.
 `CIVITAI_DEVTUNNEL_DEBUG` is listed only so it is findable: it is a diagnostic

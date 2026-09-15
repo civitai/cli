@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"archive/tar"
+	"archive/zip"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -13,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -103,8 +106,61 @@ type fullRelease struct {
 	Assets  []releaseAsset `json:"assets"`
 }
 
+// The two archive formats this repo's release publishes. They are the goreleaser
+// `formats:` spellings AND the filename extensions, which is why one constant
+// serves both: `archives[civitai]` has no explicit `formats:` (goreleaser's
+// default is tar.gz) and one `format_overrides` entry pinning `goos: windows` to
+// zip.
+const (
+	archiveFormatTarGz = "tar.gz"
+	archiveFormatZip   = "zip"
+)
+
+// archiveFormatForGOOS returns the archive format `.goreleaser.yaml` publishes
+// for goos — which is also the extension of the release asset `civitai upgrade`
+// must ask for.
+//
+// 🔴 THIS IS A VENDORED MIRROR OF `.goreleaser.yaml`, AND IT IS THE FIX FOR
+// #613. Until this existed, runUpgrade built the asset name with a hardcoded
+// `.tar.gz`, so on Windows — where `format_overrides` publishes a `.zip` — the
+// lookup could never match and every `civitai upgrade` died with
+// `no release asset "civitai_…_windows_amd64.tar.gz"`. Neither file was wrong on
+// its own; the defect lived in the seam between them, which is why the parity
+// guard (TestUpgradeArchiveFormatsMatchTheReleaseConfig) drives THIS function
+// for every GOOS `.goreleaser.yaml` builds rather than grepping either file.
+//
+// Adding a `format_overrides` entry to `.goreleaser.yaml` without teaching this
+// function about it reddens that guard. Do not "simplify" it back to a constant.
+func archiveFormatForGOOS(goos string) string {
+	if goos == "windows" {
+		return archiveFormatZip
+	}
+	return archiveFormatTarGz
+}
+
+// releaseBinaryName returns the name the civitai executable has INSIDE the
+// release archive. goreleaser appends `.exe` on Windows, so extracting by the
+// bare name would fail on exactly the platform the zip path exists for.
+func releaseBinaryName(goos string) string {
+	if goos == "windows" {
+		return "civitai.exe"
+	}
+	return "civitai"
+}
+
+// releaseAssetName builds the ONE release-asset name runUpgrade asks for. It is
+// the single writer of that string: an inlined Sprintf elsewhere would reopen
+// #613 on whichever GOOS it got wrong.
+func releaseAssetName(version, goos, goarch string) string {
+	return fmt.Sprintf("civitai_%s_%s_%s.%s", version, goos, goarch, archiveFormatForGOOS(goos))
+}
+
 // Seams for tests.
 var (
+	// runtimeGOOS is runtime.GOOS behind a seam. runtime.GOOS is fixed at compile
+	// time, so without this the Windows zip path could not be exercised at all on
+	// the machine CI runs on — which is exactly how #613 shipped unnoticed.
+	runtimeGOOS = runtime.GOOS
 	// osExecutable resolves the running binary path; overridable in tests.
 	osExecutable = os.Executable
 	// evalSymlinks resolves symlinks; overridable in tests.
@@ -136,13 +192,14 @@ func newUpgradeCmd() *cobra.Command {
 		Long: `Download and install the latest civitai release, replacing this binary.
 
 The latest release is resolved from the public GitHub releases API (no token is
-ever sent). The downloaded tarball is verified against its SHA-256 checksum
-before anything is replaced — a mismatch aborts the upgrade and leaves the
-current binary untouched.
+ever sent). The downloaded archive — a .zip on Windows, a .tar.gz everywhere
+else — is verified against its SHA-256 checksum before anything is replaced; a
+mismatch aborts the upgrade and leaves the current binary untouched.
 
 If this binary was installed via Homebrew, upgrade delegates to:
     brew upgrade civitai/tap/civitai
-(use --force to self-replace anyway).`,
+(use --force to self-replace anyway). The release publishes a Homebrew CASK,
+which is macOS-only, so that delegation only leads anywhere on macOS.`,
 		Example: `  civitai upgrade
   civitai upgrade --force`,
 		Args: cobra.NoArgs,
@@ -194,14 +251,16 @@ func runUpgrade(out io.Writer, force, noUpdateCheck bool) error {
 		return nil
 	}
 
-	// Build the asset names for this platform.
+	// Build the asset names for this platform. The EXTENSION is derived per GOOS
+	// (#613): Windows is published as a .zip, everything else as a .tar.gz.
 	verNoV := strings.TrimPrefix(latest, "v")
-	tarName := fmt.Sprintf("civitai_%s_%s_%s.tar.gz", verNoV, runtime.GOOS, runtime.GOARCH)
+	archiveFormat := archiveFormatForGOOS(runtimeGOOS)
+	assetName := releaseAssetName(verNoV, runtimeGOOS, runtime.GOARCH)
 
-	tarURL := findAssetURL(rel, tarName)
-	if tarURL == "" {
+	assetURL := findAssetURL(rel, assetName)
+	if assetURL == "" {
 		return fmt.Errorf("no release asset %q for %s/%s — upgrade manually from %s",
-			tarName, runtime.GOOS, runtime.GOARCH, "https://github.com/civitai/cli/releases/latest")
+			assetName, runtimeGOOS, runtime.GOARCH, "https://github.com/civitai/cli/releases/latest")
 	}
 	sumsURL := findAssetURL(rel, "checksums.txt")
 	if sumsURL == "" {
@@ -211,43 +270,47 @@ func runUpgrade(out io.Writer, force, noUpdateCheck bool) error {
 	// Defense-in-depth on the transport: the asset URLs come from the release
 	// JSON, so pin scheme+host BEFORE fetching anything. An http:// or
 	// non-GitHub asset URL aborts the upgrade here — the binary is never touched.
-	if err := validateAssetURL(tarURL); err != nil {
+	if err := validateAssetURL(assetURL); err != nil {
 		return err
 	}
 	if err := validateAssetURL(sumsURL); err != nil {
 		return err
 	}
 
-	// Download the checksums and the tarball.
+	// Download the checksums and the archive. checksums.txt covers BOTH archive
+	// kinds (goreleaser hashes every uploaded artifact), so the zip path needs no
+	// weakening of the integrity gate below.
 	sums, err := download(ctx, sumsURL)
 	if err != nil {
 		return fmt.Errorf("download checksums: %w", err)
 	}
-	wantSum, ok := checksumFor(string(sums), tarName)
+	wantSum, ok := checksumFor(string(sums), assetName)
 	if !ok {
-		return fmt.Errorf("checksums.txt has no entry for %s — aborting", tarName)
+		return fmt.Errorf("checksums.txt has no entry for %s — aborting", assetName)
 	}
 
-	tarball, err := download(ctx, tarURL)
+	archiveBytes, err := download(ctx, assetURL)
 	if err != nil {
-		return fmt.Errorf("download %s: %w", tarName, err)
+		return fmt.Errorf("download %s: %w", assetName, err)
 	}
 
 	// MANDATORY: verify SHA-256 BEFORE we touch the binary on disk.
-	gotSum := sha256Hex(tarball)
+	gotSum := sha256Hex(archiveBytes)
 	if gotSum != wantSum {
 		return fmt.Errorf("checksum mismatch for %s: got %s, want %s — aborting upgrade (binary NOT replaced)",
-			tarName, gotSum, wantSum)
+			assetName, gotSum, wantSum)
 	}
 
-	// Extract the civitai binary from the verified tarball.
-	bin, err := extractBinaryFromTarGz(tarball, "civitai")
+	// Extract the civitai binary from the verified archive. A corrupt or
+	// truncated archive fails HERE, before applyUpdate is reached, so the running
+	// binary is left untouched rather than half-written.
+	bin, err := extractBinaryFromArchive(archiveBytes, archiveFormat, releaseBinaryName(runtimeGOOS))
 	if err != nil {
 		return fmt.Errorf("extract binary: %w", err)
 	}
 
 	// Atomically replace the running executable.
-	if err := applyUpdate(strings.NewReader(string(bin)), resolved); err != nil {
+	if err := applyUpdate(bytes.NewReader(bin), resolved); err != nil {
 		if isPermissionError(err) {
 			return fmt.Errorf("cannot replace %s: permission denied.\n"+
 				"Try one of:\n"+
@@ -356,10 +419,92 @@ func sha256Hex(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// extractBinaryFromArchive pulls the named file out of a verified release
+// archive, dispatching on the archive FORMAT rather than on runtime.GOOS.
+//
+// The format is an explicit argument so both branches are reachable from a test
+// on any host: runtime.GOOS is compile-time, and a zip path only Windows could
+// ever execute is a path nobody would ever have seen run (#613).
+func extractBinaryFromArchive(data []byte, format, name string) ([]byte, error) {
+	switch format {
+	case archiveFormatZip:
+		return extractBinaryFromZip(data, name)
+	case archiveFormatTarGz:
+		return extractBinaryFromTarGz(data, name)
+	default:
+		return nil, fmt.Errorf("unsupported release archive format %q — upgrade manually from %s",
+			format, "https://github.com/civitai/cli/releases/latest")
+	}
+}
+
+// readArchiveMember reads one archive member, REFUSING anything larger than
+// limit instead of silently truncating it.
+//
+// 🔴 io.LimitReader ALONE CANNOT TELL A FULL READ FROM A TRUNCATED ONE: it
+// returns exactly `limit` bytes with a nil error when the member is bigger, and
+// what this function returns is written over the RUNNING BINARY. A truncated
+// write would leave a corrupt executable where a working one used to be, with no
+// error anywhere. Reading limit+1 is what makes the overflow observable.
+//
+// limit is a parameter rather than maxDownloadBytes inline so the refusal can be
+// exercised without building a 64 MiB fixture.
+func readArchiveMember(r io.Reader, name string, limit int64) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > limit {
+		return nil, fmt.Errorf("%q in the release archive is larger than the %d-byte limit this "+
+			"upgrader reads — upgrade manually from %s",
+			name, limit, "https://github.com/civitai/cli/releases/latest")
+	}
+	return b, nil
+}
+
+// extractBinaryFromZip pulls the named file out of a zip archive — the format
+// `.goreleaser.yaml` publishes for `goos: windows`.
+func extractBinaryFromZip(data []byte, name string) ([]byte, error) {
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		// Zip entry names are always slash-separated (APPNOTE 4.4.17), so
+		// path.Base — not filepath.Base, which would not split on a non-Windows
+		// host. Matching the base name means a directory prefix does not matter.
+		if path.Base(f.Name) != name {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		b, err := readArchiveMember(rc, name, maxDownloadBytes)
+		// 🔴 THE CRC IS CHECKED BY THE READ ABOVE, NOT BY Close. Measured against
+		// Go 1.25's archive/zip (three corruption shapes, including through the
+		// io.LimitReader this uses): a member whose deflate stream is corrupt
+		// returns `zip: checksum error` from io.ReadAll, and rc.Close() then
+		// returns nil. So the `err` check below is what catches a corrupt archive;
+		// Close has nothing left to report and its error is deliberately dropped.
+		// A previous version of this code returned Close's error with a comment
+		// claiming it was the CRC site — that branch was dead and the comment was
+		// wrong, which invited deleting the check that actually works.
+		_ = rc.Close()
+		if err != nil {
+			return nil, err
+		}
+		return b, nil
+	}
+	return nil, fmt.Errorf("binary %q not found in archive", name)
+}
+
 // extractBinaryFromTarGz pulls the named file out of a gzip'd tar archive. The
 // goreleaser archive contains the binary at the top level (plus README/LICENSE).
 func extractBinaryFromTarGz(data []byte, name string) ([]byte, error) {
-	gz, err := gzip.NewReader(strings.NewReader(string(data)))
+	gz, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +523,7 @@ func extractBinaryFromTarGz(data []byte, name string) ([]byte, error) {
 		}
 		// Match by base name so a possible directory prefix doesn't matter.
 		if filepath.Base(hdr.Name) == name {
-			return io.ReadAll(io.LimitReader(tr, maxDownloadBytes))
+			return readArchiveMember(tr, name, maxDownloadBytes)
 		}
 	}
 	return nil, fmt.Errorf("binary %q not found in archive", name)
