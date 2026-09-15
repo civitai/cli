@@ -88,9 +88,31 @@ func wfJSON(status string) string {
 // production produces rather than a hand-rolled stand-in.
 func apiErrorWithStatus(t *testing.T, status int) error {
 	t.Helper()
+	return apiErrorWithMessage(t, status, "scripted")
+}
+
+// apiErrorWithMessage is the same construction with the SERVER's message chosen
+// by the caller.
+//
+// 🔴 IT EXISTS BECAUSE THE MESSAGE IS THE UNTRUSTED HALF AND apiErrorWithStatus
+// HARD-CODED IT. genapi.generateError interpolates the server's own `message`
+// into every arm and APIError.Error() returns that string verbatim, so a poll
+// reporter rendering the error renders attacker-chosen bytes. A fixture whose
+// message is always the literal "scripted" can never show that — the value has
+// no newline, no tab and no escape, so a guard measured against it passes with
+// or without a gate. The message travels through the real tRPC envelope so the
+// bytes under test are the ones serverMessage really unwraps.
+func apiErrorWithMessage(t *testing.T, status int, message string) error {
+	t.Helper()
+	body, merr := json.Marshal(map[string]any{
+		"error": map[string]any{"json": map[string]string{"message": message}},
+	})
+	if merr != nil {
+		t.Fatalf("CONTROL failure, not a finding: cannot encode the scripted error body: %v", merr)
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
-		_, _ = w.Write([]byte(`{"error":{"json":{"message":"scripted"}}}`))
+		_, _ = w.Write(body)
 	}))
 	t.Cleanup(srv.Close)
 	_, _, err := genapi.New(srv.URL, "tok").GetWorkflow(context.Background(), "wf_1")
@@ -99,6 +121,14 @@ func apiErrorWithStatus(t *testing.T, status int) error {
 	}
 	if genapi.StatusOf(err) != status {
 		t.Fatalf("built error carries status %d, want %d", genapi.StatusOf(err), status)
+	}
+	// POSITIVE CONTROL on the fixture itself: a caller that hands this a hostile
+	// message is about to assert something about how that message RENDERS, and a
+	// message the envelope swallowed would make every such assertion vacuous.
+	if !strings.Contains(err.Error(), message) {
+		t.Fatalf("CONTROL failure, not a finding: the scripted server message never reached the built "+
+			"error, so any assertion about how it renders would be measured on a string that never "+
+			"carried it:\n%s", err.Error())
 	}
 	return err
 }

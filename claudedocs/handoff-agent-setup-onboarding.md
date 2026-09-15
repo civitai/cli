@@ -17,56 +17,74 @@ pastes into any coding agent, which then sets that agent up to build Civitai
 Apps. Concretely — `developer.civitai.com/agent-setup/prompt.md` (a thin router)
 plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 
+- **closing-condition:** `check` — a BLIND dogfood run reaches a working setup:
+  an agent given only the hosted URL, allowed to work from the tool's own errors
+  and `--help` but **not** from reading source, ends with `civitai agent-setup
+  --check` reporting `ok: true` **and** `zsh -lic 'civitai --version'` printing
+  that same version in the USER's login shell, on a machine that did not build
+  it. 🔴 Both halves, because the doc already records the failure where only the
+  first held: `--check` returned `ok: true` from inside the agent's shell while
+  the login shell still printed 0.1.101. The `authenticated` sub-check is
+  reported and must NOT fail `ok` — stopping before auth is deliberate.
+  This is frozen as the condition this arc was opened on.
+
+🔴 **A SECOND EFFORT HAS ACCRETED IN THIS DOC AND IS NOT PART OF THAT CONDITION.**
+The `safeTerm` / terminal-line-forgery work — ranks 23, 28, 30, 31; issues #574,
+#604, #605, #612; ten merged PRs across #596…#616 — shares no code, no goal and
+no closing condition with agent-setup onboarding. It rode in because this doc was
+the queue every `/resume` drew from, and nothing refused it.
+
+Consequences a reader needs, because they change what a close-check means here:
+
+- **A close-check against the line above will read NOT ADDRESSED for reasons that
+  have nothing to do with the forgery work**, and vice versa. Do not resolve that
+  by widening the condition — later audits and asks open a NEW arc, they do not
+  extend a frozen one.
+- **The forgery effort has no closing condition of its own anywhere.** Its ranks
+  are individually closable (each issue carries a mechanical condition) but the
+  effort as a whole has no stated done-state. That is why "is this arc finished?"
+  has been answerable only by enumerating ranks.
+- This is the concrete form of rank 29's **"split by initiative"** step, and the
+  strongest argument for doing it: the prune is not only about bytes.
+
 ## State now
 
-**Rank 23 is DONE. cli#596 is MERGED (`752bf50`) and cli#574 is CLOSED by hand with evidence.**
+**Ranks 23 and 30 are both DONE and merged.** `generate`'s forgery class is closed to the
+extent its two issues defined it — and deliberately not further; see #612.
 
-- **cli#596** — seven commits, **five adversarial audit rounds** (round 0, a full nine-axis
-  round, then deltas 2/3/4/5). Merged 2026-09-14T06:49Z as `752bf50`.
-  **Verified by CONTENT, not by `gh pr merge`'s rc** (which returns 0 and prints nothing):
-  `git diff a8cfa88 origin/main` over the six touched files is EMPTY, with a positive control
-  (`pkg/civitai/retry.go` differs) proving the comparison can report a difference.
-  🔴 A whole-tree diff is NOT the check here — `origin/main` advanced twice mid-ladder
-  (`7467c62` → `b727a83` → `752bf50`), so the whole-tree diff is non-empty for reasons that
-  have nothing to do with whether your work landed. Diff the FILES YOU TOUCHED.
-- **Merged tree tested before merging, because the base moved:** `git merge-tree --write-tree
-  origin/main a8cfa88` → rc 0 (branch on the EXIT CODE — it prints no conflict markers), tree
-  `842a47f`; extracted and run: vet clean, **21 packages ok, 0 FAIL**. CI 13/13 SUCCESS.
-- **cli#574 CLOSED** — its own stated check re-run against post-merge `origin/main` at
-  `752bf50`, not against the branch: baseline green; delete `name = safeTermSingle(name)` from
-  `blobStatusError` (one occurrence, asserted before removal) → **rc 1**, `--- FAIL:
-  TestBlobStatusErrorCannotForgeALine`, **all four arms**, **no build error**. Both required
-  `safeTermCoveredBy` rows verified present, and the gate confirmed to sit ONCE above the
-  `switch`.
-- **cli#604 FILED AND WIDENED 7 → 13 sites.** Round 5 found six more surfaces reachable from
-  `waitAndCollect`: `printOutputURLs` (`generate.go:1591`, via `:1562` on `--no-download`),
-  `classifyGenerateError` (`:2039`), and both poll reporters
-  (`generate_wait.go:313/317/322/342/349`, via `:1441`).
-- **Claims:** `agent-setup-onboarding-23` RELEASED and verified absent from `--list`.
-- ⚠ **Other sessions' PRs open at handoff time, no file overlap with ours:** #600 (a DIFFERENT
-  handoff doc), #602 (source, the #423/#585 submit-ceiling follow-up).
-- 🔴 **The base clone was switched to another session's branch AGAIN** mid-session
-  (`test/pin-429-header-before-message`). Third occurrence in three sessions. All work here was
-  done in `cli-596b` and a throwaway `cli-handoff-r2`; nothing was written to the base clone.
+- **cli#596** — rank 23, merged `752bf50`. **cli#574 CLOSED** by hand against its own stated
+  check re-run on post-merge `origin/main`.
+- **cli#608** — rank 30, merged **`a29abb7`**. 16 server operands across `generate.go` and
+  `generate_wait.go` moved to `safeTermSingle`. **cli#604 CLOSED** with element-by-element
+  evidence. Verified by CONTENT with a WORKING positive control: `git diff de82ab3 origin/main`
+  empty over the payload files, while the same command against `8872a4c` reports 97 insertions
+  and against the PR base reports 9/9 — so the zero was earned, not a broken comparison.
+  Only two plain `safeTerm(` remain in those two files: `generate.go:144` (the deliberately
+  multi-line `serverReasonSuffix`) and `:1838` (a comment). `generate_wait.go` is fully gated.
+- **cli#615** — the pin bump, merged `652ba75`, **unfroze the repo** (below).
+- **Claims:** `agent-setup-onboarding-23` and `-30` both RELEASED and verified absent.
+- **Filed and OPEN:** **#605** (soft-wrap forgery on `download`'s progress line), **#612**
+  (three `generate` operands with NO gate at all). **#609 CLOSED as a duplicate** of #606.
+- 🔴 **The base clone was on another session's branch FOUR times this session.** All work was
+  done in dedicated worktrees; nothing was written to it. Check `git branch --show-current`
+  there before any operation.
 
 ### Honest limits
 
-- 🔴 **The ladder was ENDED ON THE STATED CRITERION, NOT ON A CLEAN ROUND.** Round 5 returned
-  three findings, all fixed. No round of this ladder ever came back clean. The full rationale
-  and the enumerated list of what is deliberately NOT fixed is posted on cli#596 — read it
-  there before assuming convergence.
-- 🔴 **The audit base rate for this arc is now SIX FOR SIX.** Every round that ran found
-  something: round 0 found the reachable branch #574's table missed; round 1 found four
-  surfaces the ledger claimed and did not drive; round 2 found a round-1 claim was FALSE;
-  rounds 3, 4 and 5 each found a defect the previous round's own FIX introduced.
-- 🔴 **`printOutputURLs` forges a row on STDOUT and is LIVE on `main`.** `safeTerm(*o.URL)`
-  into `fmt.Fprintf(out, "%d\t%s\n", …)`; a URL carrying `\n2\t<other>` writes a second
-  attacker-controlled numbered row on the surface the CLI documents for piping. Tracked in
-  #604; NOT fixed.
-- **Two reachability/measurement claims in the merged code rest on evidence nobody can re-run
-  from the tree:** the no-URL error's end-to-end reachability (proved with a throwaway driver;
-  no shipped test drives it through `runGenerate`), and the `\t`-expansion measurement that
-  justified deleting a tab assertion (scoped to lipgloss v1.1.0 as vendored).
+- 🔴 **`generate` is NOT wholly gated, and the #604 closure must not be read as saying so.**
+  #612 carries a WIDER class — raw ANSI, not just `\n`/`\t` — including `generate.go:1255`,
+  where the Buzz-balance warning forges a `Cost:` line **directly above the spend
+  confirmation**, and `:2108`, `classifyGenerateError`'s fall-through on the dominant error
+  path. Both live on `main`.
+- 🔴 **#612's threat model is OPEN and that is recorded on the issue.** I first assumed those
+  operands were server-minted (so exploitation needs a compromised backend). Not established:
+  the classifier matches on `has("unknown ecosystem")`, implying the server echoes requested
+  values, so an uploader-controlled resource name may reach the ungated fall-through with no
+  compromise at all. The cheap probe is a **`whatIf`/quote** call's raw error body — never a
+  submit, which charges.
+- **The audit base rate for this arc is now NINE FOR NINE.** Every round that ran found
+  something, including three that found a defect in the previous round's own fix — one of
+  them mine.
 
 ## Open investigations — live diagnosis state
 
@@ -409,49 +427,46 @@ before those rounds' commits were read back.
 
 ## Next steps (ranked)
 
-🔴 **Ranks 1–14, 18–24 are DONE — numbering preserved** so live `claim-work` slugs keep
-pointing at what they were taken for. **Rank 23 is now DONE too.** Open: **15, 16, 17, 25, 26,
-27, 28, 29, 30**.
+🔴 **Ranks 1–14, 18–24 and 30 are DONE — numbering preserved** so live `claim-work` slugs keep
+pointing at what they were taken for. Open: **15, 16, 17, 25, 26, 27, 28, 29, 31**.
 
-🔴 **Re-verify every item against live state before trusting it.** This session found rank 23's
-entry two audit rounds behind reality and rank 29 asserting a gate that does not exist.
-
-30. **civitai/cli#604 — 13 sites where a server-chosen string forges lines on `generate`.**
-    Widened from 7 during #596's ladder. The two that matter most are NOT in the original
-    table: `printOutputURLs` writes to **stdout** (the piping surface), and the poll reporters
-    run on **every** waiting generate rather than only the timeout path. Closing condition is
-    mechanical and amended in the issue: all 13 gated with `safeTermSingle`, per-site mutation
-    matrix, a **row-count** assertion for `printOutputURLs` (not a substring), and a
-    non-terminal status driven through `pollWorkflow`.
-    ⚠ Read the issue's note before writing any tab guard: `ui`'s lipgloss styles expand `\t` to
-    four spaces, so a tab assertion is INERT on a `ui`-styled surface and live only on bare
-    `fmt.Fprintf`.
-    forcing: security — a forged row on the surface users pipe into other commands.
+31. **civitai/cli#612 — three `generate` operands with NO gate at all.** The successor to
+    rank 30 and a wider class than it. `:1255` (Buzz-balance warning, forges a `Cost:` line
+    above the spend confirmation), `:2108` (`classifyGenerateError`'s fall-through — every
+    401/403/404/429/503 and 5xx), and `:995`/`:1007` (flagged **DERIVED, not measured** —
+    reproduce before fixing, close in writing if it does not reproduce).
+    🔴 **Do NOT close it against `git grep 'safeTerm('`** — that instrument is what missed all
+    three, because it only finds operands that already have a gate. The issue's condition is
+    the operand enumeration (every `fmt.*` site, each origin traced); hold the implementer to
+    it.
+    forcing: security — a forged price line on the screen before an irreversible spend.
 15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT re-verified
-    for two sessions. `/home/zach/workspace/civit/civitai-developer-docs`.
+    for three sessions. `/home/zach/workspace/civit/civitai-developer-docs`. One command
+    settles it either way; a gate nobody has checked in three sessions is a claim, not a fact.
     forcing: gate
-16. **`images search --help` sits 14 runes under the 1400 budget.** The guard PASSES.
-    ⚠ **RECOMMENDED FOR RETIREMENT.**
+16. **`images search --help` sits 14 runes under the 1400 budget.** ⚠ RECOMMENDED FOR
+    RETIREMENT.
     forcing: none
-17. **Most of this arc's PRs were not adversarially audited.** ⚠ **RECOMMENDED FOR CONVERSION,
-    not work** — the six-for-six base rate argues for auditing at MERGE time, which is a
-    practice.
+17. **Audit at MERGE time.** ⚠ RECOMMENDED FOR CONVERSION, not work — the nine-for-nine base
+    rate argues for a practice, not a backlog item.
     forcing: none
 25. **cli#579 — `saferune.Strip`'s doc claims a byte-for-byte subsequence.** Explicitly inert.
     forcing: none
-26. **cli#575 R2–R4.** ⚠ R2/R3 RECOMMENDED FOR DEFERRAL. R4 (~60 `label: value` sites) has the
-    real coverage value.
+26. **cli#575 R2–R4.** ⚠ R2/R3 RECOMMENDED FOR DEFERRAL. R4 has the real coverage value.
     forcing: none
 27. **cli#586 — three near-identical AST expression renderers.**
     forcing: none
-28. **The soft-wrap forgery has no tracking object.** Live on `main`, measured, outside #577's
-    scope.
+28. **The soft-wrap forgery — now TRACKED as #605, but NOT closed.** ⚠ Filing the issue closed
+    the *tracking* gap only; the residual is still live on `main`. Its condition is a FORK the
+    operator must pick: bound `p.name` and pin the display-row count, **or** accept the
+    residual in writing in `decisions/38` with the measurement. Re-measured this session with a
+    negative control (unpadded payload does NOT land at column zero at widths 100/120/132), so
+    the padding is load-bearing and this is a deliberate construction.
     forcing: security — a forged `(SHA256 verified)` reachable with no control runes at all.
-29. **This doc is over its byte ceiling — a real per-session cost, NOT a gate.** ❌ The
-    "reds `main`, every unrelated PR inherits it" claim is RETRACTED; see the 2026-09-14 gotcha.
-    Playbook, raising a number LAST: evict what has CLOSED, demote dated evidence to
-    `claudedocs/refs/agent-setup-onboarding.md` leaving a pointer, then split by initiative.
-    🔴 Do NOT satisfy it by deleting an open investigation, a gotcha or a ruled-out theory.
+29. **This doc is over its byte ceiling — a real per-session cost, NOT a gate.** ❌ The "reds
+    `main`" claim is RETRACTED (see the 2026-09-14 gotcha). Playbook, raising a number LAST:
+    evict what has CLOSED, demote dated evidence to `claudedocs/refs/agent-setup-onboarding.md`
+    leaving a pointer, then split by initiative.
     forcing: none
 
 ## Gotchas / decisions / dead-ends
@@ -1391,28 +1406,73 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   root, and `rm -f <copy>/.git` first (a worktree's `.git` is a FILE, so a commit in the copy
   lands on the real branch).
 
+### Added 2026-09-15 — rank 30, and three ways a guard can be wrong
+
+- 🔴 **A GUARD CAN BE WALKABLE BY THE VERY OPERAND IT GUARDS.** To stop a one-line assertion
+  falsely accusing a deliberately multi-line suffix, I split the rendered error on
+  `". The server reported:"` and asserted on the head. `workflowID` is server-origin and lands
+  BEFORE that marker, so an id of `"wf1. The server reported: ok\nSaved …"` moves the real
+  newline into the discarded tail. MEASURED: with the gate reverted, the test PASSED while a
+  fully forged line survived. `assertNoControlEscapes` could not see it either — it matches the
+  two-character `\n` that `%q` emits, not a raw newline. **The cure was structural, not a
+  better spelling:** the no-reason case asserts one-line over the WHOLE string (nothing to
+  split) with a `HasSuffix` control — the suffix is appended LAST, so it cannot be displaced by
+  anything spelled earlier — and the reason case SUBTRACTS the suffix it injected rather than
+  searching for a marker.
+- 🔴 **AN INSTRUMENT THAT ENUMERATES THE GUARDED CANNOT FIND THE UNGUARDED.** #604's closing
+  condition said to check with `git grep 'safeTerm('`. That finds operands that ALREADY have a
+  gate, so it is structurally incapable of finding one with none — and three such operands
+  existed, one on the same `fmt.Fprintf` as a gate the PR was adding. What found them:
+  enumerate every value interpolated into a writer or `fmt.Errorf` (102 sites across the two
+  files) and trace each origin. **Write the closing-condition CHECK against the hazard, never
+  against the helper's name.**
+- 🔴 **A REQUIREMENT AUTHORED BY A PRIOR AUDIT ROUND IS THE HIGHEST-SCRUTINY CLASS.** Round 0
+  attacked #604's condition — which I had written — and was right twice: the blind instrument
+  above, and a row-count invariant that would have fired a FALSE forgery on a valid response
+  (`Deliverable` does not require a URL, so nil-URL outputs legitimately leave numbering gaps).
+  Round 0 also declined to manufacture a deletion (4 examined, 0 cut) and argued the one
+  plausible cut should stay.
+- 🔴 **THE FREEZE CLASS RECURRED, AND A DISPATCHED RUN IS NOT THE SCHEDULED ONE.**
+  `pins-vs-published` (REQUIRED, `enforce_admins: true`) went red between the nightly's 14:03
+  run and 22:29 CI — app-sdk 0.39→0.40, blocks-react 0.49→0.50 — freezing every open PR.
+  Unfrozen by dispatching the repo's own `bump-scaffold-pins` via `workflow_dispatch`, which is
+  better than hand-editing pins because it builds the scaffold against the new SDK on a clean
+  runner. It opened #615 NOT as a draft, which per #530/#540 means that validation passed.
+  ⚠ This says nothing about whether the nightly will catch the next publish.
+- ⚠ **I FILED A DUPLICATE ISSUE (#609) BECAUSE I SKIPPED THE OPEN-PR SWEEP.** #606 was already
+  in flight on the same schema drift and landed while I wrote it. `claim-work`'s own rule says
+  the `gh pr list --state open` sweep is the only thing that catches an UNCLAIMED duplicate.
+  I then nearly filed a second duplicate for the revendor bot's failure — **#607 already
+  existed, auto-filed by the bot**. Searching first is what caught that one.
+- ⚠ **A "POSITIVE CONTROL" AGAINST AN IDENTICAL TREE PROVES NOTHING.** Verifying a merge by
+  `git diff <head> origin/main` over the touched files, my control sha happened to hold the
+  same content, so it returned empty too — an empty control read as confirmation. Pick a sha
+  that genuinely differs (97 insertions, 9/9) before believing the zero.
+
 ## How to verify
 
-**#574's own stated check, which is what closing it by hand must cite** — re-run against
-`origin/main` AFTER the merge, never against the branch:
+**#612's work, when it starts** — the closing condition's own check, which is NOT a grep for a
+helper name:
 
 ```bash
-# in a fresh worktree of post-merge origin/main, NOT the shared base clone
-go test ./internal/cmd -count=1                      # green
-# then revert the gate at generate_output.go's blobStatusError and re-run:
-go test ./internal/cmd -count=1; echo "rc=$?"        # want rc=1
+# enumerate every rendered operand on the two paths and trace its origin
+command grep -nE 'fmt\.(Fprint[^(]*|Errorf|Sprintf)\(' internal/cmd/generate.go internal/cmd/generate_wait.go | wc -l   # ~102
 ```
-The result must be **rc 1 with a named assertion failure**, not a build error — a build error
-means the mutation broke compilation and proves nothing about the guard.
 
-Also required by #574's condition: the six tabled sites route their server-derived argument
-through the gate with `blobStatusError` gated **once at the top**, and
-`safeTermCoveredBy["downloadBlobTo"]` and `["blobStatusError"]` carry rows whose `why` names
-them.
+**The forgery guards on `generate`, after any change there:**
 
-**Ladder gate before any of that:** round 3 (delta over `19455c0c..<new head>`) must return
-**no findings**. A clean round ends the ladder; do not run another to confirm it.
+```bash
+go test ./internal/cmd -count=1 -run 'ForgeALine|GeometryIsNotServerChosen|RowCountIsNotServerChosen|StaysMultiLine'
+# then revert ONE gate to plain safeTerm and confirm the named test dies with ITS OWN message
+```
 
-**Repo gates:** `make ci` AND `make lint` — `make ci` does not run lint, and this PR already
-hit that exact gap once (staticcheck ST1018 on a raw U+200B, `make ci` green while `make lint`
-was red).
+**The repo freeze, when `pins-vs-published` is red:**
+
+```bash
+CIVITAI_CHECK_PUBLISHED_PINS=1 go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -count=1
+gh workflow run bump-scaffold-pins.yml --ref main    # opens a PR; NOT a draft ⇒ the SDK build passed
+```
+
+**Repo gates:** `make ci` AND `make lint` — `make ci` does not run lint, and it does not run
+`schema-drift`, `pins-vs-published` or the other CI jobs either. A green `make ci` is a claim
+about four steps, not about the eight-job gate.
