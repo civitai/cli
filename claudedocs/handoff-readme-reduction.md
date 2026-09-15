@@ -16,18 +16,27 @@ Make `README.md` high-level: trim stale/maintainer noise, compress the two refer
 tables that have grown essay-length cells, reorganise so the reader paths stop
 interleaving, and link out what does not belong in a shipped file.
 
-closing-condition: check — `README.md` is at or below **270,000** bytes on `origin/main`
-AND `go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme'
--count=1` exits 0. Both are mechanical; run them and the arc is answerable without a
-judgement call.
+closing-condition: check — `go test ./internal/cmd/ -run
+'Attribution|Troubleshooting|README|Readme|readme' -count=1` exits 0 having run **>0**
+tests, AND `go test ./...` is green, AND each remaining named phase has landed or been
+withdrawn by a merged PR. Mechanical; no byte threshold.
 
-⚠ **Two operator amendments, 2026-09-15, both recorded so the original is not
-re-derived.** (1) The threshold was **250,000** and was moved *after* the phase-3 trial
-edit showed Option A lands at ~266,261 — changed deliberately rather than quietly
-missed; the arithmetic is in `claudedocs/readme-reduction-plan.md`. (2) The gate filter
-was `-run 'README|Readme|readme'`, which matches **zero** of the guards on the
+🔴 **THE BYTE THRESHOLD WAS DELETED ON 2026-09-15, AND THIS IS THE THIRD AND FINAL
+AMENDMENT TO IT — DO NOT RE-DERIVE IT.** Its history is the argument against it: set at
+**250,000**, moved to **270,000** after the phase-3 trial edit, provisionally moved to
+**276,000** after the phase-5 measurement, then dropped entirely when the change was run
+through `the-algorithm`. It was set three times by estimate and missed twice. Step 1 of
+that skill asks who *made* the requirement; the answer was a prior agent session, which
+the skill names as "a department, not a maker". Nothing in the repo, no user and no
+incident ever asked `README.md` to be a particular size — the arc's real goal, in this
+doc's own words, is that it be *high-level*, and the byte count was a proxy for that
+which drifted into being mistaken for the thing.
+
+⚠ **The gate-filter amendment still stands and is NOT part of that retraction.** The
+filter was `-run 'README|Readme|readme'`, which matches **zero** of the guards on the
 Troubleshooting table's two frozen cells — measured, and confirmed by a live mutant the
-narrow filter reported `ok` on.
+narrow filter reported `ok` on. Use the wide filter above. Measured 2026-09-15 it runs
+**76** tests; a run reporting `ok` with 0 tests is the failure this replaced.
 
 🔴 **The full measured plan is `claudedocs/readme-reduction-plan.md`** — constraint
 map, size map, cut list, compression targets, link-out policy, sequencing. Read it
@@ -35,7 +44,7 @@ before touching prose. This doc is state; that doc is the plan.
 
 ## State now
 
-**Five PRs merged this session. README is 282,312 bytes on `main` — down 28,335 (−9.1%) from the arc's start. The closing condition (≤270,000) is 12,312 away and NO named item closes it.**
+**Five PRs merged this session. README is 282,312 bytes on `main` — down 28,335 (−9.1%) from the arc's start. The byte threshold that used to sit here is GONE (see the closing condition above); size is still reported because it is the cheapest progress signal, but it is no longer a gate and no PR should be shaped to hit a number.**
 
 | | bytes |
 |---|---:|
@@ -88,22 +97,75 @@ also disagrees with itself: a comment near the error says "ANY model file".
 
 ## Next steps (ranked)
 
-1. **DECIDE THE CLOSING CONDITION — this blocks calling the arc finished.** 282,312 now, ≤270,000 required, gap 12,312. Phase 4 is byte-neutral by definition; phase 5 is unmeasured. Three options, recommendation first: **(a) measure phase 5 first** — sample how many Troubleshooting rows can actually be deleted once their error messages carry the remedy, then re-set the condition from a measurement rather than a fourth estimate; **(b) take Option B** — move `Generate`'s deep subsections and the `####` blocks to GitHub-only docs, reaches ≤270,000 but requires repointing the golden-file and stdout pins; **(c) move the condition to ~278,000** and record that it was set twice by estimate and missed twice.
-   forcing: gate — the arc's own closing condition is unreachable as written
+0. ~~**DECIDE THE CLOSING CONDITION.**~~ **CLOSED 2026-09-15** — the threshold was deleted, not re-set. See the closing condition at the top and the two retraction blocks under Gotchas. The measurement that killed option (a) is recorded below as "what phase 5 can actually yield".
+1. **Trial-cut `## Set up your coding agent (agent-setup)` — the strongest surviving step-2 candidate, and it is UNMEASURED.** 16,971 bytes, 264 lines, **zero subheadings**, documenting ONE command — 55% the size of the whole Command reference, which covers ~25. Meanwhile 103,879 bytes of rationale for the same command already sit correctly placed in `claudedocs/decisions/34`, `/35` and `/36` (maintainer content, GitHub-only). 🔴 **Do not turn that into a byte estimate — that is the mistake this arc made three times.** Do the trial edit, then report the number. Two constraints known up front: it is read by `readme_command_synopsis_test.go`, and giving it 4–5 `###` is worth doing on its own merits (265 unbroken lines have no internal map).
+   forcing: none — no gate rides on it now
 2. **Run the ladder on #635, then merge.** Round 0 + round 1; merge when a round returns no high-sev. Same grant as #611/#625/#630/#633.
    forcing: gate
 3. **Merge #623** so the plan and this handoff stop living only on a branch. No audit round has run on it (docs-only, no test surface — stated, not skipped silently).
    forcing: gate
 4. **#602** — operator's. Green on its own checks but `DIRTY` against main and degrading; its inclusive-ceiling correction must survive the rebase (see the note posted on it).
    forcing: gate
-5. **Phase 4 — the reorder.** Byte-neutral. Fixes the measured reader paths: the CI/`--json` reader currently travels 81% of the file to reach the exit-code contract, and the `listing status`-is-not-a-read warning sits ~36% in where a `--json` reader never passes it.
+5. **Phase 4 — the reorder.** Byte-neutral. Fixes the measured reader paths: the CI/`--json` reader currently travels 81% of the file to reach the exit-code contract, and the `listing status`-is-not-a-read warning sits ~36% in where a `--json` reader never passes it. **This is now the highest-value remaining phase**, because with the byte target gone the arc's goal is legibility, which is what a reorder buys and what a byte count never measured.
    forcing: none
-6. **Phase 5 — error messages.** Where the README says more than the binary, improve the Go error string and delete the row. 7 rows sit on an incident floor and may not be deleted; column 1 is pinned to the source string, so a message change moves both in one commit. Needs its own PR and audit round — it changes behaviour.
+6. **Phase 5 — error messages.** ⚠ **Re-scoped by measurement: it is a QUALITY item, not a size item.** Where the README says more than the binary, improve the Go error string and delete the row. Ceiling measured at ~5,465 bytes realistic (see below), so do it because the error should carry its own remedy — `AGENTS.md`: *"Make errors actionable — name the next command to run"* — not to move a number. Needs its own PR and audit round: it changes behaviour.
    forcing: none
 7. **#614** — `CIVITAI_NO_COLOR` value parsing. Genuinely optional.
    forcing: none
+8. **23 stale agent worktrees under `.claude/worktrees/`** (41 total in `git worktree list`). Noticed, not acted on: they make a whole-repo `grep` return a dozen copies of every hit, which is how one measurement in this session nearly got read off the wrong tree. `git worktree prune` plus removing the dead ones. Closing condition: `git worktree list | wc -l` returns a number the operator recognises as live-only.
+   forcing: none
 
 ## Gotchas / decisions / dead-ends
+
+### Added 2026-09-15 — what phase 5 can actually yield (the measurement that closed rank 1)
+
+Measured against the LIVE section on `main` at 282,312, not estimated. `## Troubleshooting`
+is 20,372 B / 61 data rows. Banded by cause-cell size, with the two floors re-derived
+from the tests rather than trusted from prose:
+
+| band | rows | row-bytes | phase 5 applies? |
+|---|---:|---:|---|
+| floor-protected | 9 | 2,732 | **no** — 7 from `…CoversTheRefusalsAuthorsActuallyHit`, 2 from `symptomAttributionsFloor`. Both are named-MEMBERSHIP guards, not counts, so add-one/delete-one does not defeat them |
+| cause cell <150 B | 17 | 3,047 | **no** — phase 3 already cut these to the bone; the only content left is the **exit code**, which the binary never prints as text |
+| 150–250 B | 19 | 5,465 | **partly** — the realistic target |
+| >250 B | 16 | 7,966 | **no** — see below |
+
+🔴 **The big cells are big for reasons a single error string structurally CANNOT
+absorb, and that is the finding.** Checked against live source: `SHA256 mismatch for`
+(737 B) and `could not read your Buzz balance` (446 B) — **both Go strings already carry
+their remedy** — `deleted the partial download`, and `verify with civitai buzz`. The
+README's extra bytes are *threat-model rationale*: why the uploader-supplied filename is
+sanitised, why the progress line is cut at 120 chars, what a wrap would forge at column
+zero. That is documentation of a security property and it does not belong in an error
+message. Others aggregate across call sites (`is an OFFSITE app` = 4 commands,
+`no such submission` = 3, `the server rejected this store-listing change (400)` = seven
+routes) or branch **two** exit codes off one message (`rate limited (429)`) — a table can
+say that and a per-site string cannot.
+
+**So: realistic yield ≤5,465 B.** The absolute ceiling is 16,478 B (delete all 52
+non-floor rows), capped by `len(symptoms) >= 15` to ~14,600 — which means deleting **46
+of 61 published rows**. That is precisely the repair
+`TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit`'s own comment forbids:
+*"Deleting a row to make the sibling green is exactly the repair this forbids."* It was
+offered as an option and rejected.
+
+⚠ **The crude instrument is recorded so nobody quotes it.** A regex pass scored "25 of
+49 located rows have no remedy-shaped token on the error line". It **overcounts** — it
+flags `SHA256 mismatch`, which we then showed by hand already carries its remedy. Use
+the band table, not the 25.
+
+### Added 2026-09-15 — Option B, measured live instead of estimated
+
+Recorded because it was offered and declined, so the numbers are not re-derived.
+`## Generate`'s five deep subsections = **26,289 B** (`Silent model substitution` 6,035,
+`Raw graphs` 5,632, `Waiting, downloading, re-attaching` 5,142, `What the server says
+went wrong` 4,968, `Listing and cancelling workflows` 4,512). `## Submit & auth`'s
+**un-pinned** `####` blocks = **10,490 B** (`What looks like a credential` 4,696,
+`How big can a bundle be?` 3,355, `What the packager left out` 2,439) — the dotenv block
+(10,353, golden-file) and the whoami blocks (5,841, exact-stdout) are excluded because
+moving them repoints a test and turns a docs edit into a code change. Declined on the
+link-out policy: `.goreleaser.yaml` ships only `README.md` and `LICENSE`, so every byte
+moved out is lost to tarball, Homebrew-cask and npm readers offline.
 
 ### Added 2026-09-15 — four audit rounds on #611
 
@@ -134,11 +196,36 @@ also disagrees with itself: a comment near the error says "ANY model file".
 
 ### Added 2026-09-15 — the README's structural cause
 
-- 🔴 **There is no README size ceiling and roughly a dozen assertions are FLOORS.**
-  `agents_size_test.go` caps AGENTS.md; nothing caps README. Meanwhile
-  `len(raw) > 10_000`, `links >= 40`, `subs >= 25`, `symptoms >= 15` all fire if it
-  shrinks. The suite punishes this file for shrinking and never for growing — that
-  asymmetry is most of how 429 lines became 4,234 in ten weeks.
+- 🔴 **RETRACTED 2026-09-15 — "the suite punishes this file for shrinking" WAS FALSE,
+  and it was load-bearing: it is the sole argument that motivated adding a README byte
+  ceiling.** The original claim read: *"There is no README size ceiling and roughly a
+  dozen assertions are FLOORS. `len(raw) > 10_000`, `links >= 40`, `subs >= 25`,
+  `symptoms >= 15` all fire if it shrinks… that asymmetry is most of how 429 lines
+  became 4,234 in ten weeks."* The first sentence is true. **The causal half is not.**
+  Every one of those numbers is a **positive control on an EXTRACTOR**, not a floor on
+  content volume, and each says so in its own failure message — `links < 40` prints
+  *"the link regex is reading the wrong text"*; `resolved < 30` prints *"the synopsis
+  parser is not finding command paths"*; `symptoms < 15` prints *"extracted only %d
+  symptom strings"*; `rows < 20` and `checks < 85` both print *"the assertions above are
+  vacuous at this count"*. They fire when a PARSER stops seeing text, which is exactly
+  what RULES.md's instrument-validation rule demands, and they are defended.
+  **The arc itself is the disproof**: four PRs cut 28,335 bytes — 9.1% — and **not one
+  floor fired**. A suite that punished shrinking would have gone red long before.
+  ⚠ So the structural cause of the growth is still **unexplained**. Do not fill that
+  gap with the next plausible mechanism; it is an open question, not a solved one.
+- 🔴 **AND THEREFORE: DO NOT ADD A README BYTE-CEILING TEST.** One was designed and
+  discarded the same day. Three independent reasons, each sufficient. (1) The floors
+  argument above is retracted, so the guard has no incident to point at — nobody has
+  ever reported harm from README size. (2) **The analogy to `agents_size_test.go` does
+  not transfer.** That ceiling is justified by a *mechanical* per-session cost:
+  `CLAUDE.md` line 1 is `@AGENTS.md`, so every byte is paid by every agent in every
+  session. **Nothing `@`-imports `README.md`** — verified by grep — so the cost it would
+  ration does not exist. (3) `the-algorithm` step 5 forbids it in terms: *"The fix for
+  over-guarding is NEVER another guard. No ratchet on test growth."* The design WAS a
+  ratchet. Note also what the AGENTS.md ceiling actually costs, from its own comment: it
+  needed a second constant (`agentsMaxBytesCeiling`) to stop the first being raised
+  instead of obeyed, plus a third test to assert that bound — the honest price of that
+  guard is three artifacts, not one.
 - **Only `README.md` and `LICENSE` ship** (`.goreleaser.yaml` archives). So "move it
   to AGENTS.md" loses user-reachable content. The sanctioned link-out is the absolute
   `https://github.com/civitai/cli/blob/main/<doc>` URL, which
@@ -172,10 +259,23 @@ also disagrees with itself: a comment near the error says "ANY model file".
 
 ## How to verify
 
+🔴 **This block was STALE and is the reason to distrust any copy of the gate you find
+elsewhere in this doc.** It still named `<= 250000` — a threshold already superseded
+twice at the top of the file and now deleted outright — and the NARROW `-run` filter the
+amendment above exists to replace. Both are corrected here; if you find a third copy,
+that one is stale too.
+
 ```bash
-# the arc's closing condition, both halves
-git -C <repo> show origin/main:README.md | wc -c          # target: <= 250000
-go test ./internal/cmd/ -run 'README|Readme|readme' -count=1
+# the arc's closing condition. There is NO byte threshold — see the top of this doc.
+# Report the size if you like, but nothing gates on it:
+git -C <repo> show origin/main:README.md | wc -c
+
+# the gate, WIDE filter, with its own positive control.
+# `ok` with 0 tests run is the failure this replaced — measured 76 on 2026-09-15.
+go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' -count=1
+go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' \
+  -count=1 -v | grep -c '^--- PASS\|^    --- PASS'      # must be > 0
+go test ./...                                            # 9 other packages read README
 
 # the guards phase 1 shipped, proven by reverting a correction
 #   each revert must fail on its OWNING guard, not a neighbour's

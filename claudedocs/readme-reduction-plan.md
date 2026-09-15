@@ -33,12 +33,22 @@ user-facing, unique, and has a section that genuinely owns it.** The evidence th
 works is the D1 trim: **−1,103 bytes, zero give-back, and MORE correct**, because an
 unpinned prose mirror of an error string can drift while the source string cannot.
 
-**2. The closing condition moved 250,000 → 270,000, deliberately.** Option A lands at
-~266,261: 305,329 − 20,500 (phase 2) − 13,312 (command reference) − 6,000 (Submit & auth
-preamble). The 250,000 bar was set before any trial edit and was missed by 16,261. ⚠ **That
-projection is itself optimistic** — it subtracts phases 2 and 4 *gross* while using phase
-3's *net*; if those give back at phase 3's rate the real figure is higher. The bar was
-changed rather than quietly missed, and Option B was declined.
+**2. 🔴 THE BYTE CLOSING CONDITION IS DELETED (2026-09-15). This item is kept only so
+the number is not re-derived from the arithmetic below.** It moved 250,000 → 270,000 →
+(briefly) 276,000 → gone. Option A's projection was ~266,261: 305,329 − 20,500 (phase 2)
+− 13,312 (command reference) − 6,000 (Submit & auth preamble); the 250,000 bar was set
+before any trial edit and missed by 16,261, and ⚠ **the projection is itself optimistic**
+— it subtracts phases 2 and 4 *gross* while using phase 3's *net*.
+
+**What killed it was step 1 of `the-algorithm`: name the maker.** No user, no incident
+and nothing in the repo ever asked `README.md` to be a particular size. The requirement
+was self-issued by a prior agent session — which that skill names as *"a department, not
+a maker"* — and the arc's stated goal is that the file be **high-level**, for which a
+byte count was a proxy that got mistaken for the thing. Set three times by estimate,
+missed twice. The gate is now the test filter alone; see the handoff. **A README byte-
+ceiling test was designed as the replacement and then discarded** — `README.md` is not
+`@`-imported the way `AGENTS.md` is, so the per-session cost that justifies *that*
+ceiling does not exist here, and step 5 forbids answering over-growth with a ratchet.
 
 **3. CLI error messages are now IN SCOPE (new phase 5).** Round 0 on #625 measured that
 **14 of 19 sampled cause cells were near-verbatim copies of strings the binary already
@@ -262,6 +272,21 @@ the moment of failure rather than requiring them to find a table, and it is **pi
 tests**, where the prose mirror is not — column 2 of that table is checked against
 nothing, so it can drift from the binary silently while column 1 cannot.
 
+🔴 **MEASURED 2026-09-15 — PHASE 5 IS A QUALITY ITEM, NOT A SIZE ITEM. Its realistic
+yield is ≤5,465 bytes.** Banding the live 61-row section by cause-cell size: 9 rows are
+floor-protected (2,732 B); 17 have cells under 150 B that phase 3 already cut to the
+bone, where the only remaining content is the **exit code** — which the binary never
+prints as text; 19 sit in the 150–250 B middle band (5,465 B) and are the real target;
+and the 16 cells over 250 B (7,966 B) are **not movable**, because what makes them long
+is threat-model rationale (`SHA256 mismatch for` explains why an uploader-supplied
+filename is sanitised and cut at 120 chars — and its Go string *already* carries the
+remedy), aggregation across call sites (`is an OFFSITE app` covers 4 commands), or two
+exit codes branching off one message (`rate limited (429)`). A table expresses those; a
+per-site error string cannot. The absolute ceiling — delete all 52 non-floor rows — is
+16,478 B, capped by `len(symptoms) >= 15` to ~14,600, i.e. deleting 46 of 61 published
+rows; that was offered and rejected. **So do this phase because an error should carry
+its own remedy, never to move a number.** Full table in the handoff.
+
 🔴 **Constraints.** `TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit` puts
 **7 rows on an incident floor** — those rows may not be deleted whatever their cell
 says; re-derive the list rather than trusting this sentence. Column 1 is pinned to the
@@ -317,8 +342,8 @@ still fail. Until then, leave the relative links alone.
 
 | option | result | cost |
 |---|---|---|
-| **A (chosen)** — cut, compress, reorder in place; maintainer content linked out | **~266,261 B (−14%)** — revised from ~249,000 after the phase-3 trial edit | README stays fully self-contained. No test changes beyond pinned prose being cut. 4–6 reviewable PRs. 🔴 **Does NOT meet the ≤250,000 closing condition.** |
-| B — A, plus deep reference to GitHub-only docs | ~180,000 B (−42%) | Relocates `Generate`'s five deep subsections (~22,900 B) and `Submit & auth`'s `####` blocks (~27,300 B). **Two of those are the golden-file and exact-stdout pins, so the tests must be repointed at the new path** — a docs edit becomes a code change. Tarball and cask readers lose the detail offline. |
+| **A (chosen)** — cut, compress, reorder in place; maintainer content linked out | **~266,261 B (−14%)** — revised from ~249,000 after the phase-3 trial edit | README stays fully self-contained. No test changes beyond pinned prose being cut. 4–6 reviewable PRs. ⚠ **The "does NOT meet the ≤250,000 closing condition" line that stood here is VOID — there is no byte closing condition any more** (2026-09-15). The figure is a projection, which is all it ever was. |
+| B — A, plus deep reference to GitHub-only docs | ~180,000 B (−42%) | **Offered 2026-09-15 and DECLINED.** Measured live rather than estimated: `Generate`'s five deep subsections = **26,289 B**; `Submit & auth`'s **un-pinned** `####` blocks = **10,490 B** (the dotenv golden-file block, 10,353, and the whoami exact-stdout blocks, 5,841, are excluded — moving them repoints a test and turns a docs edit into a code change). Declined on the link-out policy: `.goreleaser.yaml` ships only `README.md` and `LICENSE`, so every byte moved out is lost offline to tarball, Homebrew-cask and npm readers. |
 | C — split the read path into its own document | ~120,000 B (−61%) | Not recommended. That track is what a shipped README is for; moving it makes the offline binary's only documentation an App-authoring guide. |
 
 A and B are sequential, not exclusive.
@@ -335,8 +360,10 @@ A and B are sequential, not exclusive.
 6. The reorder **last**, when the pieces are their final size. A reorder diff over
    uncompressed text is unreviewable.
 
-Gate every step on `go test ./internal/cmd/ -run 'README|Readme|readme'` plus the
-full suite. `build-test` is a required status check, so a broken pin blocks the merge
+Gate every step on `go test ./internal/cmd/ -run
+'Attribution|Troubleshooting|README|Readme|readme'` — 🔴 **the WIDE filter; the narrow
+one this line used to name matches zero of the guards on the Troubleshooting table's two
+frozen cells, and reports `ok` over a live mutant** — plus the full suite. `build-test` is a required status check, so a broken pin blocks the merge
 rather than slipping through. `make ci` does **not** run lint — that is a separate CI
 job, and golangci-lint is not on the bare PATH here (`nix-shell -p golangci-lint`).
 
