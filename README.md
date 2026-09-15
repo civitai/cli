@@ -3760,8 +3760,9 @@ The release is resolved from the **public** GitHub releases API — no token is
 ever sent — and the downloaded archive (a **`.zip`** on Windows, a **`.tar.gz`**
 everywhere else) is verified against its SHA-256 entry in the release's
 `checksums.txt` before anything is replaced. A mismatch, an archive that does not
-open, or a release carrying no `checksums.txt` at all, **aborts and leaves the
-current binary untouched**: it will not upgrade without integrity verification.
+open, an archive whose binary is larger than the 64 MiB this upgrader will read,
+or a release carrying no `checksums.txt` at all, **aborts and leaves the current
+binary untouched**: it will not upgrade without integrity verification.
 
 If this binary came from Homebrew, `upgrade` does not self-replace it — it tells
 you to run `brew upgrade civitai/tap/civitai`, so the package manager keeps

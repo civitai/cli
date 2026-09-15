@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,10 +15,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"gopkg.in/yaml.v3"
 )
@@ -797,18 +800,39 @@ func readReleaseArchivePlan(t *testing.T) releaseArchivePlan {
 // see it, and `runtime.GOOS` being compile-time meant no test ON CI could
 // execute the branch at all.
 //
-// For EVERY GOOS `.goreleaser.yaml` builds, this asserts three things about the
-// production code, through the real functions rather than the source text:
+// For EVERY GOOS `.goreleaser.yaml` builds, this asserts four things — three
+// about the production code, through the real functions rather than the source
+// text, and one about the prose that PUBLISHES the same claim to users:
 //  1. `archiveFormatForGOOS(goos)` equals the format the release publishes.
 //  2. `releaseAssetName(...)` ends in that extension — so an extension inlined
 //     somewhere other than archiveFormatForGOOS is still caught.
 //  3. `extractBinaryFromArchive` can actually OPEN that format — so an override
 //     naming a format the CLI has no reader for fails here rather than on a
 //     user's machine after a verified download.
+//  4. The three surfaces that STATE the format in prose — the README's
+//     `## Upgrading` section, the README's `civitai upgrade` command-reference
+//     row, and the command's own `Long` — name the same format this GOOS
+//     really publishes. Measured before this leg existed: inverting all three
+//     to "a .tar.gz on Windows, a .zip everywhere else" left the whole suite
+//     green (21 packages, 0 FAIL), because every guard read code and none read
+//     the prose.
 //
-// It fails in both directions: adding a `format_overrides` entry upgrade.go does
-// not honour reddens (1) and (3); reverting upgrade.go to a hardcoded extension
-// reddens (1) and (2).
+// 🔴 ATTRIBUTION, AS MEASURED — not as assumed. Each mutant below reddens
+// exactly the legs named, no more:
+//   - upgrade.go reverted to a hardcoded `tar.gz` extension → leg (1) only, on
+//     windows. Leg (1)'s `continue` short-circuits (2) and (3) for the very
+//     GOOS that failed, so they never run.
+//   - a `format_overrides` entry upgrade.go does not honour (e.g. adding
+//     `darwin: [zip]`) → leg (1) only, on darwin. Same `continue`.
+//   - `releaseAssetName` dropping the extension → leg (2), on every GOOS.
+//   - the zip case deleted from `extractBinaryFromArchive`'s switch → leg (3),
+//     on windows.
+//   - any of the three prose surfaces naming the wrong format → leg (4). It
+//     runs in its OWN pass, after the loop below, so leg (1)'s `continue`
+//     cannot suppress it.
+//
+// So legs (2), (3) and (4) are reachable, each by a different mutant — they are
+// simply not the legs a format DISAGREEMENT fires.
 func TestUpgradeArchiveFormatsMatchTheReleaseConfig(t *testing.T) {
 	plan := readReleaseArchivePlan(t)
 
@@ -852,20 +876,246 @@ func TestUpgradeArchiveFormatsMatchTheReleaseConfig(t *testing.T) {
 		}
 	}
 
+	// (4) The PUBLISHED prose. Its own pass, deliberately: leg (1) `continue`s on
+	// a format disagreement, and the prose claim is a separate artifact that must
+	// be judged even when the code is already wrong.
+	assertArchiveFormatProseMatchesPlan(t, plan)
+
 	// NEGATIVE CONTROL on the extractor's dispatch: an unknown format must be
 	// refused, not silently treated as one of the two known kinds.
 	//
-	// 🔴 THE ARCHIVE HERE IS A VALID tar.gz ON PURPOSE. Measured: with a zip as
-	// the payload, a `default:` branch falling through to extractBinaryFromTarGz
-	// SURVIVED this assertion — the tar reader rejected the zip, so the error came
-	// from the wrong place and the control went green for a reason unrelated to
-	// the dispatch. A well-formed tar.gz makes that fall-through SUCCEED, which is
-	// the only shape that can see the mutant.
+	// 🔴 IT RUNS ONCE PER KNOWN READER, AND THE PAYLOAD IS WELL-FORMED FOR THAT
+	// READER ON PURPOSE. A `default:` that falls through to one of the readers is
+	// only visible when the payload that reader would ACCEPT is the one being
+	// mislabelled — otherwise the fall-through errors for a reason unrelated to
+	// the dispatch and the control goes green for the wrong reason. Measured:
+	// with a tar.gz payload alone, a `default:` falling through to
+	// extractBinaryFromZip SURVIVED (76 pass / 0 fail, identical to baseline) —
+	// the zip reader rejected the tarball. One case per reader is what makes this
+	// control bidirectional.
 	const wellFormed = "WELL-FORMED-BUT-WRONGLY-LABELLED"
-	if got, err := extractBinaryFromArchive(makeTarGz(t, "civitai", []byte(wellFormed)), "7z", "civitai"); err == nil {
-		t.Errorf("extractBinaryFromArchive accepted the unknown format \"7z\" and returned %q — it must refuse "+
-			"a format it has no reader for. A `default:` that falls through to one of the known readers makes "+
-			"leg (3) above vacuous: every format would 'have a reader'.", got)
+	for _, payload := range []struct {
+		realFormat string
+		data       []byte
+	}{
+		{archiveFormatTarGz, makeTarGz(t, "civitai", []byte(wellFormed))},
+		{archiveFormatZip, makeZip(t, "civitai", []byte(wellFormed))},
+	} {
+		if got, err := extractBinaryFromArchive(payload.data, "7z", "civitai"); err == nil {
+			t.Errorf("extractBinaryFromArchive accepted the unknown format \"7z\" for a well-formed %s payload "+
+				"and returned %q — it must refuse a format it has no reader for. A `default:` that falls "+
+				"through to extractBinaryFrom%s makes leg (3) above vacuous: every format would "+
+				"'have a reader'.", payload.realFormat, got, map[string]string{
+				archiveFormatTarGz: "TarGz", archiveFormatZip: "Zip",
+			}[payload.realFormat])
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Leg (4): the prose that PUBLISHES the archive-format claim.
+// ---------------------------------------------------------------------------
+
+// archiveFormatClaim is what a piece of PROSE claims about archive formats,
+// PARSED OUT OF THAT PROSE rather than compared against a sentence written here.
+//
+// 🔴 THE PARSE IS THE POINT. A guard that hardcoded "the README must say zip on
+// Windows" would pass on the day `.goreleaser.yaml` adds an override — which is
+// the failure this leg exists for, one level up from #613: the parity guard
+// reddens, someone teaches archiveFormatForGOOS the new format, the suite goes
+// green, and three published surfaces now state the opposite of what the release
+// does. Deriving the expectation from the same plan the code legs use is what
+// makes that impossible.
+type archiveFormatClaim struct {
+	named    map[string]string // lowercased platform word -> format claimed for it
+	fallback string            // the format claimed for "everywhere else" / "elsewhere"
+}
+
+// formatFor reports the format this prose claims for goos.
+func (c archiveFormatClaim) formatFor(goos string) string {
+	if f, ok := c.named[goos]; ok {
+		return f
+	}
+	return c.fallback
+}
+
+var (
+	// "a `.zip` on Windows" / "a .zip on Windows", after the markup strip.
+	proseNamedFormatRe = regexp.MustCompile(`\ba \.([A-Za-z0-9.]+) on ([A-Za-z]+)\b`)
+	// "a `.tar.gz` everywhere else" / "a .tar.gz elsewhere".
+	proseFallbackFormatRe = regexp.MustCompile(`\ba \.([A-Za-z0-9.]+) (?:everywhere else|elsewhere)\b`)
+)
+
+// parseArchiveFormatClaim reads one surface's archive-format claim, Fataling
+// rather than returning a zero value: an unparsed surface would compare an empty
+// map against the plan and report a confident verdict about prose it never read.
+//
+// A reword that this cannot parse FAILS here, on purpose. That is the cost of a
+// machine-readable claim, and the alternative — a looser pattern — is a guard a
+// reword walks straight past.
+func parseArchiveFormatClaim(t *testing.T, surface, text string) archiveFormatClaim {
+	t.Helper()
+	flat := flattenWS(strings.NewReplacer("`", "", "*", "").Replace(text))
+	claim := archiveFormatClaim{named: map[string]string{}}
+	for _, m := range proseNamedFormatRe.FindAllStringSubmatch(flat, -1) {
+		claim.named[strings.ToLower(m[2])] = m[1]
+	}
+	if m := proseFallbackFormatRe.FindStringSubmatch(flat); m != nil {
+		claim.fallback = m[1]
+	}
+	if len(claim.named) == 0 || claim.fallback == "" {
+		t.Fatalf("CONTROL failure: could not parse an archive-format claim out of %s "+
+			"(named=%v, fallback=%q). That surface is supposed to say which archive format each "+
+			"platform gets — e.g. \"a `.zip` on Windows, a `.tar.gz` everywhere else\". Either the "+
+			"sentence was reworded past this parser (widen proseNamedFormatRe / "+
+			"proseFallbackFormatRe and re-measure) or the claim was dropped, in which case this leg "+
+			"has nothing to check.\n\nSurface text:\n%s", surface, claim.named, claim.fallback, flat)
+	}
+	return claim
+}
+
+// readmeUpgradingSection returns the body of the README's `## Upgrading`
+// section, Fataling on a miss so the leg cannot pass by reading "".
+func readmeUpgradingSection(t *testing.T, readme string) string {
+	t.Helper()
+	const heading = "\n## Upgrading\n"
+	i := strings.Index(readme, heading)
+	if i < 0 {
+		t.Fatalf("CONTROL failure: README.md has no `## Upgrading` heading — leg (4) would be " +
+			"reading an empty string and reporting green about it")
+	}
+	body := readme[i+len(heading):]
+	if j := strings.Index(body, "\n## "); j >= 0 {
+		body = body[:j]
+	}
+	return body
+}
+
+// readmeUpgradeCommandRow returns the command-reference table row for
+// `civitai upgrade`, Fataling on a miss for the same reason.
+func readmeUpgradeCommandRow(t *testing.T, readme string) string {
+	t.Helper()
+	const prefix = "| `civitai upgrade [--force]`"
+	for _, line := range strings.Split(readme, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return line
+		}
+	}
+	t.Fatalf("CONTROL failure: README.md has no command-reference row starting %q. Either the row "+
+		"moved, the flag list changed, or the command was renamed — leg (4) cannot check a row it "+
+		"cannot find", prefix)
+	return ""
+}
+
+// assertArchiveFormatProseMatchesPlan is leg (4): every surface that STATES the
+// archive format in prose must name, for every GOOS the release builds, the
+// format `.goreleaser.yaml` really publishes for it.
+func assertArchiveFormatProseMatchesPlan(t *testing.T, plan releaseArchivePlan) {
+	t.Helper()
+	readme := readREADME(t)
+
+	for _, s := range []struct{ name, text string }{
+		{"README.md's `## Upgrading` section", readmeUpgradingSection(t, readme)},
+		{"README.md's `civitai upgrade` command-reference row", readmeUpgradeCommandRow(t, readme)},
+		{"`civitai upgrade --help` (upgrade.go's Long)", newUpgradeCmd().Long},
+	} {
+		claim := parseArchiveFormatClaim(t, s.name, s.text)
+
+		// POSITIVE CONTROL on the platform vocabulary. The prose names platforms
+		// in English ("Windows"); the plan names them as GOOS ("windows"). If the
+		// two sets do not intersect, every GOOS silently falls through to the
+		// fallback and this surface is being judged on half its sentence. A prose
+		// "macOS" would land here — map it to `darwin` and re-measure rather than
+		// loosening the comparison.
+		intersects := false
+		for platform := range claim.named {
+			if slices.Contains(plan.goos, platform) {
+				intersects = true
+				break
+			}
+		}
+		if !intersects {
+			t.Fatalf("CONTROL failure: %s names platform(s) %v, none of which is a GOOS the release "+
+				"builds (%v). Every platform would fall through to the %q fallback, so the explicit "+
+				"half of the claim would never be compared with anything",
+				s.name, sortedKeys(toSet(claim.named)), plan.goos, claim.fallback)
+		}
+
+		for _, goos := range plan.goos {
+			want := plan.formatFor[goos]
+			if got := claim.formatFor(goos); got != want {
+				t.Errorf("%s claims %s downloads a `.%s`, but .goreleaser.yaml publishes `.%s` for that "+
+					"platform.\n\nThat is a PUBLISHED factual claim about what `civitai upgrade` does — the "+
+					"prose is the only thing a user reads before running it, and nothing in the code legs "+
+					"above can see it drift. Fix the sentence (or the release config); do not relax this.",
+					s.name, goos, got, want)
+			}
+		}
+	}
+}
+
+// toSet turns a map's keys into the set shape sortedKeys wants.
+func toSet[V any](m map[string]V) map[string]bool {
+	out := make(map[string]bool, len(m))
+	for k := range m {
+		out[k] = true
+	}
+	return out
+}
+
+// TestReadArchiveMemberRefusesAnOversizeMember pins the boundary of the cap on
+// what an archive member may be, in BOTH directions.
+//
+// The hazard it closes: `io.ReadAll(io.LimitReader(rc, limit))` returns exactly
+// `limit` bytes with a NIL error when the member is bigger, and those bytes get
+// written over the running binary. Silent truncation, no error, working
+// executable replaced by a corrupt one.
+//
+// The bounds deliberately straddle the cap rather than sitting on it — limit-1,
+// limit and limit+1 — so a mutant that compares with `>=` instead of `>`, or
+// reads `limit` instead of `limit+1`, has a case that separates it.
+func TestReadArchiveMemberRefusesAnOversizeMember(t *testing.T) {
+	const limit = 1000
+
+	for _, tc := range []struct {
+		name      string
+		size      int
+		wantErr   bool
+		wantBytes int
+	}{
+		{"well under the cap", 1, false, 1},
+		{"one byte under the cap", limit - 1, false, limit - 1},
+		{"exactly the cap", limit, false, limit},
+		{"one byte over the cap", limit + 1, true, 0},
+		{"far over the cap", limit * 4, true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := bytes.Repeat([]byte{'x'}, tc.size)
+			got, err := readArchiveMember(bytes.NewReader(src), "civitai", limit)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("a %d-byte member under a %d-byte cap returned %d bytes and no error — "+
+						"that is the silent truncation this guard exists to prevent; those bytes would be "+
+						"written over the running binary", tc.size, limit, len(got))
+				}
+				if !strings.Contains(err.Error(), "larger than") || !strings.Contains(err.Error(), "civitai") {
+					t.Errorf("refusal should name the member and say it is too large, got: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a %d-byte member under a %d-byte cap must be read in full, got error: %v",
+					tc.size, limit, err)
+			}
+			if len(got) != tc.wantBytes || !bytes.Equal(got, src) {
+				t.Errorf("read %d bytes, want %d (and byte-identical)", len(got), tc.wantBytes)
+			}
+		})
+	}
+
+	// A read error is propagated, not swallowed into a short-but-nil-error read.
+	if _, err := readArchiveMember(iotest.ErrReader(errors.New("boom")), "civitai", limit); err == nil {
+		t.Error("a reader error must propagate — a nil error here would hand a partial binary to selfupdate")
 	}
 }
 

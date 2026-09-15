@@ -437,6 +437,30 @@ func extractBinaryFromArchive(data []byte, format, name string) ([]byte, error) 
 	}
 }
 
+// readArchiveMember reads one archive member, REFUSING anything larger than
+// limit instead of silently truncating it.
+//
+// 🔴 io.LimitReader ALONE CANNOT TELL A FULL READ FROM A TRUNCATED ONE: it
+// returns exactly `limit` bytes with a nil error when the member is bigger, and
+// what this function returns is written over the RUNNING BINARY. A truncated
+// write would leave a corrupt executable where a working one used to be, with no
+// error anywhere. Reading limit+1 is what makes the overflow observable.
+//
+// limit is a parameter rather than maxDownloadBytes inline so the refusal can be
+// exercised without building a 64 MiB fixture.
+func readArchiveMember(r io.Reader, name string, limit int64) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > limit {
+		return nil, fmt.Errorf("%q in the release archive is larger than the %d-byte limit this "+
+			"upgrader reads — upgrade manually from %s",
+			name, limit, "https://github.com/civitai/cli/releases/latest")
+	}
+	return b, nil
+}
+
 // extractBinaryFromZip pulls the named file out of a zip archive — the format
 // `.goreleaser.yaml` publishes for `goos: windows`.
 func extractBinaryFromZip(data []byte, name string) ([]byte, error) {
@@ -458,14 +482,19 @@ func extractBinaryFromZip(data []byte, name string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		b, err := io.ReadAll(io.LimitReader(rc, maxDownloadBytes))
-		closeErr := rc.Close()
+		b, err := readArchiveMember(rc, name, maxDownloadBytes)
+		// 🔴 THE CRC IS CHECKED BY THE READ ABOVE, NOT BY Close. Measured against
+		// Go 1.25's archive/zip (three corruption shapes, including through the
+		// io.LimitReader this uses): a member whose deflate stream is corrupt
+		// returns `zip: checksum error` from io.ReadAll, and rc.Close() then
+		// returns nil. So the `err` check below is what catches a corrupt archive;
+		// Close has nothing left to report and its error is deliberately dropped.
+		// A previous version of this code returned Close's error with a comment
+		// claiming it was the CRC site — that branch was dead and the comment was
+		// wrong, which invited deleting the check that actually works.
+		_ = rc.Close()
 		if err != nil {
 			return nil, err
-		}
-		if closeErr != nil {
-			// A truncated/corrupt member surfaces as a CRC failure on Close.
-			return nil, closeErr
 		}
 		return b, nil
 	}
@@ -494,7 +523,7 @@ func extractBinaryFromTarGz(data []byte, name string) ([]byte, error) {
 		}
 		// Match by base name so a possible directory prefix doesn't matter.
 		if filepath.Base(hdr.Name) == name {
-			return io.ReadAll(io.LimitReader(tr, maxDownloadBytes))
+			return readArchiveMember(tr, name, maxDownloadBytes)
 		}
 	}
 	return nil, fmt.Errorf("binary %q not found in archive", name)
