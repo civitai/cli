@@ -28,82 +28,56 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
   reported and must NOT fail `ok` — stopping before auth is deliberate.
   This is frozen as the condition this arc was opened on.
 
-🔴 **A SECOND EFFORT HAS ACCRETED IN THIS DOC AND IS NOT PART OF THAT CONDITION.**
-The `safeTerm` / terminal-line-forgery work — ranks 23, 28, 30, 31; issues #574,
-#604, #605, #612; ten merged PRs across #596…#616 — shares no code, no goal and
-no closing condition with agent-setup onboarding. It rode in because this doc was
-the queue every `/resume` drew from, and nothing refused it.
+✅ **THE SECOND EFFORT THAT ACCRETED HERE HAS BEEN SPLIT OUT —
+[`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md).**
+The `safeTerm` / terminal-line-forgery work (ranks 23, 28, 30, 31 **and 32**; issues #574,
+#604, #605, #612, #620, #621, #622, #624, #627, #629; PRs #596…#628) shares no
+code, no goal and no closing condition with agent-setup onboarding. It rode in
+because this doc was the queue every `/resume` drew from, and nothing refused it.
 
-Consequences a reader needs, because they change what a close-check means here:
+🔴 **It now has a closing condition of its own — the first it has ever had** — and
+that is the thing to read there, not the rank list: *the hand enumeration is
+retired, because an instrument finds what it found.* Every defect that arc closed
+was found by a HUMAN enumerating operands, because every instrument the repo owns
+keys on the GATE and is therefore structurally incapable of finding an operand
+that has no gate. ⚠ That condition is **unratified** — a proposal by the session
+that wrote it, flagged as such there.
 
-- **A close-check against the line above will read NOT ADDRESSED for reasons that
-  have nothing to do with the forgery work**, and vice versa. Do not resolve that
-  by widening the condition — later audits and asks open a NEW arc, they do not
-  extend a frozen one.
-- **The forgery effort has no closing condition of its own anywhere.** Its ranks
-  are individually closable (each issue carries a mechanical condition) but the
-  effort as a whole has no stated done-state. That is why "is this arc finished?"
-  has been answerable only by enumerating ranks.
-- This is the concrete form of rank 29's **"split by initiative"** step, and the
-  strongest argument for doing it: the prune is not only about bytes.
+- **A close-check against THIS doc's condition and one against that doc's are
+  different questions**, and each reads NOT ADDRESSED for reasons belonging to the
+  other. Do not resolve that by widening either — a later audit or ask opens a NEW
+  arc, it does not extend a frozen one.
+- **Do not merge them back together.** This split is rank 29's "split by
+  initiative" step, done; the prune was never only about bytes.
+- ⚠ **The `## Gotchas` section below was NOT split** — it is filed by date and
+  session, not by initiative, so forgery-specific and agent-setup lessons are
+  interleaved there. The forgery-specific ones are restated in the new doc; the
+  originals are left in place rather than moved, because a partial move would make
+  this section's dates lie. Splitting it is the remaining half of rank 29.
 
 ## State now
 
-**Ranks 23, 28, 30 and 31 are all DONE and merged.** The forgery class is closed to the extent
-its five issues defined it — and deliberately not further; see **#629**, which is to #624 what
-#624 was to #612 and #612 was to #604, and is LIVE on `main`. 🔴 **That chain is the thing to
-notice about this effort: every closure so far has produced its own successor.**
+➡ **Ranks 23, 28, 30 and 31 were the FORGERY effort and have moved** —
+their state, evidence, open issues and honest limits are in
+[`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md). In one line:
+all four merged (`752bf50`, `b4acda5`, `a29abb7`, `7c5a39c`), five issues closed,
+**six still open**, and every closure so far has produced its own successor
+(#604 → #612 → #624 → #629). Nothing about them is repeated here.
 
-- **cli#596** — rank 23, merged `752bf50`. **cli#574 CLOSED** by hand against its own stated
-  check re-run on post-merge `origin/main`.
-- **cli#608** — rank 30, merged **`a29abb7`**. 16 server operands across `generate.go` and
-  `generate_wait.go` moved to `safeTermSingle`. **cli#604 CLOSED** with element-by-element
-  evidence. Verified by CONTENT with a WORKING positive control: `git diff de82ab3 origin/main`
-  empty over the payload files, while the same command against `8872a4c` reports 97 insertions
-  and against the PR base reports 9/9 — so the zero was earned, not a broken comparison.
-  Only two plain `safeTerm(` remain in those two files: `generate.go:144` (the deliberately
-  multi-line `serverReasonSuffix`) and `:1838` (a comment). `generate_wait.go` is fully gated.
 - **cli#615** — the pin bump, merged `652ba75`, **unfroze the repo** (below).
-- **cli#619** — rank 31, merged **`7c5a39c`**, **cli#612 CLOSED** against its operand
-  enumeration (never `git grep 'safeTerm('` — that instrument is what missed all three). Four
-  gates: `safeTermSingle` on the Buzz-balance warning, `safeTermErr` on the fall-through and on
-  both `%w` resolve causes. **F3 REPRODUCED** end-to-end, having been filed DERIVED-not-measured,
-  and the measurement narrowed the fix. Exit codes measured at the PROCESS boundary: base binary
-  2 lines, head 1, **both exit 4**.
-- **cli#628** — rank 28, merged **`b4acda5`**. **cli#605 AND cli#624 CLOSED together**, the fork
-  resolved **(a) bound it** by the OPERATOR. `safeTermBounded` at two sites; forged rows 66 → 2
-  and 66 → 3. Three rounds, none clean, stopped on the attribution gate.
-- **Claims:** `agent-setup-onboarding-23`, `-28`, `-30` and `-31` all RELEASED and verified absent.
-- **Filed and OPEN:** **#620**, **#621**, **#622**, **#627**, **#629**, **#397** — see rank 32.
-  **#609 CLOSED as a duplicate** of #606.
+- **Claims:** `agent-setup-onboarding-23`, `-28`, `-29`, `-30` and `-31` all RELEASED and
+  verified absent.
 - 🔴 **The base clone was on another session's branch FOUR times this session.** All work was
   done in dedicated worktrees; nothing was written to it. Check `git branch --show-current`
   there before any operation.
 
 ### Honest limits
-
-- 🔴 **`generate` is STILL NOT wholly gated, and the #624 closure must not be read as saying so
-  — this is the FOURTH rewrite of this sentence for a successor issue, and the count is now the
-  point.** #604 → #612 → #624 → **#629**: each closure has produced the next. The live one is
-  **#629**, and it is nastier than its predecessors because the bounded surface *points at it*:
-  `civitai buzz`, named in the warning's own text as the recovery path, is COMPLETELY ungated —
-  `buzz.go` has zero `safeTerm` calls and `main.go` prints the error raw, ESC included. Also
-  **#620** (the `!errors.As` return, real defect seven `internal/genapi` sites), **#627**
-  (`snippet`'s byte-index cut) and **#397** (runes are not display cells).
-  ⚠ **Before starting a fifth, ask what would have to be true for this effort to be finished** —
-  it has no closing condition of its own anywhere (see the header), and four successors is
-  evidence about the shape of the work, not just about each defect.
-- 🔴 **The threat model is STILL OPEN and that is recorded on #612.** Never established whether
-  the server's `message` carries uploader-controlled text; the classifier matching on
-  `has("unknown ecosystem")` implies the server echoes requested values. The cheap probe is a
-  **`whatIf`/quote** call's raw error body — never a submit, which charges. The severity is a
-  **floor, not a measurement**.
-- **The audit base rate for this arc is now FIFTEEN FOR FIFTEEN.** Every round that ran found
-  something. Rank 31's three rounds: round 0 found a false coverage claim and a
-  measured-redundant test; round 1 found #624 and a wrong status enumeration; **round 2's five
-  findings were ALL defects round 1's own fix introduced** — including a false absolute replaced
-  by a narrower absolute that was also false. That ladder stopped on the **attribution gate**
-  (two consecutive zero-payload rounds), NOT on a clean round.
+- ➡ **The forgery effort's limits moved too** — the open threat model, the successor chain and
+  the fifteen-for-fifteen audit base rate are in
+  [`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md).
+- 🔴 **The base rate is a fact about THIS repo's work, not only about that arc, and it is the
+  one thing worth carrying across the split: every audit round that has run on either arc found
+  something.** Budget for several rounds; the first clean one is the last.
 
 ## Open investigations — live diagnosis state
 
@@ -446,46 +420,30 @@ before those rounds' commits were read back.
 
 ## Next steps (ranked)
 
-🔴 **Ranks 1–14, 18–24, 28, 30 and 31 are DONE — numbering preserved** so live `claim-work` slugs
-keep pointing at what they were taken for. Open: **15, 16, 17, 25, 26, 27, 29, 32**.
+🔴 **Ranks 1–14, 18–24 are DONE — numbering preserved** so live `claim-work` slugs keep pointing
+at what they were taken for. Open here: **15, 16, 17, 25, 26, 27, 29**.
 
-31. ✅ **DONE — cli#612 CLOSED, cli#619 merged `7c5a39c`.** All three operands gated
-    (`safeTermSingle` on the Buzz-balance warning, `safeTermErr` on `classifyGenerateError`'s
-    fall-through and on both `%w` resolve causes). Closed against the **operand enumeration**,
-    never `git grep 'safeTerm('`. Verified by CONTENT with a working positive control (the same
-    comparison at `e4d4996` reports 120 insertions, so the zeros were earned).
-    **F3 REPRODUCED** end-to-end through the real `pkg/civitai` client — it had been filed
-    DERIVED-not-measured — and the measurement NARROWED the fix: ESC is stripped by `snippet`,
-    only `\n` survives, so `safeTermErr` and not a wider gate.
-    🔴 **Exit codes measured at the PROCESS boundary**, which the in-package test cannot do:
-    base binary prints 2 lines (second attacker-written at column zero), head prints 1, **both
-    exit 4**. Three audit rounds, **none clean**; stopped on the attribution gate (two
-    consecutive zero-payload rounds), not on convergence. Round 2's five findings were all
-    defects round 1's own fix introduced.
+➡ **Ranks 23, 28, 30, 31 and 32 were the FORGERY effort and have MOVED** to
+[`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md), which now carries its
+own closing condition. Their numbers are retired HERE rather than reused, so a live
+`claim-work` slug still resolves to what it was taken for.
 
-32. **The objects ranks 31 and 28 spawned — NONE of them closed.** ❌ This entry previously led
-    with #624 as the thing to read first; **#624 is CLOSED** (rank 28, cli#628 `b4acda5`).
-    🔴 **#629 replaces it as the one to read first, and it is the sharper finding.**
-    `civitai buzz` — the command the now-bounded balance warning NAMES as its recovery path — is
-    **completely ungated**: `buzz.go` has zero `safeTerm` calls and `main.go` prints the error
-    raw, ESC included. So the bound shrinks the forgery on the screen above the spend
-    confirmation and does nothing for the screen it recommends. It is the other half of #624's
-    option (a), which asked to cap the operand **and** `appblocks.go:1185`; only the first was
-    done, deliberately.
-    Also **#627** (`snippet` truncates on a BYTE index — 3 of 4 alignments return invalid UTF-8),
-    **#620** (the `!errors.As` return; the real defect is seven `internal/genapi` interpolation
-    sites), **#621** (a ledger `why` can still scope a surface OUT in free text with nothing
-    checking it — the mechanism that concealed #612 F2 for a full PR cycle; #619 repaired the
-    instance only), **#622** (no `claudedocs/decisions/` entry for the arc, so its rationale is
-    inlined across ~6,600 lines), **#397** (runes are NOT display cells, so every row count this
-    arc quotes doubles for CJK — explicitly not claimed closed).
-    ⚠ **Do NOT quote the operand-enumeration TOTAL** — it counts its own prose. It read
-    102 → 103 → 102 again on merged `main`, purely from comments being added and removed. A
-    literal beside it sends the next reader hunting an operand that does not exist. The
-    instrument is the enumeration and the trace.
-    ⚠ **And do not quote `swMaxRowsAt80` as pinning the cap** — it pins ROWS. Boundary measured:
-    cap 135 green, 136 red.
-    forcing: security — #629 is raw ANSI on the path a bounded surface points users at.
+🔴 **BUT THE SPLIT MINTS A SECOND SLUG FOR ONE ITEM, AND `claim-work` LOCKS PER SLUG — SO
+FORWARD IT BY HAND BEFORE TAKING ANY OF THESE.** `claim-work --slug-for` derives the slug from
+the DOC, so the same work now has two canonical names and **both compare-and-swaps succeed
+independently**: two sessions can take `agent-setup-onboarding-32` and `terminal-line-forgery-1`
+and both work civitai/cli#629. The old names stay derivable from every pre-split transcript and
+PR body, and from the `## Gotchas` notice below, which tells readers those sections cite rank
+numbers like "rank 30". The forwarding map:
+
+| retired slug (here) | now | live slug |
+|---|---|---|
+| `agent-setup-onboarding-32` | rank 1 of the forgery doc | `terminal-line-forgery-1` |
+| `agent-setup-onboarding-23` / `-28` / `-30` / `-31` | CLOSED (#574, #605+#624, #604, #612) | none — do not take |
+
+⚠ The only MECHANICAL backstop is the `gh pr list --state open` sweep, which is the one thing
+that catches an UNCLAIMED duplicate; the forgery doc mandates it. This table is the human half.
+
 15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT re-verified
     for three sessions. `/home/zach/workspace/civit/civitai-developer-docs`. One command
     settles it either way; a gate nobody has checked in three sessions is a claim, not a fact.
@@ -502,28 +460,29 @@ keep pointing at what they were taken for. Open: **15, 16, 17, 25, 26, 27, 29, 3
     forcing: none
 27. **cli#586 — three near-identical AST expression renderers.**
     forcing: none
-28. ✅ **DONE — cli#605 AND cli#624 CLOSED TOGETHER, cli#628 merged `b4acda5`.** The FORK was
-    resolved **(a) bound it**, ratified by the OPERATOR and recorded with its pricing on both
-    issues — round 0 caught that the PR had taken (a) with no operator author of record, which is
-    the finding worth remembering from this rank. Pricing that closed the implementer's own
-    stated evidence gap: **2,141 real Civitai file names** pulled live (100 most-downloaded + 100
-    newest), median 38, max 99, **zero over the 120-rune cap**.
-    `safeTermBounded` at two sites; forged rows 66 → 2 (download) and 66 → 3 (generate).
-    🔴 **The guard that matters is `swMaxRowsAt80`, and it exists because round 1 found every
-    geometry assertion DERIVED from the cap it was meant to constrain** — at cap 5000 both
-    assertions stayed GREEN while the surfaces occupied 63 and 64 rows. It pins **ROWS, not the
-    cap**: boundary measured 135 green / 136 red, so "the cap is pinned" is the wrong sentence.
-    Three rounds, **none clean**; stopped on the attribution gate (two consecutive zero-payload
-    rounds). Round 2's three findings were all prose round 1's own fix wrote.
-    ⚠ What it does NOT buy is in rank 32 — read #629 before treating either surface as safe.
-
-29. **This doc is over its byte ceiling — a real per-session cost, NOT a gate.** ❌ The "reds
-    `main`" claim is RETRACTED (see the 2026-09-14 gotcha). Playbook, raising a number LAST:
-    evict what has CLOSED, demote dated evidence to `claudedocs/refs/agent-setup-onboarding.md`
-    leaving a pointer, then split by initiative.
+29. ⚠ **HALF DONE — split by initiative is finished; the gotcha split is not.**
+    ✅ The forgery effort is now its own doc with its own closing condition, and this doc's
+    ranks, state and honest limits no longer carry it. Measured: this file was 112,582 bytes
+    before the split.
+    ❌ **The `## Gotchas` section below is STILL NOT split** — it is filed by date and session,
+    so forgery and agent-setup lessons are interleaved. The forgery-specific ones are RESTATED
+    in the new doc; the originals are deliberately left here, because moving half of a
+    date-keyed section makes its dates lie. That is the remaining work.
+    ❌ The other two playbook steps are also untouched: evicting what has CLOSED, and demoting
+    dated evidence to `claudedocs/refs/agent-setup-onboarding.md` behind a pointer.
+    🔴 Do NOT satisfy this by deleting an open investigation, a gotcha or a ruled-out theory.
     forcing: none
 
 ## Gotchas / decisions / dead-ends
+
+⚠ **THIS SECTION IS NOT SPLIT BY INITIATIVE — it is filed by date and session, so
+forgery and agent-setup lessons are interleaved here.** Two consequences a reader needs:
+a rank number cited below (e.g. "rank 30") may name a rank that has MOVED to
+[`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md) and no longer
+appears in this file's ranked list; and the forgery-specific lessons are RESTATED there,
+so finding one in both places is expected rather than a duplicate to reconcile. Splitting
+this section is the remaining half of rank 29, deliberately not attempted here — moving
+half of a date-keyed section makes its dates lie.
 
 ### Added 2026-09-13 — rank 19, four audit rounds, and a reduction
 
@@ -1505,37 +1464,15 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
 
 ## How to verify
 
-**Finding the NEXT ungated operand** (#612 is closed; this is the instrument that found it, and
-it is NOT a grep for a helper name — `git grep 'safeTerm('` only finds operands that ALREADY
-have a gate, which is why it missed all three):
-
-```bash
-# enumerate every rendered operand on the two paths, then TRACE EACH ONE to its origin
-command grep -nE 'fmt\.(Fprint[^(]*|Errorf|Sprintf)\(' internal/cmd/generate.go internal/cmd/generate_wait.go
-```
-
-🔴 **Do not pipe it to `wc -l` and compare against a remembered number.** The enumeration counts
-its own prose: it read 102 → 103 → 102 again across #619's three commits, purely because comment
-lines quoting `fmt.Errorf(` were added and then removed. A literal beside it sends the reader
-hunting an ungated operand that does not exist — that tripwire falsified itself inside a single
-PR and was deleted rather than renumbered. The instrument is the enumeration **and the trace**.
-
-⚠ And the `safeTermCoveredBy` ledger will NOT demand a row for the next one: GREW iterates the
-functions that already CALL `safeTerm`, so a function with one call and one row passes however
-many further ungated operands it grows. **#621** is the structural repair.
-
-**The forgery guards on `generate`, after any change there:**
-
-```bash
-go test ./internal/cmd -count=1 -run 'ForgeALine|GeometryIsNotServerChosen|RowCountIsNotServerChosen|StaysMultiLine|PreservesClassification'
-# then revert ONE gate to plain safeTerm and confirm the named test dies with ITS OWN message
-```
-
-⚠ Two traps in that loop, both measured: a TAB assertion is **inert** on a `ui`-styled surface
-(lipgloss expands `\t` to four spaces before the bytes reach the writer), so it is live only on
-bare `fmt.Fprintf`; and `TestClassifyGenerateErrorFallThroughPreservesClassification` is an
-**invariant guard that cannot fail alone** — nine pre-existing tests catch the same mutant, so do
-not cite it alone in a matrix.
+➡ **The forgery-guard recipes moved** to
+[`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md) — the operand
+enumeration, the `go test -run` filter and the guard traps all live there now.
+🔴 **They were DELETED here rather than left as a second copy, because the copy had
+already diverged and was wrong in the DANGEROUS direction:** its `-run` filter omitted
+`IsLengthBounded` and `SoftWrap`, the guards cli#628 added for cli#605/#624 three commits
+earlier, so a reader following it would have reported the forgery guards green having
+never run the newest one. A duplicated recipe is not a convenience; it is a second thing
+to keep true, and this one was not kept true for three commits.
 
 **The repo freeze, when `pins-vs-published` is red:**
 
