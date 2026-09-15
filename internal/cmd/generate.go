@@ -1293,23 +1293,38 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		// upstream, by transport: readResponseBody caps at 64 MiB.) Do not
 		// re-derive a route list here; read serverMessage.
 		//
-		// 🔴 RESIDUAL, MEASURED AND STILL LIVE — THE GATE BOUNDS THE RUNE CLASS,
-		// NOT THE LENGTH (civitai/cli#624, the same class as #605). safeTermSingle
-		// guarantees one line per line-break rune it can SEE, and a terminal's
-		// SOFT WRAP has no rune. Measured driving runGenerate: a 5,120-char
-		// balance error renders as ONE logical line of 5,224 runes, zero ESC, zero
-		// TAB — passing every assertion the named test makes — which an 80-column
-		// terminal lays out as ~66 rows, most starting at column zero with a
-		// complete counterfeit `Cost: 1 Buzz (balance 999999).` a few rows above
-		// the real one. 🔴 A FIX MUST BOUND THE OPERAND HERE, NOT ONE ARM
-		// UPSTREAM: capping a single appapi site leaves the identical forgery
-		// reachable through the others. The repo owns a remedy it does not apply
-		// here — wrapServerText, used at exactly ONE production site
-		// (workflows_list.go:253) — and cannot measure the width anyway, since
-		// x/term.GetSize appears nowhere. Recorded rather than fixed: bounding
-		// this is the operator FORK #605 already carries, not a #612 gate.
+		// 🔴 THE "RESIDUAL, MEASURED AND STILL LIVE" PARAGRAPH THAT STOOD HERE IS
+		// RETRACTED — THE LENGTH IS BOUNDED NOW (civitai/cli#624, taken together
+		// with #605 because one decision governs both). It said the gate bounds the
+		// rune class and not the length, and that safeTermSingle cannot see a soft
+		// wrap because a soft wrap has no rune. Both halves were true; what changed
+		// is the conclusion it ended on ("recorded rather than fixed"). The gate is
+		// safeTermBounded, which caps the operand at maxServerLineRunes AFTER the
+		// strip, so this warning is at most 226 runes — 3 display rows at 80 columns
+		// and 2 at 100/120/132 — instead of the measured 5,224 runes and ~66 rows,
+		// most of them beginning at column zero with a complete counterfeit
+		// `Cost: 1 Buzz (balance 999999).` directly above confirmGenerate's real one.
+		//
+		// 🔴 THE BOUND IS HERE, ON THE OPERAND, NOT ON ONE appapi ARM — the same
+		// reason the enumeration above states a PROPERTY instead of a route list.
+		// Capping one upstream site would leave the identical forgery reachable
+		// through every other route to `berr`.
+		//
+		// 🔴 WHAT IT DOES NOT BUY, SO NOBODY READS THIS AS CLOSED: it bounds how
+		// many display rows the server can author, NOT whether a bounded tail begins
+		// at column zero — the CLI still cannot measure the width (x/term.GetSize
+		// appears nowhere in this repo) — and it counts RUNES, not display cells, so
+		// CJK doubles the row counts above (civitai/cli#397). Pinned by
+		// TestGenerateBuzzBalanceWarningIsLengthBounded, which asserts the ROW COUNT
+		// at four widths and demonstrates, in the same run, that the same payload
+		// PASSES every assertion TestGenerateBuzzBalanceWarningCannotForgeALine makes.
+		//
+		// The cost, stated because it is observable: a balance error longer than
+		// maxServerLineRunes is abbreviated with a trailing ellipsis. This is an
+		// advisory warning whose own text names the command that shows the real
+		// balance, so nothing actionable goes with it.
 		fmt.Fprintln(errw, ui.For(errw).Warn(fmt.Sprintf(
-			"could not read your Buzz balance (%v) — continuing without the balance check; verify with `civitai buzz`", safeTermSingle(berr.Error()))))
+			"could not read your Buzz balance (%v) — continuing without the balance check; verify with `civitai buzz`", safeTermBounded(berr.Error()))))
 	} else {
 		balance, balanceKnown = b, true
 	}

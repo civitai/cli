@@ -179,6 +179,95 @@ func safeTermSingle(s string) string {
 	return strings.NewReplacer("\n", " ", "\t", " ").Replace(s)
 }
 
+// maxServerLineRunes is the budget one SERVER operand gets on a single-line
+// surface, in RUNES.
+//
+// 🔴 IT IS A BOUND ON THE OPERAND, WHICH IS WHAT MAKES THE ROW COUNT DERIVABLE
+// WITHOUT MEASURING THE TERMINAL. The CLI cannot ask how wide the terminal is —
+// `x/term.GetSize` appears nowhere in this repo, and wrapServerText's comment
+// says so for the surface it guards. With the operand capped at N and the rest
+// of the line a fixed CLI-owned format, the emitted line is at most
+// `overhead + N + 1` runes, so at any width W it occupies at most
+// `ceil((overhead+N+1)/W)` display rows. That is a claim about EVERY width,
+// derived rather than sampled, and it is the only shape of claim available to a
+// process that cannot see the terminal.
+//
+// 120 was chosen so the two bounded surfaces stay small at the widths people
+// actually use, MEASURED on this tree rather than reasoned: the download
+// progress line renders at most 148 runes (2 display rows at 80, 100, 120 and
+// 132 columns) and generate's Buzz-balance warning at most 226 (3 rows at 80,
+// 2 at 100/120/132). Before the bound the same surfaces were unbounded — the
+// measured Buzz payload was 5,224 runes, ~66 rows at 80 columns.
+//
+// 🔴 IT IS RUNES, NOT DISPLAY CELLS, AND THAT GAP IS civitai/cli#397 — DO NOT
+// WRITE A SENTENCE HERE THAT SAYS OTHERWISE. A double-width (CJK) rune occupies
+// two columns, so 120 runes can be 240 columns and the row counts above double.
+// Nothing in this repo owns a character-width table; wrapServerText's comment
+// records the same gap for the same reason. The honest statement is "bounded in
+// runes", never "bounded on screen".
+//
+// 🔴 AND A BOUNDED OPERAND CAN STILL LAND AT COLUMN ZERO. Bounding caps HOW MANY
+// display rows the server can author, not WHETHER any of them begins at column
+// zero: a tail that falls across a wrap boundary still starts a row, just a
+// shorter one. Closing that needs the width, which the CLI does not have. The
+// value of the bound is the difference between one forged continuation row and
+// sixty-six of them (civitai/cli#605, civitai/cli#624).
+//
+// It is deliberately NOT pkg/civitai's `snippet` budget of 500. The policy is
+// the same — bound server text before printing it — but 500 runes is ~7 rows at
+// 80 columns, which does not bound a single-LINE surface to anything a reader
+// would call a line. Two different surfaces, two budgets, one rule each.
+const maxServerLineRunes = 120
+
+// serverTextEllipsis marks a bounded operand as abbreviated. One rune, so it
+// costs one of the budget's display cells and the arithmetic above stays simple.
+const serverTextEllipsis = "…"
+
+// safeTermBounded is safeTermSingle plus a LENGTH bound: it is the gate for a
+// server operand on a single-line surface where an unbounded one can forge whole
+// display rows by SOFT WRAP.
+//
+// 🔴 THE HAZARD IT CLOSES HAS NO RUNE IN IT, WHICH IS WHY safeTermSingle CANNOT
+// SEE IT (civitai/cli#605, civitai/cli#624). safeTermSingle guarantees one line
+// per line-break rune it can see; a terminal's soft wrap is not a rune. Measured
+// on generate's Buzz-balance warning before this existed: a 5,120-char balance
+// error rendered as ONE logical line of 5,224 runes with zero ESC and zero TAB —
+// passing every assertion its named test made — which an 80-column terminal laid
+// out as ~66 rows, most beginning at column zero with a complete counterfeit
+// `Cost: 1 Buzz (balance 999999).` a few rows above the real one, on the last
+// screen before an irreversible spend. Measured on download's progress line: a
+// name padded to the terminal width stranded `(SHA256 verified)` at column zero —
+// a claim about whether the bytes are the bytes, rendered before any bytes are
+// verified — with no `\n`, no `\t` and no `\x1b` anywhere in the name.
+//
+// 🔴 IT BOUNDS RUNES, NOT BYTES, AND pkg/civitai's `snippet` IS THE COUNTEREXAMPLE
+// NOT TO COPY. That function slices `s[:max]` on a BYTE index, so a cut landing
+// inside a multi-byte UTF-8 sequence emits invalid UTF-8 (civitai/cli#627). A
+// rune slice cannot do that. A chunk boundary can still fall inside a grapheme
+// cluster and separate a combining mark from its base — the same residual
+// hardSplitOverlong states, a rendering blemish on hostile input rather than a
+// forgery vector.
+//
+// It is applied at exactly TWO sites, and that is deliberate rather than a
+// staging post: putting the bound inside safeTermSingle would truncate ~16 other
+// operands — tabwriter cells, `%q`-rendered values, wrapped error causes — none
+// of which asked for it and several of which would lose information a user needs
+// (a SHA256 mismatch message, an `unusable filename %q` refusal). The two sites
+// are the ones with a measured soft-wrap forgery and an issue each. Widening the
+// set is a decision, not a refactor: add the site, measure its geometry, and give
+// it a row in safeTermCoveredBy.
+//
+// Order matters: the strip runs FIRST, so the budget is spent on what will
+// actually be printed rather than on runes safeTerm is about to remove.
+func safeTermBounded(s string) string {
+	s = safeTermSingle(s)
+	r := []rune(s)
+	if len(r) <= maxServerLineRunes {
+		return s
+	}
+	return string(r[:maxServerLineRunes]) + serverTextEllipsis
+}
+
 // indentContinuation prefixes every line of s AFTER the first with pad, so a
 // multi-line SERVER string stays visibly inside the list item or block that
 // introduced it.

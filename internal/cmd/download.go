@@ -1229,14 +1229,37 @@ func (p *progressWriter) done() {
 // the bytes are the bytes.
 //
 // safeTermSingle collapses \n and \t to a space, so no LINE-BREAK RUNE survives.
-// 🔴 That is not the same as "cannot be forged": p.name is length-unbounded, so
-// a name padded to the terminal width SOFT-WRAPS and strands the identical
-// forged text at column zero with no \n and no \t. Out of #577's scope, real,
-// and stated here rather than implied — see TestProgressLineCannotForgeALine.
 // Pinned by TestProgressLineCannotForgeALine, mutation-verified: reverting this
 // one call to safeTerm reddens it by name.
+//
+// 🔴 THE SOFT-WRAP RESIDUAL THIS COMMENT STATED AS OPEN IS NOW BOUNDED, AND THE
+// SENTENCE THAT SAID IT WAS LIVE IS RETRACTED — civitai/cli#605. It read
+// "p.name is length-unbounded, so a name padded to the terminal width SOFT-WRAPS
+// and strands the identical forged text at column zero with no \n and no \t".
+// That was true and is no longer: the gate here is safeTermBounded, which caps
+// the operand at maxServerLineRunes, so this line is at most 148 runes — 2
+// display rows at 80, 100, 120 and 132 columns, derived from the cap rather than
+// measured off a terminal the CLI cannot see. Pinned by
+// TestProgressLineCannotForgeALine's `soft-wrap` subtest, which asserts the ROW
+// COUNT at four widths rather than the absence of a substring, and carries the
+// issue's own negative control: unpadded, the same payload does not reach column
+// zero at 100/120/132, so the padding is load-bearing and the construction is
+// deliberate rather than an accident of long names.
+//
+// 🔴 WHAT IS BOUNDED IS THE NUMBER OF ROWS, NOT WHETHER ANY OF THEM STARTS AT
+// COLUMN ZERO. A bounded tail crossing a wrap boundary still begins a row; the
+// CLI cannot prevent that without the terminal width. And the cap counts RUNES,
+// not display cells, so CJK doubles the row counts above — civitai/cli#397. Do
+// not read this paragraph, or the test's name, as "cannot be forged".
+//
+// The cost, stated because it is observable: a file name longer than
+// maxServerLineRunes is abbreviated with a trailing ellipsis on THIS line. The
+// `Saved %s` line (download.go:957) and printDownloadPlan stay on safeTermSingle
+// and still print the full value, so nothing that a user needs to identify the
+// file afterwards is lost — only the transient, \r-rewritten progress line is
+// abbreviated.
 func (p *progressWriter) line() string {
-	name := safeTermSingle(p.name)
+	name := safeTermBounded(p.name)
 	if p.total > 0 {
 		pct := float64(p.written) / float64(p.total) * 100
 		return fmt.Sprintf("  %s  %s / %s (%.0f%%)", name, humanBytes(p.written), humanBytes(p.total), pct)

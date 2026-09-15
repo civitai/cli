@@ -208,6 +208,25 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	"safeTermSingle": {"TestReadRenderersStripTheInvisibleClass",
 		"collapses \\n for single-line/tabwriter fields, delegating to safeTerm first — so the invisible class must still be stripped"},
 
+	// --- the SECOND composition row (civitai/cli#605, civitai/cli#624) --------
+	// safeTermBounded is safeTermSingle plus a LENGTH cap. Its own safeTerm call
+	// is the delegation, not a render, so — like safeTermSingle's row above — the
+	// named test is one that puts this function's OUTPUT on a screen.
+	// 🔴 WATCHED, NOT READ: rewriting `s = safeTermSingle(s)` inside
+	// safeTermBounded to `s = s` reddens TestProgressWriterLineSanitizesServerName
+	// (3 subtests) and TestProgressLineCannotForgeALine's newline and tab
+	// subtests. The LENGTH half of this function is pinned separately — by
+	// TestProgressLineCannotForgeALine/soft-wrap and
+	// TestGenerateBuzzBalanceWarningIsLengthBounded — because deleting the cap
+	// leaves every strip assertion green, which is the whole reason #605 and #624
+	// exist.
+	"safeTermBounded": {"TestProgressWriterLineSanitizesServerName",
+		"the shared LENGTH cap on a single-line server operand, applied at exactly two sites — " +
+			"(*progressWriter).line and runGenerate's Buzz-balance warning — because those are the two " +
+			"surfaces with a MEASURED soft-wrap forgery. It is not inside safeTermSingle on purpose: that " +
+			"would truncate ~16 other operands, several of which (a SHA256 mismatch, an `unusable " +
+			"filename %q` refusal) exist to show the user exactly what the server sent"},
+
 	// --- download path ------------------------------------------------------
 	"printDownloadPlan": {"TestDownloadPlanSanitizesControlChars",
 		"the plan a user reads before fetching: file name, sha256, target and notes. An escape here " +
@@ -233,7 +252,16 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	"(*progressWriter).line": {"TestProgressWriterLineSanitizesServerName",
 		"the server's files[].name inside a \\r-REWRITTEN line — both callers rewrite in place (Write's TTY " +
 			"branch 10×/s, done() once), so the CLI is already moving the cursor and an ESC in the name " +
-			"extends that reach up into the pickle/archive EXECUTION WARNING printed just above it"},
+			"extends that reach up into the pickle/archive EXECUTION WARNING printed just above it. " +
+			"🔴 THE GATE IS safeTermBounded SINCE civitai/cli#605, AND THIS ROW ONCE CARRIED THE OPPOSITE " +
+			"CLAIM: it said nothing about length while the surface was length-unbounded, so a name padded " +
+			"to the terminal width SOFT-WRAPPED and stranded `(SHA256 verified)` at column zero with no " +
+			"\\n, no \\t and no \\x1b — the one forgery on this path that misleads about whether the bytes " +
+			"are the bytes, rendered before any bytes are verified. The named test covers the STRIP half " +
+			"(watched red: rewriting safeTermBounded's delegation to `s = s` fails its three subtests); the " +
+			"LENGTH half is covered by TestProgressLineCannotForgeALine/soft-wrap, which asserts the " +
+			"DISPLAY-ROW COUNT at 80/100/120/132 and carries the issue's negative control. Two tests, two " +
+			"claims — a row naming only the first would read as coverage of both"},
 	"downloadOne": {"TestDownloadOneErrorsSanitizeTheServerName",
 		"the download / SHA256-mismatch / install errors AND the `Saved <target>` line. main.go " +
 			"prints err.Error() unfiltered, so the mismatch string is the CLI ASSERTING AN INTEGRITY " +
@@ -309,15 +337,19 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"through ui.Warn, and lipgloss expands \\t to four spaces before the bytes reach the writer, " +
 			"so such a guard could never fire. Not reached under --dry-run. This row covers runGenerate's " +
 			"ONE safeTerm call; the function's many other surfaces answer to their own callees' rows. " +
-			"🔴 AND THE GATE BOUNDS THE RUNE CLASS, NOT THE LENGTH — RESIDUAL, MEASURED, STILL LIVE " +
-			"(civitai/cli#624, same class as #605). A soft wrap has no line-break rune, so safeTermSingle " +
-			"cannot see it: a 5,120-char balance error renders as ONE logical line of 5,224 runes with " +
-			"zero ESC and zero TAB, PASSING EVERY ASSERTION THE NAMED TEST MAKES, which an 80-column " +
-			"terminal lays out as ~66 rows mostly beginning at column zero with a counterfeit `Cost:` " +
-			"line. Uncapped on EVERY route, not via one arm — see the call site; a fix must bound the " +
-			"operand HERE, since capping a single appapi site leaves the identical forgery reachable " +
-			"through the others. This row does NOT claim length coverage, and the " +
-			"named test does not assert it — bounding the operand is #605's operator fork, not a #612 gate",
+			"🔴 THE SENTENCE THAT STOOD HERE — \"THE GATE BOUNDS THE RUNE CLASS, NOT THE LENGTH — " +
+			"RESIDUAL, MEASURED, STILL LIVE\" — IS RETRACTED (civitai/cli#624, taken with #605 because one " +
+			"decision governs both). Its measurement stands and is why the fix exists: a soft wrap has no " +
+			"line-break rune, so safeTermSingle could not see it, and a 5,120-char balance error rendered " +
+			"as ONE logical line of 5,224 runes with zero ESC and zero TAB — PASSING EVERY ASSERTION THE " +
+			"NAMED TEST MAKES — which an 80-column terminal laid out as ~66 rows mostly beginning at " +
+			"column zero with a counterfeit `Cost:` line. The gate is safeTermBounded now, capping the " +
+			"operand HERE rather than at one appapi arm, since it is uncapped on EVERY route (see the call " +
+			"site). 🔴 THE NAMED TEST STILL DOES NOT ASSERT LENGTH, AND THAT IS DELIBERATE: " +
+			"TestGenerateBuzzBalanceWarningIsLengthBounded does, on the same surface, by asserting the " +
+			"DISPLAY-ROW COUNT at 80/100/120/132 — and it re-runs the named test's own predicates on the " +
+			"5,120-char payload to demonstrate, in the same run, that they stay green. A guard that could " +
+			"not see the defect is kept and labelled rather than widened, so the pair reads as two claims",
 	},
 	// 🔴 REPOINTED BY civitai/cli#575 R1, AND THE OLD NAME IS WHY THIS FIELD EXISTS.
 	// This row read TestGenerate_SanitisesServerStrings, which was TRUE until this
