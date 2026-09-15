@@ -32,6 +32,20 @@ where the CLI is vouching for something. The two canonical payloads, both measur
 - a forged `Cost: … Buzz` line directly above `Generate? [y/N]:`, the last screen
   before an irreversible spend.
 
+- **closing-condition:** `check` — a ledger keyed on the WRITER, not the gate, fails the
+  suite on an ungated server-origin operand; proven by a negative control, a NON-ZERO
+  positive control, and a retrospective run at the parents of the #566/#612/#624 fixes
+  that finds what the humans found. Detail and rationale directly below. ⚠ UNRATIFIED.
+
+🔴 **THE FIELD ABOVE IS THE MACHINE-READABLE ONE, AND AN EARLIER DRAFT HAD ONLY THE
+HEADING BELOW.** `handoff_doc.py` parses `closing-condition: <kind> — <…>` inside
+`## Goal`; it does not parse a `### closing-condition` heading, so the first version of
+this doc — whose PR headline was *"give it the closing condition it never had"* —
+declared **none** to every reader that matters, and the write gate reported it as
+GRANDFATHERED. That is this effort's own recurring defect (something that READS as
+coverage while providing none) committed in the document that names it. Keep both: the
+field is what is parsed, the section is what is read.
+
 ### 🔴 closing-condition — `check`
 
 **THE HAND ENUMERATION IS RETIRED, BECAUSE AN INSTRUMENT FINDS WHAT IT FOUND.**
