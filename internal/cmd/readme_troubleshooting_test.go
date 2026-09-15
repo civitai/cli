@@ -1643,6 +1643,18 @@ func TestAttributionProseParser(t *testing.T) {
 // edit asserts it matched something first: a fixture built by a replacement that
 // silently did nothing is the shipped cell again, and would report a clean pass
 // about a case it never constructed.
+//
+// 🔴 A FILTERED RUN DOES NOT REACH THIS TEST, AND THE OBVIOUS FILTER IS THE ONE
+// THAT MISSES IT. Editing the README's Troubleshooting section invites
+// `go test ./internal/cmd/ -run 'README|Readme|readme'` — and this test's name
+// starts with `TestAttribution`, so that pattern matches NONE of the frozen
+// cause-cell spans below, nor `TestAttributionProseParser` above. Measured on
+// this file at HEAD: rewording row 20's shipped cell (`never print it` ->
+// `do not emit it`) produces 7 `--- FAIL` lines under
+// `-run 'Attribution|Troubleshooting|README|Readme|readme'` and a plain `ok`
+// under `-run 'README|Readme|readme'`. `make ci` runs `go test ./...` with no
+// `-run` at all and does reach it, so a full local `make ci` — or the WIDE
+// pattern above — is the only run whose green says anything about these spans.
 func TestAttributionProseCheckAcceptsCorrectProseAndRejectsMisattribution(t *testing.T) {
 	paths := knownCommandPaths(t)
 	row := symptomAttributions()[1]
