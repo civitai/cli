@@ -15,10 +15,18 @@ Non-blocking: if it exits non-zero, print the stderr line and carry on.
 Clear the queue of **externally-reported** issues on `civitai/cli` — three open, none
 answered — starting with #513, and fix the API-side root cause behind it.
 
-- **closing-condition:** `check` — no externally-authored `civitai/cli` issue is left unanswered,
-  AND `#513`'s server-side half has a fix MERGED (`civitai/event-engine-common#13`, then
-  `civitai/civitai#4839`). 🔴 **Frozen at round 1** — the audit ladders, the doc-ceiling work and
-  the drift threads are arcs this one SPAWNED; closing them does not close this.
+- **closing-condition:** `check` — `cli#513` is CLOSED, which requires the rank-25 probe to return
+  **`"username":"0222"` QUOTED on a `cf-cache-status: MISS`**; plus no HUMAN-authored `civitai/cli`
+  issue left unanswered.
+  🔴 **TIGHTENED 2026-09-15; THE FIRST DRAFT WAS WRONG IN THE REASSURING DIRECTION.** It read
+  "…has a fix MERGED", which the 09-15 merges SATISFY — so the arc was closable while the
+  reporter's symptom was still live, and while he had been told on #513 that it closes on the
+  probe. **"Merged" is not "the symptom is gone"**; a condition a merge can satisfy is a condition
+  about us, not about him. Second hole, also fixed: "externally-authored" literally included
+  `#607` (`schema-revendor-bot`) — hence HUMAN-authored. ⚠ The Goal line above says "three open";
+  the gotcha below measured **two** on 2026-09-11. The two is the measurement.
+  🔴 **Frozen at round 1** — the audit ladders, the doc-ceiling work and the drift threads are
+  arcs this one SPAWNED; closing them does not close this.
 
 ## State now
 
@@ -198,42 +206,14 @@ Verbatim in `claudedocs/refs/external-issue-513-numeric-username.md`. Everything
 is in rank 9: scheduled run `34848144324`, `drift=success`, **0 failing steps / 15 EXECUTED** —
 the step count being what separates a green sweep from a green SKIP.
 
-### 🔴 RESOLVED: `cli#591` round-4 F2 — the ordering is pinned at BOTH the sentinel and the code
-- as-of: 2026-09-14 · shipped in **`cli#601`** (`b727a83`)
+### `cli#591` round-4 F2 — CLOSED by `cli#601`. Block demoted 2026-09-15
 
-- **Symptom + exact repro:** `exitcodes_doc.go`'s code-6 bullet publishes 🔴 *"THE HEADER IS
-  CONSULTED BEFORE THE MESSAGE, so a cap-worded 429 that carries `Retry-After` exits `5`, NOT
-  `2`."* Consult the message first in `pkg/civitai/retry.go`'s 429 branch (return terminal on cap
-  wording, whatever the header) and run `go test ./...`.
-- **Observed (with values):** round 4's *21 ok / 0 FAIL* under that mutant was **independently
-  reproduced** — mutant applied with both of #601's files reverted to `7467c62` → 21 ok / 0 FAIL.
-  The gap was real. **Why nothing could see it:** `retry_test.go`'s two 429 neighbours each hold
-  one half of the input fixed — the exhaustion case sends an EMPTY body, the terminal case sends
-  no header. It takes both at once, which nothing sent. After #601: under the same mutant, **19 ok
-  packages and exactly TWO `--- FAIL`s**, both new guards.
-- 🔴 **Round 0 of the audit found the delivered guard was ONE HOP SHORT, and that is the durable
-  part.** It pinned the SENTINEL (`errors.Is` ErrNetwork, not ErrBadRequest). The requirement of
-  record and the published bullet are about an **EXIT CODE**, and nothing anywhere composed
-  cap-body + `Retry-After` → `exitCode()`. The repo already owned the idiom one directory over:
-  `cmd/civitai/read_error_stderr_test.go` says it in words for the adjacent 429 row — *"pkg/civitai
-  owns the sentinel; this owns the number a script reads from `$?`."* **A classification test and
-  an exit-code test are two claims; a published `rc` needs the second.**
-- **Ruled out:** *"nothing local can pin this"* — **via: code**. The old `pinnedBy` read
-  `"nothing local — the assumption is about the server"`, conflating the **ORDERING** (local,
-  trivially observable, now pinned twice) with the **REACHABILITY** (whether the server ever
-  attaches `Retry-After` to a cap 429 — genuinely unguardable, and the reason the case is
-  published). Telling the next maintainer no guard is possible is the description-reads-as-coverage
-  failure.
-- **Also fixed, and the cheaper lesson:** the precedence was **described in three surfaces and
-  argued in none**, so a maintainer reading the bullet call it *"the exact hazard the 2
-  reclassification exists to prevent"* would reasonably invert it and hit a test that asserts a
-  contract without saying why. `retry.go` now argues it — a `Retry-After` header is a STRUCTURED
-  signal the server sent deliberately; `isDeepPagingCap` is a three-phrase substring match over
-  prose its own doc comment calls *"deliberately narrow"*, which any proxy or copy-edit can produce
-  or destroy — and names the four surfaces that move if the precedence ever changes.
-- **Next probe:** none. Round 1 (the nine correctness axes) was **NOT** run on #601; it merged on
-  round 0 plus my own verification. Test-and-comment-only and green on `main`, but that is a
-  judgement, not an audit.
+Verbatim in `claudedocs/refs/external-issue-513-numeric-username.md`. Safe to evict because
+two things survive it elsewhere: the PRECEDENCE ARGUMENT now lives in `pkg/civitai/retry.go`'s
+429 branch (a structured header signal outranks a three-phrase substring heuristic, plus the
+four surfaces that move if it changes), and the two guards name each other. The transferable
+lesson is in rank 22: **a classification test and an exit-code test are TWO claims**, and the
+delivered guard pinned only the first.
 
 ## Next steps (ranked)
 
@@ -243,14 +223,11 @@ the step count being what separates a green sweep from a green SKIP.
 2. **`developer-docs#61`** — awaiting the reporter's blue balance at the time of their 500. Still
    OPEN, 1 comment, untouched since 2026-09-12. Genuinely blocked on a third party.
    forcing: user — external reporter, waiting since 2026-09-11.
-3. **`civitai/civitai#4768` — PICKED UP 2026-09-14, agent dispatched to fix + PR.** Still 0
-   comments / untouched since 09-11 at dispatch time; the operator chose "dispatch to pick it up
-   and PR" over merely routing it. Working in `/home/zach/workspace/civit/civitai-4768-username`
-   off `civitai/civitai`, claim slug `civitai-4768-numeric-username`. 🔴 **The brief's load-bearing
-   constraint: a serialization-boundary `String(...)` cast is NOT the fix** — `"0222"` is already
-   `222` by the time the read path sees it, so a cast repeats #532's mistake on the server side.
-   The PR must state which half it ships (stored representation + reindex/backfill vs defensive
-   read) and use a BARE reference if partial. forcing: none — but see rank 25 for the outcome.
+3. **DONE — `civitai/civitai#4768` fixed and MERGED** (`5da5cc6467` + `d2218f54da`); it
+   auto-closed and its body was amended in place, root cause RETRACTED. **The remaining work is
+   rank 25's deploy probe, not here.** Kept for the constraint the brief got right: a
+   serialization-boundary `String(...)` cast is NOT the fix — `"0222"` is already `222` by the
+   time the read path sees it. forcing: none
 4. **DONE — stale branch deleted** (`12818a3`). forcing: none
 5. **DONE — `#545` merged.** forcing: none
 6. **DONE — `#554` closed by @xsvm.** forcing: none
@@ -262,10 +239,12 @@ the step count being what separates a green sweep from a green SKIP.
 10. **DONE — vendored mirrors measured CLEAN.** forcing: none
 11. **`home-manager switch`** so `devrc#1498`'s lesson is live. Operator's call — restarts
     collector/keylog/i3 on both hosts. forcing: none
-12. **`civitai/cli#575` — R2, R3, R4, R6 remain, and NONE were touched this session.** The issue
-    body carries a status table: R1 ✅ `#578`, R5 ✅ `#582`, R2/R3/R4 🟡 *"a trade-off that may be
-    accepted in writing"*, R6 🟡 has engineering. **R2–R4 need a WRITTEN decision from a named
-    reader, not code.** forcing: none
+12. **`civitai/cli#575` — ONLY R6 REMAINS.** R1 ✅ `#578`, R5 ✅ `#582`, **R2/R3/R4 ✅ ACCEPTED IN
+    WRITING 2026-09-14** by @ZacxDev (comment `5671768753`), body table amended in place. A
+    correction fell out of accepting R3: its *"the GREW message points at `gatePreSanitised`"*
+    clause is STALE — `#578` deleted that state — so the accepted residual is narrower than
+    written. R6 is a `(function, name)` key that cannot express two callers with two origins.
+    forcing: none
 13. **DONE — `#77` verified live**, in both directions: the notify job also CLOSED `#76` when the
     sweep passed. forcing: none
 14. **`cli-snapshot-refresh` is LATENT, not fixed** — filed as `developer-docs#82`. Its green runs
@@ -279,8 +258,10 @@ the step count being what separates a green sweep from a green SKIP.
 17. **DONE — `cli#590` merged** (`3b222c6`). 3 audit rounds. forcing: none
 18. **DONE — `cli#585` merged** (`61be65e`). Round 0 questioned the requirement; round 1 found a
     🔴 behaviour bug. forcing: none
-19. **`developer-docs#5`** — open since **2026-07-13**, MERGEABLE/CLEAN, 12 checks. Two months
-    stale; needs a yes/no rather than work. forcing: none
+19. **DONE — `developer-docs#5` MERGED** `23c6d46` (2026-09-14), after re-verifying its claim
+    against the live API rather than trusting a two-month-old PR: `?query=a` totals grow
+    **4 → 7 → 10** across pages while the unfiltered listing is a stable 88,901, exactly what it
+    documents. (This row said "open since 2026-07-13"; the real date was 08-10.) forcing: none
 20. **`developer-docs#81`** — a transitive `ERR_MODULE_NOT_FOUND` misrouted to the retirement
     message. Filed rather than fixed so round 7 stayed the ladder's last. forcing: none
 21. **The `developer-docs#76` residuals that are NOT drift-checked, none started.**
@@ -315,14 +296,39 @@ the step count being what separates a green sweep from a green SKIP.
     time. `gh pr view` said `MERGEABLE`/`CLEAN`, which is the TEXTUAL claim only. The mechanical
     check is posted as a comment on #602. Recorded as skipped, not absent — `#585` dropped
     `#591`'s rows on a resolution that conflicted nowhere. forcing: none
-24. 🔴 **`claudedocs/handoff-index-store-claims-accuracy.md` is 7,091 B OVER its ceiling and is
-    reddening a SHARED gate** — `test_no_handoff_doc_exceeds_its_budget` fails for everyone, and
-    the next unrelated PR inherits it. It is in a `devrc-*` worktree, not this repo, and it GREW
-    29 B between two readings minutes apart, so another session is actively editing it.
-    **Not mine to edit; named because it is red on a gate this repo shares.**
-    forcing: gate — a permanently-red gate trains everyone to click through.
+24. 🔴 **RETRACTED 2026-09-15 — THE GATE IS NOT RED, AND THE CLAIM WAS CARRIED ALL SESSION
+    UNVERIFIED.** Measured: that doc on devrc's `origin/main` is **59,764 B, UNDER the 65,536
+    ceiling**. The 66,930–72,627 B copies are all in `devrc-*` WORKTREES — other sessions'
+    unlanded work, which the gate never reads (`this_repos_corpus()` walks the repo root).
+    **A `forcing: gate` row asserting a red gate that is green is the inverse of the hazard it
+    cites**: it spends attention on nothing. Inherited from the previous handoff and never
+    checked — a `forcing:` kind is a CLAIM, and nothing validates it. forcing: none
 
 ## Gotchas / decisions / dead-ends
+
+- 🔴 **A HEADING-DELIMITED SLICE CUT 15× WHAT IT WAS AIMED AT, AND ONLY A COUNT CAUGHT IT.**
+  Evicting one closed block, `s.index("\n### ", start)` found the next `###` — but the block was
+  the LAST in its section, so the slice ran past `## Next steps (ranked)` and deleted **27,991 B
+  instead of ~1,800**, taking the whole ranked list and most of the Gotchas with it. The run
+  printed a plausible new size and exited 0. What caught it was an integrity check that counted
+  ranked items and got **0**; nothing else would have, and the next step was a commit. **Bound a
+  slice on EVERY delimiter that can end it (`min` of `\n### ` and `\n## `), assert the slice's
+  SIZE is in the range you expect, and assert the result still contains the sections you did not
+  mean to touch.** Nothing was committed; `git restore` on both files undid it, at the cost of
+  redoing the edits.
+- 🔴 **`forcing:` IS A CLAIM, AND NOTHING VALIDATES IT — rank 24 asserted a RED shared gate that
+  is GREEN.** It was inherited from a previous handoff, carried through a whole session, and cited
+  the "a permanently-red gate trains everyone to click through" rule while being its inverse: a
+  gate claimed red that is green spends attention on nothing. Measured only when someone finally
+  asked what was outstanding — the doc on devrc's `origin/main` is 59,764 B, under the ceiling; the
+  oversize copies are all in WORKTREES the gate never reads. **Re-measure an inherited `forcing:`
+  before acting on it, and treat `gate` as the kind most worth checking, since it sounds automatic.**
+- 🔴 **A CLOSING CONDITION A MERGE CAN SATISFY IS A CONDITION ABOUT YOU, NOT THE REPORTER.** The
+  one written this session read "…has a fix MERGED" — met the moment the platform PRs landed, while
+  the endpoint still coerced and while the reporter had been told on #513 that it closes on a probe.
+  Two bars for one thing, and the published one was the stricter. **Write the condition in terms of
+  the SYMPTOM being gone**, and check whether a literal reading lets in something you did not mean
+  (this one admitted a bot-authored issue under "externally-authored").
 
 - 🔴 **`via: code` MEANS "I READ CODE", NOT "I READ THE CODE THAT RUNS" — and that tag is what let
   a wrong root cause sit in this doc for three days reading as derived.** #4768's Meilisearch
