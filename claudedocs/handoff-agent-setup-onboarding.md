@@ -30,7 +30,7 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 
 ✅ **THE SECOND EFFORT THAT ACCRETED HERE HAS BEEN SPLIT OUT —
 [`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md).**
-The `safeTerm` / terminal-line-forgery work (ranks 23, 28, 30, 31; issues #574,
+The `safeTerm` / terminal-line-forgery work (ranks 23, 28, 30, 31 **and 32**; issues #574,
 #604, #605, #612, #620, #621, #622, #624, #627, #629; PRs #596…#628) shares no
 code, no goal and no closing condition with agent-setup onboarding. It rode in
 because this doc was the queue every `/resume` drew from, and nothing refused it.
@@ -427,6 +427,22 @@ at what they were taken for. Open here: **15, 16, 17, 25, 26, 27, 29**.
 [`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md), which now carries its
 own closing condition. Their numbers are retired HERE rather than reused, so a live
 `claim-work` slug still resolves to what it was taken for.
+
+🔴 **BUT THE SPLIT MINTS A SECOND SLUG FOR ONE ITEM, AND `claim-work` LOCKS PER SLUG — SO
+FORWARD IT BY HAND BEFORE TAKING ANY OF THESE.** `claim-work --slug-for` derives the slug from
+the DOC, so the same work now has two canonical names and **both compare-and-swaps succeed
+independently**: two sessions can take `agent-setup-onboarding-32` and `terminal-line-forgery-1`
+and both work civitai/cli#629. The old names stay derivable from every pre-split transcript and
+PR body, and from the `## Gotchas` notice below, which tells readers those sections cite rank
+numbers like "rank 30". The forwarding map:
+
+| retired slug (here) | now | live slug |
+|---|---|---|
+| `agent-setup-onboarding-32` | rank 1 of the forgery doc | `terminal-line-forgery-1` |
+| `agent-setup-onboarding-23` / `-28` / `-30` / `-31` | CLOSED (#574, #605+#624, #604, #612) | none — do not take |
+
+⚠ The only MECHANICAL backstop is the `gh pr list --state open` sweep, which is the one thing
+that catches an UNCLAIMED duplicate; the forgery doc mandates it. This table is the human half.
 
 15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT re-verified
     for three sessions. `/home/zach/workspace/civit/civitai-developer-docs`. One command
@@ -1448,37 +1464,15 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
 
 ## How to verify
 
-**Finding the NEXT ungated operand** (#612 is closed; this is the instrument that found it, and
-it is NOT a grep for a helper name — `git grep 'safeTerm('` only finds operands that ALREADY
-have a gate, which is why it missed all three):
-
-```bash
-# enumerate every rendered operand on the two paths, then TRACE EACH ONE to its origin
-command grep -nE 'fmt\.(Fprint[^(]*|Errorf|Sprintf)\(' internal/cmd/generate.go internal/cmd/generate_wait.go
-```
-
-🔴 **Do not pipe it to `wc -l` and compare against a remembered number.** The enumeration counts
-its own prose: it read 102 → 103 → 102 again across #619's three commits, purely because comment
-lines quoting `fmt.Errorf(` were added and then removed. A literal beside it sends the reader
-hunting an ungated operand that does not exist — that tripwire falsified itself inside a single
-PR and was deleted rather than renumbered. The instrument is the enumeration **and the trace**.
-
-⚠ And the `safeTermCoveredBy` ledger will NOT demand a row for the next one: GREW iterates the
-functions that already CALL `safeTerm`, so a function with one call and one row passes however
-many further ungated operands it grows. **#621** is the structural repair.
-
-**The forgery guards on `generate`, after any change there:**
-
-```bash
-go test ./internal/cmd -count=1 -run 'ForgeALine|GeometryIsNotServerChosen|RowCountIsNotServerChosen|StaysMultiLine|PreservesClassification'
-# then revert ONE gate to plain safeTerm and confirm the named test dies with ITS OWN message
-```
-
-⚠ Two traps in that loop, both measured: a TAB assertion is **inert** on a `ui`-styled surface
-(lipgloss expands `\t` to four spaces before the bytes reach the writer), so it is live only on
-bare `fmt.Fprintf`; and `TestClassifyGenerateErrorFallThroughPreservesClassification` is an
-**invariant guard that cannot fail alone** — nine pre-existing tests catch the same mutant, so do
-not cite it alone in a matrix.
+➡ **The forgery-guard recipes moved** to
+[`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md) — the operand
+enumeration, the `go test -run` filter and the guard traps all live there now.
+🔴 **They were DELETED here rather than left as a second copy, because the copy had
+already diverged and was wrong in the DANGEROUS direction:** its `-run` filter omitted
+`IsLengthBounded` and `SoftWrap`, the guards cli#628 added for cli#605/#624 three commits
+earlier, so a reader following it would have reported the forgery guards green having
+never run the newest one. A duplicated recipe is not a convenience; it is a second thing
+to keep true, and this one was not kept true for three commits.
 
 **The repo freeze, when `pins-vs-published` is red:**
 

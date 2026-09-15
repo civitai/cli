@@ -32,10 +32,13 @@ where the CLI is vouching for something. The two canonical payloads, both measur
 - a forged `Cost: … Buzz` line directly above `Generate? [y/N]:`, the last screen
   before an irreversible spend.
 
-- **closing-condition:** `check` — a ledger keyed on the WRITER, not the gate, fails the
-  suite on an ungated server-origin operand; proven by a negative control, a NON-ZERO
-  positive control, and a retrospective run at the parents of the #566/#612/#624 fixes
-  that finds what the humans found. Detail and rationale directly below. ⚠ UNRATIFIED.
+- **closing-condition:** `check` — #621 lands, AND a writer-keyed operand enumeration covers
+  the money/verification paths (`generate.go`, `generate_wait.go`, `generate_output.go`,
+  `download.go`), failing the suite on an ungated server-origin operand; proven by a negative
+  control, a NON-ZERO positive control, and a retrospective at the parents of the **#566 and
+  #612** fixes. **#624 is deliberately EXCLUDED from the retrospective** — it was an
+  insufficiency-of-gate defect on an already-gated operand, which this instrument cannot see by
+  construction. Detail, rationale and the two residuals directly below. ⚠ UNRATIFIED.
 
 🔴 **THE FIELD ABOVE IS THE MACHINE-READABLE ONE, AND AN EARLIER DRAFT HAD ONLY THE
 HEADING BELOW.** `handoff_doc.py` parses `closing-condition: <kind> — <…>` inside
@@ -46,30 +49,55 @@ GRANDFATHERED. That is this effort's own recurring defect (something that READS 
 coverage while providing none) committed in the document that names it. Keep both: the
 field is what is parsed, the section is what is read.
 
+🔴 **AND THE REFUSAL THAT EXISTS FOR EXACTLY THIS WAS OUT OF REACH, BECAUSE THE DOC WAS
+CREATED WITH A PLAIN `Write`.** `handoff_doc.py` rule (m) REFUSES a NEW doc with no
+`closing-condition:` (`EXIT_UNDEFINED_DONE`, nothing written) — but "new" means no copy
+tracked at HEAD, and this file was written and committed directly in `722cf29` before
+`/handoff` ever saw it. By then it existed, so the gate took its **advisory**
+grandfather arm instead and proceeded. The `/handoff` skill says plainly not to `Write`
+the doc yourself and that step 5 is the only step that commits; doing it by hand is what
+turned a refusal into a warning. **Create a handoff doc through the gate, even the first
+time.**
+
 ### 🔴 closing-condition — `check`
 
-**THE HAND ENUMERATION IS RETIRED, BECAUSE AN INSTRUMENT FINDS WHAT IT FOUND.**
+**THE HAND ENUMERATION BECOMES MANDATORY AND AMORTISED, SO THE ABSENCE IS RECORDABLE.**
 
-This is the condition because it is the one thing that would have stopped the effort
-regenerating. Every defect this arc has closed was found by a **human** enumerating
-operands: `#566`'s five, `#612`'s three, `#624`'s two. Its own title said so in
-July; `#612`'s body said the same thing two months and nine PRs later. Every
-instrument the repo owns keys on **the gate** — `scanSafeTermCallSites`,
-`safeTermCoveredBy`, `TestSafeTermErrCallersAreLedgered`,
-`TestSanitizerComposersAreLedgered` all enumerate functions that ALREADY call
-`safeTerm` — so all of them are structurally incapable of finding an operand that
-has no gate. That is the whole disease.
+🔴 **AN EARLIER DRAFT SAID "THE HAND ENUMERATION IS RETIRED, BECAUSE AN INSTRUMENT FINDS
+WHAT IT FOUND", AND ROUND 0 OF #632 KILLED BOTH HALVES OF THAT SENTENCE. Do not
+re-derive it.** The retractions are recorded here because this doc's whole subject is
+claims that read as coverage while providing none, and its own condition was one.
 
-So the done-state is a ledger keyed on **the WRITER**, not the gate:
+**Why the condition exists at all — this part survived.** Every defect this arc has
+closed was found by a **human** enumerating operands. Every instrument the repo owns
+keys on **the gate** — `scanSafeTermCallSites`, `safeTermCoveredBy`,
+`TestSafeTermErrCallersAreLedgered`, `TestSanitizerComposersAreLedgered` all enumerate
+functions that ALREADY call `safeTerm` — so all of them are structurally incapable of
+finding an operand that has **no** gate. That is the disease, and it is still the thing
+to fix.
 
-> Every `fmt.Fprint*` / `fmt.Errorf` / `fmt.Sprintf` site reaching a human-facing
-> surface in `internal/cmd` carries a classification for each interpolated operand —
-> **CLI-owned**, **user-typed**, or **server-origin** — and a server-origin operand
-> with no gate FAILS the suite. A new writer call site cannot be added without
-> classifying it.
+So the done-state is **both** of:
 
-That makes the absence **recordable**, which is exactly the property `#612` and
-`#621` both say is missing today.
+> **(i)** `#621` lands — the ledger's free-text `why` can no longer scope a surface OUT
+> without minting a tracked object. It is keyed on the gate and stays blind to an
+> ungated operand, so it is not sufficient; it is the cheap half that hardens what
+> exists, and (ii) inherits its defect if it ships without it.
+>
+> **(ii)** A writer-keyed operand enumeration covers the **money and verification
+> paths** — `generate.go`, `generate_wait.go`, `generate_output.go`, `download.go`.
+> Every `fmt.Fprint*` / `fmt.Errorf` / `fmt.Sprintf` site there classifies each
+> interpolated operand **CLI-owned** / **user-typed** / **server-origin**, a
+> server-origin operand with no gate FAILS the suite, and a new writer call site in
+> those files cannot be added without classifying it.
+
+🔴 **(ii) IS BOUNDED TO FOUR FILES ON PURPOSE, AND THE EARLIER DRAFT'S "all of
+`internal/cmd`" WAS NOT COSTED.** Measured at #632's head: `internal/cmd` holds **1,023**
+non-test, non-comment `fmt.Fprint*`/`Errorf`/`Sprintf` sites — against
+`maxUncoveredSafeTermFuncs = 9` rows in the ledger it would replace. The four files above
+are ~102 + `download.go`, and they are where a forged line is a **counterfeit assertion
+by the CLI** rather than cosmetic: the `(SHA256 verified)` claim and the `Cost:` line
+above an irreversible spend. Widening beyond them is a decision with a number attached,
+not a tidy-up.
 
 **Checked by — all three, because any one alone is walkable:**
 
@@ -77,18 +105,33 @@ That makes the absence **recordable**, which is exactly the property `#612` and
    call; the check goes red **with its own message**. A check that cannot go red is
    testing nothing.
 2. **POSITIVE CONTROL.** The check reports a **non-zero** count of operands actually
-   classified on `main`, and the number is printed. A reassuring zero is
-   indistinguishable from a check wired to nothing — report the pair, never the zero.
-3. **THE RETROSPECTIVE.** Run it against the parents of the commits that fixed
-   `#566`, `#612` and `#624`, and show it finds what the humans found. This is the
-   one that distinguishes "an instrument exists" from "an instrument that would have
-   worked". If it misses them, the condition is not met.
+   classified, and the number is printed. A reassuring zero is indistinguishable from a
+   check wired to nothing — report the pair, never the zero.
+3. **THE RETROSPECTIVE.** Run it at the parents of the commits that fixed **`#566` and
+   `#612`** and show it finds what the humans found. This is what distinguishes "an
+   instrument exists" from "an instrument that would have worked". If it misses them,
+   the condition is not met.
 
-**Deliberately OUT of scope, so the condition is not read wider than it is:**
-`#397` (runes are not display cells — nothing here owns a character-width table, so
-every row count this arc quotes doubles for CJK) and the fact that a **bounded** tail
-can still begin at column zero, which needs the terminal width the CLI cannot obtain.
-Those are named residuals, not failures of this condition.
+🔴 **`#624` IS EXCLUDED FROM CONTROL 3, AND AN EARLIER DRAFT INCLUDED IT — WHICH MADE
+THE CONDITION PERMANENTLY UNMEETABLE.** Measured at `b4acda5^`: both #624 operands were
+**already gated** (`safeTermSingle(p.name)`, `safeTermSingle(berr.Error())`). #624 was an
+*insufficiency*-of-gate defect — the gate bounded the rune class, not length — so a
+predicate keyed on "has a gate" reports **pass** and control 3 returns MISS. The draft's
+own next sentence then read "if it misses them, the condition is not met", so the
+condition refuted itself on one of its three named cases, forever, since #624 is closed
+and the history is fixed.
+
+**Two residuals this condition does NOT close, named so it is not read wider:**
+
+- 🔴 **It cannot see a WRONG LABEL.** All three controls check that classification
+  *happens*, never that a classification is *true*: a session that labels a
+  server-origin operand `CLI-owned` passes all three. That is `#621`'s exact mechanism —
+  free text nothing checks — which is why (i) is part of the condition rather than a
+  nice-to-have, and it is still only a partial answer at the scale of (ii).
+- **The insufficiency class is out of scope entirely** — #624's shape, and `#397` (runes
+  are not display cells, so every row count this arc quotes doubles for CJK), and the
+  fact that a **bounded** tail can still begin at column zero, which needs a terminal
+  width the CLI cannot obtain. Named residuals, not failures of this condition.
 
 ⚠ **This condition was written 2026-09-15 by the session that closed ranks 28 and 31,
 and it is the FIRST one this effort has ever had.** It is a proposal until an
@@ -111,7 +154,7 @@ Every one verified by **CONTENT** with a working positive control, never by ance
 merge makes the branch head a non-ancestor forever, so `merge-base --is-ancestor` returns false
 after every one of these and means nothing.
 
-🔴 **IN FLIGHT — `civitai/cli#632`, branch `docs/split-forgery-initiative`, commit `722cf29`.
+🔴 **IN FLIGHT — `civitai/cli#632`, branch `docs/split-forgery-initiative`.
 OPEN, UNMERGED, and NO audit round has run on it.** It is the PR that created this doc: it
 splits the effort out of `handoff-agent-setup-onboarding.md` (rank 29's "split by initiative")
 and writes the closing condition in `## Goal`. `make ci` green, 21 packages.
@@ -177,7 +220,11 @@ rather than renumbered.
 **The forgery guards, after any change:**
 
 ```bash
-go test ./internal/cmd -count=1 -run 'ForgeALine|IsLengthBounded|SoftWrap|GeometryIsNotServerChosen|RowCountIsNotServerChosen|StaysMultiLine|PreservesClassification|Ledgered'
+go test ./internal/cmd -count=1 -run 'ForgeALine|IsLengthBounded|BoundsTheOperand|GeometryIsNotServerChosen|RowCountIsNotServerChosen|StaysMultiLine|PreservesClassification|CallSitesAreCovered|CallersAreLedgered'
+# ⚠ every alternative above MATCHES a real test — an earlier draft carried `SoftWrap`, which
+# matches NONE (the file is softwrap_forgery_test.go; its funcs are BoundsTheOperand and
+# IsLengthBounded), and a -run alternative that silently matches nothing is the class this
+# doc exists to catch. Verify with -v and count the RUN lines, never the exit code.
 # then revert ONE gate and confirm the named test dies with ITS OWN message
 ```
 
