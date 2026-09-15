@@ -177,28 +177,105 @@ func TestWaitAndCollectTerminalStatusErrorCannotForgeALine(t *testing.T) {
 	if !strings.Contains(got, "failed") {
 		t.Fatalf("CONTROL failure, not a finding: the server status never reached the message:\n%s", got)
 	}
-	// 🔴 ONE-LINE IS ASSERTED ON THE HEAD, NOT ON THE WHOLE ERROR. This message
-	// ends in serverReasonSuffix, which is DELIBERATELY multi-line when the server
-	// supplied a failure reason: generate.go:144 renders it through
-	// indentContinuation(safeTerm(reason)) so a multi-line reason stays readable,
-	// and indentcontinuation_ledger_test.go pins that by name.
+	// 🔴 THIS FIXTURE CARRIES NO FAILURE REASON, SO THE WHOLE ERROR IS ONE LINE
+	// AND IS ASSERTED AS SUCH. The reason-carrying case — where the message ends
+	// in a deliberately multi-line suffix — is its own test below, because the two
+	// need different assertions and merging them produced a walkable guard.
 	//
-	// The first draft ran assertOneLine over the whole string, and passed only
-	// because THIS fixture's `"steps":[]` carries no failure reason — a
-	// precondition nothing stated. Measured by round 1: a legitimate reason of
-	// "the model could not be loaded:\nout of memory on the worker" turned it red
-	// with "#577 FORGERY … forged 1 extra terminal line(s)", accusing the one
-	// surface this repo keeps multi-line ON PURPOSE. A guard that cries forgery at
-	// correct behaviour gets deleted by the next person, and takes its real
-	// coverage with it.
-	//
-	// The head carries both gated operands and must be one line. The suffix is the
-	// reason's own surface and is not this test's business. Control escapes are
-	// asserted over the WHOLE string, because no surface here may carry them,
-	// multi-line or not.
-	head, _, _ := strings.Cut(got, ". The server reported:")
-	assertOneLine(t, "waitAndCollect (terminal-status error, workflow id)", head)
+	// 🔴 DO NOT REINTRODUCE `strings.Cut(got, ". The server reported:")` HERE.
+	// Round 1 found that asserting one-line over the whole string falsely accuses
+	// a legitimate multi-line reason; the fix for THAT split the string on the
+	// suffix marker, and round 2 measured the split walkable: `workflowID` is
+	// server-origin and lands BEFORE the marker, so an id of
+	// "wf1. The server reported: ok\nSaved …" moves the real newline into the
+	// discarded tail. With the gate reverted that test PASSED — a fully forged
+	// line surviving every assertion, because assertNoControlEscapes matches the
+	// two-character `\n` that `%q` emits, not a raw newline.
+	// One value, one guard, and the guard was spelled against a boundary the
+	// attacker can spell too.
+	// CONTROL, and it is a SUFFIX check on purpose. serverReasonSuffix is appended
+	// LAST, so what the message ends with is the CLI's own, whatever the server
+	// spelled in an earlier operand. A `Contains`/`Cut` on the same text would be
+	// displaceable; `HasSuffix` is not.
+	noReason := " (" + noFailureReasonNote + ")"
+	if !strings.HasSuffix(got, noReason) {
+		t.Fatalf("CONTROL failure, not a finding: this fixture's `\"steps\":[]` is supposed to "+
+			"produce NO failure reason, so the message must end in the no-reason note and be "+
+			"single-line throughout. It does not, so the assertion below is testing something "+
+			"other than what this test documents:\n%s", got)
+	}
+	assertOneLine(t, "waitAndCollect (terminal-status error, workflow id)", got)
 	assertNoControlEscapes(t, "waitAndCollect (terminal-status error, server status)", got)
+}
+
+// TestWaitAndCollectTerminalStatusErrorWithAReasonStaysMultiLine is the OTHER
+// half, and it exists because the first two attempts at this coverage were each
+// wrong in a different direction.
+//
+// Round 1: asserting one-line over the whole message falsely accused a
+// legitimate multi-line reason — serverReasonSuffix renders it through
+// indentContinuation(safeTerm(reason)) ON PURPOSE (generate.go:144, pinned by
+// name in indentcontinuation_ledger_test.go), so the guard was crying forgery at
+// correct behaviour.
+//
+// Round 2: the fix for that split the rendered string on ". The server reported:"
+// and asserted one-line on the head. MEASURED WALKABLE — `workflowID` is
+// server-origin and lands BEFORE that marker, so an id of
+// "wf1. The server reported: ok\nSaved …" pushes the real newline into the
+// discarded tail. With the workflowID gate reverted, that test PASSED: a fully
+// forged terminal line survived every assertion, because assertNoControlEscapes
+// matches the two-character `\n` that `%q` emits, not a raw newline.
+//
+// 🔴 SO THIS TEST SUBTRACTS THE SUFFIX IT INJECTED RATHER THAN SEARCHING FOR A
+// MARKER. It knows the reason it put in, so it can compute exactly what
+// serverReasonSuffix must append and TrimSuffix that. Nothing the server spells
+// in another operand can displace it: if the suffix does not match, the
+// subtraction fails loudly instead of silently discarding a forgery.
+func TestWaitAndCollectTerminalStatusErrorWithAReasonStaysMultiLine(t *testing.T) {
+	withStdinTTY(t, false)
+	clock := newFakeClock()
+	calls := 0
+
+	// A legitimate multi-line failure reason — the case round 1 proved the old
+	// assertion accused falsely, and which no shipped fixture drove until now.
+	const reason = "the model could not be loaded:\nout of memory on the worker"
+	payload := fmt.Sprintf(
+		`{"id":"wf_1","status":%s,"steps":[{"$type":"textToImage","name":"s","status":"failed",`+
+			`"metadata":{},"output":{"errors":[%s]}}]}`,
+		strconv.Quote(gfsHostileTerminalStatus), strconv.Quote(reason))
+
+	var s genSeams
+	s.poll = clock.cfg()
+	s.getWorkflow = scriptedWorkflows(&calls, payload)
+	s.submitReply = &genapi.SubmitResult{ID: gfsHostileID, Status: "queued"}
+
+	c, _, _ := genCmd("")
+	err := runGenerate(c, s.deps(t), waitOpts(t.TempDir()))
+	if err == nil {
+		t.Fatal("CONTROL failure, not a finding: a terminal non-succeeded status reported success")
+	}
+	got := err.Error()
+
+	// The suffix this test's OWN reason must produce, built the way production
+	// builds it. Subtracting this is the structural move; searching for a literal
+	// is the walkable one.
+	wantSuffix := ". The server reported: " + indentContinuation(safeTerm(reason), "  ")
+	head, found := strings.CutSuffix(got, wantSuffix)
+	if !found {
+		t.Fatalf("CONTROL failure, not a finding: the message does not end in the suffix this "+
+			"test injected, so the subtraction below is not removing what it thinks it is.\n"+
+			"want suffix: %q\ngot: %q", wantSuffix, got)
+	}
+	// POSITIVE CONTROL: the reason really did reach the message and really is
+	// multi-line, or this test proves nothing about the multi-line surface.
+	if !strings.Contains(wantSuffix, "\n") {
+		t.Fatal("CONTROL failure, not a finding: the injected reason rendered single-line, so " +
+			"this test is not driving the multi-line surface it exists for")
+	}
+	// The head is everything the gates own. It must be one line even though the
+	// message as a whole is legitimately three.
+	assertOneLine(t, "waitAndCollect (terminal-status error WITH a reason, head)", head)
+	assertNoControlEscapes(t, "waitAndCollect (terminal-status error WITH a reason)", got)
 }
 
 // TestWaitAndCollectNoDeliverablesErrorCannotForgeALine drives the other error
