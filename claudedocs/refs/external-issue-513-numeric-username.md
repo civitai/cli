@@ -435,3 +435,49 @@ Verbatim, including its original as-of line. CLOSED: read as recall, not live st
   every shape, one line each.
 - **Next probe:** none for #80. The residual is `devdocs#81`.
 
+
+
+---
+
+## Demoted from the handoff 2026-09-14 (third eviction, to fit this update)
+
+### 🔴 A TAB is a worse forgery vector than a newline, because tabwriter's delimiter IS the tab
+
+- **Symptom + exact repro:** at #554 HEAD, `images search` (no `--meta`) with
+  `username = "alice\tSDXL\t9x9\tNone\t0\t0\thttps://evil.example/steal"` emits a **fully
+  aligned**, entirely attacker-controlled row, pushing the real values past column 80.
+- **Observed (with values), verified first-hand not just by the auditor:**
+  `safeTermSingle` (`safeterm.go:59-65`) replaces **only `"\n"`**; `saferune.go:219` reads
+  `if r == '\n' || r == '\t'` — tab is **deliberately kept**. Survival through
+  `safeTermSingle`: `\n`→space; `\r`, `\v`, `\f`, U+0085 **stripped**; **`\t`, U+2028,
+  U+2029 SURVIVE**.
+- 🔴 **The generalisable part: "reach column zero" was never the whole hazard.** In a
+  `tabwriter`, a tab lets the attacker **inject a column**, so alignment — the thing that
+  makes output look trustworthy — becomes the attack surface. Any replacement predicate must
+  cover both.
+- **Ruled out:** that this is new in #554 — the tab behaviour predates it. What is new is the
+  CLAIM: `safeterm.go:49-55` justifies the helper by naming column-alignment and tabwriter
+  row-forging, while guarding only `\n`. `via: code`
+
+
+
+---
+
+## Demoted from the handoff 2026-09-15 (fourth eviction)
+
+### 🔴 RESOLVED: the drift streak's end is now OBSERVED in a scheduled run, not inferred
+- as-of: 2026-09-14
+
+- **Symptom + exact repro:** rank 9's forcing function was stated in SCHEDULED runs ("red for 34
+  consecutive scheduled runs, last green 2026-08-11"), and the green run that motivated closing it
+  was a `workflow_dispatch` — the same workflow and job against the same tree, but not the
+  observation the claim was made in terms of.
+- **Observed (with values):** run **`34848144324`**, `event=schedule`, **2026-09-14T13:15 UTC**:
+  `drift=success`, **0 failing steps and 15 steps EXECUTED**, `notify=success`. The step count is
+  the load-bearing half — a run that SKIPPED its steps reports `success` too, which is exactly how
+  `cli-snapshot-refresh` (rank 14) reads green while doing nothing. The prior scheduled run,
+  `09-13T12:14`, was the last `failure`.
+- **Ruled out:** *"a dispatched run closes a claim stated in scheduled runs"* — **via: measurement**.
+  It did not; this run does. The gap was ~22 h and cost nothing but patience.
+- **Next probe:** none. Closing condition met, in the terms it was written in.
+
