@@ -347,10 +347,15 @@ It does three things, and **it never authenticates**:
 3. Registers the **two Civitai MCP servers** in the detected agent's own config
    file.
 
+**No `@civitai/*` version is pinned anywhere in what this writes.** Pins live in
+`civitai app init`, which CI holds against npm; a version literal in an
+instruction file rots in silence.
+
 The agent is detected from the environment first and then from marker files in
 the project; `--agent <name>` overrides it, and `--dir <path>` points at a
-project other than the working directory. Paths in `--json` are always
-**absolute**, whatever `--dir` you passed.
+project other than the working directory. A path in `--json` is always
+**absolute**, whatever `--dir` you passed — except on a `manual` row, which names
+no file for this CLI to write and carries an empty `path`.
 
 ### The two MCP servers
 
@@ -395,6 +400,10 @@ header survives a re-run). A config that does not parse is **refused by name**
 rather than repaired. A **symlinked** config is **followed**, so a dotfiles repo
 keeps tracking the live file; a *broken* symlink is refused by name.
 
+The three writes are **independent**: a refused MCP config does not stop
+`AGENTS.md` and `CLAUDE.md` being written, and each step reports its own outcome
+rather than the run exiting with nothing to show.
+
 ### No credential is ever written
 
 **🔴 No credential is ever written into a config file — and never a placeholder
@@ -404,8 +413,10 @@ in the repo root and get committed, so an `Authorization` header holding your
 actual token is a secret headed for version control. The header **references**
 `CIVITAI_TOKEN` in each vendor's own spelling instead (the last column above),
 and where a vendor documents no interpolation at all — Zed today, and `--agent
-other` — **no header is written**, with the run printing the exact line to add
-yourself.
+other`, whose target agent is by definition unknown — **no header is written**.
+The run prints the header line for you to add instead, and for `--agent other` it
+also lists the known spellings, because this CLI cannot know which one your agent
+reads.
 
 🔴 **Mint the key at [civitai.com/user/account](https://civitai.com/user/account)
 (API Keys), then export it** — `export CIVITAI_TOKEN=<a personal API key>`, in
@@ -420,11 +431,7 @@ models, images and articles through the `civitai` server, and
 `civitai-orchestration` answers it `401`.
 
 `civitai agent-setup --help` carries the per-vendor header spellings, the merge
-rules and the JSONC/symlink handling in full.
-
-**No `@civitai/*` version is pinned anywhere in what this writes.** Pins live in
-`civitai app init`, which CI holds against npm; a version literal in an
-instruction file rots in silence.
+rules and the JSONC re-encoding caveat in full.
 
 ### Verify a setup (`--check`)
 
@@ -463,9 +470,13 @@ both of the first two.
 other than `claude` — `claude-md`.** Setup deliberately stops before auth, so the
 payload above, a complete setup with no token, is `"ok": true` and **exits 0**.
 Every other agent reads `AGENTS.md` directly, so the `CLAUDE.md` shim is inert
-for it and its row stays without counting. An absent `Authorization` header is
-likewise reported without failing anything — the correct state for Zed. Read
-those rows yourself if you need them; do not fold them into your own pass/fail.
+for it and its row stays without counting. Read those two rows yourself if you
+need them; do not fold them into your own pass/fail.
+
+An absent `Authorization` header gets **no row of its own**, and nothing fails
+because of one — that is the correct state for Zed and for `--agent other`. If
+you need to know whether a header is there, read the config file; `--check` will
+not tell you.
 
 A config file `--check` cannot **read** is reported as `mcp-site`/`mcp-orch` rows
 carrying the parse failure in their `detail`, `ok: false`, exit `1` — never as an
@@ -476,7 +487,9 @@ which. An `AGENTS.md` or `CLAUDE.md` that cannot be read is the same.
 `--dry-run` run emits `changes`; and a failure that happened before either could
 be built — no resolvable config root, for instance — emits **neither array and an
 `error` string** beside `ok: false`. Discriminate on which of the three is
-present. A payload is emitted for **every** failure except a usage error.
+present. A payload is emitted for **every** failure except a usage error — the
+property is about what the command *writes*, so if stdout itself cannot be
+written to, nothing lands there and no command can fix that.
 
 ### Exit codes and `--dry-run`
 
