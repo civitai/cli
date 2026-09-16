@@ -44,7 +44,17 @@ before touching prose. This doc is state; that doc is the plan.
 
 ## State now
 
-**Eleven PRs merged across this arc. #641 is MERGED (`db68d1a`). README is 277,680 bytes on `main` — down 32,967 (−10.6%) from the arc's start.** The byte threshold is GONE (see the closing condition); size is reported because it is the cheapest progress signal, never as a gate.
+**Twelve PRs merged across this arc. Rank 1 is CLOSED and the ladder around it is complete. README is 277,680 bytes on `main` (`4572d6f`) — down 32,967 (−10.6%) from the arc's start.** The byte threshold is GONE; size is reported because it is the cheapest progress signal, never as a gate.
+
+🔴 **ARC CLOSING-CONDITION VERDICT: NOT YET CLOSED — one clause outstanding.** Measured on `main` at `4572d6f`:
+
+| clause | result |
+|---|---|
+| `go test ./internal/cmd/ -run 'Attribution\|Troubleshooting\|README\|Readme\|readme' -count=1` exits 0 with **>0** tests | ✅ `ok`, **81** tests run |
+| `go test ./...` green | ✅ 21 packages, 0 failures |
+| each remaining named phase has landed or been withdrawn by a merged PR | ❌ **phases 4 and 5 are neither** |
+
+So the one item that stands between this arc and closed is **phase 4 (rank 7) and phase 5 (rank 8)** — land them or withdraw them by merged PR. Nothing else in the condition is outstanding.
 
 | | bytes |
 |---|---:|
@@ -56,44 +66,25 @@ before touching prose. This doc is state; that doc is the plan.
 | after phase 3c — preamble, #635 | 281,439 |
 | **after rank 1 — agent-setup, #641 (`db68d1a`)** | **277,680** |
 
-🔴 **RANK 1 LANDED AT −4,064, NOT THE −4,936 THIS DOC CARRIED ONE COMMIT AGO. THAT EARLIER FIGURE WAS MEASURED MID-LADDER AND WAS NEVER THE RESULT.** Final, measured on `origin/main` after the merge:
+### Merged this session
+- **#643** (`5327ac8`) **rank 4** — `@civitai/app-sdk` 0.41.0 pin bump. Operator-merged. `TestScaffoldPinsSatisfyPublished` re-run on a clean tree afterwards: **PASS** (it had been FAIL on `main` itself).
+- **#641** (`db68d1a`) **rank 1** — the agent-setup section: **16,971 → 12,907 B (−4,064, −23.9%)**, 265 → 217 lines, 0 → **5 `###`** each with a Contents entry, **plus `internal/cmd/readme_agent_setup_claims_test.go`** (four guards). Five audit rounds (0–4), stopped by the **attribution gate**.
+- **#642** (`4572d6f`) — the handoff, including the −4,936 → −4,064 correction.
 
-| | before (`079dc14`) | after (`db68d1a`) | delta |
-|---|---:|---:|---:|
-| section bytes | 16,971 | **12,907** | **−4,064 (−23.9%)** |
-| section lines | 265 | **217** | −48 |
-| `###` subheadings | 0 | **5** | — |
-| README total | 281,439 | 277,680 | −3,759 |
-
-⚠ **The −4,936 was true at `2673c55` and was falsified by this PR's OWN later commits** — rounds 1–4 added **872 B** back, every byte of it a contract repair. **This is the second confirmed instance of the pattern, and it is now the arc's most reliable one:** #635 advertised −1,741 and landed −873 after four rounds added 868 B back. Two PRs, two ladders, ~870 B of give-back each. **Quote a byte figure only from the MERGE COMMIT.** A mid-ladder number is a measurement of a tree nobody shipped.
-
-🔴 **AND NOTE HOW IT ESCAPED: the once-per-ladder count sweep ran at round 2 and was correct then.** Rounds 2–4 changed README again afterwards, so the swept number went stale inside its own PR — the documented "a claim falsified by a LATER commit of the same PR is inside no round's range" trap. **Run the sweep in the LAST round, or after the merge — not in the middle.**
-
-### Merged
-- **#611** (`f284d89`) phase 1, accuracy. Six corrections each pinned by a guard watched to fail, **plus a behaviour fix**: `civitai upgrade` derives the release-asset extension per GOOS and works on Windows. Closed **#613**. Four audit rounds.
-- **#625** Troubleshooting 35,250 → 19,182. Symptom column byte-identical.
-- **#630** phase 2 cuts, −14,279, **give-back 0** — the PR that proved delete-first.
-- **#633** command table 21,391 → 9,664 (−54.8%), plus `TestREADMECommandSynopsesNameRealFlags` (25 rows / 33 resolutions / 90 flag checks, floors 30/85).
-- **#615** the automated pin bump (not this session's) — unfroze the repo and satisfied the previous arc's cli#530 closing condition.
-- **#623** (`868fff6`) the plan + this handoff, and the commit that **deleted the byte closing condition**.
-- **#636** (`ada6699`) two comments that claimed coverage they did not have.
-- **#635** (`c7ea087`) phase 3c, the preamble. Four audit rounds; landed −873 against an advertised −1,741.
-- **#639** (`079dc14`) **rank 3b** — pins the four contract claims #635's rounds repaired.
-- **#643** (`5327ac8`) **rank 4** — the `@civitai/app-sdk` 0.41.0 pin bump. Operator-merged; the failing test re-run **PASS**.
-- **#641** (`db68d1a`) **rank 1** — the agent-setup section, −4,064 B (−23.9%), 0 → 5 `###`, **plus `internal/cmd/readme_agent_setup_claims_test.go`**: four guards closing a section where deleting all ~200 body lines had left the suite green. Five audit rounds (0–4), stopped by the attribution gate.
+**Verified after merge, not assumed:** the four new guards run and pass on `main` (`-run 'READMEVerdictExemptions|CheckEmitsNoRow|ManualRowCarries|HelpPointerIsHonoured'` → 4 PASS); base clone re-synced `--ff-only`; both feature branches and their worktrees removed; `claim-work --release readme-reduction-1` done.
 
 ### Open
-- **#642** — this handoff.
-- **#640** — another session's rank-3b handoff close, green. 🔴 **It edits THIS doc and #642 has now moved it, so #640 needs a rebase before it can merge.**
-- **#637** — 🔴 **a CODE defect, not a docs one.** `printSubmitSizeDiagnosis` prints `What this CLI sent` for errors raised *before any HTTP request is built*. Measured against a real `httptest` server: **0 requests received**, block printed, positive control on the hit counter. `appblocks.go:570` returns on `Token()` before `doOnceWith` builds anything; `auth/source.go:115` returns `persist refreshed tokens` untagged. Mirror case: `auth/source.go:90` tags `ErrUnauthorized` onto a purely *local* error. **Its closing condition includes reverting the two README surfaces #635 had to weaken.**
+- **#640** — another session's rank-3b handoff close. 🔴 **It edits this doc, which #642 has now moved, so it needs a rebase before it can merge.** Not ours.
+- **#637** — 🔴 **a CODE defect.** `printSubmitSizeDiagnosis` prints `What this CLI sent` for errors raised *before any HTTP request is built*. Measured against a real `httptest` server: **0 requests received**, block printed, positive control on the hit counter. `appblocks.go:570` returns on `Token()` before `doOnceWith` builds anything; `auth/source.go:115` returns `persist refreshed tokens` untagged. Mirror case: `auth/source.go:90` tags `ErrUnauthorized` onto a purely *local* error. **Its closing condition includes reverting the two README surfaces #635 had to weaken.**
 - **#602** (another session's) — 22+ commits behind `origin/main`. Not ours to rebase.
-- **#614** open and optional — the `CIVITAI_NO_COLOR` value-parsing asymmetry.
+- **#614** open and optional — `CIVITAI_NO_COLOR` value parsing.
 
 ### Honest limits
 - 🔴 **Nobody has run `civitai upgrade` on Windows.** The final self-replace is stubbed behind the `applyUpdate` seam.
-- 🔴 **Every byte estimate in this arc has over-promised, and now every mid-ladder MEASUREMENT has too.** Treat a whole-section count as an upper bound, and a pre-merge figure as provisional.
-- **`--session` sees almost nothing of this work** — files went through worktrees. Use `--pr`.
+- 🔴 **Every byte estimate in this arc over-promised, and every mid-ladder MEASUREMENT did too.** A whole-section count is an upper bound; a pre-merge figure is provisional. Quote the merge commit.
 - **golangci-lint was never run at CI's pinned v2.12.2 locally** (this host has 2.13.2, clean). `lint` is not a required context; read the PR's own run.
+- **`--session` sees almost nothing of this work** — worktrees. Use `--pr`.
+- **Worktree count is now 42, not the 41 rank 10 cites** — five agent worktrees from this session's audit rounds, minus the two feature worktrees removed at the end.
 
 ## Open investigations — live diagnosis state
 
@@ -410,29 +401,38 @@ The give-back is **not waste** — in both cases every byte bought a contract cl
 - 🔴 **Run the once-per-ladder count sweep in the LAST round or after the merge.** #641's ran at round 2 and was correct then; rounds 2–4 changed README afterwards, so the swept number went stale **inside its own PR** — precisely the "falsified by a LATER commit of the same PR, inside no round's range" trap the audit skill documents. Running it mid-ladder satisfies the letter of the rule and misses its point.
 - **Predictive value, offered as a hypothesis and not a law:** ~870 B over 4–5 rounds on a contract-bearing section, both times. If a third ladder lands near it, it is worth budgeting for rather than being surprised by.
 
+### Added 2026-09-16 — what the five-round ladder on #641 is worth repeating
+
+The full record is in the two blocks above this one. What a future session should take from it, shortest form:
+
+- 🔴 **Round 0 is the highest-yield round and the easiest to skip.** It nearly doubled the deliverable by asking *should this exist* — and the answer was that ~4,375 B restated `civitai agent-setup --help`, which the plan's own order says to DELETE FIRST. **Run it at PR-CREATE time**, not when you get round to auditing.
+- 🔴 **The `.goreleaser` link-out argument does not reach `--help` duplication.** The archive ships the binary beside `README.md`, so anything `--help` says is already offline-reachable. That argument protects `claudedocs/` link-outs only. Getting this wrong is what made the first cut half-sized.
+- 🔴 **A guard satisfiable by WORDING is not a guard.** Three attempts on one sentence: assert the name appears (it appears elsewhere — survived), assert a phrasing (a reword carries neither — survived), **construct the expected text from the derived set and compare it WHOLE** (kills the inversion, the reword, and the code-side change). Only the third pins state.
+- 🔴 **Prefer DELETING a parse to hardening it.** A guard that slices prose gives a false diagnosis when its delimiter moves, and the message sends a maintainer to edit correct text. Where the assertion is a constructed whole string, searching the whole section removes the failure class outright.
+- 🔴 **Assert `mutation APPLIED = True` before reading any mutant's result.** A substitution whose anchor moved scores SURVIVED and is indistinguishable from a vacuous guard. Hit twice in this ladder — once by an auditor, once by me.
+- **A docstring claiming coverage its body lacks appeared in FOUR separate rounds of one PR.** The tell every time: the docstring names a RELATIONSHIP, the body inspects one SIDE.
+
 ## How to verify
 
-🔴 **This block was STALE and is the reason to distrust any copy of the gate you find
-elsewhere in this doc.** It still named `<= 250000` — a threshold already superseded
-twice at the top of the file and now deleted outright — and the NARROW `-run` filter the
-amendment above exists to replace. Both are corrected here; if you find a third copy,
-that one is stale too.
+🔴 **This block was STALE once already** — it carried a deleted byte threshold and a narrow `-run` filter. Both corrected. If you find a third copy of the gate anywhere in this doc, that one is stale too.
 
 ```bash
-# the arc's closing condition. There is NO byte threshold — see the top of this doc.
-# Report the size if you like, but nothing gates on it:
-git -C <repo> show origin/main:README.md | wc -c
+# the arc's closing condition. NO byte threshold — size is a progress signal only.
+git -C <repo> show origin/main:README.md | wc -c        # 277,680 at 4572d6f
 
 # the gate, WIDE filter, with its own positive control.
-# `ok` with 0 tests run is the failure this replaced — measured 76 on 2026-09-15.
+# `ok` with 0 tests run is the failure this replaced — measured 81 on 2026-09-16.
 go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' -count=1
 go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' \
   -count=1 -v | grep -c '^--- PASS\|^    --- PASS'      # must be > 0
 go test ./...                                            # 9 other packages read README
 
-# the guards phase 1 shipped, proven by reverting a correction
-#   each revert must fail on its OWNING guard, not a neighbour's
+# the agent-setup contract guards #641 added (rank 1). All four must pass.
+go test ./internal/cmd/ -count=1 \
+  -run 'READMEVerdictExemptions|CheckEmitsNoRow|ManualRowCarries|HelpPointerIsHonoured'
 
-# lint is a SEPARATE CI job; make ci does not run it
+# lint is a SEPARATE CI job and NOT a required context; `make ci` does not run it.
+# 🔴 CI pins v2.12.2 (.github/workflows/ci.yml); this host has 2.13.2, so a local
+# zero is a claim about 2.13.2. Read the PR's own run for the gate.
 nix-shell -p golangci-lint --run "golangci-lint run"
 ```
