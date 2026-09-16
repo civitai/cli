@@ -436,13 +436,19 @@ func TestREADMEPreUploadRefusalPrintsNoEntryBlock(t *testing.T) {
 //
 // It does NOT cover the rest of that refusal's contract: that no `Packaged …`
 // line is printed and no .zip is left on disk is
-// TestAppSubmit_NonTTYRefuseHappensBeforePackaging, which deliberately keeps its
-// own setup (no recorder server, a real base URL) and does not come through here.
+// TestAppSubmit_NonTTYRefuseHappensBeforePackaging, which does not come through
+// here and keeps its own setup — no recorder server, and CIVITAI_BASE_URL set to
+// the real https://civitai.com. No intent is claimed for that: git dates the
+// test to #168, years before this driver existed, so "never consolidated" fits
+// the evidence as well as "chosen". ⚠ It has a measured cost — under a mutant
+// that removes the --yes gate, that test issues a LIVE request to civitai.com
+// and dies on `unauthorized (401)`. Anyone moving it behind a recorder is fixing
+// something, not breaking a decision.
 //
 // It is shared because #639 found ~30 lines of this setup duplicated verbatim
 // between here and TestAppSubmit_NonTTYRefusesWithoutYes_NoNetworkCall, down to
 // the literal token string. Both callers exercise the same path and differ only
-// in what they read off it. AGENTS.md: "One rule, one place."
+// in what they read off it — one rule, one place.
 //
 // 🔴 THE "NO NETWORK CALL" ASSERTION IS THE DRIVER'S, NOT A CALLER'S, AND THAT
 // IS A REPAIR TO HOW #639 LEFT IT. That PR returned the recorder's hit flag and
@@ -450,11 +456,10 @@ func TestREADMEPreUploadRefusalPrintsNoEntryBlock(t *testing.T) {
 // the run got past the refusal, so one of the two controls below has already
 // fataled on it: both `if hit` branches were dead code.
 //
-// Measured by removing confirmSubmit's non-TTY refusal — and stated with the
-// mutant that produced it, because two drafts of this comment quoted a bare
-// count and both were wrong. The count depends on how wide the mutant is, and
-// the runs below were whole-package, NOT `-run`-filtered (a filtered sweep
-// reported four and could not see the fifth by construction):
+// Measured by removing confirmSubmit's non-TTY refusal, whole-package, and
+// stated with the mutant that produced it — three drafts of this paragraph
+// quoted a count without naming one, and every draft was wrong in a different
+// way:
 //
 //	ISOLATED — arm returns nil, message literal kept in the file:  4 red
 //	WIDE     — the whole `if !stdinIsTTY()` block deleted:         5 red
@@ -465,10 +470,18 @@ func TestREADMEPreUploadRefusalPrintsNoEntryBlock(t *testing.T) {
 // source, so deleting the literal reddens it whether or not the gate still
 // works. The isolated mutant is the one that measures this gate.
 //
-// Under either, three tests name production plainly —
+// ⚠ AND THE EARLIER "A FILTERED SWEEP MISSED THE FIFTH" DIAGNOSIS IS RETRACTED,
+// not softened. Whole-package under ISOLATED also returns four, so the first
+// count was the right answer for its own mutant — the filter was a latent hazard
+// and not the cause. The repo's own gate filter at the head of this file even
+// matches the symptom guard by name. What was actually wrong, every time, was
+// quoting a number as if it were mutant-independent.
+//
+// Under ISOLATED, two of the red tests name production plainly:
 // TestConfirmSubmit_NonTTYRefusesWithoutYes ("non-TTY without --yes must
-// refuse", the same file), TestAppSubmit_NonTTYRefuseHappensBeforePackaging,
-// and the symptom guard when it fires. So what #639's shape got wrong is
+// refuse", in app_submit_r2_test.go) and
+// TestAppSubmit_NonTTYRefuseHappensBeforePackaging. Under WIDE the symptom guard
+// is a third. So what #639's shape got wrong is
 // narrower than "the reader is misdirected": the ONE test whose whole subject
 // is the network call died with "the caller is measuring a different path than
 // it claims" — a sentence about the harness, in the guard that is supposed to
