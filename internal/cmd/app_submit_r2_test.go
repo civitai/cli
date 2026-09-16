@@ -100,11 +100,15 @@ func TestConfirmSubmit_TTYDefaultCancels(t *testing.T) {
 // EMPTY. The driver drives the path against a recorder server and fatals naming
 // this gate if the run reaches it — one claim in one place, because
 // TestREADMEPreUploadRefusalPrintsNoEntryBlock drives the identical path and
-// depends on the same fact. What this test owns is the NAME: the footgun
-// regression stays runnable and greppable as itself rather than only as a
-// side-condition of a README guard. #639 consolidated the setup and left an
-// `if hit` here that could not fire; the driver's comment carries the
-// measurement and why the check moved.
+// depends on the same fact.
+//
+// 🔴 WHAT THIS TEST OWNS IS ITS NAME, AND THE NAME IS CITED FROM PRODUCTION:
+// app_submit.go's two ordering comments (at checkWorkTreeClean and at
+// checkVersionNotRegression) both say this test "pins that invocation as
+// touching nothing", and that ordering is why a bare non-TTY `app submit` costs
+// no API read. Delete this function and those two comments point at nothing —
+// silently, since TestItem38CommentsCiteTestsThatExist ledgers only item 38's
+// file set and app_submit.go is not in it.
 func TestAppSubmit_NonTTYRefusesWithoutYes_NoNetworkCall(t *testing.T) {
 	nonTTYSubmitRefusal(t)
 }

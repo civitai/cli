@@ -413,7 +413,7 @@ func troubleshootingEntryBlockCause(t *testing.T) string {
 // block headers are absent from stderr. RULES.md: a seam guard needs "a
 // behavioural case, since a structural check type-checks past a wrong argument."
 func TestREADMEPreUploadRefusalPrintsNoEntryBlock(t *testing.T) {
-	_, stderr := nonTTYSubmitRefusal(t)
+	stderr := nonTTYSubmitRefusal(t)
 
 	// The two block headers, taken from app_submit.go rather than retyped, so a
 	// reword of either moves this assertion with it.
@@ -431,27 +431,33 @@ func TestREADMEPreUploadRefusalPrintsNoEntryBlock(t *testing.T) {
 
 // nonTTYSubmitRefusal drives `app submit` down the no-TTY, no-`--yes` path
 // against a recorder server, asserts the whole contract of that refusal, and
-// returns the run's streams for a caller to assert something further about.
+// returns the run's stderr for a caller to assert something further about.
 //
-// 🔴 EXTRACTED, NOT COPIED — round 0 of #639 found ~30 lines of this setup
-// duplicated verbatim between here and TestAppSubmit_NonTTYRefusesWithoutYes_
-// NoNetworkCall, down to the literal token string. AGENTS.md: "One rule, one
-// place." Both callers exercise the same path and differ only in what they read
-// off it, which is the case a shared driver serves rather than a second copy.
+// It is shared because #639 found ~30 lines of this setup duplicated verbatim
+// between here and TestAppSubmit_NonTTYRefusesWithoutYes_NoNetworkCall, down to
+// the literal token string. Both callers exercise the same path and differ only
+// in what they read off it. AGENTS.md: "One rule, one place."
 //
 // 🔴 THE "NO NETWORK CALL" ASSERTION IS THE DRIVER'S, NOT A CALLER'S, AND THAT
 // IS A REPAIR TO HOW #639 LEFT IT. That PR returned the recorder's hit flag and
 // let each caller assert `!hit` — which cannot fire. Reaching the endpoint means
-// the run got past the refusal, so one of the two controls below already fataled
-// on it: both `if hit` branches were dead code. Measured by removing the gate in
-// confirmSubmit: the endpoint WAS hit, neither branch ran, and both tests died
-// on "refused, but not by the --yes gate — the caller is measuring a different
-// path than it claims" — a message that sends a maintainer to edit the test when
-// the defect is in the gate. Before #639 the same mutation printed "submit
-// endpoint was hit — the gate did NOT prevent the submission". A guard's failure
-// message is part of the guard, so the hit check runs FIRST and keeps that
-// wording: it is the most specific fact available, and it names production.
-func nonTTYSubmitRefusal(t *testing.T) (stdout, stderr string) {
+// the run got past the refusal, so one of the two controls below has already
+// fataled on it: both `if hit` branches were dead code.
+//
+// Measured, by removing confirmSubmit's non-TTY arm (`return nil`) — and stated
+// at the scope it was measured at, because an earlier draft of this comment
+// claimed more. That mutation reddens FOUR tests in this package, and two of
+// them name production plainly: TestConfirmSubmit_NonTTYRefusesWithoutYes
+// ("non-TTY without --yes must refuse", 50 lines above the caller, same file)
+// and TestAppSubmit_NonTTYRefuseHappensBeforePackaging. What #639's shape got
+// wrong is narrower than "the reader is misdirected": the ONE test whose whole
+// subject is the network call died with "the caller is measuring a different
+// path than it claims" — a sentence about the harness, in the guard that is
+// supposed to name the gate — while the endpoint had in fact been hit. Before
+// #639 that same mutation printed "submit endpoint was hit — the gate did NOT
+// prevent the submission". So the hit check runs FIRST and keeps that wording:
+// it is the most specific fact available about a failed run.
+func nonTTYSubmitRefusal(t *testing.T) (stderr string) {
 	t.Helper()
 	withStdinTTY(t, false)
 	tmp := t.TempDir()
@@ -484,5 +490,5 @@ func nonTTYSubmitRefusal(t *testing.T) (stdout, stderr string) {
 		t.Fatalf("CONTROL failure: refused, but not by the --yes gate — the caller is measuring a "+
 			"different path than it claims: %v", err)
 	}
-	return out, errOut
+	return errOut
 }
