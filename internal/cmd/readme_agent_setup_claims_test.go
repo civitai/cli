@@ -198,11 +198,16 @@ func TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode(t *testing.T) {
 	// package. That sentence has now been wrong twice in three rounds, so it is
 	// the last one that should be going unpinned.
 	//
-	// The README states it in its own clause, after the shared sentence.
-	claudeClause := sec[ci:]
-	if end := strings.Index(claudeClause, "\n\n"); end >= 0 {
-		claudeClause = claudeClause[:end]
-	}
+	// 🔴 SEARCHED IN THE WHOLE SECTION, NOT IN A SLICED PARAGRAPH. An earlier
+	// version sliced from the claim to the next blank line, which made an
+	// ORDINARY MARKDOWN EDIT — moving this sentence into its own paragraph,
+	// wording unchanged and still true — fail with "the README's claude clause
+	// does not state what the code computes". Measured in round 4 of #641. That
+	// message invites editing prose that is already correct, which is the same
+	// hazard the `.**` parse above was hardened against; the second slice in
+	// this function simply had not been. Deleting the parse removes the class
+	// rather than hardening it: the assertion below is a constructed WHOLE
+	// string, so where it sits in the section does not matter.
 	// 🔴 CONSTRUCT THE EXPECTED CLAUSE FROM THE DERIVED SETS AND COMPARE IT
 	// WHOLE. Two weaker versions of this check were written and both were
 	// walked past by a mutant: scanning for the name (it appears in the shared
@@ -211,8 +216,16 @@ func TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode(t *testing.T) {
 	// satisfiable by wording rather than by state.
 	//
 	// Building the sentence from `exemptForClaude` and the agent-conditional
-	// name makes it a relationship: if the code ever exempts `claude-md` for
-	// claude too, the expected text changes and this goes red. And because it
+	// name keeps it tied to the code rather than to a wording.
+	//
+	// 🔴 BUT BE PRECISE ABOUT WHAT THIS BLOCK KILLS, because an earlier comment
+	// here was not and round 4 of #641 caught it. Its UNIQUE kills are the
+	// README-side ones — the clause restated wrongly, and a REWORDED falsehood
+	// carrying the same backticked names. A CODE-side change (exempting
+	// `claude-md` for claude too) never reaches here: it lands on the
+	// agent-dependence premise above, which `t.Fatalf`s first.
+	// 🔴 SO DO NOT DELETE THAT PREMISE AS REDUNDANT — it is the only thing
+	// covering the code direction, and this block does not back it up. And because it
 	// is compared WHOLE, a reworded falsehood cannot satisfy it either.
 	var conditional []string
 	for _, name := range exemptForOther {
@@ -227,15 +240,15 @@ func TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode(t *testing.T) {
 	}
 	wantClause := "on a `" + agentClaude + "` project the exempt row is `" +
 		exemptForClaude[0] + "` alone, because `" + conditional[0] + "` counts there."
-	got := strings.Join(strings.Fields(claudeClause), " ")
+	got := strings.Join(strings.Fields(sec), " ")
 	if !strings.Contains(got, wantClause) {
-		t.Errorf("the README's claude clause does not state what the code computes.\n"+
-			"  want to find: %q\n  in:           %q\n\n"+
+		t.Errorf("the agent-setup section does not state what the code computes about a "+
+			"`claude` project.\n  want to find: %q\n  (searched the whole section)\n\n"+
 			"This sentence was wrong in round 1 of #641 (it omitted the claude case) and "+
 			"again in round 2 (it said `two rows`). It is compared WHOLE and built from "+
 			"checkCountsTowardVerdict, so a reword must keep it true rather than merely "+
 			"keep the words. A consumer on a Claude project that skips `%s` misses a real "+
-			"failure.", wantClause, got, conditional[0])
+			"failure.", wantClause, conditional[0])
 	}
 }
 
