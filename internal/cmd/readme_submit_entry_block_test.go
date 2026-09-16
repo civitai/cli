@@ -430,8 +430,14 @@ func TestREADMEPreUploadRefusalPrintsNoEntryBlock(t *testing.T) {
 }
 
 // nonTTYSubmitRefusal drives `app submit` down the no-TTY, no-`--yes` path
-// against a recorder server, asserts the whole contract of that refusal, and
-// returns the run's stderr for a caller to assert something further about.
+// against a recorder server, asserts that the refusal happened AND that the
+// endpoint was not reached, and returns the run's stderr for a caller to assert
+// something further about.
+//
+// It does NOT cover the rest of that refusal's contract: that no `Packaged …`
+// line is printed and no .zip is left on disk is
+// TestAppSubmit_NonTTYRefuseHappensBeforePackaging, which deliberately keeps its
+// own setup (no recorder server, a real base URL) and does not come through here.
 //
 // It is shared because #639 found ~30 lines of this setup duplicated verbatim
 // between here and TestAppSubmit_NonTTYRefusesWithoutYes_NoNetworkCall, down to
@@ -444,19 +450,32 @@ func TestREADMEPreUploadRefusalPrintsNoEntryBlock(t *testing.T) {
 // the run got past the refusal, so one of the two controls below has already
 // fataled on it: both `if hit` branches were dead code.
 //
-// Measured, by removing confirmSubmit's non-TTY arm (`return nil`) — and stated
-// at the scope it was measured at, because an earlier draft of this comment
-// claimed more. That mutation reddens FOUR tests in this package, and two of
-// them name production plainly: TestConfirmSubmit_NonTTYRefusesWithoutYes
-// ("non-TTY without --yes must refuse", 50 lines above the caller, same file)
-// and TestAppSubmit_NonTTYRefuseHappensBeforePackaging. What #639's shape got
-// wrong is narrower than "the reader is misdirected": the ONE test whose whole
-// subject is the network call died with "the caller is measuring a different
-// path than it claims" — a sentence about the harness, in the guard that is
-// supposed to name the gate — while the endpoint had in fact been hit. Before
-// #639 that same mutation printed "submit endpoint was hit — the gate did NOT
-// prevent the submission". So the hit check runs FIRST and keeps that wording:
-// it is the most specific fact available about a failed run.
+// Measured by removing confirmSubmit's non-TTY refusal — and stated with the
+// mutant that produced it, because two drafts of this comment quoted a bare
+// count and both were wrong. The count depends on how wide the mutant is, and
+// the runs below were whole-package, NOT `-run`-filtered (a filtered sweep
+// reported four and could not see the fifth by construction):
+//
+//	ISOLATED — arm returns nil, message literal kept in the file:  4 red
+//	WIDE     — the whole `if !stdinIsTTY()` block deleted:         5 red
+//
+// The fifth is TestREADMETroubleshootingSymptomsExistInTheSource, and it is a
+// fact about a STRING, not about the gate: the README indexes `refusing to
+// submit without --yes` as a symptom and requires it to exist in non-test
+// source, so deleting the literal reddens it whether or not the gate still
+// works. The isolated mutant is the one that measures this gate.
+//
+// Under either, three tests name production plainly —
+// TestConfirmSubmit_NonTTYRefusesWithoutYes ("non-TTY without --yes must
+// refuse", the same file), TestAppSubmit_NonTTYRefuseHappensBeforePackaging,
+// and the symptom guard when it fires. So what #639's shape got wrong is
+// narrower than "the reader is misdirected": the ONE test whose whole subject
+// is the network call died with "the caller is measuring a different path than
+// it claims" — a sentence about the harness, in the guard that is supposed to
+// name the gate — while the endpoint had in fact been hit. Before #639 that
+// same mutation printed "submit endpoint was hit — the gate did NOT prevent the
+// submission". So the hit check runs FIRST and keeps that wording: it is the
+// most specific fact available about a failed run.
 func nonTTYSubmitRefusal(t *testing.T) (stderr string) {
 	t.Helper()
 	withStdinTTY(t, false)
