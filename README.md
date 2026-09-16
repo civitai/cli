@@ -414,8 +414,8 @@ actual token is a secret headed for version control. The header **references**
 `CIVITAI_TOKEN` in each vendor's own spelling instead (the last column above),
 and where a vendor documents no interpolation at all — Zed today, and `--agent
 other`, whose target agent is by definition unknown — **no header is written**.
-The run prints the header line for you to add instead, and for `--agent other` it
-also lists the known spellings, because this CLI cannot know which one your agent
+Add it yourself to each Civitai entry; for `--agent other` the run prints the
+shape and the known spellings, because this CLI cannot know which one your agent
 reads.
 
 🔴 **Mint the key at [civitai.com/user/account](https://civitai.com/user/account)
@@ -470,8 +470,10 @@ both of the first two.
 other than `claude` — `claude-md`.** Setup deliberately stops before auth, so the
 payload above, a complete setup with no token, is `"ok": true` and **exits 0**.
 Every other agent reads `AGENTS.md` directly, so the `CLAUDE.md` shim is inert
-for it and its row stays without counting. Read those two rows yourself if you
-need them; do not fold them into your own pass/fail.
+for it and its row stays without counting. Read the exempt rows yourself if you
+need them; do not fold them into your own pass/fail — and note that on a
+`claude` project the exempt row is `authenticated` alone, because `claude-md`
+counts there.
 
 An absent `Authorization` header gets **no row of its own**, and nothing fails
 because of one — that is the correct state for Zed and for `--agent other`. If

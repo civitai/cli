@@ -74,10 +74,25 @@ func readmeAgentSetupSection(t *testing.T) string {
 func TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode(t *testing.T) {
 	sec := readmeAgentSetupSection(t)
 
-	// Every check name the command can emit, with what the README must say about
-	// each. Derived from the constants, not retyped, so a new check name that is
-	// silently exempted cannot pass unnoticed.
+	// Every check name the command can emit.
+	//
+	// 🔴 THE `mcp-*` NAMES ARE NOT CONSTANTS — they are bare literals on the
+	// server table (agent_setup_mcp.go), so a list of the `check*` constants
+	// alone holds FOUR of the six and the docstring above it reads as coverage
+	// it does not have. Round 2 of #641 measured exactly that: a mutant
+	// exempting `mcp-orch` from the verdict SURVIVED this guard while the
+	// equivalent mutant on `agents-md` was killed. Derive the server rows from
+	// the table so a third server is covered the moment it is added.
 	all := []string{checkCLIVersion, checkAgentsMD, checkClaudeMD, checkAuthenticated}
+	for _, s := range civitaiMCPServers {
+		all = append(all, s.Check)
+	}
+	// Positive control on the derivation: the table must actually have
+	// contributed, or this guard silently narrows back to the four constants.
+	if len(all) <= 4 {
+		t.Fatalf("derived only %d check name(s) — civitaiMCPServers contributed none, so "+
+			"the `mcp-*` rows are unguarded again", len(all))
+	}
 
 	var exemptForOther, exemptForClaude []string
 	for _, name := range all {
@@ -98,26 +113,58 @@ func TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode(t *testing.T) {
 			"qualifier that the code does not — rewrite both.", exemptForClaude, exemptForOther)
 	}
 
-	for _, name := range exemptForClaude {
-		if !strings.Contains(sec, "`"+name+"`") {
-			t.Errorf("checkCountsTowardVerdict exempts %q from the verdict for EVERY agent, "+
-				"and the agent-setup section never names it. A `--json` consumer folding that "+
-				"row into its own pass/fail gets a false failure.", name)
+	// 🔴 READ THE EXEMPTION SENTENCE, NOT THE SECTION. Round 2 of #641 killed
+	// the previous version of this guard: it asked whether the section MENTIONS
+	// each exempt name anywhere, and `mcp-orch` is mentioned several paragraphs
+	// away (the JSON sample, the unreadable-config paragraph). So a mutant
+	// exempting `mcp-orch` from the verdict SURVIVED — the name was present,
+	// while the sentence that tells a `--json` consumer what to skip said
+	// nothing about it. Presence of a word is not a statement about it.
+	//
+	// So: find the sentence that STATES the exemption, and compare the check
+	// names inside THAT sentence against the set derived from the code.
+	const claim = "`ok` is the AND of every check except"
+	ci := strings.Index(sec, claim)
+	if ci < 0 {
+		t.Fatalf("PREMISE BROKEN: the agent-setup section no longer contains %q, so this "+
+			"guard cannot find the claim it exists to check", claim)
+	}
+	sentence := sec[ci:]
+	if end := strings.Index(sentence, ".**"); end >= 0 {
+		sentence = sentence[:end]
+	}
+
+	named := map[string]bool{}
+	for _, name := range all {
+		if strings.Contains(sentence, "`"+name+"`") {
+			named[name] = true
 		}
 	}
-	// The agent-conditional exemption must be named WITH its condition.
+	for _, name := range exemptForOther {
+		if !named[name] {
+			t.Errorf("checkCountsTowardVerdict exempts %q from `ok`, and the README's "+
+				"exemption sentence does not name it. A `--json` consumer computing its own "+
+				"verdict from that sentence folds %q in and disagrees with the tool it wraps."+
+				"\n  sentence: %q", name, name, strings.TrimSpace(sentence))
+		}
+	}
+	for name := range named {
+		if !contains(exemptForOther, name) {
+			t.Errorf("the README's exemption sentence names %q as excluded from `ok`, but "+
+				"checkCountsTowardVerdict COUNTS it. A consumer skipping that row misses a "+
+				"real failure.\n  sentence: %q", name, strings.TrimSpace(sentence))
+		}
+	}
+	// The agent-conditional exemption must carry its condition, or the sentence
+	// claims claude users get it too.
 	for _, name := range exemptForOther {
 		if contains(exemptForClaude, name) {
 			continue
 		}
-		if !strings.Contains(sec, "`"+name+"`") {
-			t.Errorf("checkCountsTowardVerdict exempts %q for a non-claude agent and the "+
-				"README never names it", name)
-			continue
-		}
-		if !strings.Contains(sec, "other than `claude`") {
+		if !strings.Contains(sentence, "other than `claude`") {
 			t.Errorf("%q is exempt ONLY for agents other than claude, and the README states "+
-				"the exemption without that condition — which claims claude users get it too", name)
+				"the exemption without that condition — which claims claude users get it too",
+				name)
 		}
 	}
 }
@@ -156,15 +203,38 @@ func TestCheckEmitsNoRowAboutAnAbsentHeader(t *testing.T) {
 		t.Fatalf("PREMISE BROKEN: zed now documents a header syntax (%q), so this run is "+
 			"not the absent-header case the README describes", got)
 	}
+	// 🔴 ASSERT THE SET, NOT A SPELLING. An earlier version scanned each row's
+	// name for "header"/"authorization"; round 2 of #641 killed it with a row
+	// named `mcp-auth` whose DETAIL was about the header — the hazard in a
+	// different shape, which is what RULES.md means by a SPELLED guard. The
+	// emitted set is enumerable, so enumerate it: any new row at all is red
+	// here, and whoever adds one must decide what the README should say.
+	want := map[string]bool{
+		checkCLIVersion: true, checkAgentsMD: true, checkClaudeMD: true,
+		checkAuthenticated: true,
+	}
+	for _, s := range civitaiMCPServers {
+		want[s.Check] = true
+	}
 	for _, c := range payload.Checks {
-		if c.Name == checkAuthenticated {
-			continue
+		if !want[c.Name] {
+			t.Errorf("`--check` emits an unledgered row %q. The agent-setup section tells "+
+				"readers an absent Authorization header gets NO row of its own and that "+
+				"`--check` will not tell them — if this new row reports on one, that "+
+				"paragraph is now wrong. Either way, ledger it here.", c.Name)
 		}
-		low := strings.ToLower(c.Name)
-		if strings.Contains(low, "header") || strings.Contains(low, "authorization") {
-			t.Errorf("`--check` now emits row %q about the Authorization header. The "+
-				"agent-setup section tells readers there is NO row of its own for it and "+
-				"to read the config file instead — update that paragraph.", c.Name)
+	}
+	for name := range want {
+		var seen bool
+		for _, c := range payload.Checks {
+			if c.Name == name {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			t.Errorf("`--check` no longer emits the %q row this file ledgers; the README "+
+				"section still describes the row set as it was", name)
 		}
 	}
 }
@@ -191,10 +261,17 @@ func TestManualRowCarriesAnEmptyPath(t *testing.T) {
 	var seenManual bool
 	for _, c := range payload.Changes {
 		if c.Action != actionManual {
-			// The README's rule for every OTHER row: absolute.
-			if c.Path != "" && !filepath.IsAbs(c.Path) {
-				t.Errorf("row %q carries a non-absolute path %q; the README says a path in "+
-					"`--json` is always absolute whatever --dir you passed", c.Action, c.Path)
+			// The README's rule for every OTHER row: absolute — which means
+			// NON-EMPTY and absolute. 🔴 An earlier version of this guard read
+			// `c.Path != "" && !filepath.IsAbs(...)`, which exempted the empty
+			// string — the exact shape it exists to catch. Round 2 of #641
+			// measured a mutant emptying every path: it produced
+			// `"path": "", "action": "create"` in real output and this guard
+			// PASSED.
+			if !filepath.IsAbs(c.Path) {
+				t.Errorf("row %q carries path %q, which is not absolute; the README says a "+
+					"path in `--json` is always absolute whatever --dir you passed, and names "+
+					"the `manual` row as the ONLY exception", c.Action, c.Path)
 			}
 			continue
 		}
@@ -217,9 +294,14 @@ func TestManualRowCarriesAnEmptyPath(t *testing.T) {
 // without a single test noticing, leaving the README pointing at content that
 // is not there.
 //
-// 🔴 The topics are the ones the README's pointer sentence NAMES. If you change
-// that sentence, change this list — and if a topic leaves `Long`, take it out of
-// the sentence rather than out of this test.
+// 🔴 HOW THE TWO DIRECTIONS ARE ENFORCED, because they are enforced
+// differently and an earlier docstring claimed both were mechanical:
+//
+//	forward  (`Long` carries what the pointer promises) — a HAND-MAINTAINED
+//	         table. Adding a promise here is what proves `Long` carries it.
+//	reverse  (the pointer promises nothing `Long` lacks) — mechanical, by
+//	         pinning the WHOLE sentence. Any widening is red, so the forward
+//	         table cannot be bypassed by editing prose alone.
 func TestTheHelpPointerIsHonoured(t *testing.T) {
 	sec := readmeAgentSetupSection(t)
 	const pointer = "`civitai agent-setup --help` carries"
@@ -242,32 +324,50 @@ func TestTheHelpPointerIsHonoured(t *testing.T) {
 	}{
 		{"per-vendor header spellings", "${env:CIVITAI_TOKEN}"},
 		{"per-vendor header spellings", "bearer_token_env_var"},
-		{"the merge rules", "MERGED into, preserving every other server"},
+		{"the merge rules", "merged into"},
 		{"the JSONC re-encoding caveat", "JSONC"},
 	} {
-		if !strings.Contains(long, tc.inLong) {
-			t.Errorf("the README tells readers `--help` carries %s, but the agent-setup "+
-				"Long string does not contain %q. The pointer sends them to content that "+
-				"is not there.", tc.promise, tc.inLong)
+		// 🔴 CASE-INSENSITIVE, and the message says the fixture may be at fault.
+		// These two rows match PROSE, not an identifier, so a legitimate reword
+		// of `Long` turns them red — and the first draft asserted "MERGED INTO",
+		// which `Long` does not spell that way. A failure here is "check, then
+		// fix ONE of the two", never "the help text lost this topic".
+		if !strings.Contains(strings.ToLower(long), strings.ToLower(tc.inLong)) {
+			t.Errorf("the README tells readers `--help` carries %s, and the agent-setup Long "+
+				"string no longer contains %q.\n\nTWO POSSIBILITIES, check before fixing: "+
+				"(a) `Long` really dropped the topic — then drop it from the README pointer "+
+				"too; or (b) `Long` merely reworded it — then this fixture is what is stale, "+
+				"and the topic is still documented.", tc.promise, tc.inLong)
 		}
 	}
 
-	// 🔴 THE REVERSE DIRECTION, and it is the one that actually failed. The
-	// README must NOT promise a topic `Long` does not cover. Symlinks are the
-	// measured case: the pointer claimed "JSONC/symlink handling" while `Long`
-	// never mentions a symlink.
-	if strings.Contains(long, "symlink") || strings.Contains(long, "Symlink") {
-		return // Long gained it; the promise below is now safe to make.
-	}
+	// 🔴 THE REVERSE DIRECTION — the README must not promise a topic `Long` does
+	// not cover — AND IT IS PINNED AS A WHOLE NORMALISED SENTENCE, not by
+	// scanning for a word.
+	//
+	// Round 2 of #641 measured why: when this checked only for "symlink", a
+	// mutant widening the pointer to "…and the Windsurf Devin CLI path in full"
+	// SURVIVED the entire package suite — the same shape as the defect this
+	// guard was written for, re-shippable with everything green. A word scan
+	// cannot enumerate the topics nobody has thought of yet.
+	//
+	// RULES.md: "When the artifact under test IS prose, a guard on WORDS is
+	// walkable by REWORDING — pin the WHOLE normalised string. A cosmetic reword
+	// then fails the test — pay it, for a machine-readable claim." So widening
+	// this sentence is RED BY CONSTRUCTION: whoever widens it must add the new
+	// promise to the forward table above, which is what proves `Long` carries it.
+	const wantPointer = "`civitai agent-setup --help` carries the per-vendor header spellings, the merge " +
+		"rules and the JSONC re-encoding caveat in full."
 	idx := strings.Index(sec, pointer)
 	sentence := sec[idx:]
 	if end := strings.Index(sentence, "\n\n"); end >= 0 {
 		sentence = sentence[:end]
 	}
-	if strings.Contains(strings.ToLower(sentence), "symlink") {
-		t.Errorf("the README's `--help` pointer promises symlink handling, but the "+
-			"agent-setup Long string never mentions a symlink. Say it in `Long`, or drop "+
-			"it from the pointer — the symlink rule is stated in the README itself.\n"+
-			"pointer sentence: %q", strings.TrimSpace(sentence))
+	if got := strings.Join(strings.Fields(sentence), " "); got != wantPointer {
+		t.Errorf("the `--help` pointer sentence changed.\n  got:  %q\n  want: %q\n\n"+
+			"This guard pins the WHOLE sentence because a word scan let a widened pointer "+
+			"ship green (round 2 of #641). If you added a promise, add a row to the table "+
+			"above proving `Long` carries it, then update wantPointer. If you only reworded, "+
+			"update wantPointer — that is the price of a machine-readable claim.", got, wantPointer)
 	}
 }
