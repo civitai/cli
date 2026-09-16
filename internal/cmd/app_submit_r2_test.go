@@ -96,32 +96,13 @@ func TestConfirmSubmit_TTYDefaultCancels(t *testing.T) {
 // A bare `app submit` in a non-interactive shell (the accidental-footgun case)
 // must NOT reach the submit endpoint even when a token is configured.
 func TestAppSubmit_NonTTYRefusesWithoutYes_NoNetworkCall(t *testing.T) {
-	withStdinTTY(t, false)
-	tmp := t.TempDir()
-	writeStaticManifest(t, tmp)
-
-	hit := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hit = true // reaching here means a real publish request was fired
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	cfgdir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", cfgdir)
-	t.Setenv("CIVITAI_TOKEN", "tok-should-not-be-used")
-	t.Setenv("CIVITAI_BASE_URL", srv.URL)
-	t.Setenv("CIVITAI_SUBMIT_PATH", "/api/blocks/submit-version")
-
-	stdout, _, err := run(t, "app", "submit", tmp)
-	if err == nil {
-		t.Fatalf("bare submit in non-TTY must fail; stdout:\n%s", stdout)
-	}
+	// Drives the same path as TestREADMEPreUploadRefusalPrintsNoEntryBlock, so
+	// both go through one driver rather than two copies of the setup. That
+	// driver also fatals if the run did not refuse for the --yes reason, which
+	// this test previously asserted inline.
+	_, _, hit := nonTTYSubmitRefusal(t)
 	if hit {
 		t.Fatal("submit endpoint was hit — the gate did NOT prevent the submission")
-	}
-	if !strings.Contains(err.Error(), "refusing to submit without --yes") {
-		t.Errorf("error should explain the refusal, got: %v", err)
 	}
 }
 
