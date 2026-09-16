@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httptrace"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -94,9 +95,14 @@ func TestSubmitVersionTagsNothingSentWhenTheDialFails(t *testing.T) {
 // 🔴 IT IS REACHABLE, AND THAT WAS CHECKED RATHER THAN ASSUMED. internal/config
 // binds CIVITAI_BASE_URL straight onto base_url with no url.Parse and no
 // validation anywhere between there and this call, so a control character in the
-// environment variable arrives here intact. Without this test, dropping the tag
-// at that site survives the whole mutation battery — it was the one of the four
-// sites nothing exercised.
+// environment variable arrives here intact.
+//
+// ⚠ IT DOES NOT COVER A TAG AT THE BUILD SITE, AND AN EARLIER VERSION OF THIS
+// COMMENT SAID IT DID — contradicting appblocks.go's own note four lines below
+// that call, which records the mutant showing that tag was redundant. There is
+// no tag there: the build error travels back through authedDoWith and the
+// `!sent` arm tags it. What this test covers is that arm, reached by a failure
+// that never gets near the connection.
 func TestSubmitVersionTagsNothingSentWhenTheRequestCannotBeBuilt(t *testing.T) {
 	// A DEL byte is rejected by net/url and is the shape an unvalidated env var
 	// can carry. The URL is otherwise well-formed, so nothing earlier rejects it.
@@ -184,38 +190,121 @@ func TestSubmitVersionDoesNotTagWhenTheFailureCameAfterTheWrite(t *testing.T) {
 	}
 }
 
-// TestSubmitWroteTraceIgnoresAFailedWrite pins the narrowing inside the trace
-// hook: `if info.Err == nil`.
+// TestSubmitVersionDoesNotTagWhenTheWriteWasCutShort is round 1's F1, and it is
+// the case that inverted this mechanism's first design.
 //
-// 🔴 IT DRIVES THE HOOK DIRECTLY, AND AN EARLIER VERSION OF THIS TEST DROVE A
-// REAL DROPPED CONNECTION AND WAS FLAKY BY CONSTRUCTION. Measured against a
-// server that closes every connection the instant it accepts it: WroteRequest
-// fired on all 4 runs, with info.Err SET on two and NIL on the other two, where
-// the write had completed into the socket and the failure surfaced on the read.
-// The same physical event resolves either way, so a test asserting either branch
-// of it is asserting on a race. Calling the hook is the deterministic version of
-// the same question, and it is why submitWroteTrace is a named function.
+// 🔴 A SUBMIT THAT TIMES OUT MID-BODY IS NOT "NOTHING SENT". The first version
+// keyed the tag on WroteRequest reporting a CLEAN write, reasoning that a failed
+// write delivers an unknown number of bytes and might deliver none. Measured
+// against this exact server on three runs: the handler had already read 204,594
+// / 233,266 / 204,594 body bytes when the CLI said "nothing was uploaded". The
+// PR about the CLI making false claims about bytes made one.
 //
-// Both directions, because the negative alone is satisfied by a hook that never
-// records anything at all.
-func TestSubmitWroteTraceIgnoresAFailedWrite(t *testing.T) {
-	var wrote atomic.Bool
-	tr := submitWroteTrace(&wrote)
+// The assertion holds whichever way the race lands — if the whole body fits in
+// the socket buffer before the deadline, WroteRequest fires cleanly and the tag
+// is equally wrong — so this is not a timing-dependent test. What it pins is
+// that the tag means "the request never reached the connection", full stop.
+func TestSubmitVersionDoesNotTagWhenTheWriteWasCutShort(t *testing.T) {
+	var received atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, 32<<10)
+		for i := 0; i < 8; i++ {
+			n, err := r.Body.Read(buf)
+			received.Add(int64(n))
+			if err != nil {
+				break
+			}
+		}
+		// Stall with the body part-read so the client's deadline fires mid-upload.
+		time.Sleep(2 * time.Second)
+	}))
+	defer srv.Close()
 
-	tr.WroteRequest(httptrace.WroteRequestInfo{Err: errors.New("write tcp: broken pipe")})
-	if wrote.Load() {
-		t.Error("a write that FAILED was recorded as sent. How much of the body reached the wire " +
-			"is unknown and can be zero, so `app submit` would print \"N bytes on the wire\" for a " +
-			"number nothing supports — issue #637's defect, one step later.")
+	c := New(srv.URL, "tok", "/api/blocks/submit-version")
+	c.SubmitTimeout = 900 * time.Millisecond
+	zero := time.Duration(0)
+	c.SubmitPollDelay = &zero
+
+	// 6 MiB: big enough that the write cannot complete into a socket buffer,
+	// small enough that base64 keeps it under MaxSubmitBodyBytes — over that, the
+	// ceiling refusal fires first and this test measures nothing.
+	_, err := c.SubmitVersion(context.Background(), make([]byte, 6<<20), "demo", "0.1.0", Provenance{})
+	if err == nil {
+		t.Fatal("a submit that times out mid-upload must fail")
 	}
-
-	tr.WroteRequest(httptrace.WroteRequestInfo{})
-	if !wrote.Load() {
-		t.Error("CONTROL failure: a write that SUCCEEDED was not recorded, so the check above " +
-			"passes against a hook that records nothing and every submit failure would be tagged " +
-			"ErrNothingSent — which silently deletes the diagnosis instead of narrowing it.")
+	if errors.Is(err, ErrBundleTooLarge) {
+		t.Fatalf("CONTROL failure: the ceiling refusal fired, so no upload was attempted: %v", err)
+	}
+	if got := received.Load(); got == 0 {
+		t.Fatalf("CONTROL failure: the server received 0 body bytes, so this run is not the "+
+			"cut-short case it claims to measure: %v", err)
+	}
+	if errors.Is(err, ErrNothingSent) {
+		t.Errorf("ErrNothingSent was attached to a submit whose body the server had already read "+
+			"%d bytes of. The tag suppresses the entry-list diagnosis and, on the timeout arm, "+
+			"selects a message asserting nothing was uploaded — both false here, and the second is "+
+			"the exact defect issue #637 exists to remove.\ngot: %v", received.Load(), err)
 	}
 }
+
+// TestSubmitVersionKeepsTheSentFactAcrossA401Retry pins the STICKINESS of the
+// flag across authedDoWith's one refresh-and-retry.
+//
+// 🔴 AN EARLIER COMMENT HERE SAID THIS COULD NOT BE PINNED WITHOUT A RACE. That
+// was wrong, and round 1 of the audit supplied the seam: the separating point is
+// the DIALER, not the server. A transport whose DialContext succeeds once and
+// then fails gives attempt 1 a full written body and a 401, and attempt 2 a
+// failure with nothing written — deterministically, and httptrace still fires
+// because it is still an *http.Transport. A comment claiming nobody can cover
+// something is what stops the next person looking.
+func TestSubmitVersionKeepsTheSentFactAcrossA401Retry(t *testing.T) {
+	var hits, dials atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = io.Copy(io.Discard, r.Body) // read the whole body, then refuse it
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	base := &net.Dialer{}
+	tr := &http.Transport{
+		DisableKeepAlives: true, // force a second dial for the retry
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if dials.Add(1) > 1 {
+				return nil, errors.New("dial refused: the retry never reached the server")
+			}
+			return base.DialContext(ctx, network, addr)
+		},
+	}
+
+	c := NewWithSource(srv.URL, refreshingSource{}, "/api/blocks/submit-version")
+	c.HTTP = &http.Client{Transport: tr}
+
+	_, err := c.SubmitVersion(context.Background(), []byte("zip-bytes"), "demo", "0.1.0", Provenance{})
+	if err == nil {
+		t.Fatal("the retry could not dial, so the submit must fail")
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("CONTROL failure: the server was hit %d time(s), want 1 — the first attempt must "+
+			"have gone out in full for this test to mean anything", got)
+	}
+	if got := dials.Load(); got != 2 {
+		t.Fatalf("CONTROL failure: %d dial(s), want 2 — the refresh-and-retry did not happen, so "+
+			"the stickiness this test exists for was never exercised", got)
+	}
+	if errors.Is(err, ErrNothingSent) {
+		t.Errorf("ErrNothingSent was attached although attempt 1 wrote its whole body to the "+
+			"server. A per-attempt reset produces exactly this, and it contradicts README.md's "+
+			"promise that the block prints for a request that really went out.\ngot: %v", err)
+	}
+}
+
+// refreshingSource is a TokenSource that can refresh, so a 401 triggers
+// authedDoWith's retry rather than being returned as-is.
+type refreshingSource struct{}
+
+func (refreshingSource) Token(context.Context) (string, error)   { return "tok-1", nil }
+func (refreshingSource) Refresh(context.Context) (string, error) { return "tok-2", nil }
 
 // deadlineRoundTripper fails every request with a timeout WITHOUT ever writing
 // it, which is what a dial that never completes looks like from here. A real

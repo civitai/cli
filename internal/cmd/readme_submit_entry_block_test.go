@@ -29,6 +29,10 @@ import (
 //	    and not an instance.
 //	R3  the branch is keyed on how the error CLASSIFIES, not on whether bytes
 //	    left the machine — so the past tense is an account, not a guarantee.
+//	    ⚠ SUPERSEDED BY #637, which made the code compute the wire fact. Both of
+//	    R3's sentences are gone from README.md and neither is pinned here any
+//	    more; the appapi.ErrNothingSent row below carries what replaced them.
+//	    Kept in this list because it is the history that explains the row.
 //	R4  both surfaces that state this contract move together. README.md is the
 //	    only place either appears, and they disagreed for one commit.
 //
@@ -84,18 +88,28 @@ var entryBlockSentinels = []entryBlockSentinel{
 	},
 	{
 		name: "appapi.ErrNothingSent",
-		// 🔴 "NEVER PRINTS THE PAST TENSE", NOT "PRINTS NOTHING", AND THE
-		// DIFFERENCE IS A FALSE CLAIM THIS PR SHIPPED FOR ONE COMMIT. The ceiling
-		// refusal also sends nothing, and it prints a full block — the
-		// would-have-sent one, named three lines later in the same paragraph and
-		// one sentence later in the same cell. "Prints nothing" was a universal
-		// with a counterexample already on the page. The #635 ladder's own lesson,
-		// recorded in claudedocs/handoff-readme-reduction.md: a fix that makes a
-		// sentence more specific can make it false, and it reads as an improvement.
-		paragraphSays: "A failure that sent nothing never prints the past tense — no usable " +
-			"credential, an unwritable config, a connection that never opened — so `sent` is a fact " +
-			"about bytes that left this machine and not a claim about what the CLI meant to send.",
-		rowSays: "A failure that sent nothing never prints the past tense, so `sent` is exact: no " +
+		// 🔴 TWO FALSE VERSIONS OF THIS SENTENCE SHIPPED FOR ONE COMMIT EACH, IN
+		// OPPOSITE DIRECTIONS, AND BOTH ARE WHY THE WORDING IS THIS EXACT.
+		//
+		// "prints nothing" — false for the CEILING REFUSAL, which sends nothing
+		// and prints a full would-have-sent block, named three lines later in the
+		// same paragraph. A universal with its counterexample already on the page.
+		// Hence "never prints the PAST TENSE".
+		//
+		// "so `sent` is a fact about bytes that left this machine" — false for a
+		// write CUT SHORT. A submit timing out mid-body had delivered ~200 KB on
+		// every measured run while the CLI called it nothing sent; the fix keys the
+		// tag on the request reaching the connection, and the printed byte count is
+		// then an upper bound rather than a receipt. Hence "a request that really
+		// went out, not one the CLI only built".
+		//
+		// The #635 ladder's own lesson, in claudedocs/handoff-readme-reduction.md:
+		// a fix that makes a sentence more specific can make it false, and it reads
+		// as an improvement because specificity looks like rigour.
+		paragraphSays: "A failure that never reached the connection never prints the past tense — " +
+			"no usable credential, an unwritable config, a connection that never opened — so `sent` " +
+			"means a request that really went out, not one the CLI only built.",
+		rowSays: "A failure that never reached the connection never prints the past tense: no " +
 			"usable credential, an unwritable config and a connection that never opened print " +
 			"neither block.",
 		why: "issue #637 — appapi.SubmitVersion sets this from httptrace's WroteRequest, so the arm " +

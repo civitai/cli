@@ -733,9 +733,15 @@ func submitEnvelopeLen(prov Provenance) int {
 // matches no arm of that switch, so the 1 is unchanged AND now assertable.
 var ErrBundleTooLarge = errors.New("bundle too large to upload")
 
-// ErrNothingSent tags a SubmitVersion failure in which NO REQUEST BYTE REACHED
-// THE NETWORK, so a caller can tell "we never got as far as sending" from "we
-// sent it and it failed". Issue #637.
+// ErrNothingSent tags a SubmitVersion failure in which THE REQUEST NEVER REACHED
+// THE CONNECTION, so a caller can tell "we never got as far as sending" from "it
+// went out and the submit failed". Issue #637.
+//
+// ⚠ THAT IS THE PROPERTY, AND IT IS NARROWER THAN "no byte arrived". A request
+// the transport began writing and could not finish is NOT tagged: the bytes it
+// managed to put on the socket are real, and an earlier version of this sentinel
+// that claimed otherwise was measurably false on the mid-body timeout path — see
+// submitRequestSentTrace.
 //
 // 🔴 IT IS A WIRE FACT, NOT A CLASSIFICATION, AND THAT IS WHY IT IS NOT ANOTHER
 // ERROR KIND. The kinds in pkg/civitai (ErrUnauthorized, ErrRateLimited, …) say
@@ -756,12 +762,13 @@ var ErrBundleTooLarge = errors.New("bundle too large to upload")
 // mechanism either.
 //
 // What `status == 0` gets wrong is the case worth protecting: a timeout or a
-// dropped connection AFTER the whole body was written but BEFORE a response
-// header arrived. Status 0, bytes gone. Suppressing there would not narrow the
-// diagnosis — it would DELETE it on the #423 flagship path, a large bundle the
-// server is slow on, which is the failure the block was written for. WroteRequest
-// fires once headers and body have been written and carries the write's own
-// error, so it separates those two cases and `status` cannot.
+// dropped connection AFTER the request went onto the connection but BEFORE a
+// response header arrived — whether the write finished or was cut short. Status
+// 0, bytes gone. Suppressing there would not narrow the diagnosis, it would
+// DELETE it on the #423 flagship path, a large bundle the server is slow on,
+// which is the failure the block was written for. WroteRequest fires as soon as
+// the transport has written the request, so it separates those two cases and
+// `status` cannot.
 //
 // It carries no message and changes no exit code: it matches no arm of
 // cmd/civitai's exitCode switch, and civitai.Tag preserves Error() byte-for-byte
@@ -772,38 +779,40 @@ var ErrBundleTooLarge = errors.New("bundle too large to upload")
 // raised before any of this and has its own arm at every consumer, which prints
 // an honest "would have sent" block rather than nothing. That arm is first in
 // doUpload's switch, so the two never compete.
-var ErrNothingSent = errors.New("no request bytes reached the network")
+var ErrNothingSent = errors.New("the request never reached the connection")
 
 const MaxSubmitBodyBytes = 10485760
 
-// submitWroteTrace returns the httptrace hook that records, into wrote, whether
-// a request's bytes reached the connection. It is a named function rather than a
-// literal inside SubmitVersion so the one decision it encodes is directly
-// testable: TestSubmitWroteTraceIgnoresAFailedWrite calls it both ways.
+// submitRequestSentTrace returns the httptrace hook that records, into sent,
+// whether the request was put on the connection at all. It is a named function
+// rather than a literal inside SubmitVersion so the decision it encodes is
+// directly testable.
 //
-// 🔴 A FAILED WRITE IS NOT A SEND. WroteRequest fires whether the write
-// succeeded or not, and info.Err carries its failure; how much of the body
-// reached the wire in that case is unknown and can be zero, so counting it would
-// put a byte count under "What this CLI sent" that nothing supports. This errs
-// towards silence, which is the direction issue #637 is about.
+// 🔴 IT KEYS ON "THE WRITE HAPPENED", NOT "THE WRITE SUCCEEDED", AND THE
+// DIFFERENCE WAS A FALSE CLAIM THIS PR SHIPPED FOR ONE COMMIT. The first version
+// ignored a WroteRequest carrying info.Err, reasoning that a failed write
+// delivers an unknown number of bytes and might deliver none. Measured, that
+// reasoning inverts: a submit timing out MID-BODY takes exactly that branch, and
+// the server had received 204,594 / 233,266 / 204,594 bytes on three runs while
+// the CLI reported "nothing was uploaded". A PR about the CLI making false
+// claims about bytes made one.
 //
-// 🔴 AND THAT BRANCH IS NOT AN EDGE CASE OF A NETWORK FAILURE — IT IS ONE OF THE
-// TWO WAYS ONE LANDS. Measured against a server that drops every connection the
-// instant it accepts it, 4 runs: WroteRequest fired every time, with info.Err
-// SET on two of them ("use of closed network connection") and NIL on the other
-// two, where the write had completed into the socket and the failure surfaced on
-// the read instead. So the same physical event resolves either way, and both
-// answers are honest about their own case: bytes that made it out are reported,
-// bytes that did not are not. It is also why no test here drives a real dropped
-// connection — the outcome is a race, and a test asserting either branch of it
-// would be flaky by construction.
-func submitWroteTrace(wrote *atomic.Bool) *httptrace.ClientTrace {
+// So the property is the one the CLI can actually stand behind: did this request
+// get onto the connection. The three causes README.md names — no usable
+// credential, an unwritable config, a connection that never opened — all fail
+// before WroteRequest can fire, which is what makes that sentence true.
+//
+// ⚠ RESIDUAL, STATED RATHER THAN IMPLIED: a write that fails immediately fires
+// this hook having delivered little or nothing, so the byte count the diagnosis
+// prints is an UPPER BOUND on what arrived, not a receipt. That is why the prose
+// says the request went out rather than that N bytes landed, and why the block
+// keeps its own "it cannot tell whether that is why the submit failed". The
+// alternative — staying silent whenever a write was cut short — is what produced
+// the false claim above, and it deletes the entry list for the large-bundle,
+// slow-link author the block was written for.
+func submitRequestSentTrace(sent *atomic.Bool) *httptrace.ClientTrace {
 	return &httptrace.ClientTrace{
-		WroteRequest: func(info httptrace.WroteRequestInfo) {
-			if info.Err == nil {
-				wrote.Store(true)
-			}
-		},
+		WroteRequest: func(httptrace.WroteRequestInfo) { sent.Store(true) },
 	}
 }
 
@@ -888,29 +897,23 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 				"(The compressed zip is smaller than this number; base64 encoding adds ~1/3.)",
 			ErrBundleTooLarge, len(body), MaxSubmitBodyBytes)
 	}
-	// wrote records whether ANY of this call's request bytes reached the
-	// connection, and it is deliberately STICKY across the single retry
-	// authedDoWith can make (a 401 triggers one refresh-and-retry).
+	// sent records whether ANY of this call's requests reached the connection,
+	// and it is deliberately STICKY across the single retry authedDoWith can make
+	// (a 401 triggers one refresh-and-retry).
 	//
 	// 🔴 A PER-ATTEMPT RESET WAS WRITTEN HERE FIRST AND CONTRADICTED THE SENTENCE
-	// THIS MECHANISM EXISTS TO MAKE TRUE. README.md says `sent` is a fact about
-	// bytes that left this machine. Attempt 1 writes a full 12 MB body, the server
-	// answers 401, the retry fails to dial: 12 MB left this machine, and a reset
-	// would report "nothing was sent" and suppress a block whose byte count was
-	// accurate. Scoping the flag to the attempt whose error is returned is a
+	// THIS MECHANISM EXISTS TO MAKE TRUE. README.md says the block prints only for
+	// a request that really went out. Attempt 1 writes a full 12 MB body, the
+	// server answers 401, the retry fails to dial: that request DID go out, and a
+	// reset would report "nothing was sent" and suppress a block whose byte count
+	// was accurate. Scoping the flag to the attempt whose error is returned is a
 	// different and narrower claim than the one on the page, and nothing asked for
-	// it.
-	//
-	// ⚠ NOTHING PINS THIS, AND THAT IS STATED RATHER THAN LEFT IMPLIED: putting
-	// the reset back scores SURVIVED against the whole battery. The scenario that
-	// separates the two — attempt 1 writes a full body, attempt 2 does not — needs
-	// the server to die between the 401 and the retry, which is a race, and a test
-	// asserting either side of a race is the flaky-by-construction shape this PR
-	// already retracted once. Recorded as unpinned; the argument above is why the
-	// sticky reading is the one that matches README.md.
+	// it. TestSubmitVersionKeepsTheSentFactAcrossA401Retry pins it.
 	//
 	// Atomic because httptrace callbacks run on the transport's write goroutine,
-	// not on this one.
+	// not on this one. net/http fires WroteRequest on writeLoop before delivering
+	// the write result to roundTrip, so the read after authedDoWith returns is
+	// ordered as well as safe.
 	//
 	// It only fires under an *http.Transport. A client whose Transport is a
 	// custom RoundTripper never triggers the trace, so every failure would be
@@ -919,8 +922,8 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 	// and submitClient copies it — and cmd's
 	// TestSubmitDiagnosisPrintsWhenBytesReallyLeft is the standing check, driving
 	// the real client and asserting the block DOES appear when the server answers.
-	var wrote atomic.Bool
-	trace := submitWroteTrace(&wrote)
+	var sent atomic.Bool
+	trace := submitRequestSentTrace(&sent)
 	build := func() (*http.Request, error) {
 		req, err := http.NewRequestWithContext(
 			httptrace.WithClientTrace(ctx, trace), http.MethodPost, c.BaseURL+c.SubmitPath, bytes.NewReader(body))
@@ -964,14 +967,14 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 			// would make isNetworkErr true in cmd/civitai and move this failure
 			// from exit 1 to exit 5, a published contract (AGENTS.md item 7).
 			r, rerr := c.recoverTimedOutSubmit(ctx, slug, version, err)
-			if rerr == nil || wrote.Load() {
+			if rerr == nil || sent.Load() {
 				return r, rerr
 			}
 			return nil, civitai.Tag(ErrNothingSent, fmt.Errorf(
-				"submit timed out before any of the bundle was sent (%v) — nothing was uploaded "+
-					"and no submission was created, so retrying is safe", err))
+				"submit timed out before the request reached the server (%v) — nothing was "+
+					"uploaded and no submission was created, so retrying is safe", err))
 		}
-		if !wrote.Load() {
+		if !sent.Load() {
 			err = civitai.Tag(ErrNothingSent, err)
 		}
 		return nil, err
