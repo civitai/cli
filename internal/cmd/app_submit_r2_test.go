@@ -95,15 +95,18 @@ func TestConfirmSubmit_TTYDefaultCancels(t *testing.T) {
 
 // A bare `app submit` in a non-interactive shell (the accidental-footgun case)
 // must NOT reach the submit endpoint even when a token is configured.
+//
+// 🔴 THE ASSERTION LIVES IN nonTTYSubmitRefusal, NOT HERE, AND THIS TEST IS NOT
+// EMPTY. The driver drives the path against a recorder server and fatals naming
+// this gate if the run reaches it — one claim in one place, because
+// TestREADMEPreUploadRefusalPrintsNoEntryBlock drives the identical path and
+// depends on the same fact. What this test owns is the NAME: the footgun
+// regression stays runnable and greppable as itself rather than only as a
+// side-condition of a README guard. #639 consolidated the setup and left an
+// `if hit` here that could not fire; the driver's comment carries the
+// measurement and why the check moved.
 func TestAppSubmit_NonTTYRefusesWithoutYes_NoNetworkCall(t *testing.T) {
-	// Drives the same path as TestREADMEPreUploadRefusalPrintsNoEntryBlock, so
-	// both go through one driver rather than two copies of the setup. That
-	// driver also fatals if the run did not refuse for the --yes reason, which
-	// this test previously asserted inline.
-	_, _, hit := nonTTYSubmitRefusal(t)
-	if hit {
-		t.Fatal("submit endpoint was hit — the gate did NOT prevent the submission")
-	}
+	nonTTYSubmitRefusal(t)
 }
 
 // The non-TTY refusal must fire BEFORE any packaging work: no "Packaged …"

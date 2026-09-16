@@ -412,19 +412,46 @@ func troubleshootingEntryBlockCause(t *testing.T) string {
 // So this drives the real command down the no-`--yes` path and asserts BOTH
 // block headers are absent from stderr. RULES.md: a seam guard needs "a
 // behavioural case, since a structural check type-checks past a wrong argument."
+func TestREADMEPreUploadRefusalPrintsNoEntryBlock(t *testing.T) {
+	_, stderr := nonTTYSubmitRefusal(t)
+
+	// The two block headers, taken from app_submit.go rather than retyped, so a
+	// reword of either moves this assertion with it.
+	for _, header := range []string{"What this CLI sent", "What this CLI would have sent"} {
+		if strings.Contains(stderr, header) {
+			t.Errorf("a pre-upload refusal printed %q.\n"+
+				"README.md tells a reader that a refusal stopping the submit before the upload step "+
+				"\"prints nothing at all\", naming no --yes as one of four such cases. If this block "+
+				"is now meant to print here, that sentence and its Troubleshooting row both need "+
+				"rewriting — they are the only two places the contract appears.\nstderr:\n%s",
+				header, stderr)
+		}
+	}
+}
+
 // nonTTYSubmitRefusal drives `app submit` down the no-TTY, no-`--yes` path
-// against a recorder server and returns its streams.
+// against a recorder server, asserts the whole contract of that refusal, and
+// returns the run's streams for a caller to assert something further about.
 //
 // 🔴 EXTRACTED, NOT COPIED — round 0 of #639 found ~30 lines of this setup
 // duplicated verbatim between here and TestAppSubmit_NonTTYRefusesWithoutYes_
 // NoNetworkCall, down to the literal token string. AGENTS.md: "One rule, one
-// place." The two tests assert DIFFERENT things about the same path (that one:
-// no network call; this one: no entry block), which is exactly the case a shared
-// driver serves rather than a second copy.
+// place." Both callers exercise the same path and differ only in what they read
+// off it, which is the case a shared driver serves rather than a second copy.
 //
-// It fails the test itself if the path it claims to exercise was not the one
-// taken, so a caller cannot assert about a refusal that never happened.
-func nonTTYSubmitRefusal(t *testing.T) (stdout, stderr string, serverHit bool) {
+// 🔴 THE "NO NETWORK CALL" ASSERTION IS THE DRIVER'S, NOT A CALLER'S, AND THAT
+// IS A REPAIR TO HOW #639 LEFT IT. That PR returned the recorder's hit flag and
+// let each caller assert `!hit` — which cannot fire. Reaching the endpoint means
+// the run got past the refusal, so one of the two controls below already fataled
+// on it: both `if hit` branches were dead code. Measured by removing the gate in
+// confirmSubmit: the endpoint WAS hit, neither branch ran, and both tests died
+// on "refused, but not by the --yes gate — the caller is measuring a different
+// path than it claims" — a message that sends a maintainer to edit the test when
+// the defect is in the gate. Before #639 the same mutation printed "submit
+// endpoint was hit — the gate did NOT prevent the submission". A guard's failure
+// message is part of the guard, so the hit check runs FIRST and keeps that
+// wording: it is the most specific fact available, and it names production.
+func nonTTYSubmitRefusal(t *testing.T) (stdout, stderr string) {
 	t.Helper()
 	withStdinTTY(t, false)
 	tmp := t.TempDir()
@@ -443,6 +470,12 @@ func nonTTYSubmitRefusal(t *testing.T) (stdout, stderr string, serverHit bool) {
 	t.Setenv("CIVITAI_SUBMIT_PATH", "/api/blocks/submit-version")
 
 	out, errOut, err := run(t, "app", "submit", tmp)
+	if hit {
+		t.Fatalf("submit endpoint was hit — the gate did NOT prevent the submission.\n"+
+			"A bare `app submit` in a non-interactive shell must refuse before contacting the "+
+			"server; this run reached it. The refusal error, if any, was: %v\nstdout:\n%s\nstderr:\n%s",
+			err, out, errOut)
+	}
 	if err == nil {
 		t.Fatalf("CONTROL failure: the bare non-TTY submit did not refuse, so the caller never "+
 			"reached the path it is asserting about.\nstdout:\n%s\nstderr:\n%s", out, errOut)
@@ -451,25 +484,5 @@ func nonTTYSubmitRefusal(t *testing.T) (stdout, stderr string, serverHit bool) {
 		t.Fatalf("CONTROL failure: refused, but not by the --yes gate — the caller is measuring a "+
 			"different path than it claims: %v", err)
 	}
-	return out, errOut, hit
-}
-
-func TestREADMEPreUploadRefusalPrintsNoEntryBlock(t *testing.T) {
-	_, stderr, hit := nonTTYSubmitRefusal(t)
-	if hit {
-		t.Error("the submit endpoint was hit on a pre-upload refusal")
-	}
-
-	// The two block headers, taken from app_submit.go rather than retyped, so a
-	// reword of either moves this assertion with it.
-	for _, header := range []string{"What this CLI sent", "What this CLI would have sent"} {
-		if strings.Contains(stderr, header) {
-			t.Errorf("a pre-upload refusal printed %q.\n"+
-				"README.md tells a reader that a refusal stopping the submit before the upload step "+
-				"\"prints nothing at all\", naming no --yes as one of four such cases. If this block "+
-				"is now meant to print here, that sentence and its Troubleshooting row both need "+
-				"rewriting — they are the only two places the contract appears.\nstderr:\n%s",
-				header, stderr)
-		}
-	}
+	return out, errOut
 }
