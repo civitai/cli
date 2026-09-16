@@ -273,45 +273,91 @@ func TestREADMEEntryBlockClaimsArePinned(t *testing.T) {
 // goes stale ALONE.
 func TestREADMEEntryBlockSurfacesAgree(t *testing.T) {
 	para := collapseWS(readmeEntryBlockParagraph(t))
-	row := collapseWS(troubleshootingEntryBlockRow(t))
+	cause := collapseWS(troubleshootingEntryBlockCause(t))
 
 	// Both surfaces must key on classification, and neither may key on bytes.
 	for _, s := range []struct{ where, text string }{
 		{"the `## Submit & auth` paragraph", para},
-		{"the Troubleshooting row", row},
+		{"the Troubleshooting row's cause cell", cause},
 	} {
 		if !strings.Contains(s.text, "classifies") {
 			t.Errorf("%s no longer says the branch is keyed on how the error *classifies*.\n"+
 				"That word is load-bearing: doUpload switches on errors.Is, never on a wire fact, "+
 				"and a bytes-shaped claim here was measured false in issue #637 (0 requests received, "+
 				"past-tense block printed). Round 2 of #635 introduced exactly that regression while "+
-				"fixing round 1's.", s.where)
+				"fixing round 1's.\n"+
+				"🔴 IF YOU ARE HERE BECAUSE YOU FIXED #637: that is the one change this guard must NOT "+
+				"block. Once printSubmitSizeDiagnosis can no longer print for a pre-contact error, the "+
+				"stronger wording becomes TRUE and both surfaces should say so. Rewrite this expectation "+
+				"in the same commit as the code fix — do not keep the weakened sentence to keep a test "+
+				"green.", s.where)
 		}
 	}
-	// The ceiling refusal must be named as the exception on BOTH, or a reader
-	// who lands on one surface gets a rule the other contradicts.
-	for _, s := range []struct{ where, text string }{
-		{"the `## Submit & auth` paragraph", para},
-		{"the Troubleshooting row", row},
-	} {
-		if !strings.Contains(s.text, "would have sent") {
-			t.Errorf("%s no longer names the `What this CLI would have sent` case.\n"+
-				"It is the one pre-upload refusal that DOES print an entry list, so a surface that "+
-				"omits it tells a reader the block never appears before an upload — which is false, "+
-				"and was the round 0 finding on #635.", s.where)
-		}
+	// The ceiling refusal must be named as the exception in the row's CAUSE
+	// cell, or a reader who lands there gets a rule the paragraph contradicts.
+	//
+	// 🔴 THIS ASSERTION WAS VACUOUS AND SHIPPED AS LIVE — round 0 of #639 caught
+	// it. It ran against the WHOLE table line, whose left-hand symptom column
+	// literally reads `What this CLI would have sent`, so strings.Contains was
+	// satisfied no matter what the cause cell said. Worse, that symptom column
+	// is frozen independently: TestREADMETroubleshootingSymptomsExistInTheSource
+	// requires it to exist verbatim in non-test source, and app_submit.go emits
+	// it — so the string could never leave the line and the check could never
+	// fail. A cause cell reading "The block never appears before an upload" —
+	// verbatim what the error below calls false — passed.
+	//
+	// The original mutation missed it because it deleted BOTH words at once, so
+	// the sibling assertion went red first and scored this one as killed.
+	// RULES.md: isolate the mutation, and confirm the failure is THIS guard's.
+	if !strings.Contains(cause, "would have sent") {
+		t.Errorf("the Troubleshooting row's cause cell no longer names the `What this CLI would have sent` case.\n" +
+			"It is the one pre-upload refusal that DOES print an entry list, so a cause cell that " +
+			"omits it tells a reader the block never appears before an upload — which is false, " +
+			"and was the round 0 finding on #635.\n" +
+			"Note this asserts on the CAUSE cell only: the symptom column quotes the same string and " +
+			"is frozen by TestREADMETroubleshootingSymptomsExistInTheSource, so matching the whole " +
+			"row here would pass unconditionally.")
 	}
 }
 
-// troubleshootingEntryBlockRow returns the Troubleshooting row documenting the
-// entry block.
-func troubleshootingEntryBlockRow(t *testing.T) string {
+// troubleshootingEntryBlockCause returns the CAUSE cell — column two — of the
+// Troubleshooting row documenting the entry block.
+//
+// 🔴 COLUMN TWO, NOT THE WHOLE ROW, AND THAT IS THE POINT. Column one is the
+// symptom index and is pinned verbatim against non-test source by a sibling
+// guard, so any assertion made against the full line can be satisfied by text
+// that cannot change. The cause cell is the half that carries the claim.
+func troubleshootingEntryBlockCause(t *testing.T) string {
 	t.Helper()
 	section := readmeTroubleshootingSection(t)
 	for _, line := range strings.Split(section, "\n") {
-		if strings.HasPrefix(line, "|") && strings.Contains(line, "largest entries in the bundle") {
-			return line
+		if !strings.HasPrefix(line, "|") || !strings.Contains(line, "largest entries in the bundle") {
+			continue
 		}
+		cols := strings.Split(line, " | ")
+		if len(cols) < 3 {
+			t.Fatalf("CONTROL failure: the entry-block row does not split into >= 3 columns, so the "+
+				"cause cell cannot be isolated and every assertion on it is vacuous. Row:\n%s", line)
+		}
+		// Strip markdown emphasis before returning.
+		//
+		// 🔴 NOT COSMETIC — WITHOUT THIS THE ASSERTION IS WRONG, AND IT WAS.
+		// The cell writes the tense as `What this CLI **would have** sent`, so
+		// the literal substring "would have sent" does not occur: the bold
+		// markers sit INSIDE the phrase. The first reachable run of this guard
+		// failed on exactly that — which is also the cleanest evidence that
+		// making it reachable changed something. Stripping `**` makes the check
+		// about the WORDS the cell uses rather than which of them an author
+		// bolded, for the same reason prose here goes through collapseWS.
+		cause := strings.ReplaceAll(cols[1], "**", "")
+		// POSITIVE CONTROL: a cell this short is not a cause cell — it means the
+		// split landed on the wrong column, which is exactly the failure that
+		// made this guard vacuous the first time.
+		if len(cause) < 80 {
+			t.Fatalf("CONTROL failure: the extracted cause cell is %d bytes (want >= 80), so the "+
+				"column split is reading the wrong field. Extracted:\n%q", len(cause), cause)
+		}
+		return cause
 	}
 	t.Fatal("CONTROL failure: no Troubleshooting row quotes `largest entries in the bundle`, " +
 		"so TestREADMEEntryBlockSurfacesAgree is asserting against an empty string. The row is on " +
@@ -338,7 +384,20 @@ func troubleshootingEntryBlockRow(t *testing.T) string {
 // So this drives the real command down the no-`--yes` path and asserts BOTH
 // block headers are absent from stderr. RULES.md: a seam guard needs "a
 // behavioural case, since a structural check type-checks past a wrong argument."
-func TestREADMEPreUploadRefusalPrintsNoEntryBlock(t *testing.T) {
+// nonTTYSubmitRefusal drives `app submit` down the no-TTY, no-`--yes` path
+// against a recorder server and returns its streams.
+//
+// 🔴 EXTRACTED, NOT COPIED — round 0 of #639 found ~30 lines of this setup
+// duplicated verbatim between here and TestAppSubmit_NonTTYRefusesWithoutYes_
+// NoNetworkCall, down to the literal token string. AGENTS.md: "One rule, one
+// place." The two tests assert DIFFERENT things about the same path (that one:
+// no network call; this one: no entry block), which is exactly the case a shared
+// driver serves rather than a second copy.
+//
+// It fails the test itself if the path it claims to exercise was not the one
+// taken, so a caller cannot assert about a refusal that never happened.
+func nonTTYSubmitRefusal(t *testing.T) (stdout, stderr string, serverHit bool) {
+	t.Helper()
 	withStdinTTY(t, false)
 	tmp := t.TempDir()
 	writeStaticManifest(t, tmp)
@@ -355,15 +414,20 @@ func TestREADMEPreUploadRefusalPrintsNoEntryBlock(t *testing.T) {
 	t.Setenv("CIVITAI_BASE_URL", srv.URL)
 	t.Setenv("CIVITAI_SUBMIT_PATH", "/api/blocks/submit-version")
 
-	stdout, stderr, err := run(t, "app", "submit", tmp)
+	out, errOut, err := run(t, "app", "submit", tmp)
 	if err == nil {
-		t.Fatalf("CONTROL failure: the bare non-TTY submit did not refuse, so this test never "+
-			"reached the path it exists to check.\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+		t.Fatalf("CONTROL failure: the bare non-TTY submit did not refuse, so the caller never "+
+			"reached the path it is asserting about.\nstdout:\n%s\nstderr:\n%s", out, errOut)
 	}
 	if !strings.Contains(err.Error(), "refusing to submit without --yes") {
-		t.Fatalf("CONTROL failure: refused, but not by the --yes gate — this test is measuring a "+
+		t.Fatalf("CONTROL failure: refused, but not by the --yes gate — the caller is measuring a "+
 			"different path than it claims: %v", err)
 	}
+	return out, errOut, hit
+}
+
+func TestREADMEPreUploadRefusalPrintsNoEntryBlock(t *testing.T) {
+	_, stderr, hit := nonTTYSubmitRefusal(t)
 	if hit {
 		t.Error("the submit endpoint was hit on a pre-upload refusal")
 	}
