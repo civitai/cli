@@ -386,68 +386,41 @@ CLI config instead (`~/.config/devin/mcp_config.json`, or
 `%APPDATA%\devin\mcp_config.json`). This CLI still writes the Cascade path and
 says so in its output; add the servers to the Devin config too if you use it.
 
-**Nothing is clobbered.** An existing `AGENTS.md` is **appended to** when it has
-no managed block, and has **only the block between the markers replaced** when it
-does — every byte outside the markers is left alone. An existing `CLAUDE.md` is
-never read and never modified. An existing MCP config is **merged into**,
-preserving every other server, every unknown key, **and every key you added to
-the Civitai entries themselves** (a hand-added `Authorization` header survives a
-re-run). A config file that does not parse is **refused by name** rather than
-repaired, because a repair there is indistinguishable from deleting what you had.
-
-The three writes are **independent**: one failing does not stop the other two,
-each gets its own row saying what did not happen, and no row ever claims an
-action for a file nothing attempted.
-
-**Two stated exceptions**, both reported in the run's own output rather than left
-for you to discover:
-
-- A **JSONC** config (Zed's `settings.json`, `.vscode/mcp.json`,
-  `opencode.jsonc`) is decoded and re-encoded, so its **comments, its trailing
-  commas and its key order are not preserved**. Both JSONC forms are *tolerated*
-  rather than refused — your editor authored them.
-- A **symlinked** config is **followed**: the write lands on the link's target,
-  so a dotfiles repo keeps tracking the live file. A *broken* symlink is refused
-  by name.
+**Nothing is clobbered.** An existing `AGENTS.md` is **appended to**, or has only
+the block between its markers replaced — every byte outside them is left alone.
+An existing `CLAUDE.md` is never read and never modified. An existing MCP config
+is **merged into**, preserving every other server, every unknown key, **and every
+key you added to the Civitai entries themselves** (a hand-added `Authorization`
+header survives a re-run). A config that does not parse is **refused by name**
+rather than repaired. A **symlinked** config is **followed**, so a dotfiles repo
+keeps tracking the live file; a *broken* symlink is refused by name.
 
 ### No credential is ever written
 
-**🔴 No credential is ever written into a config file.** Four of the files above
-are **project-scoped** — `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json` and
-`opencode.json` sit in the repo root and get committed — so an `Authorization`
-header holding your actual token is a secret headed for version control. Never a
-placeholder that looks like a credential, either. Instead:
+**🔴 No credential is ever written into a config file — and never a placeholder
+that looks like one.** Four of the files above are **project-scoped**
+(`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `opencode.json`): they sit
+in the repo root and get committed, so an `Authorization` header holding your
+actual token is a secret headed for version control. The header **references**
+`CIVITAI_TOKEN` in each vendor's own spelling instead (the last column above),
+and where a vendor documents no interpolation at all — Zed today, and `--agent
+other` — **no header is written**, with the run printing the exact line to add
+yourself.
 
-- Where the vendor **documents** environment-variable interpolation, the header
-  **references** `CIVITAI_TOKEN` in that vendor's own spelling (the last column
-  above; the four spellings genuinely differ). Export it so the agent resolves
-  it: `export CIVITAI_TOKEN=<a personal API key>` — put it in your shell profile
-  so the agent inherits it. 🔴 **Mint that key at
-  [civitai.com/user/account](https://civitai.com/user/account) (API Keys); it is
-  not the token `civitai login` stored, and no command prints that one.**
-  Exporting a value makes this CLI treat it as a personal key with **no
-  refresh**, so an OAuth login token exported here works until it expires and
-  then hard-fails.
-- Where the vendor documents **none** — Zed today, and `--agent other`, whose
-  target agent is by definition unknown — **no header is written at all**, and
-  the output names the exact header to add yourself. Guessing a syntax would be
-  worse than omitting it: an unsupported one produces a config that looks
-  configured and sends the literal string `${CIVITAI_TOKEN}` as a bearer token,
-  which fails at request time and reads as a bad credential rather than a bad
-  config.
+🔴 **Mint the key at [civitai.com/user/account](https://civitai.com/user/account)
+(API Keys), then export it** — `export CIVITAI_TOKEN=<a personal API key>`, in
+your shell profile so the agent inherits it. It is **not** the token `civitai
+login` stored, and no command prints that one: `civitai login` writes this CLI's
+own config, which your coding agent does not read. So logging in alone is not
+enough — your agent resolves `CIVITAI_TOKEN` from the **environment**, where an
+unset variable becomes the empty string.
 
 **A header-less config is not empty, but it is not complete either**: it browses
 models, images and articles through the `civitai` server, and
-`civitai-orchestration` answers it `401`. To authenticate Zed (or an agent this
-CLI does not know), add the header yourself to each Civitai entry — the run
-prints the exact line.
+`civitai-orchestration` answers it `401`.
 
-**Authentication is yours to run**, and `civitai login` is a **separate store**
-from `CIVITAI_TOKEN`: it writes this CLI's own config, which your coding agent
-does not read. 🔴 **So `civitai login` alone is not enough** — the header
-*references* `CIVITAI_TOKEN` and your agent resolves it from the **environment**,
-where an unset variable becomes the empty string. If you have logged in but not
-exported it, the run says so; that is a missing `export`, not a bad token.
+`civitai agent-setup --help` carries the per-vendor header spellings, the merge
+rules and the JSONC/symlink handling in full.
 
 **No `@civitai/*` version is pinned anywhere in what this writes.** Pins live in
 `civitai app init`, which CI holds against npm; a version literal in an
@@ -549,13 +522,6 @@ reports the intended action, `ok: true` and exit `0`; the real run reports
 `blocked`, `ok: false` and exit `1`. A full disk and a read-only mount are the
 same shape by construction and were *not* measured. So treat a green dry run as
 "the plan is sound", never as "the write will succeed".
-
-> **Maintainers:** the rationale behind these rules — why an unsupported token
-> syntax is worse than no header, the seven measured defects behind the merge
-> contract, and why the managed block is rendered per project — is recorded in
-> [decision 34](https://github.com/civitai/cli/blob/main/claudedocs/decisions/34-agent-setup-writes-no-credential.md),
-> [decision 35](https://github.com/civitai/cli/blob/main/claudedocs/decisions/35-agent-setup-merges-a-users-file.md)
-> and [decision 36](https://github.com/civitai/cli/blob/main/claudedocs/decisions/36-agents-block-per-project.md).
 
 ## SDK packages
 
