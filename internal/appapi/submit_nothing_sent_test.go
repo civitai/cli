@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httptrace"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -86,8 +87,36 @@ func TestSubmitVersionTagsNothingSentWhenTheDialFails(t *testing.T) {
 	}
 }
 
+// TestSubmitVersionTagsNothingSentWhenTheRequestCannotBeBuilt covers the tag
+// site issue #637 names second: "doOnceWith → http.NewRequestWithContext fails
+// before contact on a malformed CIVITAI_BASE_URL".
+//
+// 🔴 IT IS REACHABLE, AND THAT WAS CHECKED RATHER THAN ASSUMED. internal/config
+// binds CIVITAI_BASE_URL straight onto base_url with no url.Parse and no
+// validation anywhere between there and this call, so a control character in the
+// environment variable arrives here intact. Without this test, dropping the tag
+// at that site survives the whole mutation battery — it was the one of the four
+// sites nothing exercised.
+func TestSubmitVersionTagsNothingSentWhenTheRequestCannotBeBuilt(t *testing.T) {
+	// A DEL byte is rejected by net/url and is the shape an unvalidated env var
+	// can carry. The URL is otherwise well-formed, so nothing earlier rejects it.
+	c := New("http://exa\x7fmple.com", "tok", "/api/blocks/submit-version")
+
+	_, err := c.SubmitVersion(context.Background(), []byte("zip"), "demo", "0.1.0", Provenance{})
+	if err == nil {
+		t.Fatal("a base URL that cannot form a request must fail the submit")
+	}
+	if !strings.Contains(err.Error(), "invalid control character") {
+		t.Fatalf("CONTROL failure: the failure did not come from request construction, so this "+
+			"test is measuring a different site: %v", err)
+	}
+	if !errors.Is(err, ErrNothingSent) {
+		t.Errorf("want ErrNothingSent when the request could not even be built, got %v", err)
+	}
+}
+
 // TestSubmitVersionDoesNotTagWhenTheServerAnswered is the POSITIVE CONTROL, and
-// the three negative cases here are worthless without it: a SubmitVersion that
+// the negative cases here are worthless without it: a SubmitVersion that
 // tagged unconditionally would satisfy every one of them.
 //
 // It also pins the feature #637 must not "fix" by deleting: a 500 that arrives
@@ -228,10 +257,40 @@ func TestSubmitVersionTagsNothingSentWhenATimeoutPrecededTheWrite(t *testing.T) 
 			"timedOutSubmitError uses %%v, not %%w, so this arm has to tag its own result — a tag "+
 			"applied to the cause is dropped on the floor.", err)
 	}
+
+	// 🔴 SUPPRESSING THE BYTE BLOCK IS ONLY HALF THE FIX. The recovery error says
+	// "the upload may not have completed … check whether it landed before
+	// resubmitting", which produces exactly the hesitation issue #637 is about.
+	// When nothing was written the outcome is not unknown, and the message says so.
+	if !strings.Contains(err.Error(), "nothing was uploaded and no submission was created") {
+		t.Errorf("the timeout error still leaves the outcome open when the CLI knows it: %v", err)
+	}
+	if strings.Contains(err.Error(), "may not have completed") {
+		t.Errorf("the recovery wording reached a run that sent nothing: %v", err)
+	}
+	// The recovery poll DOES still run — skipping it was tried and reverted,
+	// because TestSubmitVersionRecoversFromADeadlineExceededTokenError next door
+	// pins the token seam as the positive control for its whole family. So the
+	// transport is called once per attempt plus once per poll, and what changed
+	// is only what the CLI says afterwards.
+	if got := rt.calls.Load(); got != int64(1+submitPollAttempts) {
+		t.Errorf("transport calls = %d, want %d (one submit + %d recovery polls) — if the poll "+
+			"stopped running, the sibling family's positive control went with it", got,
+			1+submitPollAttempts, submitPollAttempts)
+	}
 }
 
-// TestNothingSentPreservesClassification pins what the tag must NOT do: strip
-// the failure KIND an already-classified error carries. internal/auth tags
+// TestNothingSentPreservesClassification is an INVARIANT GUARD, not regression
+// coverage, and is labelled as one because nothing in this PR could have broken
+// it: civitai.Tag's taggedError.Unwrap returns BOTH errors, so no mutation of
+// this file's code makes it red, and the mutation battery names no mutant it
+// kills. internal/cmd's TestSubmitDiagnosisAbsentWhenTheCredentialIsLocallyRefused
+// asserts the same errors.Is through the same chain plus the behavioural half.
+//
+// Kept anyway, at one layer down: exit 3 for a locally-refused credential is
+// published contract, and this is the package that attaches the new tag. What it
+// pins is what the tag must NOT do — strip the failure KIND an already-classified
+// error carries. internal/auth tags
 // civitai.ErrUnauthorized onto "no refresh token stored" — a local error — and
 // exit code 3 for that is published contract (claudedocs/decisions/07, and the
 // exit-code map in cmd/civitai branches on errors.Is).

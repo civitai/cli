@@ -746,12 +746,22 @@ var ErrBundleTooLarge = errors.New("bundle too large to upload")
 // needs exactly that, and got it wrong: measured in #637 as 0 requests received
 // while the CLI printed "What this CLI sent … N bytes on the wire".
 //
-// 🔴 THE SIGNAL IS httptrace's WroteRequest, NOT "a request was built". A build
-// gate would still lie for a dial failure — request constructed, connection
-// never established, zero bytes on the wire — which is the same defect one step
-// later. WroteRequest fires once the headers AND body have been written to the
-// connection, and it carries the write's own error, so it is the exact answer to
-// "did these bytes leave this machine": true only when the write completed.
+// 🔴 THE SIGNAL IS httptrace's WroteRequest, AND THE CHEAPER ALTERNATIVE IS
+// NAMED HERE BECAUSE IT ALMOST WORKS. authedDoWith already returns a status, and
+// it is 0 for every failure that never got a response — the token lookup, the
+// request build, the dial that never connects. Branching on `status == 0` needs
+// no trace, no atomic and no hook, and a future simplifier WILL find it. It also
+// covers the case the issue's own closing condition offered as the easy fix ("a
+// request was built"), which is why that one is not the argument for this
+// mechanism either.
+//
+// What `status == 0` gets wrong is the case worth protecting: a timeout or a
+// dropped connection AFTER the whole body was written but BEFORE a response
+// header arrived. Status 0, bytes gone. Suppressing there would not narrow the
+// diagnosis — it would DELETE it on the #423 flagship path, a large bundle the
+// server is slow on, which is the failure the block was written for. WroteRequest
+// fires once headers and body have been written and carries the write's own
+// error, so it separates those two cases and `status` cannot.
 //
 // It carries no message and changes no exit code: it matches no arm of
 // cmd/civitai's exitCode switch, and civitai.Tag preserves Error() byte-for-byte
@@ -853,10 +863,11 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 		SourceDirty:  dirty,
 	})
 	if err != nil {
-		// Tagged even though marshalling a struct of strings is not a failure
-		// anyone has seen: it is unambiguously a nothing-was-sent error, and an
-		// untagged one here would be the only path that can still print the past
-		// tense over zero bytes.
+		// UNREACHABLE for these field types — submitEnvelopeLen says the same of
+		// the identical Marshal below, and this is the stronger statement of what
+		// an earlier comment here called "not a failure anyone has seen". Tagged
+		// anyway so the set of tagged sites is the set of nothing-was-sent sites,
+		// with no case resting on a reachability argument; not counted as covered.
 		return nil, civitai.Tag(ErrNothingSent, err)
 	}
 	// 🔴 Refuse locally rather than uploading a body the server will truncate.
@@ -877,16 +888,26 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 				"(The compressed zip is smaller than this number; base64 encoding adds ~1/3.)",
 			ErrBundleTooLarge, len(body), MaxSubmitBodyBytes)
 	}
-	// wrote records whether THIS attempt's request bytes reached the connection.
+	// wrote records whether ANY of this call's request bytes reached the
+	// connection, and it is deliberately STICKY across the single retry
+	// authedDoWith can make (a 401 triggers one refresh-and-retry).
 	//
-	// Reset inside build(), which authedDoWith calls once per attempt immediately
-	// before the write — and it can attempt twice, since a 401 triggers one
-	// refresh-and-retry. That scopes the fact to the attempt whose error is
-	// actually returned. It is NOT the difference between true and false: if a
-	// first attempt wrote a full body and a retry then failed to dial, bytes did
-	// leave this machine, so a sticky flag would not be lying. The narrower
-	// reading is simply the more useful one — the diagnosis sits under the error
-	// being reported, and that error is the retry's.
+	// 🔴 A PER-ATTEMPT RESET WAS WRITTEN HERE FIRST AND CONTRADICTED THE SENTENCE
+	// THIS MECHANISM EXISTS TO MAKE TRUE. README.md says `sent` is a fact about
+	// bytes that left this machine. Attempt 1 writes a full 12 MB body, the server
+	// answers 401, the retry fails to dial: 12 MB left this machine, and a reset
+	// would report "nothing was sent" and suppress a block whose byte count was
+	// accurate. Scoping the flag to the attempt whose error is returned is a
+	// different and narrower claim than the one on the page, and nothing asked for
+	// it.
+	//
+	// ⚠ NOTHING PINS THIS, AND THAT IS STATED RATHER THAN LEFT IMPLIED: putting
+	// the reset back scores SURVIVED against the whole battery. The scenario that
+	// separates the two — attempt 1 writes a full body, attempt 2 does not — needs
+	// the server to die between the 401 and the retry, which is a race, and a test
+	// asserting either side of a race is the flaky-by-construction shape this PR
+	// already retracted once. Recorded as unpinned; the argument above is why the
+	// sticky reading is the one that matches README.md.
 	//
 	// Atomic because httptrace callbacks run on the transport's write goroutine,
 	// not on this one.
@@ -901,11 +922,15 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 	var wrote atomic.Bool
 	trace := submitWroteTrace(&wrote)
 	build := func() (*http.Request, error) {
-		wrote.Store(false)
 		req, err := http.NewRequestWithContext(
 			httptrace.WithClientTrace(ctx, trace), http.MethodPost, c.BaseURL+c.SubmitPath, bytes.NewReader(body))
 		if err != nil {
-			return nil, civitai.Tag(ErrNothingSent, err)
+			// NOT tagged here, and a mutant proved why: this error travels back
+			// through authedDoWith, so the `!wrote.Load()` arm below tags it
+			// anyway. Dropping a tag from this line changed no test — the first
+			// version of this code tagged here too, and the redundancy read as
+			// coverage. One rule, one place; the arm below is the place.
+			return nil, err
 		}
 		req.Header.Set("Content-Type", "application/json")
 		return req, nil
@@ -913,18 +938,38 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 	status, raw, err := c.authedDoWith(ctx, c.submitClient(), build)
 	if err != nil {
 		if isTimeoutErr(err) {
-			// 🔴 THE TIMEOUT ARM TAGS ITS OWN RESULT, AND IT HAS TO:
-			// timedOutSubmitError formats its cause with %v, not %w, so a tag
-			// applied to `err` before this call is DROPPED rather than carried
-			// through. A timeout during dial wrote nothing, and "the upload may
-			// not have completed" over a byte count is the same false claim as
-			// any other. A timeout AFTER the write keeps the diagnosis, which is
-			// the case it is most useful for.
+			// 🔴 A TIMEOUT THAT WROTE NOTHING IS NOT AN UNKNOWN OUTCOME, AND THE
+			// RECOVERY PATH MUST NOT SAY IT IS. timedOutSubmitError exists for the
+			// real case — the POST went out and the response never came, so the
+			// submit may well have landed — and it tells the author to check
+			// before resubmitting. Reaching it when the request never left turns
+			// suppressing the byte count into a half-fix: the block goes, and the
+			// sentence underneath still produces exactly the hesitation issue #637
+			// is about ("the likely reaction is to AVOID retrying").
+			//
+			// 🔴 THE POLL STILL RUNS, AND SKIPPING IT WAS TRIED AND REVERTED.
+			// It looks provably futile when nothing was written — this run created
+			// no submission, so there is nothing to find — but
+			// TestSubmitVersionRecoversFromADeadlineExceededTokenError pins that a
+			// ctx deadline arriving through the TOKEN SEAM still enters recovery,
+			// and it is the positive control for the whole "a filesystem error is
+			// not a timeout" family next to it. Without it, "no filesystem error
+			// recovers" is equally satisfied by a build that recovers from nothing
+			// the TokenSource returns. Deleting the work would have deleted that
+			// control. The wasted polls are a known cost, recorded rather than
+			// paid down here.
+			//
+			// Both messages keep %v rather than %w on the cause, and that is load
+			// bearing rather than stylistic: wrapping context.DeadlineExceeded
+			// would make isNetworkErr true in cmd/civitai and move this failure
+			// from exit 1 to exit 5, a published contract (AGENTS.md item 7).
 			r, rerr := c.recoverTimedOutSubmit(ctx, slug, version, err)
-			if rerr != nil && !wrote.Load() {
-				rerr = civitai.Tag(ErrNothingSent, rerr)
+			if rerr == nil || wrote.Load() {
+				return r, rerr
 			}
-			return r, rerr
+			return nil, civitai.Tag(ErrNothingSent, fmt.Errorf(
+				"submit timed out before any of the bundle was sent (%v) — nothing was uploaded "+
+					"and no submission was created, so retrying is safe", err))
 		}
 		if !wrote.Load() {
 			err = civitai.Tag(ErrNothingSent, err)

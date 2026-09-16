@@ -73,18 +73,31 @@ var entryBlockSentinels = []entryBlockSentinel{
 	{
 		name:          "appapi.ErrBundleTooLarge",
 		paragraphSays: "The ceiling refusal above is the one refusal with an entry list of its own",
-		rowSays:       "`What this CLI would have sent` is the ceiling refusal alone, and that one is exact too: nothing was uploaded.",
+		// No `**` here: troubleshootingEntryBlockCause strips bold markers before
+		// comparing, so the expectation is about the cell's WORDS and not about
+		// which of them an author bolded.
+		rowSays: "`What this CLI would have sent` is the ceiling refusal alone — it sends nothing " +
+			"either, and says so — and that one is exact too: nothing was uploaded.",
 		why: "it takes the FIRST case and diverts to printSubmitSizeRefusal, so it is an " +
 			"exception to the past-tense block rather than an instance of it. Round 0 of #635 " +
 			"found the README claiming the block printed here",
 	},
 	{
 		name: "appapi.ErrNothingSent",
-		paragraphSays: "A failure that sent nothing prints nothing — no usable credential, an " +
-			"unwritable config, a connection that never opened — so `sent` is a fact about bytes " +
-			"that left this machine and not a claim about what the CLI meant to send.",
-		rowSays: "A failure that sent nothing prints nothing, so the past tense is exact: no usable " +
-			"credential, an unwritable config and a connection that never opened all print neither block.",
+		// 🔴 "NEVER PRINTS THE PAST TENSE", NOT "PRINTS NOTHING", AND THE
+		// DIFFERENCE IS A FALSE CLAIM THIS PR SHIPPED FOR ONE COMMIT. The ceiling
+		// refusal also sends nothing, and it prints a full block — the
+		// would-have-sent one, named three lines later in the same paragraph and
+		// one sentence later in the same cell. "Prints nothing" was a universal
+		// with a counterexample already on the page. The #635 ladder's own lesson,
+		// recorded in claudedocs/handoff-readme-reduction.md: a fix that makes a
+		// sentence more specific can make it false, and it reads as an improvement.
+		paragraphSays: "A failure that sent nothing never prints the past tense — no usable " +
+			"credential, an unwritable config, a connection that never opened — so `sent` is a fact " +
+			"about bytes that left this machine and not a claim about what the CLI meant to send.",
+		rowSays: "A failure that sent nothing never prints the past tense, so `sent` is exact: no " +
+			"usable credential, an unwritable config and a connection that never opened print " +
+			"neither block.",
 		why: "issue #637 — appapi.SubmitVersion sets this from httptrace's WroteRequest, so the arm " +
 			"is a WIRE FACT and not a classification. It is what lets both surfaces state the past " +
 			"tense as true instead of hedging it, and #635 spent four audit rounds on that hedge",
@@ -282,33 +295,22 @@ var readmeEntryBlockClaims = []struct {
 		want:     "A refusal that stops the submit **before** the upload step prints nothing at all: no `--yes`, a dirty work tree, the version guard, a validation failure.",
 		verifyAt: "internal/cmd/app_submit.go — those four all return before doUpload",
 	},
-	{
-		// 🔴 THIS PAIR REPLACES #635's R3/R3b, AND THE REPLACEMENT IS THE POINT.
-		// Those two claims were the HEDGE that ladder had to publish because the
-		// code could not support the strong version: "keyed on how the error
-		// *classifies*, not on whether bytes left the machine" and "read `sent`
-		// as the CLI's account and not a guarantee". #637 fixed the code, so the
-		// hedge is now itself false — doUpload branches on a wire fact — and the
-		// old guard's failure message said in terms that this is the one change
-		// it must not block. Reverting these two strings without reverting
-		// app_submit.go's ErrNothingSent arm republishes a false claim.
-		claim: "R3 — the past tense is a WIRE FACT: nothing prints unless bytes left this machine",
-		want:  "A failure that sent nothing prints nothing — no usable credential, an unwritable config, a connection that never opened — so `sent` is a fact about bytes that left this machine and not a claim about what the CLI meant to send.",
-		verifyAt: "internal/appapi/appblocks.go — SubmitVersion tags ErrNothingSent from httptrace's " +
-			"WroteRequest, covering the token-lookup failure, the dial that never connects, a build " +
-			"error and a timeout that preceded the write. The three causes the sentence NAMES are the " +
-			"reachable ones, not an illustration: the unwritable config is internal/auth/source.go's " +
-			"`persist refreshed tokens` (NFS-soft, sshfs, CIFS, read-only fs), `no usable credential` " +
-			"covers that same file's locally-tagged ErrUnauthorized, and the dial case is the one a " +
-			"build-time gate would have missed. Both directions are asserted in " +
-			"internal/appapi/submit_nothing_sent_test.go and internal/cmd/app_submit_nothing_sent_test.go",
-	},
-	// There is no R3b. #635's was "read `sent` as the CLI's account and not a
-	// guarantee" — the other half of the hedge #637 removed — and a replacement
-	// pinning the row's phrasing of the same fact would be strictly weaker than
-	// R3 above (whole sentence) plus the sentinel ledger's rowSays (the row's own
-	// whole sentence). The weaker of two overlapping assertions is the one that
-	// teaches a maintainer the wrong bar.
+	// 🔴 THERE IS NO R3 OR R3b HERE, AND THE ABSENCE IS THE DECISION.
+	//
+	// #635's pair was the HEDGE that ladder had to publish because the code could
+	// not support the strong version: "keyed on how the error *classifies*, not on
+	// whether bytes left the machine" and "read `sent` as the CLI's account and
+	// not a guarantee". #637 made the code compute the property, so the hedge is
+	// now itself false and both strings are gone from README.md.
+	//
+	// The claim that REPLACED them is pinned by the ledger above, not here —
+	// entryBlockSentinels' appapi.ErrNothingSent row carries the paragraph's whole
+	// sentence AND the row's whole sentence, and it is CONDITIONAL on that arm
+	// still existing in doUpload's switch, which a copy here would not be. A
+	// second pin on the same string in the same surface adds no failure mode and
+	// teaches the next maintainer that duplicating a claim is how this file works.
+	// The weaker of two overlapping assertions is the one to delete; here they
+	// were byte-identical, so the one that also checks the code is the keeper.
 }
 
 // TestREADMEEntryBlockClaimsArePinned pins the four repaired claims themselves.
@@ -343,56 +345,23 @@ func TestREADMEEntryBlockClaimsArePinned(t *testing.T) {
 	}
 }
 
-// TestREADMEEntryBlockSurfacesAgree is R4: the two surfaces stating this
-// contract must not drift apart again.
+// R4 — "the two surfaces stating this contract must not drift apart" — used to
+// be TestREADMEEntryBlockSurfacesAgree, and it is now the LEDGER's job.
 //
-// 🔴 THIS IS THE ONE THAT WAS ACTUALLY BROKEN BY A FIX. Round 0's repair moved
-// the paragraph and left the Troubleshooting row carrying the wording it had
-// just called wrong. AGENTS.md names the class: the command section, the
-// exit-code table and the Troubleshooting index each state the contract and each
-// goes stale ALONE.
-func TestREADMEEntryBlockSurfacesAgree(t *testing.T) {
-	para := collapseWS(readmeEntryBlockParagraph(t))
-	cause := collapseWS(troubleshootingEntryBlockCause(t))
-
-	// Both surfaces must state the same PRECONDITION on the past tense, and that
-	// precondition is now a wire fact rather than a classification.
-	//
-	// 🔴 THIS ASSERTION USED TO REQUIRE THE WORD "classifies" — the HEDGE #635
-	// round 2 published because the code could not support anything stronger. Its
-	// own failure message said this was the one change it must not block, and
-	// #637 is that change. The expectation moved in the same commit as the code,
-	// which is what that message asked for.
-	//
-	// It is a whole normalised clause, not a keyword, for the reason this whole
-	// file exists: every one of these claims was replaced by a DIFFERENTLY WRONG
-	// one at least once, and a keyword pin waves that through. "sent nothing
-	// prints nothing" is the shared half of both surfaces' sentences — the
-	// sentinel ledger above pins each surface's full sentence separately.
-	const precondition = "A failure that sent nothing prints nothing"
-	for _, s := range []struct{ where, text string }{
-		{"the `## Submit & auth` paragraph", para},
-		{"the Troubleshooting row's cause cell", cause},
-	} {
-		if !strings.Contains(s.text, precondition) {
-			t.Errorf("%s no longer states that a failure which sent nothing prints nothing.\n"+
-				"want verbatim: %q\n"+
-				"That clause is the contract #637 bought: doUpload's appapi.ErrNothingSent arm makes "+
-				"the past tense true, and both surfaces promise it. Deleting it here while the arm "+
-				"stays is under-claiming; deleting the ARM while this stays republishes the false "+
-				"claim #635 spent four rounds hedging (measured then: 0 requests received, past-tense "+
-				"block printed).\n"+
-				"If the wording is genuinely moving, move it on BOTH surfaces and here in one commit — "+
-				"README.md is the only place either appears and they disagreed for a commit in #635.",
-				s.where, precondition)
-		}
-	}
-	// The `would have sent` case is NOT re-checked here: entryBlockSentinels'
-	// rowSays for appapi.ErrBundleTooLarge pins that whole sentence in the same
-	// cell, which is strictly stronger than the keyword check that used to sit
-	// here. One rule, one place — and the weaker of two overlapping assertions
-	// is the one that teaches a maintainer the wrong bar.
-}
+// 🔴 THAT TEST WAS DELETED BECAUSE IT HAD BECOME THE SHAPE IT ITSELF CONDEMNED.
+// Its last assertion was a substring shared by both surfaces; by then
+// entryBlockSentinels carried paragraphSays AND rowSays as whole sentences, and
+// every string the shared check looked for was a substring of one of those. The
+// PR's own mutation matrix showed it: no mutant was ever killed by SurfacesAgree
+// alone — the ledger killed each one first. Its own closing comment said "the
+// weaker of two overlapping assertions is the one that teaches a maintainer the
+// wrong bar", which by then described the test it was written in.
+//
+// What replaced it is not less coverage: the ledger asserts, per live sentinel,
+// that the paragraph carries its paragraphSays and the cause cell carries its
+// rowSays. Two surfaces, checked together, per branch. The drift #635 shipped —
+// the row keeping wording the paragraph had just called wrong — is red under
+// that, and is the mutation matrix's M6.
 
 // troubleshootingEntryBlockCause returns the CAUSE cell — column two — of the
 // Troubleshooting row documenting the entry block.
@@ -434,7 +403,7 @@ func troubleshootingEntryBlockCause(t *testing.T) string {
 		return cause
 	}
 	t.Fatal("CONTROL failure: no Troubleshooting row quotes `largest entries in the bundle`, " +
-		"so TestREADMEEntryBlockSurfacesAgree is asserting against an empty string. The row is on " +
+		"so every rowSays check in the ledger is asserting against an empty string. The row is on " +
 		"no floor, so it CAN be deleted — but deleting it silently un-documents the block, and this " +
 		"guard is what makes that visible.")
 	return ""
