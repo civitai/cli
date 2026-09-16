@@ -69,6 +69,11 @@ contract, and **packages/submits** it for review.
 **Author an App**
 
 - [Set up your coding agent (`agent-setup`)](#set-up-your-coding-agent-agent-setup) — **run this first**
+  - [The two MCP servers](#the-two-mcp-servers)
+  - [Where each agent's config lives](#where-each-agents-config-lives)
+  - [No credential is ever written](#no-credential-is-ever-written)
+  - [Verify a setup (`--check`)](#verify-a-setup---check)
+  - [Exit codes and `--dry-run`](#exit-codes-and---dry-run)
 - [SDK packages](#sdk-packages)
 - [The blockId](#the-blockid)
 - [Templates](#templates)
@@ -330,40 +335,44 @@ It does three things, and **it never authenticates**:
 1. Writes an `AGENTS.md` **managed block** into the project — the commands and
    the gotchas an agent cannot infer by reading your code (Buzz is the *viewer's*,
    a newly declared scope is consent-gated, a hung hook is usually a missing HOST
-   handler, `useSharedStorage()` has no REST route).
+   handler, `useSharedStorage()` has no REST route). Its "Local development"
+   section is **read from the directory**, not fixed: in an npm project it names
+   only the scripts that are in **that** project's `package.json` and carries the
+   lockfile rule; in a project whose template ships no `package.json` (`static`,
+   the **default** for `civitai app init`) it says so and points at `index.html`;
+   and where nothing has been scaffolded yet it says that rather than guessing.
+   **Re-run `civitai agent-setup` after changing your scripts.**
 2. Writes a one-line `CLAUDE.md` containing `@AGENTS.md`, **only when there is
    no `CLAUDE.md` already**. Claude Code does not read `AGENTS.md` on its own.
 3. Registers the **two Civitai MCP servers** in the detected agent's own config
    file.
 
-🔴 **The block's "Local development" section is READ FROM THE DIRECTORY, not
-fixed.** The `civitai` commands it lists are true in every App project; how you
-run the app locally is not, because the templates differ — `page-money` defines
-`dev:harness`, `dev:live` and `dev:tunnel`, `page-vite` defines `dev` and neither
-of the first two, and `static` (the **default** for `civitai app init`) ships no
-`package.json` at all. So that section is rendered per project: in an npm project
-it names only the scripts that are in **that** project's `package.json` and
-carries the lockfile rule; in a `static` project it says there is no
-`package.json` and points at `index.html` / serving the directory, exactly as
-`civitai app init`'s own next steps do; and in a directory where nothing has been
-scaffolded yet it says so rather than guessing. **Re-run `civitai agent-setup`
-after changing your scripts** and the section is rewritten from the file.
+**No `@civitai/*` version is pinned anywhere in what this writes.** Pins live in
+`civitai app init`, which CI holds against npm; a version literal in an
+instruction file rots in silence.
+
+The agent is detected from the environment first and then from marker files in
+the project; `--agent <name>` overrides it, and `--dir <path>` points at a
+project other than the working directory. A path in `--json` is always
+**absolute**, whatever `--dir` you passed — except on a `manual` row, which names
+no file for this CLI to write and carries an empty `path`.
+
+### The two MCP servers
 
 | Server | URL | What it reaches | Anonymous? |
 | --- | --- | --- | --- |
 | `civitai` | `https://mcp.civitai.com/mcp` | the Civitai site — models, images, articles, your account | **yes** — answers without a credential |
 | `civitai-orchestration` | `https://orchestration.civitai.com/mcp` | the generation orchestrator — workflows and image generation | **no** — returns `401` until an `Authorization` header is present |
 
-🔴 **The two servers differ, and the difference decides whether a header-less
-setup is finished.** Measured with no credential, `POST … {"method":"initialize"}`:
-the site server answers `200`, the orchestration server answers `401` with an
-empty body and no `WWW-Authenticate`. It is not a read/write split — the
-handshake itself is refused, so nothing on that server is reachable until you add
-a header.
+🔴 **That difference decides whether a header-less setup is finished.** It is not
+a read/write split: the orchestration server refuses the **handshake** itself, so
+nothing on it is reachable until you add a header.
 
-**Why a command and not a paragraph telling you to hand-write JSON:** the file
-*and* the key name differ per agent, and every way of getting it wrong produces
-a file that parses cleanly and registers nothing.
+### Where each agent's config lives
+
+The file *and* the key name differ per agent, and every way of getting it wrong
+produces a file that parses cleanly and registers nothing — which is why this is
+a command rather than a paragraph telling you to hand-write JSON.
 
 | Agent | File | Top-level key | URL key | How the token is referenced |
 | --- | --- | --- | --- | --- |
@@ -382,92 +391,51 @@ CLI config instead (`~/.config/devin/mcp_config.json`, or
 `%APPDATA%\devin\mcp_config.json`). This CLI still writes the Cascade path and
 says so in its output; add the servers to the Devin config too if you use it.
 
-The agent is detected from the environment first and then from marker files in
-the project; `--agent <name>` overrides it, and `--dir <path>` points at a
-project other than the working directory. Paths in `--json` are always
-**absolute**, whatever `--dir` you passed.
+**Nothing is clobbered.** An existing `AGENTS.md` is **appended to**, or has only
+the block between its markers replaced — every byte outside them is left alone.
+An existing `CLAUDE.md` is never read and never modified. An existing MCP config
+is **merged into**, preserving every other server, every unknown key, **and every
+key you added to the Civitai entries themselves** (a hand-added `Authorization`
+header survives a re-run). A config that does not parse is **refused by name**
+rather than repaired. A **symlinked** config is **followed**, so a dotfiles repo
+keeps tracking the live file; a *broken* symlink is refused by name.
 
-**Nothing is clobbered.** An existing `AGENTS.md` is **appended to** when it has
-no managed block, and has **only the block between the markers replaced** when it
-does — every byte outside the markers is left alone. An existing `CLAUDE.md` is
-never read and never modified. An existing MCP config is **merged into**,
-preserving every other server, every unknown key, **and every key you added to
-the Civitai entries themselves** (a hand-added `Authorization` header survives a
-re-run). A config file that does not parse is **refused by name** rather than
-repaired, because a repair there is indistinguishable from deleting what you had
-— and that refusal no longer stops `AGENTS.md` and `CLAUDE.md` being written: the
-MCP step is reported as `blocked` in `changes`, `ok` is `false`, and the command
-exits `1`. **The same is true of a step that fails at write time** — a
-destination it will not write, a directory it cannot write into — so a partial
-run always reports which step did not happen rather than exiting with an empty
-`--json`. **And the same is true of the two instruction files**: `AGENTS.md` and
-`CLAUDE.md` each get their own `blocked` row for a broken-symlink destination, a
-file that cannot be read, or an `AGENTS.md` carrying two managed blocks. The
-three writes are **independent** — one failing does not stop the other two, and
-no row ever claims an action for a file nothing attempted.
+The three writes are **independent**: a refused MCP config does not stop
+`AGENTS.md` and `CLAUDE.md` being written, and each step reports its own outcome
+rather than the run exiting with nothing to show.
 
-**Two stated exceptions**, both reported in the run's own output rather than left
-for you to discover:
+### No credential is ever written
 
-- A **JSONC** config (Zed's `settings.json`, `.vscode/mcp.json`,
-  `opencode.jsonc`) is decoded and re-encoded, so its **comments, its trailing
-  commas and its key order are not preserved**. Both JSONC forms are *tolerated*
-  rather than refused — Zed ships `settings.json` with a comment block, and both
-  Zed and VS Code read a trailing comma back happily, so refusing either blamed
-  you for a file your editor authored.
-- A **symlinked** config is **followed**: the write lands on the link's target,
-  so a dotfiles repo keeps tracking the live file. A *broken* symlink is refused
-  by name.
+**🔴 No credential is ever written into a config file — and never a placeholder
+that looks like one.** Four of the files above are **project-scoped**
+(`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `opencode.json`): they sit
+in the repo root and get committed, so an `Authorization` header holding your
+actual token is a secret headed for version control. The header **references**
+`CIVITAI_TOKEN` in each vendor's own spelling instead (the last column above),
+and where a vendor documents no interpolation at all — Zed today, and `--agent
+other`, whose target agent is by definition unknown — **no header is written**.
+Add it yourself to each Civitai entry; for `--agent other` the run prints the
+shape and the known spellings, because this CLI cannot know which one your agent
+reads.
 
-**🔴 No credential is ever written into a config file.** Four of the files above
-are **project-scoped** — `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json` and
-`opencode.json` sit in the repo root and get committed — so an `Authorization`
-header holding your actual token is a secret headed for version control. Instead:
+🔴 **Mint the key at [civitai.com/user/account](https://civitai.com/user/account)
+(API Keys), then export it** — `export CIVITAI_TOKEN=<a personal API key>`, in
+your shell profile so the agent inherits it. It is **not** the token `civitai
+login` stored, and no command prints that one: `civitai login` writes this CLI's
+own config, which your coding agent does not read. So logging in alone is not
+enough — your agent resolves `CIVITAI_TOKEN` from the **environment**, where an
+unset variable becomes the empty string.
 
-- Where the vendor **documents** environment-variable interpolation, the header
-  **references** `CIVITAI_TOKEN` in that vendor's own spelling (the last column
-  above; the four spellings genuinely differ). Export it so the agent resolves
-  it: `export CIVITAI_TOKEN=<a personal API key>` — put it in your shell profile
-  so the agent inherits it. 🔴 **Mint that key at
-  [civitai.com/user/account](https://civitai.com/user/account) (API Keys); it is
-  not the token `civitai login` stored, and no command prints that one.**
-  Exporting a value makes this CLI treat it as a personal key with **no
-  refresh**, so an OAuth login token exported here works until it expires and
-  then hard-fails.
-- Where the vendor documents **none** — Zed today, and `--agent other`, whose
-  target agent is by definition unknown — **no header is written at all**, and the
-  output names the exact header to add yourself. Guessing a syntax
-  would be worse than omitting it: an unsupported one produces a config that
-  looks configured and sends the literal string `${CIVITAI_TOKEN}` as a bearer
-  token, which fails at request time and reads as a bad credential rather than a
-  bad config.
+**A header-less config is not empty, but it is not complete either**: it browses
+models, images and articles through the `civitai` server, and
+`civitai-orchestration` answers it `401`.
 
-Never a placeholder that looks like a credential, either. **A header-less config
-is not empty, but it is not complete either**: it browses models, images and
-articles through the `civitai` server, and `civitai-orchestration` answers it
-`401`. See the server table above. To authenticate Zed (or an agent this CLI does
-not know), add the header yourself to each Civitai entry — the run prints the
-exact line.
+`civitai agent-setup --help` carries the per-vendor header spellings, the merge
+rules and the JSONC re-encoding caveat in full.
 
-**Authentication is yours to run**, and `civitai login` is a **separate store**
-from `CIVITAI_TOKEN`: it writes this CLI's own config, which your coding agent
-does not read. 🔴 **So `civitai login` alone is not enough** — the header
-*references* `CIVITAI_TOKEN` and your agent resolves it from the **environment**,
-where an unset variable becomes the empty string. If you have logged in but not
-exported it, the run says so; that is a missing `export`, not a bad token.
+### Verify a setup (`--check`)
 
-Three rows are **reported by `--check` and never fail its verdict**, because each
-would otherwise be permanently red for someone who did everything right:
-`authenticated` (setup stops before login on purpose); an **absent
-`Authorization` header** (the correct state for Zed); and `claude-md` for any
-agent other than `claude` (every other agent reads `AGENTS.md` directly, so the
-shim is inert for it — the row stays for whoever opens Claude Code there later).
-
-**No `@civitai/*` version is pinned anywhere in what this writes.** Pins live in
-`civitai app init`, which CI holds against npm; a version literal in an
-instruction file rots in silence.
-
-Verify a setup — this writes nothing:
+This writes nothing, and contacts nothing — every step is a file read:
 
 ```bash
 civitai agent-setup --check --json
@@ -489,97 +457,86 @@ civitai agent-setup --check --json
 }
 ```
 
-🔴 **The `authenticated` row names WHICH STORE it looked in, because there are
-two and your agent reads only one.** `civitai login` writes this CLI's config;
-the MCP entries reference `CIVITAI_TOKEN` and your agent resolves it from the
-**environment**. So the row has three details, not two: `CIVITAI_TOKEN` is
-exported (the setup an agent can use); a token is configured for **this CLI** but
-`CIVITAI_TOKEN` is not exported (this CLI works, your agent gets `401` from
-`orchestration.civitai.com`); or neither. The row's `ok` is `true` for both of
-the first two and it never fails the verdict either way — what it reports is a
-value being **present**, never that a server accepted it.
+🔴 **Every row reports PRESENCE, never acceptance.** An `ok: true` `mcp-*` row
+means an entry is **in that file** — never that the server answered — so the row
+names the file it inspected. The `authenticated` row reports that a value is
+present, and names **which store** it looked in, because there are two and your
+agent reads only one: `CIVITAI_TOKEN` exported (the setup an agent can use); a
+token configured for **this CLI** but not exported (this CLI works, your agent
+gets `401` from `orchestration.civitai.com`); or neither. Its `ok` is `true` for
+both of the first two.
 
-🔴 **An `ok: true` `mcp-*` row means an entry is IN THAT FILE — never that the
-server answered.** `--check` is offline and side-effect-free: every one of its
-steps is a file read, and it contacts nothing. So the row names the file it
-inspected and says so, because `ok: true` beside a bare path used to read as
-"this server works" — and `https://orchestration.civitai.com/mcp` returns `401`
-to an unauthenticated request, which a green row said nothing about. Same rule as
-`authenticated` above: presence, not acceptance.
+🔴 **`ok` is the AND of every check except `authenticated` and — for any agent
+other than `claude` — `claude-md`.** Setup deliberately stops before auth, so the
+payload above, a complete setup with no token, is `"ok": true` and **exits 0**.
+Every other agent reads `AGENTS.md` directly, so the `CLAUDE.md` shim is inert
+for it and its row stays without counting. Read the exempt rows yourself if you
+need them; do not fold them into your own pass/fail — and note that on a
+`claude` project the exempt row is `authenticated` alone, because `claude-md`
+counts there.
 
-A config file `--check` cannot **read** is reported the same way an unknown agent
-and an unresolvable home already were: as `mcp-site`/`mcp-orch` rows carrying the
-parse failure in their `detail`, `ok: false`, exit `1` — never as an empty
-stdout. "Could not look" is not "not registered", and the detail says which. An
-`AGENTS.md` or `CLAUDE.md` that cannot be read is the same: a failed row naming
-the file and the reason, not a silent exit.
+An absent `Authorization` header gets **no row of its own**, and nothing fails
+because of one — that is the correct state for Zed and for `--agent other`. If
+you need to know whether a header is there, read the config file; `--check` will
+not tell you.
+
+A config file `--check` cannot **read** is reported as `mcp-site`/`mcp-orch` rows
+carrying the parse failure in their `detail`, `ok: false`, exit `1` — never as an
+empty stdout. "Could not look" is not "not registered", and the detail says
+which. An `AGENTS.md` or `CLAUDE.md` that cannot be read is the same.
 
 🔴 **`--json` has three shapes.** A `--check` run emits `checks`; a write or
 `--dry-run` run emits `changes`; and a failure that happened before either could
 be built — no resolvable config root, for instance — emits **neither array and an
 `error` string** beside `ok: false`. Discriminate on which of the three is
-present.
+present. A payload is emitted for **every** failure except a usage error — the
+property is about what the command *writes*, so if stdout itself cannot be
+written to, nothing lands there and no command can fix that.
 
-🔴 **A payload is emitted for every failure except a usage error, and that is
-enforced by the command's shape rather than by a list.** `agent-setup` builds its
-one stdout emitter before the first step that can fail, has a single return, and
-hands every error to that emitter, which decides from the error itself. A
-**usage** error — a mistake about the *invocation*: unknown `--agent`, a `--dir`
-that does not exist or is not a directory, `--track api` — exits `2` on stderr
-like every other command's usage error, because there is no run to describe.
-Everything else exits `1` with one of the three shapes above, **including a
-`--dir` this command cannot `stat` for some other reason** (a parent it may not
-search, a path that walks through a regular file), which is an environment
-failure rather than a mistyped command line and gets the `error` envelope. The
-property is about what the command *writes*: if stdout itself cannot be written
-to, nothing lands there, and no command can fix that.
+### Exit codes and `--dry-run`
 
-🔴 **`ok` is the AND of every check EXCEPT the non-counting rows above** —
-`authenticated`, an absent `Authorization` header, and `claude-md` for a
-non-`claude` agent. Setup deliberately stops before auth, so the payload above —
-a complete setup with no token — is `"ok": true` and **exits 0**. Read those rows
-yourself if you need them; do not fold them into your own pass/fail.
+`--check` exits `1` when a check failed and `0` otherwise. A write run exits `0`
+when **every** step happened, and **`1`** when one did not — a config that does
+not parse, a destination it will not write (a broken symlink, for **any** of the
+three files), a file it could not write (an unwritable directory), an `AGENTS.md`
+that cannot be read or that carries two managed blocks. Each of those is a
+`blocked` row in `changes` with `ok: false`, in `--json` and on the terminal
+alike.
 
-`--dry-run` prints every path that would be written, with the reason, and writes
-nothing. It reports the outcomes the **plan** can classify — for **all three**
-files, not just the MCP config — with the same rows, the same `ok` and the same
-**exit code** the real run gives for those: a destination the real run would
-refuse (a broken symlink), a config that does not parse, an `AGENTS.md` it cannot
-read or that carries two managed blocks.
+🔴 **There is exactly one outcome where a step does not happen and the command
+still exits `0`: `action: manual`** — `--agent other`, or a user-scoped agent
+whose home directory cannot be resolved. There is no file for this CLI to write
+in either case, so the servers are printed for you to paste and the run is a
+success with a manual step left in it; that is a `changes` row you have to read,
+not an `ok: false`. A step this CLI *could* have taken and did not is always
+`blocked`, never `manual`.
 
-🔴 **It cannot report a failure only the act of writing can produce.** A run that
-performs no write cannot observe one. **Measured:** a project directory the
-process may not write into — the dry run reports the intended action, `ok: true`
-and exit `0`; the real run reports `blocked`, `ok: false` and exit `1`. A full
-disk and a read-only mount are the same shape by construction and were *not*
-measured. So this is not a closed list: treat a green dry run as "the plan is
-sound", never as "the write will succeed".
-
-**Exit codes.** `--check` exits `1` when a check failed and `0` otherwise. A write
-run exits `0` when **every** step happened, and **`1`** when one did not — a
-config that does not parse, a destination it will not write (a broken symlink, for
-**any** of the three files), a file it could not write (an unwritable directory),
-an `AGENTS.md` that cannot be read or that carries two managed blocks. Each of
-those is a `blocked` row in `changes` with `ok: false`, in `--json` and on the
-terminal alike. 🔴 **There is exactly one outcome where a step does not happen and
-the command still exits `0`: `action: manual`** — `--agent other`, or a
-user-scoped agent whose home directory cannot be resolved. There is no file for
-this CLI to write in either case, so the servers are printed for you to paste and
-the run is a success with a manual step left in it; that is a `changes` row you
-have to read, not an `ok: false`. A step this CLI *could* have taken and did not
-is always `blocked`, never `manual`. Exit `2`
-covers the invocation: an unknown `--agent`, a `--dir`
-that does not exist or is not a directory, and `--track api`. 🔴 **Not every bad
-`--dir` is an exit `2`** — a directory this command cannot `stat` at all (a parent
-it may not search, a path that walks through a regular file) is a fact about the
-machine rather than a mistyped command line, so it exits `1` with the `error`
-envelope under `--json`. That last one is a
-**recognised** value, not an unknown flag: the API track is not built yet, so it
-refuses with a pointer to the two MCP servers (which work today) and to
+Exit `2` covers the invocation: an unknown `--agent`, a `--dir` that does not
+exist or is not a directory, and `--track api`. 🔴 **Not every bad `--dir` is an
+exit `2`** — a directory this command cannot `stat` at all (a parent it may not
+search, a path that walks through a regular file) is a fact about the machine
+rather than a mistyped command line, so it exits `1` with the `error` envelope
+under `--json`. `--track api` is a **recognised** value, not an unknown flag: the
+API track is not built yet, so it refuses with a pointer to the two MCP servers
+(which work today) and to
 [developer.civitai.com/site](https://developer.civitai.com/site/) and
 [developer.civitai.com/orchestration](https://developer.civitai.com/orchestration/),
 rather than letting a reading agent conclude the API is unsupported. It never
 silently falls back to `--track app`.
+
+`--dry-run` prints every path that would be written, with the reason, and writes
+nothing. It reports the outcomes the **plan** can classify — for **all three**
+files — with the same rows, the same `ok` and the same **exit code** the real run
+gives for those: a destination the real run would refuse (a broken symlink), a
+config that does not parse, an `AGENTS.md` it cannot read or that carries two
+managed blocks.
+
+🔴 **It cannot report a failure only the act of writing can produce.**
+**Measured:** a project directory the process may not write into — the dry run
+reports the intended action, `ok: true` and exit `0`; the real run reports
+`blocked`, `ok: false` and exit `1`. A full disk and a read-only mount are the
+same shape by construction and were *not* measured. So treat a green dry run as
+"the plan is sound", never as "the write will succeed".
 
 ## SDK packages
 
