@@ -129,9 +129,31 @@ func TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode(t *testing.T) {
 		t.Fatalf("PREMISE BROKEN: the agent-setup section no longer contains %q, so this "+
 			"guard cannot find the claim it exists to check", claim)
 	}
+	// 🔴 THE PARSE MUST DIAGNOSE ITSELF. This slices on the bold terminator
+	// `.**`; an ordinary markdown edit moving the period outside the bold makes
+	// the slice run on to the NEXT `.**` in the section, swallowing the
+	// paragraph that names `mcp-site`/`mcp-orch`. Round 3 of #641 measured the
+	// consequence: the guard went red — good — but with the false diagnosis
+	// "the README names `mcp-site` as excluded from `ok`", and FOLLOWING that
+	// message (de-backticking those names in the unreadable-config paragraph)
+	// goes green while deleting real content. A guard whose failure message
+	// sends a maintainer to the wrong file is the hazard RULES.md names.
 	sentence := sec[ci:]
-	if end := strings.Index(sentence, ".**"); end >= 0 {
-		sentence = sentence[:end]
+	end := strings.Index(sentence, ".**")
+	if end < 0 {
+		t.Fatalf("PREMISE BROKEN: found the claim %q but no `.**` terminator after it, so "+
+			"this guard cannot tell where the exemption sentence ends. Check the markdown "+
+			"around it rather than the claim itself.", claim)
+	}
+	sentence = sentence[:end]
+	// Bounded, so a moved terminator is reported as a PARSE failure rather than
+	// as a false statement about what the README claims.
+	if len(sentence) > 400 {
+		t.Fatalf("the exemption sentence parsed as %d bytes, which is a paragraph and not a "+
+			"sentence — the `.**` terminator has almost certainly moved (a period placed "+
+			"outside the bold, or the claim split in two).\n\nFIX THE PARSE, NOT THE README: "+
+			"the names found in an over-long slice come from neighbouring paragraphs, so any "+
+			"message about them would be wrong.\n  parsed: %q", len(sentence), sentence)
 	}
 
 	named := map[string]bool{}
@@ -166,6 +188,54 @@ func TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode(t *testing.T) {
 				"the exemption without that condition — which claims claude users get it too",
 				name)
 		}
+	}
+
+	// 🔴 THE CLAUDE DIRECTION, WHICH THIS FILE COMPUTED AND THEN DID NOT CHECK.
+	// `exemptForClaude` was derived above and used only for a premise and a
+	// condition, while the docstring claimed a ledger. Round 3 of #641 measured
+	// the gap: a mutant restating the claude case as round 1 had it wrong
+	// ("the exempt rows are `authenticated` and `claude-md`") SURVIVED the whole
+	// package. That sentence has now been wrong twice in three rounds, so it is
+	// the last one that should be going unpinned.
+	//
+	// The README states it in its own clause, after the shared sentence.
+	claudeClause := sec[ci:]
+	if end := strings.Index(claudeClause, "\n\n"); end >= 0 {
+		claudeClause = claudeClause[:end]
+	}
+	// 🔴 CONSTRUCT THE EXPECTED CLAUSE FROM THE DERIVED SETS AND COMPARE IT
+	// WHOLE. Two weaker versions of this check were written and both were
+	// walked past by a mutant: scanning for the name (it appears in the shared
+	// sentence too) and scanning for "`x` alone"/"is `x`" (a reworded
+	// falsehood carries neither). Both are the SPELLED-guard class — a guard
+	// satisfiable by wording rather than by state.
+	//
+	// Building the sentence from `exemptForClaude` and the agent-conditional
+	// name makes it a relationship: if the code ever exempts `claude-md` for
+	// claude too, the expected text changes and this goes red. And because it
+	// is compared WHOLE, a reworded falsehood cannot satisfy it either.
+	var conditional []string
+	for _, name := range exemptForOther {
+		if !contains(exemptForClaude, name) {
+			conditional = append(conditional, name)
+		}
+	}
+	if len(exemptForClaude) != 1 || len(conditional) != 1 {
+		t.Fatalf("PREMISE BROKEN: this guard builds a one-exempt-row sentence, but the code "+
+			"now exempts %v on claude and makes %v conditional. Rewrite the README clause "+
+			"and this construction together.", exemptForClaude, conditional)
+	}
+	wantClause := "on a `" + agentClaude + "` project the exempt row is `" +
+		exemptForClaude[0] + "` alone, because `" + conditional[0] + "` counts there."
+	got := strings.Join(strings.Fields(claudeClause), " ")
+	if !strings.Contains(got, wantClause) {
+		t.Errorf("the README's claude clause does not state what the code computes.\n"+
+			"  want to find: %q\n  in:           %q\n\n"+
+			"This sentence was wrong in round 1 of #641 (it omitted the claude case) and "+
+			"again in round 2 (it said `two rows`). It is compared WHOLE and built from "+
+			"checkCountsTowardVerdict, so a reword must keep it true rather than merely "+
+			"keep the words. A consumer on a Claude project that skips `%s` misses a real "+
+			"failure.", wantClause, got, conditional[0])
 	}
 }
 
@@ -324,15 +394,29 @@ func TestTheHelpPointerIsHonoured(t *testing.T) {
 	}{
 		{"per-vendor header spellings", "${env:CIVITAI_TOKEN}"},
 		{"per-vendor header spellings", "bearer_token_env_var"},
-		{"the merge rules", "merged into"},
+		{"the merge rules", "MERGED into, preserving every other server"},
 		{"the JSONC re-encoding caveat", "JSONC"},
 	} {
-		// 🔴 CASE-INSENSITIVE, and the message says the fixture may be at fault.
-		// These two rows match PROSE, not an identifier, so a legitimate reword
-		// of `Long` turns them red — and the first draft asserted "MERGED INTO",
-		// which `Long` does not spell that way. A failure here is "check, then
-		// fix ONE of the two", never "the help text lost this topic".
-		if !strings.Contains(strings.ToLower(long), strings.ToLower(tc.inLong)) {
+		// 🔴 CASE-SENSITIVE, AND THE STRINGS ARE SPECIFIC ON PURPOSE. Round 2 of
+		// #641 weakened this row to "merged into" and wrapped the comparison in
+		// ToLower, on the stated grounds that `Long` "does not spell it that
+		// way". THE TREE CONTRADICTS THAT: the string above was present and this
+		// row was GREEN at bc33d094. What was wrong was an earlier *draft*
+		// ("MERGED INTO"), already fixed; the weakening conflated the two.
+		//
+		// Round 3 measured the cost with two mutants, both of which SURVIVED the
+		// whole package under the weakened form and are killed by this one:
+		//   - `Long` drops the merge RULES while keeping the words "merged
+		//     into" — the README goes on promising them "in full".
+		//   - `Long` mis-cases the vendor spelling to `${ENV:civitai_token}`,
+		//     which does not resolve. Env var names are case-sensitive and
+		//     `${env:` is the documented form, so case here is load-bearing:
+		//     a user pastes what `--help` prints and gets no credential.
+		//
+		// The failure MESSAGE is what the weakening was really reaching for, and
+		// it is kept — a red here means "check which of the two is stale", not
+		// "the help text lost this topic".
+		if !strings.Contains(long, tc.inLong) {
 			t.Errorf("the README tells readers `--help` carries %s, and the agent-setup Long "+
 				"string no longer contains %q.\n\nTWO POSSIBILITIES, check before fixing: "+
 				"(a) `Long` really dropped the topic — then drop it from the README pointer "+
