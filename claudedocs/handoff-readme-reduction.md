@@ -44,7 +44,7 @@ before touching prose. This doc is state; that doc is the plan.
 
 ## State now
 
-**Eight PRs merged across this arc. README is 281,439 bytes on `main` — down 29,208 (−9.4%) from the arc's start. The byte threshold that used to sit here is GONE (see the closing condition above); size is still reported because it is the cheapest progress signal, but it is no longer a gate and no PR should be shaped to hit a number.**
+**Nine PRs merged across this arc; five of them this session. README is 281,439 bytes on `main` (`079dc14`) — down 29,208 (−9.4%) from the arc's start. There is no byte gate (see the closing condition above); size is reported because it is the cheapest progress signal, and for no other reason.**
 
 | | bytes |
 |---|---:|
@@ -54,32 +54,30 @@ before touching prose. This doc is state; that doc is the plan.
 | after phase 2 — cuts, #630 | 293,378 |
 | after phase 3b — command table, #633 | 282,312 |
 | after phase 3c — preamble, #635 | 281,439 |
-| **on `main` now (`c7ea087`)** | **281,439** |
+| **on `main` now (`079dc14`)** | **281,439** |
 
-⚠ **#635 landed at −873, not the −1,741 its body advertises.** Four audit rounds added
-868 B back, every byte of it buying a contract claim that is now true. Under the
-threshold this arc used to carry, that would have read as the PR failing; it is the PR
-working, and it is the clearest single vindication of deleting the threshold.
+⚠ **#635 landed at −873, not the −1,741 its body advertises.** Four audit rounds added 868 B back, every byte buying a contract claim that is now true. Under the deleted threshold that would have read as the PR failing; it is the PR working, and it is the clearest single vindication of deleting it.
 
 ### Merged
-- **#611** (`f284d89`) phase 1, accuracy. Six corrections each pinned by a guard watched to fail, **plus a behaviour fix**: `civitai upgrade` now derives the release-asset extension per GOOS and works on Windows. Closed **#613** (Windows `upgrade`). Four audit rounds.
+- **#611** (`f284d89`) phase 1, accuracy — six corrections each pinned by a guard watched to fail, plus the Windows `civitai upgrade` behaviour fix. Closed #613. Four audit rounds.
 - **#625** Troubleshooting 35,250 → 19,182. Symptom column byte-identical.
 - **#630** phase 2 cuts, −14,279, **give-back 0** — the PR that proved delete-first.
-- **#633** command table 21,391 → 9,664 (−54.8%), **plus a new guard**: `TestREADMECommandSynopsesNameRealFlags` drives the live Cobra tree, 25 rows / 33 resolutions / 90 flag checks, floors 30/85.
-- **#615** the automated pin bump (not this session's) — unfroze the repo and satisfied the previous arc's cli#530 closing condition.
+- **#633** command table 21,391 → 9,664 (−54.8%), plus `TestREADMECommandSynopsesNameRealFlags`.
+- **#615** the automated pin bump (not this arc's) — satisfied the previous arc's cli#530 closing condition.
 - **#623** (`868fff6`) the plan + this handoff, and the commit that **deleted the byte closing condition**.
-- **#636** (`ada6699`) two comments that claimed coverage they did not have — see the ladder record below.
-- **#635** (`c7ea087`) phase 3c, the preamble. **Four audit rounds**; the record is below and it is the most useful thing this session produced.
+- **#636** (`ada6699`) two comments that claimed coverage they did not have.
+- **#635** (`c7ea087`) phase 3c, the preamble. **Four audit rounds** — the ladder record is under Gotchas and is the most transferable thing this arc produced.
+- **#639** (`079dc14`) **rank 3b — the guards.** Four tests over the paragraph #635 repaired and over `doUpload`'s switch, all mutation-verified. **Two audit rounds, four findings, every one of them my own prose overreaching my own code.**
 
 ### Open
-- **#637** — 🔴 **NEW, and it is a CODE defect, not a docs one.** `printSubmitSizeDiagnosis` prints `What this CLI sent` for errors raised *before any HTTP request is built*, so the past tense can be false. Measured against a real `httptest` server: **0 requests received**, block printed, with a positive control on the hit counter. `appblocks.go:570` returns on `Token()` before `doOnceWith` builds anything; `auth/source.go:115` returns `persist refreshed tokens` untagged. A second comment on it carries the mirror case — `auth/source.go:90` tags `ErrUnauthorized` onto a purely *local* error, suppressing the block with no HTTP status anywhere. **Its closing condition includes reverting the two README surfaces #635 had to weaken.**
-- **#602** (another session's) — now **22 commits behind** `origin/main` and still degrading. Not ours to rebase.
+- **#637** — 🔴 a **CODE** defect, not a docs one. `printSubmitSizeDiagnosis` prints `What this CLI sent` for errors raised *before any HTTP request is built*, so the past tense can be false. Measured against a real `httptest` server: **0 requests received**, block printed, with a positive control on the hit counter. `appblocks.go:570` returns on `Tokens.Token()` before `doOnceWith` builds anything; `auth/source.go:115` returns `persist refreshed tokens` untagged. A second comment carries the mirror case — `auth/source.go:90` tags `ErrUnauthorized` onto a purely *local* error, suppressing the block with no HTTP status anywhere. **Its closing condition includes reverting the two README surfaces #635 had to weaken**, and `TestREADMEEntryBlockSurfacesAgree`'s failure message points at it by name so a future fixer is not told to keep the weakened wording.
+- **#602** (another session's) — `DIRTY` against main and **22+ commits behind**. Not ours to rebase.
 - **#614** open and optional — the `CIVITAI_NO_COLOR` value-parsing asymmetry, documented and guarded.
 
 ### Honest limits
-- 🔴 **Nobody has run `civitai upgrade` on Windows.** Every branch is exercised against the real published v0.1.105 zip, and `minio/selfupdate` has a real Windows implementation, but the final self-replace is stubbed behind the `applyUpdate` seam — as it was for every platform before #611.
-- **The estimates have under-delivered three times running**, each because the compressible fraction was smaller than a whole-section byte count suggested: Troubleshooting 13,000→20,229 (7,081 B of the section is not cause cells), phase 2 20,500→14,279, preamble 6,000→1,741 (35% of it is a golden file, another 20% pinned against live stdout).
-- **`--session` sees almost nothing of this work** — every file went through subagent worktrees. Use `--pr` for the index window.
+- 🔴 **Nobody has run `civitai upgrade` on Windows.** Every branch is exercised against the real published v0.1.105 zip, but the final self-replace is stubbed behind the `applyUpdate` seam.
+- **The estimates under-delivered three times running**, which is what eventually killed the byte threshold. Phase 5 is now measured rather than estimated (below).
+- 🔴 **The `app_submit_r2_test.go` consolidation in #639 was never audited.** It landed in the round-1 fix commit, and no round read it. Operator merged knowing this. It is one call into `nonTTYSubmitRefusal`, and that helper fatals if the refusal path was not the one taken — so the exposure is small and named, not hand-waved.
 
 ## Open investigations — live diagnosis state
 
@@ -104,25 +102,23 @@ also disagrees with itself: a comment near the error says "ANY model file".
 
 ## Next steps (ranked)
 
-0. ~~**DECIDE THE CLOSING CONDITION.**~~ **CLOSED 2026-09-15** — the threshold was deleted, not re-set. See the closing condition at the top and the two retraction blocks under Gotchas. The measurement that killed option (a) is recorded below as "what phase 5 can actually yield".
-1. **Trial-cut `## Set up your coding agent (agent-setup)` — the strongest surviving step-2 candidate, and it is UNMEASURED.** 16,971 bytes, 264 lines, **zero subheadings**, documenting ONE command — 55% the size of the whole Command reference, which covers ~25. Meanwhile 103,879 bytes of rationale for the same command already sit correctly placed in `claudedocs/decisions/34`, `/35` and `/36` (maintainer content, GitHub-only). 🔴 **Do not turn that into a byte estimate — that is the mistake this arc made three times.** Do the trial edit, then report the number. Two constraints known up front: it is read by `readme_command_synopsis_test.go`, and giving it 4–5 `###` is worth doing on its own merits (265 unbroken lines have no internal map).
-   forcing: none — no gate rides on it now
-2. ~~**Run the ladder on #635, then merge.**~~ **CLOSED** — merged `c7ea087` after **four** rounds. The record is under Gotchas; read it before running any ladder in this repo.
-3. ~~**Merge #623.**~~ **CLOSED** — merged `868fff6`. (#636 also merged, `ada6699`.)
-3b. 🔴 **PIN THE PROSE #635 REPAIRED — this is the real follow-up, and nothing currently guards it.** Four rounds fixed four false claims in one paragraph and its Troubleshooting row, and **not one of those sentences is asserted on by any test**; only the left-hand symptom column is. The arc's own phase-1 pattern (a guard per repaired claim, watched to fail) was not applied here, which is why it took four rounds. Do it the way `readme_troubleshooting_test.go` already does for row 20 — pin the WHOLE normalised sentence, not a keyword, since a guard on words is walkable by rewording. Closing condition: reverting any one of the four repairs turns a test red **with that test's own error naming the claim**, and the PR records which mutant it watched for each.
+**Closed and removed from the queue** (kept as one line so nobody re-derives them): the byte closing condition decision, the #635 ladder, merging #623, and rank 3b. 3b merged as #639 (`079dc14`) — the four claims are pinned, and the ledger catches something nothing else in the tree does (measured: removing the `ErrRateLimited` case is caught *only* by that file).
+
+1. **Trial-cut `## Set up your coding agent (agent-setup)` — the largest surviving step-2 candidate, still UNMEASURED.** 16,971 bytes, 264 lines, **zero subheadings**, documenting ONE command — 55% the size of the whole Command reference, which covers ~25. 103,879 bytes of its rationale already sit correctly placed in `claudedocs/decisions/34`, `/35`, `/36` (maintainer content, GitHub-only). 🔴 **Measured 2026-09-16: only ~168 of its 16,971 bytes are pinned** by any Go test literal ≥30 B — three Docs-section URLs and one sentence; `agent_setup_docs_test.go` does not read the README at all. So it is almost entirely unpinned prose, the same property that made Troubleshooting's middle column tractable. 🔴 **Do not turn that into a byte estimate — that is the mistake this arc made three times.** Do the trial edit, then report the number. Repo: `civitai/cli`; files: `README.md`, and `internal/cmd/readme_command_synopsis_test.go` reads that section.
    forcing: none
-4. **#602** — operator's. Green on its own checks but `DIRTY` against main and **now 22 commits behind**; its inclusive-ceiling correction must survive the rebase (see the note posted on it).
+2. **Phase 4 — the reorder.** Byte-neutral, and **now the highest-value remaining phase**: with the byte target gone the arc's goal is legibility, which is what a reorder buys and what a byte count never measured. Fixes the measured reader paths — the CI/`--json` reader travels 81% of the file to reach the exit-code contract, and the `listing status`-is-not-a-read warning sits ~36% in where a `--json` reader never passes it. Repo: `civitai/cli`; files: `README.md`.
+   forcing: none
+3. **Phase 5 — error messages.** ⚠ **Re-scoped by measurement: a QUALITY item, not a size one.** Realistic yield ≤5,465 B (band table under Gotchas), so do it because an error should carry its own remedy — `AGENTS.md`: *"Make errors actionable — name the next command to run"* — never to move a number. Changes behaviour, so it needs its own PR and audit round. Repo: `civitai/cli`; files: `internal/cmd/*.go`, `README.md`.
+   forcing: none
+4. **#602** — operator's. Green on its own checks but `DIRTY` against main and degrading; its inclusive-ceiling correction must survive the rebase (note posted on the PR).
    forcing: gate
-5. **Phase 4 — the reorder.** Byte-neutral. Fixes the measured reader paths: the CI/`--json` reader currently travels 81% of the file to reach the exit-code contract, and the `listing status`-is-not-a-read warning sits ~36% in where a `--json` reader never passes it. **This is now the highest-value remaining phase**, because with the byte target gone the arc's goal is legibility, which is what a reorder buys and what a byte count never measured.
+5. **#637** — fix the code so the tense stops lying, then **revert the two README surfaces #635 weakened, in the same PR**. `TestREADMEEntryBlockSurfacesAgree` will go red on that revert and its failure message says so explicitly — that is intended, not a blocker. Repo: `civitai/cli`; files: `internal/cmd/app_submit.go`, `internal/appapi/appblocks.go`, `internal/auth/source.go`, `README.md`, `internal/cmd/readme_submit_entry_block_test.go`.
    forcing: none
-6. **Phase 5 — error messages.** ⚠ **Re-scoped by measurement: it is a QUALITY item, not a size item.** Where the README says more than the binary, improve the Go error string and delete the row. Ceiling measured at ~5,465 bytes realistic (see below), so do it because the error should carry its own remedy — `AGENTS.md`: *"Make errors actionable — name the next command to run"* — not to move a number. Needs its own PR and audit round: it changes behaviour.
+6. **#614** — `CIVITAI_NO_COLOR` value parsing. Genuinely optional.
    forcing: none
-7. **#614** — `CIVITAI_NO_COLOR` value parsing. Genuinely optional.
+7. **41 worktrees on this clone — 23 agent (`.claude/worktrees/`) + 18 named.** ⚠ **`git worktree prune` was RUN and removed NOTHING**: every directory exists, so they are live entries and the cheap fix does not apply. **Not acted on, deliberately** — several hold *other sessions'* branches, and removing 18 is the operator's call. Cost measured, not asserted: it blocked `--delete-branch` on **all five** merges this session, and it produced a false 🔴 in #635's round 3 (an auditor grepped a worktree standing on `main` rather than the PR head). Closing condition: `git worktree list | wc -l` returns a number the operator recognises as live-only.
    forcing: none
-8. **41 worktrees on this clone — 23 agent (`.claude/worktrees/`) + 18 named.** ⚠ **`git worktree prune` was RUN and removed NOTHING**: every directory still exists, so they are live entries, not orphans, and the cheap fix does not apply. **Not acted on further, deliberately** — several named ones hold *other sessions'* branches, and removing 18 of those is high-blast-radius and the operator's call. Two measured costs: a whole-repo `grep` returns a dozen copies of every hit (one measurement this session was nearly read off the wrong tree, and #635's round 3 actually did produce a false 🔴 that way), and a worktree holding a merged branch blocks `--delete-branch`, which failed on all three merges today. Closing condition: `git worktree list | wc -l` returns a number the operator recognises as live-only.
-   forcing: none
-9. 🔴 **`README.md:1679`/`:1728` state a body size that is arithmetically impossible**, under a sentence asserting *"That number is exact, not an estimate."* Pre-existing since #452, unpinned by construction (`10935065` appears only in `README.md`). Either re-derive it from `SubmitBodySize` and pin it, or stop quoting an exact number. Closing condition: the printed figure equals `base64.EncodedLen(zip) + len(envelope)` for a stated provenance case, and a test asserts it.
-   forcing: none
+8. 🔴 **`README.md:1679`/`:1728` state a body size that is arithmetically impossible**, under a sentence asserting *"That number is exact, not an estimate."* `base64.EncodedLen(8201270)` + envelope = **10935047** (no provenance) or **10935125** (40-hex commit + `sourceDirty:false`); the README prints **10935065**, which is neither. Pre-existing since `509babc` (#452); `10935065` appears only in `README.md`, so it is unpinned by construction. Closing condition: the printed figure equals `SubmitBodySize` for a stated provenance case, and a test asserts it.
    forcing: none
 
 ## Gotchas / decisions / dead-ends
@@ -327,29 +323,62 @@ moved out is lost to tarball, Homebrew-cask and npm readers offline.
 - **`git merge-tree` exit code answers a different question from `gh pr view`.** #602 conflicts with `origin/main` *on its own*; a control row proved the conflict was not caused by any of this session's branches.
 - **`printf` in a commit message eats a bare `%`** — one commit shipped truncated at "39.7". Write the message to a file and `-F` it.
 
+### Added 2026-09-16 — #639's ladder, and the pattern across BOTH ladders this session
+
+🔴 **ACROSS #635 AND #639, SIX OF EIGHT AUDIT FINDINGS WERE "A SENTENCE CLAIMING MORE THAN ITS CODE DOES" — AND HALF OF THOSE WERE WRITTEN WHILE BUILDING THE GUARD AGAINST THAT EXACT CLASS.** The arc has now reproduced its own defect inside its own fix, twice, in two different shapes.
+
+**The mechanism is nameable, and it is not carelessness.** Every one came from writing the **doc comment first** and the implementation after. `RULES.md` already says *"Write the claim AFTER the code, from what the function does"* — it was read, in session, and the opposite was done three times in one file. The fix that worked was mechanical: on the last round every comment was rewritten **from the code**, and that round produced no new prose findings.
+
+Concrete instances, so the shape is recognisable rather than abstract:
+
+- 🔴 **"EXTRACTED, NOT COPIED", citing `AGENTS.md` "One rule, one place" — in a ONE-FILE diff.** Extracting is not something a one-file diff can do. `app_submit_r2_test.go` still held its own verbatim copy, so the PR took the count from one site to **two** while its comment claimed the reverse *and named the rule it was breaking*. The tell was free: `git diff --stat` said one file.
+- 🔴 **A ledger that covered one of the two surfaces it existed to keep in sync.** `entryBlockSentinel` carried only what the paragraph must say; the Troubleshooting row's exception list — *the half that actually drifted in #635* — was two keyword checks. Rewriting the cell to *"including a `401`/`403`/`429`"*, the exact inverse of `doUpload`'s second case, left the package green.
+- 🔴 **A "grows" direction that was SPELLED, not structural.** The extractor regex was `(?:appapi|civitai)\.(\w+)`, so `case errors.Is(err, os.ErrDeadlineExceeded)` was invisible while the docstring said flatly that a new sentinel is red. The `len(found) >= 2` control could not see it either — the three *known* sentinels still matched. **A positive control sized to today's set cannot detect an addition.**
+- **A comment describing its own bounds wrongly in both halves**, repeated verbatim in the function's header doc.
+
+### Added 2026-09-16 — two mutation-testing errors of mine, both in the "green for the wrong reason" family
+
+- 🔴 **A MUTANT THAT TRIPS TWO ASSERTIONS TELLS YOU NOTHING ABOUT EITHER.** My M5 deleted both words the row check looked for; the sibling `classifies` assertion went red first, and I scored the *other* one as killed. It was **vacuous**: it matched the whole table line, whose left-hand symptom column contains the same string — and that column is frozen independently by `TestREADMETroubleshootingSymptomsExistInTheSource`, so it could never leave the line. A cause cell saying verbatim what my own error message called false **passed**. Round 0 built the isolated mutant I should have. **Mutate the narrowest expression that can be wrong, and confirm the failure names the guard you were testing.**
+- **Making it reachable immediately found a second thing** — the cell writes the tense as `**would have** sent`, so the literal substring never occurred. The first reachable run failed on that. That failure is the cleanest evidence the fix changed something real.
+- 🔴 **A positive control floor proves the instrument is reading, not that it is reading WIDELY enough.** `len(found) >= 2` was satisfied by the pre-existing sentinels throughout the `os.ErrDeadlineExceeded` mutant. A floor keyed to today's population is blind to growth by construction.
+
+### Added 2026-09-16 — the gate filter trap, hit AGAIN, by me
+
+🔴 **A NEW GUARD WHOSE NAME DOES NOT MATCH THE GATE FILTER RUNS ONLY UNDER A FULL `./...`, AND THE DOCUMENTED GATE REPORTS GREEN OVER IT.** `TestSubmitEntryBlockSentinelLedger` did not match `-run 'Attribution|Troubleshooting|README|Readme|readme'`. This is Correction 2 in the plan doc, reproduced by the person who had just read it. Both new behavioural/structural tests now carry the `README` prefix deliberately — **name a guard for the filter that is supposed to run it.**
+
+⚠ **And a counting slip worth the line:** the gate count was quoted as 42 once, from `grep -c '^--- PASS'`, against a 76 baseline taken with `'^--- PASS\|^    --- PASS'`. Two patterns, compared as if one. **Name the pattern beside the number** — a round-1 auditor independently failed to reproduce 76→80 for exactly this reason. Correct figures: **76 → 80** with the subtest-inclusive pattern, 38 → 42 top-level.
+
+### Added 2026-09-16 — what audit round 0 is FOR, demonstrated twice
+
+Round 0 (requirements & deletion) changed the outcome on **both** PRs it ran on this session, which is not what its own trial record predicted (`ran: 6 · changed the outcome: 3`).
+
+- On **#639** it was pointed explicitly at the question *"should these guards exist at all"*, because a README byte-ceiling test had been designed and discarded the day before under `the-algorithm` step 5. It **upheld** the requirement, and the discriminator it gave is worth reusing: **the byte threshold had no incident — it was a proxy a session invented; rank 3b has a measured one. The incident is the maker; the session only wrote it down.**
+- It also **deflated the PR's own framing** rather than agreeing with it: at most **two** of #635's four defects would have been caught *at introduction*; the rest catch **regression** of already-repaired claims. And it found that `app_submit_size_test.go` already pinned the 401/403 suppression **behaviourally** — so "nothing asserted any of it" was wrong: the behaviour was pinned, only the prose was not.
+
+**Dispatch it blind and let it attack the premise.** A framed audit confirms the frame.
+
 ## How to verify
 
-🔴 **This block was STALE and is the reason to distrust any copy of the gate you find
-elsewhere in this doc.** It still named `<= 250000` — a threshold already superseded
-twice at the top of the file and now deleted outright — and the NARROW `-run` filter the
-amendment above exists to replace. Both are corrected here; if you find a third copy,
-that one is stale too.
+🔴 **This block was stale once already** — it named a deleted threshold and the narrow `-run` filter. If you find a third copy anywhere, that one is stale too.
 
 ```bash
-# the arc's closing condition. There is NO byte threshold — see the top of this doc.
-# Report the size if you like, but nothing gates on it:
-git -C <repo> show origin/main:README.md | wc -c
+# The arc's closing condition. There is NO byte threshold — see the top of this doc.
+# Report the size if you like; nothing gates on it:
+git -C <repo> show origin/main:README.md | wc -c          # 281,439 at 079dc14
 
-# the gate, WIDE filter, with its own positive control.
-# `ok` with 0 tests run is the failure this replaced — measured 76 on 2026-09-15.
+# The gate, WIDE filter, with its own positive control.
+# `ok` with 0 tests run is the failure this replaced. Measured 80 on 2026-09-16.
 go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' -count=1
 go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' \
-  -count=1 -v | grep -c '^--- PASS\|^    --- PASS'      # must be > 0
-go test ./...                                            # 9 other packages read README
+  -count=1 -v | grep -c '^--- PASS\|^    --- PASS'      # 80 — NAME this pattern when quoting it
+go test ./...                                            # 21/21 packages, 9 others read README
 
-# the guards phase 1 shipped, proven by reverting a correction
-#   each revert must fail on its OWNING guard, not a neighbour's
+# The guards #639 added, and the one mutation that proves the ledger earns its place:
+go test ./internal/cmd/ -run 'EntryBlock|PreUploadRefusal' -count=1 -v
+#   then, in a cp -a copy with .git REMOVED FIRST (a worktree's .git is a FILE):
+#   delete `&& !errors.Is(err, civitai.ErrRateLimited)` from doUpload's switch
+#   -> TestREADMESubmitEntryBlockSentinelLedger is the ONLY test in the tree that fails.
 
 # lint is a SEPARATE CI job; make ci does not run it
-nix-shell -p golangci-lint --run "golangci-lint run"
+nix-shell -p golangci-lint --run "golangci-lint run ./internal/cmd/..."
 ```
