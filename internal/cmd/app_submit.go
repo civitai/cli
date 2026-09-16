@@ -669,9 +669,32 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 		// failed" — was false too, because it had just decided. The entry list
 		// is still worth printing (the refusal tells you to look at it), so the
 		// refusal gets its own block with honest tense rather than none.
+		//
+		// 🔴 AND NOT FOR ANY OTHER FAILURE THAT SENT NOTHING — issue #637, the
+		// SAME defect down a path this switch could not see. It branched on how
+		// the error CLASSIFIED and on nothing else, and two reachable failures
+		// classify as ordinary while the server receives zero bytes: an
+		// unwritable config after an OAuth refresh (internal/auth returns
+		// `persist refreshed tokens` UNTAGGED, and authedDoWith returns on
+		// Tokens.Token() before a request exists), and a dial that never
+		// connects. Both printed the past tense over nothing.
+		// appapi.SubmitVersion now answers the wire question directly —
+		// ErrNothingSent is set from httptrace's WroteRequest — so this arm asks
+		// it instead of inferring it from a kind.
+		//
+		// That is also what makes the 401/403/429 arm below honest: it is now
+		// reached only when the server really answered, where those numbers mean
+		// what the README says. A credential refused LOCALLY (internal/auth tags
+		// ErrUnauthorized onto "no refresh token stored") lands on the arm above
+		// it now — same silence, but attributed to the fact rather than to
+		// vocabulary borrowed from a status code that never existed.
 		switch {
 		case errors.Is(err, appapi.ErrBundleTooLarge):
 			printSubmitSizeRefusal(cmd.ErrOrStderr(), zipBytes, prov)
+		case errors.Is(err, appapi.ErrNothingSent):
+			// Nothing left the machine, so there is no account to give: the
+			// error already names the cause, and a byte count here would be the
+			// false claim this case exists to stop.
 		case !errors.Is(err, civitai.ErrUnauthorized) && !errors.Is(err, civitai.ErrRateLimited):
 			printSubmitSizeDiagnosis(cmd.ErrOrStderr(), zipBytes, prov)
 		}
