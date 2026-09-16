@@ -41,37 +41,54 @@ import (
 // guard must pin a RELATIONSHIP, not a component."
 
 // entryBlockSentinel is one `errors.Is` case in doUpload's switch, together
-// with what the README is obliged to say about it.
+// with what the README is obliged to say about it. `name` is the sentinel
+// expression AS WRITTEN in the switch, qualifier included — that is what
+// errorsIsRe captures, and matching on the qualified form is what stops a
+// same-named sentinel from a different package reading as covered.
 //
 // 🔴 THIS IS A LEDGER, NOT A COUNT. Membership is the assertion: adding a
 // sentinel without a row here is red, and so is deleting one. A count would let
 // add-one/delete-one swap a case silently — the exact defeat
 // symptomAttributionsFloor was converted away from in #605.
 type entryBlockSentinel struct {
-	name string // the identifier inside errors.Is(err, …)
-	// readmeSays is text the paragraph MUST contain while this case exists.
-	// Empty means the case is deliberately not named in the README.
-	readmeSays string
-	why        string
+	name string // the sentinel expression as written in the switch
+	// paragraphSays and rowSays are text the `## Submit & auth` paragraph and
+	// the Troubleshooting row's CAUSE CELL must each contain while this case
+	// exists. Empty means that surface deliberately does not name the case.
+	//
+	// 🔴 BOTH SURFACES, BECAUSE ONE OF THEM WAS UNPINNED AND ROUND 1 INVERTED
+	// IT. This struct carried only the paragraph. The row's exception list —
+	// the half that actually drifted in #635 round 1 — was reachable only by
+	// two keyword checks, so rewriting the cell to "including a 401/403/429",
+	// the exact inverse of doUpload's second case, left the whole package
+	// green. A ledger that covers one of the two surfaces it exists to keep in
+	// sync is the narrower-than-its-docstring defect this file was written to
+	// catch, committed inside the file itself.
+	paragraphSays string
+	rowSays       string
+	why           string
 }
 
 var entryBlockSentinels = []entryBlockSentinel{
 	{
-		name:       "ErrBundleTooLarge",
-		readmeSays: "The ceiling refusal above is the one refusal with an entry list of its own",
+		name:          "appapi.ErrBundleTooLarge",
+		paragraphSays: "The ceiling refusal above is the one refusal with an entry list of its own",
+		rowSays:       "`What this CLI would have sent` is the ceiling refusal alone, and that one is exact: nothing was uploaded.",
 		why: "it takes the FIRST case and diverts to printSubmitSizeRefusal, so it is an " +
 			"exception to the past-tense block rather than an instance of it. Round 0 of #635 " +
 			"found the README claiming the block printed here",
 	},
 	{
-		name:       "ErrUnauthorized",
-		readmeSays: "except a `401`/`403`",
-		why:        "401 and 403 both map to this sentinel in pkg/civitai/errkind.go, and both suppress the block",
+		name:          "civitai.ErrUnauthorized",
+		paragraphSays: "except a `401`/`403`",
+		rowSays:       "and not on a `401`/`403`/`429`.",
+		why:           "401 and 403 both map to this sentinel in pkg/civitai/errkind.go, and both suppress the block",
 	},
 	{
-		name:       "ErrRateLimited",
-		readmeSays: "or a `429`",
-		why:        "429 maps to this sentinel, and it suppresses the block",
+		name:          "civitai.ErrRateLimited",
+		paragraphSays: "or a `429`",
+		rowSays:       "and not on a `401`/`403`/`429`.",
+		why:           "429 maps to this sentinel, and it suppresses the block",
 	},
 }
 
@@ -107,8 +124,8 @@ func readmeEntryBlockParagraph(t *testing.T) string {
 }
 
 // doUploadSwitch returns the source text of the switch in doUpload that decides
-// which entry block prints, bounded by the two printer names so it cannot drift
-// onto an unrelated switch.
+// which entry block prints. It is anchored on the literal `switch {` + first
+// case, which is specific enough not to drift onto an unrelated switch.
 func doUploadSwitch(t *testing.T) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("app_submit.go"))
@@ -116,8 +133,14 @@ func doUploadSwitch(t *testing.T) string {
 		t.Fatalf("CONTROL failure: cannot read app_submit.go: %v", err)
 	}
 	src := string(b)
-	// Bound it at the refusal printer's call site and close at the following
-	// `return err`, which is the switch's own terminator.
+	// Bound it at the `switch {` plus its first case — NOT at either printer's
+	// call site — and close at the first line that is exactly three tabs and a
+	// brace, which is the switch's own closing brace. A nested block inside a
+	// case closes deeper than that and cannot match.
+	//
+	// (This comment previously described both bounds wrongly, naming the printer
+	// call site and a following `return err`. Round 1 of #639 caught it. A
+	// comment is a claim like any other.)
 	start := strings.Index(src, "switch {\n\t\tcase errors.Is(err, appapi.")
 	if start < 0 {
 		t.Fatalf("CONTROL failure: could not locate doUpload's entry-block switch in app_submit.go.\n" +
@@ -133,7 +156,21 @@ func doUploadSwitch(t *testing.T) string {
 	return rest[:end]
 }
 
-var errorsIsRe = regexp.MustCompile(`errors\.Is\(err,\s*(?:appapi|civitai)\.(\w+)\)`)
+// errorsIsRe matches ANY errors.Is sentinel, qualified or bare.
+//
+// 🔴 IT WAS `(?:appapi|civitai)\.(\w+)` AND THAT MADE THE LEDGER SPELLED
+// RATHER THAN STRUCTURAL. Round 1 of #639 added
+// `case errors.Is(err, os.ErrDeadlineExceeded)` to the switch — `os` is already
+// imported by app_submit.go — and the whole package stayed green. The doc above
+// said flatly that a new sentinel is red; for any package outside that
+// two-name allowlist it was invisible, and the `len(found) >= 2` control could
+// not see it either because the three known sentinels still matched.
+//
+// The switch is package-local code, so a bare `errFoo` or a `context.` /
+// `pkgzip.` sentinel are all realistic. Matching the whole expression and
+// ledgering the QUALIFIED name means a new branch is red whatever it is
+// spelled.
+var errorsIsRe = regexp.MustCompile(`errors\.Is\(err,\s*([\w.]+)\)`)
 
 // TestREADMESubmitEntryBlockSentinelLedger is the primary guard: it pins the
 // RELATIONSHIP between doUpload's switch and what the README says about it.
@@ -178,24 +215,32 @@ func TestREADMESubmitEntryBlockSentinelLedger(t *testing.T) {
 		if !found[name] {
 			t.Errorf("entryBlockSentinels still carries %s, but doUpload's switch no longer branches on it.\n"+
 				"Reason it was ledgered: %s.\n"+
-				"The README currently tells readers %q. If the branch is genuinely gone, delete that "+
-				"claim from BOTH the paragraph and the Troubleshooting row in the same commit, then "+
-				"drop this row.", name, s.why, s.readmeSays)
+				"The README currently tells readers %q (paragraph) and %q (Troubleshooting row). If the "+
+				"branch is genuinely gone, delete both claims in the same commit, then drop this row.",
+				name, s.why, s.paragraphSays, s.rowSays)
 		}
 	}
 
-	// And the README must actually carry what each live sentinel obliges.
+	// And BOTH README surfaces must carry what each live sentinel obliges.
 	para := collapseWS(readmeEntryBlockParagraph(t))
+	cause := collapseWS(troubleshootingEntryBlockCause(t))
 	for _, s := range entryBlockSentinels {
-		if !found[s.name] || s.readmeSays == "" {
+		if !found[s.name] {
 			continue
 		}
-		if !strings.Contains(para, s.readmeSays) {
-			t.Errorf("doUpload branches on %s, but the entry-table paragraph no longer says %q.\n"+
+		for _, surface := range []struct{ where, text, want string }{
+			{"the `## Submit & auth` paragraph", para, s.paragraphSays},
+			{"the Troubleshooting row's cause cell", cause, s.rowSays},
+		} {
+			if surface.want == "" || strings.Contains(surface.text, surface.want) {
+				continue
+			}
+			t.Errorf("doUpload branches on %s, but %s no longer says %q.\n"+
 				"Why that matters: %s.\n"+
-				"Do not satisfy this by pasting the string back — check the paragraph still describes "+
-				"the branch correctly, then update the expectation here if the wording moved.",
-				s.name, s.readmeSays, s.why)
+				"Do not satisfy this by pasting the string back — check the surface still describes "+
+				"the branch correctly, then update the expectation here if the wording moved. Both "+
+				"surfaces are ledgered because the row's exception list is the half that drifted in "+
+				"#635 round 1.", s.name, surface.where, surface.want, s.why)
 		}
 	}
 }
@@ -246,8 +291,11 @@ func TestREADMEEntryBlockClaimsArePinned(t *testing.T) {
 	// regressions rather than one lost section.
 	if len(para) < 400 {
 		t.Fatalf("CONTROL failure: the entry-table paragraph is %d bytes (want >= 400). "+
-			"It is too short to carry these claims — the locator is probably reading the wrong "+
-			"region, not the paragraph having been trimmed.", len(para))
+			"It is too short to carry these claims. Two causes, and check which: the locator may be "+
+			"reading the wrong region (retarget the anchor), OR the paragraph really was trimmed — "+
+			"this repo is mid-way through a documented README-reduction effort, so that is a live "+
+			"possibility and not a remote one. If it was trimmed, the four claim-specific failures "+
+			"below are the ones to read.", len(para))
 	}
 	for _, c := range readmeEntryBlockClaims {
 		if !strings.Contains(para, c.want) {
@@ -293,31 +341,11 @@ func TestREADMEEntryBlockSurfacesAgree(t *testing.T) {
 				"green.", s.where)
 		}
 	}
-	// The ceiling refusal must be named as the exception in the row's CAUSE
-	// cell, or a reader who lands there gets a rule the paragraph contradicts.
-	//
-	// 🔴 THIS ASSERTION WAS VACUOUS AND SHIPPED AS LIVE — round 0 of #639 caught
-	// it. It ran against the WHOLE table line, whose left-hand symptom column
-	// literally reads `What this CLI would have sent`, so strings.Contains was
-	// satisfied no matter what the cause cell said. Worse, that symptom column
-	// is frozen independently: TestREADMETroubleshootingSymptomsExistInTheSource
-	// requires it to exist verbatim in non-test source, and app_submit.go emits
-	// it — so the string could never leave the line and the check could never
-	// fail. A cause cell reading "The block never appears before an upload" —
-	// verbatim what the error below calls false — passed.
-	//
-	// The original mutation missed it because it deleted BOTH words at once, so
-	// the sibling assertion went red first and scored this one as killed.
-	// RULES.md: isolate the mutation, and confirm the failure is THIS guard's.
-	if !strings.Contains(cause, "would have sent") {
-		t.Errorf("the Troubleshooting row's cause cell no longer names the `What this CLI would have sent` case.\n" +
-			"It is the one pre-upload refusal that DOES print an entry list, so a cause cell that " +
-			"omits it tells a reader the block never appears before an upload — which is false, " +
-			"and was the round 0 finding on #635.\n" +
-			"Note this asserts on the CAUSE cell only: the symptom column quotes the same string and " +
-			"is frozen by TestREADMETroubleshootingSymptomsExistInTheSource, so matching the whole " +
-			"row here would pass unconditionally.")
-	}
+	// The `would have sent` case is NOT re-checked here: entryBlockSentinels'
+	// rowSays for appapi.ErrBundleTooLarge pins that whole sentence in the same
+	// cell, which is strictly stronger than the keyword check that used to sit
+	// here. One rule, one place — and the weaker of two overlapping assertions
+	// is the one that teaches a maintainer the wrong bar.
 }
 
 // troubleshootingEntryBlockCause returns the CAUSE cell — column two — of the
