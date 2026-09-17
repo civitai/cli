@@ -50,13 +50,16 @@ ceiling test was designed as the replacement and then discarded** — `README.md
 `@`-imported the way `AGENTS.md` is, so the per-session cost that justifies *that*
 ceiling does not exist here, and step 5 forbids answering over-growth with a ratchet.
 
-**3. CLI error messages are now IN SCOPE (new phase 5).** Round 0 on #625 measured that
-**14 of 19 sampled cause cells were near-verbatim copies of strings the binary already
-prints**, and `AGENTS.md` says *"Make errors actionable — name the next command to
-run."* Where the README says more than the binary, the fix is to improve the Go error
-string and delete the row — the message then reaches the user at the moment of failure
-and is pinned by tests, unlike the prose. This widens the arc beyond documentation; it
-was chosen explicitly.
+**3. CLI error messages were brought IN SCOPE as phase 5 — and phase 5 is WITHDRAWN
+(2026-09-17, see its own section).** The reasoning here still stands as far as it goes:
+round 0 on #625 measured that **14 of 19 sampled cause cells were near-verbatim copies
+of strings the binary already prints**, and `AGENTS.md` says *"Make errors actionable —
+name the next command to run."* 🔴 **But the conclusion drawn from it was backwards.**
+That measurement says the cells RESTATE the binary; the phase read it as the binary
+lacking what the cells hold, which is the opposite claim and does not follow. Measured
+row by row, the binary already carries the remedy in 20 of 21 rows of the target band —
+because that `AGENTS.md` rule has been in force the whole time. **The one row where it
+did not is shipped.**
 
 ## How it got here
 
@@ -277,40 +280,129 @@ former argument against it (*"in a PR whose requirement is give-back 0"*) is its
 now that the byte condition is deleted. The reason to leave it alone is that **it is
 correct**, which is the durable one.
 
-## Phase 5 — improve the error messages, then delete the rows (NEW, operator-approved)
+## Phase 5 — WITHDRAWN 2026-09-17, measured row by row
 
-Round 0 on #625 sampled 19 Troubleshooting rows and found **14 whose cause cell merely
-restated the string the binary already prints**. Phase 3 trimmed those cells; phase 5
-attacks the other end. For each row where the README still says more than the binary
-does, move the difference **into the Go error string** and delete the row.
+🔴 **WITHDRAWN. Do not re-open it on the numbers below — they are the numbers that
+killed it.** The phase said: *"for each row where the README still says more than the
+binary does, move the difference into the Go error string and delete the row."* Measured
+against the live Troubleshooting section, **the premise holds for exactly ONE of the 21
+rows in its own target band**. That one was done — the difference moved into the binary
+and the row deleted, which is phase 5 working, once. For the other 20 there is nothing
+to move: the binary already says it, or the cell holds something an error string cannot.
 
-Why this is the better half of the fix, in the repo's own words (`AGENTS.md`): *"Make
-errors actionable — name the next command to run."* The message then reaches the user at
-the moment of failure rather than requiring them to find a table, and it is **pinned by
-tests**, where the prose mirror is not — column 2 of that table is checked against
-nothing, so it can drift from the binary silently while column 1 cannot.
+🔴 **EVERY FIGURE HERE CARRIES ITS DERIVATION, BECAUSE THE FIRST VERSION OF THIS
+SECTION DID NOT AND DID NOT REPRODUCE.** Round 0 on #652 re-derived them independently
+and got a different section size (20,812 vs a claimed 20,834) and a different non-floor
+band (19 rows / 3,647 B vs a claimed 18 / 3,480). A withdrawal whose stated numbers are
+unreproducible is a withdrawal the next session re-litigates. So: measured **after** the
+one row was deleted, on the `zach/readme-phase5-error-remedies` head, slicing
+`## Troubleshooting` to the next `## ` exactly as `readmeTroubleshootingSection` does and
+counting a row as a line beginning `` | ` ``:
 
-🔴 **MEASURED 2026-09-15 — PHASE 5 IS A QUALITY ITEM, NOT A SIZE ITEM. Its realistic
-yield is ≤5,465 bytes.** Banding the live 61-row section by cause-cell size: 9 rows are
-floor-protected (2,732 B); 17 have cells under 150 B that phase 3 already cut to the
-bone, where the only remaining content is the **exit code** — which the binary never
-prints as text; 19 sit in the 150–250 B middle band (5,465 B) and are the real target;
-and the 16 cells over 250 B (7,966 B) are **not movable**, because what makes them long
-is threat-model rationale (`SHA256 mismatch for` explains why an uploader-supplied
-filename is sanitised and cut at 120 chars — and its Go string *already* carries the
-remedy), aggregation across call sites (`is an OFFSITE app` covers 4 commands), or two
-exit codes branching off one message (`rate limited (429)`). A table expresses those; a
-per-site error string cannot. The absolute ceiling — delete all 52 non-floor rows — is
-16,478 B, capped by `len(symptoms) >= 15` to ~14,600, i.e. deleting 46 of 61 published
-rows; that was offered and rejected. **So do this phase because an error should carry
-its own remedy, never to move a number.** Full table in the handoff.
+    section 20,586 B / 60 rows
+    floor-protected 10 rows / 2,057 cause-bytes
+    cause cell <150 B 17 rows / 1,444
+    cause cell 150-250 B 17 rows / 3,294   <- what remains of the target band
+    cause cell >250 B 16 rows / 6,601
 
-🔴 **Constraints.** `TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit` puts
-**7 rows on an incident floor** — those rows may not be deleted whatever their cell
-says; re-derive the list rather than trusting this sentence. Column 1 is pinned to the
-source string, so changing an error message means changing the symptom column with it,
-in the same commit. And this phase changes **CLI behaviour**, so it needs its own audit
-round and its own PR — do not fold it into a prose PR.
+⚠ **"The incident floor is 10 rows" is a COMPOSITE and the label is wrong.** It is 7 from
+`TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit` — which *is* the incident
+floor — plus 2 from `symptomAttributionsFloor` and 1 from the submit entry-block ledger.
+A future re-derivation reading the incident-floor test alone will find **7** and conclude
+this doc is stale. Of the band's rows, **2** are on the INCIDENT floor specifically
+(`block lacks ai:write:budgeted scope`, `it did NOT check that the file is loaded`); the
+banding above counts 3 band rows as floor-protected because it applies the composite.
+Both numbers are right about different floors, which is why the composite needed naming.
+
+### The 21 band rows, as they were before the deletion
+
+| | rows | why it is not phase-5 work |
+|---|---:|---|
+| the binary already carries the remedy in full | **12** | the cell restates it |
+| the cell holds what a per-site string structurally cannot | **3** | two exit codes off one message (`rate limited (429)`); cross-row aggregation (*"the two rows below are the 403s that are not about your grant"*); the saferune filtering policy (`--json` is unfiltered) |
+| not an error message the CLI emits | **5** | a `whoami` row label, a `workflows list` legend, a `noFailureReasonNote`, two output labels (`prompt:`/`negative:`) — and one string **your app prints at runtime**, which the CLI cannot reach |
+| genuine — done, row deleted | **1** | `not logged in (401)` |
+
+⚠ **This table was 11/3/6/1 and was wrong twice.** It enumerated *seven* descriptors for
+six rows, and it filed `model substituted` under "not an error message" when
+`generate_substitution.go:265` wraps that sentinel into a full refusal already naming its
+remedy — bucket 1, not bucket 3. Both found by round 0. The conclusion does not move:
+every row shuffled between buckets 1 and 2 is still not phase-5 work.
+
+⚠ **AND ONE ROW IS AN HONEST EXCEPTION, SO THE HEADLINE IS "19 OF 21", NOT 20.**
+`Submit Apps:` (`whoami.go:120`) prints a bare `unknown`; the cell's actionable half —
+*"Re-run `civitai login` for a token whose scope the server reports"* — is carried
+nowhere in the output. It is excluded from phase 5 only on the technicality that the
+phase says *"error string"* and this is OUTPUT. **Making `Submit Apps: unknown`
+self-describing is straightforwardly better and would make that row deletable** — filed,
+not done here, because it is a different surface from the one this PR touches.
+
+Three examples of the dominant pattern, because it is uniform rather than marginal:
+
+- **`HEAD is on no remote`** — README: *"Push the branch."* Binary already: *"Push the
+  branch so the submitted version can be traced back to a commit."*
+- **`nothing index.html loads reaches it`** — README: *"Copying `civitai-host.js` in is
+  only half the fix — it has to be referenced too."* `readyAckRemedy` already: *"Copying
+  the file in is not enough on its own — a browser never fetches a file nothing
+  references."*
+- **`no lockfile is committed`** — README: *"Generate it with the package manager."*
+  Binary already: *"Run `%s` and commit the %s it writes."*
+
+**The instrument mattered, and the first one was wrong.** A one-line regex over non-test
+Go called 12 rows "no remedy in the binary". Every one hand-checked was a **false
+negative** — these messages are `+`-joined across many lines, and a single-line read
+truncates them. That is the same overcounting the handoff recorded for the crude
+25-of-49 pass. The classification above comes from reading whole statements, and round 0
+re-read the largest bucket from source and found no false positive in the other
+direction.
+
+### What the one genuine row turned into
+
+The 401 message existed at **eight** arms in `internal/appapi`, spelling it four
+different ways — `not logged in (401)`, `not authenticated`, `unauthorized (401): … —
+check your token` (what `civitai app submit` and `civitai whoami` printed), and
+`not authorized (check your API key / Apps invite)` (what `civitai app withdraw`
+printed). The last two name no command anyone can run. All eight now call
+`unauthorizedError`, which names the `CIVITAI_TOKEN` route and the personal-API-key
+route that **no 401 in this package carried**.
+
+⚠ **That last clause is deliberately narrow.** An earlier draft said "no user-facing
+surface carried it", which is false: `internal/genapi/errors.go` names both routes on its
+own 401, and roughly ten surfaces name the key route in several spellings.
+`internal/cmd/login.go`'s `spendCredentialRoutes` already states the governing
+convention — other packages cannot import it, so their wording is corrected in place and
+**kept in step by hand**. This is another copy under that convention, not a unification.
+
+🔴 **THE COUNT WENT FIVE → SEVEN → EIGHT, AND EACH CORRECTION CAME FROM A WIDER
+INSTRUMENT RATHER THAN A WIDER READ.** Draft 1 grepped the literal `not logged in (401)`
+— the very class of one-line-literal instrument this section criticises two paragraphs
+above — and found five. Round 0 grepped `case http.StatusUnauthorized:` and found seven.
+Round 1 parsed the AST and found eight: `withdrawError` used `case
+http.StatusUnauthorized, http.StatusForbidden:`, a shape no line-regex sees, seventy
+lines from the code under change. **The guard was wrong the same way, twice** — file-
+granular, then arm-granular-but-pattern-blind; round 2 found the `go/parser` walk that
+replaced it ALSO blind, to `if status == http.StatusUnauthorized`, a shape in the same
+file at `appblocks.go:580` under a comment asserting no blind spot existed; and round 3
+found the RE-KEYED walk blind again, to `st == 401 || st == 403`, because its condition
+recursion handled `==`/`!=` and stopped at `&&`/`||`.
+
+🔴 **FOUR DRAFTS, FOUR TIMES THE DESCRIPTION WAS WIDER THAN THE IMPLEMENTATION, AND EVERY
+FIX WAS A WIDER OR BETTER-KEYED PATTERN. The fifth is not a pattern at all.** It drives
+every status mapper in the package with a 401 and compares the OUTPUT, so a divergent
+message fails whatever syntax produced it — including the package-level-sentinel shape
+that beat all four static drafts. Its one real gap (a mapper the signature regex does not
+recognise) is written down in the file instead of denied beside it.
+
+**The transferable rule, and it is not "prefer deleting a parse" — that was tried and was
+draft 4.** When a guard's third and fourth attempts still miss, the question is no longer
+how to analyse the source better; it is whether the property can be OBSERVED instead.
+A behavioural check has no pattern to be blind in.
+
+**The transferable finding:** this repo's error strings were already carrying their
+remedies, because `AGENTS.md` has said *"make errors actionable — name the next command
+to run"* the whole time. A phase premised on them NOT doing so was mis-specified, and
+only a row-by-row read could show it. **Where a README cell is longer than the error,
+read the error before assuming the cell adds something.**
 
 ## Link-out policy
 

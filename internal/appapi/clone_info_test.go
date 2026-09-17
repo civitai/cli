@@ -126,7 +126,9 @@ func TestCloneInfoErrorMapping(t *testing.T) {
 		wantSubstr string // must appear (the actionable prefix)
 		wantMsg    string // extracted/echoed server message that must appear
 	}{
-		{"401 tRPC message", http.StatusUnauthorized, trpcBody("token expired"), "not authenticated", "token expired"},
+		// 🔴 WAS `"not authenticated"`, cloneInfoError's own spelling of a 401.
+		// It now routes through unauthorizedError like every other 401 arm.
+		{"401 tRPC message", http.StatusUnauthorized, trpcBody("token expired"), "not logged in (401)", "token expired"},
 		{"403 tRPC message", http.StatusForbidden, trpcBody("not the owner"), "not permitted", "not the owner"},
 		{"404 tRPC message", http.StatusNotFound, trpcBody("App not found"), "no such app", "App not found"},
 		{"500 default", http.StatusInternalServerError, trpcBody("kaboom"), "getMyForgejoCloneInfo failed (HTTP 500)", "kaboom"},

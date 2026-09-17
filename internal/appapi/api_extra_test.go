@@ -23,7 +23,10 @@ func TestSubmitVersionStatusErrors(t *testing.T) {
 		status int
 		want   string
 	}{
-		{http.StatusUnauthorized, "unauthorized (401)"},
+		// 🔴 WAS `"unauthorized (401)"`. serverError's 401 arm now returns
+		// unauthorizedError, so every 401 in this package reads the same. This row
+		// pinned the DIVERGENT spelling — it is why the drift was invisible.
+		{http.StatusUnauthorized, "not logged in (401)"},
 		{http.StatusForbidden, "forbidden (403)"},
 		{http.StatusServiceUnavailable, "service unavailable (503)"},
 		{http.StatusInternalServerError, "server returned 500"},

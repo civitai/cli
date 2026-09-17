@@ -71,8 +71,11 @@ func TestWithdrawRequestErrorMapping(t *testing.T) {
 	}{
 		{http.StatusNotFound, map[string]string{"message": "not found"}, "not found (or not yours)"},
 		{http.StatusConflict, map[string]string{"message": "request is already approved"}, "request is already approved"},
-		{http.StatusUnauthorized, map[string]string{"message": "bad key"}, "not authorized"},
-		{http.StatusForbidden, map[string]string{"message": "no mod"}, "not authorized"},
+		// 🔴 BOTH ROWS USED TO ASSERT "not authorized", which is exactly why the
+		// merged `case 401, 403:` was invisible: one expectation covered two
+		// different problems. They are now distinct, so a future re-merge reddens.
+		{http.StatusUnauthorized, map[string]string{"message": "bad key"}, "not logged in (401)"},
+		{http.StatusForbidden, map[string]string{"message": "no mod"}, "refused to withdraw this request (403)"},
 		{http.StatusTooManyRequests, map[string]string{"message": "slow"}, "rate limited"},
 		{http.StatusServiceUnavailable, map[string]string{"message": "Apps are not enabled"}, "apps unavailable (503)"},
 		{http.StatusInternalServerError, map[string]string{"message": "boom"}, "server returned 500"},

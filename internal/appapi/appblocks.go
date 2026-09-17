@@ -1658,7 +1658,7 @@ func cloneInfoError(status int, raw []byte) (err error) {
 	}
 	switch status {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("not authenticated — run `civitai login` (or set CIVITAI_TOKEN): %s", msg)
+		return unauthorizedError(msg)
 	case http.StatusForbidden:
 		return fmt.Errorf("not permitted (are you the app owner, and is Apps enabled for your account?): %s", msg)
 	case http.StatusNotFound:
@@ -1905,7 +1905,7 @@ func devTokenError(status int, raw []byte) (err error) {
 		}
 		return fmt.Errorf("app not found (404): %s — check the slug. (dev-token mints from your local block.manifest.json; a 404 means the slug is registered to a different account.): %w", msg, ErrSlugRegisteredToOtherAccount)
 	case http.StatusUnauthorized:
-		return fmt.Errorf("not logged in (401): %s — run `civitai login` (or set CIVITAI_TOKEN)", msg)
+		return unauthorizedError(msg)
 	case http.StatusForbidden:
 		return fmt.Errorf("not authorized (403): %s — minting needs an invite (invite-only beta) AND a credential carrying the AI Services scopes: `civitai login --scopes generate` or a full-scope personal API key. A DEFAULT OAuth `civitai login` token can't mint a spend token (check with `civitai whoami`)", msg)
 	case http.StatusTooManyRequests:
@@ -2273,7 +2273,7 @@ func devTunnelError(status int, raw []byte) (err error) {
 		// message on this path is the origin-gate string ("Please use the public
 		// API instead"), which is misleading to a CLI user. Drop it — the only
 		// action is `civitai login`.
-		return fmt.Errorf("not logged in (401) — run `civitai login` (or set CIVITAI_TOKEN)")
+		return unauthorizedError("")
 	case http.StatusForbidden:
 		return &DevTunnelForbiddenError{ServerMsg: msg, InsufficientScope: isInsufficientScopeMsg(msg)}
 	case http.StatusNotFound:
@@ -2304,8 +2304,29 @@ func withdrawError(status int, raw []byte) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
 	msg := serverMessage(raw)
 	switch status {
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("not authorized (check your API key / Apps invite) (%d): %s", status, msg)
+	case http.StatusUnauthorized:
+		return unauthorizedError(msg)
+	case http.StatusForbidden:
+		// 🔴 SPLIT FROM THE 401 ON PURPOSE. These shared one arm and one message —
+		// "not authorized (check your API key / Apps invite)" — which named no
+		// command and merged two problems with different remedies: a 401 is a
+		// credential the server did not accept, a 403 is one it accepted and
+		// refused to act on. Logging in again can fix the first; it may or may
+		// not fix the second.
+		//
+		// 🔴 AND THIS ARM HEDGES ON PURPOSE — an earlier version of it did not,
+		// and asserted "withdrawing needs Apps-author access (invite-only beta);
+		// check which account you are on". Nothing sources that. WithdrawPath's
+		// own vendored note above records 200/404/409 and NO 403 at all, and it
+		// puts the not-yours case on **404** — so the one cause that message
+		// named is the one the route does not use. Meanwhile listingError's
+		// isInsufficientScopeMsg arm proves this token family DOES 403 for a
+		// stale scope, whose remedy is re-running `civitai login`, the opposite
+		// of switching accounts. Naming both, hedged, is what the neighbouring
+		// under-determined 403s already do ("your account may lack Apps access",
+		// "are you the app owner, and is Apps enabled…?"). Tighten it only with a
+		// sourced server contract, and update the note above in the same commit.
+		return fmt.Errorf("the server refused to withdraw this request (403): %s — the credential was accepted and the action was not. Two things do this: a token that predates the Apps scope (re-run `civitai login`), or an account without Apps-author access (`civitai whoami` shows who you are). Note a request that is not yours answers 404, not 403", msg)
 	case http.StatusNotFound:
 		return fmt.Errorf("publish request not found (or not yours) (404): %s", msg)
 	case http.StatusConflict:
@@ -2330,7 +2351,7 @@ func submissionsError(status int, raw []byte, id, blockID string) (err error) {
 	msg := serverMessage(raw)
 	switch status {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("not logged in (401): %s — run `civitai login`", msg)
+		return unauthorizedError(msg)
 	case http.StatusForbidden:
 		return fmt.Errorf("apps access required — invite-only beta (403): %s", msg)
 	case http.StatusNotFound:
@@ -2378,7 +2399,7 @@ func serverError(status int, raw []byte) (err error) {
 	msg := serverMessage(raw)
 	switch status {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("unauthorized (401): %s — check your token with `civitai login`", msg)
+		return unauthorizedError(msg)
 	case http.StatusForbidden:
 		return fmt.Errorf("forbidden (403): %s — your account may lack Apps access", msg)
 	case http.StatusServiceUnavailable:
