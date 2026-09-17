@@ -20,8 +20,15 @@ import (
 // internal/cmd holds the behavioural half — that the past-tense block does not
 // print — and it would stay green if this tag were attached for the wrong
 // reason, or attached always. What is asserted here is the RELATIONSHIP: the tag
-// is present exactly when no request bytes reached the network, and absent when
-// they did.
+// is present exactly when THE REQUEST NEVER REACHED THE CONNECTION, and absent
+// when it did.
+//
+// ⚠ NOT "when no bytes reached the network" — that is the retracted wording, and
+// this header carried it for a round after the code stopped meaning it. A
+// request the transport began writing and could not finish is NOT tagged; see
+// submitRequestSentTrace and TestSubmitVersionDoesNotTagWhenTheWriteWasCutShort.
+// A maintainer deriving the invariant from a file header is how the narrowing
+// that test exists to forbid would come back.
 
 // errTokenSource fails the way internal/auth does when an OAuth refresh succeeds
 // over the network but persisting the new tokens to disk does not.
@@ -200,13 +207,24 @@ func TestSubmitVersionDoesNotTagWhenTheFailureCameAfterTheWrite(t *testing.T) {
 // / 233,266 / 204,594 body bytes when the CLI said "nothing was uploaded". The
 // PR about the CLI making false claims about bytes made one.
 //
-// The assertion holds whichever way the race lands — if the whole body fits in
-// the socket buffer before the deadline, WroteRequest fires cleanly and the tag
-// is equally wrong — so this is not a timing-dependent test. What it pins is
-// that the tag means "the request never reached the connection", full stop.
+// 🔴 THE CONTROL COUNTS BYTES ON THE CLIENT SIDE, AND IT HAD TO. Round 2 caught
+// the first version asserting only that the SERVER received something — which a
+// run where the whole body wrote cleanly into socket buffers also satisfies,
+// since the handler stops reading either way. On such a host the test passes
+// while the mutant it is credited with killing survives: the ASSERTION holding
+// either way does not make the KILL hold either way. A counting net.Conn makes
+// the difference observable, and the control was watched to fire — draining the
+// body in the handler produces "the client wrote 8389316 of 8388627 body bytes".
 func TestSubmitVersionDoesNotTagWhenTheWriteWasCutShort(t *testing.T) {
-	var received atomic.Int64
+	var received, written atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "submissions") {
+			// The recovery poll's route, answered immediately: it shares this
+			// handler, and letting it reach the stall below cost ~6s per run.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"submissions":[]}`))
+			return
+		}
 		buf := make([]byte, 32<<10)
 		for i := 0; i < 8; i++ {
 			n, err := r.Body.Read(buf)
@@ -220,7 +238,17 @@ func TestSubmitVersionDoesNotTagWhenTheWriteWasCutShort(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	base := &net.Dialer{}
 	c := New(srv.URL, "tok", "/api/blocks/submit-version")
+	c.HTTP = &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := base.DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			return &countingConn{Conn: conn, written: &written}, nil
+		},
+	}}
 	c.SubmitTimeout = 900 * time.Millisecond
 	zero := time.Duration(0)
 	c.SubmitPollDelay = &zero
@@ -228,7 +256,8 @@ func TestSubmitVersionDoesNotTagWhenTheWriteWasCutShort(t *testing.T) {
 	// 6 MiB: big enough that the write cannot complete into a socket buffer,
 	// small enough that base64 keeps it under MaxSubmitBodyBytes — over that, the
 	// ceiling refusal fires first and this test measures nothing.
-	_, err := c.SubmitVersion(context.Background(), make([]byte, 6<<20), "demo", "0.1.0", Provenance{})
+	zip := make([]byte, 6<<20)
+	_, err := c.SubmitVersion(context.Background(), zip, "demo", "0.1.0", Provenance{})
 	if err == nil {
 		t.Fatal("a submit that times out mid-upload must fail")
 	}
@@ -239,12 +268,32 @@ func TestSubmitVersionDoesNotTagWhenTheWriteWasCutShort(t *testing.T) {
 		t.Fatalf("CONTROL failure: the server received 0 body bytes, so this run is not the "+
 			"cut-short case it claims to measure: %v", err)
 	}
+	if got, full := written.Load(), int64(SubmitBodySize(len(zip), Provenance{})); got >= full {
+		t.Fatalf("CONTROL failure: the client wrote %d of %d body bytes — the transfer COMPLETED, "+
+			"so this run does not exercise a cut-short write and the mutant it is credited with "+
+			"killing would survive here. The stall is not holding.", got, full)
+	}
 	if errors.Is(err, ErrNothingSent) {
 		t.Errorf("ErrNothingSent was attached to a submit whose body the server had already read "+
 			"%d bytes of. The tag suppresses the entry-list diagnosis and, on the timeout arm, "+
 			"selects a message asserting nothing was uploaded — both false here, and the second is "+
 			"the exact defect issue #637 exists to remove.\ngot: %v", received.Load(), err)
 	}
+}
+
+// countingConn counts the bytes the CLIENT actually wrote to the socket. The
+// server's read count cannot answer that: a handler that stops reading leaves
+// the rest in kernel buffers, so "the server got some" is true both when the
+// write was cut short and when it completed.
+type countingConn struct {
+	net.Conn
+	written *atomic.Int64
+}
+
+func (c *countingConn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	c.written.Add(int64(n))
+	return n, err
 }
 
 // TestSubmitVersionKeepsTheSentFactAcrossA401Retry pins the STICKINESS of the

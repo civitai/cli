@@ -18,7 +18,13 @@ import (
 )
 
 // This file is the behavioural half of issue #637: the past-tense block must be
-// UNREACHABLE for a failure in which no request bytes left this machine.
+// UNREACHABLE for a failure whose request never reached the connection.
+//
+// ⚠ "never reached the connection", NOT "nothing left this machine" — the second
+// is the retracted wording, and this header carried it for a round after the
+// code stopped meaning it. A transfer cut short DID put bytes on the wire, is
+// not tagged, and prints the block; what the block says about the size is an
+// upper bound, which is why printSubmitSizeDiagnosis says "up to".
 //
 // 🔴 IT DRIVES THE REAL appapi.Client, NOT THE FAKE Submitter, AND THAT IS THE
 // WHOLE POINT. The defect lives between internal/auth, internal/appapi and
@@ -65,13 +71,17 @@ func doUploadStderr(t *testing.T, client appapi.Submitter) (string, error) {
 	c.SetOut(&bytes.Buffer{})
 	c.SetErr(&errBuf)
 	m := &manifest.Manifest{BlockID: "demo", Version: "0.1.0", Name: "Demo"}
-	err := doUpload(c, client, []byte("PRETEND-ZIP-BYTES"), m, "https://civitai.com/", appapi.Provenance{})
+	err := doUpload(c, client, zipPayload, m, "https://civitai.com/", appapi.Provenance{})
 	return errBuf.String(), err
 }
 
 // pastTenseBlock is the header printSubmitSizeDiagnosis opens with. Taken from
 // app_submit.go rather than retyped: a reword there must move this assertion.
 const pastTenseBlock = "What this CLI sent"
+
+// zipPayload is the bundle every case here hands doUpload. Named so the size
+// assertion below derives its expected line from the same bytes the run used.
+var zipPayload = []byte("PRETEND-ZIP-BYTES")
 
 // TestSubmitDiagnosisPrintsWhenBytesReallyLeft is the POSITIVE CONTROL for the
 // three suppression cases below, and it is not optional.
@@ -98,6 +108,22 @@ func TestSubmitDiagnosisPrintsWhenBytesReallyLeft(t *testing.T) {
 		t.Errorf("a 500 AFTER the request went out must still print %q — that is the #423 case the "+
 			"block exists for, and suppressing it here would fix #637 by deleting the feature.\n"+
 			"stderr:\n%s", pastTenseBlock, stderr)
+	}
+
+	// 🔴 AND THE COUNT IS PRESENTED AS AN UPPER BOUND, WHICH IS A SEPARATE CLAIM
+	// AND WAS UNPINNED UNTIL A MUTANT SAID SO. app_submit_size_test.go asserts the
+	// line CONTAINS "<n> bytes on the wire", which is satisfied with or without
+	// the qualifier — so deleting it survived the whole battery. The qualifier is
+	// load-bearing since #637 widened when this block prints: it now prints for a
+	// transfer cut short, where the body size is what the CLI BUILT and more than
+	// what arrived (measured: 8,388,627 printed against 233,266 received). The
+	// whole line is constructed from the derived size rather than retyped, so a
+	// reword fails and a change of arithmetic moves with it.
+	wantLine := fmt.Sprintf("up to %d bytes on the wire — a %d-byte zip, base64-encoded into a JSON body.",
+		appapi.SubmitBodySize(len(zipPayload), appapi.Provenance{}), len(zipPayload))
+	if !strings.Contains(stderr, wantLine) {
+		t.Errorf("the size line is not the upper-bound form.\nwant verbatim:\n  %s\nstderr:\n%s",
+			wantLine, stderr)
 	}
 }
 

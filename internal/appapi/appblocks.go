@@ -911,9 +911,20 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 	// it. TestSubmitVersionKeepsTheSentFactAcrossA401Retry pins it.
 	//
 	// Atomic because httptrace callbacks run on the transport's write goroutine,
-	// not on this one. net/http fires WroteRequest on writeLoop before delivering
-	// the write result to roundTrip, so the read after authedDoWith returns is
-	// ordered as well as safe.
+	// not on this one.
+	//
+	// ⚠ SAFE ALWAYS; ORDERED ON HTTP/1 ONLY, AND PRODUCTION IS h2. On HTTP/1 the
+	// hook fires inside Request.write and every error return from
+	// persistConn.roundTrip goes through mapRoundTripError, which waits on
+	// writeLoopDone — so the read below cannot precede it. The h2 path gives no
+	// such guarantee: http2ClientConn.roundTrip's ctx.Done()/reqCancel cases
+	// return without waiting for the request goroutine, so the hook can in
+	// principle land after this read. Probed 3/3 on h2 and 3/3 on h1 with the
+	// flag already set, and not reproduced — reported as an unproven ordering
+	// rather than a known defect. If it ever loses, the losing case is an
+	// ordinary cancellation mid-upload (Ctrl-C) reading !sent and suppressing a
+	// block it should have printed: the conservative direction, and never the
+	// false-claim direction #637 is about.
 	//
 	// It only fires under an *http.Transport. A client whose Transport is a
 	// custom RoundTripper never triggers the trace, so every failure would be

@@ -1663,7 +1663,7 @@ naming nothing size-shaped. The CLI adds what it knows on top:
 Error: server returned 400: Invalid JSON
 
 What this CLI sent (it cannot tell whether that is why the submit failed):
-  10935065 bytes on the wire — a 8201270-byte zip, base64-encoded into a JSON body.
+  up to 10935065 bytes on the wire — a 8201270-byte zip, base64-encoded into a JSON body.
   largest entries in the bundle (compressed / original):
        2411008 / 2418844     docs/screenshots/flow-01.png
        1904772 / 1911233     docs/screenshots/flow-02.png
