@@ -372,13 +372,28 @@ var readmeTOCExemptSections = map[string]string{
 //
 // 🔴 It is what makes the exemption map safe to hold a rule instead of a list.
 // The failure mode of a parent-keyed exemption is that it is TOO BROAD — naming
-// `Generate` would silently retire 12 subsections and the gate would go on
-// printing a green PASS over a document it had stopped reading. This floor turns
-// that into a red run: the real in-scope count is 33, so exempting any of the
-// substantial sections (`Generate` 12, `Command reference` 6, `Install` 5,
-// `Scripting with --json` 5) drops it under the floor and the guard says so by
-// name. It is set well below 33 so ordinary additions and deletions never trip
-// it.
+// `Generate` would silently retire its whole subsection tree and the gate would
+// go on printing a green PASS over a document it had stopped reading. This floor
+// turns the LARGEST such exemption into a red run.
+//
+// 🔴 IT DOES NOT CATCH EVERY EXEMPTION, AND A PREVIOUS VERSION OF THIS COMMENT
+// CLAIMED IT DID. It read: "the real in-scope count is 33, so exempting any of
+// the substantial sections (`Generate` 12, `Command reference` 6, `Install` 5,
+// `Scripting with --json` 5) drops it under the floor." Three things were wrong.
+// The count was never 33 — measured 41 before the phase-4 reorder and 35 after.
+// `Command reference` has NO `###` children at all since that reorder, so
+// exempting it would retire nothing. And at the real count only the largest
+// section crosses the floor; exempting any of the others leaves the gate green.
+// So this floor is a backstop against the worst case, NOT a proof that every
+// over-broad exemption is caught — treat a new exemption as a decision to
+// justify in its map entry, not as something this constant will police for you.
+//
+// Stated without a census on purpose, and that is the same lesson the 🔴 block
+// in TestREADMETableOfContentsCoversEverySection records one screen below: a
+// count in a comment is a claim nothing asserts on, so it goes stale silently
+// the next time a section is reorganised — which is exactly what happened here,
+// twice, the second time in the very PR that reorganised them. If you want the
+// number, run it.
 const readmeTOCMinSubsections = 25
 
 // TestREADMETableOfContentsCoversEverySection requires each top-level (`##`)
@@ -581,10 +596,17 @@ func TestREADMETableOfContentsListsNothingElse(t *testing.T) {
 
 // readmeCommandReferenceTable returns the body of `## Command reference` — the
 // heading to the next heading at the same or a higher level — and is the ONE
-// place that decides where that table ends. Two extractors read it:
-// readmeCommandTableSubjects below, and
-// readmeCommandSynopses in readme_command_synopsis_test.go. Until phase 4 each
-// open-coded the same bound, so each carried the same defect.
+// place that decides where that table ENDS. Two extractors need that bound:
+// readmeCommandTableSubjects below, and readmeCommandSynopses in
+// readme_command_synopsis_test.go. Until phase 4 each open-coded it, so each
+// carried the same defect.
+//
+// ⚠ A third site reads the same section — readme_install_accuracy_test.go's
+// `readmeSectionByAnchor(t, md, "command-reference")` — and deliberately does
+// NOT route through here: it slices the PREAMBLE above the table, so where the
+// section ends is not an input to it and it gains nothing from this function's
+// control. "ONE place" is a claim about the END bound, not about who may look
+// at the section.
 //
 // 🔴 THE BOUND USED TO BE "THE FIRST `### ` AFTER THE HEADING", AND THAT WAS
 // ONLY EVER A PROXY FOR THE END OF THE SECTION. It happened to be right because
@@ -611,9 +633,11 @@ func TestREADMETableOfContentsListsNothingElse(t *testing.T) {
 // and it strips fenced code first so a ``` block holding a `## ` line cannot cut
 // the body short either. Preferring to delete a parse over teaching it a better
 // bound is this arc's own lesson, applied to the parse that made it necessary.
-// Measured on the phase-4 tree: byte-identical to the `\n## ` scan it replaces
-// (10,304 B, 25 rows), because the section carries no fences today — the point
-// of using it is the day one is added.
+// Measured on the phase-4 tree, and the antecedent matters: what it REPLACES is
+// the `\n### ` scan, which returned 12,193 B. It is byte-identical to the
+// `\n## ` scan — the obvious alternative repair, NOT taken — at 10,304 B / 25
+// rows, because the section carries no fences today. The point of using the
+// anchor helper rather than that alternative is the day one is added.
 func readmeCommandReferenceTable(t *testing.T, md string) string {
 	t.Helper()
 	body := readmeSectionByAnchor(t, md, "command-reference")

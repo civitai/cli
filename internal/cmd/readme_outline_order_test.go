@@ -29,15 +29,24 @@ import (
 //
 // Both directions would have made the two agree and both are byte-neutral, so
 // this needs a reason, and the obvious one does not hold up. 🔴 THE ORIGINAL
-// REASON WAS A BYTE-DISTANCE READER MODEL, AND IT REFUTES ITSELF. It said a CI
-// author sent to `## Scripting with --json` had 160,391 bytes — 58% of the file
-// — before reaching `## Exit codes`, the contract their script branches on
+// REASON WAS A DISTANCE-BASED READER MODEL, AND IT REFUTES ITSELF. It said a CI
+// author sent to `## Scripting with --json` had 160,391 characters — 58% of the
+// file — before reaching `## Exit codes`, the contract their script branches on
 // (22,339 after). But the same argument dismissed the one reader the reorder
 // made WORSE (`## Download model files`, 64,782 -> 159,634) on the grounds that
 // they still have a Contents link. If a Contents link settles it for that
 // reader it settles it for the CI reader too, and the headline number is worth
 // nothing. Round 0 on #648 is what caught that; the numbers survive as history,
 // not as the justification.
+//
+// ⚠ CHARACTERS, not bytes, and every figure above shipped mislabelled `bytes`
+// until round 1 caught it. The file is UTF-8 with emoji and em dashes, so the
+// two differ: 160,391 chars is 161,628 bytes, 22,339 is 22,532, 64,782 is
+// 65,276, 159,634 is 160,868. They were produced by `awk`'s `length($0)`, which
+// counts characters in a UTF-8 locale. The percentage is unaffected. Recorded
+// rather than silently corrected because the same trap — Python's `len(str)` —
+// had already been hit and written up EARLIER IN THE SAME SESSION, and a lesson
+// that does not survive one session needs its instance kept beside it.
 //
 // The reason that does hold is structural, and it is the one to keep:
 // `## Contents` is not a flat list — it carries four editorial groups (**Get
@@ -67,6 +76,17 @@ import (
 // TestREADMETableOfContentsCoversEverySection requires to be present. If those
 // two ever disagreed about scope, the order check would be asserting a sequence
 // over a population the presence check does not police.
+// 🔴 `contents` is skipped on BOTH sides — here and in the TOC anchor list this
+// is compared against — and the symmetry is load-bearing rather than tidy.
+// TestREADMETableOfContentsCoversEverySection skips it too ("the TOC does not
+// list itself"), but TestREADMETableOfContentsListsNothingElse does NOT: it puts
+// `contents` in its in-scope set, so a `[Contents](#contents)` line in the TOC is
+// ALLOWED by the reverse guard. Skip it on one side only and that line makes the
+// populations differ by one, which sends the mismatch branch below to two guards
+// that are both green and name nothing. Measured by mutant: inserting that line
+// left …AnchorLinksResolve, …CoversEverySection and …ListsNothingElse all PASS
+// and only this test red, pointing at them. It fails SAFE — a confusing red, not
+// a false green — but the round it costs is real, so both sides drop it.
 func readmeOutlineOrder(t *testing.T, md string) []string {
 	t.Helper()
 	var out []string
@@ -106,7 +126,18 @@ func readmeOutlineOrder(t *testing.T, md string) []string {
 func TestREADMEContentsListsSectionsInDocumentOrder(t *testing.T) {
 	md := readREADME(t)
 	doc := readmeOutlineOrder(t, md)
-	toc := readmeContentsAnchors(t, md)
+
+	// The other half of the `contents` symmetry readmeOutlineOrder's comment
+	// explains. Filtered here rather than inside readmeContentsAnchors because
+	// that helper also feeds readmeContentsLinks, whose two callers DO have to
+	// see a self-link to judge it.
+	var toc []string
+	for _, slug := range readmeContentsAnchors(t, md) {
+		if slug == "contents" {
+			continue
+		}
+		toc = append(toc, slug)
+	}
 
 	// Positive control. Both extractors have their own floor already, but those
 	// floors are about each side in isolation; this one is about the COMPARISON
