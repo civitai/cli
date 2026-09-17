@@ -251,10 +251,16 @@ func TestREADMEAnchorLinksResolve(t *testing.T) {
 	}
 }
 
-// readmeContentsLinks returns the set of anchor slugs the "## Contents" list
-// links to. The block is delimited structurally — the `## Contents` heading to
+// readmeContentsAnchors returns the anchor slugs the "## Contents" list links
+// to, IN THE ORDER IT LISTS THEM, with repeats dropped after their first
+// appearance. The block is delimited structurally — the `## Contents` heading to
 // the next `## ` — so ordinary edits inside it do not move the bounds.
-func readmeContentsLinks(t *testing.T, md string) map[string]bool {
+//
+// Order is preserved here rather than in the caller because it is the thing
+// TestREADMEContentsListsSectionsInDocumentOrder asserts on, and a map cannot
+// carry it. readmeContentsLinks derives the set from this, so the two views of
+// the Contents block cannot disagree about what is in it.
+func readmeContentsAnchors(t *testing.T, md string) []string {
 	t.Helper()
 	const heading = "\n## Contents\n"
 	i := strings.Index(md, heading)
@@ -266,15 +272,31 @@ func readmeContentsLinks(t *testing.T, md string) map[string]bool {
 		toc = toc[:j]
 	}
 
-	linked := map[string]bool{}
-	for _, m := range readmeAnchorRe.FindAllStringSubmatch(toc, -1) {
-		linked[m[1]] = true
+	seen := map[string]bool{}
+	var ordered []string
+	for _, m := range readmeAnchorRe.FindAllStringSubmatch(stripFencedCode(toc), -1) {
+		if seen[m[1]] {
+			continue
+		}
+		seen[m[1]] = true
+		ordered = append(ordered, m[1])
 	}
 	// Positive control: a Contents block that extracted to nothing would report
 	// every section as missing (loud) — but it would report every TOC entry as
 	// legitimate (silent), which is the reverse direction below.
-	if len(linked) < 20 {
-		t.Fatalf("the Contents section holds only %d links — the extractor is reading the wrong block", len(linked))
+	if len(ordered) < 20 {
+		t.Fatalf("the Contents section holds only %d links — the extractor is reading the wrong block", len(ordered))
+	}
+	return ordered
+}
+
+// readmeContentsLinks returns the set of anchor slugs the "## Contents" list
+// links to.
+func readmeContentsLinks(t *testing.T, md string) map[string]bool {
+	t.Helper()
+	linked := map[string]bool{}
+	for _, slug := range readmeContentsAnchors(t, md) {
+		linked[slug] = true
 	}
 	return linked
 }
@@ -406,10 +428,15 @@ const readmeTOCMinSubsections = 25
 // cheaper and more honest answer than a stale literal.
 //
 // This asserts PRESENCE — that a heading has a TOC line pointing at its anchor.
-// It says nothing about whether the TOC's ORDER matches the document's, or about
-// whether the label beside the link still describes the section. Neither is a
-// hole this guard can close, and both are stated so a green run is not read as
-// "the TOC is correct".
+// It says nothing about whether the label beside the link still describes the
+// section, which remains a hole this guard cannot close and is stated so a green
+// run is not read as "the TOC is correct".
+//
+// ORDER used to be named here as a second such hole. It is not one any more:
+// TestREADMEContentsListsSectionsInDocumentOrder (readme_outline_order_test.go)
+// asserts that the sequence this guard's linked set is drawn from is the
+// document's own sequence. The two are deliberately separate tests — presence
+// and order fail for different reasons and a reader needs to be told which.
 func TestREADMETableOfContentsCoversEverySection(t *testing.T) {
 	md := readREADME(t)
 	linked := readmeContentsLinks(t, md)
@@ -552,6 +579,49 @@ func TestREADMETableOfContentsListsNothingElse(t *testing.T) {
 	}
 }
 
+// readmeCommandReferenceTable returns the body of `## Command reference` — the
+// heading to the next heading at the same or a higher level — and is the ONE
+// place that decides where that table ends. Two extractors read it:
+// readmeCommandTableSubjects below, and
+// readmeCommandSynopses in readme_command_synopsis_test.go. Until phase 4 each
+// open-coded the same bound, so each carried the same defect.
+//
+// 🔴 THE BOUND USED TO BE "THE FIRST `### ` AFTER THE HEADING", AND THAT WAS
+// ONLY EVER A PROXY FOR THE END OF THE SECTION. It happened to be right because
+// six App-authoring subsections were nested under this section, so its first
+// `###` was also its last line. Phase 4 promoted those six to `##` — and the
+// proxy did not fail, it silently WIDENED: the next `###` in the file was now
+// the first subsection of `## Set up your coding agent`, so the extracted body
+// grew from 10,304 B to 12,193 B and kept reading 1,889 bytes that are not the
+// table. The whole suite stayed GREEN, because the extra window happened to
+// contain no `| `civitai` row. That is the reassuring direction: a scoping bug
+// that costs nothing today is still a guard reporting a scope it does not have.
+//
+// The replacement is not a better raw scan, it is NO raw scan:
+// readmeSectionByAnchor already bounds a section at the next heading of the same
+// or a higher LEVEL, which is the rule the old `### ` scan was standing in for,
+// and it strips fenced code first so a ``` block holding a `## ` line cannot cut
+// the body short either. Preferring to delete a parse over teaching it a better
+// bound is this arc's own lesson, applied to the parse that made it necessary.
+// Measured on the phase-4 tree: byte-identical to the `\n## ` scan it replaces
+// (10,304 B, 25 rows), because the section carries no fences today — the point
+// of using it is the day one is added.
+func readmeCommandReferenceTable(t *testing.T, md string) string {
+	t.Helper()
+	body := readmeSectionByAnchor(t, md, "command-reference")
+	// Positive control. A bound that matched at offset 0, or a heading that had
+	// been renamed out from under the Index above, yields a body with no table in
+	// it — and an empty row set reads to every caller below as "the table
+	// documents nothing", which their own floors then report as their own
+	// failure rather than as this extractor's.
+	if !strings.Contains(body, "\n| `civitai") {
+		t.Fatalf("CONTROL failure: the `## Command reference` body holds no `| `civitai` row — "+
+			"this extractor is reading the wrong block, so every verdict derived from it is about "+
+			"text that is not the command table:\n%s", body)
+	}
+	return body
+}
+
 // readmeCommandTableSubjects returns the first-column cell of every
 // `| `civitai …` |` row inside the "## Command reference" table.
 //
@@ -561,15 +631,7 @@ func TestREADMETableOfContentsListsNothingElse(t *testing.T) {
 // is merely mentioned somewhere.
 func readmeCommandTableSubjects(t *testing.T, md string) []string {
 	t.Helper()
-	const heading = "\n## Command reference\n"
-	i := strings.Index(md, heading)
-	if i < 0 {
-		t.Fatal("README.md has no `## Command reference` heading")
-	}
-	body := md[i+len(heading):]
-	if j := strings.Index(body, "\n### "); j >= 0 {
-		body = body[:j]
-	}
+	body := readmeCommandReferenceTable(t, md)
 
 	var subjects []string
 	for _, line := range strings.Split(body, "\n") {
