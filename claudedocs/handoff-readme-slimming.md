@@ -30,69 +30,53 @@ Operator's words: *"readme is still way overly verbose."*
 
 | question | answer |
 |---|---|
-| Does developer.civitai.com override *"user-contract content never moves out"*? | **Retire the policy — link out** ⚠ *but see the resolved investigation below: the site is wrong often enough that "link out" is conditional on measuring the target* |
+| Does developer.civitai.com override *"user-contract content never moves out"*? | **Retire the policy — link out** ⚠ *conditional on measuring the target: see the correction block below, where 2 of 4 drift rows were themselves false* |
 | How much read path stays local? | **Short quickstart + pointer** (install one-liner, `civitai login`, one search, one download, then link) |
 | Are `Submit & auth` + `Generate` in scope? | **Include in this pass** (operator overrode the recommendation to defer) |
 | Audit depth? | **Round 0 at PR-create + one correctness round** — not an open ladder |
 | **Added mid-session:** does `## Install` link out too? | **No — keep it local.** Linking it out would retire `TestREADMEHomebrewSectionMatchesTheReleaseConfig` and send Linux readers to a `brew install` that cannot work |
 
 **Rank 1 (L1+L2) is DELIVERED as [#656](https://github.com/civitai/cli/pull/656)** — branch
-`docs/readme-slim-l1-l2`, head `7cff466`, `MERGEABLE`/`CLEAN`, **13/13 checks terminal and
-green** including all five required contexts. Claimed as `readme-slimming-1` before any edit;
-the `gh pr list --state open` sweep beside it found only #602 (unrelated, another session's).
+`docs/readme-slim-l1-l2`, head **`678bd0b`** (2 commits), `MERGEABLE`/`CLEAN`, **13/13 checks
+terminal and green** including all five required contexts. Claimed as `readme-slimming-1`
+before any edit; the open-PR sweep beside it found only #602 (unrelated).
 
-🔴 **THE −37 KB FLOOR WAS WRONG, AND THAT IS THIS SESSION'S MAIN RESULT.** Measured yield is
-**−5,294 B** (277,572 → 272,278, **−1.91%**). The floor is not a near-miss to be recovered by
-trying harder — it rested on two premises that were measured false against the live site and a
-binary built from the same commit (`v0.1.105-37-gb6e894b`). **Do not re-derive it for L3/L4.**
+**Measured yield: −5,480 B** (277,572 → **272,092**, −1.97%).
 
-| premise the floor assumed | measured |
-|---|---|
-| `## Scripting with --json` (10,426 B) deletes wholesale | only **2,780 B** is site-covered; the other **7,646 B** — the read-body repair (#525), numeric-username (#513), `### Generation --json`, the 🔴 `app listing status --json` side-effect warning — is on no site page |
-| `## Download model files` (12,515) + `## Browse the public API` (5,798) are "duplicated" | the site is **one sentence per topic**, with **no type→folder table** and nothing on the ambiguous-id stop, `--force`, `--yes`, pickle/executable safety, the ControlNet note, SHA256-integrity-≠-authenticity, filename sanitisation, retry/backoff or exit codes |
-
-Per-section delta actually landed:
+⚠ **Three different totals were reported during this PR** — `−5,294`, `−5,293`, then
+`−5,480`. Only the last is correct, and the first two are the arc's own defect class: each
+was measured on a tree the same PR then edited again. **Quote a byte figure only from the
+merge commit.**
 
 | Δ B | section |
 |---:|---|
-| −2,075 | `## Set up your coding agent` — L1's two subsections; `agent-setup --help` carries the content, verified string by string |
-| −2,334 | `## Scripting with --json` — the four site-covered recipe subsections; preamble + `### Generation --json` **kept** |
+| −2,074 | `## Set up your coding agent` — L1's two subsections; `agent-setup --help` carries the content |
+| −2,370 | `## Scripting with --json` — the four site-covered recipe subsections; preamble + `### Generation --json` **kept** |
+| −429 | `## Browse the public API` — base-model tutorial only; the command **table stays** (anchor target for 6 inbound links, pinned by two guards) |
 | −353 | `## Contents` |
 | −227 | `## Quickstart: browse & download` → short form (operator's spec) |
-| −403 | `## Browse the public API` — base-model tutorial only; the command **table stays** (anchor target for 6 inbound links, pinned by `TestREADMECommandReferencePointsAtTheReadCommandTable`) |
-| **+98** | `## Download model files` — a signpost, not a cut; the +98 states what the guide does NOT carry so the next pass cannot re-derive the false premise |
+| −27 | `## Download model files` — a signpost, not a cut |
 
-**Operator decision taken mid-session, recorded here because the PR body is not durable:**
-`## Install` **stays local**. Linking it out would (a) retire
-`TestREADMEHomebrewSectionMatchesTheReleaseConfig`, a bidirectional guard against
-`.goreleaser.yaml`, and (b) send Linux readers to a `brew install` that cannot work. The
-operator was given three options and chose "keep Install local, delete the rest".
-
-**New guard shipped:** `internal/cmd/readme_external_links_test.go` — the handoff's standing
-decision that *a link-liveness guard ships WITH the links*. Network-gated on
-`CIVITAI_CHECK_README_LINKS=1`; 404/410 FAIL, unreachable/5xx/401/403/429 SKIP. Floor at the
-**actual** count (37), cross-checked against an independent shell extraction.
-
-**Also changed:** `download_example_id_test.go` README `minHits` 8→5 (the actual count,
-justified in the commit); `claudedocs/readme-reduction-plan.md` retires the
-*"user contract content never moves out"* clause for site-covered content and records the
-measurements above.
+🔴 **THE −37 KB FLOOR IS REFUTED AND MUST NOT BE RE-DERIVED FOR L3/L4.** It rested on two
+premises measured false: that `## Scripting with --json` (10,426 B) deletes wholesale (only
+**2,780 B** is site-covered), and that `## Download model files` + `## Browse the public API`
+are duplicated (the site is **one sentence per topic**, with no type→folder table and nothing
+on the ambiguous-id stop, the same-named-file refusal, pickle safety, the ControlNet note,
+SHA256-integrity-≠-authenticity, filename sanitisation, the `429`/`Retry-After` rule or exit
+codes). A matching heading list overstates the duplication by roughly 4×.
 
 ### Verification status
 
-`go test ./... -count=1` **21 packages green** · wide README gate `ok`, **82** tests ·
-`make ci` green · `make ci-shallow` **21/21** run against the COMMIT (not a dirty tree) ·
-`golangci-lint run` **0 issues** (locally **2.13.2**; CI pins **2.12.2**, and `lint` is not a
-required context — read the PR's own run) · live link check **35 fetched, 2 skipped, 0 dead**.
+`go test ./... -count=1` **21 packages green** · `make ci-shallow` **21/21** against the
+commit · `golangci-lint` **0 issues** (locally 2.13.2; CI pins 2.12.2 and `lint` reports
+without gating) · live link check **38 extracted / 35 fetched / 3 skipped / 0 dead**.
 
-⚠ **IN FLIGHT: round 0 of the audit was dispatched and had not returned when this doc was
-written.** The operator's recorded audit depth for this arc is *"Round 0 at PR-create + one
-correctness round — not an open ladder"*, so **one correctness round is still owed** before
-merge. Do not merge #656 on the green checks alone.
+**Audit status:** round 0 ran at PR-create and its five findings are all fixed in `678bd0b`;
+its record is posted as a PR comment. **The one correctness round the operator scoped was
+dispatched and had not returned when this was written.** Do not merge #656 until it has.
 
-⚠ **No `clawgate-task:` field was written.** `clawgate_handoff.sh resolve` returned **rc=5,
-nothing resolved**. An unknown session id answers `200` with an EMPTY ARRAY, so this zero
-cannot distinguish "touched no task" from "wrong id" — it is not a clean bill of health.
+⚠ **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` returned **rc=5**. An unknown
+session id also answers `200` with an empty array, so this zero is not a clean bill of health.
 
 ## Open investigations — live diagnosis state
 
@@ -188,6 +172,37 @@ is a different and larger problem than lag.
 - **Next probe:** none needed for L1+L2. For L3/L4, **fetch the target page and diff it
   against the binary BEFORE quoting any link-out figure** — a matching heading list overstates
   the duplication by roughly 4×, measured.
+
+### 🔴 CORRECTION 2026-09-17 — two of the four site-drift rows above are FALSE, and the mechanism is the lesson
+- as-of: 2026-09-17
+
+🔴 **AMENDS the block `✅ RESOLVED 2026-09-17 — does linking out expose readers to STALE
+docs? YES, AND WORSE`. Its rows 2 and 4 are RETRACTED.** That block's conclusions all
+survive; two of its four supporting measurements do not. Round 0 of #656 refuted them.
+
+- **How they got in — this is the durable half.** Both came from an **LLM summary of**
+  `developer.civitai.com/site/guide/cli`, not from the page. Asked to list the download
+  flags, the summarizer folded the **read** commands' `--json` into the Download section
+  and dropped a whole sentence. Neither error is visible in its output, and both read
+  exactly like a measurement. `via: measurement` (raw `curl` + tag-strip + sentence grep,
+  re-run 2026-09-17).
+- ❌ **RETRACTED — "the site documents `--json` on `download`".** Every `--json` mention on
+  the page is scoped to read subcommands (*"Every **read** subcommand accepts `--json`"*),
+  and the page twice excludes download from that set. The **binary** half is true
+  (`civitai download --json` → `Error: unknown flag: --json`); the site never claimed
+  otherwise.
+- ❌ **RETRACTED — "the site omits the Prebuilt binary install method".** The page carries
+  *"Prebuilt binaries for linux/macOS/windows × amd64/arm64 are on the GitHub Releases
+  page."*
+- ✅ **STILL TRUE:** the Homebrew `macOS / Linux` row — the one `## Install` was kept local
+  for — and the missing `download --force` / `--yes`.
+- ✅ **NEW, and worse than either retraction, found only by reading the raw page:** the site
+  states `civitai model-versions get 999999999 --json` **exits 1**. Measured, the binary
+  exits **4**, and `README.md` says 4 and is correct. That is a **scripting contract**, so
+  the site's version is the damaging direction. `via: command`.
+- 🔴 **Next probe, and the rule that replaces the old one: `curl` the page, strip tags, grep
+  the sentences. NEVER diff against a summary of a page.** A summarizer reorganising a flag
+  list is invisible in its output.
 
 ## Next steps (ranked)
 
@@ -349,6 +364,58 @@ Before deleting any `##`, grep for inbound anchors **and** for Go guards reading
   line for every `##`/`###` and every anchor to resolve, and `readme_outline_order_test.go`
   requires the TOC ORDER to match the document. Budget the Contents edits as part of the cut.
 
+### Added 2026-09-17 — the round-0 corrections to #656, and the class they all share
+
+**Round 0 found five things. Every one was a claim wider than its evidence — the same class
+this arc has now recorded in five consecutive PRs, committed again by the session
+documenting it.**
+
+- 🔴 **Two "measured" site rows taken from an LLM summary** (above). The transferable rule:
+  a summarizer's output is not a measurement, and it fails in the *reassuring* direction —
+  it produced a clean, plausible flag table that simply was not the page's.
+- 🔴 **The byte figure was measured on a tree the same PR then edited again.** `−5,294` was
+  taken before a one-byte blank-line fix and never re-derived; the per-section table was
+  never re-run at all. Final, cross-checked with two instruments: **−5,480 B**
+  (277,572 → **272,092**). The arc already had this rule — *"quote a byte figure ONLY from
+  the merge commit"* — and it was broken anyway.
+- 🔴 **Three README clauses asserted what a third-party page does NOT carry.** The PR
+  shipped a guard for the positive claim (the URL resolves) and **none** for the negative
+  one — and the negative one was what justified keeping 12,515 B. If the docs team adds a
+  type→folder table, the README becomes false and nothing notices. All three dropped; the
+  measurement's home is `readme-reduction-plan.md`. This is what turned
+  `## Download model files` from **+98 B** to **−27 B**.
+- 🔴 **A guard comment certified a discipline the guard did not follow.** `notAPage`'s
+  header read *"EVERY ENTRY HERE WAS PUT IN BY A MEASURED RED"* — false of two of its three
+  entries. That is the sentence that stops the next reader questioning an entry.
+  `orchestration.civitai.com/mcp` turned out to be **inert** (measured 401, which the 401
+  arm already SKIPs); `mcp.civitai.com/mcp` is load-bearing for a different reason than
+  stated (measured **405**, which falls through to the `>= 400` arm).
+- 🔴 **An anti-vacuity floor set on the EXACT count is a ratchet, not a control.**
+  `readmeMinExternalURLs` was 37, the live count, citing #652's *"set the floor at the
+  ACTUAL count"*. But #652's lesson was about a floor too **slack** to catch a mutant
+  de-converting two arms; the property at risk here is *"is the extractor still reading
+  URLs?"*, which a slack floor answers just as well. On the exact count, any honest link
+  removal goes red telling you to lower the constant. Now **20**, with the `mustFind`
+  positive control doing the actual work. **A rule imported from a neighbouring incident
+  can overshoot; check the property matches before reusing the number.**
+
+### Added 2026-09-17 — the new link guard is not wired to anything, and that is OPEN
+
+`CIVITAI_CHECK_README_LINKS` appears in exactly one file — the test that defines it. No CI
+job and no cron sets it. The precedent it deliberately copies does **not** have this gap:
+`pins_guard_test.go`'s `CIVITAI_CHECK_PUBLISHED_PINS` is set by the dedicated
+`pins-vs-published` job.
+
+**State it precisely, because the PR must not over-claim:** the **extraction** half
+(`TestREADMEExternalURLsAreExtractable`) runs under `go test ./...` in `build-test` and does
+gate. The **liveness** half is operator-run only.
+
+🔴 **Left OPEN on purpose.** Fixing it means adding a scheduled workflow, and `AGENTS.md`
+puts `.github/workflows/*` under **"Ask first"**. Either wire a cron job on the
+`release-homebrew.yml` model, or delete the network half — what it must not do is read as
+coverage it does not provide. ⚠ And note `pins-vs-published` is the cautionary tale for a
+live-network **required** check: it froze every open PR twice in the previous arc.
+
 ## How to verify
 
 ```bash
@@ -357,34 +424,34 @@ Before deleting any `##`, grep for inbound anchors **and** for Go guards reading
 go test ./... -count=1                                   # 21 packages
 go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' -count=1
 go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' \
-  -count=1 -v | grep -c '^--- PASS\|^    --- PASS'      # 82 at 7cff466; must be > 0
+  -count=1 -v | grep -c '^--- PASS\|^    --- PASS'      # > 0
 
 # CI checks out at depth 1; this is the only local mirror of that. Reads COMMITTED
 # state only — commit first, or it measures the previous commit.
 make ci-shallow                                          # 21/21
 
-# the new link guard. Offline by default; this is the live run.
+# the link guard. Offline by default; this is the live run.
 CIVITAI_CHECK_README_LINKS=1 \
-  go test ./internal/cmd/ -run 'TestREADMEExternalURLs' -count=1 -v   # 35 fetched, 2 skipped, 0 dead
+  go test ./internal/cmd/ -run 'TestREADMEExternalURLs' -count=1 -v
+# 38 extracted / 35 fetched / 3 skipped / 0 dead at 678bd0b
 
-# 🔴 THE SITE-vs-BINARY PROBE — run this before quoting ANY link-out figure for L3/L4.
+# 🔴 THE SITE-vs-BINARY PROBE — run this before quoting ANY link-out figure for L3/L4,
+# and read the RAW PAGE. A summary of it produced two false "measured" rows in #656.
+curl -s -L https://developer.civitai.com/site/guide/cli -o /tmp/site.html
+python3 -c "import re,html,sys; s=open('/tmp/site.html',encoding='utf-8',errors='replace').read(); \
+  s=re.sub(r'<(script|style).*?</\1>','',s,flags=re.S|re.I); \
+  print(re.sub(r'\s+',' ',html.unescape(re.sub(r'<[^>]+>',' ',s))))" > /tmp/site.txt
+grep -o -i 'prebuilt binar[^.]*\.' /tmp/site.txt          # IS on the site — row 4 retracted
 make build
-./bin/civitai download --help | grep -c -- '--json'      # 0 — the site documents it anyway
-./bin/civitai download --json --dry-run 2>&1 | head -1   # Error: unknown flag: --json
-grep -nE '^(homebrew_casks|brews):' .goreleaser.yaml     # homebrew_casks only -> cask -> macOS only
-
-# 🔴 --help sizes: EXPLICIT ARGS. `$c` does not word-split in zsh and the error
-# output is 4,636 B, which reads exactly like a real help text.
-./bin/civitai generate --help | wc -c                    # 16,668
+./bin/civitai model-versions get 999999999 --json; echo "exit=$?"   # 4; the site says 1
+grep -nE '^(homebrew_casks|brews):' .goreleaser.yaml      # casks only -> macOS-only
 
 # 🔴 A RED `pins-vs-published` IS A FACT ABOUT npm UNTIL THIS SAYS OTHERWISE.
-# Run it on a CLEAN main tree; if it fails there, it is not your PR.
 CIVITAI_CHECK_PUBLISHED_PINS=1 \
   go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -count=1
 
 # lint is a SEPARATE CI job and NOT a required context; `make ci` does not run it.
-# CI pins v2.12.2; this host has 2.13.2, so a local zero is a claim about 2.13.2.
-nix-shell -p golangci-lint --run "golangci-lint run"
+nix-shell -p golangci-lint --run "golangci-lint run"      # 0 issues at 2.13.2; CI pins 2.12.2
 ```
 ## Defects (batched)
 
