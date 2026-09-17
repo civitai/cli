@@ -24,59 +24,64 @@ Operator's words: *"readme is still way overly verbose."*
 
 ## State now
 
-### The operator decisions (2026-09-17) — CARRIED FORWARD, still govern L3/L4
+🔴 **RANK 1 IS COMPLETE AND MERGE-READY. THE AUDIT LADDER IS CLOSED. NOT MERGED —
+that is the operator's call (see below).**
 
-🔴 **These are the arc's scoping answers. They did not expire when rank 1 shipped.**
+[#656](https://github.com/civitai/cli/pull/656) · branch `docs/readme-slim-l1-l2` · head
+**`4c69017`** (3 commits) · `MERGEABLE`/`CLEAN` · **13/13 checks terminal green**, all five
+required contexts included.
 
-| question | answer |
-|---|---|
-| Does developer.civitai.com override *"user-contract content never moves out"*? | **Retire the policy — link out** ⚠ *conditional on measuring the target: see the correction block below, where 2 of 4 drift rows were themselves false* |
-| How much read path stays local? | **Short quickstart + pointer** (install one-liner, `civitai login`, one search, one download, then link) |
-| Are `Submit & auth` + `Generate` in scope? | **Include in this pass** (operator overrode the recommendation to defer) |
-| Audit depth? | **Round 0 at PR-create + one correctness round** — not an open ladder |
-| **Added mid-session:** does `## Install` link out too? | **No — keep it local.** Linking it out would retire `TestREADMEHomebrewSectionMatchesTheReleaseConfig` and send Linux readers to a `brew install` that cannot work |
+**Measured yield: −5,111 B** (277,572 → **272,461**, −1.84%) at `4c69017`.
 
-**Rank 1 (L1+L2) is DELIVERED as [#656](https://github.com/civitai/cli/pull/656)** — branch
-`docs/readme-slim-l1-l2`, head **`678bd0b`** (2 commits), `MERGEABLE`/`CLEAN`, **13/13 checks
-terminal and green** including all five required contexts. Claimed as `readme-slimming-1`
-before any edit; the open-PR sweep beside it found only #602 (unrelated).
+⚠ **FOUR different totals were reported during this one PR** — −5,294, −5,293, −5,480,
+−5,111. Each was true when taken and wrong when quoted, because the PR kept being edited by
+its own audit rounds. **Quote a byte figure only from the merge commit.** The arc had this
+rule already and broke it four times in three hours.
 
-**Measured yield: −5,480 B** (277,572 → **272,092**, −1.97%).
+### Audit: closed, per the operator's scoped depth
 
-⚠ **Three different totals were reported during this PR** — `−5,294`, `−5,293`, then
-`−5,480`. Only the last is correct, and the first two are the arc's own defect class: each
-was measured on a tree the same PR then edited again. **Quote a byte figure only from the
-merge commit.**
+The operator's answer was *"Round 0 at PR-create + one correctness round — not an open
+ladder"*, and the stop rule is *"audit until a round returns no HIGH-SEVERITY findings"*.
+Round 1 returned **no 🔴** and verdict *safe to merge*. **Both conditions met, so there is no
+round 2.** Both rounds' records are posted as PR comments; round 1 carries the
+`audit-claims` block (`audited=678bd0b..4c69017`) so a future delta round can anchor.
 
-| Δ B | section |
-|---:|---|
-| −2,074 | `## Set up your coding agent` — L1's two subsections; `agent-setup --help` carries the content |
-| −2,370 | `## Scripting with --json` — the four site-covered recipe subsections; preamble + `### Generation --json` **kept** |
-| −429 | `## Browse the public API` — base-model tutorial only; the command **table stays** (anchor target for 6 inbound links, pinned by two guards) |
-| −353 | `## Contents` |
-| −227 | `## Quickstart: browse & download` → short form (operator's spec) |
-| −27 | `## Download model files` — a signpost, not a cut |
+| round | findings | outcome |
+|---|---|---|
+| 0 (requirements & deletion) | 5, incl. **2 of my 4 "measured" site rows refuted** | all fixed in `678bd0b` |
+| 1 (nine axes, dispatched **blind**) | 4, **no 🔴** | all fixed in `4c69017` |
 
-🔴 **THE −37 KB FLOOR IS REFUTED AND MUST NOT BE RE-DERIVED FOR L3/L4.** It rested on two
-premises measured false: that `## Scripting with --json` (10,426 B) deletes wholesale (only
-**2,780 B** is site-covered), and that `## Download model files` + `## Browse the public API`
-are duplicated (the site is **one sentence per topic**, with no type→folder table and nothing
-on the ambiguous-id stop, the same-named-file refusal, pickle safety, the ControlNet note,
-SHA256-integrity-≠-authenticity, filename sanitisation, the `429`/`Retry-After` rule or exit
-codes). A matching heading list overstates the duplication by roughly 4×.
+🔴 **Round 1 validated the new guard rather than trusting it** — the check I should have run
+and did not: negative control (a planted bogus URL → `FAIL … DEAD LINK … 404`), positive
+control (rewriting the four guide URLs while holding the count at 38 → `FAIL: CONTROL
+failure`), **and** it probed two bogus paths on `developer.civitai.com` to confirm the host
+returns a real 404 rather than an SPA 200 — without which a dead guide link could have landed
+silently in the SKIP bucket.
 
-### Verification status
+### 🔴 TWO DECISIONS WAITING ON THE OPERATOR — nothing else blocks rank 1
 
-`go test ./... -count=1` **21 packages green** · `make ci-shallow` **21/21** against the
-commit · `golangci-lint` **0 issues** (locally 2.13.2; CI pins 2.12.2 and `lint` reports
-without gating) · live link check **38 extracted / 35 fetched / 3 skipped / 0 dead**.
+1. **Merge #656.** Not merged by this session: the standing merge authority recorded in
+   `handoff-readme-reduction.md` was scoped to *"how this arc runs"* — the **previous** arc —
+   and an approval covers the step it was given for. Ask before reusing it.
+2. **`TestREADMEExternalURLsResolve` is run by no CI job and no cron.** Confirmed
+   independently by both rounds: `CIVITAI_CHECK_README_LINKS` appears nowhere outside the file
+   defining it, while the precedent it names (`pins_guard_test.go`) has a dedicated job **and**
+   a positive control on its `-run` pattern. **The extraction half gates via `build-test`; the
+   liveness half is operator-run only.** `.github/workflows/*` is **"Ask first"** per
+   `AGENTS.md`, so: wire a cron job on the `release-homebrew.yml` model, or delete the network
+   half. ⚠ `pins-vs-published` is the cautionary tale for a live-network **required** check —
+   it froze every open PR twice in the previous arc, so a *scheduled* job is the safer shape.
 
-**Audit status:** round 0 ran at PR-create and its five findings are all fixed in `678bd0b`;
-its record is posted as a PR comment. **The one correctness round the operator scoped was
-dispatched and had not returned when this was written.** Do not merge #656 until it has.
+### Also open
 
-⚠ **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` returned **rc=5**. An unknown
-session id also answers `200` with an empty array, so this zero is not a clean bill of health.
+- **Three** (not four) `developer.civitai.com` drift items remain valid and are **NOT FILED** —
+  filing in `civitai/civitai-developer-docs` is outward-facing and the operator's call. See
+  `## Defects (batched)`.
+- [#657](https://github.com/civitai/cli/pull/657) — this handoff, on `docs/handoff-slim-rank1`.
+  Unaudited; it is a handoff doc, not the code change the arc's audit depth was scoped to.
+
+⚠ **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` → **rc=5**. An unknown session
+id also answers `200` with an empty array, so this zero is not a clean bill of health.
 
 ## Open investigations — live diagnosis state
 
@@ -415,6 +420,65 @@ puts `.github/workflows/*` under **"Ask first"**. Either wire a cron job on the
 `release-homebrew.yml` model, or delete the network half — what it must not do is read as
 coverage it does not provide. ⚠ And note `pins-vs-published` is the cautionary tale for a
 live-network **required** check: it froze every open PR twice in the previous arc.
+
+### 🔴 THE OPERATOR DECISIONS (2026-09-17) — MOVED HERE ON PURPOSE, they govern L3/L4
+
+🔴 **This table lived under `## State now` and the write gate flagged it as a durable line
+about to be dropped TWICE in one session — because `State now` is a REPLACE bucket and these
+are not status.** Moved to this APPEND bucket so a routine status rewrite can no longer lose
+them. **Do not move it back.**
+
+| question | answer |
+|---|---|
+| Does developer.civitai.com override *"user-contract content never moves out"*? | **Retire the policy — link out** ⚠ *conditional on measuring the target: 2 of the 4 drift rows that justified it were themselves false — see the correction block in Open investigations* |
+| How much read path stays local? | **Short quickstart + pointer** (install one-liner, `civitai login`, one search, one download, then link) |
+| Are `Submit & auth` + `Generate` in scope? | **Include in this pass** (operator overrode the recommendation to defer) |
+| Audit depth? | **Round 0 at PR-create + one correctness round** — not an open ladder |
+| Does `## Install` link out too? *(added mid-session)* | **No — keep it local.** Linking it out would retire `TestREADMEHomebrewSectionMatchesTheReleaseConfig` and send Linux readers to a `brew install` that cannot work |
+
+⚠ **Not carried over from the previous arc:** its *"standing merge authority"* was scoped to
+*"how this arc runs"*. It does not apply here — ask before merging.
+
+### Added 2026-09-17 — round 1, and the finding that is worse than a false claim
+
+**Round 1 found four things, no 🔴. Two were the arc's usual class; one was new and worse.**
+
+- 🔴 **I FIXED A RATCHET IN ONE FILE AND WROTE ONE INTO ANOTHER, IN THE SAME PR.** Round 0 had
+  me change `readmeMinExternalURLs` from the exact live count (37) to a slack 20, because a
+  floor set ON the count reddens on any honest removal and tells the next author to lower the
+  constant. In the same breath I set `download_example_id_test.go`'s README `minHits` to **5**,
+  the exact live count — the identical defect, two files away, written *while* fixing it.
+  Round 1 caught it and also measured that the old `8` had carried slack (the base README had
+  **9** examples, not 8). Now **3**. 🔴 **A fix you have just internalised is not thereby
+  applied everywhere — sweep the whole commit for the shape you are fixing, not just the site
+  that was reported.** The arc already records this as *"a sweep applied to ONE claim and not
+  the others in the same commit"*; it happened again anyway.
+- 🔴 **A POINTER I ADDED WAS FALSE, AND IT POINTED AT SAFETY-RELEVANT CONTENT.** The L1 rewrite
+  said the per-agent **key names** are *"derived and evidenced in"* decisions 34/35. Measured:
+  `mcpServers` **0** occurrences in both docs, `context_servers` **0** in both. The reader who
+  needs that key is exactly the Zed or VS Code user the same section tells that **no header is
+  written** for Zed and that `civitai-orchestration` 401s without one. The fact was never lost
+  (`agent-setup --help` carries every key) — it was a wrong signpost, which is the class
+  `readme_agent_setup_claims_test.go`'s own docstring calls **F1**, committed directly beneath
+  the pinned sentence that guards the *other* pointer against precisely this.
+- **A negative claim removed by STRING survives by MEANING.** `678bd0b` dropped three *"which
+  that guide does not carry"* clauses and its subject line says so; a fourth, differently
+  worded — *"the behaviour that guide does not cover"* — survived at `README.md:241`. Sweep by
+  meaning.
+- **A pointer can be wider than the page.** *"The CLI guide works through it with examples"*
+  was written about `--base-model` on both `models search` and `images search`; the guide's
+  images-search flag list does not contain the flag at all.
+
+### Added 2026-09-17 — what a BLIND round bought, concretely
+
+Round 1 was dispatched without round 0's conclusions, per *"a framed audit verifies the
+frame"*. It **independently re-derived** both of round 0's retractions and every surviving
+drift row — which is what makes them trustworthy now, since round 0 was itself correcting two
+false claims of mine. It also ran a control **neither** I nor round 0 thought of: probing two
+bogus paths on `developer.civitai.com` to establish the host 404s properly rather than serving
+an SPA 200. **Without that, the guard's SKIP-vs-FAIL split was an untested assumption** — an
+SPA returning 200 for everything would have made every liveness check vacuously green.
+🔴 **Ask of any liveness check: what does the host do with a URL that does not exist?**
 
 ## How to verify
 
