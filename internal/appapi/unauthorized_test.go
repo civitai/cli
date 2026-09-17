@@ -28,7 +28,19 @@ var unauthorizedLedger = map[string]string{
 	"analytics.go": "`app metrics`",
 }
 
-var statusUnauthorizedArm = regexp.MustCompile(`(?m)^\s*case http\.StatusUnauthorized:`)
+// statusUnauthorizedArm captures a 401 case clause AND the statement it returns,
+// so the guard below can judge EACH ARM rather than each FILE.
+//
+// 🔴 THE FILE-GRANULAR VERSION OF THIS SHIPPED IN THIS PR AND WAS VACUOUS.
+// It asked `strings.Contains(src, "unauthorizedError(")`, which one converted arm
+// satisfies for the whole file — so `appblocks.go`, which has FIVE 401 arms, passed
+// while two of them still answered with their own literals. Mutation-proven: a sixth
+// arm returning `fmt.Errorf("auth failed (401) — try again later")` appended to that
+// file SURVIVED the guard. It is the exact failure this file's own comment on
+// TestUnauthorizedErrorIsStatusTagged boasts about catching — a docstring naming a
+// RELATIONSHIP over a body inspecting one SIDE — re-committed one test up.
+var statusUnauthorizedArm = regexp.MustCompile(
+	`(?m)^[ \t]*case http\.StatusUnauthorized:[ \t]*\n((?:[ \t]*(?://[^\n]*)?\n)*[ \t]*return[^\n]*)`)
 
 // TestUnauthorizedCallersAreLedgered is the seam guard. It pins a RELATIONSHIP —
 // "every 401 arm in this package returns unauthorizedError" — rather than
@@ -48,6 +60,7 @@ func TestUnauthorizedCallersAreLedgered(t *testing.T) {
 	}
 
 	found := map[string]int{}
+	var unconverted []string
 	scanned := 0
 	for _, e := range entries {
 		name := e.Name()
@@ -59,8 +72,17 @@ func TestUnauthorizedCallersAreLedgered(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
-		if n := len(statusUnauthorizedArm.FindAllIndex(src, -1)); n > 0 {
-			found[name] = n
+		arms := statusUnauthorizedArm.FindAllSubmatch(src, -1)
+		if len(arms) > 0 {
+			found[name] = len(arms)
+		}
+		// PER ARM, not per file: every 401 case clause must RETURN the helper.
+		for _, a := range arms {
+			ret := strings.TrimSpace(string(a[1]))
+			if strings.Contains(ret, "unauthorizedError(") {
+				continue
+			}
+			unconverted = append(unconverted, name+": "+ret)
 		}
 	}
 	// Positive control: a walk that read no files would report every ledgered
@@ -92,23 +114,27 @@ func TestUnauthorizedCallersAreLedgered(t *testing.T) {
 			"drifted apart. Add the file to the ledger once its arm calls the helper.", unledgered)
 	}
 
-	// The relationship itself: a ledgered file must CALL the helper, not merely
-	// have an arm. A structural check that stopped at the previous assertion
-	// would pass over a file that answers 401 with its own literal.
-	for name := range unauthorizedLedger {
-		src, err := os.ReadFile(name)
-		if err != nil {
-			continue // already reported above
-		}
-		if !strings.Contains(string(src), "unauthorizedError(") {
-			t.Errorf("%s has a `case http.StatusUnauthorized:` arm but never calls unauthorizedError — "+
-				"it is spelling the remedy itself, which is the drift this helper exists to end", name)
-		}
-		if strings.Contains(string(src), `"not logged in (401)`) {
-			t.Errorf("%s still carries a literal `not logged in (401)` message. The message lives in "+
-				"unauthorized.go and nowhere else; a second copy is free to disagree with it, and the "+
-				"five copies this replaced already did.", name)
-		}
+	// The relationship itself, ARM BY ARM. A file-granular version of this check
+	// shipped in this PR and was satisfied by one converted arm out of five.
+	if len(unconverted) > 0 {
+		sort.Strings(unconverted)
+		t.Errorf("%d `case http.StatusUnauthorized:` arm(s) do not return unauthorizedError:\n    %s\n\n"+
+			"Every 401 in this package returns the SAME message, because a user hitting one has the same "+
+			"problem and the same two remedies whichever route they were on. An arm with its own literal "+
+			"is free to disagree, and before this helper existed two of them already did — one dropped the "+
+			"CIVITAI_TOKEN route for the command group most likely to run in CI, and one said "+
+			"\"check your token\", which is not a command anyone can run.", len(unconverted),
+			strings.Join(unconverted, "\n    "))
+	}
+	// Positive control on the ARM parser itself: a regex that matched no arm would
+	// report zero unconverted and read exactly like full conversion.
+	total := 0
+	for _, n := range found {
+		total += n
+	}
+	if total < 5 {
+		t.Fatalf("CONTROL failure: the arm regex matched only %d `case http.StatusUnauthorized:` clause(s) "+
+			"across %d files — it is not reading the case bodies, so a zero above means nothing", total, len(found))
 	}
 }
 

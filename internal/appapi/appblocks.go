@@ -1658,7 +1658,7 @@ func cloneInfoError(status int, raw []byte) (err error) {
 	}
 	switch status {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("not authenticated — run `civitai login` (or set CIVITAI_TOKEN): %s", msg)
+		return unauthorizedError(msg)
 	case http.StatusForbidden:
 		return fmt.Errorf("not permitted (are you the app owner, and is Apps enabled for your account?): %s", msg)
 	case http.StatusNotFound:
@@ -2378,7 +2378,7 @@ func serverError(status int, raw []byte) (err error) {
 	msg := serverMessage(raw)
 	switch status {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("unauthorized (401): %s — check your token with `civitai login`", msg)
+		return unauthorizedError(msg)
 	case http.StatusForbidden:
 		return fmt.Errorf("forbidden (403): %s — your account may lack Apps access", msg)
 	case http.StatusServiceUnavailable:

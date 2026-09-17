@@ -29,8 +29,8 @@ import "fmt"
 // ledgered one stops calling it. A helper nothing is required to use regenerates
 // exactly the drift it was written to end.
 const unauthorizedRemedy = "run `civitai login` (or set CIVITAI_TOKEN). " +
-	"An OAuth token refreshes itself on a 401, so reaching this message means the refresh failed too — " +
-	"if logging in again does not clear it, create a personal API key at " +
+	"An OAuth login refreshes itself on a 401, so if that is what you are using the refresh failed too " +
+	"and logging in again may not clear it — create a personal API key at " +
 	"https://civitai.com/user/account and run `civitai login --token <key>`"
 
 // unauthorizedError builds the 401 error for an appapi route.

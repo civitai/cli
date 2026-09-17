@@ -285,25 +285,56 @@ correct**, which is the durable one.
 🔴 **WITHDRAWN. Do not re-open it on the numbers below — they are the numbers that
 killed it.** The phase said: *"for each row where the README still says more than the
 binary does, move the difference into the Go error string and delete the row."* Measured
-against the live section, **the premise is false for 20 of 21 rows in its own target
-band**: the binary already says it.
+against the live Troubleshooting section, **the premise holds for exactly ONE of the 21
+rows in its own target band**. That one was done — the difference moved into the binary
+and the row deleted, which is phase 5 working, once. For the other 20 there is nothing
+to move: the binary already says it, or the cell holds something an error string cannot.
 
-**The instrument mattered, and the first one was wrong.** A one-line regex over
-non-test Go called 12 rows "no remedy in the binary". Every one hand-checked was a
-**false negative** — these messages are `+`-joined across many lines, and a single-line
-read truncates them. That is the same overcounting the handoff already recorded for the
-crude 25-of-49 pass. The classification below comes from reading the WHOLE statement.
+🔴 **EVERY FIGURE HERE CARRIES ITS DERIVATION, BECAUSE THE FIRST VERSION OF THIS
+SECTION DID NOT AND DID NOT REPRODUCE.** Round 0 on #652 re-derived them independently
+and got a different section size (20,812 vs a claimed 20,834) and a different non-floor
+band (19 rows / 3,647 B vs a claimed 18 / 3,480). A withdrawal whose stated numbers are
+unreproducible is a withdrawal the next session re-litigates. So: measured **after** the
+one row was deleted, on the `zach/readme-phase5-error-remedies` head, slicing
+`## Troubleshooting` to the next `## ` exactly as `readmeTroubleshootingSection` does and
+counting a row as a line beginning `` | ` ``:
 
-The 21 rows in the 150–250 B band:
+    section 20,586 B / 60 rows
+    floor-protected 10 rows / 2,057 cause-bytes
+    cause cell <150 B 17 rows / 1,444
+    cause cell 150-250 B 17 rows / 3,294   <- what remains of the target band
+    cause cell >250 B 16 rows / 6,601
+
+⚠ **"The incident floor is 10 rows" is a COMPOSITE and the label is wrong.** It is 7 from
+`TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit` — which *is* the incident
+floor — plus 2 from `symptomAttributionsFloor` and 1 from the submit entry-block ledger.
+A future re-derivation reading the incident-floor test alone will find **7** and conclude
+this doc is stale. Only **2** of the band's rows are floor-protected.
+
+### The 21 band rows, as they were before the deletion
 
 | | rows | why it is not phase-5 work |
 |---|---:|---|
-| the binary already carries the remedy in full | **11** | the README cell restates it |
-| the cell holds what a per-site string structurally cannot | **3** | two exit codes off one message (`rate limited (429)`); "the two rows below are the 403s that are not about your grant"; an exit code the binary never prints as text |
-| not an error message at all | **6** | a `whoami` row label, a `workflows list` legend, an `errors.New` sentinel, a note, two output labels — and one string **your app prints at runtime**, which the CLI cannot reach |
-| genuine | **1** | `not logged in (401)` — shipped, see below |
+| the binary already carries the remedy in full | **12** | the cell restates it |
+| the cell holds what a per-site string structurally cannot | **3** | two exit codes off one message (`rate limited (429)`); cross-row aggregation (*"the two rows below are the 403s that are not about your grant"*); the saferune filtering policy (`--json` is unfiltered) |
+| not an error message the CLI emits | **5** | a `whoami` row label, a `workflows list` legend, a `noFailureReasonNote`, two output labels (`prompt:`/`negative:`) — and one string **your app prints at runtime**, which the CLI cannot reach |
+| genuine — done, row deleted | **1** | `not logged in (401)` |
 
-Three examples, because the pattern is uniform rather than marginal:
+⚠ **This table was 11/3/6/1 and was wrong twice.** It enumerated *seven* descriptors for
+six rows, and it filed `model substituted` under "not an error message" when
+`generate_substitution.go:265` wraps that sentinel into a full refusal already naming its
+remedy — bucket 1, not bucket 3. Both found by round 0. The conclusion does not move:
+every row shuffled between buckets 1 and 2 is still not phase-5 work.
+
+⚠ **AND ONE ROW IS AN HONEST EXCEPTION, SO THE HEADLINE IS "19 OF 21", NOT 20.**
+`Submit Apps:` (`whoami.go:120`) prints a bare `unknown`; the cell's actionable half —
+*"Re-run `civitai login` for a token whose scope the server reports"* — is carried
+nowhere in the output. It is excluded from phase 5 only on the technicality that the
+phase says *"error string"* and this is OUTPUT. **Making `Submit Apps: unknown`
+self-describing is straightforwardly better and would make that row deletable** — filed,
+not done here, because it is a different surface from the one this PR touches.
+
+Three examples of the dominant pattern, because it is uniform rather than marginal:
 
 - **`HEAD is on no remote`** — README: *"Push the branch."* Binary already: *"Push the
   branch so the submitted version can be traced back to a commit."*
@@ -314,25 +345,34 @@ Three examples, because the pattern is uniform rather than marginal:
 - **`no lockfile is committed`** — README: *"Generate it with the package manager."*
   Binary already: *"Run `%s` and commit the %s it writes."*
 
-⚠ **AND ITS CEILING WAS STALE IN BOTH DIRECTIONS.** The ≤5,465 B figure was measured
-when `README.md` was 282,312 B, three PRs ago. Live: the section is **20,834 B / 61
-rows**, the non-floor 150–250 band is **18 rows / 3,480 cause-bytes**, and the incident
-floor now protects **10** rows, not 7. Re-measure before quoting any of it.
+**The instrument mattered, and the first one was wrong.** A one-line regex over non-test
+Go called 12 rows "no remedy in the binary". Every one hand-checked was a **false
+negative** — these messages are `+`-joined across many lines, and a single-line read
+truncates them. That is the same overcounting the handoff recorded for the crude
+25-of-49 pass. The classification above comes from reading whole statements, and round 0
+re-read the largest bucket from source and found no false positive in the other
+direction.
 
-🔴 **The one genuine row was shipped, and it turned into a consolidation.** The 401
-message existed at **five** sites in `internal/appapi`; four spelled the remedy
-`run `civitai login` (or set CIVITAI_TOKEN)` and the fifth — `submissionsError` — said
-`run `civitai login``, dropping the environment-variable route for the command group
-most likely to run in CI. Nobody chose that; it is what an open-coded predicate does at
-N sites. All five now call `unauthorizedError`, which also names the personal-API-key
-route the README had and **no user-facing surface did**. `TestUnauthorizedCallersAreLedgered`
-pins the caller set in both directions.
+### What the one genuine row turned into
+
+The 401 message existed at **seven** arms in `internal/appapi`, spelling it three
+different ways — `not logged in (401)`, `not authenticated`, and `unauthorized (401): …
+— check your token`, the last of which names no command anyone can run and is what
+`civitai app submit` and `civitai whoami` printed. All seven now call
+`unauthorizedError`, which names the `CIVITAI_TOKEN` route and the personal-API-key
+route that **no user-facing surface carried**.
+
+🔴 **The count was FIVE in this PR's first draft, and the instrument that produced it was
+a literal grep for `not logged in (401)` — the very class of one-line-literal instrument
+this section criticises two paragraphs above.** Round 0 found the other two. The guard
+written to prevent exactly this was *also* file-granular and certified past them; it is
+now arm-granular and reddened on the gap the moment it was widened.
 
 **The transferable finding:** this repo's error strings were already carrying their
 remedies, because `AGENTS.md` has said *"make errors actionable — name the next command
-to run"* the whole time. A phase premised on them NOT doing so was mis-specified from
-the start, and only a row-by-row read could show it. **Where a README cell is longer
-than the error, read the error before assuming the cell adds something.**
+to run"* the whole time. A phase premised on them NOT doing so was mis-specified, and
+only a row-by-row read could show it. **Where a README cell is longer than the error,
+read the error before assuming the cell adds something.**
 
 ## Link-out policy
 
