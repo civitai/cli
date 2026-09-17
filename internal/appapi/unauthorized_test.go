@@ -9,19 +9,25 @@ import (
 	"github.com/civitai/cli/pkg/civitai"
 )
 
-// 🔴 THE REGEX-BASED LEDGER THAT STOOD HERE IS RETIRED, NOT MOVED.
-// It was `unauthorizedLedger` + `statusUnauthorizedArm`, and it was wrong twice
-// in one PR — file-granular first (one converted arm satisfied a file of five),
-// then arm-granular but blind to a `case A, B:` list and to a branching clause
-// body, both of which this package already contained. Its replacement is
-// TestEvery401ArmRoutesThroughTheHelper in unauthorized_arms_test.go, which uses
-// go/parser and so cannot have a pattern blind spot at all.
+// 🔴 FIVE GUARDS HAVE STOOD HERE. THE FOUR THAT ANALYSED SOURCE ARE ALL GONE.
 //
-// Deleted rather than kept alongside, because a superseded guard that still
-// passes is the worst of both: it reads as coverage, it is satisfied by states
-// the real guard rejects, and the next reader cannot tell which one is load-
-// bearing. The per-file reasons it carried are not lost — the AST guard reports
-// file:line for every arm it finds.
+// A per-file ledger, then a regex over `case http.StatusUnauthorized:`, then a
+// go/parser walk over case clauses, then a go/parser walk keyed on message
+// construction. An audit round refuted each one by finding a spelling it could
+// not see — and each time the guard's own comment had denied having a blind spot,
+// including in this block, which asserted "cannot have a pattern blind spot at
+// all" and outlived by two rounds the draft it was describing.
+//
+// The replacement is unauthorized_mappers_test.go, which reads OUTPUT instead of
+// source: it drives every status mapper with a 401 and compares what comes back.
+// Its coverage limit is stated there rather than denied here.
+//
+// ⚠ This block itself carried FOUR stale claims for a whole round — a deleted
+// test's name, a ledger that no longer existed, the omniscience sentence, and a
+// "reports file:line for every arm" that was never true — while the file it sits
+// in was edited thirty lines below. It is kept short now for that reason: a long
+// explanation of retired machinery is a surface nobody re-reads and everybody
+// trusts.
 
 // TestUnauthorizedErrorNamesBothRemedies pins what the message SAYS, as a whole
 // normalised string rather than by keyword.

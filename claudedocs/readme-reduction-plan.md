@@ -380,14 +380,23 @@ above — and found five. Round 0 grepped `case http.StatusUnauthorized:` and fo
 Round 1 parsed the AST and found eight: `withdrawError` used `case
 http.StatusUnauthorized, http.StatusForbidden:`, a shape no line-regex sees, seventy
 lines from the code under change. **The guard was wrong the same way, twice** — file-
-granular, then arm-granular-but-pattern-blind — and round 2 found the `go/parser` walk
-that replaced it ALSO pattern-blind, to `if status == http.StatusUnauthorized`, a shape
-sitting in the same file at `appblocks.go:580` under a comment asserting no blind spot
-existed. **Three drafts, three times the description was wider than the implementation.**
-The fourth stops keying on syntax altogether and asks the question the invariant is about
-— does a 401-conditioned region CONSTRUCT a message? — which makes the enclosing form
-stop being an input. Prefer DELETING a parse to teaching it a better pattern; and when
-the third attempt still misses, re-key rather than widen.
+granular, then arm-granular-but-pattern-blind; round 2 found the `go/parser` walk that
+replaced it ALSO blind, to `if status == http.StatusUnauthorized`, a shape in the same
+file at `appblocks.go:580` under a comment asserting no blind spot existed; and round 3
+found the RE-KEYED walk blind again, to `st == 401 || st == 403`, because its condition
+recursion handled `==`/`!=` and stopped at `&&`/`||`.
+
+🔴 **FOUR DRAFTS, FOUR TIMES THE DESCRIPTION WAS WIDER THAN THE IMPLEMENTATION, AND EVERY
+FIX WAS A WIDER OR BETTER-KEYED PATTERN. The fifth is not a pattern at all.** It drives
+every status mapper in the package with a 401 and compares the OUTPUT, so a divergent
+message fails whatever syntax produced it — including the package-level-sentinel shape
+that beat all four static drafts. Its one real gap (a mapper the signature regex does not
+recognise) is written down in the file instead of denied beside it.
+
+**The transferable rule, and it is not "prefer deleting a parse" — that was tried and was
+draft 4.** When a guard's third and fourth attempts still miss, the question is no longer
+how to analyse the source better; it is whether the property can be OBSERVED instead.
+A behavioural check has no pattern to be blind in.
 
 **The transferable finding:** this repo's error strings were already carrying their
 remedies, because `AGENTS.md` has said *"make errors actionable — name the next command
