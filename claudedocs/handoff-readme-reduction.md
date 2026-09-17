@@ -35,8 +35,9 @@ which drifted into being mistaken for the thing.
 ⚠ **The gate-filter amendment still stands and is NOT part of that retraction.** The
 filter was `-run 'README|Readme|readme'`, which matches **zero** of the guards on the
 Troubleshooting table's two frozen cells — measured, and confirmed by a live mutant the
-narrow filter reported `ok` on. Use the wide filter above. Measured 2026-09-15 it runs
-**76** tests; a run reporting `ok` with 0 tests is the failure this replaced.
+narrow filter reported `ok` on. Use the wide filter above. It ran **76** tests on
+2026-09-15 and **80** at `c51fab9`; the count moves with the suite, so re-measure it —
+what matters is that a run reporting `ok` with **0** tests is the failure this replaced.
 
 🔴 **The full measured plan is `claudedocs/readme-reduction-plan.md`** — constraint
 map, size map, cut list, compression targets, link-out policy, sequencing. Read it
@@ -44,17 +45,19 @@ before touching prose. This doc is state; that doc is the plan.
 
 ## State now
 
-**Twelve PRs merged across this arc. Rank 1 is CLOSED and the ladder around it is complete. README is 277,680 bytes on `main` (`4572d6f`) — down 32,967 (−10.6%) from the arc's start.** The byte threshold is GONE; size is reported because it is the cheapest progress signal, never as a gate.
+**Fourteen PRs merged across this arc. README is 277,826 bytes on `main` (`c51fab9`).** The byte threshold is GONE; size is reported because it is the cheapest progress signal, never as a gate — and this session ADDED 146 bytes, on purpose: #646 traded them for two README sentences that are now true.
 
-🔴 **ARC CLOSING-CONDITION VERDICT: NOT YET CLOSED — one clause outstanding.** Measured on `main` at `4572d6f`:
+🔴 **ARC CLOSING-CONDITION VERDICT: NOT YET CLOSED — one clause outstanding, unchanged.** Measured on a clean `main` at `c51fab9`:
 
 | clause | result |
 |---|---|
-| `go test ./internal/cmd/ -run 'Attribution\|Troubleshooting\|README\|Readme\|readme' -count=1` exits 0 with **>0** tests | ✅ `ok`, **81** tests run |
+| `go test ./internal/cmd/ -run 'Attribution\|Troubleshooting\|README\|Readme\|readme' -count=1` exits 0 with **>0** tests | ✅ `ok`, **80** tests run |
 | `go test ./...` green | ✅ 21 packages, 0 failures |
 | each remaining named phase has landed or been withdrawn by a merged PR | ❌ **phases 4 and 5 are neither** |
 
-So the one item that stands between this arc and closed is **phase 4 (rank 7) and phase 5 (rank 8)** — land them or withdraw them by merged PR. Nothing else in the condition is outstanding.
+⚠ **The gate count is 80, not the 81 this doc carried — and the drop is correct, not a regression.** #646 deleted `TestREADMEEntryBlockSurfacesAgree`, whose last assertion had become a substring of the sentinel ledger's own whole-sentence checks; no mutant was ever killed by it alone. Re-measure rather than reconcile: the number tracks the suite, and a session that "fixes" it back by re-adding a subsumed guard has made things worse.
+
+So the one item between this arc and closed is still **phase 4 (rank 7) and phase 5 (rank 8)** — land them or withdraw them by merged PR.
 
 | | bytes |
 |---|---:|
@@ -64,27 +67,32 @@ So the one item that stands between this arc and closed is **phase 4 (rank 7) an
 | after phase 2 — cuts, #630 | 293,378 |
 | after phase 3b — command table, #633 | 282,312 |
 | after phase 3c — preamble, #635 | 281,439 |
-| **after rank 1 — agent-setup, #641 (`db68d1a`)** | **277,680** |
+| after rank 1 — agent-setup, #641 (`db68d1a`) | 277,680 |
+| **after #646 — the #637 code fix (`c51fab9`)** | **277,826 (+146)** |
 
-### Merged this session
+### Merged in the rank-1 session
 - **#643** (`5327ac8`) **rank 4** — `@civitai/app-sdk` 0.41.0 pin bump. Operator-merged. `TestScaffoldPinsSatisfyPublished` re-run on a clean tree afterwards: **PASS** (it had been FAIL on `main` itself).
 - **#641** (`db68d1a`) **rank 1** — the agent-setup section: **16,971 → 12,907 B (−4,064, −23.9%)**, 265 → 217 lines, 0 → **5 `###`** each with a Contents entry, **plus `internal/cmd/readme_agent_setup_claims_test.go`** (four guards). Five audit rounds (0–4), stopped by the **attribution gate**.
-- **#642** (`4572d6f`) — the handoff, including the −4,936 → −4,064 correction.
+- **#642** (`4572d6f`) / **#644** (`be4c34a`) — the handoff, including the −4,936 → −4,064 correction.
 
-**Verified after merge, not assumed:** the four new guards run and pass on `main` (`-run 'READMEVerdictExemptions|CheckEmitsNoRow|ManualRowCarries|HelpPointerIsHonoured'` → 4 PASS); base clone re-synced `--ff-only`; both feature branches and their worktrees removed; `claim-work --release readme-reduction-1` done.
+### Merged in the #637 session
+- **#645** (`7819352`) — the audit #640 said had never happened, plus the defect it found. #639's `nonTTYSubmitRefusal` returned `serverHit` and both callers asserted `if hit` — **branches that cannot fire**, because reaching the endpoint means the driver's own controls already fataled. A/B on one mutant: pre-#639 the test died naming the gate (*"submit endpoint was hit — the gate did NOT prevent the submission"*); post-#639 it died naming the harness. Three rounds; **stopped by the attribution gate**, rounds 1 and 2 changing 49 and 37 lines, all comments.
+- **#646** (`c51fab9`) — **#637, closed COMPLETED.** `appapi.ErrNothingSent`, set from httptrace, tags any submit failure whose request never reached the connection; `doUpload` gains an arm that prints nothing for those; both README surfaces go back to the strong claim #635 spent four rounds hedging. Three rounds, ten mutants, zero survivors.
+
+**Verified after merge, not assumed:** both squashes checked **by content** per file against `origin/main` (never by ancestry); `go test ./...` 21/21 and the wide gate at 80 on a clean `main`; the 12 new behaviour guards pass there; both worktrees removed, both branches deleted, base clone re-synced `--ff-only`, both claims released.
 
 ### Open
-- **#640** — another session's rank-3b handoff close. 🔴 **It edits this doc, which #642 has now moved, so it needs a rebase before it can merge.** Not ours.
-- **#637** — 🔴 **a CODE defect.** `printSubmitSizeDiagnosis` prints `What this CLI sent` for errors raised *before any HTTP request is built*. Measured against a real `httptest` server: **0 requests received**, block printed, positive control on the hit counter. `appblocks.go:570` returns on `Token()` before `doOnceWith` builds anything; `auth/source.go:115` returns `persist refreshed tokens` untagged. Mirror case: `auth/source.go:90` tags `ErrUnauthorized` onto a purely *local* error. **Its closing condition includes reverting the two README surfaces #635 had to weaken.**
 - **#602** (another session's) — 22+ commits behind `origin/main`. Not ours to rebase.
 - **#614** open and optional — `CIVITAI_NO_COLOR` value parsing.
+- **#640** — CLOSED as superseded, not merged. Its branch sat on `079dc14`, so its README half *reverted* #641; a rebase would have been a full rewrite of every hunk. Its one surviving finding was salvaged into #645 and is discharged.
 
 ### Honest limits
 - 🔴 **Nobody has run `civitai upgrade` on Windows.** The final self-replace is stubbed behind the `applyUpdate` seam.
 - 🔴 **Every byte estimate in this arc over-promised, and every mid-ladder MEASUREMENT did too.** A whole-section count is an upper bound; a pre-merge figure is provisional. Quote the merge commit.
 - **golangci-lint was never run at CI's pinned v2.12.2 locally** (this host has 2.13.2, clean). `lint` is not a required context; read the PR's own run.
 - **`--session` sees almost nothing of this work** — worktrees. Use `--pr`.
-- **Worktree count is now 42, not the 41 rank 10 cites** — five agent worktrees from this session's audit rounds, minus the two feature worktrees removed at the end.
+- **Worktree count keeps drifting upward** — every audit round adds an agent worktree. Rank 10's figure is stale on arrival; count it rather than quoting this doc.
+- 🔴 **NOBODY HAS RUN `app submit` AGAINST THE REAL SERVER SINCE #646.** Everything about `ErrNothingSent` is measured against `httptest` and a stubbed transport. The h2 ordering of the httptrace callback is **probed, not proven** (3/3 each way, not reproduced) and is recorded as such in `appblocks.go`; the losing direction is conservative, but it is unproven either way.
 
 ## Open investigations — live diagnosis state
 
@@ -112,12 +120,14 @@ also disagrees with itself: a comment near the error says "ANY model file".
 🔴 **Ranks 0, 1, 2, 3, 3b, 4 and 5 are CLOSED and are deliberately no longer ranks** — a closed item is not work, and carrying it as a numbered rank inflates the `forcing: none` count the write gate ratchets on. Live numbering below is UNCHANGED so existing `claim-work` slugs keep resolving.
 
 - **0** closing condition — threshold deleted 2026-09-15, not re-set.
-- **1** trial-cut the agent-setup section — **CLOSED, −4,936 B (−29.1%), #641**, audited over five rounds.
+- **1** trial-cut the agent-setup section — **CLOSED, −4,064 B (−23.9%), #641**, audited over five rounds. (The −4,936 here was the mid-ladder figure this doc elsewhere retracts; corrected in place so the two halves stop disagreeing.)
 - **2** the #635 ladder — merged `c7ea087`.
 - **3** #623 — merged `868fff6`; #636 also merged.
 - **3b** pin the prose #635 repaired — merged as **#639**.
 - **4** the stale scaffold pin — **CLOSED**, merged as **#643** (`5327ac8`), operator-merged; the failing test re-run green.
 - **5** audit #641 — **CLOSED**: rounds 0–4 run, ladder stopped by the attribution gate, round 4 verdict *safe to merge*.
+- **#640/#645** salvage the unaudited #639 consolidation — **CLOSED**: #640 closed superseded, its finding discharged by **#645** (`7819352`).
+- **#637** the false past tense — **CLOSED**, merged as **#646** (`c51fab9`), issue auto-closed COMPLETED. Never a numbered rank; it was carried in Open.
 
 6. **#602** — operator's. Green on its own checks but `DIRTY` against main and 22+ commits behind; its inclusive-ceiling correction must survive the rebase.
    forcing: gate
@@ -127,9 +137,15 @@ also disagrees with itself: a comment near the error says "ANY model file".
    forcing: none
 9. **#614** — `CIVITAI_NO_COLOR` value parsing. Genuinely optional.
    forcing: none
-10. **41 worktrees on this clone.** `git worktree prune` removed NOTHING — live entries, not orphans. Several hold *other sessions'* branches; high blast radius, operator's call.
+10. **Worktrees on this clone — count before quoting.** `git worktree prune` removed NOTHING — live entries, not orphans; several hold *other sessions'* branches. High blast radius, operator's call. The number in this line has been stale at every reading: audit rounds add one each.
    forcing: none
-11. 🔴 **`README.md:1679`/`:1728` state a body size that is arithmetically impossible**, under a sentence asserting *"That number is exact, not an estimate."* Pre-existing since #452; `10935065` appears only in `README.md`, so it is unpinned by construction.
+11. 🔴 **`README.md` states a body size that is arithmetically impossible**, under a sentence asserting *"That number is exact, not an estimate."* Pre-existing since #452; `10935065` appears only in `README.md`, so it is unpinned by construction. ⚠ #646 prefixed that sample line with **"up to"**, which changes what the number CLAIMS but not whether it is derivable — re-read the line before quoting the old line numbers.
+   forcing: none
+
+12. **Eight `internal/` files cite a `RULES.md` this repo does not ship**, so those pointers are unopenable for any contributor. Fixing two of eight (both in `readme_submit_entry_block_test.go`) is the patch-the-second-copy shape; it wants one consolidating change. **Closing condition:** a merged PR that either ships the referenced rules or rewrites all eight citations to name something in-repo, checked by a grep in that PR's diff.
+   forcing: none
+
+13. **`TestItem38CommentsCiteTestsThatExist` ledgers only item 38's file set**, so a production comment citing a test by name — `internal/cmd/app_submit.go` does it twice — dangles silently if that test is deleted. Widening needs a suppression convention for ~5 prose shapes first; that test's own comment records why. **Closing condition:** a merged PR that globs the citation check repo-wide with that convention.
    forcing: none
 
 ## Gotchas / decisions / dead-ends
@@ -412,16 +428,80 @@ The full record is in the two blocks above this one. What a future session shoul
 - 🔴 **Assert `mutation APPLIED = True` before reading any mutant's result.** A substitution whose anchor moved scores SURVIVED and is indistinguishable from a vacuous guard. Hit twice in this ladder — once by an auditor, once by me.
 - **A docstring claiming coverage its body lacks appeared in FOUR separate rounds of one PR.** The tell every time: the docstring names a RELATIONSHIP, the body inspects one SIDE.
 
+### Added 2026-09-16 — the #637 session: three ladders, zero 🔴, and a defect the fix kept regenerating
+
+🔴 **THE OPERATOR'S STOP RULE WAS OVER-RUN, AND THAT IS THE PROCESS FINDING.** The rule
+recorded above is *"audit until a round returns no HIGH-SEVERITY findings"* — an operator
+correction, explicitly not to be re-derived from the skill's stricter text. **No round of
+either PR returned a 🔴**, so #646 was a stopping round at round 1 and #645 at round 0.
+Both ran to round 2 anyway, on the skill's findings-keyed rule. The extra rounds found real
+things — including a false byte claim that had shipped — so the content was not waste; the
+*call* was the operator's and was not asked for. Ask, or stop.
+
+🔴 **THE SAME SENTENCE SHIPPED FALSE THREE TIMES, IN THREE DIFFERENT DIRECTIONS, ACROSS
+THREE ROUNDS OF ONE PR.** This is the arc's cleanest instance of "a fix that makes a sentence
+more specific can make it false".
+
+| round | what the README said | why it was false |
+|---|---|---|
+| 0 | "A failure that sent nothing prints **nothing**" | the ceiling refusal sends nothing and prints a full block — named three lines below it |
+| 1 | "…so `sent` is a fact about **bytes that left this machine**" | a write cut short had delivered ~200 KB while the CLI called it nothing sent |
+| 2 | the block printed "**N bytes** on the wire" | after round 1 widened *when* it prints, N was what the CLI BUILT: 8,388,627 printed against 233,266 received |
+
+Round 2's is the one to study: round 1 fixed **when** the block prints and left **what it
+says** alone, so the repair re-opened #423's original defect ("the server received 0 bytes
+while the CLI reported 12,587,785") through a new door. **When a fix widens a predicate, list
+every sentence downstream of it before deciding you are done.**
+
+- 🔴 **A JUSTIFICATION CAN POINT AT PROSE THAT DOES NOT EXIST.** Round 1's comment read "the
+  prose says the request went out rather than that N bytes landed" — while the PRINTED prose
+  said N bytes. It was true of the comment's own paragraph and false of the program.
+- 🔴 **"THIS CANNOT BE PINNED WITHOUT A RACE" WAS WRONG, AND THAT CLASS OF CLAIM IS THE
+  EXPENSIVE ONE.** The stickiness of the sent-flag across a 401 retry looked unpinnable
+  (the server would have to die between attempts). The separating seam is the **dialer**:
+  a `DialContext` that succeeds once and fails after gives attempt 1 a full body and attempt
+  2 nothing, deterministically. A comment saying nobody can cover something stops the next
+  person looking.
+- 🔴 **AN ASSERTION HOLDING EITHER WAY DOES NOT MAKE THE KILL HOLD EITHER WAY.** The
+  cut-short test asserted the SERVER received something — equally true when the whole body
+  writes cleanly into socket buffers. On such a host it passes while the mutant it is
+  credited with killing survives. Fixed with a counting `net.Conn` measuring what the CLIENT
+  wrote, and the control was watched to fire.
+- 🔴 **A MUTATION HARNESS IS AN INSTRUMENT.** One mutant scored `APPLIED=False` rather than
+  `SURVIVED` because the mutant text CONTAINS its own anchor, so the "old text absent" check
+  could never hold. Two mutants also survived and each survivor was a real coverage gap — a
+  redundant tag site that read as coverage, and an unpinned qualifier.
+- 🔴 **`git checkout -- <file>` RESTORES FROM THE INDEX.** Reverting a mutant that way
+  silently discarded two unstaged fixes in the same file. Stage before a battery, or copy
+  aside — the rule about `cp -a` restores exists for exactly this.
+- **Both PRs quoted a count from a `-run`-FILTERED sweep and had to retract it** — then the
+  retraction was itself wrong (the filter was a latent hazard, not the cause; whole-package
+  under the same mutant returns the same number). **A count is meaningless without the mutant
+  that produced it.**
+- **An `AGENTS.md: "…"` attribution named a phrase in no file this repo ships.** It lives in
+  the operator's private rules. Eight `internal/` files cite a `RULES.md` the repo does not
+  ship — filed, not fixed, because fixing two of eight is the patch-the-second-copy shape.
+
+### Added 2026-09-16 — the attribution gate fired for real, twice
+
+#645 stopped on it rather than on a clean round: rounds 1 and 2 changed **49 and 37 payload
+lines, every one a comment** (checked mechanically — no changed line failed `^[+-]\s*//`).
+Two consecutive zero-executable rounds means the ladder is auditing its own prose. Round 2
+was explicitly *not* clean, which is the point of gating on what a round CHANGES rather than
+on what it FINDS.
+
 ## How to verify
 
 🔴 **This block was STALE once already** — it carried a deleted byte threshold and a narrow `-run` filter. Both corrected. If you find a third copy of the gate anywhere in this doc, that one is stale too.
 
 ```bash
 # the arc's closing condition. NO byte threshold — size is a progress signal only.
-git -C <repo> show origin/main:README.md | wc -c        # 277,680 at 4572d6f
+git -C <repo> show origin/main:README.md | wc -c        # 277,826 at c51fab9
 
 # the gate, WIDE filter, with its own positive control.
-# `ok` with 0 tests run is the failure this replaced — measured 81 on 2026-09-16.
+# `ok` with 0 tests run is the failure this replaced. 76 on 2026-09-15, 81 after
+# #639/#641, 80 at c51fab9 once #646 deleted a subsumed guard. The number tracks
+# the suite: RE-MEASURE it, never reconcile it back.
 go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' -count=1
 go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' \
   -count=1 -v | grep -c '^--- PASS\|^    --- PASS'      # must be > 0
@@ -430,6 +510,12 @@ go test ./...                                            # 9 other packages read
 # the agent-setup contract guards #641 added (rank 1). All four must pass.
 go test ./internal/cmd/ -count=1 \
   -run 'READMEVerdictExemptions|CheckEmitsNoRow|ManualRowCarries|HelpPointerIsHonoured'
+
+# the #637 behaviour guards #646 added. 12 PASS on a clean main at c51fab9; each
+# drives the REAL appapi.Client, because a fake Submitter returns whatever error
+# the test hands it and would pass vacuously while the real chain lied.
+go test ./internal/appapi/ ./internal/cmd/ -count=1 \
+  -run 'NothingSent|SubmitDiagnosis|CutShort|A401Retry|CannotBeBuilt|AfterTheWrite'
 
 # lint is a SEPARATE CI job and NOT a required context; `make ci` does not run it.
 # 🔴 CI pins v2.12.2 (.github/workflows/ci.yml); this host has 2.13.2, so a local
