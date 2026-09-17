@@ -64,7 +64,14 @@ func downloadExampleSources(t *testing.T) map[string]struct {
 		"root Example":     {root.Example, 1},
 		"download Long":    {dl.Long, 2},
 		"download Example": {dl.Example, 5},
-		"README.md":        {string(readme), 8},
+		// 🔴 LOWERED 8 -> 5 when the read-path link-out removed four example
+		// lines the CLI guide at developer.civitai.com walks through. Set at the
+		// ACTUAL count, deliberately, not padded: this number is a positive
+		// control on the REGEX (does it still fire on this source?), never a
+		// floor on how many examples the README ought to carry. Every remaining
+		// example is still checked against unambiguousExampleIDs, so the #227
+		// coverage is unchanged — what shrank is the sample, not the rule.
+		"README.md": {string(readme), 5},
 	}
 }
 

@@ -420,9 +420,41 @@ working URL instead of a 404.
 So the rule is about **audience**, not file size:
 
 - **Maintainer content moves out freely** — anyone who needs it has a checkout.
+- **Deep reference is the judgement call** — see "How far to go".
 - **User contract content never moves out** — exit codes, `--json` shapes, the
   command reference, Troubleshooting. These stay in the shipped file whatever they cost.
-- **Deep reference is the judgement call** — see "How far to go".
+
+🔴 **THAT LAST CLAUSE WAS RETIRED BY THE OPERATOR ON 2026-09-17, AND ONLY FOR
+CONTENT `developer.civitai.com` ACTUALLY COVERS.** The read path — Install,
+browse, download, `--json` scripting — is documented on
+`developer.civitai.com/site/guide/cli`, so restating it here maintains two
+hand-synced surfaces that drift independently. Where the site covers a topic,
+link out. Where it does not, the clause above still stands unchanged.
+
+🔴 **BUT "THE SITE COVERS IT" IS A CLAIM TO MEASURE, NOT TO ASSUME — AND WHEN
+MEASURED IT WAS MOSTLY FALSE.** The read-path link-out PR probed the live page
+against a binary built from the same commit, and the site turned out to be both
+*thinner* and *wrong*:
+
+- It documents `--json` on `download`; the binary answers `unknown flag: --json`.
+- It lists Homebrew as **"macOS / Linux"**. `.goreleaser.yaml` publishes a
+  `homebrew_casks:` entry and no `brews:`, a cask is macOS-only, and
+  `TestREADMEHomebrewSectionMatchesTheReleaseConfig` exists precisely to stop
+  this README repeating that claim. **`## Install` was therefore kept local.**
+- It omits `download --force` and `--yes` (the ambiguous-id **safety** stop), and
+  the "Prebuilt binary" install method entirely.
+- Its Download coverage is **one sentence per topic**. It has no type→folder
+  table, and nothing on the ambiguous-id stop, pickle/executable safety, the
+  ControlNet note, SHA256-integrity-is-not-authenticity, filename sanitisation,
+  retry/backoff or exit codes.
+
+**So the measured yield was −5,294 B, not the −37 KB this plan projected.** The
+link-out is real for `## Scripting with --json`'s four recipe subsections and for
+the `agent-setup` prose that duplicates `--help`; it is **not** real for
+`## Download model files` or the behavioural half of `## Browse the public API`.
+Before quoting a link-out figure for any remaining section, fetch the target page
+and diff it against the binary — the duplication is far thinner than a matching
+heading list suggests.
 
 ⚠ **Five of the six existing relative links already 404 for a non-checkout reader**
 (`internal/scaffold/…`, `examples/`, `schema/…`). The guard covers only three named
