@@ -309,7 +309,10 @@ counting a row as a line beginning `` | ` ``:
 `TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit` — which *is* the incident
 floor — plus 2 from `symptomAttributionsFloor` and 1 from the submit entry-block ledger.
 A future re-derivation reading the incident-floor test alone will find **7** and conclude
-this doc is stale. Only **2** of the band's rows are floor-protected.
+this doc is stale. Of the band's rows, **2** are on the INCIDENT floor specifically
+(`block lacks ai:write:budgeted scope`, `it did NOT check that the file is loaded`); the
+banding above counts 3 band rows as floor-protected because it applies the composite.
+Both numbers are right about different floors, which is why the composite needed naming.
 
 ### The 21 band rows, as they were before the deletion
 
@@ -355,18 +358,31 @@ direction.
 
 ### What the one genuine row turned into
 
-The 401 message existed at **seven** arms in `internal/appapi`, spelling it three
-different ways — `not logged in (401)`, `not authenticated`, and `unauthorized (401): …
-— check your token`, the last of which names no command anyone can run and is what
-`civitai app submit` and `civitai whoami` printed. All seven now call
+The 401 message existed at **eight** arms in `internal/appapi`, spelling it four
+different ways — `not logged in (401)`, `not authenticated`, `unauthorized (401): … —
+check your token` (what `civitai app submit` and `civitai whoami` printed), and
+`not authorized (check your API key / Apps invite)` (what `civitai app withdraw`
+printed). The last two name no command anyone can run. All eight now call
 `unauthorizedError`, which names the `CIVITAI_TOKEN` route and the personal-API-key
-route that **no user-facing surface carried**.
+route that **no 401 in this package carried**.
 
-🔴 **The count was FIVE in this PR's first draft, and the instrument that produced it was
-a literal grep for `not logged in (401)` — the very class of one-line-literal instrument
-this section criticises two paragraphs above.** Round 0 found the other two. The guard
-written to prevent exactly this was *also* file-granular and certified past them; it is
-now arm-granular and reddened on the gap the moment it was widened.
+⚠ **That last clause is deliberately narrow.** An earlier draft said "no user-facing
+surface carried it", which is false: `internal/genapi/errors.go` names both routes on its
+own 401, and roughly ten surfaces name the key route in several spellings.
+`internal/cmd/login.go`'s `spendCredentialRoutes` already states the governing
+convention — other packages cannot import it, so their wording is corrected in place and
+**kept in step by hand**. This is another copy under that convention, not a unification.
+
+🔴 **THE COUNT WENT FIVE → SEVEN → EIGHT, AND EACH CORRECTION CAME FROM A WIDER
+INSTRUMENT RATHER THAN A WIDER READ.** Draft 1 grepped the literal `not logged in (401)`
+— the very class of one-line-literal instrument this section criticises two paragraphs
+above — and found five. Round 0 grepped `case http.StatusUnauthorized:` and found seven.
+Round 1 parsed the AST and found eight: `withdrawError` used `case
+http.StatusUnauthorized, http.StatusForbidden:`, a shape no line-regex sees, seventy
+lines from the code under change. **The guard was wrong the same way, twice** — file-
+granular, then arm-granular-but-pattern-blind — and is now a `go/parser` walk, which
+cannot have a pattern blind spot. Two hardenings of one parse is the evidence for this
+repo's own rule: prefer DELETING a parse to teaching it a better pattern.
 
 **The transferable finding:** this repo's error strings were already carrying their
 remedies, because `AGENTS.md` has said *"make errors actionable — name the next command

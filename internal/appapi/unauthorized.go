@@ -19,26 +19,39 @@ import "fmt"
 // token source refreshes transparently on a 401 (see `pkg/civitai/api.go`), so
 // this message existing means the refresh token is dead too, and "log in again"
 // can fail a second time for the same reason. The README's Troubleshooting table
-// carried that diagnosis and the personal-key escape hatch; the binary did not,
-// and a table is not reachable from a CI log. The wording of the key route is
-// taken verbatim from the one surface that already had it right —
-// `analytics.go`'s 403 arm — so the CLI names one way to do this, not two.
+// carried that diagnosis and the personal-key escape hatch; no 401 in THIS
+// package did, and a table is not reachable from a CI log.
+//
+// ⚠ NARROWER THAN AN EARLIER DRAFT OF THIS COMMENT CLAIMED. It said the key
+// route was carried by "no user-facing surface" and that this wording is
+// "verbatim from the one surface that already had it right". Both are false:
+// `genapi/errors.go` carries both routes on its own 401, `analytics.go`'s 403
+// carries the key route in a different spelling, and roughly ten surfaces name
+// it in several. This is therefore ANOTHER copy, not a unification — and
+// `internal/cmd/login.go`'s `spendCredentialRoutes` already states the
+// convention that governs it: other packages cannot import that constant, so
+// their wording is corrected in place and must be KEPT IN STEP by hand. Nothing
+// pins the two against each other; that is a known, accepted cost here, not an
+// oversight to discover later.
 //
 // 🔴 TestUnauthorizedCallersAreLedgered pins the caller set in BOTH directions:
 // it fails when a new 401 arm is written without this helper, and when a
 // ledgered one stops calling it. A helper nothing is required to use regenerates
 // exactly the drift it was written to end.
 const unauthorizedRemedy = "run `civitai login` (or set CIVITAI_TOKEN). " +
-	"An OAuth login refreshes itself on a 401, so if that is what you are using the refresh failed too " +
-	"and logging in again may not clear it — create a personal API key at " +
+	"An OAuth login retries once with a refreshed token, so if that is what you are using it has already " +
+	"failed twice and logging in again may not clear it — create a personal API key at " +
 	"https://civitai.com/user/account and run `civitai login --token <key>`"
 
 // unauthorizedError builds the 401 error for an appapi route.
 //
-// serverMsg is the server's own words, or "" where the caller has decided they
-// are misleading and dropped them — `devTunnelError` does exactly that, and says
-// why at its call site. Both shapes are deliberate; the remedy is identical
-// either way, which is the whole point of the helper.
+// serverMsg is the server's own words, or "" where the caller drops them. TWO
+// callers pass "", and they are not equally well justified: `devTunnelError`
+// drops the origin-gate string and says why at its call site; `listingError`
+// computes `msg` and discards it on the 401 arm with no comment at all, which
+// predates this helper and is recorded here rather than silently tidied — the
+// drop may well be right, but nothing says so. Both shapes are supported; the
+// remedy is identical either way, which is the point of the helper.
 func unauthorizedError(serverMsg string) error {
 	if serverMsg == "" {
 		return fmt.Errorf("not logged in (401) — %s", unauthorizedRemedy)

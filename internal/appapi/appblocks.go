@@ -2304,8 +2304,16 @@ func withdrawError(status int, raw []byte) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
 	msg := serverMessage(raw)
 	switch status {
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("not authorized (check your API key / Apps invite) (%d): %s", status, msg)
+	case http.StatusUnauthorized:
+		return unauthorizedError(msg)
+	case http.StatusForbidden:
+		// 🔴 SPLIT FROM THE 401 ON PURPOSE. These shared one arm and one message —
+		// "not authorized (check your API key / Apps invite)" — which named no
+		// command and merged two different problems: a 401 is a credential the
+		// server did not accept, a 403 is a credential it accepted and an account
+		// that lacks the grant. Logging in again fixes the first and cannot fix
+		// the second, so one message had to be wrong for one of them.
+		return fmt.Errorf("not authorized to withdraw this request (403): %s — withdrawing needs Apps-author access (invite-only beta); check which account you are on with `civitai whoami`", msg)
 	case http.StatusNotFound:
 		return fmt.Errorf("publish request not found (or not yours) (404): %s", msg)
 	case http.StatusConflict:

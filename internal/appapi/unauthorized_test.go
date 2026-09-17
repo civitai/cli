@@ -3,140 +3,25 @@ package appapi
 import (
 	"errors"
 	"net/http"
-	"os"
-	"regexp"
-	"sort"
 	"strings"
 	"testing"
 
 	"github.com/civitai/cli/pkg/civitai"
 )
 
-// unauthorizedLedger is the ASSERTED set of non-test files in this package that
-// contain a `case http.StatusUnauthorized:` arm. It is checked in BOTH
-// directions: the guard fails when the set GROWS (a new 401 arm was written)
-// and when it SHRINKS (a ledgered one was removed or renamed).
+// 🔴 THE REGEX-BASED LEDGER THAT STOOD HERE IS RETIRED, NOT MOVED.
+// It was `unauthorizedLedger` + `statusUnauthorizedArm`, and it was wrong twice
+// in one PR — file-granular first (one converted arm satisfied a file of five),
+// then arm-granular but blind to a `case A, B:` list and to a branching clause
+// body, both of which this package already contained. Its replacement is
+// TestEvery401ArmRoutesThroughTheHelper in unauthorized_arms_test.go, which uses
+// go/parser and so cannot have a pattern blind spot at all.
 //
-// 🔴 A ONE-DIRECTIONAL VERSION OF THIS WOULD BE THE DEFECT IT EXISTS TO CATCH.
-// The state before this change was five open-coded 401 literals, four spelling
-// the remedy one way and the fifth another. A guard that only checked the files
-// it already knew about would have gone on passing while a sixth site was added
-// with a sixth wording — which is how the fifth got there.
-var unauthorizedLedger = map[string]string{
-	"listing.go":   "store-listing routes (`app listing …`)",
-	"appblocks.go": "submit, dev-token, dev-tunnel and submissions",
-	"analytics.go": "`app metrics`",
-}
-
-// statusUnauthorizedArm captures a 401 case clause AND the statement it returns,
-// so the guard below can judge EACH ARM rather than each FILE.
-//
-// 🔴 THE FILE-GRANULAR VERSION OF THIS SHIPPED IN THIS PR AND WAS VACUOUS.
-// It asked `strings.Contains(src, "unauthorizedError(")`, which one converted arm
-// satisfies for the whole file — so `appblocks.go`, which has FIVE 401 arms, passed
-// while two of them still answered with their own literals. Mutation-proven: a sixth
-// arm returning `fmt.Errorf("auth failed (401) — try again later")` appended to that
-// file SURVIVED the guard. It is the exact failure this file's own comment on
-// TestUnauthorizedErrorIsStatusTagged boasts about catching — a docstring naming a
-// RELATIONSHIP over a body inspecting one SIDE — re-committed one test up.
-var statusUnauthorizedArm = regexp.MustCompile(
-	`(?m)^[ \t]*case http\.StatusUnauthorized:[ \t]*\n((?:[ \t]*(?://[^\n]*)?\n)*[ \t]*return[^\n]*)`)
-
-// TestUnauthorizedCallersAreLedgered is the seam guard. It pins a RELATIONSHIP —
-// "every 401 arm in this package returns unauthorizedError" — rather than
-// inspecting one side of it.
-//
-// Mutation-verified when it landed, and the controls are recorded because a
-// structural check like this type-checks past a wrong argument:
-//   - restoring any one of the five original `fmt.Errorf("not logged in (401)…`
-//     literals reddens it by file name;
-//   - adding a `case http.StatusUnauthorized:` arm in a new file reddens the
-//     GROWS direction;
-//   - deleting `analytics.go`'s arm reddens the SHRINKS direction.
-func TestUnauthorizedCallersAreLedgered(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("read package dir: %v", err)
-	}
-
-	found := map[string]int{}
-	var unconverted []string
-	scanned := 0
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		scanned++
-		src, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		arms := statusUnauthorizedArm.FindAllSubmatch(src, -1)
-		if len(arms) > 0 {
-			found[name] = len(arms)
-		}
-		// PER ARM, not per file: every 401 case clause must RETURN the helper.
-		for _, a := range arms {
-			ret := strings.TrimSpace(string(a[1]))
-			if strings.Contains(ret, "unauthorizedError(") {
-				continue
-			}
-			unconverted = append(unconverted, name+": "+ret)
-		}
-	}
-	// Positive control: a walk that read no files would report every ledgered
-	// entry as missing (loud) AND every unledgered one as absent (silent). The
-	// floor pins the walk to the real package.
-	if scanned < 5 {
-		t.Fatalf("CONTROL failure: scanned only %d non-test .go files in this package — "+
-			"the directory walk is reading the wrong tree, and neither direction below is meaningful", scanned)
-	}
-
-	for name, why := range unauthorizedLedger {
-		if _, ok := found[name]; !ok {
-			t.Errorf("unauthorizedLedger names %s (%s), which no longer has a `case http.StatusUnauthorized:` arm. "+
-				"Drop the entry, or restore the arm — a ledger entry for code that is gone is a rule nobody can check.",
-				name, why)
-		}
-	}
-	var unledgered []string
-	for name := range found {
-		if _, ok := unauthorizedLedger[name]; !ok {
-			unledgered = append(unledgered, name)
-		}
-	}
-	if len(unledgered) > 0 {
-		sort.Strings(unledgered)
-		t.Errorf("these files answer a 401 but are not in unauthorizedLedger: %v\n\n"+
-			"Every 401 arm in this package must return unauthorizedError(serverMsg) so the remedy is "+
-			"spelled once. Five open-coded literals is the state this replaced, and they had already "+
-			"drifted apart. Add the file to the ledger once its arm calls the helper.", unledgered)
-	}
-
-	// The relationship itself, ARM BY ARM. A file-granular version of this check
-	// shipped in this PR and was satisfied by one converted arm out of five.
-	if len(unconverted) > 0 {
-		sort.Strings(unconverted)
-		t.Errorf("%d `case http.StatusUnauthorized:` arm(s) do not return unauthorizedError:\n    %s\n\n"+
-			"Every 401 in this package returns the SAME message, because a user hitting one has the same "+
-			"problem and the same two remedies whichever route they were on. An arm with its own literal "+
-			"is free to disagree, and before this helper existed two of them already did — one dropped the "+
-			"CIVITAI_TOKEN route for the command group most likely to run in CI, and one said "+
-			"\"check your token\", which is not a command anyone can run.", len(unconverted),
-			strings.Join(unconverted, "\n    "))
-	}
-	// Positive control on the ARM parser itself: a regex that matched no arm would
-	// report zero unconverted and read exactly like full conversion.
-	total := 0
-	for _, n := range found {
-		total += n
-	}
-	if total < 5 {
-		t.Fatalf("CONTROL failure: the arm regex matched only %d `case http.StatusUnauthorized:` clause(s) "+
-			"across %d files — it is not reading the case bodies, so a zero above means nothing", total, len(found))
-	}
-}
+// Deleted rather than kept alongside, because a superseded guard that still
+// passes is the worst of both: it reads as coverage, it is satisfied by states
+// the real guard rejects, and the next reader cannot tell which one is load-
+// bearing. The per-file reasons it carried are not lost — the AST guard reports
+// file:line for every arm it finds.
 
 // TestUnauthorizedErrorNamesBothRemedies pins what the message SAYS, as a whole
 // normalised string rather than by keyword.
@@ -166,15 +51,18 @@ func TestUnauthorizedErrorNamesBothRemedies(t *testing.T) {
 	// regression this whole change exists to fix.
 	for _, clause := range []string{
 		"run `civitai login` (or set CIVITAI_TOKEN)",
-		"the refresh failed too",
+		"already failed twice",
 		"https://civitai.com/user/account",
 		"`civitai login --token <key>`",
 	} {
 		if !strings.Contains(unauthorizedRemedy, clause) {
 			t.Errorf("the 401 remedy no longer contains %q.\n\nfull text: %s\n\n"+
 				"Each clause is a separate action a user can take, and the key route is the one that "+
-				"works when `civitai login` does not — an expired OAuth REFRESH token cannot be "+
-				"refreshed by logging in again through the same path.", clause, unauthorizedRemedy)
+				"works when `civitai login` does not. ⚠ The middle clause is CONDITIONED on OAuth "+
+				"and says \"already failed twice\" rather than \"the refresh failed\": a personal key "+
+				"never refreshes at all (auth/source.go returns ErrNoRefresh), and an OAuth refresh "+
+				"can SUCCEED and still 401 on the retry. Both earlier wordings asserted one of "+
+				"those away.", clause, unauthorizedRemedy)
 		}
 	}
 }
