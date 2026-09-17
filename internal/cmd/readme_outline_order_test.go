@@ -25,10 +25,30 @@ import (
 // satisfy both directions of that and still be a map of a document nobody
 // wrote.
 //
-// The measured consequence was a reader cost, not a broken link. A CI author
-// sent to `## Scripting with --json` had 160,391 bytes — 58% of the file —
-// between that section and `## Exit codes`, the contract their script has to
-// branch on. After the reorder that gap is 22,339 bytes.
+// # Why the document moved to the TOC rather than the TOC to the document
+//
+// Both directions would have made the two agree and both are byte-neutral, so
+// this needs a reason, and the obvious one does not hold up. 🔴 THE ORIGINAL
+// REASON WAS A BYTE-DISTANCE READER MODEL, AND IT REFUTES ITSELF. It said a CI
+// author sent to `## Scripting with --json` had 160,391 bytes — 58% of the file
+// — before reaching `## Exit codes`, the contract their script branches on
+// (22,339 after). But the same argument dismissed the one reader the reorder
+// made WORSE (`## Download model files`, 64,782 -> 159,634) on the grounds that
+// they still have a Contents link. If a Contents link settles it for that
+// reader it settles it for the CI reader too, and the headline number is worth
+// nothing. Round 0 on #648 is what caught that; the numbers survive as history,
+// not as the justification.
+//
+// The reason that does hold is structural, and it is the one to keep:
+// `## Contents` is not a flat list — it carries four editorial groups (**Get
+// started**, **Author an App**, **Use the API**, **Reference**), and on `main`
+// the three read-path sections sat INSIDE the authoring run while `## Generate`
+// sat between `## App metrics` and `## Upgrading`. So repairing the TOC to match
+// the document would have had to SPLIT "Use the API" into fragments interleaved
+// with "Author an App" — destroying a real reader affordance to preserve an
+// accident. Moving the document is the only direction that keeps the grouping,
+// and topical coherence (a reader working the authoring track linearly stopped
+// hitting three API sections mid-stream) is the benefit, not scroll distance.
 //
 // # What it does NOT assert
 //
