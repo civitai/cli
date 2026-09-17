@@ -12,6 +12,16 @@ import (
 //
 // Consumers (e.g. the CLI's process-exit-code mapping in cmd/civitai) branch on
 // these; nothing here alters what a human sees printed on stderr.
+//
+// 🔴 THEY ANSWER "WHAT KIND OF FAILURE", NEVER "DID ANYTHING LEAVE THIS
+// MACHINE", and those are different questions. Most are read off an HTTP status,
+// but internal/auth attaches ErrUnauthorized to purely LOCAL errors ("no refresh
+// token stored"), so a consumer branching on kind alone cannot tell whether a
+// request went out. `app submit` needed exactly that and got it wrong — issue
+// #637, measured as 0 requests received while the CLI printed "What this CLI
+// sent … N bytes on the wire". That answer lives in internal/appapi as
+// ErrNothingSent, set from httptrace, deliberately NOT as a kind here. Read its
+// doc comment before adding a wire-fact sentinel to this list.
 var (
 	// ErrUnauthorized marks an authentication/authorization failure — a missing,
 	// expired, or invalid credential, or a credential lacking the needed scope

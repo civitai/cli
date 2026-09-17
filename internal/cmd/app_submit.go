@@ -30,16 +30,28 @@ import (
 const submitDiagnosisEntries = 5
 
 // printSubmitSizeDiagnosis writes what the CLI knows about the bundle whose
-// upload just failed: the exact number of bytes it put on the wire, and the
+// upload just failed: the size of the request it put on the connection, and the
 // largest entries those bytes were made of.
 //
 // 🔴 IT IS AN ACCOUNT OF WHAT WAS SENT, NOT A DIAGNOSIS OF WHY IT WAS REFUSED,
 // and the wording keeps that line. The CLI cannot see the server's limits: it
 // does not know this failure is about size, and it must not imply it does —
 // this same block prints under a 500 that has nothing to do with the bundle.
-// What it can say is true of every one of those cases: here is what left this
-// machine. See issue #423 for the failure that made the distinction matter, and
-// pkgzip's cap comment for why the honest move is to report rather than refuse.
+// See issue #423 for the failure that made the distinction matter, and pkgzip's
+// cap comment for why the honest move is to report rather than refuse.
+//
+// 🔴 "up to", AND THAT WORD IS THE WHOLE OF A SECOND MEASURED DEFECT. This block
+// used to print only when httptrace reported the request written CLEANLY, so the
+// count was exact. #637 widened that — a submit cut short mid-body had genuinely
+// sent bytes and was being told it had sent none — and widening WHEN the block
+// prints without touching WHAT IT SAYS left it asserting a full body count over a
+// partial transfer. Measured: a mid-body timeout printed 8,388,627 bytes where
+// the server had received 233,266, and a connection dropped at accept printed the
+// same number on 4 of 5 runs having delivered essentially nothing. That is #423's
+// own defect — "the server received 0 bytes while the CLI reported 12,587,785" —
+// reached through a different door. The number is an upper bound on what arrived
+// and the line now says so. printSubmitSizeRefusal keeps the exact form: nothing
+// was sent there, so there is no transfer to fall short of.
 //
 // It is on the FAILURE path only. On a success there is nothing to diagnose,
 // and the size already appears on the `Packaged …` line for anyone who wants
@@ -47,7 +59,7 @@ const submitDiagnosisEntries = 5
 // the block, which is precisely when it is worth reading.
 func printSubmitSizeDiagnosis(w io.Writer, zipBytes []byte, prov appapi.Provenance) {
 	fmt.Fprintf(w, "\nWhat this CLI sent (it cannot tell whether that is why the submit failed):\n")
-	fmt.Fprintf(w, "  %d bytes on the wire — a %d-byte zip, base64-encoded into a JSON body.\n",
+	fmt.Fprintf(w, "  up to %d bytes on the wire — a %d-byte zip, base64-encoded into a JSON body.\n",
 		appapi.SubmitBodySize(len(zipBytes), prov), len(zipBytes))
 
 	entries, err := pkgzip.LargestEntries(zipBytes, submitDiagnosisEntries)
@@ -669,9 +681,32 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 		// failed" — was false too, because it had just decided. The entry list
 		// is still worth printing (the refusal tells you to look at it), so the
 		// refusal gets its own block with honest tense rather than none.
+		//
+		// 🔴 AND NOT FOR ANY OTHER FAILURE THAT SENT NOTHING — issue #637, the
+		// SAME defect down a path this switch could not see. It branched on how
+		// the error CLASSIFIED and on nothing else, and two reachable failures
+		// classify as ordinary while the server receives zero bytes: an
+		// unwritable config after an OAuth refresh (internal/auth returns
+		// `persist refreshed tokens` UNTAGGED, and authedDoWith returns on
+		// Tokens.Token() before a request exists), and a dial that never
+		// connects. Both printed the past tense over nothing.
+		// appapi.SubmitVersion now answers the wire question directly —
+		// ErrNothingSent is set from httptrace's WroteRequest — so this arm asks
+		// it instead of inferring it from a kind.
+		//
+		// That is also what makes the 401/403/429 arm below honest: it is now
+		// reached only when the server really answered, where those numbers mean
+		// what the README says. A credential refused LOCALLY (internal/auth tags
+		// ErrUnauthorized onto "no refresh token stored") lands on the arm above
+		// it now — same silence, but attributed to the fact rather than to
+		// vocabulary borrowed from a status code that never existed.
 		switch {
 		case errors.Is(err, appapi.ErrBundleTooLarge):
 			printSubmitSizeRefusal(cmd.ErrOrStderr(), zipBytes, prov)
+		case errors.Is(err, appapi.ErrNothingSent):
+			// Nothing left the machine, so there is no account to give: the
+			// error already names the cause, and a byte count here would be the
+			// false claim this case exists to stop.
 		case !errors.Is(err, civitai.ErrUnauthorized) && !errors.Is(err, civitai.ErrRateLimited):
 			printSubmitSizeDiagnosis(cmd.ErrOrStderr(), zipBytes, prov)
 		}
