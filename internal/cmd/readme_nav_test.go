@@ -597,6 +597,14 @@ func TestREADMETableOfContentsListsNothingElse(t *testing.T) {
 // contain no `| `civitai` row. That is the reassuring direction: a scoping bug
 // that costs nothing today is still a guard reporting a scope it does not have.
 //
+// Measured rather than asserted, because "costs nothing today" is a claim about
+// today. Planting one row — `| `civitai app validate --definitely-not-a-flag` |`
+// — in the first 1,889 bytes of `## Set up your coding agent` is INVISIBLE under
+// this bound (correct: it is not in the table) and reddens
+// TestREADMECommandSynopsesNameRealFlags under the old one. So the old bound did
+// not merely read further, it adjudicated a flag claim in a section it does not
+// own.
+//
 // The replacement is not a better raw scan, it is NO raw scan:
 // readmeSectionByAnchor already bounds a section at the next heading of the same
 // or a higher LEVEL, which is the rule the old `### ` scan was standing in for,
