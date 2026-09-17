@@ -51,18 +51,19 @@ func TestUnauthorizedErrorNamesBothRemedies(t *testing.T) {
 	// regression this whole change exists to fix.
 	for _, clause := range []string{
 		"run `civitai login` (or set CIVITAI_TOKEN)",
-		"already failed twice",
+		"already tried to refresh and retry",
 		"https://civitai.com/user/account",
 		"`civitai login --token <key>`",
 	} {
 		if !strings.Contains(unauthorizedRemedy, clause) {
 			t.Errorf("the 401 remedy no longer contains %q.\n\nfull text: %s\n\n"+
 				"Each clause is a separate action a user can take, and the key route is the one that "+
-				"works when `civitai login` does not. ⚠ The middle clause is CONDITIONED on OAuth "+
-				"and says \"already failed twice\" rather than \"the refresh failed\": a personal key "+
-				"never refreshes at all (auth/source.go returns ErrNoRefresh), and an OAuth refresh "+
-				"can SUCCEED and still 401 on the retry. Both earlier wordings asserted one of "+
-				"those away.", clause, unauthorizedRemedy)
+				"works when `civitai login` does not. 🔴 The middle clause is CONDITIONED on OAuth "+
+				"and must NOT name which half of refresh-and-retry failed. Two earlier wordings did "+
+				"and each was false about the other case: \"the refresh failed too\" is false when "+
+				"the refresh SUCCEEDED and the retry 401d, and \"already failed twice\" is false when "+
+				"the refresh ERRORED so no retry ever ran. A personal key never refreshes at all "+
+				"(auth/source.go returns ErrNoRefresh), which is what the OAuth condition covers.", clause, unauthorizedRemedy)
 		}
 	}
 }

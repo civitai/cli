@@ -15,10 +15,15 @@ import "fmt"
 //
 // # What it says that it did not before
 //
-// A 401 that reaches a user has ALREADY survived an automatic refresh — the
-// token source refreshes transparently on a 401 (see `pkg/civitai/api.go`), so
-// this message existing means the refresh token is dead too, and "log in again"
-// can fail a second time for the same reason. The README's Troubleshooting table
+// A 401 that reaches a user on an OAuth login has already been through the
+// refresh-and-retry at `appblocks.go:580`, whichever way that went: the refresh
+// errored (no refresh token, or the grant failed) and the original 401 stands, or
+// it succeeded and the retry 401'd anyway. Both mean "log in again" may not clear
+// it. 🔴 THE MESSAGE MUST NOT NAME WHICH — two earlier wordings did, and each was
+// false about the other case: "the refresh failed too" is false when it
+// succeeded, and "it has already failed twice" is false when no retry ever ran.
+// A personal key never refreshes at all (`auth/source.go` returns ErrNoRefresh),
+// which is why the clause is conditioned on OAuth. The README's Troubleshooting table
 // carried that diagnosis and the personal-key escape hatch; no 401 in THIS
 // package did, and a table is not reachable from a CI log.
 //
@@ -34,13 +39,20 @@ import "fmt"
 // pins the two against each other; that is a known, accepted cost here, not an
 // oversight to discover later.
 //
-// 🔴 TestUnauthorizedCallersAreLedgered pins the caller set in BOTH directions:
-// it fails when a new 401 arm is written without this helper, and when a
-// ledgered one stops calling it. A helper nothing is required to use regenerates
-// exactly the drift it was written to end.
+// 🔴 TestNo401SiteBuildsItsOwnMessage (unauthorized_arms_test.go) is what makes
+// this mandatory rather than advisory: it fails when any region conditioned on
+// StatusUnauthorized constructs its own message. A helper nothing is REQUIRED to
+// use regenerates exactly the drift it was written to end.
+//
+// ⚠ It is not a per-file ledger and there is no longer one. An earlier draft of
+// this comment named `TestUnauthorizedCallersAreLedgered`, which the same commit
+// that wrote this sentence DELETED — so the source pointed at a guard that did
+// not exist. The replacement pins message construction plus a site-count floor;
+// it does not pin which files answer a 401, so moving every arm into a new file
+// keeps it silent.
 const unauthorizedRemedy = "run `civitai login` (or set CIVITAI_TOKEN). " +
-	"An OAuth login retries once with a refreshed token, so if that is what you are using it has already " +
-	"failed twice and logging in again may not clear it — create a personal API key at " +
+	"On an OAuth login the CLI has already tried to refresh and retry, so logging in again may not clear " +
+	"it — create a personal API key at " +
 	"https://civitai.com/user/account and run `civitai login --token <key>`"
 
 // unauthorizedError builds the 401 error for an appapi route.

@@ -187,7 +187,7 @@ func TestAppWithdrawErrorMapping(t *testing.T) {
 		{http.StatusConflict, map[string]any{"message": "request is already approved"}, "request is already approved"},
 		// See withdraw_test.go: one shared expectation hid a merged 401/403 arm.
 		{http.StatusUnauthorized, map[string]any{"message": "invalid key"}, "not logged in (401)"},
-		{http.StatusForbidden, map[string]any{"message": "no access"}, "not authorized to withdraw"},
+		{http.StatusForbidden, map[string]any{"message": "no access"}, "refused to withdraw this request (403)"},
 		{http.StatusTooManyRequests, map[string]any{"message": "slow down"}, "rate limited"},
 		{http.StatusServiceUnavailable, map[string]any{"message": "Rate limiter unavailable; please retry"}, "apps unavailable (503)"},
 	}

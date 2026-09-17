@@ -380,9 +380,14 @@ above — and found five. Round 0 grepped `case http.StatusUnauthorized:` and fo
 Round 1 parsed the AST and found eight: `withdrawError` used `case
 http.StatusUnauthorized, http.StatusForbidden:`, a shape no line-regex sees, seventy
 lines from the code under change. **The guard was wrong the same way, twice** — file-
-granular, then arm-granular-but-pattern-blind — and is now a `go/parser` walk, which
-cannot have a pattern blind spot. Two hardenings of one parse is the evidence for this
-repo's own rule: prefer DELETING a parse to teaching it a better pattern.
+granular, then arm-granular-but-pattern-blind — and round 2 found the `go/parser` walk
+that replaced it ALSO pattern-blind, to `if status == http.StatusUnauthorized`, a shape
+sitting in the same file at `appblocks.go:580` under a comment asserting no blind spot
+existed. **Three drafts, three times the description was wider than the implementation.**
+The fourth stops keying on syntax altogether and asks the question the invariant is about
+— does a 401-conditioned region CONSTRUCT a message? — which makes the enclosing form
+stop being an input. Prefer DELETING a parse to teaching it a better pattern; and when
+the third attempt still misses, re-key rather than widen.
 
 **The transferable finding:** this repo's error strings were already carrying their
 remedies, because `AGENTS.md` has said *"make errors actionable — name the next command

@@ -2309,11 +2309,24 @@ func withdrawError(status int, raw []byte) (err error) {
 	case http.StatusForbidden:
 		// 🔴 SPLIT FROM THE 401 ON PURPOSE. These shared one arm and one message —
 		// "not authorized (check your API key / Apps invite)" — which named no
-		// command and merged two different problems: a 401 is a credential the
-		// server did not accept, a 403 is a credential it accepted and an account
-		// that lacks the grant. Logging in again fixes the first and cannot fix
-		// the second, so one message had to be wrong for one of them.
-		return fmt.Errorf("not authorized to withdraw this request (403): %s — withdrawing needs Apps-author access (invite-only beta); check which account you are on with `civitai whoami`", msg)
+		// command and merged two problems with different remedies: a 401 is a
+		// credential the server did not accept, a 403 is one it accepted and
+		// refused to act on. Logging in again can fix the first; it may or may
+		// not fix the second.
+		//
+		// 🔴 AND THIS ARM HEDGES ON PURPOSE — an earlier version of it did not,
+		// and asserted "withdrawing needs Apps-author access (invite-only beta);
+		// check which account you are on". Nothing sources that. WithdrawPath's
+		// own vendored note above records 200/404/409 and NO 403 at all, and it
+		// puts the not-yours case on **404** — so the one cause that message
+		// named is the one the route does not use. Meanwhile listingError's
+		// isInsufficientScopeMsg arm proves this token family DOES 403 for a
+		// stale scope, whose remedy is re-running `civitai login`, the opposite
+		// of switching accounts. Naming both, hedged, is what the neighbouring
+		// under-determined 403s already do ("your account may lack Apps access",
+		// "are you the app owner, and is Apps enabled…?"). Tighten it only with a
+		// sourced server contract, and update the note above in the same commit.
+		return fmt.Errorf("the server refused to withdraw this request (403): %s — the credential was accepted and the action was not. Two things do this: a token that predates the Apps scope (re-run `civitai login`), or an account without Apps-author access (`civitai whoami` shows who you are). Note a request that is not yours answers 404, not 403", msg)
 	case http.StatusNotFound:
 		return fmt.Errorf("publish request not found (or not yours) (404): %s", msg)
 	case http.StatusConflict:
