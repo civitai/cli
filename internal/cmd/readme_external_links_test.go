@@ -51,19 +51,18 @@ var absoluteURLRe = regexp.MustCompile(`https://[A-Za-z0-9._~:/?#@!$&*+,;=%-]+`)
 // dereferenced by this guard. Each entry states WHY, because an unexplained
 // exclusion is how a guard silently narrows until it covers nothing.
 //
-// 🔴 EVERY ENTRY HERE WAS PUT IN BY A MEASURED RED, not by anticipation. The
-// first live run of this guard failed on exactly these, which is the negative
-// control that proves it can go red at all.
+// ⚠ EACH ENTRY RECORDS HOW IT GOT HERE, because an earlier version of this
+// comment claimed "EVERY ENTRY HERE WAS PUT IN BY A MEASURED RED" and that was
+// FALSE of two of the three — a comment certifying a discipline the table did
+// not follow, which is exactly the sentence that stops the next reader
+// questioning an entry.
 var notAPage = map[string]string{
-	// The two MCP transport endpoints. They are JSON-RPC servers, not pages:
-	// orchestration deliberately answers 401 without a credential (that refusal
-	// is itself documented in `## Set up your coding agent`), and a plain GET is
-	// not the protocol. Fetching them would assert nothing about the docs.
-	"https://mcp.civitai.com/mcp":           "MCP transport endpoint, not a page",
-	"https://orchestration.civitai.com/mcp": "MCP transport endpoint; 401 by design",
+	// MEASURED 405 to a plain GET. It is a JSON-RPC transport, not a page, so a
+	// GET is not the protocol and the status says nothing about the docs. This
+	// is load-bearing: 405 falls through to the >= 400 arm and would fail.
+	"https://mcp.civitai.com/mcp": "MCP transport endpoint; measured 405 to a GET",
 
-	// A deliberate placeholder in the `app listing set-source-repo` examples.
-	// It is meant to look like a user's repo and must never resolve.
+	// MEASURED RED on the guard's first live run.
 	"https://github.com/me/my-app": "placeholder repo URL in a command example",
 }
 
@@ -72,12 +71,15 @@ var notAPage = map[string]string{
 // without resolving, and README.md itself documents that `--image` validates
 // against it as a reserved host — so a 404 from it is the specification working,
 // not drift.
+//
+// ⚠ ONLY HOSTS THE README ACTUALLY USES. Three anticipatory entries
+// (`www.example.com`, `example.net`, `example.org`) were removed after measuring
+// zero matches each: an exclusion that excludes nothing is indistinguishable
+// from one that is load-bearing, and the list is where this guard narrows.
+// README.md names `.net`/`.org` in PROSE as reserved hosts; it links neither.
 var placeholderHosts = map[string]bool{
-	"example.com":     true,
-	"www.example.com": true,
-	"example.net":     true,
-	"example.org":     true,
-	"img.shields.io":  true, // badge image service, not documentation
+	"example.com":    true,
+	"img.shields.io": true, // badge image service, not documentation
 }
 
 // readmeExternalURLs extracts the distinct absolute URLs worth dereferencing.
@@ -109,17 +111,24 @@ func readmeExternalURLs(t *testing.T) []string {
 	return out
 }
 
-// readmeMinExternalURLs is an anti-vacuity floor set at the ACTUAL count at the
-// time of writing (37 after the read-path link-out), not a slack round number.
-// Cross-checked against an independent shell extraction applying the same
-// exclusions, which is what makes 37 a measurement rather than this regex's
-// opinion of itself.
+// readmeMinExternalURLs is an anti-vacuity floor: it answers "is the extractor
+// still reading URLs at all?", and NOTHING else. The live count at the time of
+// writing was 38 (cross-checked against an independent shell extraction applying
+// the same exclusions), so 20 is slack by design.
 //
-// 🔴 A SLACK FLOOR IS WHAT LETS LINKS VANISH UNNOTICED — the lesson #652 paid
-// for with a `total < 5` floor against a real 7, under which a mutant could
-// delete two arms in silence. Set it at the real count and treat moving it as a
-// decision to justify in the same commit.
-const readmeMinExternalURLs = 37
+// 🔴 IT WAS 37 — THE EXACT COUNT — AND THAT WAS THE WRONG SHAPE. Set on the
+// count, this fires on any honest link removal with a message telling you to
+// lower the constant, which is a change-detector that ratchets, not an
+// invariant. The #652 lesson it cited ("set the floor at the ACTUAL count") was
+// about a floor too SLACK to see a mutant de-converting two arms; applying it
+// here overshot, because the property at risk is different.
+//
+// 🔴 WHAT ACTUALLY DEFENDS THIS GUARD IS THE POSITIVE CONTROL BELOW, not the
+// number. A broken regex returns ~0 and trips 20 just as surely as 37; a regex
+// that silently matched only github.com would pass ANY count, and only the
+// `mustFind` assertion catches it. Raise this only if it stops being able to
+// distinguish "the extractor broke" from "a link was removed".
+const readmeMinExternalURLs = 20
 
 func TestREADMEExternalURLsAreExtractable(t *testing.T) {
 	urls := readmeExternalURLs(t)
@@ -134,7 +143,7 @@ func TestREADMEExternalURLsAreExtractable(t *testing.T) {
 
 	// POSITIVE CONTROL on the extractor, not just on the count: the guide the
 	// read-path sections were deleted in favour of must be among what we found.
-	// Without this, a regex that matched 37 GitHub URLs and missed every
+	// Without this, a regex that matched 30 GitHub URLs and missed every
 	// developer.civitai.com one would pass the floor above.
 	const mustFind = "https://developer.civitai.com/site/guide/cli"
 	found := false
@@ -199,12 +208,16 @@ func TestREADMEExternalURLsResolve(t *testing.T) {
 		case resp.StatusCode == http.StatusUnauthorized ||
 			resp.StatusCode == http.StatusForbidden ||
 			resp.StatusCode == http.StatusTooManyRequests:
-			// 🔴 NOT A DEAD LINK, AND MEASURED: www.npmjs.com answers 403 to
-			// this checker AND to curl under a browser user-agent, while the
-			// page is perfectly live in a browser. An anti-bot or rate-limit
-			// refusal is the host declining to ANSWER, which is the
-			// "we could not ask" case — failing on it would make this a
-			// permanently-red gate, the one outcome worse than no gate.
+			// 🔴 NOT A DEAD LINK, AND MEASURED: www.npmjs.com answered 403 to
+			// this checker and to curl under a browser user-agent, while the
+			// page is live in a browser. ⚠ It is INTERMITTENT — two runs an
+			// hour apart 403'd a different subset of the same two npm URLs —
+			// which is the argument FOR this arm, not against it: a host that
+			// refuses some requests and not others is precisely what must never
+			// decide a gate's colour. An anti-bot or rate-limit refusal is the
+			// host declining to ANSWER, which is the "we could not ask" case;
+			// failing on it would make this permanently and randomly red, the
+			// one outcome worse than no gate.
 			skipped++
 			checked--
 			t.Logf("SKIP %s — %d (access-controlled or bot-filtered, not a dead link)", u, resp.StatusCode)

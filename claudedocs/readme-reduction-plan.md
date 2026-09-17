@@ -431,24 +431,48 @@ browse, download, `--json` scripting — is documented on
 hand-synced surfaces that drift independently. Where the site covers a topic,
 link out. Where it does not, the clause above still stands unchanged.
 
-🔴 **BUT "THE SITE COVERS IT" IS A CLAIM TO MEASURE, NOT TO ASSUME — AND WHEN
-MEASURED IT WAS MOSTLY FALSE.** The read-path link-out PR probed the live page
-against a binary built from the same commit, and the site turned out to be both
-*thinner* and *wrong*:
+🔴 **BUT "THE SITE COVERS IT" IS A CLAIM TO MEASURE, NOT TO ASSUME.** The
+read-path link-out PR (#656) probed the live page against a binary built from the
+same commit. The site is **thinner** than its heading list implies, and **wrong**
+in two places:
 
-- It documents `--json` on `download`; the binary answers `unknown flag: --json`.
-- It lists Homebrew as **"macOS / Linux"**. `.goreleaser.yaml` publishes a
-  `homebrew_casks:` entry and no `brews:`, a cask is macOS-only, and
+- 🔴 It lists Homebrew as **"macOS / Linux"**. `.goreleaser.yaml:85` publishes a
+  `homebrew_casks:` entry and **no** `brews:`; a cask is macOS-only, and
   `TestREADMEHomebrewSectionMatchesTheReleaseConfig` exists precisely to stop
   this README repeating that claim. **`## Install` was therefore kept local.**
-- It omits `download --force` and `--yes` (the ambiguous-id **safety** stop), and
-  the "Prebuilt binary" install method entirely.
+- 🔴 It states `civitai model-versions get 999999999 --json` **exits 1**.
+  Measured against the binary it exits **4**; this README says 4 and is correct.
+  A scripting contract, so the site's version is the damaging direction.
+- It omits `download --force` and `--yes` (the ambiguous-id **safety** stop).
 - Its Download coverage is **one sentence per topic**. It has no type→folder
-  table, and nothing on the ambiguous-id stop, pickle/executable safety, the
-  ControlNet note, SHA256-integrity-is-not-authenticity, filename sanitisation,
-  retry/backoff or exit codes.
+  table, and nothing on the ambiguous-id stop, the same-named-file refusal,
+  pickle/executable safety, the ControlNet note,
+  SHA256-integrity-is-not-authenticity, filename sanitisation, the
+  `429`/`Retry-After` rule or exit codes.
 
-**So the measured yield was −5,294 B, not the −37 KB this plan projected.** The
+🔴 **TWO FURTHER "MEASURED" ROWS WERE PUBLISHED HERE AND ARE RETRACTED — round 0
+of #656 refuted both, and how they got here is the lesson.** They were taken from
+an **LLM summary of the page** rather than the page: asked to list the download
+flags, the summarizer folded the read-commands' `--json` into the Download
+section and omitted a sentence. Re-measured against the raw HTML:
+
+- ❌ *"It documents `--json` on `download`"* — **FALSE.** Every `--json` mention
+  on the page is scoped to read subcommands (*"Every **read** subcommand accepts
+  `--json`"*), and the page twice excludes download from that set. The binary
+  half is true (`download --json` → `unknown flag`), but the site never claims
+  otherwise.
+- ❌ *"It omits the Prebuilt binary install method"* — **FALSE.** The page carries
+  *"Prebuilt binaries for linux/macOS/windows × amd64/arm64 are on the GitHub
+  Releases page."*
+
+🔴 **SO: DIFF AGAINST THE RAW PAGE, NEVER A SUMMARY OF IT.** A summarizer
+reorganising a flag list is invisible in its output and reads exactly like a
+measurement. `curl` the page, strip tags, and grep the sentences.
+
+**The measured yield was −5,480 B (277,572 → 272,092), not the −37 KB this plan
+projected.** ⚠ Quote that figure only from the merge commit: three earlier
+numbers in this arc (−5,294, −5,293) were each measured on a tree that was then
+edited again by the same PR. The
 link-out is real for `## Scripting with --json`'s four recipe subsections and for
 the `agent-setup` prose that duplicates `--help`; it is **not** real for
 `## Download model files` or the behavioural half of `## Browse the public API`.

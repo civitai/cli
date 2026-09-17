@@ -2599,8 +2599,7 @@ civitai images search --model-id 4384 --sort "Most Reactions" --json   # raw JSO
 `baseModels` filter (an OR across the values) on both `models search` and
 `images search`. The
 [CLI guide](https://developer.civitai.com/site/guide/cli) works through it with
-examples; the rest of this section is CLI **output** behaviour that guide does
-not cover.
+examples; the rest of this section is CLI **output** behaviour.
 
 **Generation metadata (`--meta`).** By default the image list is a compact table
 without generation data (matching the API, which omits `meta` unless asked). Add
@@ -2650,9 +2649,7 @@ civitai download 691639 --layout a1111 --for-base "SDXL 1.0"      # A1111 layout
 
 The [CLI guide](https://developer.civitai.com/site/guide/cli) introduces file
 selection, folder routing, the compatibility check and integrity verification a
-paragraph at a time. What follows is the **full** behaviour — the type→folder
-map, the refusals, the safety notes and the sanitisation rules — which that guide
-does not carry.
+paragraph at a time. What follows is the full behaviour.
 
 > **Downloads require authentication.** Every model-file download needs a token —
 > even a small public embedding 401s anonymously. Run `civitai login` first. The
@@ -3448,8 +3445,8 @@ The **read-path recipes** — the `--cursor` deep-paging loop, silencing the upd
 nag for clean pipeline output, the SHA256-case and embedded-`modelVersions`
 gotchas, and a worked search→download example — live in the
 [CLI guide](https://developer.civitai.com/site/guide/cli). What stays below is
-what that guide does **not** cover: how `--json` treats the bytes, and the
-generation and `app` payloads, which are not Site API REST shapes.
+how `--json` treats the bytes, and the generation and `app` payloads, which are
+not Site API REST shapes.
 
 🔴 **It passes through the DOCUMENT, not the BYTES — do not diff or hash
 `--json` output against the wire.** Two things change the bytes without changing
