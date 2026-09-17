@@ -45,36 +45,17 @@ before touching prose. This doc is state; that doc is the plan.
 
 ## State now
 
-**Eighteen PRs merged across this arc. README is 277,820 bytes on `main` (`7543bbc`).** The byte threshold is GONE; size is a progress signal, never a gate.
-
-🔴 **ARC CLOSING-CONDITION VERDICT: NOT YET CLOSED — ONE NAMED PHASE LEFT, AND IT IS THE LAST.** Measured on a clean `main` at `7543bbc`:
+🔴 **THE ARC IS CLOSED. All three closing-condition clauses are green on a clean `main` at `ef20a33`.** Twenty-one PRs merged. README **277,572 B**, from 310,647 at arc start (`426288f`) — **−33,075 B, −10.6%**.
 
 | clause | result |
 |---|---|
-| `go test ./internal/cmd/ -run 'Attribution\|Troubleshooting\|README\|Readme\|readme' -count=1` exits 0 with **>0** tests | ✅ `ok`, **81** tests run |
-| `go test ./...` green | ✅ 21 packages, 0 failures — and **21/21 under `make ci-shallow`** in a depth-1 clone |
-| each remaining named phase has landed or been withdrawn by a merged PR | ❌ **phase 4 CLOSED (#648, `7543bbc`); phase 5 is the only one left** |
+| `go test ./internal/cmd/ -run 'Attribution\|Troubleshooting\|README\|Readme\|readme' -count=1` exits 0 with **>0** tests | ✅ `ok`, **81** tests |
+| `go test ./...` green | ✅ 21 packages, 0 failures |
+| each named phase landed **or was withdrawn** by a merged PR | ✅ phase 4 → **#648** (`7543bbc`); phase 5 → **WITHDRAWN, #652** (`ef20a33`) |
 
-⚠ **The gate count is 81 on a clean `main`, and the +1 over `c51fab9`'s 80 is #648's new guard** — `TestREADMEContentsListsSectionsInDocumentOrder`. Re-measure rather than reconcile: the number tracks the suite.
+⚠ **"Withdrawn" is the clause's own word, not a loophole.** Phase 5's premise — *the README says more than the binary, so move the difference* — was measured false for 20 of the 21 rows in its own target band, because `AGENTS.md` has said *"make errors actionable — name the next command to run"* the whole time and the strings were already doing it. The one row where it held was done. Full measurement and derivation: `claudedocs/readme-reduction-plan.md` → *"Phase 5 — WITHDRAWN"*.
 
-**So phase 5 (rank 8) is the ONLY thing between this arc and closed.** Land it or withdraw it by merged PR and all three clauses are satisfied.
-
-### Phase 4 CLOSED — #648 (`7543bbc`), two audit rounds
-
-**Merged and verified BY CONTENT, never by ancestry:** `README.md`, `readme_outline_order_test.go`, `readme_nav_test.go` and `readme_command_synopsis_test.go` each proven to exist on `origin/main` (`git cat-file -e`) and then byte-identical to the branch head. Worktree removed, branch deleted local and remote, base clone re-synced `--ff-only`, claim `readme-reduction-7` released.
-
-**What landed.** README 277,826 → 277,820; the six bytes are the six `#` removed by promoting `The blockId`, `Templates`, `The host handshake`, `Local dev loop`, `Preview in the real host` and `Examples` out of `## Command reference`. Anchors come from heading TEXT not level, so every link still resolved. The `##` blocks were permuted into the order `## Contents` lists them — **proven a pure permutation**: with those six headings normalised, `sort README.md` is byte-identical before and after, and round 1 strengthened that by partitioning into inside-fence and outside-fence line multisets separately (identical, so no fenced block was split by a block move). Plus `TestREADMEContentsListsSectionsInDocumentOrder` over all 66 in-scope headings, and `readmeCommandReferenceTable` replacing two open-coded bounds.
-
-🔴 **THE LADDER STOPPED ON THE OPERATOR'S RULE — no round returned a high-severity finding — AND THE CALL WAS ASKED FOR, NOT ASSUMED.** That is the correction the #637 session's record demanded ("Ask, or stop"), applied.
-
-| round | findings | payload lines its fix changed |
-|---|---|---:|
-| 0 — requirements & deletion | verdict `requirement questioned`; **1 🟡**; 0 deletion candidates from 2 examined; retracted its own first theory | (n/a — reports only) |
-| 1 — the nine axes | **2 🟡 + 2 🟢, zero 🔴** | **0** (both files `_test.go`; payload = `README.md`) |
-
-**Round 0's finding was the JUSTIFICATION, not the code** — see the retraction block below. **Round 1's two 🟡:** a false census in `readmeTOCMinSubsections`' comment that this PR made falser, and a mismatch branch that could send a maintainer to two green tests. Both fixed in `e0024d7` and re-verified by mutant.
-
-⚠ **Round 1's fix changed ZERO payload lines.** That is one payload-free round; the attribution gate needs two consecutive, so it never fired — but the direction is exactly what that gate exists to catch, and it is why stopping was right rather than merely permitted.
+**Nothing further is claimed. `readme-reduction-7` and `-8` are released; no worktree or branch from this arc remains.**
 
 | | bytes |
 |---|---:|
@@ -84,34 +65,34 @@ before touching prose. This doc is state; that doc is the plan.
 | after phase 2 — cuts, #630 | 293,378 |
 | after phase 3b — command table, #633 | 282,312 |
 | after phase 3c — preamble, #635 | 281,439 |
-| after rank 1 — agent-setup, #641 (`db68d1a`) | 277,680 |
-| after #646 — the #637 code fix (`c51fab9`) | 277,826 (+146) |
-| **after phase 4 — the reorder, #648 (`7543bbc`)** | **277,820 (−6)** |
+| after rank 1 — agent-setup, #641 | 277,680 |
+| after #646 — the #637 code fix | 277,826 |
+| after phase 4 — the reorder, #648 | 277,820 |
+| **after phase 5 withdrawn, #652 (`ef20a33`)** | **277,572** |
 
-### Merged earlier in this arc — carried forward, not re-derived
+### Merged 2026-09-17 — phases 4 and 5
 
-- **#643** (`5327ac8`) **rank 4** — `@civitai/app-sdk` 0.41.0 pin bump. Operator-merged. `TestScaffoldPinsSatisfyPublished` re-run on a clean tree afterwards: **PASS** (it had been FAIL on `main` itself).
-- **#641** (`db68d1a`) **rank 1** — the agent-setup section: **16,971 → 12,907 B (−4,064, −23.9%)**, 265 → 217 lines, 0 → **5 `###`** each with a Contents entry, **plus `internal/cmd/readme_agent_setup_claims_test.go`** (four guards). Five audit rounds (0–4), stopped by the **attribution gate**.
-- **#645** (`7819352`) — the audit #640 said had never happened, plus the defect it found. #639's `nonTTYSubmitRefusal` returned `serverHit` and both callers asserted `if hit` — **branches that cannot fire**, because reaching the endpoint means the driver's own controls already fataled. A/B on one mutant: pre-#639 the test died naming the gate (*"submit endpoint was hit — the gate did NOT prevent the submission"*); post-#639 it died naming the harness. Three rounds; **stopped by the attribution gate**, rounds 1 and 2 changing 49 and 37 lines, all comments.
-- **#646** (`c51fab9`) — **#637, closed COMPLETED.** `appapi.ErrNothingSent`, set from httptrace, tags any submit failure whose request never reached the connection; `doUpload` gains an arm that prints nothing for those; both README surfaces go back to the strong claim #635 spent four rounds hedging. Three rounds, ten mutants, zero survivors.
-- **#642** (`4572d6f`) / **#644** (`be4c34a`) / **#647** (`4cb7c17`) — the handoff, including the −4,936 → −4,064 correction.
-- **Verified after merge, not assumed** for all of the above: both squashes checked **by content** per file against `origin/main` (never by ancestry); worktrees removed, branches deleted, base clone re-synced `--ff-only`, claims released.
+- **#648** (`7543bbc`) **phase 4** — README reordered to match its own `## Contents`; six App-authoring subsections promoted out of `## Command reference`. Proven a **pure permutation**: with those headings normalised, `sort README.md` is byte-identical before and after, and the inside-fence and outside-fence line multisets match separately, so no fenced block was split. Plus `TestREADMEContentsListsSectionsInDocumentOrder` (red at `4cb7c17`, green at head) and `readmeCommandReferenceTable` replacing two open-coded bounds. **Two rounds, stopped on the operator's no-high-sev rule with the call asked for.**
+- **#649** / **#651** — the handoff.
+- **#650** (`effa189`) — retracted the reader-cost byte model and corrected a figure that was a different section's offset.
+- **#653** (`e433959`) — the `@civitai/*` pin bump that unfroze the repo. **Merged on the operator's reaffirmed instruction, overriding the standing `bump-scaffold-pins` exclusion for that PR only, not generally.** Freeze confirmed lifted by running the pins test against **live npm** on a clean `main`, not by reading the check's colour.
+- **#652** (`ef20a33`) **phase 5 WITHDRAWN** + the 401 consolidation: eight `appapi` 401 arms, four spellings, now one message. **Four audit rounds (0–3).** The operator cut the ladder at round 3 rather than run round 4.
+
+**Verified after merge, not assumed:** every squash checked **by content** per file against `origin/main`, with existence proven first by `git cat-file -e` (a diff against an absent operand reports SAME, not MISSING); the deleted static guard confirmed **absent**; 13/13 checks terminal before each merge; a merged-tree test off current `main` before each; base clone re-synced `--ff-only`.
 
 ### Open
 
-- **#602** (another session's) — 22+ commits behind `origin/main`. Not ours to rebase.
+- **#602** (another session's) — `DIRTY` against main and far behind. Not ours to rebase.
 - **#614** open and optional — `CIVITAI_NO_COLOR` value parsing.
 
 ### Honest limits
 
+- 🔴 **#652's round-3 fix was never audited.** Four of four rounds found the previous fix incomplete; the fifth guard draft has only its author's mutation battery behind it (10/10, including the package-level-sentinel shape that beat all four static drafts). **The seam a round 4 would attack is `TestMapperSetIsComplete`'s signature regex**, now the single load-bearing discovery mechanism: if `func …Error(status int` stops matching how mappers are written, the behavioural test silently covers fewer of them. A positive control on that regex exists and the gap is written down in the file.
 - 🔴 **Nobody has run `civitai upgrade` on Windows.** The final self-replace is stubbed behind the `applyUpdate` seam.
-- 🔴 **Every byte estimate in this arc over-promised, and every mid-ladder MEASUREMENT did too.** Quote the merge commit. #648's −6 is an exception only because it is arithmetically forced (six `#` characters) rather than estimated.
-- 🔴 **NOBODY HAS RUN `app submit` AGAINST THE REAL SERVER SINCE #646.** Everything about `ErrNothingSent` is measured against `httptest` and a stubbed transport; the h2 ordering of the httptrace callback is **probed, not proven**.
+- 🔴 **NOBODY HAS RUN `app submit` AGAINST THE REAL SERVER SINCE #646.** `ErrNothingSent` is measured against `httptest` and a stubbed transport; the h2 ordering of the httptrace callback is **probed, not proven**.
+- 🔴 **No 401 in this arc was exercised against the real server either.** The eight-mapper consolidation is driven by unit fixtures. The exit-code tag is pinned per mapper; the *text* a live 401 produces is unobserved.
 - **golangci-lint at CI's pinned v2.12.2 has never been run locally** (this host has 2.13.2). Read the PR's own `lint` run; it is not a required context.
-- ⚠ **THIS DOC RUNS AT ~60 KB AGAINST A 65,536 B SOFT CEILING.** The 2026-09-17 session pruned 2,811 B by merging the two duplicate `pins-vs-published` blocks and deleting the one that opened *"the full record is in the two blocks above this one"*. **Prune before you append**; the remaining fat is the 2026-09-15 ladder blocks, which overlap the 2026-09-16 ones.
-- **`--session` sees almost nothing of this work** — worktrees. Use `--pr`.
-- **Worktree count keeps drifting upward.** Count it; do not quote this doc. The 2026-09-17 session added four and removed all four.
-- 🔴 **Line numbers quoted anywhere in this doc for `README.md` are INVALIDATED by #648 if it merges.** Measured example: the rank-11 `10935065` lines were `:1679`/`:1728` at `c51fab9` and are `1289`/`1335` on the phase-4 branch. Re-grep; never quote a line number across that merge.
+- ⚠ **This doc is at 63,853 B of a 65,536 B soft ceiling, and the arc it tracks is CLOSED.** 2026-09-17 pruned 6,519 B across two sessions — the duplicate `pins-vs-published` blocks, the self-restating #641 block, the superseded phase-5 yield measurement, and the #637 ladder block condensed. 🔴 **The next session should not append to this: it should RETIRE it.** Per the memory-hygiene rule, work-status belongs in a handoff and a handoff whose work is done is status. Move the `## Gotchas` blocks that are still teaching something — the five-guard-drafts block, the four-rounds block, the instrument traps — into `cli/readme-guards` or the matching skill, and delete the rest. A new arc gets a new doc; the `forcing: none` residue in the ranks below is not work and should not be inherited as if it were.
 
 ## Open investigations — live diagnosis state
 
@@ -136,28 +117,18 @@ also disagrees with itself: a comment near the error says "ANY model file".
 
 ## Next steps (ranked)
 
-🔴 **Ranks 0, 1, 2, 3, 3b, 4 and 5 are CLOSED and are deliberately no longer ranks** — a closed item is not work, and carrying it as a numbered rank inflates the `forcing: none` count the write gate ratchets on. Live numbering below is UNCHANGED so existing `claim-work` slugs keep resolving.
+🔴 **THE ARC IS CLOSED — ranks 0–8 are all CLOSED and are deliberately no longer ranks** — a closed item is not work, and carrying it as a numbered rank inflates the `forcing: none` count the write gate ratchets on. What remains below is residue that outlived the arc: two operator-owned PRs and four filed defects. **Nothing here is arc work, and nothing here is forced.** Live numbering is UNCHANGED so existing `claim-work` slugs keep resolving.
 
-- **0** closing condition — threshold deleted 2026-09-15, not re-set.
-- **1** trial-cut the agent-setup section — **CLOSED, −4,064 B (−23.9%), #641**, audited over five rounds. (The −4,936 carried elsewhere in this doc was the mid-ladder figure it retracts; corrected in place so the two halves stop disagreeing.)
-- **2** the #635 ladder — merged `c7ea087`.
-- **3** #623 — merged `868fff6`; #636 also merged.
-- **3b** pin the prose #635 repaired — merged as **#639**.
-- **4** the stale scaffold pin — **CLOSED**, merged as **#643** (`5327ac8`), operator-merged; the failing test re-run green.
-- **5** audit #641 — **CLOSED**: rounds 0–4 run, ladder stopped by the attribution gate, round 4 verdict *safe to merge*.
-- **#640/#645** — **CLOSED**: #640 closed superseded (not merged — its branch sat on `079dc14`, so its README half *reverted* #641 and a rebase would have been a full rewrite of every hunk); its one surviving finding was salvaged into **#645** (`7819352`) and is discharged.
-- **#637** the false past tense — **CLOSED**, merged as **#646** (`c51fab9`), issue auto-closed COMPLETED. Never a numbered rank; it was carried in Open.
+- **0–5, 7, 8** — CLOSED. 7 = phase 4, merged as **#648**. 8 = phase 5, **withdrawn** as **#652**.
+- **#637, #640/#645** — CLOSED.
 
-6. **#602** — operator's. Green on its own checks but `DIRTY` against main and 22+ commits behind; its inclusive-ceiling correction must survive the rebase.
+6. **#602** — operator's. Green on its own checks but `DIRTY` against main and far behind; its inclusive-ceiling correction must survive the rebase.
    forcing: gate
-- **7** phase 4, the reorder — **CLOSED**, merged as **#648** (`7543bbc`), two audit rounds (0 and 1), stopped on the operator's no-high-sev rule with the call asked for rather than assumed.
-8. **Phase 5 — error messages. THE LAST NAMED PHASE: landing or withdrawing it CLOSES THE ARC.** A QUALITY item, not a size item; ceiling measured at ~5,465 B realistic (the 150–250 B band, 19 rows — see the band table below). Do it because the error should carry its own remedy, never to move a number. Needs its own PR and audit round: **it changes CLI behaviour**, and column 1 of the table is pinned to the source string, so changing a message means changing the symptom column in the same commit. `claim-work` slug `readme-reduction-8`, CLAIMED 2026-09-17.
-   forcing: none
 9. **#614** — `CIVITAI_NO_COLOR` value parsing. Genuinely optional.
    forcing: none
-10. **Worktrees on this clone — count before quoting.** `git worktree prune` removed NOTHING — live entries, not orphans; several hold *other sessions'* branches. High blast radius, operator's call. 🔴 **`/home/zach/workspace/civit/cli-reorder` is THIS session's and is NOT orphaned** — remove it only after #648 merges or is abandoned.
+10. **Worktrees on this clone — count before quoting.** `git worktree prune` removes NOTHING; they are live entries and several hold *other sessions'* branches. High blast radius, operator's call. The 2026-09-17 sessions created eight and removed all eight.
     forcing: none
-11. 🔴 **`README.md` states a body size that is arithmetically impossible**, under a sentence asserting *"That number is exact, not an estimate."* Pre-existing since #452; `10935065` appears only in `README.md`, so it is unpinned by construction. ⚠ #646 prefixed that sample line with **"up to"**. 🔴 **The line numbers moved with #648** — `1289`/`1335` on that branch, `1679`/`1728` at `c51fab9`. Grep the literal, never the line.
+11. 🔴 **`README.md` states a body size that is arithmetically impossible**, under a sentence asserting *"That number is exact, not an estimate."* Pre-existing since #452; `10935065` appears only in `README.md`, so it is unpinned by construction. 🔴 **Grep the literal, never a line number** — #648's reorder moved every line in the file.
     forcing: none
 12. **Eight `internal/` files cite a `RULES.md` this repo does not ship**, so those pointers are unopenable for any contributor. Fixing two of eight is the patch-the-second-copy shape; it wants one consolidating change. **Closing condition:** a merged PR that either ships the referenced rules or rewrites all eight citations to name something in-repo, checked by a grep in that PR's diff.
     forcing: none
@@ -226,42 +197,20 @@ on `main`.
 - **`d1361c3`'s commit message claims `10485760` "still appears exactly once".** It appears
   **twice**, and did so already at the PR base. Commit-message only.
 
-### Added 2026-09-15 — what phase 5 can actually yield (the measurement that closed rank 1)
+### Added 2026-09-15 — ⚠ SUPERSEDED — what phase 5 could yield
 
-Measured against the LIVE section on `main` at 282,312, not estimated. `## Troubleshooting`
-is 20,372 B / 61 data rows. Banded by cause-cell size, with the two floors re-derived
-from the tests rather than trusted from prose:
+🔴 **RETIRED. Phase 5 is WITHDRAWN by a merged PR (#652) and its numbers here were
+stale in both directions** — measured when `README.md` was 282,312 B, and round 0 on
+#652 re-derived them row by row against the live section. The band table, the corrected
+figures, the 19-of-21 classification and the one row that was genuinely phase-5 work all
+live in `claudedocs/readme-reduction-plan.md` under *"Phase 5 — WITHDRAWN"*, with their
+derivation stated so they can be re-run rather than re-litigated. **Do not reconstruct
+the ≤5,465 B ceiling from this heading.**
 
-| band | rows | row-bytes | phase 5 applies? |
-|---|---:|---:|---|
-| floor-protected | 9 | 2,732 | **no** — 7 from `…CoversTheRefusalsAuthorsActuallyHit`, 2 from `symptomAttributionsFloor`. Both are named-MEMBERSHIP guards, not counts, so add-one/delete-one does not defeat them |
-| cause cell <150 B | 17 | 3,047 | **no** — phase 3 already cut these to the bone; the only content left is the **exit code**, which the binary never prints as text |
-| 150–250 B | 19 | 5,465 | **partly** — the realistic target |
-| >250 B | 16 | 7,966 | **no** — see below |
-
-🔴 **The big cells are big for reasons a single error string structurally CANNOT
-absorb, and that is the finding.** Checked against live source: `SHA256 mismatch for`
-(737 B) and `could not read your Buzz balance` (446 B) — **both Go strings already carry
-their remedy** — `deleted the partial download`, and `verify with civitai buzz`. The
-README's extra bytes are *threat-model rationale*: why the uploader-supplied filename is
-sanitised, why the progress line is cut at 120 chars, what a wrap would forge at column
-zero. That is documentation of a security property and it does not belong in an error
-message. Others aggregate across call sites (`is an OFFSITE app` = 4 commands,
-`no such submission` = 3, `the server rejected this store-listing change (400)` = seven
-routes) or branch **two** exit codes off one message (`rate limited (429)`) — a table can
-say that and a per-site string cannot.
-
-**So: realistic yield ≤5,465 B.** The absolute ceiling is 16,478 B (delete all 52
-non-floor rows), capped by `len(symptoms) >= 15` to ~14,600 — which means deleting **46
-of 61 published rows**. That is precisely the repair
-`TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit`'s own comment forbids:
-*"Deleting a row to make the sibling green is exactly the repair this forbids."* It was
-offered as an option and rejected.
-
-⚠ **The crude instrument is recorded so nobody quotes it.** A regex pass scored "25 of
-49 located rows have no remedy-shaped token on the error line". It **overcounts** — it
-flags `SHA256 mismatch`, which we then showed by hand already carries its remedy. Use
-the band table, not the 25.
+The one claim worth carrying forward, because it is the reason the phase died: the
+>250 B cells are big for reasons an error string structurally cannot absorb —
+threat-model rationale, aggregation across call sites, two exit codes off one message —
+and the 150–250 B band turned out to be the same in kind.
 
 ### Added 2026-09-15 — Option B, measured live instead of estimated
 
@@ -426,59 +375,34 @@ The give-back is **not waste** — in both cases every byte bought a contract cl
 - 🔴 **Run the once-per-ladder count sweep in the LAST round or after the merge.** #641's ran at round 2 and was correct then; rounds 2–4 changed README afterwards, so the swept number went stale **inside its own PR** — precisely the "falsified by a LATER commit of the same PR, inside no round's range" trap the audit skill documents. Running it mid-ladder satisfies the letter of the rule and misses its point.
 - **Predictive value, offered as a hypothesis and not a law:** ~870 B over 4–5 rounds on a contract-bearing section, both times. If a third ladder lands near it, it is worth budgeting for rather than being surprised by.
 
-### Added 2026-09-16 — the #637 session: three ladders, zero 🔴, and a defect the fix kept regenerating
+### Added 2026-09-16 — ⚠ CONDENSED — the #637 session's three ladders
 
-🔴 **THE OPERATOR'S STOP RULE WAS OVER-RUN, AND THAT IS THE PROCESS FINDING.** The rule
-recorded above is *"audit until a round returns no HIGH-SEVERITY findings"* — an operator
-correction, explicitly not to be re-derived from the skill's stricter text. **No round of
-either PR returned a 🔴**, so #646 was a stopping round at round 1 and #645 at round 0.
-Both ran to round 2 anyway, on the skill's findings-keyed rule. The extra rounds found real
-things — including a false byte claim that had shipped — so the content was not waste; the
-*call* was the operator's and was not asked for. Ask, or stop.
+🔴 **THE OPERATOR'S STOP RULE WAS OVER-RUN, AND THAT IS THE DURABLE FINDING.** The rule
+is *"audit until a round returns no HIGH-SEVERITY findings"* — an operator correction, not
+to be re-derived from the skill's stricter text. No round of either PR returned a 🔴, so
+both were stopping rounds and both ran on anyway. The extra rounds found real things, so
+the content was not waste; the *call* was the operator's and was not asked for. **Ask, or
+stop.** (Applied on 2026-09-17: #648's ladder hit the same disagreement and the question
+went to the operator instead.)
 
-🔴 **THE SAME SENTENCE SHIPPED FALSE THREE TIMES, IN THREE DIFFERENT DIRECTIONS, ACROSS
-THREE ROUNDS OF ONE PR.** This is the arc's cleanest instance of "a fix that makes a sentence
-more specific can make it false".
+🔴 **THE SAME SENTENCE SHIPPED FALSE THREE TIMES, IN THREE DIRECTIONS, ACROSS THREE
+ROUNDS OF ONE PR** — "prints nothing" (the ceiling refusal prints a block), then "bytes
+that left this machine" (a cut-short write had delivered ~200 KB), then "N bytes on the
+wire" (N was what the CLI BUILT: 8,388,627 printed against 233,266 received). Round 2's
+is the one to study: round 1 fixed *when* the block prints and left *what it says* alone,
+re-opening #423's original defect through a new door. **When a fix widens a predicate,
+list every sentence downstream of it before deciding you are done.**
 
-| round | what the README said | why it was false |
-|---|---|---|
-| 0 | "A failure that sent nothing prints **nothing**" | the ceiling refusal sends nothing and prints a full block — named three lines below it |
-| 1 | "…so `sent` is a fact about **bytes that left this machine**" | a write cut short had delivered ~200 KB while the CLI called it nothing sent |
-| 2 | the block printed "**N bytes** on the wire" | after round 1 widened *when* it prints, N was what the CLI BUILT: 8,388,627 printed against 233,266 received |
-
-Round 2's is the one to study: round 1 fixed **when** the block prints and left **what it
-says** alone, so the repair re-opened #423's original defect ("the server received 0 bytes
-while the CLI reported 12,587,785") through a new door. **When a fix widens a predicate, list
-every sentence downstream of it before deciding you are done.**
-
-- 🔴 **A JUSTIFICATION CAN POINT AT PROSE THAT DOES NOT EXIST.** Round 1's comment read "the
-  prose says the request went out rather than that N bytes landed" — while the PRINTED prose
-  said N bytes. It was true of the comment's own paragraph and false of the program.
-- 🔴 **"THIS CANNOT BE PINNED WITHOUT A RACE" WAS WRONG, AND THAT CLASS OF CLAIM IS THE
-  EXPENSIVE ONE.** The stickiness of the sent-flag across a 401 retry looked unpinnable
-  (the server would have to die between attempts). The separating seam is the **dialer**:
-  a `DialContext` that succeeds once and fails after gives attempt 1 a full body and attempt
-  2 nothing, deterministically. A comment saying nobody can cover something stops the next
-  person looking.
-- 🔴 **AN ASSERTION HOLDING EITHER WAY DOES NOT MAKE THE KILL HOLD EITHER WAY.** The
-  cut-short test asserted the SERVER received something — equally true when the whole body
-  writes cleanly into socket buffers. On such a host it passes while the mutant it is
-  credited with killing survives. Fixed with a counting `net.Conn` measuring what the CLIENT
-  wrote, and the control was watched to fire.
-- 🔴 **A MUTATION HARNESS IS AN INSTRUMENT.** One mutant scored `APPLIED=False` rather than
-  `SURVIVED` because the mutant text CONTAINS its own anchor, so the "old text absent" check
-  could never hold. Two mutants also survived and each survivor was a real coverage gap — a
-  redundant tag site that read as coverage, and an unpinned qualifier.
+- 🔴 **"THIS CANNOT BE PINNED WITHOUT A RACE" WAS WRONG.** The separating seam was the
+  dialer: a `DialContext` that succeeds once and fails after gives attempt 1 a full body
+  and attempt 2 nothing, deterministically. A comment saying nobody can cover something
+  stops the next person looking.
+- 🔴 **AN ASSERTION HOLDING EITHER WAY DOES NOT MAKE THE KILL HOLD EITHER WAY.** A test
+  asserting the SERVER received something is equally true when the whole body writes
+  cleanly into socket buffers. Fixed with a counting `net.Conn` measuring what the CLIENT
+  wrote, control watched to fire.
 - 🔴 **`git checkout -- <file>` RESTORES FROM THE INDEX.** Reverting a mutant that way
-  silently discarded two unstaged fixes in the same file. Stage before a battery, or copy
-  aside — the rule about `cp -a` restores exists for exactly this.
-- **Both PRs quoted a count from a `-run`-FILTERED sweep and had to retract it** — then the
-  retraction was itself wrong (the filter was a latent hazard, not the cause; whole-package
-  under the same mutant returns the same number). **A count is meaningless without the mutant
-  that produced it.**
-- **An `AGENTS.md: "…"` attribution named a phrase in no file this repo ships.** It lives in
-  the operator's private rules. Eight `internal/` files cite a `RULES.md` the repo does not
-  ship — filed, not fixed, because fixing two of eight is the patch-the-second-copy shape.
+  discarded two unstaged fixes. Stage before a battery, or copy aside.
 
 ### Added 2026-09-16 — the attribution gate fired for real, twice
 
@@ -547,41 +471,80 @@ Before (`4cb7c17`) vs after, corrected in both figure and unit:
 
 Moving `##` blocks can falsify any sentence saying "above"/"below". Checked mechanically rather than by eye: every `](#anchor)` followed within 60 characters by "above"/"below" (**3** in the file — checked on BOTH trees, both clean), plus every by-name cross-section reference carrying a positional word (`Listing media requirements` → 1870 "below" ✅, `Local dev loop` → 726 "above" ✅, `Download model files` → 2683 "below" ✅, `What looks like a credential` → 1542 "below" ✅ ×2, `Raw graphs` → 3067 "below" ✅). ⚠ **3 linked pairs is a thin instrument** — it only sees positional words that follow an anchor link. The by-name half was done by grep and judgement and is not mechanised.
 
+### Added 2026-09-17 — 🔴 THE ARC'S SHARPEST LESSON: a guard written FIVE times, and why the fifth is different in kind
+
+**One invariant — every `appapi` 401 returns the same message — took five guards. Four analysed the source. An audit round refuted each one by finding a spelling it could not see, and every time the guard's own comment had DENIED having a blind spot.**
+
+| draft | keyed on | what refuted it |
+|---|---|---|
+| 1 | `strings.Contains(src, "unauthorizedError(")` | one converted arm satisfied a file holding five |
+| 2 | regex on `case http.StatusUnauthorized:` | `case A, B:` — **the shape `withdrawError` actually used** — and branching bodies |
+| 3 | `go/parser` over `*ast.CaseClause` | `if status == …`, **at `appblocks.go:580`, in the same file**, under the comment denying blind spots |
+| 4 | `go/parser` keyed on message CONSTRUCTION | `st == 401 \|\| st == 403` — the condition recursion handled `==`/`!=` and stopped at `&&`/`||` |
+| **5** | **drive every mapper with a 401 and read the OUTPUT** | — |
+
+- 🔴 **THE TRANSFERABLE RULE IS NOT "PREFER DELETING A PARSE" — THAT WAS DRAFT 4, AND IT FAILED TOO.** Draft 4 was the deliberate application of this repo's existing rule, and it moved the syntax dependency down one level rather than removing it: from *which statement encloses the 401* to *which expression tests it*. **When the third and fourth attempts still miss, the question stops being how to analyse the source better and becomes whether the property can be OBSERVED instead.** A behavioural check has no pattern to be blind in.
+- 🔴 **THE PROOF THAT DRAFT 5 IS DIFFERENT IN KIND, NOT MERELY WIDER:** its battery includes a package-level-sentinel shape — `fmt.Errorf("%w: %s", zzErrAuth, msg)` — that **beat all four static drafts** and dies against it. A wider pattern would not have caught that; reading the output does.
+- 🔴 **EACH DRAFT'S COMMENT WAS THE ACTIVE HARM, NOT ITS CODE.** "cannot have a pattern blind spot at all" is what stopped rounds 1→2 from looking, and it survived **two** rounds in a third copy nobody greped for. A 13-line block in `unauthorized_test.go` carried four falsehoods for a whole round — a deleted test's name, a ledger that no longer existed, an untrue coverage claim, and that sentence — in a file the same PR edited thirty lines below. **When you retire machinery, the prose describing it is part of the deletion.**
+- **The count of sites went 5 → 7 → 8, and every correction came from a WIDER INSTRUMENT rather than a wider read.** grep the literal → 5. grep the case keyword → 7. Parse the AST → 8. **A count is a property of the instrument until two instruments agree.**
+- **A slack floor is what let two arms vanish unnoticed.** `total < 5` against a real 7 meant a mutant could de-convert two arms in silence — demonstrated. Set an anti-vacuity floor at the ACTUAL count, and treat moving it as a decision to justify in the same commit.
+
+### Added 2026-09-17 — what four rounds on one PR cost, and what the stop rule is worth
+
+**#652 ran rounds 0–3 and every round found the previous round's fix incomplete — four for four, all the same class:** a guard's description wider than its implementation. It never returned a clean round; the operator cut it.
+
+- 🔴 **THE ATTRIBUTION GATE COULD NEVER FIRE, AND THAT IS THE WARNING.** It needs two consecutive rounds whose fixes change zero payload lines. Every round here touched payload (round 1: 45 lines; round 3: 55), so the ladder was never "auditing its own scaffolding" — it was finding real defects in shipped code, round after round. **A ladder that keeps touching payload is not converging; it is telling you the thing under it is not finished.** Four rounds is the signal, not the cost.
+- 🔴 **ASKING BEAT DECIDING, TWICE.** On #648 the operator's stop rule (no high-sev findings) and the skill's (findings-keyed) disagreed, and the question went to the operator rather than being resolved silently — the correction the #637 session's record demanded. On #652 the operator cut at round 3. **Both calls were the operator's and both were asked for.**
+- **A fix round's own prose is the likeliest next finding.** Measured here three times: round 1's fix named a test it deleted; round 2's remedy moved a falsehood rather than removing it ("the refresh failed too" → "already failed twice", each false about the *other* case); round 3's control claim credited itself with a kill the floor had actually made. **Ask each round: what did this fix ASSERT, and is every assertion true?**
+- **A red required check is a fact about the registry until a control says otherwise.** `pins-vs-published` blocked every open PR twice in this arc. The control is one command on a **clean `main`** tree, and it is the whole of the attribution: it failed there with zero local changes, naming both published versions. Without it, "my PR broke a check" is indistinguishable from the truth.
+
+### Added 2026-09-17 — the instrument traps this session hit, in order
+
+- 🔴 **`go test ./...` returned `ok … (cached)` for all 21 packages against a REWRITTEN README.** `-count=1` is not optional when the input under test is a non-Go file. Every line of the verify block below carries it for that reason.
+- 🔴 **Byte figures that were CHARACTER counts, twice, through two different tools.** Python's `len(str)` first — diagnosed and written into this doc — then `awk`'s `length($0)` in a UTF-8 locale a few hours later, which shipped to `main` in #649 and had to be corrected in #650. **A lesson recorded is not a lesson learned.**
+- 🔴 **A figure taken from the adjacent row of my own heading map.** `99,003` is `## Submit & auth`; `## Validate fidelity` is `87,546`. It inflated the claim 40% and reached `main` before round 0 caught it.
+- **A crude regex called 12 rows "no remedy in the binary" and every one hand-checked was a FALSE NEGATIVE** — these messages are `+`-joined across many lines and a one-line read truncates them. The same overcounting this doc already recorded for the 25-of-49 pass. **Read the whole statement.**
+- **A mutant REFUSED TO SCORE rather than reporting SURVIVED**, because its anchor had moved when a fix reworded the constant. That is the `APPLIED = True` discipline earning its keep — the alternative is a false survivor indistinguishable from a vacuous guard.
+- **A false-positive control that was killed for the RIGHT reason by the WRONG guard.** The indirect-routing check added a *new* mapper, which the ledger check correctly rejected; the control had to be redone against an existing one. **A control that fires for an unrelated reason has told you nothing about what you were controlling for.**
+- **A first-draft behavioural assertion failed on four mappers and it was the FIXTURE.** They extract the server's message differently (tRPC envelope vs `serverMessage(raw)`), which is deliberate. Reading that as a wording divergence would have been an instrument fault reported as a defect. **Validate the instrument before believing its red, not just its green.**
+
 ## How to verify
 
-🔴 **This block was STALE once already** — it carried a deleted byte threshold and a narrow `-run` filter. Both corrected. If you find a third copy of the gate anywhere in this doc, that one is stale too.
+🔴 **This block was STALE twice** — it has carried a deleted byte threshold and a narrow `-run` filter. If you find a second copy of the gate anywhere in this doc, that one is stale too.
 
 ```bash
-# the arc's closing condition. NO byte threshold — size is a progress signal only.
-git -C <repo> show origin/main:README.md | wc -c        # 277,826 at 4cb7c17
-git -C <repo> show origin/zach/readme-phase4-reorder:README.md | wc -c   # 277,820 at ced3b56
+# THE ARC'S CLOSING CONDITION — all three clauses, on a clean main.
+git -C <repo> show origin/main:README.md | wc -c        # 277,572 at ef20a33
 
-# the gate, WIDE filter, with its own positive control.
-# `ok` with 0 tests run is the failure this replaced. 80 at c51fab9, 81 on the
-# phase-4 branch (+1 = TestREADMEContentsListsSectionsInDocumentOrder).
-# The number tracks the suite: RE-MEASURE it, never reconcile it back.
+# 🔴 -count=1 IS LOAD-BEARING ON EVERY LINE. Measured 2026-09-17: with the README
+# rewritten, a bare `go test ./...` returned `ok … (cached)` for all 21 packages —
+# a green that had not read the change at all.
 go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' -count=1
 go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' \
-  -count=1 -v | grep -c '^--- PASS\|^    --- PASS'      # must be > 0
-go test ./...  -count=1                                  # 9 other packages read README
+  -count=1 -v | grep -c '^--- PASS\|^    --- PASS'      # 81; must be > 0
+go test ./... -count=1                                   # 21 packages
 
-# 🔴 -count=1 IS LOAD-BEARING ON EVERY LINE ABOVE. Measured 2026-09-17: with the
-# README rewritten, a bare `go test ./...` returned `ok … (cached)` for all 21
-# packages — a green that had not read the change at all.
+# CI checks out at depth 1; this is the only local mirror of that.
+make ci-shallow                                          # 21/21
 
-# the phase-4 guard (#648). Red at 4cb7c17, green at ced3b56 — A/B both watched.
+# the phase-4 guard (#648). Red at 4cb7c17, green after — A/B both watched.
 go test ./internal/cmd/ -count=1 -run 'ContentsListsSectionsInDocumentOrder'
 
-# the agent-setup contract guards #641 added (rank 1). All four must pass.
+# the 401 consolidation (#652). Drives all eight mappers and reads the OUTPUT;
+# four static predecessors were each refuted by a shape they could not see.
+go test ./internal/appapi/ -count=1 -run 'Mapper|Unauthorized'
+
+# the agent-setup contract guards (#641) and the #637 behaviour guards (#646).
 go test ./internal/cmd/ -count=1 \
   -run 'READMEVerdictExemptions|CheckEmitsNoRow|ManualRowCarries|HelpPointerIsHonoured'
-
-# the #637 behaviour guards #646 added. 12 PASS on a clean main.
 go test ./internal/appapi/ ./internal/cmd/ -count=1 \
   -run 'NothingSent|SubmitDiagnosis|CutShort|A401Retry|CannotBeBuilt|AfterTheWrite'
 
-# CI runs at depth 1; ci-shallow is the only local mirror of that.
-make ci-shallow                                          # 21/21 on the phase-4 branch
+# 🔴 A RED `pins-vs-published` IS A FACT ABOUT npm UNTIL THIS SAYS OTHERWISE.
+# Run it on a CLEAN main tree; if it fails there, it is not your PR. It froze
+# every open PR twice in this arc.
+CIVITAI_CHECK_PUBLISHED_PINS=1 \
+  go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -count=1
 
 # lint is a SEPARATE CI job and NOT a required context; `make ci` does not run it.
 # 🔴 CI pins v2.12.2 (.github/workflows/ci.yml); this host has 2.13.2, so a local
@@ -590,4 +553,7 @@ nix-shell -p golangci-lint --run "golangci-lint run"
 ```
 ## Defects (batched)
 
-- **The `listing status`-is-not-a-pure-read warning in `## Scripting with --json` is unpinned by any test.** Found by #648's round 0. `README.md` (phase-4 branch) lines 3548–3551 carry *"🔴 And `app listing status --json` is a read with a server-side SIDE EFFECT — on a live listing it opens a revision draft — so, unlike the reads above, it must not be polled."* Nothing asserts it. It is the CI-safety claim the whole reorder was justified by reaching, and it can be deleted or inverted on a green suite. Pin it whole-string (the spelled-guard lesson), not by keyword.
+- **`Submit Apps: unknown` is uninformative** (`whoami.go:120`, `yesNoUnknown` at `:213`). The README cell's actionable half — *"Re-run `civitai login` for a token whose scope the server reports"* — is carried nowhere in the output; the adjacent note at `:129` is scoped to **Buzz** and says nothing about the submit row. Found by #652's round 0 as the one honest exception to its 19-of-21 headline. Making the row self-describing is better OUTPUT and would make the README row deletable. **Not an error string, which is why phase 5 excluded it on a technicality its own headline sentence did not survive.**
+- **The `listing status`-is-not-a-pure-read warning in `## Scripting with --json` is unpinned by any test.** Nothing asserts it. It is the CI-safety claim phase 4 was justified by reaching, and it can be deleted or inverted on a green suite. Pin it whole-string (the spelled-guard lesson), not by keyword.
+- **`#652`'s round-3 fix is unaudited** — see Honest limits. Filed rather than left implicit so a future reader knows it is open rather than absent.
+- **`listingError` discards the server's message on its 401 arm with no comment** (`listing.go:998`). Pre-existing; `devTunnelError` does the same and says why at its call site. The drop may well be right, but nothing says so.
