@@ -995,7 +995,7 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 	name := route.name()
 	switch status {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("not logged in (401) — run `civitai login` (or set CIVITAI_TOKEN)")
+		return unauthorizedError("")
 	case http.StatusForbidden:
 		if isInsufficientScopeMsg(msg) {
 			return fmt.Errorf("listing media needs the Apps submit scope (403): %s — re-run `civitai login` (an old token may predate the scope), or use a full-scope personal API key", msg)

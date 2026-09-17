@@ -1905,7 +1905,7 @@ func devTokenError(status int, raw []byte) (err error) {
 		}
 		return fmt.Errorf("app not found (404): %s — check the slug. (dev-token mints from your local block.manifest.json; a 404 means the slug is registered to a different account.): %w", msg, ErrSlugRegisteredToOtherAccount)
 	case http.StatusUnauthorized:
-		return fmt.Errorf("not logged in (401): %s — run `civitai login` (or set CIVITAI_TOKEN)", msg)
+		return unauthorizedError(msg)
 	case http.StatusForbidden:
 		return fmt.Errorf("not authorized (403): %s — minting needs an invite (invite-only beta) AND a credential carrying the AI Services scopes: `civitai login --scopes generate` or a full-scope personal API key. A DEFAULT OAuth `civitai login` token can't mint a spend token (check with `civitai whoami`)", msg)
 	case http.StatusTooManyRequests:
@@ -2273,7 +2273,7 @@ func devTunnelError(status int, raw []byte) (err error) {
 		// message on this path is the origin-gate string ("Please use the public
 		// API instead"), which is misleading to a CLI user. Drop it — the only
 		// action is `civitai login`.
-		return fmt.Errorf("not logged in (401) — run `civitai login` (or set CIVITAI_TOKEN)")
+		return unauthorizedError("")
 	case http.StatusForbidden:
 		return &DevTunnelForbiddenError{ServerMsg: msg, InsufficientScope: isInsufficientScopeMsg(msg)}
 	case http.StatusNotFound:
@@ -2330,7 +2330,7 @@ func submissionsError(status int, raw []byte, id, blockID string) (err error) {
 	msg := serverMessage(raw)
 	switch status {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("not logged in (401): %s — run `civitai login`", msg)
+		return unauthorizedError(msg)
 	case http.StatusForbidden:
 		return fmt.Errorf("apps access required — invite-only beta (403): %s", msg)
 	case http.StatusNotFound:

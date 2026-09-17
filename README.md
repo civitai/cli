@@ -3954,7 +3954,7 @@ context rather than instructions.
 | You saw | What it means | Where to read more |
 | --- | --- | --- |
 | `no token configured` | Nothing is logged in. Run `civitai login` or set `CIVITAI_TOKEN` — the App **store** (`app list` / `app view`) is not an anonymous read either. | [Submit & auth](#submit--auth), [Browse the App store](#browse-the-app-store) |
-| `not logged in (401)` | The credential is present but invalid or expired. OAuth tokens refresh themselves, so the *refresh* token expired too: log in again, or mint a personal key at `civitai.com/user/account`. | [Submit & auth](#submit--auth) |
+| `not logged in (401)` | The credential is present but invalid or expired, and the transparent 401 refresh failed too — so logging in again can fail the same way. The message names both routes, key included. | [Submit & auth](#submit--auth) |
 | `forbidden (403)` | Usually the invite-only Apps beta rather than a broken token — the same account reads the public API fine. | [Submit & auth](#submit--auth) |
 | `not permitted for your account (403)` | The **catch-all** listing `403`: managing a store listing needs Apps-author access, a narrower grant than submitting. The two rows below are the listing `403`s that are *not* about your grant. | [Listing media requirements](#listing-media-requirements) |
 | `under a moderator takedown (403)` | A moderator removed this **store listing**; **your account's access is not the problem** and no login, grant or command reverses it — ask a moderator to relist it. Exit `3`, with the server's own sentence after the code naming the state. Unpublishing it yourself is a different refusal: a *material* change, `400`, exit `2`. | [Exit code 3](#exit-code-3) |

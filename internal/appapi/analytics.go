@@ -260,7 +260,7 @@ func analyticsError(status int, raw []byte) (err error) {
 	}
 	switch status {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("not logged in (401): %s — run `civitai login` (or set CIVITAI_TOKEN)", msg)
+		return unauthorizedError(msg)
 	case http.StatusForbidden:
 		return fmt.Errorf("not permitted to read this app's analytics (403): %s — this query needs a full-scope personal API key; "+
 			"an OAuth `civitai login` token can't read it. Create a key at https://civitai.com/user/account, then run "+

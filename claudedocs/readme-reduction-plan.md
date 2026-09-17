@@ -50,13 +50,16 @@ ceiling test was designed as the replacement and then discarded** — `README.md
 `@`-imported the way `AGENTS.md` is, so the per-session cost that justifies *that*
 ceiling does not exist here, and step 5 forbids answering over-growth with a ratchet.
 
-**3. CLI error messages are now IN SCOPE (new phase 5).** Round 0 on #625 measured that
-**14 of 19 sampled cause cells were near-verbatim copies of strings the binary already
-prints**, and `AGENTS.md` says *"Make errors actionable — name the next command to
-run."* Where the README says more than the binary, the fix is to improve the Go error
-string and delete the row — the message then reaches the user at the moment of failure
-and is pinned by tests, unlike the prose. This widens the arc beyond documentation; it
-was chosen explicitly.
+**3. CLI error messages were brought IN SCOPE as phase 5 — and phase 5 is WITHDRAWN
+(2026-09-17, see its own section).** The reasoning here still stands as far as it goes:
+round 0 on #625 measured that **14 of 19 sampled cause cells were near-verbatim copies
+of strings the binary already prints**, and `AGENTS.md` says *"Make errors actionable —
+name the next command to run."* 🔴 **But the conclusion drawn from it was backwards.**
+That measurement says the cells RESTATE the binary; the phase read it as the binary
+lacking what the cells hold, which is the opposite claim and does not follow. Measured
+row by row, the binary already carries the remedy in 20 of 21 rows of the target band —
+because that `AGENTS.md` rule has been in force the whole time. **The one row where it
+did not is shipped.**
 
 ## How it got here
 
@@ -277,40 +280,59 @@ former argument against it (*"in a PR whose requirement is give-back 0"*) is its
 now that the byte condition is deleted. The reason to leave it alone is that **it is
 correct**, which is the durable one.
 
-## Phase 5 — improve the error messages, then delete the rows (NEW, operator-approved)
+## Phase 5 — WITHDRAWN 2026-09-17, measured row by row
 
-Round 0 on #625 sampled 19 Troubleshooting rows and found **14 whose cause cell merely
-restated the string the binary already prints**. Phase 3 trimmed those cells; phase 5
-attacks the other end. For each row where the README still says more than the binary
-does, move the difference **into the Go error string** and delete the row.
+🔴 **WITHDRAWN. Do not re-open it on the numbers below — they are the numbers that
+killed it.** The phase said: *"for each row where the README still says more than the
+binary does, move the difference into the Go error string and delete the row."* Measured
+against the live section, **the premise is false for 20 of 21 rows in its own target
+band**: the binary already says it.
 
-Why this is the better half of the fix, in the repo's own words (`AGENTS.md`): *"Make
-errors actionable — name the next command to run."* The message then reaches the user at
-the moment of failure rather than requiring them to find a table, and it is **pinned by
-tests**, where the prose mirror is not — column 2 of that table is checked against
-nothing, so it can drift from the binary silently while column 1 cannot.
+**The instrument mattered, and the first one was wrong.** A one-line regex over
+non-test Go called 12 rows "no remedy in the binary". Every one hand-checked was a
+**false negative** — these messages are `+`-joined across many lines, and a single-line
+read truncates them. That is the same overcounting the handoff already recorded for the
+crude 25-of-49 pass. The classification below comes from reading the WHOLE statement.
 
-🔴 **MEASURED 2026-09-15 — PHASE 5 IS A QUALITY ITEM, NOT A SIZE ITEM. Its realistic
-yield is ≤5,465 bytes.** Banding the live 61-row section by cause-cell size: 9 rows are
-floor-protected (2,732 B); 17 have cells under 150 B that phase 3 already cut to the
-bone, where the only remaining content is the **exit code** — which the binary never
-prints as text; 19 sit in the 150–250 B middle band (5,465 B) and are the real target;
-and the 16 cells over 250 B (7,966 B) are **not movable**, because what makes them long
-is threat-model rationale (`SHA256 mismatch for` explains why an uploader-supplied
-filename is sanitised and cut at 120 chars — and its Go string *already* carries the
-remedy), aggregation across call sites (`is an OFFSITE app` covers 4 commands), or two
-exit codes branching off one message (`rate limited (429)`). A table expresses those; a
-per-site error string cannot. The absolute ceiling — delete all 52 non-floor rows — is
-16,478 B, capped by `len(symptoms) >= 15` to ~14,600, i.e. deleting 46 of 61 published
-rows; that was offered and rejected. **So do this phase because an error should carry
-its own remedy, never to move a number.** Full table in the handoff.
+The 21 rows in the 150–250 B band:
 
-🔴 **Constraints.** `TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit` puts
-**7 rows on an incident floor** — those rows may not be deleted whatever their cell
-says; re-derive the list rather than trusting this sentence. Column 1 is pinned to the
-source string, so changing an error message means changing the symptom column with it,
-in the same commit. And this phase changes **CLI behaviour**, so it needs its own audit
-round and its own PR — do not fold it into a prose PR.
+| | rows | why it is not phase-5 work |
+|---|---:|---|
+| the binary already carries the remedy in full | **11** | the README cell restates it |
+| the cell holds what a per-site string structurally cannot | **3** | two exit codes off one message (`rate limited (429)`); "the two rows below are the 403s that are not about your grant"; an exit code the binary never prints as text |
+| not an error message at all | **6** | a `whoami` row label, a `workflows list` legend, an `errors.New` sentinel, a note, two output labels — and one string **your app prints at runtime**, which the CLI cannot reach |
+| genuine | **1** | `not logged in (401)` — shipped, see below |
+
+Three examples, because the pattern is uniform rather than marginal:
+
+- **`HEAD is on no remote`** — README: *"Push the branch."* Binary already: *"Push the
+  branch so the submitted version can be traced back to a commit."*
+- **`nothing index.html loads reaches it`** — README: *"Copying `civitai-host.js` in is
+  only half the fix — it has to be referenced too."* `readyAckRemedy` already: *"Copying
+  the file in is not enough on its own — a browser never fetches a file nothing
+  references."*
+- **`no lockfile is committed`** — README: *"Generate it with the package manager."*
+  Binary already: *"Run `%s` and commit the %s it writes."*
+
+⚠ **AND ITS CEILING WAS STALE IN BOTH DIRECTIONS.** The ≤5,465 B figure was measured
+when `README.md` was 282,312 B, three PRs ago. Live: the section is **20,834 B / 61
+rows**, the non-floor 150–250 band is **18 rows / 3,480 cause-bytes**, and the incident
+floor now protects **10** rows, not 7. Re-measure before quoting any of it.
+
+🔴 **The one genuine row was shipped, and it turned into a consolidation.** The 401
+message existed at **five** sites in `internal/appapi`; four spelled the remedy
+`run `civitai login` (or set CIVITAI_TOKEN)` and the fifth — `submissionsError` — said
+`run `civitai login``, dropping the environment-variable route for the command group
+most likely to run in CI. Nobody chose that; it is what an open-coded predicate does at
+N sites. All five now call `unauthorizedError`, which also names the personal-API-key
+route the README had and **no user-facing surface did**. `TestUnauthorizedCallersAreLedgered`
+pins the caller set in both directions.
+
+**The transferable finding:** this repo's error strings were already carrying their
+remedies, because `AGENTS.md` has said *"make errors actionable — name the next command
+to run"* the whole time. A phase premised on them NOT doing so was mis-specified from
+the start, and only a row-by-row read could show it. **Where a README cell is longer
+than the error, read the error before assuming the cell adds something.**
 
 ## Link-out policy
 
