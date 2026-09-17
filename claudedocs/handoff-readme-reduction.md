@@ -59,9 +59,11 @@ before touching prose. This doc is state; that doc is the plan.
 
 ### Open this session — PR #648, phase 4 (rank 7)
 
-**`zach/readme-phase4-reorder`, two commits, `ced3b56`. MERGEABLE, `BLOCKED` only on `build-test` still running; every other check green including `lint` at CI's pinned 2.12.2.** Claim `readme-reduction-7` is HELD until it merges or is abandoned.
+**`zach/readme-phase4-reorder`, three commits, `62aca22`.** Claim `readme-reduction-7` is HELD until it merges or is abandoned. Checks were `CLEAN` at `ced3b56` and are re-running on `62aca22`; `lint` passed at CI's pinned 2.12.2. **Merged-tree test re-run after #649 moved the base**: integration branch off `origin/main` + this head ⇒ `go test ./... -count=1` 21/21, wide gate `ok` at 81.
 
-🔴 **NO AUDIT ROUND HAS RUN ON IT — not even round 0 as `/audit-pr`'s round-0 section.** This session could not dispatch one (the Agent tool was off), so a hand-run round 0 is recorded in the PR body and is NOT a substitute. Standing merge authority is conditioned on "a round returns no high-sev findings", which has not happened, so it was deliberately not merged on green checks.
+🔴 **ROUND 0 HAS RUN. THE NINE CORRECTNESS AXES HAVE NOT — so #648 is NOT cleared to merge.** Round 0's verdict was `requirement questioned — R1's direction, and the byte-offset reader-cost model that chose it`, not `close` and not `rework`; it found **1 🟡** (the wrong-section figure, fixed in `62aca22` and in the PR body plus a public comment), **0 deletion candidates from 2 examined**, and it re-derived every other number in the PR body exactly — including the watched-to-fail A/B and the planted-row control in both directions. It also **retracted its own first theory** that the new order guard subsumes the two presence guards. Ledger: `round 0 · requirements: 8 (unattributed: 2) · deletion candidates: 2 (0 recommended)`.
+
+**Next on this PR: `/audit-pr 648` for the nine axes, as round 1.** Round 0 reports and cannot move the ladder, so nothing about it licenses skipping that. ⚠ Round 0 could not verify `golangci-lint run → 0 issues` (tool absent in its worktree) — read the PR's own `lint` run.
 
 What is on the branch:
 
@@ -522,17 +524,23 @@ on what it FINDS.
 - **Mutation matrix, each mutant asserting `APPLIED = True` (new text present AND old absent, re-read from disk) before its result was read:** swap two adjacent `##` blocks → KILLED "position 58"; swap two Contents lines → KILLED "position 61"; reorder two `###` inside one section → KILLED "position 2"; delete one Contents line → KILLED via the presence branch. Positive control on the unmutated tree: PASS.
 - **A/B watched, both halves:** red at `4cb7c17` (same 66 slugs, diverging at index 9 — document `set-up-your-coding-agent-agent-setup` vs contents `command-reference`), green at `2a75f3e`.
 
-### Added 2026-09-17 — the reader-path numbers, including the one that got WORSE
+### Added 2026-09-17 — 🔴 RETRACTED THE SAME DAY — the reader-path byte model, and one figure that was a different section
 
-Measured as byte offsets in the file, before (`4cb7c17`) vs after (`ced3b56`, total 277,820):
+🔴 **THE BYTE-OFFSET READER MODEL IS RETRACTED AS A JUSTIFICATION — #648's round 0 refuted it, and the refutation is the durable half.** The table below was used to argue the reorder's DIRECTION; it cannot, because the same argument dismissed the one reader the change made WORSE (`Download model files`) on the grounds that they still have a `## Contents` link — **and if a Contents link settles it for that reader it settles it for the CI reader too, which voids the 160,391 B headline the whole case rested on.** One affordance cannot be decisive in one row and irrelevant in another. The figures are real; the inference was not. **Do not re-derive this model.**
+
+⚠ **And one figure was measured against the WRONG SECTION.** Row 2's "before" shipped as **99,003 B**, which is the offset of **`## Submit & auth`** on `4cb7c17`. `## Validate fidelity` is at **87,546**, so the row compared two different sections and inflated the improvement by 11,457 B (39,989 claimed, 28,532 real). It was taken from the adjacent row of that session's own heading map — the arc's standing defect class, committed by the session documenting it, and it reached `main` in #649 before round 0 caught it.
+
+Before (`4cb7c17`) vs after (`ced3b56`, total 277,820), corrected:
 
 | reader | before | after |
 |---|---:|---:|
-| `## Scripting with --json` → `## Exit codes`, the contract a CI script branches on | 160,391 B | **22,339 B** |
-| top of file → `## Validate fidelity` | 99,003 B | **59,014 B** |
+| `## Scripting with --json` → `## Exit codes` | 160,391 B | **22,339 B** |
+| top of file → `## Validate fidelity` | **87,546 B** (shipped as 99,003) | **59,014 B** |
 | top of file → `## Download model files` | 64,782 B | **159,634 B** |
 
-🔴 **THE THIRD ROW IS A REAL REGRESSION AND WAS NOT HIDDEN.** The read track now sits after the authoring track because that is where `## Contents` puts it. **An order that dominates on all three does not exist** — putting the read track early pushes `Scripting` back to ~35% and re-opens the ~141 KB gap to `Exit codes`. The trade was taken deliberately for the reader the plan names as worst-served.
+🔴 **THE REASON THAT SURVIVES IS STRUCTURAL, AND IT IS THE ONE TO QUOTE.** `## Contents` is not a flat list — it carries four editorial groups (**Get started** / **Author an App** / **Use the API** / **Reference**). On `main` the three read-path sections sat INSIDE the authoring run and `## Generate` sat between `## App metrics` (176,357) and `## Upgrading` (225,598), so repairing the TOC to match the document would have had to **split "Use the API" into fragments interleaved with "Author an App"** — destroying a real reader affordance to preserve an accident. Moving the document is the only direction that keeps the grouping. It now lives in `readme_outline_order_test.go`'s doc comment (`62aca22`), not only in a PR body.
+
+⚠ The third row is still a real regression and is still not hidden. It is simply no longer being traded off against a number that means nothing.
 
 ### Added 2026-09-17 — round 0 found the plan's headline item ALREADY DONE
 
