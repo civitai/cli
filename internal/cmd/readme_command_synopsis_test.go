@@ -62,21 +62,18 @@ func readmeUnescapeCells(row string) []string {
 // readmeCommandSynopses returns the first-column synopsis of every row of the
 // `## Command reference` table, backticks stripped, in document order.
 //
-// Scoped to that one table (heading → the first `### ` after it) for the reason
-// readmeCommandTableSubjects gives: `civitai app list` and friends also appear
-// in prose and in shell fences, and a whole-file sweep would check strings that
-// are not the published synopsis.
+// Scoped to that one table for the reason readmeCommandTableSubjects gives:
+// `civitai app list` and friends also appear in prose and in shell fences, and a
+// whole-file sweep would check strings that are not the published synopsis.
+//
+// The bound itself lives in readmeCommandReferenceTable (readme_nav_test.go),
+// not here. This file used to open-code the same "heading → the first `### `"
+// rule, which is how one wrong bound became two wrong bounds — read that
+// function's comment for what the old one did once the section's subsections
+// moved out from under it.
 func readmeCommandSynopses(t *testing.T, md string) []string {
 	t.Helper()
-	const heading = "\n## Command reference\n"
-	i := strings.Index(md, heading)
-	if i < 0 {
-		t.Fatal("README.md has no `## Command reference` heading")
-	}
-	body := md[i+len(heading):]
-	if j := strings.Index(body, "\n### "); j >= 0 {
-		body = body[:j]
-	}
+	body := readmeCommandReferenceTable(t, md)
 
 	var out []string
 	for _, line := range strings.Split(body, "\n") {

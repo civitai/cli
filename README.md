@@ -321,6 +321,46 @@ Enable shell completion (optional):
 source <(civitai completion bash)   # bash; see `civitai completion --help` for zsh/fish/powershell
 ```
 
+## Command reference
+
+> **This table is the authoring & account half of the CLI — it is not every
+> command.** The **public-API read commands** — `civitai models`,
+> `model-versions`, `images`, `articles`, `collections`, `creators`, `tags` and
+> `users` — have their own table, with their flags, in
+> [Browse the public API](#browse-the-public-api); `civitai download` is
+> documented there and in [Download model files](#download-model-files).
+
+| Command | What it does |
+| --- | --- |
+| `civitai agent-setup [--track app\|api] [--agent <name>] [--dir <path>] [--check] [--json] [--dry-run]` | **Set up the coding agent you are using to build Civitai Apps** — an `AGENTS.md` block, a `CLAUDE.md` shim, and the two Civitai MCP servers in that agent's own config file. 🔴 **It never writes a credential into any of those files**, and it never authenticates. `--check` verifies a setup; `--dry-run` plans one. See [Set up your coding agent](#set-up-your-coding-agent-agent-setup). |
+| `civitai login [--scopes <set>] [--token [<t>]] [--no-browser]` | Browser OAuth device login by default; `--scopes generate` additively grants generation + Buzz **spend**, which the default set withholds. `--token <t>` stores a personal API key instead. Config at `~/.config/civitai/config.yaml`, 0600; also reads `CIVITAI_TOKEN`. |
+| `civitai whoami [--scopes] [--json]` | Verify the stored token — user, credential type, and a **`Capabilities:`** section decoded from its scope, so a money-path dead end is visible before `dev:live`. **Submit Apps is tri-state**: `unknown` is never `no`. See [What `civitai whoami` reports](#submit--auth). |
+| `civitai buzz [--json]` | Show your spendable Buzz balance (**blue / green / yellow**, plus a **total**); needs the BuzzRead scope, which a **default** OAuth login token lacks (`civitai login --scopes generate`, or a full-scope personal API key). `--json` emits `{blue,green,yellow,total}`. |
+| `civitai app list [--kind <k>] [--category <c>] [--sort <s>] [--limit <n>] [--cursor <c>] [--json]` | **Discover published Apps in the store** (`GET /api/v1/apps`) — filter-based, cursor-paged, and **not anonymous**: the visible catalog is keyed off your identity, so it needs a credential. See [Browse the App store](#browse-the-app-store). |
+| `civitai app view <slug> [--json]` | **Show one published App's store detail** (`GET /api/v1/apps/{slug}`) — the public store catalog, not your own deploy. Needs a credential, same as `app list`. See [Browse the App store](#browse-the-app-store). |
+| `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>] [--slug <slug>] [--yes]` | **The friendly happy path** — scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). `--slug` sets the **blockId** explicitly; `-y`/`--yes` never prompts. See [The blockId](#the-blockid). |
+| `civitai app init [name] [dir] [--yes] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias); same `--yes`. |
+| `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`**; `--spend` must be asked for explicitly to request real-Buzz spend, and `--env` prints a paste-ready `VITE_LIVE_BLOCK_TOKEN=<token>`. See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
+| `civitai app dev-tunnel [blockId] [--block <id>] [--port <n>] [--local-host <host>] [--tunnel-endpoint <h:p>] [--idle-timeout <d>] [--ready-timeout <d>] [--no-wait]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>`. See [Preview in the real host](#preview-in-the-real-host-app-dev-tunnel). |
+| `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json` — warnings are non-fatal unless `--strict`, `--json` emits the structured result, and a `[dir]` that is missing or not a directory is a **usage error** (exit `2`, no JSON). See [Validate fidelity](#validate-fidelity). |
+| `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate] [--allow-downgrade] [--allow-dirty] [--allow-oversize]` | Validate + package the source tree + upload it with your stored token (with no token it writes the bundle and prints next steps). A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`. It also refuses a version that is not strictly above the highest APPROVED version of that app, a dirty git work tree, and a body larger than the server can receive — each waived by the matching flag above, and **all three skipped on the routes that never reach the server** (`--package-only`, or a run with no token). See [Submit & auth](#submit--auth) and [Exit code 1](#exit-code-1), which maps each refusal to its flag. |
+| `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps.** ⚠ The clone URL embeds your access token and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
+| `civitai app listing status [--json]\|set-text [--tagline <t>] [--description <d>] [--category <c>] [--clear <fields>] [--yes]\|set-source-repo <url>\|--clear\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots optional, up to 8), and `listing status` prints what the publish floor still requires. 🔴 **`listing status` is not a pure read — `--json` or not — so do not poll it**: on a live listing it opens a revision draft. On a LIVE listing a **material** change — the media commands, and `set-source-repo` — is **staged on a revision** and is not live until `submit-revision` is approved. 🔴 **`set-text` is the exception: it applies IN PLACE, immediately and publicly**, with no revision to review or abandon. Blanking a field that way needs `--yes` (the SET path only — `--clear` is already explicit), and `--tagline ""` sets an empty string where `--clear tagline` sets null. **ON-SITE apps are refused** by `set-text` and `set-source-repo`. See [After you submit](#after-you-submit-review--approve--deploy) and [Link your source code](#link-your-source-code-app-listing-set-source-repo). |
+| `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions — all of them, or one in detail by `blockId` or `--id`, with a **SOURCE** column carrying the commit the submitting client claimed. Run from inside an app checkout it also warns on **stderr** when your `block.manifest.json` is **BEHIND** your highest approved version. See [Submission status](#submission-status). |
+| `civitai app doctor [slug] [--json]` | **Diagnose what is incomplete or blocked on your App store listings, and how to fix it**, across every listing you own or hold an **accepted** collaborator seat on. 🔴 **Exits `1` when a blocking problem sits on a listing that can still publish, `0` otherwise**, so it gates a release script. A pure read. See [Listing doctor](#listing-doctor-app-doctor). |
+| `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, API engagement — always printing the window the **server** served. Needs the **Apps submit scope**. See [App metrics](#app-metrics). |
+| `civitai app withdraw [pubreq-id] [--id <pubreq>] [--yes]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`), freeing the slug. **It also deletes a first-version app's store listing**, so it asks first and needs `--yes` in a script. See [Submission status](#submission-status). |
+| `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--out-name <template>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job, shows the cost + your balance, asks, submits, then **waits and downloads**. `--dry-run` prices it without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes; a **default** OAuth login is refused. See [Generate](#generate). |
+| `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost and `deliverable/total` outputs. Cursor-paged; reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
+| `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps, outputs and the Buzz transactions recorded for it. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C; output URLs are presigned and expire. See [Generate](#waiting-downloading-and-re-attaching). |
+| `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **You are billed for what it already delivered**, and this CLI cannot report the figure. Asks for confirmation (default **no**); a non-TTY without `--yes` refuses. See [Generate](#listing-and-cancelling-workflows). |
+| `civitai upgrade [--force]` | **Self-update this binary in place**, verifying the release's SHA-256 against `checksums.txt`. The asset follows the platform the release publishes — a `.zip` on Windows, a `.tar.gz` elsewhere. A **macOS** Homebrew install delegates to `brew upgrade`; `--force` reinstalls anyway. See [Upgrading](#upgrading). |
+| `civitai version` | Print version / commit / build date. |
+| `civitai completion [shell]` | Generate a shell-completion script. |
+
+Run `civitai help`, `civitai app --help`, or `civitai <command> --help` for the
+full details and examples.
+
 ## Set up your coding agent (`agent-setup`)
 
 If you are building your App with a coding agent — Claude Code, Cursor, Codex,
@@ -558,47 +598,7 @@ The full hook-by-hook reference (with snippets) lives in each package's npm
 README. For the end-to-end walkthrough, see
 [Build your first App](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md).
 
-## Command reference
-
-> **This table is the authoring & account half of the CLI — it is not every
-> command.** The **public-API read commands** — `civitai models`,
-> `model-versions`, `images`, `articles`, `collections`, `creators`, `tags` and
-> `users` — have their own table, with their flags, in
-> [Browse the public API](#browse-the-public-api); `civitai download` is
-> documented there and in [Download model files](#download-model-files).
-
-| Command | What it does |
-| --- | --- |
-| `civitai agent-setup [--track app\|api] [--agent <name>] [--dir <path>] [--check] [--json] [--dry-run]` | **Set up the coding agent you are using to build Civitai Apps** — an `AGENTS.md` block, a `CLAUDE.md` shim, and the two Civitai MCP servers in that agent's own config file. 🔴 **It never writes a credential into any of those files**, and it never authenticates. `--check` verifies a setup; `--dry-run` plans one. See [Set up your coding agent](#set-up-your-coding-agent-agent-setup). |
-| `civitai login [--scopes <set>] [--token [<t>]] [--no-browser]` | Browser OAuth device login by default; `--scopes generate` additively grants generation + Buzz **spend**, which the default set withholds. `--token <t>` stores a personal API key instead. Config at `~/.config/civitai/config.yaml`, 0600; also reads `CIVITAI_TOKEN`. |
-| `civitai whoami [--scopes] [--json]` | Verify the stored token — user, credential type, and a **`Capabilities:`** section decoded from its scope, so a money-path dead end is visible before `dev:live`. **Submit Apps is tri-state**: `unknown` is never `no`. See [What `civitai whoami` reports](#submit--auth). |
-| `civitai buzz [--json]` | Show your spendable Buzz balance (**blue / green / yellow**, plus a **total**); needs the BuzzRead scope, which a **default** OAuth login token lacks (`civitai login --scopes generate`, or a full-scope personal API key). `--json` emits `{blue,green,yellow,total}`. |
-| `civitai app list [--kind <k>] [--category <c>] [--sort <s>] [--limit <n>] [--cursor <c>] [--json]` | **Discover published Apps in the store** (`GET /api/v1/apps`) — filter-based, cursor-paged, and **not anonymous**: the visible catalog is keyed off your identity, so it needs a credential. See [Browse the App store](#browse-the-app-store). |
-| `civitai app view <slug> [--json]` | **Show one published App's store detail** (`GET /api/v1/apps/{slug}`) — the public store catalog, not your own deploy. Needs a credential, same as `app list`. See [Browse the App store](#browse-the-app-store). |
-| `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>] [--slug <slug>] [--yes]` | **The friendly happy path** — scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). `--slug` sets the **blockId** explicitly; `-y`/`--yes` never prompts. See [The blockId](#the-blockid). |
-| `civitai app init [name] [dir] [--yes] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias); same `--yes`. |
-| `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`**; `--spend` must be asked for explicitly to request real-Buzz spend, and `--env` prints a paste-ready `VITE_LIVE_BLOCK_TOKEN=<token>`. See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
-| `civitai app dev-tunnel [blockId] [--block <id>] [--port <n>] [--local-host <host>] [--tunnel-endpoint <h:p>] [--idle-timeout <d>] [--ready-timeout <d>] [--no-wait]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>`. See [Preview in the real host](#preview-in-the-real-host-app-dev-tunnel). |
-| `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json` — warnings are non-fatal unless `--strict`, `--json` emits the structured result, and a `[dir]` that is missing or not a directory is a **usage error** (exit `2`, no JSON). See [Validate fidelity](#validate-fidelity). |
-| `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate] [--allow-downgrade] [--allow-dirty] [--allow-oversize]` | Validate + package the source tree + upload it with your stored token (with no token it writes the bundle and prints next steps). A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`. It also refuses a version that is not strictly above the highest APPROVED version of that app, a dirty git work tree, and a body larger than the server can receive — each waived by the matching flag above, and **all three skipped on the routes that never reach the server** (`--package-only`, or a run with no token). See [Submit & auth](#submit--auth) and [Exit code 1](#exit-code-1), which maps each refusal to its flag. |
-| `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps.** ⚠ The clone URL embeds your access token and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
-| `civitai app listing status [--json]\|set-text [--tagline <t>] [--description <d>] [--category <c>] [--clear <fields>] [--yes]\|set-source-repo <url>\|--clear\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots optional, up to 8), and `listing status` prints what the publish floor still requires. 🔴 **`listing status` is not a pure read — `--json` or not — so do not poll it**: on a live listing it opens a revision draft. On a LIVE listing a **material** change — the media commands, and `set-source-repo` — is **staged on a revision** and is not live until `submit-revision` is approved. 🔴 **`set-text` is the exception: it applies IN PLACE, immediately and publicly**, with no revision to review or abandon. Blanking a field that way needs `--yes` (the SET path only — `--clear` is already explicit), and `--tagline ""` sets an empty string where `--clear tagline` sets null. **ON-SITE apps are refused** by `set-text` and `set-source-repo`. See [After you submit](#after-you-submit-review--approve--deploy) and [Link your source code](#link-your-source-code-app-listing-set-source-repo). |
-| `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions — all of them, or one in detail by `blockId` or `--id`, with a **SOURCE** column carrying the commit the submitting client claimed. Run from inside an app checkout it also warns on **stderr** when your `block.manifest.json` is **BEHIND** your highest approved version. See [Submission status](#submission-status). |
-| `civitai app doctor [slug] [--json]` | **Diagnose what is incomplete or blocked on your App store listings, and how to fix it**, across every listing you own or hold an **accepted** collaborator seat on. 🔴 **Exits `1` when a blocking problem sits on a listing that can still publish, `0` otherwise**, so it gates a release script. A pure read. See [Listing doctor](#listing-doctor-app-doctor). |
-| `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, API engagement — always printing the window the **server** served. Needs the **Apps submit scope**. See [App metrics](#app-metrics). |
-| `civitai app withdraw [pubreq-id] [--id <pubreq>] [--yes]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`), freeing the slug. **It also deletes a first-version app's store listing**, so it asks first and needs `--yes` in a script. See [Submission status](#submission-status). |
-| `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--out-name <template>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job, shows the cost + your balance, asks, submits, then **waits and downloads**. `--dry-run` prices it without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes; a **default** OAuth login is refused. See [Generate](#generate). |
-| `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost and `deliverable/total` outputs. Cursor-paged; reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
-| `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps, outputs and the Buzz transactions recorded for it. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C; output URLs are presigned and expire. See [Generate](#waiting-downloading-and-re-attaching). |
-| `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **You are billed for what it already delivered**, and this CLI cannot report the figure. Asks for confirmation (default **no**); a non-TTY without `--yes` refuses. See [Generate](#listing-and-cancelling-workflows). |
-| `civitai upgrade [--force]` | **Self-update this binary in place**, verifying the release's SHA-256 against `checksums.txt`. The asset follows the platform the release publishes — a `.zip` on Windows, a `.tar.gz` elsewhere. A **macOS** Homebrew install delegates to `brew upgrade`; `--force` reinstalls anyway. See [Upgrading](#upgrading). |
-| `civitai version` | Print version / commit / build date. |
-| `civitai completion [shell]` | Generate a shell-completion script. |
-
-Run `civitai help`, `civitai app --help`, or `civitai <command> --help` for the
-full details and examples.
-
-### The blockId
+## The blockId
 
 The **blockId** is your app's permanent public identity: the hostname it will be
 served at once approved (`https://<blockId>.civit.ai/`) and the argument every
@@ -646,7 +646,7 @@ characters**. Both refusals exit `2` and both are settled the same way — pass
 A name that is **not valid UTF-8** is refused outright (it used to lose the bad
 bytes from the blockId *and* write them into `block.manifest.json`).
 
-### Templates
+## Templates
 
 - **`static`** — a no-build page app (`index.html` + a tiny `app.js`,
   `block.manifest.json` with `page:{}`, no build step).
@@ -665,7 +665,7 @@ store-listing media requirements — and no images, so the `set-icon` / `set-cov
 step fails loudly until you supply real artwork. See
 [Listing media requirements](#listing-media-requirements).
 
-### The host handshake (`BLOCK_READY`)
+## The host handshake (`BLOCK_READY`)
 
 Every template declares a `page` surface, and the host **will not reveal a page
 app until the app posts `BLOCK_READY`** — that handler is the only transition
@@ -723,7 +723,7 @@ of `RESIZE_IFRAME`, so a project scaffolded from one still carries dead code you
 can delete — nothing scans for it, because `civitai app validate` checks the
 manifest and the handshake, not this.
 
-### Local dev loop (harness: mock vs live)
+## Local dev loop (harness: mock vs live)
 
 A scaffolded App is a sandboxed iframe, and locally there is no host to send
 `BLOCK_INIT` — so `npm run dev` shows you your own UI and nothing of the
@@ -817,7 +817,7 @@ Env vars (`VITE_BLOCK_ALLOWED_PARENT_ORIGINS`, `VITE_HARNESS_MODE`,
 `VITE_LIVE_BLOCK_TOKEN`, …) and the scenario knobs are documented in depth in
 your scaffolded project's own `README.md` and `.env.example`.
 
-### Preview in the real host (`app dev-tunnel`)
+## Preview in the real host (`app dev-tunnel`)
 
 > **(Pre-GA / invite-gated.)** Access is gated behind an Apps-author invite
 > **and** a server kill-switch flag, so if you are not enrolled the mint reports
@@ -895,7 +895,7 @@ like `=1`; leaving it **unset** is the only way to switch it off. It is read onc
 as the tunnel is established, and prints nothing until traffic actually arrives,
 so a tunnel nobody has loaded stays as quiet as it was before.
 
-### Examples
+## Examples
 
 Two real example manifests live under [`examples/`](examples/) (copied from the
 `civitai-block-*` dogfood apps). Read them for manifest **shape** — between them
@@ -913,337 +913,6 @@ field's description in the [canonical schema](https://civitai.com/schemas/app-bl
 
 Both validate clean — schema conformance only, which says nothing about whether
 a value is well-sized.
-
-## Browse the public API
-
-Beyond authoring Apps, the CLI is a thin client for Civitai's **public read REST
-API** (`GET /api/v1/**`). These subcommands **work anonymously** — no `login`
-needed, because the data is public — but when you're logged in your stored token
-is sent automatically (pass `--anon` to force a no-auth request). Every command
-also takes `--json` to print the **raw API JSON response** for scripting.
-
-| Command | What it does | Notable flags |
-| --- | --- | --- |
-| `civitai models search` | Search models (`GET /api/v1/models`) | `--query`, `--tag`, `--username`, `--type`, `--base-model` (repeatable), `--sort`, `--period`, `--nsfw`; paging `--limit` (≤100), `--page`, `--cursor` |
-| `civitai models get <id>` | Get one model by id | `--json`, `--anon` |
-| `civitai model-versions get <id>` | Get a model version by id (alias `mv`) | `--json`, `--anon` |
-| `civitai model-versions by-hash <hash>` | Look up a model version by file hash (AutoV2, SHA256, …) | `--json`, `--anon` |
-| `civitai download <version-id>` | Download a model version's file(s) | `--model`, `--file`, `--all`, `--out`, `--out-dir`, `--layout`, `--root`, `--for-base`, `--no-verify`, `--force`, `--anon` |
-| `civitai images get <id>` | Get one image by id (`GET /api/v1/images?imageId=<id>`) | `--json`, `--anon` |
-| `civitai images search` | Search images (`GET /api/v1/images`) | `--model-id`, `--model-version-id`, `--post-id`, `--username`, `--base-model` (repeatable), `--type` (image/video/audio), `--sort`, `--period`, `--nsfw`, `--meta` (include generation metadata); paging `--limit` (≤200), `--page`, `--cursor` |
-| `civitai tags search` | Search model tags | `--query`; paging `--limit` (≤200), `--page` |
-| `civitai creators search` | Search creators | `--query`; paging `--limit` (≤200), `--page` |
-| `civitai users get <username-or-id>` | Look up a user via public search (a number = exact id; a name = exact-username match, else it lists close matches) | `--json`, `--anon` |
-| `civitai articles search` | Search articles (`GET /api/v1/articles`) | `--query`, `--tags`, `--username`, `--sort`, `--nsfw`; paging `--limit` (≤100), `--cursor` |
-| `civitai articles get <id>` | Get one article by id (`--content` renders the article body as readable text/markdown) | `--content`, `--json`, `--anon` |
-| `civitai collections search` | Search public collections (`GET /api/v1/collections`) | `--query`, `--sort`, `--nsfw`; paging `--limit` (≤100), `--cursor` |
-| `civitai collections get <id>` | Get one collection by id | `--json`, `--anon` |
-
-**Pagination.** List commands print a compact footer with the next-page hint.
-`models`/`images` support both shallow `--page` and deep `--cursor` paging (the
-API caps `page*limit` at 1000 and 429s beyond it — prefer `--cursor` for deep
-paging); `articles`/`collections` are **cursor-only** (keyset feed — no
-`--page`); `tags`/`creators` are `--page`-only. Each endpoint caps `--limit`
-(models/articles/collections 100; images/tags/creators 200).
-
-```bash
-civitai models search --query "pony" --limit 5
-civitai models get 4384
-civitai model-versions by-hash 5D8D26E2A6
-civitai articles get 32680
-civitai articles get 32680 --content   # render the article body (the guide) as readable text/markdown
-civitai images search --model-id 4384 --sort "Most Reactions" --json   # raw JSON for scripting
-```
-
-**Filtering by base model.** `--base-model` is repeatable and maps to the REST
-`baseModels` filter (an OR across the values). It's the key discovery filter for
-things `--type` can't separate — e.g. video checkpoints all share
-`--type Checkpoint` and are distinguished only by base model. It works on both
-`models search` and `images search`:
-
-```bash
-civitai models search --type Checkpoint --base-model "Wan Video 2.2 T2V-A14B"
-civitai models search --base-model Pony --base-model Illustrious --limit 20
-# images too — find recent-popular images generated with a given base model:
-civitai images search --base-model "Krea 2" --sort "Most Reactions" --period Week
-civitai images search --type video --sort "Most Reactions"   # videos only
-```
-
-**Generation metadata (`--meta`).** By default the image list is a compact table
-without generation data (matching the API, which omits `meta` unless asked). Add
-`--meta` to include each image's prompt, sampler, cfg, steps, seed, and model —
-rendered as an indented detail block per image (the table can't hold a prompt).
-Images whose uploader chose to hide their generation data show
-`meta: (hidden by uploader)`. With `--json`, `--meta` adds the raw `meta` object
-to each item.
-
-```bash
-civitai images search --nsfw --sort "Most Reactions" --period Month --meta
-civitai images search --model-version-id 128713 --meta --json | jq '.items[].meta'
-```
-
-The human table includes a `BASE MODEL` column (the base model each image was
-generated with, when the API reports one; `-` when it doesn't), so you can see
-the ecosystem at a glance without dropping to `--json`.
-
-**`--sort` is ignored with `--model-id`.** The REST API returns images for a
-given `modelId` in its own default order regardless of `sort`, so
-`images search --model-id <id> --sort …` prints a one-line note on stderr and the
-results are NOT re-sorted. (`--model-version-id` is unaffected — it honours
-`--sort`.)
-
-**Non-weights file marker.** In the human (non-`--json`) output of
-`models get` and `model-versions get`, a version whose **primary file is not
-model weights** (`type != "Model"`) is tagged with its actual file type — e.g.
-`[Archive]` (a "Workflows" model's downloadable deliverable), `[Training Data]`,
-or `[Other]` — so you can see at a glance that the version's file isn't weights.
-It's purely informational: any file type still downloads. `--json` output is an
-unchanged raw passthrough.
-
-## Download model files
-
-`civitai download` fetches the file(s) of a model **version**. Identify the
-version deterministically by its numeric **version id**, or resolve a model's
-default (first) published version with `--model`:
-
-```bash
-civitai download 691639                       # the version's primary file → ./<server-name>
-civitai download --model 4384                 # resolve model 4384's default version, then download its primary file
-civitai download --model 4384 --dry-run       # print the plan (files, sizes, hashes, targets) — download nothing
-civitai download 691639 --out ./flux_dev.safetensors
-civitai download 290640 --file vae --out-dir ./models   # pick a file by name; write into a dir
-civitai download 691639 --file 1234567                  # pick one of two same-named files by its file id
-civitai download 290640 --all --out-dir ./models        # every file in the version
-civitai download 290640 --all --layout comfyui --root ~/ComfyUI   # route each file to its type folder
-civitai download 691639 --layout a1111 --for-base "SDXL 1.0"      # A1111 layout + base-model compat warning
-```
-
-> **Downloads require authentication.** Every model-file download needs a token —
-> even a small public embedding 401s anonymously. Run `civitai login` first. The
-> read/search commands work anonymously; downloads do not. `--anon` is meaningful
-> for the read commands, not for `download`.
-
-Behavior:
-
-- **Identifier** — exactly one of the positional id or `--model <model-id>` is required. The positional is normally a model-**version** id, but because `models search` / `models get` print **model** ids, handing one over just works: the CLI notices it is a model id and downloads that model's default version, printing a `note: <id> is a model id — downloading its default version <v>` line. When a number is **both** a valid model id and a valid version id (common for low/mid numbers), the CLI **stops** rather than guess, naming both interpretations — re-run with `--model <id>` (that model's default version), `--version <id>` (that version as-is), or `--yes` to take the version interpretation and have it echoed back. `--version` names a version id explicitly and skips the stop entirely.
-- **`--model` resolves the default version** — the model's default (first published) version; its primary file is downloaded regardless of file type. Any model type works, including a `type: Workflows` model whose deliverable is a downloadable `Archive`.
-- **`--dry-run`** — resolve the version + selected file(s) and print the plan (each file's name, size, SHA256, resolved target path, and whether authentication will be required) then exit `0`, transferring nothing and creating no file (not even a `.part`). Works with `--file`, `--all`, `--model`, `--out`, `--out-dir`, and `--layout`/`--root` (the plan shows the routed target paths).
-- **File selection** — defaults to the version's **primary** file. `--file` selects one file by **numeric file id** (the version's `files[].id`) or by **name** (exact, else a unique case-insensitive substring; ambiguous/none errors and lists the candidate files with their ids). `--all` downloads every file.
-- **Same-named files (no silent overwrite)** — a version can ship two files that share a name (e.g. Flux Dev's fp16 **and** fp8, both `flux_dev.safetensors`). Selecting that shared name with `--file` is **ambiguous** and errors, listing both files with their ids — pass the **numeric id** to pick exactly one (`--file 1234567`; the id is shown by `--dry-run` and in the error). `--all` **refuses** to run when two selected files would resolve to the **same on-disk path** (which would silently clobber one) — it fails *before* transferring anything, lists the colliding files with their ids/sizes, and tells you to pick one with `--file <id>` (or write them to separate paths). No download ever silently overwrites another.
-- **Output** — `--out <path>` sets an exact target path (single file only). `--out-dir <dir>` writes server-named files into a directory (works with `--all`). Parent directories are created as needed. Default is the server-provided filename in the current directory.
-- **Type-aware folder routing (`--layout`)** — `--layout <a1111|comfyui>` writes each file into the correct subfolder for that app, keyed by the file/model **type**, under `--root <dir>` (default `.`). This fixes the footgun where `--all --out-dir X` dumps a **bundled VAE into the checkpoint folder** and pollutes the model dropdown: with `--layout`, the checkpoint lands in the checkpoints folder and the VAE in the VAE folder. `--layout` is mutually exclusive with `--out`/`--out-dir`; `--root` only applies with `--layout`. An unmapped type (Poses, Wildcards, Archive, …) is written to `--root` with a stderr note rather than silently misplaced. The routed folder maps:
-
-  | Civitai type | A1111 / Forge | ComfyUI |
-  |---|---|---|
-  | Checkpoint | `models/Stable-diffusion` | `models/checkpoints` |
-  | VAE (standalone **or** bundled) | `models/VAE` | `models/vae` |
-  | LORA / LoCon / DoRA | `models/Lora` | `models/loras` |
-  | TextualInversion (embedding) | `embeddings` | `models/embeddings` |
-  | Hypernetwork | `models/hypernetworks` | `models/hypernetworks` |
-  | Controlnet | `models/ControlNet` | `models/controlnet` |
-  | Upscaler | `models/ESRGAN` | `models/upscale_models` |
-
-  (Sources: the [AUTOMATIC1111 wiki](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/Command-Line-Arguments-and-Settings) + the sd-webui-controlnet `models/ControlNet` default; the [ComfyUI models docs](https://docs.comfy.org/development/core-concepts/models).)
-- **Mis-file warning (without `--layout`)** — when `--all` would place files of **differing types** into one directory (the mis-file footgun), the CLI prints a one-line stderr warning naming the off-type file(s) and suggesting `--layout`. It's a warning, not an error; a single-type download stays quiet.
-- **Base model + compatibility (`--for-base`)** — the version's **base model** is always shown in the plan/output. `--for-base "<baseModel>"` warns on stderr when the version's base model is in a **confidently different family** than your target (e.g. an `SD 1.5` embedding like EasyNegative downloaded for an `SDXL 1.0` model → won't work; the wrong VAE → black images). The check is conservative — it groups the common bases into architecture families (SD1.x, SD2.x, the SDXL family [SDXL/Pony/Illustrious/NoobAI, treated loosely], SD3, Flux, video, …) and only warns on an architecture-level mismatch, never on near-neighbours (Pony vs Illustrious) or unclassifiable bases.
-- **Streaming + atomicity** — the body streams to `<target>.part` and is renamed into place only on success, so an interrupted run never leaves a truncated final file. Large files (10+ GB) are never buffered in memory. TTY-aware progress is printed to **stderr**. The Civitai download URL 302-redirects to signed storage; the CLI follows it.
-- **Auth** — your stored login token (`civitai login`) or `CIVITAI_TOKEN` is used automatically; **Civitai requires a token to download any model file, even public ones**, so an anonymous download gets an actionable 401 (`401` → run `civitai login`; `403` → the file is gated for your account). `--anon` forces no token.
-- **Transient-failure retry (reads)** — the read endpoints (search / model / version / images / tags / creators / users / articles / collections) retry a transient `502`/`503`/`504` or network error a few times with exponential backoff (with jitter), noting each retry on stderr. A `429` is retried **only** when it carries a `Retry-After` header (a genuine throttle, honored up to a cap); a `429` **without** `Retry-After` is treated as terminal rather than retried, because Civitai's deterministic deep-paging limit arrives that way, and is surfaced immediately with the hint to use `--cursor` instead of `--page`. ⚠ The absent header decides whether to RETRY; it does **not** identify the cap — the exit-code split is drawn from the server's message, so a header-less generic throttle is still a throttle and exits `6`; a 429 can also exit `2` or `5`, so branch on the code, not the text. The download **stream** is not retried mid-transfer.
-- **Integrity (default on)** — the streamed bytes are verified against the file's `SHA256`; a mismatch deletes the `.part` and fails. `--no-verify` skips it; a file with no published SHA256 downloads with a warning (not a hard failure). Note that **SHA256 verifies integrity (the bytes match what the API advertised), not authenticity** — it proves the download wasn't corrupted or truncated in transit, but a compromised source that advertises a matching hash for malicious bytes cannot be detected by the hash alone. Only download models from creators you trust.
-- **Pickle/archive safety note** — when a downloaded file has a pickle/executable extension (`.ckpt`, `.pt`, `.pth`, `.bin`, `.pickle`, `.pkl`) or an archive extension (`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.rar`, `.7z`), the CLI prints a one-line stderr note: these formats **can execute arbitrary code when loaded** by ComfyUI/A1111/`torch.load`, and they land in folders those apps auto-scan. `safetensors` and image files are inert and get no note. The note is informational — it never blocks the download.
-- **ControlNet preprocessor note** — when the parent model is a **ControlNet**, the CLI prints a one-line stderr note: a ControlNet model needs a matching **preprocessor/annotator** (e.g. the ComfyUI `comfyui_controlnet_aux` custom node — OpenPose/Canny/Depth) to derive the control image from your input, and that preprocessor is a **separate install, not hosted on Civitai**. The note is informational — it never blocks the download.
-- **Server-supplied text is sanitised on every message here** — the file name in a `SHA256 mismatch` line is the *uploader's*, and so is most of what these messages carry, so invisible and terminal-controlling characters are removed first. The list is notable rather than exhaustive: the download progress line, the same-target overwrite refusal, the `401`/`403`/`404` download errors, the `server returned an unusable filename` refusal (which reaches both stderr and, as the download plan's `target: (unresolved)` note, stdout), the `download …`, `install …`, `create …`, `streaming …` and `finalize …` errors, and the `Saved …` line. **Newlines and tabs are removed too**, on every one of them: each is a single-line surface, so a newline in a file name would let the uploader write a whole line of their own — a forged `Saved … (SHA256 verified)` above a transfer that never finished, say. A newline or tab becomes a space, exactly as it does in a table cell (see [What a table cell can contain](#what-a-table-cell-can-contain)). **On the progress line the name is also shortened** — cut at 120 characters and marked with a `…` — because removing newlines does not stop a name long enough to **wrap**: the terminal, not the CLI, puts the overflow at column zero, and a wrap has no character in it to remove. That shortening is the progress line **only**; the `Saved …` line, the `SHA256 mismatch` line and the download plan still print the name in full. **Two deliberate exceptions, and they do NOT share a reason** — an earlier version of this claim said they did, which was true of only the first. (1) The `server returned an unusable filename` refusal renders through `%q`, which **escapes** the newline to a visible `\n`; it is already harmless there, and collapsing it would hide what the server actually sent. (2) Multi-line server text outside this path — a `prompt`, a generation failure reason — is printed **raw** and **indented**, not escaped: its newlines are real, and the indentation is what stops a continuation line reaching column zero. Do not read reason (1) as covering case (2); acting on that would remove the indentation guard, which is the forgery it exists to prevent.
-- **Idempotency** — an already-present target (that verifies, or with `--no-verify`) is skipped with a note; `--force` re-downloads.
-- **Any file type downloads** — the selected/primary file is downloaded whatever its `type` (`Model` weights, a `type: Workflows` model's `Archive`, training data, or other artifacts). The human `models get` / `model-versions get` output tags a non-weights primary file with its type (e.g. `[Archive]`) purely for information; it never blocks a download.
-
-## Scripting with `--json`
-
-Every read subcommand takes `--json`, which prints the `/api/v1/...` REST
-response as the API shaped it — not a CLI-invented shape. So the field schema
-is exactly the public Site API's; keep the
-[REST field reference](https://developer.civitai.com/site/reference/) open
-(e.g. [models](https://developer.civitai.com/site/reference/models),
-[model-versions](https://developer.civitai.com/site/reference/model-versions))
-rather than reverse-engineering fields with `jq keys`.
-
-🔴 **It passes through the DOCUMENT, not the BYTES — do not diff or hash
-`--json` output against the wire.** Two things change the bytes without changing
-the document. The first is cosmetic: **the output is re-indented**, so a compact
-API body comes out longer than it went in. The second is not, and it has its own
-paragraph below: **a body that will not parse is repaired first.**
-
-Two properties make the output safe to pipe:
-
-- **`--json` stdout is pure JSON** — nothing else is written to stdout, so
-  `... --json | jq -e .` always parses.
-- **Errors go to stderr with a non-zero exit** — a failed call writes the error
-  to **stderr**, exits non-zero, and prints **nothing to stdout**, so `jq` never
-  sees error prose. For example `civitai model-versions get 999999999 --json`
-  exits `4` with `Error: not found (404): Model not found` on stderr and an empty
-  stdout.
-
-The repair, in full. The API intermittently
-emits a **raw control byte** — a carriage return, most often — inside a `prompt`
-or `description` string, which is not legal JSON and used to fail the whole page
-([#525](https://github.com/civitai/cli/issues/525)). When a page will not decode,
-the CLI rewrites those bytes as their JSON escapes (`\r`, `\u0001`) and decodes
-the repaired body, and that repaired body is what `--json` prints. The *document*
-is still the API's — the same strings, the same characters — but the bytes are
-not: this is the second of the two byte changes named above, and the reason the
-warning against diffing or hashing is not just about whitespace. A page that
-decodes as sent is passed through with no such rewrite.
-
-A second shape used to fail the same way and is also fixed: a Civitai **username
-can be entirely digits**, and such a value was reported arriving as a bare JSON
-**number** (`"username": 2802169344506`, unquoted) rather than a string
-([#513](https://github.com/civitai/cli/issues/513)). One such uploader on a page
-failed the whole page, so `civitai images search` printed nothing at all; the CLI
-now accepts either shape and keeps the digits exactly as sent.
-
-When a body still will not decode you get `unexpected response from …`, and the
-text after the colon is the server's own body, **truncated**, with invisible and
-terminal-controlling characters removed — so a hostile body cannot rewrite what
-is already on your screen from inside the error line. Nothing else about it is
-rewritten, and the repair above is **not** applied to what you are shown.
-
-Both of the two piping properties above hold for `civitai generate` and
-`civitai workflows …` too, but their payloads are **not** Site API REST
-shapes — generation has no REST route, so those commands print the
-*orchestrator's* reply. **The two byte changes apply differently there, so take
-them one at a time:** the output is **re-indented** exactly as above, so it is no
-more diffable or hashable than the read group's; but the **repair never runs on
-a generation reply** — it is applied by the read SDK's own decode step, and the
-generation client decodes with plain `encoding/json`, so nothing rewrites a
-control byte there. Read
-[Generation `--json`](#generation---json) before scripting against them.
-
-Two `app` commands emit a shape this **CLI composes**, not a wire payload:
-`civitai app validate --json` (see
-[The `--json` result shape](#the---json-result-shape)) and
-`civitai app listing status --json`, which joins the two listing reads into one
-object naming `parentId` and `shadowId` (see
-[After you submit](#after-you-submit-review--approve--deploy)). Both keep the two
-properties above; only the *provenance* of the fields differs. 🔴 **And
-`app listing status --json` is a read with a server-side SIDE EFFECT** — on a
-live listing it opens a revision draft — so, unlike the reads above, it must not
-be polled.
-
-### Cursor pagination loop
-
-For deep paging use `--cursor` (**not** `--page` — the API caps `page*limit` at
-1000 and 429s beyond it). Read `.metadata.nextCursor` from each response and feed
-it back via `--cursor`; stop when it's absent/null:
-
-```bash
-export CIVITAI_NO_UPDATE_CHECK=1
-cursor=""
-while :; do
-  page=$(civitai models search --type LORA --base-model Illustrious \
-           --sort "Most Downloaded" --limit 5 ${cursor:+--cursor "$cursor"} --json) || break
-  echo "$page" | jq -r '.items[].id'                 # do your work here
-  cursor=$(echo "$page" | jq -r '.metadata.nextCursor // empty')
-  [ -z "$cursor" ] && break                          # no more pages
-done
-```
-
-### Clean output for pipelines
-
-The CLI runs a background check for a newer release and prints a nag to
-**stderr**. In scripts, silence it with `CIVITAI_NO_UPDATE_CHECK=1` (env) or
-`--no-update-check` (flag). Either way stdout stays pure JSON — the nag never
-touches stdout — but suppressing it keeps stderr clean for logs.
-
-### Generation `--json`
-
-`civitai generate --dry-run --json`, `civitai workflows list --json` and
-`civitai workflows get <id> --json` emit the raw orchestrator payload. Two
-caveats have bitten people, and neither shows up as an error:
-
-- **Output URLs are presigned and EXPIRE.** The links in a workflow payload are
-  short-lived signatures, not durable addresses. A pipeline that stores them and
-  fetches later gets a 401/403 from the storage host that no credential can fix
-  — re-run `civitai workflows get <id>` for fresh links instead of caching the
-  old ones. (Fetch them with **no** `Authorization` header; they are already
-  authorized, and the CLI deliberately attaches nothing to them.)
-- **`--json` still exits `0` when the server reports the resources are
-  unavailable.** `--dry-run --json` prints the estimate and exits `0` even when
-  the payload says `"ready": false`. A human `--dry-run` prints a warning and
-  this CLI refuses to submit in that state, but a script reading only the exit
-  code sees success. **Branch on the field**, exactly as `app metrics` requires
-  branching on `notOwned` — and note the shape below, which **fails closed**:
-
-  ```bash
-  q=$(civitai generate "a cat" --dry-run --json) || exit $?
-  case "$(printf '%s' "$q" | jq -r 'if has("ready") then .ready else "absent" end')" in
-    false)   echo "resources unavailable" >&2; exit 1 ;;   # decisive: do not submit
-    true)    ;;                                            # NOT a green light — see below
-    *)       echo "no readable .ready field" >&2; exit 1 ;; # absent, null, or jq failed
-  esac
-  printf '%s' "$q" | jq -r .cost.total
-  ```
-
-  The `*` arm is the point. An earlier version of this snippet tested
-  `[ … = "false" ] && exit 1`, which exits **0** when the key is absent or `jq`
-  fails — it read "we could not ask" as "we asked and it was fine", the
-  fabricated-zero mistake `app metrics` documents for `views.unavailable`.
-
-  🔴 **`ready` is one-directional, and the human label says so.** It reports
-  only that the resources this job needs are currently available — the server
-  computes it as "every job's queue position reports `support: available`", and
-  a job carrying no queue position at all is skipped, leaving the flag `true`.
-  It is not a moderation verdict and not a prediction that the job produces an
-  image; `--dry-run` therefore prints it as **`Resources ready`**, not
-  "Generatable". A run reporting `ready: true` can still be charged and return
-  nothing — measured: 8 submits across 3 checkpoints that all quoted
-  `ready: true` produced 0 outputs. So gate on the FALSE direction, as above,
-  and never treat `true` as a success predicate. The only thing that settles
-  whether a job produced output is the finished workflow
-  (`civitai workflows get <id>`), and `civitai generate` exits non-zero when it
-  waited and got no deliverable output.
-
-  **What `ready: false` gets you is a LOCAL refusal.** `civitai generate` reads
-  the flag and refuses to submit; no server-side enforcement of it is known.
-  Treat it as this CLI's own pre-flight, not as a promise about what the server
-  would have done.
-
-  Cost keys (`cost.factors`, `cost.fixed`) are server-owned and passed through
-  **verbatim**, so treat them as an open map rather than a fixed set.
-
-### Gotchas
-
-- **SHA256 is UPPER-case** in the API/`--json` (e.g.
-  `42BA94DF20CC0F4E6DF46E3C294587A2F8CF133BF0134185884EE1C9C5E108C4`), while
-  `sha256sum` emits lowercase. Case-fold before comparing if you roll your own
-  verify (`civitai download`'s built-in check is already case-insensitive):
-  `[ "$(echo "$api_sha" | tr A-Z a-z)" = "$(sha256sum file | cut -d' ' -f1)" ]`.
-- **`models search` already embeds `.modelVersions[]`** — each item carries its
-  full versions, including `files[].hashes.SHA256` and `trainedWords`. If you're
-  iterating search results you usually **don't** need a follow-up
-  `model-versions get` per version.
-- **Creator + model-level download counts live only in the search response.**
-  `model-versions get <id>` returns a **version**, whose `.model` is just
-  `{name, type, nsfw, poi}` — no `creator`, no model `stats.downloadCount`. If
-  you started from a version and need those, fetch them from `models search`
-  / `models get` and join on the model id (`.modelId` on the version).
-
-### Worked example — top LoRAs for a base model, then plan a download
-
-Search → pick versions with `jq` → hand each version id to `download` with app
-folder routing. `--dry-run` prints the plan (files, sizes, hashes, target paths)
-without transferring, so this snippet is safe to copy-paste:
-
-```bash
-export CIVITAI_NO_UPDATE_CHECK=1
-civitai models search --type LORA --base-model Illustrious \
-    --sort "Most Downloaded" --limit 3 --json |
-  jq -r '.items[].modelVersions[0].id' |
-  while read -r vid; do
-    civitai download "$vid" --layout comfyui --root ~/ComfyUI --dry-run
-  done
-```
-
-Drop `--dry-run` (and `civitai login` first) to actually fetch the files —
-`--layout comfyui` routes each into its ComfyUI type folder.
 
 ## Validate fidelity
 
@@ -2925,6 +2594,148 @@ outage from a real zero. A server old enough to predate this section omits the
 (naming the different cause), and a script should treat a missing `.views` the
 same way.
 
+## Browse the public API
+
+Beyond authoring Apps, the CLI is a thin client for Civitai's **public read REST
+API** (`GET /api/v1/**`). These subcommands **work anonymously** — no `login`
+needed, because the data is public — but when you're logged in your stored token
+is sent automatically (pass `--anon` to force a no-auth request). Every command
+also takes `--json` to print the **raw API JSON response** for scripting.
+
+| Command | What it does | Notable flags |
+| --- | --- | --- |
+| `civitai models search` | Search models (`GET /api/v1/models`) | `--query`, `--tag`, `--username`, `--type`, `--base-model` (repeatable), `--sort`, `--period`, `--nsfw`; paging `--limit` (≤100), `--page`, `--cursor` |
+| `civitai models get <id>` | Get one model by id | `--json`, `--anon` |
+| `civitai model-versions get <id>` | Get a model version by id (alias `mv`) | `--json`, `--anon` |
+| `civitai model-versions by-hash <hash>` | Look up a model version by file hash (AutoV2, SHA256, …) | `--json`, `--anon` |
+| `civitai download <version-id>` | Download a model version's file(s) | `--model`, `--file`, `--all`, `--out`, `--out-dir`, `--layout`, `--root`, `--for-base`, `--no-verify`, `--force`, `--anon` |
+| `civitai images get <id>` | Get one image by id (`GET /api/v1/images?imageId=<id>`) | `--json`, `--anon` |
+| `civitai images search` | Search images (`GET /api/v1/images`) | `--model-id`, `--model-version-id`, `--post-id`, `--username`, `--base-model` (repeatable), `--type` (image/video/audio), `--sort`, `--period`, `--nsfw`, `--meta` (include generation metadata); paging `--limit` (≤200), `--page`, `--cursor` |
+| `civitai tags search` | Search model tags | `--query`; paging `--limit` (≤200), `--page` |
+| `civitai creators search` | Search creators | `--query`; paging `--limit` (≤200), `--page` |
+| `civitai users get <username-or-id>` | Look up a user via public search (a number = exact id; a name = exact-username match, else it lists close matches) | `--json`, `--anon` |
+| `civitai articles search` | Search articles (`GET /api/v1/articles`) | `--query`, `--tags`, `--username`, `--sort`, `--nsfw`; paging `--limit` (≤100), `--cursor` |
+| `civitai articles get <id>` | Get one article by id (`--content` renders the article body as readable text/markdown) | `--content`, `--json`, `--anon` |
+| `civitai collections search` | Search public collections (`GET /api/v1/collections`) | `--query`, `--sort`, `--nsfw`; paging `--limit` (≤100), `--cursor` |
+| `civitai collections get <id>` | Get one collection by id | `--json`, `--anon` |
+
+**Pagination.** List commands print a compact footer with the next-page hint.
+`models`/`images` support both shallow `--page` and deep `--cursor` paging (the
+API caps `page*limit` at 1000 and 429s beyond it — prefer `--cursor` for deep
+paging); `articles`/`collections` are **cursor-only** (keyset feed — no
+`--page`); `tags`/`creators` are `--page`-only. Each endpoint caps `--limit`
+(models/articles/collections 100; images/tags/creators 200).
+
+```bash
+civitai models search --query "pony" --limit 5
+civitai models get 4384
+civitai model-versions by-hash 5D8D26E2A6
+civitai articles get 32680
+civitai articles get 32680 --content   # render the article body (the guide) as readable text/markdown
+civitai images search --model-id 4384 --sort "Most Reactions" --json   # raw JSON for scripting
+```
+
+**Filtering by base model.** `--base-model` is repeatable and maps to the REST
+`baseModels` filter (an OR across the values). It's the key discovery filter for
+things `--type` can't separate — e.g. video checkpoints all share
+`--type Checkpoint` and are distinguished only by base model. It works on both
+`models search` and `images search`:
+
+```bash
+civitai models search --type Checkpoint --base-model "Wan Video 2.2 T2V-A14B"
+civitai models search --base-model Pony --base-model Illustrious --limit 20
+# images too — find recent-popular images generated with a given base model:
+civitai images search --base-model "Krea 2" --sort "Most Reactions" --period Week
+civitai images search --type video --sort "Most Reactions"   # videos only
+```
+
+**Generation metadata (`--meta`).** By default the image list is a compact table
+without generation data (matching the API, which omits `meta` unless asked). Add
+`--meta` to include each image's prompt, sampler, cfg, steps, seed, and model —
+rendered as an indented detail block per image (the table can't hold a prompt).
+Images whose uploader chose to hide their generation data show
+`meta: (hidden by uploader)`. With `--json`, `--meta` adds the raw `meta` object
+to each item.
+
+```bash
+civitai images search --nsfw --sort "Most Reactions" --period Month --meta
+civitai images search --model-version-id 128713 --meta --json | jq '.items[].meta'
+```
+
+The human table includes a `BASE MODEL` column (the base model each image was
+generated with, when the API reports one; `-` when it doesn't), so you can see
+the ecosystem at a glance without dropping to `--json`.
+
+**`--sort` is ignored with `--model-id`.** The REST API returns images for a
+given `modelId` in its own default order regardless of `sort`, so
+`images search --model-id <id> --sort …` prints a one-line note on stderr and the
+results are NOT re-sorted. (`--model-version-id` is unaffected — it honours
+`--sort`.)
+
+**Non-weights file marker.** In the human (non-`--json`) output of
+`models get` and `model-versions get`, a version whose **primary file is not
+model weights** (`type != "Model"`) is tagged with its actual file type — e.g.
+`[Archive]` (a "Workflows" model's downloadable deliverable), `[Training Data]`,
+or `[Other]` — so you can see at a glance that the version's file isn't weights.
+It's purely informational: any file type still downloads. `--json` output is an
+unchanged raw passthrough.
+
+## Download model files
+
+`civitai download` fetches the file(s) of a model **version**. Identify the
+version deterministically by its numeric **version id**, or resolve a model's
+default (first) published version with `--model`:
+
+```bash
+civitai download 691639                       # the version's primary file → ./<server-name>
+civitai download --model 4384                 # resolve model 4384's default version, then download its primary file
+civitai download --model 4384 --dry-run       # print the plan (files, sizes, hashes, targets) — download nothing
+civitai download 691639 --out ./flux_dev.safetensors
+civitai download 290640 --file vae --out-dir ./models   # pick a file by name; write into a dir
+civitai download 691639 --file 1234567                  # pick one of two same-named files by its file id
+civitai download 290640 --all --out-dir ./models        # every file in the version
+civitai download 290640 --all --layout comfyui --root ~/ComfyUI   # route each file to its type folder
+civitai download 691639 --layout a1111 --for-base "SDXL 1.0"      # A1111 layout + base-model compat warning
+```
+
+> **Downloads require authentication.** Every model-file download needs a token —
+> even a small public embedding 401s anonymously. Run `civitai login` first. The
+> read/search commands work anonymously; downloads do not. `--anon` is meaningful
+> for the read commands, not for `download`.
+
+Behavior:
+
+- **Identifier** — exactly one of the positional id or `--model <model-id>` is required. The positional is normally a model-**version** id, but because `models search` / `models get` print **model** ids, handing one over just works: the CLI notices it is a model id and downloads that model's default version, printing a `note: <id> is a model id — downloading its default version <v>` line. When a number is **both** a valid model id and a valid version id (common for low/mid numbers), the CLI **stops** rather than guess, naming both interpretations — re-run with `--model <id>` (that model's default version), `--version <id>` (that version as-is), or `--yes` to take the version interpretation and have it echoed back. `--version` names a version id explicitly and skips the stop entirely.
+- **`--model` resolves the default version** — the model's default (first published) version; its primary file is downloaded regardless of file type. Any model type works, including a `type: Workflows` model whose deliverable is a downloadable `Archive`.
+- **`--dry-run`** — resolve the version + selected file(s) and print the plan (each file's name, size, SHA256, resolved target path, and whether authentication will be required) then exit `0`, transferring nothing and creating no file (not even a `.part`). Works with `--file`, `--all`, `--model`, `--out`, `--out-dir`, and `--layout`/`--root` (the plan shows the routed target paths).
+- **File selection** — defaults to the version's **primary** file. `--file` selects one file by **numeric file id** (the version's `files[].id`) or by **name** (exact, else a unique case-insensitive substring; ambiguous/none errors and lists the candidate files with their ids). `--all` downloads every file.
+- **Same-named files (no silent overwrite)** — a version can ship two files that share a name (e.g. Flux Dev's fp16 **and** fp8, both `flux_dev.safetensors`). Selecting that shared name with `--file` is **ambiguous** and errors, listing both files with their ids — pass the **numeric id** to pick exactly one (`--file 1234567`; the id is shown by `--dry-run` and in the error). `--all` **refuses** to run when two selected files would resolve to the **same on-disk path** (which would silently clobber one) — it fails *before* transferring anything, lists the colliding files with their ids/sizes, and tells you to pick one with `--file <id>` (or write them to separate paths). No download ever silently overwrites another.
+- **Output** — `--out <path>` sets an exact target path (single file only). `--out-dir <dir>` writes server-named files into a directory (works with `--all`). Parent directories are created as needed. Default is the server-provided filename in the current directory.
+- **Type-aware folder routing (`--layout`)** — `--layout <a1111|comfyui>` writes each file into the correct subfolder for that app, keyed by the file/model **type**, under `--root <dir>` (default `.`). This fixes the footgun where `--all --out-dir X` dumps a **bundled VAE into the checkpoint folder** and pollutes the model dropdown: with `--layout`, the checkpoint lands in the checkpoints folder and the VAE in the VAE folder. `--layout` is mutually exclusive with `--out`/`--out-dir`; `--root` only applies with `--layout`. An unmapped type (Poses, Wildcards, Archive, …) is written to `--root` with a stderr note rather than silently misplaced. The routed folder maps:
+
+  | Civitai type | A1111 / Forge | ComfyUI |
+  |---|---|---|
+  | Checkpoint | `models/Stable-diffusion` | `models/checkpoints` |
+  | VAE (standalone **or** bundled) | `models/VAE` | `models/vae` |
+  | LORA / LoCon / DoRA | `models/Lora` | `models/loras` |
+  | TextualInversion (embedding) | `embeddings` | `models/embeddings` |
+  | Hypernetwork | `models/hypernetworks` | `models/hypernetworks` |
+  | Controlnet | `models/ControlNet` | `models/controlnet` |
+  | Upscaler | `models/ESRGAN` | `models/upscale_models` |
+
+  (Sources: the [AUTOMATIC1111 wiki](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/Command-Line-Arguments-and-Settings) + the sd-webui-controlnet `models/ControlNet` default; the [ComfyUI models docs](https://docs.comfy.org/development/core-concepts/models).)
+- **Mis-file warning (without `--layout`)** — when `--all` would place files of **differing types** into one directory (the mis-file footgun), the CLI prints a one-line stderr warning naming the off-type file(s) and suggesting `--layout`. It's a warning, not an error; a single-type download stays quiet.
+- **Base model + compatibility (`--for-base`)** — the version's **base model** is always shown in the plan/output. `--for-base "<baseModel>"` warns on stderr when the version's base model is in a **confidently different family** than your target (e.g. an `SD 1.5` embedding like EasyNegative downloaded for an `SDXL 1.0` model → won't work; the wrong VAE → black images). The check is conservative — it groups the common bases into architecture families (SD1.x, SD2.x, the SDXL family [SDXL/Pony/Illustrious/NoobAI, treated loosely], SD3, Flux, video, …) and only warns on an architecture-level mismatch, never on near-neighbours (Pony vs Illustrious) or unclassifiable bases.
+- **Streaming + atomicity** — the body streams to `<target>.part` and is renamed into place only on success, so an interrupted run never leaves a truncated final file. Large files (10+ GB) are never buffered in memory. TTY-aware progress is printed to **stderr**. The Civitai download URL 302-redirects to signed storage; the CLI follows it.
+- **Auth** — your stored login token (`civitai login`) or `CIVITAI_TOKEN` is used automatically; **Civitai requires a token to download any model file, even public ones**, so an anonymous download gets an actionable 401 (`401` → run `civitai login`; `403` → the file is gated for your account). `--anon` forces no token.
+- **Transient-failure retry (reads)** — the read endpoints (search / model / version / images / tags / creators / users / articles / collections) retry a transient `502`/`503`/`504` or network error a few times with exponential backoff (with jitter), noting each retry on stderr. A `429` is retried **only** when it carries a `Retry-After` header (a genuine throttle, honored up to a cap); a `429` **without** `Retry-After` is treated as terminal rather than retried, because Civitai's deterministic deep-paging limit arrives that way, and is surfaced immediately with the hint to use `--cursor` instead of `--page`. ⚠ The absent header decides whether to RETRY; it does **not** identify the cap — the exit-code split is drawn from the server's message, so a header-less generic throttle is still a throttle and exits `6`; a 429 can also exit `2` or `5`, so branch on the code, not the text. The download **stream** is not retried mid-transfer.
+- **Integrity (default on)** — the streamed bytes are verified against the file's `SHA256`; a mismatch deletes the `.part` and fails. `--no-verify` skips it; a file with no published SHA256 downloads with a warning (not a hard failure). Note that **SHA256 verifies integrity (the bytes match what the API advertised), not authenticity** — it proves the download wasn't corrupted or truncated in transit, but a compromised source that advertises a matching hash for malicious bytes cannot be detected by the hash alone. Only download models from creators you trust.
+- **Pickle/archive safety note** — when a downloaded file has a pickle/executable extension (`.ckpt`, `.pt`, `.pth`, `.bin`, `.pickle`, `.pkl`) or an archive extension (`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.rar`, `.7z`), the CLI prints a one-line stderr note: these formats **can execute arbitrary code when loaded** by ComfyUI/A1111/`torch.load`, and they land in folders those apps auto-scan. `safetensors` and image files are inert and get no note. The note is informational — it never blocks the download.
+- **ControlNet preprocessor note** — when the parent model is a **ControlNet**, the CLI prints a one-line stderr note: a ControlNet model needs a matching **preprocessor/annotator** (e.g. the ComfyUI `comfyui_controlnet_aux` custom node — OpenPose/Canny/Depth) to derive the control image from your input, and that preprocessor is a **separate install, not hosted on Civitai**. The note is informational — it never blocks the download.
+- **Server-supplied text is sanitised on every message here** — the file name in a `SHA256 mismatch` line is the *uploader's*, and so is most of what these messages carry, so invisible and terminal-controlling characters are removed first. The list is notable rather than exhaustive: the download progress line, the same-target overwrite refusal, the `401`/`403`/`404` download errors, the `server returned an unusable filename` refusal (which reaches both stderr and, as the download plan's `target: (unresolved)` note, stdout), the `download …`, `install …`, `create …`, `streaming …` and `finalize …` errors, and the `Saved …` line. **Newlines and tabs are removed too**, on every one of them: each is a single-line surface, so a newline in a file name would let the uploader write a whole line of their own — a forged `Saved … (SHA256 verified)` above a transfer that never finished, say. A newline or tab becomes a space, exactly as it does in a table cell (see [What a table cell can contain](#what-a-table-cell-can-contain)). **On the progress line the name is also shortened** — cut at 120 characters and marked with a `…` — because removing newlines does not stop a name long enough to **wrap**: the terminal, not the CLI, puts the overflow at column zero, and a wrap has no character in it to remove. That shortening is the progress line **only**; the `Saved …` line, the `SHA256 mismatch` line and the download plan still print the name in full. **Two deliberate exceptions, and they do NOT share a reason** — an earlier version of this claim said they did, which was true of only the first. (1) The `server returned an unusable filename` refusal renders through `%q`, which **escapes** the newline to a visible `\n`; it is already harmless there, and collapsing it would hide what the server actually sent. (2) Multi-line server text outside this path — a `prompt`, a generation failure reason — is printed **raw** and **indented**, not escaped: its newlines are real, and the indentation is what stops a continuation line reaching column zero. Do not read reason (1) as covering case (2); acting on that would remove the indentation guard, which is the forgery it exists to prevent.
+- **Idempotency** — an already-present target (that verifies, or with `--no-verify`) is skipped with a note; `--force` re-downloads.
+- **Any file type downloads** — the selected/primary file is downloaded whatever its `type` (`Model` weights, a `type: Workflows` model's `Archive`, training data, or other artifacts). The human `models get` / `model-versions get` output tags a non-weights primary file with its type (e.g. `[Archive]`) purely for information; it never blocks a download.
+
 ## Generate
 
 `civitai generate "<prompt>"` runs a text-to-image generation on Civitai's
@@ -3666,6 +3477,195 @@ write a retry loop that branches on the exit code alone; re-attach with
 | `--timeout` expired, or Ctrl-C while waiting — the job **keeps running** server-side and was **not** cancelled | `1` |
 | The workflow finished `failed` / `expired` / `canceled` | `1` |
 | The workflow succeeded but every output was filtered out (blocked / unavailable / hidden) | `1` |
+
+## Scripting with `--json`
+
+Every read subcommand takes `--json`, which prints the `/api/v1/...` REST
+response as the API shaped it — not a CLI-invented shape. So the field schema
+is exactly the public Site API's; keep the
+[REST field reference](https://developer.civitai.com/site/reference/) open
+(e.g. [models](https://developer.civitai.com/site/reference/models),
+[model-versions](https://developer.civitai.com/site/reference/model-versions))
+rather than reverse-engineering fields with `jq keys`.
+
+🔴 **It passes through the DOCUMENT, not the BYTES — do not diff or hash
+`--json` output against the wire.** Two things change the bytes without changing
+the document. The first is cosmetic: **the output is re-indented**, so a compact
+API body comes out longer than it went in. The second is not, and it has its own
+paragraph below: **a body that will not parse is repaired first.**
+
+Two properties make the output safe to pipe:
+
+- **`--json` stdout is pure JSON** — nothing else is written to stdout, so
+  `... --json | jq -e .` always parses.
+- **Errors go to stderr with a non-zero exit** — a failed call writes the error
+  to **stderr**, exits non-zero, and prints **nothing to stdout**, so `jq` never
+  sees error prose. For example `civitai model-versions get 999999999 --json`
+  exits `4` with `Error: not found (404): Model not found` on stderr and an empty
+  stdout.
+
+The repair, in full. The API intermittently
+emits a **raw control byte** — a carriage return, most often — inside a `prompt`
+or `description` string, which is not legal JSON and used to fail the whole page
+([#525](https://github.com/civitai/cli/issues/525)). When a page will not decode,
+the CLI rewrites those bytes as their JSON escapes (`\r`, `\u0001`) and decodes
+the repaired body, and that repaired body is what `--json` prints. The *document*
+is still the API's — the same strings, the same characters — but the bytes are
+not: this is the second of the two byte changes named above, and the reason the
+warning against diffing or hashing is not just about whitespace. A page that
+decodes as sent is passed through with no such rewrite.
+
+A second shape used to fail the same way and is also fixed: a Civitai **username
+can be entirely digits**, and such a value was reported arriving as a bare JSON
+**number** (`"username": 2802169344506`, unquoted) rather than a string
+([#513](https://github.com/civitai/cli/issues/513)). One such uploader on a page
+failed the whole page, so `civitai images search` printed nothing at all; the CLI
+now accepts either shape and keeps the digits exactly as sent.
+
+When a body still will not decode you get `unexpected response from …`, and the
+text after the colon is the server's own body, **truncated**, with invisible and
+terminal-controlling characters removed — so a hostile body cannot rewrite what
+is already on your screen from inside the error line. Nothing else about it is
+rewritten, and the repair above is **not** applied to what you are shown.
+
+Both of the two piping properties above hold for `civitai generate` and
+`civitai workflows …` too, but their payloads are **not** Site API REST
+shapes — generation has no REST route, so those commands print the
+*orchestrator's* reply. **The two byte changes apply differently there, so take
+them one at a time:** the output is **re-indented** exactly as above, so it is no
+more diffable or hashable than the read group's; but the **repair never runs on
+a generation reply** — it is applied by the read SDK's own decode step, and the
+generation client decodes with plain `encoding/json`, so nothing rewrites a
+control byte there. Read
+[Generation `--json`](#generation---json) before scripting against them.
+
+Two `app` commands emit a shape this **CLI composes**, not a wire payload:
+`civitai app validate --json` (see
+[The `--json` result shape](#the---json-result-shape)) and
+`civitai app listing status --json`, which joins the two listing reads into one
+object naming `parentId` and `shadowId` (see
+[After you submit](#after-you-submit-review--approve--deploy)). Both keep the two
+properties above; only the *provenance* of the fields differs. 🔴 **And
+`app listing status --json` is a read with a server-side SIDE EFFECT** — on a
+live listing it opens a revision draft — so, unlike the reads above, it must not
+be polled.
+
+### Cursor pagination loop
+
+For deep paging use `--cursor` (**not** `--page` — the API caps `page*limit` at
+1000 and 429s beyond it). Read `.metadata.nextCursor` from each response and feed
+it back via `--cursor`; stop when it's absent/null:
+
+```bash
+export CIVITAI_NO_UPDATE_CHECK=1
+cursor=""
+while :; do
+  page=$(civitai models search --type LORA --base-model Illustrious \
+           --sort "Most Downloaded" --limit 5 ${cursor:+--cursor "$cursor"} --json) || break
+  echo "$page" | jq -r '.items[].id'                 # do your work here
+  cursor=$(echo "$page" | jq -r '.metadata.nextCursor // empty')
+  [ -z "$cursor" ] && break                          # no more pages
+done
+```
+
+### Clean output for pipelines
+
+The CLI runs a background check for a newer release and prints a nag to
+**stderr**. In scripts, silence it with `CIVITAI_NO_UPDATE_CHECK=1` (env) or
+`--no-update-check` (flag). Either way stdout stays pure JSON — the nag never
+touches stdout — but suppressing it keeps stderr clean for logs.
+
+### Generation `--json`
+
+`civitai generate --dry-run --json`, `civitai workflows list --json` and
+`civitai workflows get <id> --json` emit the raw orchestrator payload. Two
+caveats have bitten people, and neither shows up as an error:
+
+- **Output URLs are presigned and EXPIRE.** The links in a workflow payload are
+  short-lived signatures, not durable addresses. A pipeline that stores them and
+  fetches later gets a 401/403 from the storage host that no credential can fix
+  — re-run `civitai workflows get <id>` for fresh links instead of caching the
+  old ones. (Fetch them with **no** `Authorization` header; they are already
+  authorized, and the CLI deliberately attaches nothing to them.)
+- **`--json` still exits `0` when the server reports the resources are
+  unavailable.** `--dry-run --json` prints the estimate and exits `0` even when
+  the payload says `"ready": false`. A human `--dry-run` prints a warning and
+  this CLI refuses to submit in that state, but a script reading only the exit
+  code sees success. **Branch on the field**, exactly as `app metrics` requires
+  branching on `notOwned` — and note the shape below, which **fails closed**:
+
+  ```bash
+  q=$(civitai generate "a cat" --dry-run --json) || exit $?
+  case "$(printf '%s' "$q" | jq -r 'if has("ready") then .ready else "absent" end')" in
+    false)   echo "resources unavailable" >&2; exit 1 ;;   # decisive: do not submit
+    true)    ;;                                            # NOT a green light — see below
+    *)       echo "no readable .ready field" >&2; exit 1 ;; # absent, null, or jq failed
+  esac
+  printf '%s' "$q" | jq -r .cost.total
+  ```
+
+  The `*` arm is the point. An earlier version of this snippet tested
+  `[ … = "false" ] && exit 1`, which exits **0** when the key is absent or `jq`
+  fails — it read "we could not ask" as "we asked and it was fine", the
+  fabricated-zero mistake `app metrics` documents for `views.unavailable`.
+
+  🔴 **`ready` is one-directional, and the human label says so.** It reports
+  only that the resources this job needs are currently available — the server
+  computes it as "every job's queue position reports `support: available`", and
+  a job carrying no queue position at all is skipped, leaving the flag `true`.
+  It is not a moderation verdict and not a prediction that the job produces an
+  image; `--dry-run` therefore prints it as **`Resources ready`**, not
+  "Generatable". A run reporting `ready: true` can still be charged and return
+  nothing — measured: 8 submits across 3 checkpoints that all quoted
+  `ready: true` produced 0 outputs. So gate on the FALSE direction, as above,
+  and never treat `true` as a success predicate. The only thing that settles
+  whether a job produced output is the finished workflow
+  (`civitai workflows get <id>`), and `civitai generate` exits non-zero when it
+  waited and got no deliverable output.
+
+  **What `ready: false` gets you is a LOCAL refusal.** `civitai generate` reads
+  the flag and refuses to submit; no server-side enforcement of it is known.
+  Treat it as this CLI's own pre-flight, not as a promise about what the server
+  would have done.
+
+  Cost keys (`cost.factors`, `cost.fixed`) are server-owned and passed through
+  **verbatim**, so treat them as an open map rather than a fixed set.
+
+### Gotchas
+
+- **SHA256 is UPPER-case** in the API/`--json` (e.g.
+  `42BA94DF20CC0F4E6DF46E3C294587A2F8CF133BF0134185884EE1C9C5E108C4`), while
+  `sha256sum` emits lowercase. Case-fold before comparing if you roll your own
+  verify (`civitai download`'s built-in check is already case-insensitive):
+  `[ "$(echo "$api_sha" | tr A-Z a-z)" = "$(sha256sum file | cut -d' ' -f1)" ]`.
+- **`models search` already embeds `.modelVersions[]`** — each item carries its
+  full versions, including `files[].hashes.SHA256` and `trainedWords`. If you're
+  iterating search results you usually **don't** need a follow-up
+  `model-versions get` per version.
+- **Creator + model-level download counts live only in the search response.**
+  `model-versions get <id>` returns a **version**, whose `.model` is just
+  `{name, type, nsfw, poi}` — no `creator`, no model `stats.downloadCount`. If
+  you started from a version and need those, fetch them from `models search`
+  / `models get` and join on the model id (`.modelId` on the version).
+
+### Worked example — top LoRAs for a base model, then plan a download
+
+Search → pick versions with `jq` → hand each version id to `download` with app
+folder routing. `--dry-run` prints the plan (files, sizes, hashes, target paths)
+without transferring, so this snippet is safe to copy-paste:
+
+```bash
+export CIVITAI_NO_UPDATE_CHECK=1
+civitai models search --type LORA --base-model Illustrious \
+    --sort "Most Downloaded" --limit 3 --json |
+  jq -r '.items[].modelVersions[0].id' |
+  while read -r vid; do
+    civitai download "$vid" --layout comfyui --root ~/ComfyUI --dry-run
+  done
+```
+
+Drop `--dry-run` (and `civitai login` first) to actually fetch the files —
+`--layout comfyui` routes each into its ComfyUI type folder.
 
 ## Upgrading
 
