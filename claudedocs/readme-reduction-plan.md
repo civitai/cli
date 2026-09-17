@@ -469,10 +469,12 @@ section and omitted a sentence. Re-measured against the raw HTML:
 reorganising a flag list is invisible in its output and reads exactly like a
 measurement. `curl` the page, strip tags, and grep the sentences.
 
-**The measured yield was −5,480 B (277,572 → 272,092), not the −37 KB this plan
-projected.** ⚠ Quote that figure only from the merge commit: three earlier
-numbers in this arc (−5,294, −5,293) were each measured on a tree that was then
-edited again by the same PR. The
+**The measured yield was −5,111 B (277,572 → 272,461), not the −37 KB this plan
+projected.** 🔴 **Quote that figure ONLY from the merge commit.** Four numbers
+were reported during #656 — −5,294, −5,293, −5,480, −5,111 — and the first three
+were each measured on a tree the same PR then edited again (a blank-line fix,
+then two rounds of audit fixes). Every one of them was true when taken and wrong
+when quoted. The
 link-out is real for `## Scripting with --json`'s four recipe subsections and for
 the `agent-setup` prose that duplicates `--help`; it is **not** real for
 `## Download model files` or the behavioural half of `## Browse the public API`.

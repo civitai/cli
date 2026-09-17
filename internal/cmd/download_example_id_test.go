@@ -64,14 +64,23 @@ func downloadExampleSources(t *testing.T) map[string]struct {
 		"root Example":     {root.Example, 1},
 		"download Long":    {dl.Long, 2},
 		"download Example": {dl.Example, 5},
-		// 🔴 LOWERED 8 -> 5 when the read-path link-out removed four example
-		// lines the CLI guide at developer.civitai.com walks through. Set at the
-		// ACTUAL count, deliberately, not padded: this number is a positive
-		// control on the REGEX (does it still fire on this source?), never a
-		// floor on how many examples the README ought to carry. Every remaining
-		// example is still checked against unambiguousExampleIDs, so the #227
-		// coverage is unchanged — what shrank is the sample, not the rule.
-		"README.md": {string(readme), 5},
+		// 🔴 LOWERED 8 -> 3 when the read-path link-out removed four example
+		// lines the CLI guide at developer.civitai.com walks through.
+		//
+		// 🔴 IT IS 3, NOT THE LIVE COUNT OF 5, AND THE SLACK IS THE POINT. This
+		// number is a positive control on the REGEX — does it still fire on this
+		// source? — never a floor on how many examples the README owes. Set ON
+		// the live count it becomes a ratchet: removing one example reddens this
+		// test with "the examples were removed", telling the next author to
+		// lower the constant rather than telling them anything true. The old 8
+		// carried exactly this slack (the base README had 9), and the same PR
+		// that first set this to 5 had to undo the identical mistake in
+		// readme_external_links_test.go's readmeMinExternalURLs.
+		//
+		// #227 coverage is unaffected either way: every example the regex finds
+		// is checked against unambiguousExampleIDs, and the distinct id set
+		// ({691639, 290640}) is the same before and after the cut.
+		"README.md": {string(readme), 3},
 	}
 }
 

@@ -238,7 +238,7 @@ and the rest of `download`'s selection, paging and routing flags are walked
 through in the
 [CLI guide](https://developer.civitai.com/site/guide/cli). This file keeps the
 command inventory in [Browse the public API](#browse-the-public-api) and the
-behaviour that guide does not cover in
+full download behaviour in
 [Download model files](#download-model-files).
 
 ## Quickstart: build an App Block
@@ -427,7 +427,12 @@ models, images and articles through the `civitai` server, and
 `civitai agent-setup --help` carries the per-vendor header spellings, the merge
 rules and the JSONC re-encoding caveat in full.
 
-The per-agent file paths and key names, the Windsurf legacy-Cascade vs Devin-CLI
+`civitai agent-setup --help` also names the top-level key each agent uses
+(`mcpServers`, VS Code's `servers`, opencode's `mcp`, Zed's `context_servers`,
+Windsurf's `serverUrl`-not-`url`, and Codex's `[mcp_servers.<name>]` TOML table),
+which you need if you are hand-adding an `Authorization` header.
+
+The per-agent file paths, the Windsurf legacy-Cascade vs Devin-CLI
 split, symlink handling and the full merge semantics are derived and evidenced in
 [decision 34](https://github.com/civitai/cli/blob/main/claudedocs/decisions/34-agent-setup-writes-no-credential.md)
 and
@@ -2599,7 +2604,8 @@ civitai images search --model-id 4384 --sort "Most Reactions" --json   # raw JSO
 `baseModels` filter (an OR across the values) on both `models search` and
 `images search`. The
 [CLI guide](https://developer.civitai.com/site/guide/cli) works through it with
-examples; the rest of this section is CLI **output** behaviour.
+`models search` examples — it does not list the flag for `images search`, which
+the table above does; the rest of this section is CLI **output** behaviour.
 
 **Generation metadata (`--meta`).** By default the image list is a compact table
 without generation data (matching the API, which omits `meta` unless asked). Add
