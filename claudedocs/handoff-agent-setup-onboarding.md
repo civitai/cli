@@ -464,6 +464,16 @@ returns `ok: false` and exit 1 after a **completely correct** setup, forever.
   setup as a failure; and the CLI's own remediation line — "re-run `civitai
   agent-setup` to fix what it can write" — names an action that can never change
   the outcome on this path.
+- 🔴 **A2 — the escape hatch exists and the entrypoint never mentions it.**
+  `prompt.md` contains `--agent` **zero** times, while
+  `civitai agent-setup --track app --agent cursor` yields `{"ok":true}` on the spot.
+  The one trial that recovered gracefully did so by **asking the user** which editor
+  they use — the one thing the prompt tells the agent not to do — because nothing it
+  was given mentions the flag. ⚠ **`--agent` is NOT a blanket fix**: it is right when
+  detection merely FAILED for an agent that IS in the table, and wrong when the agent
+  genuinely is not (it writes a config the running agent never reads, and `--check`
+  then reports green on a setup that does not work). Any prompt change here has to
+  separate those two cases, and it does not remove the need to fix A.
 - **Next probe:** none needed; it is diagnosed. The decision is whether the fix is
   in the verdict (recommended, matches precedent) or in `prompt.md`'s wording.
 

@@ -122,6 +122,35 @@ func checkCountsTowardVerdict(name, agent string) bool {
 }
 ```
 
+### A2 — the escape hatch exists and the entrypoint never mentions it
+
+`prompt.md` contains the string `--agent` **zero** times. The CLI's own `--help`
+documents it, and it works immediately:
+
+```
+$ civitai agent-setup --track app --agent cursor && civitai agent-setup --check --json
+{"ok":true,"agent":"cursor"}
+```
+
+The one trial that recovered gracefully — claude-sonnet-5 forced onto `other` —
+did so by **asking the user** which editor they use, which is the one thing the
+prompt tells the agent not to do ("Do not ask the user to run any of these
+commands"; it works autonomously otherwise). It could not offer `--agent` because
+nothing it was given mentions it.
+
+🔴 **But `--agent` is NOT a blanket fix, and the prompt would have to say which
+case it is for.** Two situations are being conflated:
+
+| situation | right action | `ok: true` reachable? |
+|---|---|---|
+| detection FAILED for an agent that IS in the table (no env signal, e.g. the CLI run from a plain terminal) | `--agent <name>` | yes |
+| the agent is genuinely NOT in the table (Gemini CLI, Aider, Cline, …) | paste by hand | **no — defect A** |
+
+Forcing `--agent cursor` in the second case writes a Cursor config that the
+running agent will never read, and `--check` then reports a green setup that does
+not work. So the fix for A2 is a *conditional* instruction, and it does not remove
+the need to fix A.
+
 **Recommended fix (structural, matching the existing precedent):** the two MCP
 rows must not count when `agentTargets[agent]` is unknown — the rows STAY, because
 they are true and the user does need to paste, exactly as `authenticated` stays.
