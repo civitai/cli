@@ -420,9 +420,67 @@ working URL instead of a 404.
 So the rule is about **audience**, not file size:
 
 - **Maintainer content moves out freely** — anyone who needs it has a checkout.
+- **Deep reference is the judgement call** — see "How far to go".
 - **User contract content never moves out** — exit codes, `--json` shapes, the
   command reference, Troubleshooting. These stay in the shipped file whatever they cost.
-- **Deep reference is the judgement call** — see "How far to go".
+
+🔴 **THAT LAST CLAUSE WAS RETIRED BY THE OPERATOR ON 2026-09-17, AND ONLY FOR
+CONTENT `developer.civitai.com` ACTUALLY COVERS.** The read path — Install,
+browse, download, `--json` scripting — is documented on
+`developer.civitai.com/site/guide/cli`, so restating it here maintains two
+hand-synced surfaces that drift independently. Where the site covers a topic,
+link out. Where it does not, the clause above still stands unchanged.
+
+🔴 **BUT "THE SITE COVERS IT" IS A CLAIM TO MEASURE, NOT TO ASSUME.** The
+read-path link-out PR (#656) probed the live page against a binary built from the
+same commit. The site is **thinner** than its heading list implies, and **wrong**
+in two places:
+
+- 🔴 It lists Homebrew as **"macOS / Linux"**. `.goreleaser.yaml:85` publishes a
+  `homebrew_casks:` entry and **no** `brews:`; a cask is macOS-only, and
+  `TestREADMEHomebrewSectionMatchesTheReleaseConfig` exists precisely to stop
+  this README repeating that claim. **`## Install` was therefore kept local.**
+- 🔴 It states `civitai model-versions get 999999999 --json` **exits 1**.
+  Measured against the binary it exits **4**; this README says 4 and is correct.
+  A scripting contract, so the site's version is the damaging direction.
+- It omits `download --force` and `--yes` (the ambiguous-id **safety** stop).
+- Its Download coverage is **one sentence per topic**. It has no type→folder
+  table, and nothing on the ambiguous-id stop, the same-named-file refusal,
+  pickle/executable safety, the ControlNet note,
+  SHA256-integrity-is-not-authenticity, filename sanitisation, the
+  `429`/`Retry-After` rule or exit codes.
+
+🔴 **TWO FURTHER "MEASURED" ROWS WERE PUBLISHED HERE AND ARE RETRACTED — round 0
+of #656 refuted both, and how they got here is the lesson.** They were taken from
+an **LLM summary of the page** rather than the page: asked to list the download
+flags, the summarizer folded the read-commands' `--json` into the Download
+section and omitted a sentence. Re-measured against the raw HTML:
+
+- ❌ *"It documents `--json` on `download`"* — **FALSE.** Every `--json` mention
+  on the page is scoped to read subcommands (*"Every **read** subcommand accepts
+  `--json`"*), and the page twice excludes download from that set. The binary
+  half is true (`download --json` → `unknown flag`), but the site never claims
+  otherwise.
+- ❌ *"It omits the Prebuilt binary install method"* — **FALSE.** The page carries
+  *"Prebuilt binaries for linux/macOS/windows × amd64/arm64 are on the GitHub
+  Releases page."*
+
+🔴 **SO: DIFF AGAINST THE RAW PAGE, NEVER A SUMMARY OF IT.** A summarizer
+reorganising a flag list is invisible in its output and reads exactly like a
+measurement. `curl` the page, strip tags, and grep the sentences.
+
+**The measured yield was −5,111 B (277,572 → 272,461), not the −37 KB this plan
+projected.** 🔴 **Quote that figure ONLY from the merge commit.** Four numbers
+were reported during #656 — −5,294, −5,293, −5,480, −5,111 — and the first three
+were each measured on a tree the same PR then edited again (a blank-line fix,
+then two rounds of audit fixes). Every one of them was true when taken and wrong
+when quoted. The
+link-out is real for `## Scripting with --json`'s four recipe subsections and for
+the `agent-setup` prose that duplicates `--help`; it is **not** real for
+`## Download model files` or the behavioural half of `## Browse the public API`.
+Before quoting a link-out figure for any remaining section, fetch the target page
+and diff it against the binary — the duplication is far thinner than a matching
+heading list suggests.
 
 ⚠ **Five of the six existing relative links already 404 for a non-checkout reader**
 (`internal/scaffold/…`, `examples/`, `schema/…`). The guard covers only three named

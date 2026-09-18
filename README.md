@@ -70,8 +70,7 @@ contract, and **packages/submits** it for review.
 
 - [Set up your coding agent (`agent-setup`)](#set-up-your-coding-agent-agent-setup) — **run this first**
   - [The two MCP servers](#the-two-mcp-servers)
-  - [Where each agent's config lives](#where-each-agents-config-lives)
-  - [No credential is ever written](#no-credential-is-ever-written)
+  - [Config files and credentials](#config-files-and-credentials)
   - [Verify a setup (`--check`)](#verify-a-setup---check)
   - [Exit codes and `--dry-run`](#exit-codes-and---dry-run)
 - [SDK packages](#sdk-packages)
@@ -114,11 +113,7 @@ contract, and **packages/submits** it for review.
   - [Reading a workflow's Buzz transactions](#reading-a-workflows-buzz-transactions)
   - [Exit codes specific to `generate`](#exit-codes-specific-to-generate)
 - [Scripting with `--json`](#scripting-with---json)
-  - [Cursor pagination loop](#cursor-pagination-loop)
-  - [Clean output for pipelines](#clean-output-for-pipelines)
   - [Generation `--json`](#generation---json)
-  - [Gotchas](#gotchas)
-  - [Worked example — top LoRAs for a base model, then plan a download](#worked-example--top-loras-for-a-base-model-then-plan-a-download)
 
 **Reference**
 
@@ -227,31 +222,24 @@ raw API response for scripting.
 > [Browse the App store](#browse-the-app-store).
 
 ```bash
+civitai login                                                    # downloads need a token
+
 # Search models — filter by base model, type, and sort:
 civitai models search --base-model Illustrious --type Checkpoint --sort "Most Downloaded"
 
-# --base-model works on any type, including embeddings (TextualInversion):
-civitai models search --type TextualInversion --base-model "SDXL 1.0"
-
-# Inspect a specific model or a specific model version:
-civitai models get 618692
-civitai model-versions get 691639
-
 # Download a version's file(s) — SHA256-verified, streamed atomically.
 # `--layout` routes each file into the right app subfolder (also `a1111`);
-# `--dry-run` prints the plan without transferring. Downloads require `civitai login`.
+# `--dry-run` prints the plan without transferring.
 civitai download 691639 --layout comfyui --root ~/ComfyUI
-civitai download 691639 --dry-run
-
-# Find and read articles (guides) right in the terminal:
-civitai articles search --query "comfyui workflow"
-civitai articles get 32680 --content
 ```
 
-See [Browse the public API](#browse-the-public-api) and
-[Download model files](#download-model-files) below for the full command and
-flag reference (images, tags, creators, collections, pagination, folder routing,
-base-model compatibility checks, and more).
+The other read commands — images, tags, creators, users, articles, collections —
+and the rest of `download`'s selection, paging and routing flags are walked
+through in the
+[CLI guide](https://developer.civitai.com/site/guide/cli). This file keeps the
+command inventory in [Browse the public API](#browse-the-public-api) and the
+full download behaviour in
+[Download model files](#download-model-files).
 
 ## Quickstart: build an App Block
 
@@ -408,55 +396,21 @@ no file for this CLI to write and carries an empty `path`.
 a read/write split: the orchestration server refuses the **handshake** itself, so
 nothing on it is reachable until you add a header.
 
-### Where each agent's config lives
+### Config files and credentials
 
 The file *and* the key name differ per agent, and every way of getting it wrong
 produces a file that parses cleanly and registers nothing — which is why this is
-a command rather than a paragraph telling you to hand-write JSON.
+a command rather than a paragraph telling you to hand-write JSON. Run the
+command and it reports the exact file it wrote.
 
-| Agent | File | Top-level key | URL key | How the token is referenced |
-| --- | --- | --- | --- | --- |
-| `claude` | `<dir>/.mcp.json` | `mcpServers` | `url` | `Bearer ${CIVITAI_TOKEN}` |
-| `cursor` | `<dir>/.cursor/mcp.json` | `mcpServers` | `url` | `Bearer ${env:CIVITAI_TOKEN}` |
-| `vscode` | `<dir>/.vscode/mcp.json` | **`servers`** | `url` | `Bearer ${env:CIVITAI_TOKEN}` |
-| `codex` | `$CODEX_HOME/config.toml`, else `~/.codex/config.toml` | **`[mcp_servers.<name>]`** (TOML) | `url` | `bearer_token_env_var = "CIVITAI_TOKEN"` |
-| `opencode` | `<dir>/opencode.json`, or an existing `opencode.jsonc` | **`mcp`** | `url` | `Bearer {env:CIVITAI_TOKEN}` — single brace, no `$` |
-| `windsurf` | `~/.codeium/windsurf/mcp_config.json` ⚠️ | `mcpServers` | **`serverUrl`** | `Bearer ${env:CIVITAI_TOKEN}` |
-| `zed` | `~/.config/zed/settings.json` (`%APPDATA%\Zed\settings.json` on Windows) | **`context_servers`** | `url` | **no header** — see below |
-| `other` | — *(prints the config for you to paste; writes nothing)* | — | — | **no header** — see below |
-
-⚠️ **Windsurf:** that path is the **legacy Cascade agent's**. The vendor page now
-states that the *Devin Local* agent — the default for new tabs — reads the Devin
-CLI config instead (`~/.config/devin/mcp_config.json`, or
-`%APPDATA%\devin\mcp_config.json`). This CLI still writes the Cascade path and
-says so in its output; add the servers to the Devin config too if you use it.
-
-**Nothing is clobbered.** An existing `AGENTS.md` is **appended to**, or has only
-the block between its markers replaced — every byte outside them is left alone.
-An existing `CLAUDE.md` is never read and never modified. An existing MCP config
-is **merged into**, preserving every other server, every unknown key, **and every
-key you added to the Civitai entries themselves** (a hand-added `Authorization`
-header survives a re-run). A config that does not parse is **refused by name**
-rather than repaired. A **symlinked** config is **followed**, so a dotfiles repo
-keeps tracking the live file; a *broken* symlink is refused by name.
-
-The three writes are **independent**: a refused MCP config does not stop
-`AGENTS.md` and `CLAUDE.md` being written, and each step reports its own outcome
-rather than the run exiting with nothing to show.
-
-### No credential is ever written
-
-**🔴 No credential is ever written into a config file — and never a placeholder
-that looks like one.** Four of the files above are **project-scoped**
+🔴 **No credential is ever written into a config file — and never a placeholder
+that looks like one.** Four of the target files are **project-scoped**
 (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `opencode.json`): they sit
 in the repo root and get committed, so an `Authorization` header holding your
 actual token is a secret headed for version control. The header **references**
-`CIVITAI_TOKEN` in each vendor's own spelling instead (the last column above),
-and where a vendor documents no interpolation at all — Zed today, and `--agent
-other`, whose target agent is by definition unknown — **no header is written**.
-Add it yourself to each Civitai entry; for `--agent other` the run prints the
-shape and the known spellings, because this CLI cannot know which one your agent
-reads.
+`CIVITAI_TOKEN` in each vendor's own spelling instead, and where a vendor
+documents no interpolation at all — Zed today, and `--agent other`, whose target
+agent is by definition unknown — **no header is written**.
 
 🔴 **Mint the key at [civitai.com/user/account](https://civitai.com/user/account)
 (API Keys), then export it** — `export CIVITAI_TOKEN=<a personal API key>`, in
@@ -472,6 +426,17 @@ models, images and articles through the `civitai` server, and
 
 `civitai agent-setup --help` carries the per-vendor header spellings, the merge
 rules and the JSONC re-encoding caveat in full.
+
+`civitai agent-setup --help` also names the top-level key each agent uses
+(`mcpServers`, VS Code's `servers`, opencode's `mcp`, Zed's `context_servers`,
+Windsurf's `serverUrl`-not-`url`, and Codex's `[mcp_servers.<name>]` TOML table),
+which you need if you are hand-adding an `Authorization` header.
+
+The per-agent file paths, the Windsurf legacy-Cascade vs Devin-CLI
+split, symlink handling and the full merge semantics are derived and evidenced in
+[decision 34](https://github.com/civitai/cli/blob/main/claudedocs/decisions/34-agent-setup-writes-no-credential.md)
+and
+[decision 35](https://github.com/civitai/cli/blob/main/claudedocs/decisions/35-agent-setup-merges-a-users-file.md).
 
 ### Verify a setup (`--check`)
 
@@ -2636,18 +2601,11 @@ civitai images search --model-id 4384 --sort "Most Reactions" --json   # raw JSO
 ```
 
 **Filtering by base model.** `--base-model` is repeatable and maps to the REST
-`baseModels` filter (an OR across the values). It's the key discovery filter for
-things `--type` can't separate — e.g. video checkpoints all share
-`--type Checkpoint` and are distinguished only by base model. It works on both
-`models search` and `images search`:
-
-```bash
-civitai models search --type Checkpoint --base-model "Wan Video 2.2 T2V-A14B"
-civitai models search --base-model Pony --base-model Illustrious --limit 20
-# images too — find recent-popular images generated with a given base model:
-civitai images search --base-model "Krea 2" --sort "Most Reactions" --period Week
-civitai images search --type video --sort "Most Reactions"   # videos only
-```
+`baseModels` filter (an OR across the values) on both `models search` and
+`images search`. The
+[CLI guide](https://developer.civitai.com/site/guide/cli) works through it with
+`models search` examples — it does not list the flag for `images search`, which
+the table above does; the rest of this section is CLI **output** behaviour.
 
 **Generation metadata (`--meta`).** By default the image list is a compact table
 without generation data (matching the API, which omits `meta` unless asked). Add
@@ -2690,13 +2648,14 @@ default (first) published version with `--model`:
 civitai download 691639                       # the version's primary file → ./<server-name>
 civitai download --model 4384                 # resolve model 4384's default version, then download its primary file
 civitai download --model 4384 --dry-run       # print the plan (files, sizes, hashes, targets) — download nothing
-civitai download 691639 --out ./flux_dev.safetensors
 civitai download 290640 --file vae --out-dir ./models   # pick a file by name; write into a dir
-civitai download 691639 --file 1234567                  # pick one of two same-named files by its file id
-civitai download 290640 --all --out-dir ./models        # every file in the version
 civitai download 290640 --all --layout comfyui --root ~/ComfyUI   # route each file to its type folder
 civitai download 691639 --layout a1111 --for-base "SDXL 1.0"      # A1111 layout + base-model compat warning
 ```
+
+The [CLI guide](https://developer.civitai.com/site/guide/cli) introduces file
+selection, folder routing, the compatibility check and integrity verification a
+paragraph at a time. What follows is the full behaviour.
 
 > **Downloads require authentication.** Every model-file download needs a token —
 > even a small public embedding 401s anonymously. Run `civitai login` first. The
@@ -3488,6 +3447,13 @@ is exactly the public Site API's; keep the
 [model-versions](https://developer.civitai.com/site/reference/model-versions))
 rather than reverse-engineering fields with `jq keys`.
 
+The **read-path recipes** — the `--cursor` deep-paging loop, silencing the update
+nag for clean pipeline output, the SHA256-case and embedded-`modelVersions`
+gotchas, and a worked search→download example — live in the
+[CLI guide](https://developer.civitai.com/site/guide/cli). What stays below is
+how `--json` treats the bytes, and the generation and `app` payloads, which are
+not Site API REST shapes.
+
 🔴 **It passes through the DOCUMENT, not the BYTES — do not diff or hash
 `--json` output against the wire.** Two things change the bytes without changing
 the document. The first is cosmetic: **the output is re-indented**, so a compact
@@ -3550,31 +3516,6 @@ properties above; only the *provenance* of the fields differs. 🔴 **And
 live listing it opens a revision draft — so, unlike the reads above, it must not
 be polled.
 
-### Cursor pagination loop
-
-For deep paging use `--cursor` (**not** `--page` — the API caps `page*limit` at
-1000 and 429s beyond it). Read `.metadata.nextCursor` from each response and feed
-it back via `--cursor`; stop when it's absent/null:
-
-```bash
-export CIVITAI_NO_UPDATE_CHECK=1
-cursor=""
-while :; do
-  page=$(civitai models search --type LORA --base-model Illustrious \
-           --sort "Most Downloaded" --limit 5 ${cursor:+--cursor "$cursor"} --json) || break
-  echo "$page" | jq -r '.items[].id'                 # do your work here
-  cursor=$(echo "$page" | jq -r '.metadata.nextCursor // empty')
-  [ -z "$cursor" ] && break                          # no more pages
-done
-```
-
-### Clean output for pipelines
-
-The CLI runs a background check for a newer release and prints a nag to
-**stderr**. In scripts, silence it with `CIVITAI_NO_UPDATE_CHECK=1` (env) or
-`--no-update-check` (flag). Either way stdout stays pure JSON — the nag never
-touches stdout — but suppressing it keeps stderr clean for logs.
-
 ### Generation `--json`
 
 `civitai generate --dry-run --json`, `civitai workflows list --json` and
@@ -3630,42 +3571,6 @@ caveats have bitten people, and neither shows up as an error:
 
   Cost keys (`cost.factors`, `cost.fixed`) are server-owned and passed through
   **verbatim**, so treat them as an open map rather than a fixed set.
-
-### Gotchas
-
-- **SHA256 is UPPER-case** in the API/`--json` (e.g.
-  `42BA94DF20CC0F4E6DF46E3C294587A2F8CF133BF0134185884EE1C9C5E108C4`), while
-  `sha256sum` emits lowercase. Case-fold before comparing if you roll your own
-  verify (`civitai download`'s built-in check is already case-insensitive):
-  `[ "$(echo "$api_sha" | tr A-Z a-z)" = "$(sha256sum file | cut -d' ' -f1)" ]`.
-- **`models search` already embeds `.modelVersions[]`** — each item carries its
-  full versions, including `files[].hashes.SHA256` and `trainedWords`. If you're
-  iterating search results you usually **don't** need a follow-up
-  `model-versions get` per version.
-- **Creator + model-level download counts live only in the search response.**
-  `model-versions get <id>` returns a **version**, whose `.model` is just
-  `{name, type, nsfw, poi}` — no `creator`, no model `stats.downloadCount`. If
-  you started from a version and need those, fetch them from `models search`
-  / `models get` and join on the model id (`.modelId` on the version).
-
-### Worked example — top LoRAs for a base model, then plan a download
-
-Search → pick versions with `jq` → hand each version id to `download` with app
-folder routing. `--dry-run` prints the plan (files, sizes, hashes, target paths)
-without transferring, so this snippet is safe to copy-paste:
-
-```bash
-export CIVITAI_NO_UPDATE_CHECK=1
-civitai models search --type LORA --base-model Illustrious \
-    --sort "Most Downloaded" --limit 3 --json |
-  jq -r '.items[].modelVersions[0].id' |
-  while read -r vid; do
-    civitai download "$vid" --layout comfyui --root ~/ComfyUI --dry-run
-  done
-```
-
-Drop `--dry-run` (and `civitai login` first) to actually fetch the files —
-`--layout comfyui` routes each into its ComfyUI type folder.
 
 ## Upgrading
 
