@@ -24,64 +24,69 @@ Operator's words: *"readme is still way overly verbose."*
 
 ## State now
 
-🔴 **RANK 1 IS COMPLETE AND MERGE-READY. THE AUDIT LADDER IS CLOSED. NOT MERGED —
-that is the operator's call (see below).**
+🔴 **RANK 1 IS MERGED. L3 AND L4 ARE MEASURED AND WITHDRAWN. THE ARC'S PREMISE IS
+EXHAUSTED: the README's remaining size is CONTRACT, not duplication.**
 
-[#656](https://github.com/civitai/cli/pull/656) · branch `docs/readme-slim-l1-l2` · head
-**`4c69017`** (3 commits) · `MERGEABLE`/`CLEAN` · **13/13 checks terminal green**, all five
-required contexts included.
+`main` is `c81ea2d`, clean. README **272,461 B**.
 
-**Measured yield: −5,111 B** (277,572 → **272,461**, −1.84%) at `4c69017`.
+| | |
+|---|---|
+| **#656** merged `392e4f3` | rank 1 (L1+L2), **−5,111 B**. Verified by CONTENT per file against `origin/main` (existence proven first with `git cat-file -e`), not by ancestry — a squash never makes the branch head an ancestor |
+| **#657** merged `c81ea2d` | the handoff |
+| claims | `readme-slimming-1` and `-2` released; `-3` released with L4 withdrawn |
 
-⚠ **FOUR different totals were reported during this one PR** — −5,294, −5,293, −5,480,
-−5,111. Each was true when taken and wrong when quoted, because the PR kept being edited by
-its own audit rounds. **Quote a byte figure only from the merge commit.** The arc had this
-rule already and broke it four times in three hours.
+### 🔴 L3 AND L4: WITHDRAWN ON MEASUREMENT — do not re-derive their byte projections
 
-### Audit: closed, per the operator's scoped depth
+Both were scoped on the belief that a large section implies large duplication. Measured with
+a paragraph-similarity instrument carrying **both controls** (positive: a `--help` paragraph
+against its own pool = **1.00**; negative: unrelated prose = **0.36–0.37**, the noise floor):
 
-The operator's answer was *"Round 0 at PR-create + one correctness round — not an open
-ladder"*, and the stop rule is *"audit until a round returns no HIGH-SEVERITY findings"*.
-Round 1 returned **no 🔴** and verdict *safe to merge*. **Both conditions met, so there is no
-round 2.** Both rounds' records are posted as PR comments; round 1 carries the
-`audit-claims` block (`audited=678bd0b..4c69017`) so a future delta round can anchor.
+| section | total | duplicated by `--help` | redundant vs rest of README |
+|---|---:|---:|---:|
+| `## Generate` | 43,498 B | **~1,600 B** (0.40 threshold) | not run |
+| `## Submit & auth` | 53,229 B | **912 B** (0.40) | **505 B** at 0.45; **0 B** at 0.55 |
 
-| round | findings | outcome |
-|---|---|---|
-| 0 (requirements & deletion) | 5, incl. **2 of my 4 "measured" site rows refuted** | all fixed in `678bd0b` |
-| 1 (nine axes, dispatched **blind**) | 4, **no 🔴** | all fixed in `4c69017` |
+**36,513 B of `## Generate` and 45,132 B of `## Submit & auth` sit at or BELOW the noise
+floor** — i.e. they are not restatements of anything, in the binary or in the file.
 
-🔴 **Round 1 validated the new guard rather than trusting it** — the check I should have run
-and did not: negative control (a planted bogus URL → `FAIL … DEAD LINK … 404`), positive
-control (rewriting the four guide URLs while holding the count at 38 → `FAIL: CONTROL
-failure`), **and** it probed two bogus paths on `developer.civitai.com` to confirm the host
-returns a real 404 rather than an SPA 200 — without which a dead guide link could have landed
-silently in the SKIP bucket.
+- **L3's premise was duplication, and it was false.** `generate --help` is 16,668 B and
+  genuinely substantive — it carries the `--print-input` credential/network nuance and the
+  whole `--max-cost`-is-not-a-cap rule — but it overlaps the README by ~1.6 KB of prose plus
+  ~1.0 KB of examples (13 of 14 example commands duplicated). **~2.6 KB, 6% of the section.**
+- **L4's premise was COMPRESSION, not duplication** — the handoff's own words, *"only 6,067 B
+  of `--help` overlap, so this is genuine compression"*. ⚠ **So the overlap instrument tests
+  the wrong hypothesis for L4**, and this is stated rather than glossed. What it establishes
+  is that there is nothing to DELETE; what remains is editorial tightening of published
+  contract prose.
+- 🔴 **And that is the one lever this arc has measured as high-risk and low-yield.** The
+  previous arc shipped **two 🔴 contract falsehoods while compressing**, one of which could
+  have led a reader to make an irreversible public write; its ladders gave back **~870 B per
+  contract-bearing section** over 4–5 audit rounds. Rewriting `## Submit & auth` — which
+  governs publishing, listing media, source-repo linking and submit provenance
+  (decisions 25/30/31/32) — buys ~1 KB against that record.
 
-### 🔴 TWO DECISIONS WAITING ON THE OPERATOR — nothing else blocks rank 1
+### The honest limit of this conclusion
 
-1. **Merge #656.** Not merged by this session: the standing merge authority recorded in
-   `handoff-readme-reduction.md` was scoped to *"how this arc runs"* — the **previous** arc —
-   and an approval covers the step it was given for. Ask before reusing it.
-2. **`TestREADMEExternalURLsResolve` is run by no CI job and no cron.** Confirmed
-   independently by both rounds: `CIVITAI_CHECK_README_LINKS` appears nowhere outside the file
-   defining it, while the precedent it names (`pins_guard_test.go`) has a dedicated job **and**
-   a positive control on its `-run` pattern. **The extraction half gates via `build-test`; the
-   liveness half is operator-run only.** `.github/workflows/*` is **"Ask first"** per
-   `AGENTS.md`, so: wire a cron job on the `release-homebrew.yml` model, or delete the network
-   half. ⚠ `pins-vs-published` is the cautionary tale for a live-network **required** check —
-   it froze every open PR twice in the previous arc, so a *scheduled* job is the safer shape.
+🔴 **"Not duplicated" and "not redundant" are NOT the same claim as "cannot be said in fewer
+words".** The instruments measure restatement, not density. A skilled editorial pass could
+still shorten dense prose without losing meaning; nothing here refutes that. What is measured
+is that **no mechanical lever remains** — there is nothing to delete, link out, or de-duplicate.
+Any further reduction is a rewrite of contract, sentence by sentence, against the Go source.
 
-### Also open
+### Protected content found while measuring L4 (named now, not mid-edit)
 
-- **Three** (not four) `developer.civitai.com` drift items remain valid and are **NOT FILED** —
-  filing in `civitai/civitai-developer-docs` is outward-facing and the operator's call. See
-  `## Defects (batched)`.
-- [#657](https://github.com/civitai/cli/pull/657) — this handoff, on `docs/handoff-slim-rank1`.
-  Unaudited; it is a handoff doc, not the code change the arc's audit depth was scoped to.
-
-⚠ **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` → **rc=5**. An unknown session
-id also answers `200` with an empty array, so this zero is not a clean bill of health.
+- `#### Which dotenv files end up in the bundle` **10,353 B** — golden-file pinned in
+  `internal/pkgzip`.
+- `#### What civitai whoami reports` 2,282 + `##### whoami --json` 2,501 — **exact-stdout** pinned.
+- The entry-table paragraph is pinned by **`entryBlockSentinels`**, a ledger in
+  `readme_submit_entry_block_test.go` that fails when the sentinel set GROWS *or* SHRINKS and
+  requires specific text per sentinel on **two** surfaces (the paragraph and the Troubleshooting
+  cause cell).
+- In `## Generate`: **every one of the 12 subsections has 2–5 inbound anchors**, so no heading
+  can be deleted without repointing links; 4 `` ```console `` blocks are recorded transcripts,
+  at least one byte-pinned by `TestREADME_DryRunTranscriptMatchesRealOutput`;
+  `TestCheckpointExamplesNameAnEcosystem` scans every `` ```bash `` block (floor 10 repo-wide,
+  30 present).
 
 ## Open investigations — live diagnosis state
 
@@ -211,30 +216,31 @@ survive; two of its four supporting measurements do not. Round 0 of #656 refuted
 
 ## Next steps (ranked)
 
-1. **L1 + L2 — `IN FLIGHT: civitai/cli#656`.** Delivered, green, **awaiting the one correctness
-   round** the operator's audit depth specifies. Round 0 was dispatched; its result had not
-   returned when this doc was written. Do not merge on green checks alone.
-   forcing: user — operator asked for it explicitly on 2026-09-17, with the four scoping answers
-2. **L3 — `## Generate`** (43,194 B). 🔴 **Resolve delete-vs-relocate first** (the second Open
-   investigation, still open). Keep the three 🔴 money-safety subsections either way unless the
-   operator says otherwise. 🔴 **And re-measure the lever**: L3's premise is `--help`
-   duplication, NOT link-out, so the site's thinness does not touch it — but #656 showed the
-   `--help` overlap is also worth measuring string-by-string rather than by byte totals.
-   `internal/cmd/generate.go` for the `Long`, `README.md` for the prose.
-   forcing: user — same ask; operator explicitly put this section in scope
-3. **L4 — `## Submit & auth`** (52,774 B). The largest section in the file and the
-   highest-risk item: only 6,067 B of `--help` overlap, so this is genuine compression.
-   🔴 **Open the Go source for every behavioural sentence shortened** — the previous arc
-   shipped two 🔴 contract falsehoods doing exactly this, one of which could have led a reader
-   to make an irreversible public write.
-   forcing: user — same ask
+1. **Decide whether the arc closes.** Ranks 1–3 are done or withdrawn on measurement, and no
+   mechanical lever remains. The remaining options are (a) close it, (b) commission an
+   editorial compression pass on `## Submit & auth` accepting ~1 KB for a full audit cycle and
+   the contract-falsehood risk, or (c) delete published contract, which the operator has
+   declined at every prior fork. **Closing condition:** the operator states which, in writing.
+   forcing: user — the arc was opened by an operator ask ("readme is still way overly verbose") and only they can retire it
+2. **Wire or delete the link guard's network half.** `CIVITAI_CHECK_README_LINKS` is set by no
+   CI job and no cron, so `TestREADMEExternalURLsResolve` never runs; the precedent it copies
+   (`pins_guard_test.go`) has a dedicated job. `.github/workflows/*` is **"Ask first"** per
+   `AGENTS.md`. **Closing condition:** a merged PR that either adds a scheduled job or removes
+   the network half.
+   forcing: gate — a guard that never runs is the "reads as coverage while providing none" shape RULES.md names
+3. **File the three `developer.civitai.com` drift items** (Homebrew macOS/Linux; missing
+   `--force`/`--yes`; `model-versions get … --json` documented as exit 1 where the binary exits
+   4). They belong to `civitai/civitai-developer-docs`. **Closing condition:** a merged PR
+   there, or a written decision not to fix.
+   forcing: user — outward-facing, deliberately left to the operator
 4. **Reconcile `handoff-cli-docs-consolidation.md`.** It answers this arc's central question
-   the opposite way ("No — relocate into cobra"). Record the reversal there or retire the doc.
-   **Closing condition:** a merged PR that either edits that doc's answer or deletes it.
+   the opposite way ("No — relocate into cobra"). ⚠ **Its answer is now partly VINDICATED**:
+   the relocate-into-`Long` pipeline is live and verified (`/apps/reference/cli` carries 29
+   `civitai generate` hits, 22 `ecosystem`), so record the nuance rather than overwriting it.
+   **Closing condition:** a merged PR that edits that doc's answer or retires the doc.
    forcing: none
-5. **Retire `handoff-readme-reduction.md`.** Its own closing instruction: the arc is closed, so
-   the doc is status. Move the still-teaching `## Gotchas` blocks into `cli/readme-guards` or
-   the matching skill and delete the rest. **Closing condition:** a merged PR that removes it.
+5. **Retire `handoff-readme-reduction.md`.** Its own closing instruction. **Closing condition:**
+   a merged PR that removes it.
    forcing: none
 
 ## Gotchas / decisions / dead-ends
@@ -479,6 +485,45 @@ bogus paths on `developer.civitai.com` to establish the host 404s properly rathe
 an SPA 200. **Without that, the guard's SKIP-vs-FAIL split was an untested assumption** — an
 SPA returning 200 for everything would have made every liveness check vacuously green.
 🔴 **Ask of any liveness check: what does the host do with a URL that does not exist?**
+
+### Added 2026-09-18 — the arc's real answer, and the instrument that produced it
+
+🔴 **THREE SECTIONS, THREE INSTRUMENTS, ONE RESULT: THE README IS NOT VERBOSE, IT IS
+CONTRACTUAL.** L1+L2 found the docs site carries one sentence per topic; L3 found
+`generate --help` overlaps by 6%; L4 found `## Submit & auth` is 912 B duplicated and 505 B
+self-redundant. **Every lever this arc was built on rested on "a big section must contain
+duplication", and that was false three times running.**
+
+- 🔴 **THE CHEAP INSTRUMENT IS PARAGRAPH SIMILARITY WITH BOTH CONTROLS, AND IT TAKES A
+  MINUTE.** Normalise markdown away, score every prose paragraph against a pool (the `--help`
+  text, or the rest of the file) with `difflib.SequenceMatcher`, and report the **byte mass by
+  similarity bucket** rather than a single number. Then: positive control (a pool paragraph
+  against its own pool → must be ~1.00) and negative control (unrelated prose → gives you the
+  NOISE FLOOR, ~0.36 here). **A bucket histogram is what makes the verdict unarguable** — when
+  36 KB of 38 KB sits below the noise floor, no threshold choice rescues the premise.
+- 🔴 **RUN IT BEFORE SCOPING A REDUCTION, NOT AFTER.** Every byte projection in this arc's
+  plan — −37 KB for L1+L2, and the implicit ones for L3/L4 — came from comparing HEADING LISTS
+  and SECTION SIZES. Measuring the bodies took minutes and refuted all of them.
+- ⚠ **STATE WHICH HYPOTHESIS YOUR INSTRUMENT TESTS.** L4 was scoped as *compression*, not
+  duplication, so an overlap measurement does not settle it — it only proves there is nothing
+  to DELETE. Reporting "L4 is empty" without that distinction would have been the arc's own
+  defect class (a claim wider than its evidence) committed in the act of closing the arc.
+
+### Added 2026-09-18 — the relocate-into-`Long` pipeline is REAL, and the prior doc was right about it
+
+`handoff-cli-docs-consolidation.md` said *"No — relocate their content into the cobra command
+definitions"*, and this arc's operator answer went the other way ("link out"). **Both can be
+right, and the mechanism is now verified rather than assumed:** content in a command's `Long`
+reaches the shipped binary (offline, in the `.goreleaser` archive) **and** the docs site via
+the `appblocks-snapshots/civitai-cli-help.txt` snapshot — measured on
+`developer.civitai.com/apps/reference/cli`, which carries **29** `civitai generate` mentions,
+**22** `ecosystem` and **6** `--max-cost`, but **0** `Silent model substitution` (README-only
+prose). **So `Long` is a two-surface home and README is a one-surface home.**
+
+⚠ **The operator chose delete-only for L3 anyway, and the reasons stand:** the arc measured
+delete-first beats relocate (phase 3 relocated and gave back 39.7%; deletes gave back 0), and
+`generate --help` is already 16,668 B — growing it degrades the most-used surface. Recorded so
+the option is understood rather than re-discovered, not so it is re-opened.
 
 ## How to verify
 
