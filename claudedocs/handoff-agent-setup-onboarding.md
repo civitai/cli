@@ -28,6 +28,17 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
   reported and must NOT fail `ok` — stopping before auth is deliberate.
   This is frozen as the condition this arc was opened on.
 
+- 🔴 **MEASURED 2026-09-18 — NOT MET. 4 of 16 blind trials reached it**, and the
+  12 failures are explained by exactly two defects (ranks 33 and 34 below), with
+  **no model-dependent behaviour at all** across 19 trials. The condition is
+  additionally **unreachable by construction on the `other` agent path**, which is
+  rank 33 — so a future close-check must fix 33 first or it is grading an
+  impossible bar. Method, grid, controls and limits:
+  [`claudedocs/refs/agent-setup-dogfood-matrix-2026-09-18.md`](refs/agent-setup-dogfood-matrix-2026-09-18.md).
+  The harness is committed at `scripts/dogfood/`, so this is re-runnable rather
+  than a one-off reading — ⚠ it feeds every trial the true bytes via `curl`, so it
+  says nothing about the WebFetch-summarisation failure mode.
+
 ✅ **THE SECOND EFFORT THAT ACCRETED HERE HAS BEEN SPLIT OUT —
 [`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md).**
 The `safeTerm` / terminal-line-forgery work (ranks 23, 28, 30, 31 **and 32**; issues #574,
@@ -84,9 +95,11 @@ all four merged (`752bf50`, `b4acda5`, `a29abb7`, `7c5a39c`), five issues closed
 🔴 **THIS SECTION IS APPEND-ONLY, SO A HEADING ALONE IS NOT A STATUS. READ THE
 HEADING PREFIX.** Blocks are never deleted — a corrected reading is worth more than a
 deleted one — so a superseded diagnosis stays in place with its heading rewritten to
-`❌ SUPERSEDED`. **Exactly ONE investigation is open below** — the one headed
-"⚠ OPEN — The docs repo cannot be built locally from a pristine main" (rank 15).
-Everything else here is `✅ RESOLVED` or
+`❌ SUPERSEDED`. **THREE investigations are open below** (was one until
+2026-09-18): "⚠ OPEN — The docs repo cannot be built locally from a pristine main"
+(rank 15), "⚠ OPEN — an agent the CLI does not know can never reach `ok: true`"
+(rank 33) and "⚠ OPEN — the documented `--prefix` remedy leaves the CLI
+unreachable" (rank 34). Everything else here is `✅ RESOLVED` or
 `❌ SUPERSEDED`, and a reader who stops at the first matching heading was previously
 getting the OPPOSITE of the truth — three blocks still said `STILL OPEN` above their
 own resolutions until this delta retired them (2026-09-12).
@@ -418,10 +431,83 @@ before those rounds' commits were read back.
   does not exist; `git worktree list` shows `cli-596b` on `fix/generate-blob-forgery-r0` at
   `19455c0`. `via: command`
 
+### ⚠ OPEN — an agent the CLI does not know can never reach `ok: true` (rank 33)
+- as-of: 2026-09-18, from 19 blind trials
+
+For `agent == other` — every agent with no entry in the CLI's table — `--check`
+returns `ok: false` and exit 1 after a **completely correct** setup, forever.
+
+- **Symptom + exact repro:**
+  ```bash
+  docker run -d --name x node:22-bookworm-slim sleep infinity
+  docker exec -w /work x bash -lc \
+    'mkdir -p /work && npm install -g @civitai/cli && civitai agent-setup --track app
+     civitai agent-setup --check --json; echo "rc=$?"'
+  ```
+- **Observed (with values):** `{"agent":"other","ok":false,…}`, rc **1**, with
+  `mcp-site` and `mcp-orch` both false and detail *"agent other has no config file
+  this CLI knows — register … by hand"*. `authenticated` is correctly excluded
+  (the error says "2 check(s) failed", not 3). 4 of 4 such trials hit it; the
+  three de-confounding trials show it follows the IDENTITY, not the model —
+  claude-sonnet-5 on `other` fails, gemini and grok on `claude` pass.
+- **Ruled out:** that this is model behaviour — see the swap above. `via: measurement`
+  · That `authenticated` is the cause — it is already excluded by
+  `checkCountsTowardVerdict`. `via: code`
+- **Root cause, located:** `internal/cmd/agent_setup.go` `checkCountsTowardVerdict`
+  excludes `authenticated` and `claude-md` and nothing else, so the two MCP rows
+  count even for an agent the CLI structurally cannot write config for.
+- 🔴 **This is the same shape the file's own comments have already recognised
+  TWICE** (both exclusions carry a comment saying the hosted prompt would
+  otherwise "report that as a failed setup"). Third instance, not a new class.
+- **Why it bites the entrypoint:** `prompt.md` step 4 says *"Do not report success
+  if any check fails"*, so the prompt instructs the agent to report a correct
+  setup as a failure; and the CLI's own remediation line — "re-run `civitai
+  agent-setup` to fix what it can write" — names an action that can never change
+  the outcome on this path.
+- **Next probe:** none needed; it is diagnosed. The decision is whether the fix is
+  in the verdict (recommended, matches precedent) or in `prompt.md`'s wording.
+
+### ⚠ OPEN — the documented `--prefix` remedy leaves the CLI unreachable (rank 34)
+- as-of: 2026-09-18, from 19 blind trials
+
+- **Symptom + exact repro:** on any machine where npm's global prefix is not
+  writable, follow `prompt.md` §2 "If the install fails" exactly, then open a new
+  shell:
+  ```bash
+  npm install -g --prefix="$HOME/.npm-global" @civitai/cli
+  PATH="$HOME/.npm-global/bin:$PATH"; civitai --version   # works
+  bash -lc 'command -v civitai'                           # nothing
+  zsh -lic 'civitai --version'                            # command not found
+  ```
+- **Observed (with values):** **8 of 8** trials on the two non-writable-prefix
+  environments ended this way, across all four models. 8 of 8 relayed the PATH
+  line to the user as step 5 requires — so the prompt's instruction is obeyed —
+  and **5 of 8 still declared success.** The binary is present at
+  `~/.npm-global/bin/civitai` the whole time.
+- **Ruled out:** that the agents skipped or garbled the documented remedy — every
+  one ran it verbatim and relayed the PATH line. `via: measurement`
+- **Why step 4 cannot catch it:** step 4's `civitai --version` runs in the *same*
+  shell as the install, which is the one shell where it works.
+- 🔴 **The second-order cost is the real one:** step 3 writes an `AGENTS.md` that
+  tells every future agent session to run `civitai …`. Those sessions get a new
+  shell, so the file the setup exists to produce names a binary the setup left
+  unreachable.
+- 🔴 **This is "success measured in an environment the user does not have" on a NEW
+  operand.** The recorded instance was a *stale* binary and was fixed with
+  `civitai upgrade`; this is an *unreachable* binary produced by the prompt's own
+  remedy. A fix aimed at the earlier operand did not generalise.
+- **Next probe:** decide between (a) step 4 verifying in a NEW shell so the failure
+  is visible, (b) a prefix already on PATH, (c) `AGENTS.md` recording the absolute
+  path. (a) is the smallest honest change and is independent of the others.
+
 ## Next steps (ranked)
 
 🔴 **Ranks 1–14, 18–24 are DONE — numbering preserved** so live `claim-work` slugs keep pointing
-at what they were taken for. Open here: **15, 16, 17, 25, 26, 27, 29**.
+at what they were taken for. Open here: **15, 16, 17, 25, 26, 27, 29, 33, 34**.
+
+🔴 **33 and 34 are the only two that block the arc's closing condition, and they outrank
+everything else here.** They are the entire explanation of a 4-of-16 blind-trial result;
+16, 17, 25, 26 and 27 are cleanups with no bearing on whether the entrypoint works.
 
 ➡ **Ranks 23, 28, 30, 31 and 32 were the FORGERY effort and have MOVED** to
 [`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md), which now carries its
@@ -472,6 +558,29 @@ that catches an UNCLAIMED duplicate; the forgery doc mandates it. This table is 
     dated evidence to `claudedocs/refs/agent-setup-onboarding.md` behind a pointer.
     🔴 Do NOT satisfy this by deleting an open investigation, a gotcha or a ruled-out theory.
     forcing: none
+33. 🔴 **`--check` can never report `ok: true` for an agent outside the CLI's table.**
+    Diagnosed, located, and the fix has a precedent in the same function. Blocks the arc's
+    closing condition outright — the condition requires `ok: true` and this path cannot
+    produce it. Recommended fix: exclude `mcp-site`/`mcp-orch` from the verdict when
+    `agentTargets[agent]` is unknown, keeping the rows (they are true and the user does need
+    to paste), exactly as `authenticated` is kept and excluded.
+    closing-condition: on a fresh machine, with no agent env var set, `civitai agent-setup
+    --track app && civitai agent-setup --check --json` reports `ok: true` and exits 0, with
+    both MCP rows still PRESENT and still `false`. Checked by re-running
+    `scripts/dogfood/driver.sh` — any `other`-identity cell must grade
+    `CLOSING_CONDITION=yes`.
+    forcing: gate
+34. 🔴 **The `--prefix` install remedy leaves `civitai` unreachable from every later shell.**
+    8 of 8 trials on a non-writable prefix; 5 of 8 reported success anyway. The written
+    `AGENTS.md` then instructs future sessions to run a binary they cannot find.
+    ⚠ Pick the fix before building: (a) step 4 verifies in a NEW shell so the failure is at
+    least visible, (b) install to a prefix already on PATH, (c) `AGENTS.md` records the
+    absolute path. (a) is the smallest honest change; (b) and (c) actually fix it.
+    closing-condition: a blind trial on `df-node-user` or `df-ubuntu-apt` ends with EITHER
+    `zsh -lic 'civitai --version'` printing the version, OR the agent's final report stating
+    plainly that the CLI is not yet on the user's PATH and the setup is incomplete.
+    `scripts/dogfood/grade.sh` decides the first half; the second is read off the transcript.
+    forcing: gate
 
 ## Gotchas / decisions / dead-ends
 
@@ -1419,6 +1528,50 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   root, and `rm -f <copy>/.git` first (a worktree's `.git` is a FILE, so a commit in the copy
   lands on the real branch).
 
+### Added 2026-09-18 — 19 blind trials, and two instruments that lied first
+
+- 🔴 **A `2>&1` CAPTURE OF `--check --json` IS UNPARSEABLE, AND THE FAILURE READS AS
+  "NO JSON AT ALL".** The command prints its `Error: agent setup incomplete…` line
+  to **stderr, AHEAD of** the JSON on stdout, so a merged capture makes `jq` fail —
+  and a `jq` failure is indistinguishable from "the CLI is not installed". My first
+  grader scored a *correctly installed, genuinely failing* setup identically to a
+  bare container. **Read stdout only.** Anything consuming that payload — the
+  hosted prompt included — has the same exposure.
+- 🔴 **`jq '.ok // "absent"'` CANNOT SEE `ok: false`.** jq's `//` treats `false` as
+  empty exactly like `null`, so the alternative fires and a real failure is reported
+  as a missing field. `if has("ok") then (.ok|tostring) else "absent" end`. The tell
+  is a boolean field that never once reports `false` across a run you know contains
+  failures.
+- 🔴 **BLINDNESS SHOULD BE A MOUNT NAMESPACE, NOT AN INSTRUCTION — AND A CONTAINER
+  MAKES IT ~40 LINES.** Every earlier dogfood harness in this repo enforced
+  blindness by telling the agent not to look, then spent rounds arguing about what
+  that did and did not bind. A model whose only tool shells into a throwaway
+  container cannot read the repo because the repo is not in its filesystem. The
+  deleted `dogfood-sandbox.sh` complex (7 rounds, ~24 findings, none about the CLI)
+  was the credentialed version of this problem; **un-credentialed, the whole thing
+  is cheap** — no token, no spend meter, no ledger, no jail.
+- 🔴 **I CONFOUNDED THE DIMENSION I WAS THERE TO MEASURE, AND THE GRID LOOKED
+  CLEAN.** The matrix gave `claude`/`gpt` a known agent identity and `gemini`/`grok`
+  none, so a 16-cell result that partitioned perfectly by model was equally well
+  explained by identity. **A result that looks decisive is when to ask what else
+  predicts it.** Three swap trials settled it in ten minutes and inverted the
+  reading: identity decides, model does not. Had I shipped the first grid, "Gemini
+  and Grok fail the onboarding" would have been the finding — and it is false.
+- 🔴 **AN AGENT'S FINAL REPORT IS NOT EVIDENCE ABOUT THE MACHINE.** 5 of 8 agents
+  declared success on a setup that did not survive their own shell, and every one of
+  those reports is internally consistent and well-written. The grader measures the
+  container and never reads the transcript for a verdict. **Where a trial produces
+  both a claim and a state, grade the state.**
+- ⚠ **A "measured on a real machine" prose remedy can be correct AND still not
+  work.** `prompt.md`'s `--prefix` fallback is accurate, the agents executed it
+  verbatim, and it still ended in an unusable install 8 times out of 8. Accuracy of
+  an instruction and sufficiency of the outcome are different claims — the whole
+  reason this arc's condition has a login-shell half.
+- **The `other` agent path is not an edge case, and treating it as one is how it
+  went unnoticed.** Gemini CLI, Aider, Cline, Continue and anything shipped after
+  the table was written all land there. It was 8 of 19 trials here purely by
+  accident of how I assigned identities.
+
 ### Added 2026-09-15 — rank 30, and three ways a guard can be wrong
 
 - 🔴 **A GUARD CAN BE WALKABLE BY THE VERY OPERAND IT GUARDS.** To stop a one-line assertion
@@ -1480,6 +1633,20 @@ to keep true, and this one was not kept true for three commits.
 CIVITAI_CHECK_PUBLISHED_PINS=1 go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -count=1
 gh workflow run bump-scaffold-pins.yml --ref main    # opens a PR; NOT a draft ⇒ the SDK build passed
 ```
+
+**The arc's own closing condition — a blind dogfood run:**
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+cd scripts/dogfood
+for e in node-root node-user ubuntu-apt stale-cli; do docker build -q -t "df-$e" -f "envs/$e.Dockerfile" .; done
+bash driver.sh                          # 4 models x 4 envs, resumable
+bash grade.sh t-claude-noderoot root     # CLOSING_CONDITION=yes|no, measured on the container
+```
+
+🔴 **Run BOTH grader controls first** (README §"Validate the grader") — an untouched
+container must grade `no` and a hand-built success must grade `yes`. Each has already
+caught a grader defect that would have produced a confident wrong verdict.
 
 **Repo gates:** `make ci` AND `make lint` — `make ci` does not run lint, and it does not run
 `schema-drift`, `pins-vs-published` or the other CI jobs either. A green `make ci` is a claim
