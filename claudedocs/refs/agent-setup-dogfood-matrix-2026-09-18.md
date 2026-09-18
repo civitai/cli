@@ -76,9 +76,25 @@ environment:
 
 **The outcome inverts with the identity and not with the model.** Across all 19
 trials the verdict is a pure function of (agent identity ∈ CLI table?, npm prefix
-writable?). **No model-dependent behaviour was observed at all** — and that is the
-most useful single result here, because it means both defects are fixable in the
-product rather than papered over with prose aimed at weaker models.
+writable?). **The VERDICT is model-independent** — and that is the most useful
+single result here, because it means both defects are fixable in the product
+rather than papered over with prose aimed at weaker models.
+
+🔴 **State that at the width it was measured, not wider. "No model-dependent
+behaviour at all" is FALSE, and an earlier draft of this file said it.** Two
+model-dependent differences were observed, both in *reporting* rather than in the
+machine state:
+
+- **Steps to completion ranged 3–8.** gpt-5.6-terra chained install+setup+verify
+  into a single command; claude-sonnet-5 took 7–8 discrete steps everywhere.
+- **The persistence warning is model-dependent.** 6 of 8 agents on the `--prefix`
+  path told the user the PATH change would not survive the shell and named the
+  profile file; the 2 that did not were **both gpt-5.6-terra** — i.e. the model
+  with the fewest steps. A small sample, and the direction is worth a second look
+  before anyone leans on it.
+
+So: *what the machine ends up in* did not depend on the model across 19 trials.
+*What the user is told about it* did.
 
 ## Defect A — an agent the CLI does not know can never reach `ok: true`
 

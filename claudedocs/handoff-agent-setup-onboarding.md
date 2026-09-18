@@ -30,7 +30,10 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 
 - 🔴 **MEASURED 2026-09-18 — NOT MET. 4 of 16 blind trials reached it**, and the
   12 failures are explained by exactly two defects (ranks 33 and 34 below), with
-  **no model-dependent behaviour at all** across 19 trials. The condition is
+  a **model-independent VERDICT** across 19 trials — ⚠ stated at that width on
+  purpose: the machine state did not depend on the model, but what the user is
+  TOLD about it did (2 of 8 agents omitted the PATH-persistence warning, both the
+  same model). "No model-dependent behaviour at all" is false. The condition is
   additionally **unreachable by construction on the `other` agent path**, which is
   rank 33 — so a future close-check must fix 33 first or it is grading an
   impossible bar. Method, grid, controls and limits:
