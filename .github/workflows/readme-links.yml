@@ -1,0 +1,253 @@
+# README external-link liveness — the NETWORK half of the link guard.
+#
+# WHY THIS FILE EXISTS. `internal/cmd/readme_external_links_test.go` ships two
+# tests and only one of them ran anywhere:
+#
+#   TestREADMEExternalURLsAreExtractable — offline. Runs under `go test ./...`
+#                                          in the `build-test` job and DOES gate
+#                                          a merge. Untouched by this file.
+#   TestREADMEExternalURLsResolve        — network. Gated on
+#                                          CIVITAI_CHECK_README_LINKS=1, which
+#                                          was set by NO job and NO cron, so it
+#                                          never ran anywhere but a developer's
+#                                          terminal.
+#
+# A guard nobody runs reads as coverage while providing none — the worst of the
+# three states, because it stops the next person looking. The two honest
+# resolutions were "wire it" or "delete it"; this is "wire it". The GUARD ITSELF
+# IS UNCHANGED: this file adds a caller, nothing else. Its three outcomes were
+# already correct and are merely classified here.
+#
+# 🔴 WHY SCHEDULED AND NOT A REQUIRED CHECK. This repo has already measured what
+# a live-network REQUIRED check does: `pins-vs-published` compares the scaffold
+# pins against npm's published latest, so it reddens on every open PR the moment
+# upstream publishes, with no code change anywhere — it froze every open PR
+# twice. A dead external link in a docs file is not a reason to block an
+# unrelated merge, and the README's links rot on the scale of months, not of
+# pull requests. So this runs on a schedule, reports by filing an issue, and is
+# deliberately NOT added to branch protection. Do not add it.
+#
+# The daily Homebrew cask check (`release-homebrew.yml`, #313) is the precedent
+# being followed, including its finding that a red SCHEDULED run reaches almost
+# nobody — GitHub mails scheduled-failure notices only to whoever last touched
+# the `cron` line, through that person's own per-user setting. That is why the
+# `signal` job below exists rather than relying on the run going red.
+
+name: readme-links
+
+on:
+  # Weekly, not daily. Published documentation URLs rot on a scale of months; a
+  # daily run would spend 52x the requests to learn the same thing, and every
+  # extra request is one more chance to trip a host's bot filter (which the
+  # guard correctly skips, but which still costs a run).
+  schedule:
+    - cron: "41 6 * * 1"
+  # On demand — load-bearing, not a convenience. It is how a human verifies the
+  # guard still works after editing it, without waiting a week.
+  workflow_dispatch:
+    inputs:
+      # 🔴 THE FIRE DRILL. A notification path nobody has watched work is the
+      # same class of defect as a guard that cannot fail — the argument
+      # `release-homebrew.yml` makes, and every other caller of
+      # failure-issue.yml in this repo carries one of these. Without it, the
+      # `signal` job below would ship never having run, and the first time
+      # anyone learned whether it files a readable issue would be the week a
+      # link actually died.
+      #
+      # It exercises the REAL path end to end: a genuinely 404ing URL, the
+      # guard's own DEAD LINK arm, the real classifier, the real issue. Nothing
+      # is stubbed, which is the point — a rehearsal against a fake failure
+      # would only prove the fake works.
+      drill:
+        description: "Fire drill: append a known-404 URL to the RUNNER's copy of README.md so the dead-link path and the issue it files are rehearsed for real. Opens a REAL issue — close it when you are done. It cannot change the repo: the edit lives in the ephemeral checkout and this workflow only has `contents: read`."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: readme-links
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      # One of: ok | dead-link | unmeasurable | guard-did-not-run.
+      # The `signal` job branches on it, and failure-issue.yml posts its one
+      # notifying comment only when it CHANGES between runs.
+      state: ${{ steps.check.outputs.state }}
+      title: ${{ steps.check.outputs.title }}
+      body: ${{ steps.check.outputs.body }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: check README external links resolve
+        id: check
+        env:
+          CIVITAI_CHECK_README_LINKS: "1"
+          DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || false }}
+        run: |
+          # GitHub runs this as `bash -e {0}`, so errexit is already on and
+          # `set -uo pipefail` does not clear it. The `go test` below IS expected
+          # to fail on a dead link, so its status is captured explicitly rather
+          # than being allowed to kill the step before the classifier runs.
+          set -uo pipefail
+
+          # THE DRILL, applied to the runner's ephemeral checkout only. This
+          # workflow holds `contents: read` and never pushes, so the edit cannot
+          # outlive the job. A bare URL is enough — the extractor reads those,
+          # measured — and this host is known to answer a real 404 for an
+          # unknown path rather than serving an SPA 200, which is what makes the
+          # rehearsal a rehearsal of the FAILING arm rather than of nothing.
+          if [ "$DRILL" = "true" ]; then
+            echo "::warning title=readme-links::FIRE DRILL — a known-404 URL was appended to this runner's copy of README.md. Any failure below is rehearsed, not real."
+            printf '\n<!-- fire drill: not committed, runner checkout only -->\nhttps://developer.civitai.com/zz-readme-links-fire-drill\n' >> README.md
+          fi
+
+          # 🔴 `-count=1` IS LOAD-BEARING, NOT HYGIENE — the same trap
+          # `pins-vs-published` documents at length. `setup-go` with `cache: true`
+          # restores GOCACHE across runs, and Go's test cache tracks the env vars
+          # a test reads but NOT what a remote host answered. Without this, a
+          # second run contacts the network ZERO times and replays the first
+          # run's PASS line verbatim — a network guard reporting green on a link
+          # that had already gone 404.
+          rc=0
+          go test ./internal/cmd -run 'TestREADMEExternalURLsResolve' -count=1 -v 2>&1 \
+            | tee "$RUNNER_TEMP/links.log" || rc=$?
+
+          # POSITIVE CONTROL — can this job ever observe the thing at all?
+          # "0 dead links" and "the -run pattern matched no test" are the same
+          # exit 0 otherwise. A rename, a move, or a change to the
+          # CIVITAI_CHECK_README_LINKS gate each produce a serene pass over an
+          # unchecked README, which is precisely what this refuses. SKIP is in
+          # the pattern because a skipped test is a REAL result that must be
+          # classified below, not because a skip is acceptable here.
+          if ! grep -Eq -- '^ *--- (PASS|SKIP|FAIL): TestREADMEExternalURLsResolve( |/|$)' "$RUNNER_TEMP/links.log"; then
+            echo "::error::the link guard exited without running TestREADMEExternalURLsResolve — the -run pattern matched no test (renamed? moved?). A green here would have been a claim about nothing."
+            {
+              echo "state=guard-did-not-run"
+              echo "title=[readme-links] the link guard did not run"
+              echo "body<<READMELINKS_EOF"
+              echo "\`TestREADMEExternalURLsResolve\` did not execute — the \`-run\` pattern matched no test."
+              echo ""
+              echo "The usual causes are a rename, a move to another package, or a change to the \`CIVITAI_CHECK_README_LINKS\` env gate. Until this is fixed the README's external links are unchecked, and a passing run would have said nothing."
+              echo "READMELINKS_EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          # A SKIP here means the CIVITAI_CHECK_README_LINKS gate did not take,
+          # because that is the guard's ONLY t.Skip. The env is set above, so a
+          # skip means the gate's spelling changed — the guard did not run.
+          if grep -Eq -- '^ *--- SKIP: TestREADMEExternalURLsResolve' "$RUNNER_TEMP/links.log"; then
+            echo "::error::the guard SKIPPED itself despite CIVITAI_CHECK_README_LINKS=1 — its env gate no longer matches what this workflow sets."
+            {
+              echo "state=guard-did-not-run"
+              echo "title=[readme-links] the link guard did not run"
+              echo "body<<READMELINKS_EOF"
+              echo "\`TestREADMEExternalURLsResolve\` skipped itself even though this workflow sets \`CIVITAI_CHECK_README_LINKS=1\`."
+              echo ""
+              echo "Its env gate and this workflow have drifted apart. Until they agree the README's external links are unchecked."
+              echo "READMELINKS_EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          # Surface the fetched/skipped/extracted triple. The guard logs it
+          # precisely so a zero is never read alone; hide it in the log and the
+          # run summary says "green" without saying green about WHAT.
+          grep -E 'liveness: ' "$RUNNER_TEMP/links.log" >> "$GITHUB_STEP_SUMMARY" || true
+
+          if [ "$rc" -eq 0 ]; then
+            echo "state=ok" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # 🔴 THE TWO REDS ARE NOT THE SAME FINDING AND MUST NOT SHARE WORDING.
+          # The guard fails on a dead link, and it ALSO fails when it fetched
+          # nothing at all ("fetched 0 of N URLs") — deliberately, so an outage
+          # is not banked as a pass. Reporting the second as "a URL no longer
+          # resolves" would send someone hunting a dead link that does not
+          # exist, so they get different states and different bodies. A distinct
+          # state is also what makes failure-issue.yml post its one notifying
+          # comment when an outage turns into a genuine dead link.
+          if grep -q 'fetched 0 of' "$RUNNER_TEMP/links.log"; then
+            echo "::warning title=readme-links::no URL answered — this run measured NOTHING about link health."
+            {
+              echo "state=unmeasurable"
+              echo "title=[readme-links] the link check could not reach anything"
+              echo "body<<READMELINKS_EOF"
+              echo "Every request failed, so this run proves nothing about link health — it is **no measurement**, not a pass, and the guard fails rather than banking it as green."
+              echo ""
+              echo "This is about the runner's network, not about \`README.md\`. If it persists, the question is whether the scheduled runner can reach these hosts at all — and if it cannot, this job should be retired rather than left reporting weekly."
+              echo "READMELINKS_EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          {
+            echo "### Dead link(s) in README.md"
+            echo
+            echo '```'
+            grep -E 'DEAD LINK|not a 404|malformed URL' "$RUNNER_TEMP/links.log" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          {
+            echo "state=dead-link"
+            echo "title=[readme-links] README.md points at a URL that no longer resolves"
+            echo "body<<READMELINKS_EOF"
+            # A drill files a REAL issue on purpose — that is what is being
+            # rehearsed. Say so in the body, or the rehearsal becomes the very
+            # false alarm it exists to prevent.
+            if [ "$DRILL" = "true" ]; then
+              echo "> ⚠️ **FIRE DRILL — not a real dead link.** This issue was raised by a hand-dispatched run with \`drill: true\`, which appends a known-404 URL to the runner's copy of \`README.md\`. \`README.md\` itself is untouched. Close this issue."
+              echo ""
+            fi
+            echo "The weekly README external-link check found a dead address."
+            echo ""
+            echo "\`README.md\` is the shipped user contract, and several of its sections were deliberately shortened on the grounds that \`developer.civitai.com\` carries the detail — so a dead link there is content loss for the reader, not a cosmetic blemish."
+            echo ""
+            echo "**What to do:** open the run log, find the \`DEAD LINK\` line(s), and either fix the address or restore what it pointed at."
+            echo ""
+            echo "The guard does NOT fail on unreachable hosts, 5xx, 401, 403 or 429 — those are \"we could not ask\", and are skipped. A failure here means a server answered **404/410**, or answered some other 4xx, definitively."
+            echo ""
+            echo "Reproduce locally:"
+            echo ""
+            echo '```bash'
+            echo "CIVITAI_CHECK_README_LINKS=1 \\"
+            echo "  go test ./internal/cmd -run TestREADMEExternalURLsResolve -count=1 -v"
+            echo '```'
+            echo "READMELINKS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          exit 1
+
+  # File a report when the check is red, and close it when it recovers. See
+  # `failure-issue.yml` for why this is an issue rather than email, and for the
+  # anti-spam rules that stop it becoming noise.
+  #
+  # `always()` so a red `check` job still reports; `!= 'cancelled'` so a hand
+  # cancellation is not filed as a defect.
+  signal:
+    needs: [check]
+    if: always() && needs.check.result != 'cancelled'
+    uses: ./.github/workflows/failure-issue.yml
+    permissions:
+      contents: read
+      issues: write
+    with:
+      marker: "[readme-links]"
+      failing: ${{ needs.check.result != 'success' }}
+      # Empty when `check` died before the classifier ran — a runner failure, a
+      # failed checkout, setup-go failing. That is its own state and must not
+      # borrow the wording of a verdict this job never reached.
+      state: ${{ needs.check.outputs.state || 'unknown' }}
+      title: "${{ needs.check.outputs.title || '[readme-links] the link check could not run' }}"
+      body: "${{ needs.check.outputs.body || 'The `check` job failed before it could classify what went wrong, so it did not reach the end of the test step. Check the run log — the usual causes are the runner dying, the checkout failing, or `setup-go` failing.' }}"
