@@ -180,10 +180,35 @@ $ zsh -lic 'civitai --version'  → command not found
 $ ls ~/.npm-global/bin          → civitai        # it is right there
 ```
 
-8 of 8 relayed the PATH line to the user, so the prompt's own instruction works.
-**5 of 8 still declared the setup a success.** The reason step 4 cannot catch it
-is that step 4's `civitai --version` runs in the *same* shell as the install —
-the one shell in which it works.
+What the agents actually reported, counted by hand after a keyword regex
+**overstated this and had to be retracted** (see the correction note below):
+
+| | count | detail |
+|---|---|---|
+| relayed the PATH line, as step 5 requires | **8 / 8** | the prompt's instruction is obeyed |
+| *also* warned it is not persistent and named the profile file | **6 / 8** | e.g. *"add it to `~/.bashrc` or `~/.zshrc` to make it permanent"* |
+| gave no persistence warning at all | **2 / 8** | both gpt-5.6-terra |
+| opened by declaring the setup complete/successful | 4 / 8 | claude ×2, gemini-ubuntu, gpt-ubuntu |
+| stated that a LATER shell — including a later **agent** session reading the `AGENTS.md` just written — would not find `civitai` | **0 / 8** | nobody connected the two |
+
+🔴 **So the defect is NARROWER than "agents falsely report success", and saying it
+that way would have been wrong.** The prompt's prose works; most agents relay a
+usable manual remedy. What no agent noticed, and what no step checks, is that
+**step 3's durable artifact is written against a binary that only exists in the
+installing shell**: `AGENTS.md` tells every future agent session to run `civitai
+…`, and every future session gets a new shell. The gap is closed only if the
+human performs the profile edit before anything else runs.
+
+Step 4 cannot catch it because its `civitai --version` runs in the *same* shell as
+the install — the one shell in which it works.
+
+> ⚠ **Correction, recorded because the instrument was mine.** The first version of
+> this section said *"5 of 8 still declared the setup a success"*, from a regex
+> matching `success|complete|all set|done`. That regex scores *"Setup is
+> complete"* and *"all steps succeeded except authentication"* identically to a
+> report that merely lists what it did, and it counted a persistence WARNING as
+> nothing at all. Read by hand, 6 of 8 warned properly. The number was quoted in a
+> commit message before it was checked.
 
 The second-order cost is the one that matters: step 3 writes an `AGENTS.md` that
 tells every future agent session to run `civitai …`. Those sessions get a new

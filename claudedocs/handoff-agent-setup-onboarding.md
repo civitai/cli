@@ -490,10 +490,17 @@ returns `ok: false` and exit 1 after a **completely correct** setup, forever.
   zsh -lic 'civitai --version'                            # command not found
   ```
 - **Observed (with values):** **8 of 8** trials on the two non-writable-prefix
-  environments ended this way, across all four models. 8 of 8 relayed the PATH
-  line to the user as step 5 requires — so the prompt's instruction is obeyed —
-  and **5 of 8 still declared success.** The binary is present at
-  `~/.npm-global/bin/civitai` the whole time.
+  environments ended this way, across all four models. The binary is present at
+  `~/.npm-global/bin/civitai` the whole time. What the agents reported: **8/8**
+  relayed the PATH line as step 5 requires, **6/8** also warned it is not
+  persistent and named the profile file, **2/8** (both gpt-5.6-terra) gave no
+  persistence warning, and **0/8** connected it to the `AGENTS.md` just written.
+- ⚠ **CORRECTED — an earlier draft of this block said "5 of 8 still declared
+  success", from a keyword regex, and that overstated the defect.** Read by hand,
+  most agents relay a usable manual remedy. **The defect is not that agents lie;
+  it is that step 3's durable artifact is written against a binary that only
+  exists in the installing shell.** `AGENTS.md` tells every future agent session
+  to run `civitai …`, and every future session gets a new shell.
 - **Ruled out:** that the agents skipped or garbled the documented remedy — every
   one ran it verbatim and relayed the PATH line. `via: measurement`
 - **Why step 4 cannot catch it:** step 4's `civitai --version` runs in the *same*
@@ -1567,11 +1574,18 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   predicts it.** Three swap trials settled it in ten minutes and inverted the
   reading: identity decides, model does not. Had I shipped the first grid, "Gemini
   and Grok fail the onboarding" would have been the finding — and it is false.
-- 🔴 **AN AGENT'S FINAL REPORT IS NOT EVIDENCE ABOUT THE MACHINE.** 5 of 8 agents
-  declared success on a setup that did not survive their own shell, and every one of
-  those reports is internally consistent and well-written. The grader measures the
-  container and never reads the transcript for a verdict. **Where a trial produces
-  both a claim and a state, grade the state.**
+- 🔴 **AN AGENT'S FINAL REPORT IS NOT EVIDENCE ABOUT THE MACHINE** — and my first
+  attempt to quantify that was itself a bad instrument. A regex over the final
+  reports matching `success|complete|all set|done` scored *"Setup is complete"* the
+  same as a report that merely lists what it did, and scored a persistence WARNING
+  as nothing at all; it produced "5 of 8 declared success", **which I put in a
+  commit message before checking it.** Read by hand: 8/8 relayed the PATH line,
+  **6/8** also warned it does not persist, 2/8 did not. **The defect survived the
+  correction and got sharper — it is not that agents lie, it is that `AGENTS.md`
+  is written against a binary that only exists in the installing shell — but the
+  number was wrong and the framing it supported was wrong with it.** The grader,
+  which measures the container, was right throughout; the prose instrument I
+  reached for to describe *why* was not. **Validate the cheap instrument too.**
 - ⚠ **A "measured on a real machine" prose remedy can be correct AND still not
   work.** `prompt.md`'s `--prefix` fallback is accurate, the agents executed it
   verbatim, and it still ended in an unusable install 8 times out of 8. Accuracy of
