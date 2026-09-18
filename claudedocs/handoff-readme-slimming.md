@@ -24,83 +24,57 @@ Operator's words: *"readme is still way overly verbose."*
 
 ## State now
 
-🔴 **RANK 1 IS MERGED. L3 AND L4 ARE MEASURED AND WITHDRAWN. THE ARC'S PREMISE IS
-EXHAUSTED: the README's remaining size is CONTRACT, not duplication.**
+🔴 **THE ARC IS CLOSED AND STAYS CLOSED — its answer was that the README's remaining size is
+CONTRACT, not duplication (measured three ways; see "the arc's real answer" under Gotchas).
+Ranks 2 and 3 of its queue are now DONE and merged. What remains is a NEW arc: two filed issues
+in `civitai/civitai-developer-docs`.**
 
-`main` is **`b37d683`**, clean, nothing uncommitted. README **272,461 B** (from 277,572 at
-arc start). **All three of this arc's PRs are merged; nothing is in flight.**
+`civitai/cli` `main` is `7cfd93c`, clean. `civitai-developer-docs` `main` is `8c2a6e2`.
 
 | | |
 |---|---|
-| **#656** merged `392e4f3` | rank 1 (L1+L2), **−5,111 B**. Verified by CONTENT per file against `origin/main` (existence proven first with `git cat-file -e`), not by ancestry — a squash never makes the branch head an ancestor |
-| **#657** merged `c81ea2d` | the handoff |
-| **#658** merged `b37d683` | the L3/L4 withdrawal record below. Also verified by content |
-| claims | `readme-slimming-1`, `-2`, `-3` **all released** |
-| open PRs | only **#602**, which is not this arc's |
+| **cli#659** merged `3181d34` | handoff refresh from a concurrent session |
+| **cli#660** merged `7cfd93c` | rank 2 — the link guard's network half, wired + drilled |
+| **docs#85** merged `8c2a6e2` | rank 3 — the docs-site drift, 6 files, 3 audit rounds |
+| claims | `readme-slimming-2` and `-3` both RELEASED |
+| filed, not fixed | **docs#86** (stale CLI help snapshot) · **docs#87** (nothing guards the corrected claims) |
+| in flight, NOT mine | **cli#602** (submit body ceiling) — pre-existing, untouched |
 
-⚠ **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` → **rc=5**, nothing resolved.
-It printed a POSITIVE CONTROL (the same endpoint answered 3 links for a different session), so
-the board is reachable and the token accepted — but a wrong session id ALSO answers `200` with
-an empty array, so this zero is **not** a clean bill of health. `… field <doc>` → rc=1 (no
-field present), and none was added.
+**No `clawgate-task:` field.** `clawgate_handoff.sh resolve` → **rc=5**, nothing resolved. It
+printed a POSITIVE CONTROL (the same endpoint answered 11 links for a different session), so the
+board is reachable and the token accepted — but a wrong session id ALSO answers `200` with an
+empty array, so this zero is **not** a clean bill of health. No field was written and none was
+invented.
 
-⚠ **One leftover worktree, deliberately not removed:** `/home/zach/workspace/civit/cli-slim`
-holds `docs/handoff-readme-slimming` at `c3bc346` — the PREVIOUS session's tree, whose content
-merged as #655. Safe to remove, but it is not this session's and worktree removal has real
-blast radius, so it is the operator's call.
+### rank 2 — verified IN PRODUCTION, not merely merged
 
-### 🔴 L3 AND L4: WITHDRAWN ON MEASUREMENT — do not re-derive their byte projections
+`.github/workflows/readme-links.yml`, weekly, **deliberately not a required check** (the
+`pins-vs-published` freeze is why; the header says so to stop a future reader "fixing" it).
+The guard itself is UNCHANGED — the PR adds a caller and nothing else.
 
-Both were scoped on the belief that a large section implies large duplication. Measured with
-a paragraph-similarity instrument carrying **both controls** (positive: a `--help` paragraph
-against its own pool = **1.00**; negative: unrelated prose = **0.36–0.37**, the noise floor):
+Both halves of the notification path were then **watched to work**, which is the only reason
+this counts as done:
 
-| section | total | duplicated by `--help` | redundant vs rest of README |
-|---|---:|---:|---:|
-| `## Generate` | 43,498 B | **~1,600 B** (0.40 threshold) | not run |
-| `## Submit & auth` | 53,229 B | **912 B** (0.40) | **505 B** at 0.45; **0 B** at 0.55 |
+```
+drill run 35306523650   check: failure -> signal: success -> issue #661 filed, FIRE DRILL banner
+normal run 35306644793  check: success -> comment posted  -> issue #661 CLOSED 04:22:06Z
+```
 
-**36,513 B of `## Generate` and 45,132 B of `## Submit & auth` sit at or BELOW the noise
-floor** — i.e. they are not restatements of anything, in the binary or in the file.
+The close-on-green is not cosmetic: it resets the dedupe so the NEXT real failure notifies
+instead of folding into a stale thread. 🔴 **The scheduled (cron) run has still never fired** —
+only the two hand dispatches above. First `41 6 * * 1`.
 
-- **L3's premise was duplication, and it was false.** `generate --help` is 16,668 B and
-  genuinely substantive — it carries the `--print-input` credential/network nuance and the
-  whole `--max-cost`-is-not-a-cap rule — but it overlaps the README by ~1.6 KB of prose plus
-  ~1.0 KB of examples (13 of 14 example commands duplicated). **~2.6 KB, 6% of the section.**
-- **L4's premise was COMPRESSION, not duplication** — the handoff's own words, *"only 6,067 B
-  of `--help` overlap, so this is genuine compression"*. ⚠ **So the overlap instrument tests
-  the wrong hypothesis for L4**, and this is stated rather than glossed. What it establishes
-  is that there is nothing to DELETE; what remains is editorial tightening of published
-  contract prose.
-- 🔴 **And that is the one lever this arc has measured as high-risk and low-yield.** The
-  previous arc shipped **two 🔴 contract falsehoods while compressing**, one of which could
-  have led a reader to make an irreversible public write; its ladders gave back **~870 B per
-  contract-bearing section** over 4–5 audit rounds. Rewriting `## Submit & auth` — which
-  governs publishing, listing media, source-repo linking and submit provenance
-  (decisions 25/30/31/32) — buys ~1 KB against that record.
+### rank 3 — what running the docs found that reading them did not
 
-### The honest limit of this conclusion
+`docs#85` began as three recorded drift items and ended at **6 files across 6 commits**, because
+each check widened it:
 
-🔴 **"Not duplicated" and "not redundant" are NOT the same claim as "cannot be said in fewer
-words".** The instruments measure restatement, not density. A skilled editorial pass could
-still shorten dense prose without losing meaning; nothing here refutes that. What is measured
-is that **no mechanical lever remains** — there is nothing to delete, link out, or de-duplicate.
-Any further reduction is a rewrite of contract, sentence by sentence, against the Go source.
-
-### Protected content found while measuring L4 (named now, not mid-edit)
-
-- `#### Which dotenv files end up in the bundle` **10,353 B** — golden-file pinned in
-  `internal/pkgzip`.
-- `#### What civitai whoami reports` 2,282 + `##### whoami --json` 2,501 — **exact-stdout** pinned.
-- The entry-table paragraph is pinned by **`entryBlockSentinels`**, a ledger in
-  `readme_submit_entry_block_test.go` that fails when the sentinel set GROWS *or* SHRINKS and
-  requires specific text per sentinel on **two** surfaces (the paragraph and the Troubleshooting
-  cause cell).
-- In `## Generate`: **every one of the 12 subsections has 2–5 inbound anchors**, so no heading
-  can be deleted without repointing links; 4 `` ```console `` blocks are recorded transcripts,
-  at least one byte-pinned by `TestREADME_DryRunTranscriptMatchesRealOutput`;
-  `TestCheckpointExamplesNameAnEcosystem` scans every `` ```bash `` block (floor 10 repo-wide,
-  30 present).
+| found by | what |
+|---|---|
+| re-measuring before filing | **all SEVEN** `civitai download 128713` examples exit 2 — that id is BOTH a model id and a version id |
+| audit round 0 | the Linux-Homebrew claim on **two more** surfaces, one **executed unattended by agents** |
+| audit round 1 | the prompt byte-ratchet left with **13 bytes** of headroom; a fifth Homebrew surface; the one unpinned example id |
+| audit rounds 2–3 | only findings about prose the ladder itself wrote |
 
 ## Open investigations — live diagnosis state
 
@@ -228,33 +202,69 @@ survive; two of its four supporting measurements do not. Round 0 of #656 refuted
   the sentences. NEVER diff against a summary of a page.** A summarizer reorganising a flag
   list is invisible in its output.
 
+### ✅ RESOLVED 2026-09-18 — the four site-drift items are FIXED and merged; the "treat every link-out target as suspect" instruction is RETIRED
+- as-of: 2026-09-18
+
+🔴 **RETIRES the `## Defects (batched)` bullet "Four `developer.civitai.com/site/guide/cli` drift
+items … NOT FILED" and its instruction to treat every remaining link-out target as suspect.** They
+are filed, fixed, audited over three rounds and merged as `8c2a6e2`. The surviving suspicion is
+narrower and is now tracked as docs#87, not as a standing warning.
+
+- **Observed (with values),** verified by CONTENT on `origin/main` after the squash (ancestry
+  cannot answer a squash):
+  - `macOS / Linux` → **0** occurrences across all four doc surfaces (was 2 when this arc
+    started, and 4 once correctly swept).
+  - `site/guide/cli.md` carries `exits \`4\`` ×1 and `is ambiguous` ×1.
+  - `public/agent-setup/prompt.md` carries `on macOS only` ×1.
+  `via: command`
+- **Ruled out:** that the Homebrew claim was confined to the two CLI pages — an enumerated
+  repo-wide sweep found it in **4** `.md` files, and a later one found a **5th** in
+  `scripts/check-appblocks-cli-snapshot.mjs`. `via: measurement`
+- **Ruled out:** that `apps/reference/cli.md`'s download examples needed the same fix — they sit
+  inside the `BEGIN GENERATED: cli` region (lines 131–2849), are generated from the binary's help,
+  and already used the unambiguous ids. `via: code`
+- **Leading hypothesis:** nothing further is wrong on those pages *today*; the live risk is that
+  nothing keeps them right — see docs#87.
+- **Next probe:** none for this item. For docs#87, the probe is the one in its own body: re-add a
+  Linux-Homebrew claim to BOTH CLI pages and confirm `check:cli-install-parity` stays green (it
+  did when measured, which is the whole finding).
+
 ## Next steps (ranked)
 
-1. **Decide whether the arc closes.** Ranks 1–3 are done or withdrawn on measurement, and no
-   mechanical lever remains. The remaining options are (a) close it, (b) commission an
-   editorial compression pass on `## Submit & auth` accepting ~1 KB for a full audit cycle and
-   the contract-falsehood risk, or (c) delete published contract, which the operator has
-   declined at every prior fork. **Closing condition:** the operator states which, in writing.
-   forcing: user — the arc was opened by an operator ask ("readme is still way overly verbose") and only they can retire it
-2. **Wire or delete the link guard's network half.** `CIVITAI_CHECK_README_LINKS` is set by no
-   CI job and no cron, so `TestREADMEExternalURLsResolve` never runs; the precedent it copies
-   (`pins_guard_test.go`) has a dedicated job. `.github/workflows/*` is **"Ask first"** per
-   `AGENTS.md`. **Closing condition:** a merged PR that either adds a scheduled job or removes
-   the network half.
-   forcing: gate — a guard that never runs is the "reads as coverage while providing none" shape RULES.md names
-3. **File the three `developer.civitai.com` drift items** (Homebrew macOS/Linux; missing
-   `--force`/`--yes`; `model-versions get … --json` documented as exit 1 where the binary exits
-   4). They belong to `civitai/civitai-developer-docs`. **Closing condition:** a merged PR
-   there, or a written decision not to fix.
-   forcing: user — outward-facing, deliberately left to the operator
-4. **Reconcile `handoff-cli-docs-consolidation.md`.** It answers this arc's central question
-   the opposite way ("No — relocate into cobra"). ⚠ **Its answer is now partly VINDICATED**:
-   the relocate-into-`Long` pipeline is live and verified (`/apps/reference/cli` carries 29
-   `civitai generate` hits, 22 `ecosystem`), so record the nuance rather than overwriting it.
-   **Closing condition:** a merged PR that edits that doc's answer or retires the doc.
+1. **docs#87 — make the corrections un-revertible.** `check-cli-install-parity.mjs` compares the
+   two CLI pages **to each other** with no notion of platform, which is exactly why
+   `# Homebrew (macOS / Linux)` sat in perfect parity on both and shipped; it is green today if
+   someone re-adds it to both. Same gap for the example ids: `civitai/cli` pins its README ids with
+   `internal/cmd/download_example_id_test.go` + `unambiguousExampleIDs`, and the docs repo mirrors
+   neither. Repo: `civitai/civitai-developer-docs`; files: `scripts/check-cli-install-parity.mjs`,
+   a new example-id check, `.github/workflows/`. **Closing condition:** issue #87's own — each new
+   check WATCHED to go red on a deliberately reintroduced defect, not merely existing.
+   forcing: regression — the corrected claim can silently revert with every check green, measured: the parity guard reports "both pages offer the same 8 install method(s)" before AND after the platform correction
+2. **docs#86 — re-capture the CLI help snapshot.** `appblocks-snapshots/civitai-cli-help.txt` is
+   pinned at **v0.1.104** while the release is **v0.1.105** (published 2026-09-14), so
+   `/apps/reference/cli` omits flags that shipped. Measured with controls: `--allow-oversize` **0**
+   in the snapshot, **2** in the binary's help; positive control `civitai app submit` → 14;
+   negative control → 0. Needs a real v0.1.105 binary and a by-hand diff review; the checker warns
+   the PR-blocking `appblocks-cli` job fails on a shrinking tree. Repo:
+   `civitai/civitai-developer-docs`. **Closing condition:** issue #86's own — `check:cli-snapshot`
+   green AND `--allow-oversize` present in the snapshot (two claims, because that checker compares
+   TAGS and has historically said `ok` through a real content failure).
+   forcing: regression — the published reference trails the shipped binary today, measured
+3. **`check-agent-setup.mjs:18` says "FOUR INDEPENDENT CHECKS" and lists five.** Pre-existing on
+   `main`, observed during round 3's cross-reference sweep, deliberately left out of docs#85 to
+   keep its scope honest. One-word fix. Repo: `civitai/civitai-developer-docs`.
+   **Closing condition:** a merged PR, or a written decision it does not matter.
    forcing: none
-5. **Retire `handoff-readme-reduction.md`.** Its own closing instruction. **Closing condition:**
-   a merged PR that removes it.
+4. **Register the `civitai-developer-docs` scope in the cairn routing table.** This session's
+   subsystem-index write was REFUSED: `cairn create` exits with *"scope
+   `civitai-developer-docs` is not in the routing table"*, which refuses rather than guessing an
+   instance. Source is `$DEVRC/claude/cairn-routes.json` (a home-manager `home.file`, so
+   `~/.config/subsystem-store/routes.json` resolves into `/nix/store` and editing it does
+   nothing) — the value is unambiguous, all 25 existing scopes including `cli` and nine
+   `civitai-*` siblings map to `personal`. Needs a devrc commit **and a `home-manager switch`**,
+   which is why this session did not do it. ⚠ The entry's content is NOT lost — the same facts
+   are in the Gotchas section of this doc — but it will not outlive this doc until it lands.
+   **Closing condition:** `cairn create --scope civitai-developer-docs --ref cli …` succeeds.
    forcing: none
 
 ## Gotchas / decisions / dead-ends
@@ -539,73 +549,174 @@ delete-first beats relocate (phase 3 relocated and gave back 39.7%; deletes gave
 `generate --help` is already 16,668 B — growing it degrades the most-used surface. Recorded so
 the option is understood rather than re-discovered, not so it is re-opened.
 
+### Added 2026-09-18 — a SWEEP'S ANSWER IS A CLAIM ABOUT ITS SCOPE, and I made that error twice
+
+🔴 **Both times the instrument was correct and the SCOPE was the overstatement.** I used an
+enumerated `find … -print0 | xargs -0 grep` specifically to dodge the gitignore-blind `grep -r`
+trap — then scoped it to three directories and reported it as repo-wide.
+
+```
+mine:    find site apps .vitepress …          -> 2 files
+correct: find . -not node_modules|dist|.git … -> 4 files
+```
+
+The two it missed were the worse ones, including `public/agent-setup/prompt.md` — served verbatim
+and, per that repo's own `CLAUDE.md`, **fetched and executed unattended by coding agents**. On Linux
+an agent ran `brew install`, installed nothing, and hit a failure that page's own troubleshooting
+section does not cover. Then round 1 found a **fifth** surface the corrected sweep still missed,
+because that sweep was `.md`-scoped. **State the scope you measured, in the same breath as the
+count.**
+
+### Added 2026-09-18 — RUN THE DOCS, DO NOT READ THEM
+
+🔴 **The single highest-value check in this session was executing the documentation's own example.**
+`civitai download 128713` — the guide's headline Download command, used in **all seven** of its
+bare-positional examples — exits **2**:
+
+```
+Error: 128713 is ambiguous — it's both model "Airi Akizuki …" and version 128713 (of "DreamShaper").
+```
+
+Every reader who copy-pasted it got an error. No amount of reading finds this; `--help` describes
+the stop correctly and the page looked plausible. Replaced with `691639`/`290640`, which are not
+merely unambiguous today but **pinned** as such by `civitai/cli`'s `unambiguousExampleIDs`.
+🔴 **The CLI repo has a guard for this exact class and the docs site reproduced the defect that
+guard exists to prevent** — a mirror that exists in one repo and not its neighbour.
+
+### Added 2026-09-18 — I "fixed" a hole that did not exist, and the control is what caught it
+
+I added a zero-fetch skip arm to `readme_external_links_test.go` after reading to line 234 and
+assuming the function ended at the `t.Logf`. It does not: line 236 already had a `t.Fatalf` for
+exactly that case. **What caught it was running the PRE-CHANGE code expecting green and watching it
+go red** — the "a test you have not watched fail proves nothing" rule, applied to my own fix.
+`cli#660` therefore touches no Go code at all; it adds a caller and nothing else, which is the
+honest shape for "wire the guard".
+
+### Added 2026-09-18 — a mutation battery that killed all three mutants for the WRONG reason
+
+Re-deriving `PROMPT_MAX_BYTES` needed proof the ratchet still bounds. First attempt: append bytes
+to `prompt.md`, run `check:agent-setup`. All three mutants died — **including the `+100B` case that
+was supposed to PASS**, which is the only reason I noticed. Appending to `prompt.md` alone breaks
+the prompt↔inline-copy byte-identity check, so every mutant died on a different guard.
+
+Isolated by regenerating `agent-setup/index.md` per mutant and asserting the **budget-specific**
+error rather than a bare non-zero:
+
+```
++100 B  ordinary wording fix      rc=0   <- still fits, as the docstring promises
++260 B  just over headroom        rc=1   "OVER the 7437-byte budget by 10"
++333 B  a whole smallest section  rc=1   "OVER the 7437-byte budget by 83"
+```
+
+🔴 **A mutant that dies tells you nothing until you know WHICH guard killed it.** The tell was a
+mutant that died when it should have lived.
+
+### Added 2026-09-18 — re-deriving a constant: reproduce the ORIGINAL derivation before trusting your own
+
+`PROMPT_MAX_BYTES`'s docstring says the file was "6,949 bytes in 9 sections, smallest 321". My
+first parse counted only `##` and got **7** sections — so my "smallest section" would have been
+wrong. Counting `##` **and** `###` reproduces 6,949 / 9 / 322 / median 891 at the base commit, which
+is what proved I was using *their* definition and not inventing one.
+
+```
+PROMPT_MAX_BYTES          7,200 -> 7,437   = 7,187 + 250, under smallest (333)
+PROMPT_MAX_BYTES_CEILING  7,800 -> 8,037   = 7,187 + 850, under median (891)
+```
+
+🔴 **Reproduce the old number with your method before using that method for the new one.**
+
+### Added 2026-09-18 — ONE RULE ONE PLACE beats syncing the third copy
+
+Round 2 found a stale `7,200` in the check-5 preamble, 27 lines above the constant — a third copy
+my re-derivation had stranded. The obvious repair is to write `7,437` there; **that recreates the
+duplicate and guarantees the next re-derivation strands it again.** Instead the sentence now says
+the budget permits MORE than the 6,949 at which the loss was measured — the only property its
+argument needs, true of any future value.
+
+⚠ Round 3 then caught the replacement over-claiming *"the only place it is stated"* — `7,437` is
+live in two places (the constant and the derivation that shows the arithmetic, which is not
+removable). Reworded to the property that actually holds: **adjacency, not uniqueness** — the two
+live mentions are 11 lines apart in one JSDoc and move together; the stranded copy was 27 lines
+away in a different block.
+
+### Added 2026-09-18 — the audit ladder, and where it stopped
+
+Four rounds. 🔴 **Round 0 earned its keep and no correctness round could have**: it found the two
+extra Homebrew surfaces because they were OUTSIDE the diff, which is the one question the nine axes
+never ask.
+
+| round | on the shipped docs | on the ladder's own prose |
+|---|---|---|
+| 0 | two more Homebrew surfaces, one executed unattended | — |
+| 1 | exhausted byte ratchet · unpinned example id · fifth surface | — |
+| 2 | — | stale constant · miscounted files · wrong check number |
+| 3 | — | false uniqueness claim · miscounted historical mentions |
+
+**Stopped on the ATTRIBUTION GATE, not on a verdict.** Two consecutive fix rounds changed zero
+payload lines (`55044c76..dfb1238` 8/4 and `dfb1238..fe8f590` 5/3, both comments in one guard
+script; revert test: the corrected docs still ship ⇒ scaffolding). The shipped artifact has not
+changed since `55044c7`.
+
+🔴 **Rounds 2 and 3 BOTH returned "safe to merge" while reporting real defects** — a verdict-keyed
+ladder stops at round 2 and ships the stale constant. ⚠ **Round 3 also asserted it was "the second
+consecutive round with zero payload"; round 2's own ledger records 4.** I re-measured both ranges
+rather than accept it — the gate fired, for a different reason than the one given. **An auditor's
+ledger is a claim too.**
+
+### Added 2026-09-18 — the issue-filing gate improved the work, not just the paperwork
+
+The first attempt at docs#86 was refused by a PreToolUse hook for naming no closing condition. The
+obvious one is *"`check:cli-snapshot` exits 0"* — but that checker compares **tags**, and the
+prior-art I had cited **in my own issue body** records it reporting `ok` straight through a real
+content failure. The filed condition therefore pairs it with a content grep
+(`--allow-oversize` present). **I would have shipped the weaker condition unprompted.**
+
 ## How to verify
 
 ```bash
-# 🔴 -count=1 ON EVERY LINE. The input under test is a non-Go file: with README.md
-# rewritten, a bare `go test ./...` returns `ok … (cached)` for all 21 packages.
-go test ./... -count=1                                   # 21 packages
-go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' -count=1
-go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' \
-  -count=1 -v | grep -c '^--- PASS\|^    --- PASS'      # > 0
+# --- rank 2, cli#660: the link guard ------------------------------------------
+# It is WEEKLY and NOT a required check. Do not add it to branch protection.
+gh workflow run readme-links.yml --repo civitai/cli --ref main            # green path
+gh workflow run readme-links.yml --repo civitai/cli --ref main -f drill=true  # failure path
+# drill -> a REAL issue titled "[readme-links] …" with a FIRE DRILL banner; close it by
+# re-running WITHOUT -f drill (a green run closes it, which resets the dedupe).
+gh issue list --repo civitai/cli --state open --search '[readme-links]'
 
-# CI checks out at depth 1; this is the only local mirror of that. Reads COMMITTED
-# state only — commit first, or it measures the previous commit.
-make ci-shallow                                          # 21/21
-
-# the link guard. 🔴 OFFLINE BY DEFAULT AND RUN BY NO CI JOB — see rank 2.
+# the guard itself, locally. 🔴 -count=1 is load-bearing: setup-go restores GOCACHE and
+# Go's test cache does NOT track what a remote host answered.
 CIVITAI_CHECK_README_LINKS=1 \
-  go test ./internal/cmd/ -run 'TestREADMEExternalURLs' -count=1 -v
+  go test ./internal/cmd -run TestREADMEExternalURLsResolve -count=1 -v
+# 35 fetched / 3 skipped / 38 extracted at 3181d34
 
-# 🔴 THE INSTRUMENT THAT ENDED THIS ARC — run it BEFORE scoping any reduction.
-# Byte mass by similarity bucket, with BOTH controls. A heading list is not evidence.
-python3 - <<'EOF'
-import re,difflib,subprocess,collections
-s=open('README.md',encoding='utf-8').read()
-i=s.index('\n## Submit & auth\n'); j=s.index('\n## Submission status', i)
-sec=s[i:j]
-pool=[subprocess.run(['./bin/civitai']+c+['--help'],capture_output=True,text=True).stdout
-      for c in (['app','submit'],['app','validate'],['app','listing'],['whoami'],['login'])]
-norm=lambda t:' '.join(re.sub(r'`|\*\*|\*|>|#','',t).lower().split())
-L=[norm(p) for h in pool for p in re.split(r'\n\s*\n',h) if p.strip()]
-ps=[p for p in re.split(r'\n\s*\n',sec) if not p.strip().startswith('```') and len(norm(p))>=40]
-b=collections.Counter()
-for p in ps: b[round(max(difflib.SequenceMatcher(None,norm(p),q).ratio() for q in L),1)]+=len(p.encode())
-for k in sorted(b): print(' %.1f %7d B'%(k,b[k]))
-print('POSITIVE %.2f'%max(difflib.SequenceMatcher(None,L[5],q).ratio() for q in L))
-print('NEGATIVE %.2f'%max(difflib.SequenceMatcher(None,'the quick brown fox jumps over the lazy dog',q).ratio() for q in L))
-EOF
+# --- rank 3, docs#85: verify by CONTENT (a squash makes ancestry lie) ----------
+cd /home/zach/workspace/civit/civitai-developer-docs && git fetch origin -q
+for f in site/guide/cli.md apps/reference/cli.md public/agent-setup/prompt.md agent-setup/index.md; do
+  printf '%-34s macOS/Linux -> %s\n' "$f" \
+    "$(git show origin/main:$f | grep -c 'macOS / Linux\|macOS/Linux')"   # all 0
+done
 
-# 🔴 SITE-vs-BINARY, READING THE RAW PAGE. A WebFetch SUMMARY produced two false
-# "measured" drift rows in #656 — it folded the read commands' --json into the
-# Download section and dropped a sentence. Never diff against a summary.
-curl -s -L https://developer.civitai.com/site/guide/cli -o /tmp/site.html
-python3 -c "import re,html; s=open('/tmp/site.html',encoding='utf-8',errors='replace').read(); \
-  s=re.sub(r'<(script|style).*?</\1>','',s,flags=re.S|re.I); \
-  print(re.sub(r'\s+',' ',html.unescape(re.sub(r'<[^>]+>',' ',s))))" > /tmp/site.txt
-grep -o -i 'prebuilt binar[^.]*\.' /tmp/site.txt          # IS on the site
-make build && ./bin/civitai model-versions get 999999999 --json; echo "exit=$?"  # 4; site says 1
-grep -nE '^(homebrew_casks|brews):' .goreleaser.yaml      # casks only -> macOS-only
+# 🔴 RUN THE EXAMPLES, DO NOT READ THEM. This is what found seven broken ones.
+/home/zach/workspace/civit/cli/bin/civitai download 128713 --dry-run   # exit 2, ambiguous
+/home/zach/workspace/civit/cli/bin/civitai download 691639 --dry-run   # exit 0
 
-# 🔴 A RED `pins-vs-published` IS A FACT ABOUT npm UNTIL THIS SAYS OTHERWISE.
-CIVITAI_CHECK_PUBLISHED_PINS=1 \
-  go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -count=1
+# --- the docs repo's gates (need `npm ci` first) ------------------------------
+for c in check:agent-setup check:no-flag-tables check:cli-install-parity \
+         check:md-regions check:built-site test:samples:site; do
+  printf '%-28s ' "$c"; npm run --silent $c >/dev/null 2>&1; echo "rc=$?"
+done
+# check:cli-snapshot is RED on main for a PRE-EXISTING reason -> docs#86. Not a regression.
 
-# lint is a SEPARATE CI job and NOT a required context; `make ci` does not run it.
-nix-shell -p golangci-lint --run "golangci-lint run"      # 0 issues at 2.13.2; CI pins 2.12.2
+# --- the byte ratchet still bounds (isolate the mutant, or it dies wrongly) ----
+# Append to prompt.md, THEN `npm run gen:agent-setup-page`, else check 4 kills it
+# and check 5 never runs. Assert the budget-specific error, not a bare non-zero.
 ```
 ## Defects (batched)
 
-- 🔴 **Four `developer.civitai.com/site/guide/cli` drift items** (enumerated verbatim in the
-  resolved Open-investigation block above): the Homebrew macOS/Linux error, `--json` on
-  `download`, the missing `--force`/`--yes`, and the missing "Prebuilt binary" install method.
-  They belong to `civitai/civitai-developer-docs`, **not** this repo. **NOT FILED** — filing in
-  another org repo is outward-facing and was left to the operator. **Closing condition:** a
-  merged PR in that repo, or an explicit decision not to fix. Until then, treat every remaining
-  link-out target as suspect.
-- **`## Download model files` gained +98 B in a slimming PR.** Defensible (the note is what
-  stops the next pass re-deriving the false premise) but worth re-reading once L3/L4 land, in
-  case the three pointer paragraphs added across the file read as ceremony in aggregate.
-- **The `/apps/reference/` snapshot page was not probed** — see the Open-investigation block.
-- **Nothing pins the four site-drift facts.** If the docs site is fixed, nothing in this repo
-  notices; if it regresses, likewise. The new link guard checks liveness, **not correctness**.
+- **`docs#85` grew from 2 files to 6 after review.** Defensible — every widening was a measured
+  defect, not scope creep — but worth one read of `8c2a6e2` in aggregate to check the added prose
+  does not read as ceremony.
+- **The `readme-links` cron has never fired.** Both production runs were hand dispatches. The
+  first scheduled run is the only untested trigger path; if Monday passes with no run, the `cron`
+  expression is the suspect.
+- ~~Four `developer.civitai.com` drift items, NOT FILED~~ — **RETIRED**, see the Open-investigation
+  block above. Fixed and merged as `8c2a6e2`.
