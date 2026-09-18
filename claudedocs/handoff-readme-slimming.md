@@ -27,13 +27,27 @@ Operator's words: *"readme is still way overly verbose."*
 🔴 **RANK 1 IS MERGED. L3 AND L4 ARE MEASURED AND WITHDRAWN. THE ARC'S PREMISE IS
 EXHAUSTED: the README's remaining size is CONTRACT, not duplication.**
 
-`main` is `c81ea2d`, clean. README **272,461 B**.
+`main` is **`b37d683`**, clean, nothing uncommitted. README **272,461 B** (from 277,572 at
+arc start). **All three of this arc's PRs are merged; nothing is in flight.**
 
 | | |
 |---|---|
 | **#656** merged `392e4f3` | rank 1 (L1+L2), **−5,111 B**. Verified by CONTENT per file against `origin/main` (existence proven first with `git cat-file -e`), not by ancestry — a squash never makes the branch head an ancestor |
 | **#657** merged `c81ea2d` | the handoff |
-| claims | `readme-slimming-1` and `-2` released; `-3` released with L4 withdrawn |
+| **#658** merged `b37d683` | the L3/L4 withdrawal record below. Also verified by content |
+| claims | `readme-slimming-1`, `-2`, `-3` **all released** |
+| open PRs | only **#602**, which is not this arc's |
+
+⚠ **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` → **rc=5**, nothing resolved.
+It printed a POSITIVE CONTROL (the same endpoint answered 3 links for a different session), so
+the board is reachable and the token accepted — but a wrong session id ALSO answers `200` with
+an empty array, so this zero is **not** a clean bill of health. `… field <doc>` → rc=1 (no
+field present), and none was added.
+
+⚠ **One leftover worktree, deliberately not removed:** `/home/zach/workspace/civit/cli-slim`
+holds `docs/handoff-readme-slimming` at `c3bc346` — the PREVIOUS session's tree, whose content
+merged as #655. Safe to remove, but it is not this session's and worktree removal has real
+blast radius, so it is the operator's call.
 
 ### 🔴 L3 AND L4: WITHDRAWN ON MEASUREMENT — do not re-derive their byte projections
 
@@ -539,20 +553,38 @@ go test ./internal/cmd/ -run 'Attribution|Troubleshooting|README|Readme|readme' 
 # state only — commit first, or it measures the previous commit.
 make ci-shallow                                          # 21/21
 
-# the link guard. Offline by default; this is the live run.
+# the link guard. 🔴 OFFLINE BY DEFAULT AND RUN BY NO CI JOB — see rank 2.
 CIVITAI_CHECK_README_LINKS=1 \
   go test ./internal/cmd/ -run 'TestREADMEExternalURLs' -count=1 -v
-# 38 extracted / 35 fetched / 3 skipped / 0 dead at 678bd0b
 
-# 🔴 THE SITE-vs-BINARY PROBE — run this before quoting ANY link-out figure for L3/L4,
-# and read the RAW PAGE. A summary of it produced two false "measured" rows in #656.
+# 🔴 THE INSTRUMENT THAT ENDED THIS ARC — run it BEFORE scoping any reduction.
+# Byte mass by similarity bucket, with BOTH controls. A heading list is not evidence.
+python3 - <<'EOF'
+import re,difflib,subprocess,collections
+s=open('README.md',encoding='utf-8').read()
+i=s.index('\n## Submit & auth\n'); j=s.index('\n## Submission status', i)
+sec=s[i:j]
+pool=[subprocess.run(['./bin/civitai']+c+['--help'],capture_output=True,text=True).stdout
+      for c in (['app','submit'],['app','validate'],['app','listing'],['whoami'],['login'])]
+norm=lambda t:' '.join(re.sub(r'`|\*\*|\*|>|#','',t).lower().split())
+L=[norm(p) for h in pool for p in re.split(r'\n\s*\n',h) if p.strip()]
+ps=[p for p in re.split(r'\n\s*\n',sec) if not p.strip().startswith('```') and len(norm(p))>=40]
+b=collections.Counter()
+for p in ps: b[round(max(difflib.SequenceMatcher(None,norm(p),q).ratio() for q in L),1)]+=len(p.encode())
+for k in sorted(b): print(' %.1f %7d B'%(k,b[k]))
+print('POSITIVE %.2f'%max(difflib.SequenceMatcher(None,L[5],q).ratio() for q in L))
+print('NEGATIVE %.2f'%max(difflib.SequenceMatcher(None,'the quick brown fox jumps over the lazy dog',q).ratio() for q in L))
+EOF
+
+# 🔴 SITE-vs-BINARY, READING THE RAW PAGE. A WebFetch SUMMARY produced two false
+# "measured" drift rows in #656 — it folded the read commands' --json into the
+# Download section and dropped a sentence. Never diff against a summary.
 curl -s -L https://developer.civitai.com/site/guide/cli -o /tmp/site.html
-python3 -c "import re,html,sys; s=open('/tmp/site.html',encoding='utf-8',errors='replace').read(); \
+python3 -c "import re,html; s=open('/tmp/site.html',encoding='utf-8',errors='replace').read(); \
   s=re.sub(r'<(script|style).*?</\1>','',s,flags=re.S|re.I); \
   print(re.sub(r'\s+',' ',html.unescape(re.sub(r'<[^>]+>',' ',s))))" > /tmp/site.txt
-grep -o -i 'prebuilt binar[^.]*\.' /tmp/site.txt          # IS on the site — row 4 retracted
-make build
-./bin/civitai model-versions get 999999999 --json; echo "exit=$?"   # 4; the site says 1
+grep -o -i 'prebuilt binar[^.]*\.' /tmp/site.txt          # IS on the site
+make build && ./bin/civitai model-versions get 999999999 --json; echo "exit=$?"  # 4; site says 1
 grep -nE '^(homebrew_casks|brews):' .goreleaser.yaml      # casks only -> macOS-only
 
 # 🔴 A RED `pins-vs-published` IS A FACT ABOUT npm UNTIL THIS SAYS OTHERWISE.
