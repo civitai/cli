@@ -22,9 +22,16 @@ cd scripts/dogfood
 for e in node-root node-user ubuntu-apt stale-cli; do
   docker build -q -t "df-$e" -f "envs/$e.Dockerfile" .
 done
-bash driver.sh                        # 4 models x 4 environments, 4 at a time
-bash grade.sh t-claude-noderoot root  # grade one finished trial
+bash driver.sh                                  # the matrix, 4 trials at a time
+bash grade.sh t-claude-noderoot-claudeid root   # grade one finished trial
+
+# a cheap smoke run — one model, one env, BOTH identities:
+DOGFOOD_MODELS='google/gemini-3.8-flash|gemini' DOGFOOD_ENVS='df-node-root|noderoot|root' bash driver.sh
 ```
+
+Trial ids are `t-<model>-<env>-<identity>`. Set `FULL_CROSS=1` to run every
+model × env × identity combination instead of the default, which crosses both
+identities only on the cheapest environment.
 
 `driver.sh` skips a trial whose `runs/<id>/transcript.jsonl` already exists, so it
 is resumable. Each trial writes a full transcript — every message, every command,
@@ -33,8 +40,11 @@ every result, and per-call token usage.
 ## Reading a verdict
 
 `grade.sh` measures the CONTAINER. It never reads what the agent said it did,
-because those are different claims — in the 2026-09-18 matrix, 5 of 8 agents
-declared success on a setup that did not survive their own shell.
+because those are different claims — in the 2026-09-18 matrix, **0 of 8** agents
+on the `--prefix` path noticed that the `AGENTS.md` they had just written names a
+binary no later shell can find. Most of them reported the situation accurately as
+far as they went (8/8 relayed the PATH line, 6/8 warned it would not persist);
+what none of them reported is the thing only the container can tell you.
 
 It reports the arc's frozen closing condition, which needs BOTH halves:
 
@@ -66,8 +76,16 @@ A grader that has not been watched to go red AND green is a claim about itself.
 `civitai agent-setup` branches hard on which agent it detects, and detection is by
 environment variable. `--agent-env CLAUDECODE=1` makes a trial the `claude` path;
 omitting it makes it `other`, which is what every agent outside the CLI's table
-gets. **Vary it independently of the model** — the first matrix confounded the two
-and needed three extra trials to separate them.
+gets.
+
+🔴 **Identity is CROSSED with the model in `driver.sh`, never bound to it.** The
+first version of this harness gave `claude`/`gpt` a known identity and
+`gemini`/`grok` none. The resulting grid partitioned perfectly by model — and was
+equally well explained by identity. Read the wrong way it says *"Gemini and Grok
+fail the onboarding"*, which is **false**: swap the identities and the outcome
+swaps with them. The default cross runs both identities on the cheapest
+environment for exactly this reason, and a per-model claim is only readable
+between two cells whose identity matches.
 
 ## Known limits
 

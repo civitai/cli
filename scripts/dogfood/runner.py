@@ -21,9 +21,11 @@ import urllib.error
 import urllib.request
 
 API = "https://openrouter.ai/api/v1/chat/completions"
-# Operator-supplied, never stored in this repo. OPENROUTER_API_KEY wins; the
-# opencode credential file is a convenience fallback for a machine that has one.
-AUTH_FALLBACK = pathlib.Path.home() / ".local/share/opencode/auth.json"
+# Operator-supplied, and the ONLY source. An earlier version fell back to
+# reading another tool's credential file when this was unset — in a PUBLIC repo
+# that means a contributor who clones and runs the driver without exporting a
+# key bills a credential they never pointed at this, which is a surprise in the
+# spend direction. Refuse instead.
 
 # What the model is. Deliberately thin: a coding agent with a shell, nothing
 # about Civitai. Anything more would be hand-holding the artifact under test.
@@ -63,11 +65,7 @@ def key() -> str:
     k = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if k:
         return k
-    if AUTH_FALLBACK.exists():
-        k = json.loads(AUTH_FALLBACK.read_text()).get("openrouter", {}).get("key", "")
-        if k:
-            return k
-    sys.exit("no OpenRouter key: set OPENROUTER_API_KEY")
+    sys.exit("no OpenRouter key: export OPENROUTER_API_KEY (this spends real money)")
 
 
 def sh(container: str, user: str, command: str, timeout: int = 300) -> str:

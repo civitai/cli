@@ -48,7 +48,17 @@ x 'for f in "$HOME"/.claude.json "$HOME"/.mcp.json /work/.mcp.json "$HOME"/.code
 printf -- '--- verdict\n'
 LOGIN_VER=$(printf '%s' "$LOGIN_OUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
 AGENT_VER=$(x 'civitai --version' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
+
+# 🔴 ROW PRESENCE IS PART OF THE VERDICT, NOT DECORATION. Any proposal to stop
+# the MCP rows failing `ok` must keep REPORTING them — the user still has to
+# paste. Without this assertion the obvious WRONG fix, deleting the rows
+# outright, grades exactly like the right one.
+ROWS=$(printf '%s' "$CHECK_OUT" | jq -r '[.checks[].name]|join(",")' 2>/dev/null)
+MCP_ROWS=$(printf '%s' "$CHECK_OUT" | jq -r '[.checks[]|select(.name|startswith("mcp-"))]|length' 2>/dev/null)
+[ -z "$MCP_ROWS" ] && MCP_ROWS=unreadable
+
 PASS=no
-if [ "$OK" = "true" ] && [ -n "$LOGIN_VER" ] && [ "$LOGIN_VER" = "$AGENT_VER" ]; then PASS=yes; fi
-printf 'check_ok=%s failed_checks=[%s] login_version=%s agent_shell_version=%s CLOSING_CONDITION=%s\n' \
-  "$OK" "${FAILED:-}" "${LOGIN_VER:-none}" "${AGENT_VER:-none}" "$PASS"
+if [ "$OK" = "true" ] && [ -n "$LOGIN_VER" ] && [ "$LOGIN_VER" = "$AGENT_VER" ] \
+   && [ "$MCP_ROWS" = "2" ]; then PASS=yes; fi
+printf 'check_ok=%s failed_checks=[%s] mcp_rows=%s rows=[%s] login_version=%s agent_shell_version=%s CLOSING_CONDITION=%s\n' \
+  "$OK" "${FAILED:-}" "$MCP_ROWS" "${ROWS:-}" "${LOGIN_VER:-none}" "${AGENT_VER:-none}" "$PASS"

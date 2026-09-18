@@ -121,12 +121,39 @@ Three consequences, all observed:
 3. **The arc's frozen closing condition is unreachable on this path**, because it
    requires `ok: true`.
 
-🔴 **This is the THIRD instance of a shape the file's own comments have already
-recognised twice.** `authenticated` is excluded from the verdict because *"a
-fresh, correct, unauthenticated setup is a SUCCESS"*; `claude-md` is excluded for
-an agent that does not read it because otherwise *"the hosted prompt reports that
-as a failed setup"*. The `other` case is the same sentence a third time, and the
-exclusion list does not cover it:
+🔴 **RETRACTED — "this is the THIRD instance of a shape the file's own comments
+have already recognised twice", and the exclusion fix that rested on it. A
+round-0 audit refuted both; the retraction is kept in place rather than deleted
+because the argument was persuasive and someone will re-derive it.**
+
+Why it fails. The two existing exclusions are exclusions because **no work
+remains**: `authenticated` is out of scope by design (*"a fresh, correct,
+unauthenticated setup is a SUCCESS"*), and `claude-md` is **inert** for an agent
+that does not read it. On `other`, work remains and has not been done — the MCP
+servers genuinely are unregistered and the user genuinely must paste. Not the
+same sentence.
+
+🔴 **And the code already decided this case, explicitly, in the docstring of the
+function that emits the rows — `internal/cmd/agent_setup.go:739-742`:**
+
+> *"An agent this CLI has no target for, and a user-scoped target with no
+> resolvable home directory, **are both genuinely unfinished setups** — but a row
+> reading "not registered in " with an empty path is an answer with none of the
+> content."*
+
+The first draft of this section did not quote that comment. It read the
+`checkCountsTowardVerdict` switch as an omission when a sibling function records
+the decision in words.
+
+🔴 **Worse, the recommended fix contradicted this document's own reasoning ~40
+lines below.** §A2 rejects forcing `--agent cursor` on the not-in-table path
+*because "`--check` then reports a green setup that does not work"* — and
+excluding the rows from the verdict produces exactly that outcome by a different
+route. The same consequence was disqualifying in one paragraph and recommended in
+another.
+
+**What is left standing, below, is the part that needs no verdict change at all.**
+For reference, the switch as it is today:
 
 ```go
 func checkCountsTowardVerdict(name, agent string) bool {
@@ -167,12 +194,30 @@ running agent will never read, and `--check` then reports a green setup that doe
 not work. So the fix for A2 is a *conditional* instruction, and it does not remove
 the need to fix A.
 
-**Recommended fix (structural, matching the existing precedent):** the two MCP
-rows must not count when `agentTargets[agent]` is unknown — the rows STAY, because
-they are true and the user does need to paste, exactly as `authenticated` stays.
-The alternative — teaching `prompt.md` to distinguish "a check that failed" from
-"a check that reports work only you can do" — pushes a product invariant into
-prose, and prose is the channel this arc has repeatedly measured to be lossy.
+### What is uncontested, and what is a design call
+
+**Uncontested, and fixable without touching verdict semantics:**
+
+1. The remediation string *"re-run `civitai agent-setup` to fix what it can
+   write"* names an action that can never change the outcome on this path. It
+   should say what is actually left to do: paste the printed config.
+2. `prompt.md` mentions `--agent` **zero** times (§A2), so an agent landing on
+   `other` has no documented recovery.
+
+**The design call, which this document does NOT get to make:** `prompt.md` step 4
+says *"Do not report success if any check fails"*, and on this path a check fails
+permanently by design. Those cannot both stand. Either the prompt learns to
+distinguish "a check that failed" from "a check that reports work only YOU can
+do", or the verdict does. 🔴 **The first draft of this file picked the second and
+argued it from a precedent that does not exist** (see the retraction above); the
+first is now the likelier answer, because it is the one the code's own docstring
+is consistent with — but the `--json` contract has ledgered consumers
+(`readme_agent_setup_claims_test.go`), so whoever owns that contract decides, not
+this report.
+
+⚠ **Consequence for the arc's closing condition:** it requires `ok: true`, so it
+is unreachable on this path. That is a fact about the CONDITION. It must not be
+resolved by quietly widening the condition until it passes.
 
 ## Defect B — the documented `--prefix` remedy produces a setup that does not survive the shell
 

@@ -28,3 +28,10 @@ coverage.html
 # blind-staging. Ignoring the directory removes that from being one `git add -A`
 # away from a committed private key.
 /node_modules/
+
+# `scripts/dogfood/driver.sh` writes one full model transcript per trial into
+# runs/ and logs/ — tens of thousands of lines of raw model output, and the
+# containers they describe are throwaway. Ignored so a routine stage cannot
+# sweep a matrix of them in, the same reasoning as /node_modules/ above.
+/scripts/dogfood/runs/
+/scripts/dogfood/logs/

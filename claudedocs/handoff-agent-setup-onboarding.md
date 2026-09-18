@@ -29,14 +29,16 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
   This is frozen as the condition this arc was opened on.
 
 - 🔴 **MEASURED 2026-09-18 — NOT MET. 4 of 16 blind trials reached it**, and the
-  12 failures are explained by exactly two defects (ranks 33 and 34 below), with
+  12 failures are explained by exactly two causes (ranks 33 and 34 below — 34 is a
+  defect, 33 is a **contested design call**, see its entry), with
   a **model-independent VERDICT** across 19 trials — ⚠ stated at that width on
   purpose: the machine state did not depend on the model, but what the user is
   TOLD about it did (2 of 8 agents omitted the PATH-persistence warning, both the
   same model). "No model-dependent behaviour at all" is false. The condition is
   additionally **unreachable by construction on the `other` agent path**, which is
-  rank 33 — so a future close-check must fix 33 first or it is grading an
-  impossible bar. Method, grid, controls and limits:
+  rank 33 — so a future close-check must SETTLE 33 first or it is grading an
+  impossible bar. 🔴 Settle, not "fix": whether the CLI's verdict is wrong there
+  is contested, and the first draft of rank 33 asserted it was and was refuted. Method, grid, controls and limits:
   [`claudedocs/refs/agent-setup-dogfood-matrix-2026-09-18.md`](refs/agent-setup-dogfood-matrix-2026-09-18.md).
   The harness is committed at `scripts/dogfood/`, so this is re-runnable rather
   than a one-off reading — ⚠ it feeds every trial the true bytes via `curl`, so it
@@ -435,7 +437,9 @@ before those rounds' commits were read back.
   `19455c0`. `via: command`
 
 ### ⚠ OPEN — an agent the CLI does not know can never reach `ok: true` (rank 33)
-- as-of: 2026-09-18, from 19 blind trials
+- as-of: 2026-09-18, from 19 blind trials; **argument rewritten the same day after
+  a round-0 audit refuted its original framing — read the RETRACTED bullet below
+  before acting on any part of this block**
 
 For `agent == other` — every agent with no entry in the CLI's table — `--check`
 returns `ok: false` and exit 1 after a **completely correct** setup, forever.
@@ -456,17 +460,28 @@ returns `ok: false` and exit 1 after a **completely correct** setup, forever.
 - **Ruled out:** that this is model behaviour — see the swap above. `via: measurement`
   · That `authenticated` is the cause — it is already excluded by
   `checkCountsTowardVerdict`. `via: code`
-- **Root cause, located:** `internal/cmd/agent_setup.go` `checkCountsTowardVerdict`
+- **Mechanism, located:** `internal/cmd/agent_setup.go` `checkCountsTowardVerdict`
   excludes `authenticated` and `claude-md` and nothing else, so the two MCP rows
-  count even for an agent the CLI structurally cannot write config for.
-- 🔴 **This is the same shape the file's own comments have already recognised
-  TWICE** (both exclusions carry a comment saying the hosted prompt would
-  otherwise "report that as a failed setup"). Third instance, not a new class.
-- **Why it bites the entrypoint:** `prompt.md` step 4 says *"Do not report success
-  if any check fails"*, so the prompt instructs the agent to report a correct
-  setup as a failure; and the CLI's own remediation line — "re-run `civitai
-  agent-setup` to fix what it can write" — names an action that can never change
-  the outcome on this path.
+  count even for an agent the CLI has no config target for.
+- ❌ **RETRACTED — "this is the same shape the file's own comments have already
+  recognised TWICE; third instance, not a new class."** Refuted by a round-0
+  audit. The two existing exclusions apply where **no work remains** (auth is out
+  of scope; the CLAUDE.md shim is inert for a non-Claude agent); on `other` work
+  remains and the user must paste. 🔴 **And `agent_setup.go:739-742` — the
+  docstring of the function emitting these rows — records the opposite decision
+  in words: *"An agent this CLI has no target for … are both genuinely unfinished
+  setups"*.** The first draft read a switch as an omission while a sibling
+  function stated the intent. **Do not re-derive the exclusion fix from the
+  switch alone.**
+- **What bites the entrypoint, and is not contested:** `prompt.md` step 4 says
+  *"Do not report success if any check fails"* while this path fails one
+  permanently by design — those cannot both stand; and the CLI's own remediation
+  line, "re-run `civitai agent-setup` to fix what it can write", names an action
+  that can never change the outcome here.
+- 🔴 **Which surface moves is a DESIGN CALL, not a diagnosis.** `prompt.md`'s
+  wording or the verdict semantics — and the `--json` contract has ledgered
+  consumers (`readme_agent_setup_claims_test.go`), so it belongs to whoever owns
+  that contract. This block reports; it does not decide.
 - 🔴 **A2 — the escape hatch exists and the entrypoint never mentions it.**
   `prompt.md` contains `--agent` **zero** times, while
   `civitai agent-setup --track app --agent cursor` yields `{"ok":true}` on the spot.
@@ -525,9 +540,13 @@ returns `ok: false` and exit 1 after a **completely correct** setup, forever.
 🔴 **Ranks 1–14, 18–24 are DONE — numbering preserved** so live `claim-work` slugs keep pointing
 at what they were taken for. Open here: **15, 16, 17, 25, 26, 27, 29, 33, 34**.
 
-🔴 **33 and 34 are the only two that block the arc's closing condition, and they outrank
-everything else here.** They are the entire explanation of a 4-of-16 blind-trial result;
-16, 17, 25, 26 and 27 are cleanups with no bearing on whether the entrypoint works.
+🔴 **33 and 34 are the only two that stand between the arc and its closing condition, and they
+outrank everything else here** — they are the entire explanation of a 4-of-16 blind-trial
+result, where 16, 17, 25, 26 and 27 are cleanups with no bearing on whether the entrypoint
+works. ⚠ **But they are different KINDS of item and only 34 is work.** 34 is a defect with a
+mechanical closing condition. **33 is a contested design call** carrying `forcing: none`: its
+first draft asserted a fix, a round-0 audit refuted the argument, and what it needs now is a
+DECISION from the `--json` contract's owner — not an implementation by the next session.
 
 ➡ **Ranks 23, 28, 30, 31 and 32 were the FORGERY effort and have MOVED** to
 [`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md), which now carries its
@@ -578,21 +597,49 @@ that catches an UNCLAIMED duplicate; the forgery doc mandates it. This table is 
     dated evidence to `claudedocs/refs/agent-setup-onboarding.md` behind a pointer.
     🔴 Do NOT satisfy this by deleting an open investigation, a gotcha or a ruled-out theory.
     forcing: none
-33. 🔴 **`--check` can never report `ok: true` for an agent outside the CLI's table.**
-    Diagnosed, located, and the fix has a precedent in the same function. Blocks the arc's
-    closing condition outright — the condition requires `ok: true` and this path cannot
-    produce it. Recommended fix: exclude `mcp-site`/`mcp-orch` from the verdict when
-    `agentTargets[agent]` is unknown, keeping the rows (they are true and the user does need
-    to paste), exactly as `authenticated` is kept and excluded.
-    closing-condition: on a fresh machine, with no agent env var set, `civitai agent-setup
-    --track app && civitai agent-setup --check --json` reports `ok: true` and exits 0, with
-    both MCP rows still PRESENT and still `false`. Checked by re-running
-    `scripts/dogfood/driver.sh` — any `other`-identity cell must grade
-    `CLOSING_CONDITION=yes`.
-    forcing: gate
+33. **`--check` can never report `ok: true` for an agent outside the CLI's table, and what
+    to DO about that is genuinely contested.**
+    🔴 **REWRITTEN after a round-0 audit — do not restore the earlier version, which is
+    wrong in a way that reads as well-evidenced.** It called this "the third instance of a
+    shape the file's own comments already recognise twice" and recommended excluding
+    `mcp-site`/`mcp-orch` from the verdict when `agentTargets[agent]` is unknown. Both
+    halves fail:
+    - **The precedent is not a precedent.** `authenticated` is excluded because auth is out
+      of scope BY DESIGN and `claude-md` because the shim is INERT for a non-Claude agent —
+      in both, **no work remains**. On `other`, work remains and has not been done: the MCP
+      servers really are unregistered and the user really must paste.
+    - **The code already decided the opposite, explicitly, and the earlier version did not
+      quote it.** `internal/cmd/agent_setup.go:739-742`, the docstring of the function that
+      emits these very rows: *"An agent this CLI has no target for, and a user-scoped target
+      with no resolvable home directory, **are both genuinely unfinished setups**"*.
+    - 🔴 **And the recommended fix contradicted this arc's own reasoning two paragraphs
+      away.** `refs/…-matrix-2026-09-18.md` rejects forcing `--agent cursor` on this path
+      *because "`--check` then reports a green setup that does not work"* — and excluding the
+      rows produces that same outcome by another route. Disqualifying in one paragraph,
+      recommended in the next.
+    **What survives, and is not contested:** (a) the remediation string *"re-run `civitai
+    agent-setup` to fix what it can write"* names an action that can never change the
+    outcome on this path; (b) `prompt.md` mentions `--agent` **zero** times, so an agent
+    landing on `other` has no documented recovery and the one that recovered did it by
+    asking the user; (c) `prompt.md` step 4's *"Do not report success if any check fails"*
+    and a permanently-`false` verdict cannot both be right.
+    **The open question is which of the two moves** — `prompt.md`'s wording, or the verdict
+    semantics — and it needs a decision from whoever owns the `--json` contract, because
+    `readme_agent_setup_claims_test.go` ledgers consumers against the current one.
+    ⚠ **This also means the arc's frozen closing condition is unreachable on this path.**
+    That is a fact about the CONDITION, not proof the CLI is wrong; resolving it is part of
+    the same decision. Do not quietly widen the condition to make it pass.
+    closing-condition: **a written decision** in `claudedocs/decisions/` naming which of the
+    two surfaces moves and why, plus (a) and (b) fixed in whichever surface it names.
+    Checked by: the decision file exists and its named change is merged.
+    forcing: none — this is a design call, not a defect to be fixed by the next session
 34. 🔴 **The `--prefix` install remedy leaves `civitai` unreachable from every later shell.**
-    8 of 8 trials on a non-writable prefix; 5 of 8 reported success anyway. The written
-    `AGENTS.md` then instructs future sessions to run a binary they cannot find.
+    8 of 8 trials on a non-writable prefix. The written `AGENTS.md` then instructs future
+    sessions to run a binary they cannot find, and **0 of 8** agents noticed that — the
+    number that carries this item. (8/8 relayed the PATH line and 6/8 warned it would not
+    persist, so the agents are not the weak link. ⚠ An earlier draft of this item said
+    "5 of 8 reported success anyway"; that came from a keyword regex and is RETRACTED —
+    see the correction in the block above and `refs/…-matrix-2026-09-18.md`.)
     ⚠ Pick the fix before building: (a) step 4 verifies in a NEW shell so the failure is at
     least visible, (b) install to a prefix already on PATH, (c) `AGENTS.md` records the
     absolute path. (a) is the smallest honest change; (b) and (c) actually fix it.
