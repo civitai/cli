@@ -104,11 +104,12 @@ old binary. A verdict of `CLOSING_CONDITION=yes` requires both.
 ## 🔴 Validate the grader before you read a verdict
 
 Three controls. ⚠ **None of them FOUND a defect** — an earlier draft of this line
-claimed each had, and it was wrong. Two of the three grader defects were found on
-real trials and the third by an audit round; the controls are what prove the
-instrument can go red AND green at all, and `ctl-profile` was written afterwards to
-pin the third. That is still not ceremony — an instrument never watched to do both
-is a claim about itself — but it is a weaker claim than "each caught something":
+claimed each had, and it was wrong. Defect 3 was found by an audit round;
+**what found defects 1 and 2 is not recorded and is no longer guessed at** (three
+drafts gave three answers). `ctl-profile` was written afterwards to pin defect 3.
+The controls prove the instrument can go red AND green — still not ceremony, since
+one never watched to do both is a claim about itself, but a weaker claim than "each
+caught something", and weaker again than coverage:
 
 ```bash
 docker run -d --name dogfood-ctl-neg df-node-root sleep infinity
@@ -122,7 +123,8 @@ bash grade.sh ctl-pos root          # MUST report CLOSING_CONDITION=yes
 
 A grader that has not been watched to go red AND green is a claim about itself.
 
-🔴 **A third control, and the one that caught a false GREEN.** Arm B used to run
+🔴 **A third control, pinning a false GREEN that an audit round found** (it did not
+find it — see the retraction above). Arm B used to run
 `bash -lc "zsh -lic '…'"`. The outer bash login shell sources `~/.profile`, whose
 stock `if [ -d "$HOME/.local/bin" ]` block prepends a directory **zsh never sees** —
 so a CLI installed under `$HOME/.local` was visible to the wrapper and invisible to

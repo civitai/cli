@@ -1767,9 +1767,16 @@ bash driver.sh    # 24 trials: per model, noderoot x 3 identities + 3 envs x 1. 
 bash grade.sh t-claude-noderoot-claudeid root   # CLOSING_CONDITION=yes|no, from the container
 ```
 
-🔴 **Run BOTH grader controls first** (README §"Validate the grader") — an untouched
-container must grade `no` and a hand-built success must grade `yes`. Each has already
-caught a grader defect that would have produced a confident wrong verdict.
+🔴 **Run ALL THREE grader controls first** (README §"Validate the grader") — an
+untouched container must grade `no`, a hand-built success must grade `yes`, and
+`ctl-profile` must grade `no` with arm A still green. ⚠ **This said "BOTH" and
+"each has already caught a grader defect" from the first commit through six audit
+rounds**, surviving both the round that added the third control and the round that
+retracted that claim elsewhere — so it prescribed two of three, on a justification
+already withdrawn twice, on the surface a resuming session actually acts from.
+🔴 **And running all three certifies ONE of the three recorded grader defects**
+(see the evidence doc's instrument section): defects 1 and 2 are pinned by nothing.
+The controls prove the instrument can go red and green; they are not coverage.
 
 **Repo gates:** `make ci` AND `make lint` — `make ci` does not run lint, and it does not run
 `schema-drift`, `pins-vs-published` or the other CI jobs either. A green `make ci` is a claim

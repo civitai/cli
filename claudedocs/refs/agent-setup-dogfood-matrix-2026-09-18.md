@@ -71,19 +71,41 @@ as a regression:
 Both were re-run after every change to the grader. **THREE grader defects have been
 found, each of which would have produced a confident wrong verdict.**
 
-🔴 **NONE OF THE THREE WAS FOUND BY A CONTROL, and two earlier drafts of this
-paragraph claimed otherwise.** Defects 1 and 2 were found on a REAL TRIAL; defect 3
-was found by an audit round. The reason is mechanical and worth keeping: **neither
-tabulated control ever produces `ok: false`** — `ctl-neg` yields no JSON at all and
-`ctl-pos` yields `ok: true` — so neither can discriminate defect 2's `jq` expression,
-which differs from the correct one on `ok: false` and nowhere else. A control that
-cannot produce the discriminating input cannot find the defect.
+🔴 **NONE OF THE THREE WAS FOUND BY A CONTROL. That is PROVED; what DID find
+defects 1 and 2 is NOT, and this paragraph stops guessing.** Three drafts gave three
+different answers — "found and fixed by these controls", then "only the first two
+were found by the controls", then "found on a real trial" — and the transcripts that
+would settle it are gitignored. **No positive attribution is made here.** Defect 3
+is the exception: it is dated to audit round 4 in this file's own history.
+
+What IS proved, mechanically: **neither tabulated control ever produces `ok: false`**
+— `ctl-neg` yields no JSON at all and `ctl-pos` yields `ok: true` — so neither can
+discriminate defect 2's `jq` expression, which differs from the correct one on
+`ok: false` and nowhere else (`ok: null` is unreachable: the field is a bare `bool`).
+And reintroducing defect 1 leaves all three controls matching their expectations. **A
+control that cannot produce the discriminating input cannot find the defect** — which
+is the transferable half, and the reason no future draft should re-attribute these.
 
 **What the controls ARE for:** proving the instrument can go red AND green at all,
 which is a different and still necessary claim. `ctl-profile` was WRITTEN to pin
-defect 3 after the fact; it did not find it either. ⚠ Running the two tabulated
-controls certifies neither defect 2 nor defect 3 — validate from the README's full
-control list.
+defect 3 after the fact; it did not find it either.
+
+🔴 **AND BE PRECISE ABOUT WHAT THE FULL CONTROL SET CERTIFIES — IT IS ONE DEFECT OF
+THE THREE.** Measured by reintroducing each defect and reading what the controls
+report: under defect 1 (merged `2>&1` capture) and under defect 2 (`jq '.ok //'`),
+**all three controls still match their documented expectations**. Only `ctl-profile`
+discriminates, and only for defect 3. So:
+
+| defect | covered by a control? |
+|---|---|
+| 1 — stderr ahead of the JSON | **no** |
+| 2 — `jq //` cannot see `ok: false` | **no** |
+| 3 — arm B measured the wrong shell | yes, `ctl-profile` |
+
+⚠ An earlier draft of this paragraph said the tabulated controls certify "neither
+defect 2 nor defect 3", which omits defect 1 and implies the README's fuller list
+closes the gap. It does not: running all three controls certifies against **one** of
+the three recorded defects. Defects 1 and 2 are pinned by nothing.
 
 1. 🔴 **`--check --json` prints its error line to STDERR *ahead of* the JSON**, so
    a `2>&1` capture is unparseable — and `jq` failing then reads as "the command
