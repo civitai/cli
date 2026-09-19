@@ -90,41 +90,36 @@ that wrote it, flagged as such there.
 
 ## State now
 
-- ✅ **RELEASED — `v0.1.106` is live on npm and Homebrew**, re-confirmed independently
-  this session: a container that never built the CLI ran `npm install -g @civitai/cli`
-  from the PUBLIC registry and reported `civitai 0.1.106`, then completed setup
-  end-to-end (the `ctl-pos` grader control).
-- ✅ **Rank 33 — `cli#669` MERGED** (`d0b79ae`), and **MEASURED IN A BLIND TRIAL for the
-  first time**: the `gemini × node-root × other` cell, recorded ❌ `no` under mechanism A
-  on 2026-09-18, now grades `CLOSING_CONDITION=yes` on v0.1.106. See the rank-36
-  investigation block below.
+- ✅ **RELEASED — `v0.1.106` is live on npm and Homebrew**, re-confirmed independently:
+  a container that never built the CLI installed it from the PUBLIC registry and
+  completed setup end-to-end (the `ctl-pos` grader control).
+- ✅ **Rank 33 — `cli#669` MERGED** (`d0b79ae`) and **MEASURED**: mechanism A is CLOSED.
+  All four `other`-identity cells measured post-ship grade `CLOSING_CONDITION=yes`,
+  against 4-of-4 failing on 2026-09-18.
 - ✅ **Rank 35 — `civitai-developer-docs#89` MERGED AND LIVE** (7433 B, step 4 keys on `ok`).
-- ⚠ **Rank 34 — `cli#671` MERGED, `cli#665` REOPENED and still open.** Mechanism B is
-  unfixed and was reproduced this session by the `ctl-profile` control: installing under
-  `--prefix="$HOME/.local"`, `bash -lc 'civitai --version'` → `0.1.106` while
-  `zsh -lic 'civitai --version'` → `command not found`.
-- ✅ **`cli#673` MERGED** (`9588fb0`, squash) — dogfood grader: agent identity in the
-  verdict line, and a stale stderr-ordering claim corrected. Verified by CONTENT with a
-  negative control: `AGENT_ID` appears 3× in `scripts/dogfood/grade.sh` at `origin/main`
-  and 0× at `origin/main~1`. All 13 checks were green SHA-pinned at `1b157f3`.
-- ⏳ **IN FLIGHT — the rank-36 matrix**, 18 trials on an operator-chosen model set
-  (`z-ai/glm-5.3-flash`, `xiaomi/mimo-v2.5`, `deepseek/deepseek-v4-pro`), running in
-  `/home/zach/workspace/civit/cli-dogfood36/scripts/dogfood`. 🔴 **Its results are NOT in
-  this doc** — read `runs/*/transcript.jsonl` and re-grade each container.
-- **Deploy/verify status:** nothing new deployed. `#673` touches only the harness and
-  reaches no user.
-- ⚠ **No `clawgate-task:` field**: `clawgate_handoff.sh resolve` exited **5** (nothing
-  resolved). An unknown session id answers 200 with an empty array, so that zero cannot
-  distinguish "touched no task" from "wrong id". Not a clean bill of health.
-- ⚠ **Live worktrees**, remove by EXACT path: `/home/zach/workspace/civit/cli-dogfood36`
-  (the harness run — holds `runs/` and `logs/`, the only copy of this session's
-  transcripts), `/home/zach/workspace/civit/cli-ho674` (this doc),
-  `/home/zach/workspace/civit/cli-rank33` and `/home/zach/workspace/civit/cli-cc-fix`
-  (both merged — safe to remove).
-- ⚠ **Docker state is NOT clean**: four `df-*` images (342 MB each) and ~10
-  `dogfood-*` containers are live, including three `dogfood-ctl-*` controls. The
-  grader can only re-read a RUNNING container, so removing them destroys the ability
-  to re-grade without a re-run.
+- ✅ **Rank 36 — the matrix RAN and is graded: 18/18, 12 `yes` / 6 `no`.** The verdict is
+  now a function of **prefix-writable alone**; identity no longer determines anything.
+  Full grid and limits in the investigation block below. ⚠ Its comparison clause is
+  **partly unmet** — see rank 36.
+- ⚠ **Rank 34 / `cli#665` — UNFIXED, and the remedy analysis is aimed at the wrong
+  path.** 6 of 6 failing containers (complete enumeration) installed the CLI at
+  `$HOME/.npm-global/bin/civitai`, reachable from NEITHER login shell. The issue's
+  candidate (b) is `--prefix="$HOME/.local"`; **no agent took it.**
+- ✅ **`cli#673` MERGED** (`9588fb0`, squash) — grader identity in the verdict line, and a
+  stale stderr-ordering claim corrected. Verified by CONTENT with a negative control:
+  `AGENT_ID` 3× at `origin/main`, 0× at `origin/main~1`. 13/13 checks green SHA-pinned.
+- **Deploy/verify status:** nothing new deployed. `#673` touches only the harness.
+- ⚠ **No `clawgate-task:` field**: `clawgate_handoff.sh resolve` exited **5**. An unknown
+  session id answers 200 with an empty array, so that zero cannot distinguish "touched no
+  task" from "wrong id". Not a clean bill of health.
+- ⚠ **Live worktrees**, remove by EXACT path: `cli-dogfood36` (holds `runs/` and `logs/` —
+  the ONLY copy of this session's 21 transcripts), `cli-ho674` (this doc), `cli-rank33`
+  and `cli-cc-fix` (both merged — safe to remove).
+- ⚠ **21 `dogfood-*` trial containers + 3 `dogfood-ctl-*` controls are RUNNING**, plus four
+  `df-*` images at 342 MB each. 🔴 `grade.sh` can only read a RUNNING container and
+  refuses a stopped one by name, so tearing these down means any re-grade needs a
+  **re-run** — and `runner.py` opens each transcript `"w"`, so a re-run DESTROYS the
+  transcripts too. Copy `runs/` aside before any re-run.
 
 ## Open investigations — live diagnosis state
 
@@ -716,7 +711,7 @@ all three, and its header retracted.**
   value was ~0 against that. `via: measurement`
 - **Next probe:** the dogfood matrix — see ranked item 36.
 
-### ⏳ IN FLIGHT — rank 36: the first post-ship dogfood measurement, and a 25× cost error in this doc
+### ~~⏳ IN FLIGHT — rank 36: the first post-ship dogfood measurement, and a 25× cost error in this doc~~ ✅ MEASURED 2026-09-19 — the matrix completed; see "✅ MEASURED — rank 36" below. The cost and control findings here STAND; only the "in flight" status is superseded.
 - as-of: 2026-09-19
 
 - **Symptom + exact repro:** the arc shipped ranks 33 and 35 to move the 12-of-16
@@ -802,10 +797,81 @@ all three, and its header retracted.**
   done
   ```
 
+### ✅ MEASURED — rank 36: mechanism A is closed, mechanism B is not, and agents do not take the documented remedy
+
+- as-of: 2026-09-19
+
+**Supersedes the "⏳ IN FLIGHT — rank 36" block above** (its status only; its cost and
+grader-control findings stand).
+
+- **Observed (with values) — the full grid.** 18 trials, all stopped `"finished"` in 7–11
+  steps, graded from the containers with the `#673` grader:
+
+  | env | prefix writable | identity | glm-5.3-flash | mimo-v2.5 | deepseek-v4-pro |
+  |---|---|---|---|---|---|
+  | node-root | yes | claude | ✅ yes | ✅ yes | ✅ yes |
+  | node-root | yes | codex | ✅ yes | ✅ yes | ✅ yes |
+  | node-root | yes | **other** | ✅ **yes** | ✅ **yes** | ✅ **yes** |
+  | stale-cli 0.1.101 | yes | claude | ✅ yes | ✅ yes | ✅ yes |
+  | node-user | **no** | claude | ❌ no | ❌ no | ❌ no |
+  | ubuntu-apt | **no** | claude | ❌ no | ❌ no | ❌ no |
+
+  Every `yes` reads `login_version=0.1.106 agent_shell_version=0.1.106 mcp_rows=2`; every
+  `other` cell reads `failed_checks=[mcp-site,mcp-orch,authenticated]` with both MCP rows
+  PRESENT and `false`, which is rank 33's design. Every `no` reads
+  `agent=unknown check_ok=parse-error mcp_rows=unreadable`.
+
+- 🔴 **MECHANISM A IS CLOSED.** The `other` identity passes on all three models. With the
+  `gemini × node-root × other` smoke cell — which IS one of the recorded four — that is
+  **four `other` cells measured post-ship, all `yes`**, against 4-of-4 failing before.
+
+- 🔴 **MECHANISM B IS UNFIXED, AND THE REMEDY ANALYSIS IS AIMED AT A PATH NOBODY WALKS.**
+  Enumerated, not sampled — **6 of 6** failing containers:
+  `installed_at=/home/dev/.npm-global/bin/civitai bash_login=none zsh_login=none`.
+  The install SUCCEEDS; nothing makes it reachable. The hosted prompt documents candidate
+  **(b)** as `--prefix="$HOME/.local"`, and this doc's measured objection to (b) is that
+  the stock `~/.profile` block serves bash but not zsh — **but all six agents
+  independently chose `~/.npm-global`, which `~/.profile` does not add at all**, so
+  neither shell finds it. That is one step WORSE than the modelled case, and the
+  `ctl-profile` control reproduces (b), not what agents do. `via: measurement`
+
+- **Ruled out — that the six failures are a capability failure of cheap models.** This was
+  the confound flagged before the run: a model that cannot drive the task yields the same
+  `CLOSING_CONDITION=no` as a broken product. It does not apply — every trial stopped
+  `"finished"`, and all six failures hit `EACCES` (5–7 occurrences each) and attempted
+  prefix remedies (8–14 mentions each). `via: measurement` (transcript scan)
+
+- **Ruled out — that the verdict is model-dependent.** Identical outcomes across three
+  models absent from every prior grid. `via: measurement`
+
+- 🔴 **Stated limit — the comparison clause is PARTLY UNMET.** Rank 36 asks that the
+  `other` cells be compared against the recorded 4-of-4 failure. **One** of those four
+  (`gemini × node-root × other`) was re-measured directly and flipped; the other three
+  (`gemini × stale`, `grok × node-root`, `grok × stale`) were NOT re-run, and the three
+  new `other` cells are on models absent from the record. The claim "mechanism A is
+  closed" therefore rests on 1 direct re-measurement plus model-independence, not on 4
+  direct ones. Closing that gap is three trials at ~$0.08.
+
+- **Observed — cost, against the `--max-cost` ceiling that framed this item.** 21 trials
+  totalled **$0.1211** (mean $0.0058) against a $21 cap. Per model: mimo $0.0009–0.0013,
+  glm $0.0013–0.0026, deepseek $0.0029–0.0054, **gemini $0.0248–0.0297** — the frontier
+  model was 5–20× dearer than any of the three.
+
+- **Next probe:** the three missing recorded cells, which is the whole remaining gap:
+  ```bash
+  D=/home/zach/workspace/civit/cli-dogfood36/scripts/dogfood
+  cd "$D" && DOGFOOD_MODELS='x-ai/grok-4.6|grok' DOGFOOD_ENVS='df-node-root|noderoot|root df-stale-cli|stale|root' \
+    DOGFOOD_IDENTITIES='other|' bash driver.sh
+  ```
+  🔴 Then the `gemini × stale × other` cell separately — and note the driver's
+  non-crossed envs run the FIRST identity in the list, which is why `DOGFOOD_IDENTITIES`
+  must name `other` first or the stale cell silently runs a different identity.
+
 ## Next steps (ranked)
 
 🔴 **Ranks 1–14, 18–24 are DONE — numbering preserved** so live `claim-work` slugs keep
-pointing at what they were taken for. **33, 35 and 37 are DONE; 34 partly; 36 in flight.**
+pointing at what they were taken for. **33, 35, 36 and 37 are DONE; 34 is the only
+product work left.**
 
 ➡ **Ranks 23, 28, 30, 31 and 32 were the FORGERY effort and have MOVED** to
 [`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md), which carries its own
@@ -819,7 +885,7 @@ the same work has two canonical names and **both compare-and-swaps succeed indep
 |---|---|---|
 | `agent-setup-onboarding-32` | rank 1 of the forgery doc | `terminal-line-forgery-1` |
 | `agent-setup-onboarding-23` / `-28` / `-30` / `-31` | CLOSED (#574, #605+#624, #604, #612) | none — do not take |
-| `agent-setup-onboarding-33` / `-34` / `-35` / `-37` | released | free to re-take |
+| `agent-setup-onboarding-33` / `-35` / `-36` / `-37` | released | free to re-take |
 
 ⚠ The only MECHANICAL backstop is the `gh pr list --state open` sweep, which is the one thing
 that catches an UNCLAIMED duplicate.
@@ -843,17 +909,19 @@ that catches an UNCLAIMED duplicate.
     ❌ The other two playbook steps are also untouched: **evicting what has CLOSED**, and
     **demoting dated evidence to `claudedocs/refs/`** behind a pointer.
     🔴 Do NOT satisfy this by deleting an open investigation, a gotcha or a ruled-out theory.
+    ⚠ The doc is now **158 KB against the tool's 65 KB ceiling** — over by 92 KB. No gate
+    enforces it; it is purely what the next session must read.
     forcing: none
-33. ✅ **DONE — merged (`d0b79ae`), RELEASED in v0.1.106, and now MEASURED**: the
-    `other`-identity cell it was built for grades `yes` in a blind trial. Claim released.
+33. ✅ **DONE — merged (`d0b79ae`), RELEASED in v0.1.106, and MEASURED**: mechanism A is
+    closed across four post-ship `other` cells. Claim released.
     forcing: gate — satisfied
-34. ⚠ **PARTLY DONE — `cli#671` merged and released; `cli#665` REOPENED and still open.**
-    The `AGENTS.md` half shipped; the install half did not. Candidate **(b)**
-    (`--prefix="$HOME/.local"`) is the cause-side remedy and lives in the hosted prompt.
-    🔴 Its measured limit is now REPRODUCED, not just argued: the `ctl-profile` control
-    shows `bash -lc` finding the binary at `0.1.106` while `zsh -lic` reports
-    `command not found`, and the closing condition names `zsh -lic`. So (b) alone does
-    not close it.
+34. 🔴 **THE ONLY PRODUCT WORK LEFT — `cli#665` is OPEN and its remedy is aimed at the
+    wrong path.** `cli#671` shipped the `AGENTS.md` half; the install half did not.
+    🔴 **NEW, MEASURED 2026-09-19 (enumerated 6 of 6, not sampled):** agents resolve
+    `EACCES` by installing to **`~/.npm-global`**, NOT the `--prefix="$HOME/.local"` the
+    hosted prompt documents as candidate (b). `~/.profile` does not add `~/.npm-global`,
+    so **neither** `bash -lc` nor `zsh -lic` finds the binary — worse than (b), whose
+    known limit was bash-only. Any fix must be designed against `~/.npm-global`.
     ⚠ An earlier draft of this item said "5 of 8 reported success anyway" — from a keyword
     regex, RETRACTED. The number that carries the item is **0 of 8** (agents that connected
     the failure to the `AGENTS.md` they had just written). 8/8 relayed the PATH line and
@@ -862,19 +930,16 @@ that catches an UNCLAIMED duplicate.
 35. ✅ **DONE — docs#89 merged and verified LIVE** (7433 B, new step 4 present, old
     wording gone). Claim released.
     forcing: gate — satisfied
-36. ⏳ **IN FLIGHT — the matrix is RUNNING; grade it and write up the grid.** The grader
-    was validated in all three directions first and the 3-trial smoke already flipped the
-    key cell (see the investigation block). What remains is to grade the 18 in-flight
-    trials, tabulate by (identity, prefix writable), and read the transcript of any `no`
-    cell before attributing it to the product.
-    🔴 The run uses an operator-chosen model set DISJOINT from the recorded grid, so the
-    literal "compare against the recorded 4-of-4 failure" clause cannot be satisfied
-    cell-for-cell by this run — decide explicitly whether to amend the condition or add
-    the three missing `other` cells on the original models (~$0.10).
+36. ✅ **DONE — the matrix ran, 18/18 graded, grid recorded in the investigation block.**
+    ⚠ **Its comparison clause is PARTLY UNMET and that is deliberate, not an oversight:**
+    3 of the recorded 4 `other` cells (`gemini × stale`, `grok × node-root`,
+    `grok × stale`) were not re-run — the operator declined the ~$0.08 gap-filling run.
+    So "mechanism A is closed" rests on ONE direct re-measurement plus model-independence.
+    Anyone wanting the literal clause should run the `Next probe` in that block.
     closing-condition: `scripts/dogfood/grade.sh` reports the per-cell verdicts for a
     full matrix run, and the `other`-identity cells are compared against the recorded
     4-of-4 failure.
-    forcing: gate — the arc's headline claim is unmeasured without it
+    forcing: gate — satisfied for the grid; 3 comparison cells outstanding
 37. ✅ **DONE — `cli#673` merged** (`9588fb0`), verified by content with a negative
     control at `main~1`. Claim released.
     forcing: gate — satisfied
