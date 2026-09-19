@@ -761,7 +761,14 @@ half of a date-keyed section makes its dates lie.
   Windsurf config blocks **missing**; `curl` returned the true 4,900 bytes.
   There is a public case (`oh-my-openagent#1401`) where the summarizer dropped
   one of four install flags and the install reported success. **This is the
-  entire reason the logic lives in the Go binary and `prompt.md` is ~60 lines.**
+  entire reason the logic lives in the Go binary and `prompt.md` stays short.**
+  ⚠ **This said "~60 lines" and that was never true of the SERVED file** — measured
+  across its whole history in `civitai-developer-docs`: 89 lines at `a94fee3`
+  (2026-09-08, the first commit served verbatim), then 155, 165, and **169 lines /
+  7,187 bytes today** (`8c2a6e2`, 2026-09-18). Pre-existing rot, not a claim this
+  arc made; corrected here because the number is the whole point of the sentence.
+  🔴 **Do not restate a line count here — it rots in another repo.** Measure it:
+  `curl -s https://developer.civitai.com/agent-setup/prompt.md | wc -l`.
 - 🔴 **Do not pin `@civitai/*` versions in any hosted or embedded file.** Pins
   belong in `civitai app init`, which `pins-vs-published` guards. The current
   freeze is the live demonstration: a version literal with CI behind it still
