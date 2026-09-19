@@ -901,6 +901,119 @@ func TestAuthenticatedIsReportedButNeverFailsTheVerdict(t *testing.T) {
 	})
 }
 
+// TestMCPRowsDoNotFailTheVerdictForAnAgentWithNoConfigTarget is the same
+// inversion guard as its neighbour above, on the operand that was missed.
+//
+// 🔴 FOR AN AGENT THIS CLI HAS NO TARGET FOR, `--check` USED TO RETURN
+// `ok: false` AND EXIT 1 FOREVER, after a completely correct setup. There is no
+// file for this CLI to write, so re-running it changes nothing and the two MCP
+// rows can never go green — while the hosted prompt's step 4 says "Do not
+// report success if any check fails". Measured in 4 of 4 blind `other`-identity
+// dogfood trials, and the de-confounding controls showed it follows the
+// IDENTITY, not the model.
+//
+// The precedent is `authenticated`, not `claude-md`: work DOES remain here, the
+// USER must do it (paste the printed config), this CLI deliberately will not,
+// and `ok` is `true` anyway. `ok` means "this CLI did everything it can do for
+// you". Decision: claudedocs/decisions/35-agent-setup-merges-a-users-file.md.
+//
+// Three subtests, because the first two are each individually satisfiable by a
+// broken implementation: the rows must STAY and stay `false` (hiding them is
+// the wrong fix, and the user does need to paste), and a KNOWN agent whose MCP
+// config is missing must still fail — otherwise the fix is a blanket exemption.
+func TestMCPRowsDoNotFailTheVerdictForAnAgentWithNoConfigTarget(t *testing.T) {
+	// PREMISE: the identity really is absent from the table, or every arm here
+	// is vacuous.
+	const unknownAgent = "other"
+	if _, known := agentTargets[unknownAgent]; known {
+		t.Fatalf("PREMISE BROKEN: %q is in agentTargets, so this test no longer exercises "+
+			"the no-config-target path at all", unknownAgent)
+	}
+
+	t.Run("a correct setup for an unknown agent is ok and exits 0", func(t *testing.T) {
+		dir, _ := agentSetupProject(t)
+		if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", unknownAgent); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		stdout, _, err := run(t, "agent-setup", "--dir", dir, "--agent", unknownAgent, "--check", "--json")
+		if err != nil {
+			t.Fatalf("a correct setup for an agent with no config target must exit 0, got: %v\n%s", err, stdout)
+		}
+		var payload agentSetupJSON
+		if jerr := json.Unmarshal([]byte(stdout), &payload); jerr != nil {
+			t.Fatal(jerr)
+		}
+		// PREMISE: both MCP rows really did fail, or this arm observes nothing.
+		rows := map[string]agentCheckJSON{}
+		for _, c := range payload.Checks {
+			rows[c.Name] = c
+		}
+		for _, srv := range civitaiMCPServers {
+			row, present := rows[srv.Check]
+			if !present {
+				t.Fatalf("PREMISE BROKEN: there is no %q row — the MCP rows must be REPORTED, "+
+					"not omitted. The user still has to paste this config by hand.", srv.Check)
+			}
+			if row.OK {
+				t.Fatalf("PREMISE BROKEN: %q passed for an agent with no config target (%q) — "+
+					"this arm cannot see the inversion it exists to catch", srv.Check, row.Detail)
+			}
+		}
+		if !payload.OK {
+			t.Error("ok = false with only the MCP rows failing on an agent this CLI has no " +
+				"config target for. Those rows can NEVER go green on this path, so this is " +
+				"a permanent exit 1 for a setup that did everything it could. This is the " +
+				"inversion this test exists for.")
+		}
+	})
+
+	t.Run("a KNOWN agent with no MCP config still fails", func(t *testing.T) {
+		// 🔴 THE ARM THAT STOPS THE FIX BEING A BLANKET EXEMPTION. Without it,
+		// `checkCountsTowardVerdict` returning false for every `mcp-*` row
+		// regardless of agent passes the arm above.
+		dir, _ := agentSetupProject(t)
+		if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentClaude); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if err := os.Remove(filepath.Join(dir, ".mcp.json")); err != nil {
+			t.Fatalf("PREMISE BROKEN: could not remove the MCP config this arm depends on: %v", err)
+		}
+		stdout, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentClaude, "--check", "--json")
+		if err == nil {
+			t.Fatal("a known agent with its MCP config removed must NOT check clean — the " +
+				"exemption is conditional on the agent being absent from agentTargets")
+		}
+		var payload agentSetupJSON
+		if jerr := json.Unmarshal([]byte(stdout), &payload); jerr != nil {
+			t.Fatal(jerr)
+		}
+		if payload.OK {
+			t.Error("ok = true for a known agent whose MCP config is missing — the " +
+				"exemption has been applied as a blanket rather than per-agent")
+		}
+	})
+
+	t.Run("a real non-MCP failure still fails on the unknown path", func(t *testing.T) {
+		// Stops the whole thing being satisfied by `return true` on this path.
+		dir, _ := agentSetupProject(t)
+		stdout, _, err := run(t, "agent-setup", "--dir", dir, "--agent", unknownAgent, "--check", "--json")
+		if err == nil {
+			t.Fatal("an empty directory must not check clean for an unknown agent either")
+		}
+		if !errors.Is(err, ErrAgentSetupIncomplete) {
+			t.Errorf("want ErrAgentSetupIncomplete, got %T: %v", err, err)
+		}
+		var payload agentSetupJSON
+		if jerr := json.Unmarshal([]byte(stdout), &payload); jerr != nil {
+			t.Fatal(jerr)
+		}
+		if payload.OK {
+			t.Error("ok = true with `agents-md` failing — the verdict is not reading the " +
+				"rows that DO count on this path")
+		}
+	})
+}
+
 // TestAgentSetupVerdictUnit drives the verdict function directly, over the rows
 // that decide it. A unit here catches an inversion the end-to-end rows above
 // could only see through a whole run.

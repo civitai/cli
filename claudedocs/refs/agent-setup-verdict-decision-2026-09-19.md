@@ -1,5 +1,10 @@
 # Decision — `--check`'s verdict for an agent the CLI has no config target for
 
+✅ **SHIPPED — read "Status" at the bottom before acting on anything above it.**
+The code change is **made**; every "not yet"/"must"/"will" in this file is the
+pre-implementation plan, kept as the record of what was decided and why. Three of its
+coupled edits needed correcting against reality, including the one this header states.
+
 🔴 **This lives in `claudedocs/refs/`, NOT `claudedocs/decisions/`, on purpose.**
 That directory is mechanically 1:1 with a numbered `AGENTS.md` item
 (`TestEvidencePointersAndFilesAreTheSameSet`, `TestSplitTableCoversEveryEvidenceFile`),
@@ -9,12 +14,16 @@ new entry the largest in the list — above every existing one. Adding an item t
 every session, and the sequencing would be wrong anyway: an `AGENTS.md` item states a
 rule agents must follow, and this rule is **not true until the code ships**.
 
-**The implementing PR takes that on**: it adds the `AGENTS.md` item, pays the eviction,
-and moves this file to `claudedocs/decisions/NN-…` — at the moment the rule becomes
-true. Until then this is a decision record, not a repo rule.
+❌ **RETRACTED — "the implementing PR adds the `AGENTS.md` item, pays the eviction,
+and moves this file to `claudedocs/decisions/NN-…`."** None of that was needed, and
+none of it was done. **Item 35 already routes here**: its trigger sentence names
+*"`--check`'s verdict"* verbatim, its Code header already lists
+`checkCountsTowardVerdict`, and `claudedocs/decisions/35-agent-setup-merges-a-users-file.md`
+already carries the verdict-exemption table this change extends. `AGENTS.md` is
+unchanged and no eviction was paid. See Status, correction 3.
 
 **Decided 2026-09-19 by the owner of the `--json` contract.** This file records the
-decision and the argument; the code change is **not yet made** — see "Status".
+decision and the argument; for what the code actually does, read decision 35.
 
 ## The question
 
@@ -128,8 +137,49 @@ argument.
 
 ## Status
 
-**DECIDED, NOT IMPLEMENTED.** No code has changed. The arc's closing condition for
-this item is this file plus the change it names, merged.
+✅ **IMPLEMENTED 2026-09-19.** The durable rule now lives in
+[`claudedocs/decisions/35-agent-setup-merges-a-users-file.md`](../decisions/35-agent-setup-merges-a-users-file.md)
+§"The `mcp-*` rows for an agent this CLI has no target for" — read that, not this file,
+for what the code does. This file stays as the dated record of the decision and of the
+alternatives that were rejected.
+
+### Three corrections this file's plan needed, measured during implementation
+
+1. 🔴 **The `switch` arm above DOES NOT COMPILE.** `checkMCPSite` and `checkMCPOrch`
+   are not constants — the check names are bare literals on `civitaiMCPServers`
+   (`agent_setup_mcp.go`). Implemented as a derived `isMCPCheckName(name)` lookup
+   against that table instead, so a third server is covered the moment it is added.
+   Writing the two names out is the exact drift
+   `TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode`'s docstring was hardened
+   against.
+2. 🔴 **Coupled edit 3 predicted the wrong DIRECTION, and the guard was blind.**
+   The claim was that `readme_agent_setup_claims_test.go` "goes red until the README
+   sentence names the exemption". Measured: the change landed with the **whole package
+   green** and the README sentence left false; and naming the rows in that sentence
+   then went **red** with *"the README names `mcp-site` as excluded from `ok`, but
+   checkCountsTowardVerdict COUNTS it"* — itself false. The guard derives its
+   "exempt for other agents" set with `"cursor"`, an agent that **is** in
+   `agentTargets`, so "other" there has only ever meant *not claude*, never *not in
+   the table*. It sampled two of three agent classes. Widened to sample the unknown
+   class, assert that identity is absent from `agentTargets`, and pin the clause
+   whole. Following the guard's own failure message would have led to de-backticking
+   the names (round 3 of #641's measured wrong fix) or reverting correct code.
+3. 🔴 **Coupled edit 6's eviction was NOT NEEDED — `AGENTS.md` item 35 already
+   routes here.** Its trigger sentence names *"`--check`'s verdict"* verbatim, its
+   Code header already lists `checkCountsTowardVerdict`, and decision 35 already
+   carries a section titled *"The `--check` verdict: a gate nobody can clear is a
+   gate everyone ignores"* with the exemption table this change extends. So no new
+   numbered item was minted, no eviction was paid, and `AGENTS.md` is unchanged at
+   30,493 bytes. The header's premise — that this rule needs an item of its own —
+   was written without checking item 35. ⚠ **This is the one place the
+   implementation departs from the decision as written**; it is reversible, and the
+   contract's owner can overrule it by minting a new numbered item and paying
+   the eviction.
+
+Edit 4 (the remediation string) shipped, reworded to stop promising that a re-run
+fixes rows a re-run cannot fix. Edit 5 (`prompt.md` and `--agent`) is **NOT in this
+change** — that file lives in `civitai/civitai-developer-docs`, a different repo that
+auto-deploys on push to `main`, so it is a separate PR.
 
 ⚠ **It also unblocks the arc's frozen closing condition**, which requires `ok: true`
-and is unreachable on the `other` path until item 1 lands.
+and was unreachable on the `other` path until item 1 landed.
