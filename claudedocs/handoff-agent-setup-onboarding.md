@@ -1953,10 +1953,14 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   a warning naming `claudedocs/refs/r2-b2-tiering-thrash.md`, a file in the *other*
   repo that the commit does not contain (`git show --name-only | grep -c r2-b2` → 0).
   Verify against the commit before acting on it.
-- ⚠ **An "item N" reference in prose is CHECKED.** `TestAgentsItemCrossReferencesResolve`
-  failed on the phrase *"minting item 39"* written in a `claudedocs/refs/` file —
-  `AGENTS.md` has items 1..38, and the guard reads prose across the repo, not just
-  `AGENTS.md`. Say "a new numbered item" unless the item exists.
+- ⚠ **An "item N" reference in prose is CHECKED, ACROSS THE WHOLE REPO — and writing
+  the gotcha down is not the same as obeying it.** `TestAgentsItemCrossReferencesResolve`
+  fails on a prose phrase naming an item number above `AGENTS.md`'s highest (currently
+  1..38), in ANY file, not just `AGENTS.md`. It fired twice in one session: first on a
+  `claudedocs/refs/` file, then **on this very bullet**, whose original wording quoted
+  the offending phrase verbatim as the example. A guard that reads prose cannot tell a
+  citation from a claim. **Say "a new numbered item", and do not quote the number even
+  when explaining the rule.**
 
 ## How to verify
 
