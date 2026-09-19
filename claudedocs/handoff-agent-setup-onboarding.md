@@ -2001,6 +2001,10 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   squash commit, and auto-closed an issue whose condition was explicitly unmet. Same
   shape as this repo's item-N xref guard, which fired on the very bullet documenting it.
   **A parser reads words, not meaning — do not quote the form you are refusing.**
+- 🔴 ⚠ **THE COUNT IN THIS BULLET IS WRONG — IT WAS EIGHT, NOT SIX. See the close-out
+  correction at the end of this section; two more happened AFTER this was written, and
+  the eighth was a false SECURITY finding.** The six below are accurate as instances;
+  only the total is stale — which is precisely the rot this bullet is about.
 - 🔴 **SIX INSTRUMENT MISREADINGS IN ONE SESSION, ALL THE SAME SHAPE: the tool answered
   confidently about the WRONG OBJECT.** (1) `gh pr checks` served the pre-push rollup
   after a force-push. (2) `npm view` reported the OLD version minutes after a successful
@@ -2029,6 +2033,37 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   mutation-test restore silently discarded the real change in that file; the end-to-end
   suite caught it as a template error. **Restore from a `cp` backup, never from git,
   when the file carries uncommitted work.**
+
+### Added 2026-09-19 (close-out) — the count was wrong, and the worst misread came last
+
+- 🔴 **CORRECTION: the bullet above says SIX instrument misreadings. It was EIGHT, and
+  the count was written while two more were still ahead.** This is the exact rot that
+  bullet is about — a number asserted in prose, stale before the session ended. The two
+  it missed:
+  - **(7) `handoff_doc.py` refusals read as success.** `--confirm --push` was run twice
+    and its GUIDANCE text was tailed as if it were a verdict; the real `status=` line
+    said `behind` (the primary clone was behind a trunk I had myself moved), then
+    `failed` (detached HEAD, no `--branch`). Nothing was written either time. **Read the
+    field that carries the verdict, not the nearest reassuring text.**
+  - **(8) 🔴 `git check-ignore -q <DIRECTORY>` PRODUCED A FALSE SECURITY FINDING.**
+    `.gitignore` carries `.secrets/*` — the pattern matches the CONTENTS, not the
+    directory entry — so `check-ignore .secrets` correctly reports "not matched", and
+    that was read as "the private keys are not ignored". It was reported to the operator
+    TWICE and committed into a handoff before being checked. Measured afterwards:
+    `check-ignore -v` resolves every key file to `.gitignore:9`, and `git add .secrets`
+    exits `fatal: pathspec … did not match any files`. **A gitignore question is about
+    FILES — test a path INSIDE the directory, and use `-v` (which names the matching
+    rule) over `-q` (a status you then interpret).**
+- 🔴 **AN ASSERTED VULNERABILITY THAT DOES NOT EXIST COSTS MORE THAN A MISSED ONE.** It
+  spends the operator's attention and devalues every other finding in the same document.
+  Retracted in place at `<talos-infra>` `bec009e81`, struck through rather than deleted so
+  anyone who read the earlier version sees it was withdrawn.
+- ⚠ **All eight have ONE shape: the instrument answered confidently about the WRONG
+  OBJECT** — a stale rollup, a cached registry read, a pre-rotation PipelineRun, a
+  reason string that was `Completed` not `Succeeded`, an unsplit zsh variable, guidance
+  text, and a directory-vs-contents pattern. Seven cost time. The eighth cost
+  credibility. **The cure is the same every time: name the object you are asking about,
+  and read the field that answers for THAT object.**
 
 ## How to verify
 
