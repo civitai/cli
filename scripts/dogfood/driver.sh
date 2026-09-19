@@ -39,10 +39,15 @@ ENVS=(
 # short|agent-env  — the identity the CLI will DETECT. Empty env => `other`,
 # which is what every agent with no entry in the CLI's table gets. Both rows
 # matter: `other` is where the verdict differs, not an edge case.
+# 🔴 `codex` is here because the CLI writes TOML for it and JSON for claude — a
+# different merge routine, not a different label — so dropping it would leave the
+# TOML path unexercised. `other` is the no-signal case.
 IDENTITIES=(
   "claudeid|CLAUDECODE=1"
+  "codexid|CODEX_SANDBOX=1"
   "other|"
 )
+[ -n "${DOGFOOD_IDENTITIES:-}" ] && read -r -a IDENTITIES <<<"$DOGFOOD_IDENTITIES"
 
 # IDENT_FOR restricts which identities a given env is crossed with, so the full
 # cross does not cost 4x for no information. Default: cross the cheapest env
@@ -52,7 +57,20 @@ FULL_CROSS="${FULL_CROSS:-0}"
 
 run_one() {  # model short image ienv trial user
   local model=$1 image=$3 ienv=$4 trial=$5 euser=$6
-  [ -f "runs/$trial/transcript.jsonl" ] && { echo "skip $trial (done)"; return; }
+  # 🔴 GATE ON COMPLETION, NOT ON EXISTENCE. runner.py opens transcript.jsonl in
+  # "w" mode BEFORE it creates the container or makes its first API call, so a
+  # trial killed by the timeout below — or one that died on a retry storm —
+  # leaves a non-empty file with no `end` record. Keyed on `-f`, that trial is
+  # skipped forever and the matrix reports COMPLETE while missing it; grade.sh
+  # then scores its half-built container as an ordinary failure, which is
+  # indistinguishable from a real product defect.
+  if [ -f "runs/$trial/transcript.jsonl" ] \
+     && grep -q '"kind": "end"' "runs/$trial/transcript.jsonl"; then
+    echo "skip $trial (complete)"; return
+  fi
+  if [ -f "runs/$trial/transcript.jsonl" ]; then
+    echo "re-running $trial (previous attempt did not finish)"
+  fi
   local args=(--model "$model" --image "$image" --trial "$trial" --user "$euser" --out runs)
   [ -n "$ienv" ] && args+=(--agent-env "$ienv")
   ( timeout 1500 python3 runner.py "${args[@]}" >"logs/$trial.out" 2>"logs/$trial.err"

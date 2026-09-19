@@ -14,6 +14,15 @@ TRIAL="${1:?trial id}"
 U="${2:-root}"
 C="dogfood-$TRIAL"
 
+# 🔴 POSITIVE CONTROL ON THE INSTRUMENT ITSELF. Without this, a grade against a
+# container that does not exist returns empty stdout, which is byte-identical to
+# "the CLI is not installed" — so a typo in the trial id prints a confident
+# CLOSING_CONDITION=no about nothing at all.
+if ! docker inspect "$C" >/dev/null 2>&1; then
+  printf 'no such container: %s — nothing was measured (this is NOT a failing trial)\n' "$C" >&2
+  exit 2
+fi
+
 x() { docker exec -u "$U" -w /work "$C" bash -lc "$1" 2>&1; }
 # stdout ONLY. `--check` prints its error line to stderr AHEAD of the JSON, so a
 # merged capture is unparseable and jq's failure reads as "no JSON at all".
@@ -57,8 +66,14 @@ ROWS=$(printf '%s' "$CHECK_OUT" | jq -r '[.checks[].name]|join(",")' 2>/dev/null
 MCP_ROWS=$(printf '%s' "$CHECK_OUT" | jq -r '[.checks[]|select(.name|startswith("mcp-"))]|length' 2>/dev/null)
 [ -z "$MCP_ROWS" ] && MCP_ROWS=unreadable
 
+# 🔴 `LOGIN_RC` IS PART OF HALF B, NOT DECORATION. `LOGIN_OUT` is a MERGED stream,
+# so `grep -oE '<semver>'` matches a version appearing in ANY line — an npm
+# deprecation banner, a .zshrc greeting, an error. Without the rc, half B reads
+# "some semver appeared in both shells and they matched", which a banner printing
+# the same node/npm version in both satisfies with `civitai` absent from both.
+# The rc was already being captured and was going unused.
 PASS=no
-if [ "$OK" = "true" ] && [ -n "$LOGIN_VER" ] && [ "$LOGIN_VER" = "$AGENT_VER" ] \
-   && [ "$MCP_ROWS" = "2" ]; then PASS=yes; fi
+if [ "$OK" = "true" ] && [ "$LOGIN_RC" = "0" ] && [ -n "$LOGIN_VER" ] \
+   && [ "$LOGIN_VER" = "$AGENT_VER" ] && [ "$MCP_ROWS" = "2" ]; then PASS=yes; fi
 printf 'check_ok=%s failed_checks=[%s] mcp_rows=%s rows=[%s] login_version=%s agent_shell_version=%s CLOSING_CONDITION=%s\n' \
   "$OK" "${FAILED:-}" "$MCP_ROWS" "${ROWS:-}" "${LOGIN_VER:-none}" "${AGENT_VER:-none}" "$PASS"

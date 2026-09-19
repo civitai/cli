@@ -9,6 +9,35 @@ the 12 failures are fully explained by exactly TWO defects — neither of which 
 model-dependent.** Every model read the prompt correctly and followed it. The
 prompt is accurate and cheap; it is not sufficient on two axes.
 
+## 🔴 THE GRID BELOW WAS PRODUCED BY AN EARLIER DRIVER THAN THE ONE COMMITTED
+
+Read this before re-running anything. The 16-cell grid and the 3 controls were run
+by a `driver.sh` that **bound agent identity to the model row** — `claude`/`gpt`
+got a known identity, `gemini`/`grok` got none. That is the confound this document
+then identifies as its own central methodological error, and the committed
+`scripts/dogfood/driver.sh` no longer has it: identity is a crossed axis there.
+
+**So the committed instrument does not reproduce this grid, and it should not.**
+Re-running it yields a different and better-shaped matrix — 4 models × 4 envs ×
+identity, with all three identities (`claude`, `codex`, `other`) crossed on the
+cheapest env by default. Expect a
+different headline number from the same product behaviour, because more cells run
+under a known identity: mechanism **A** below is keyed to identity, so it fires in
+fewer cells.
+
+Two consequences, stated because a reader will otherwise treat a different number
+as a regression:
+
+- **The `4 of 16` headline is a property of THIS run's cell selection**, not a
+  score for the entrypoint. What is invariant is the *rule* the cells obey, and
+  that is what the de-confounding control establishes.
+- **The per-trial figures here are not re-derivable from the repo.** Transcripts
+  are gitignored (they are tens of thousands of lines of raw model output), and the
+  committed driver runs a different cell set. Every count, cost and step figure
+  below is therefore a **recorded measurement, not a reproducible one**. Treat them
+  as evidence about what happened on 2026-09-18, and re-measure rather than re-cite
+  if a decision turns on them.
+
 ## Method, and what makes it blind
 
 - The model's ONLY tool is `bash`, and that bash runs `docker exec` into the trial
@@ -59,8 +88,21 @@ every agent outside the CLI's table gets (Gemini CLI, Aider, Cline, Continue, �
 | gemini-3.8-flash | stale-cli | other | yes | ❌ no | **A** |
 | grok-4.6 | node-root | other | yes | ❌ no | **A** |
 | grok-4.6 | stale-cli | other | yes | ❌ no | **A** |
-| all 4 models | node-user | — | **no** | ❌ no (4/4) | **B** |
-| all 4 models | ubuntu-apt | — | **no** | ❌ no (4/4) | **B** |
+| claude / gpt | node-user | claude / codex | **no** | ❌ no (2/2) | **B** |
+| gemini / grok | node-user | other | **no** | ❌ no (2/2) | **B** |
+| claude / gpt | ubuntu-apt | claude / codex | **no** | ❌ no (2/2) | **B** |
+| gemini / grok | ubuntu-apt | other | **no** | ❌ no (2/2) | **B** |
+
+⚠ **The last four rows were written as two rows reading `agent: —`**, i.e. the
+identity was left unrecorded for 8 of the 16 cells — on the axis this document's
+own de-confounding section proves is one of the two determinants. The identities
+above are recovered from the run's model→identity binding, which is exactly the
+confound; they are correct for this run but they are a *derivation*, not an
+independent record. **Mechanism B is reported for all 8 on the strength of the
+container measurement** (`civitai` absent from every fresh shell), which does not
+depend on identity — but the document cannot independently demonstrate that A was
+not also firing in the four `other` cells, because B alone is sufficient to
+produce `CLOSING_CONDITION=no` and the grader stops there.
 
 ### The de-confounding control — model vs agent identity
 
@@ -330,6 +372,11 @@ Stated so an absence is not read as a clean bill of health.
    `$HOME`.
 6. **A pre-existing `CLAUDE.md` / `AGENTS.md` / populated MCP config.** Every
    project directory was empty, so the merge paths are untested.
-7. **Only 4 of the 7 agents in the CLI's table** were exercised as identities
-   (claude, codex, and `other` twice over). `cursor`, `opencode`, `vscode`,
-   `windsurf` and `zed` were not.
+7. **Only 2 of the 7 agents in the CLI's table** were exercised as identities
+   (⚠ this said *"4 of 7"* and was wrong by 2×, in the one section whose job is to
+   not overstate coverage — the same sentence names 5 as unexercised, and 7−5=2.
+   `other` is not a table entry: `agentTargets` has no row for it, which is the
+   entire mechanism of defect A.) Exercised: **claude** and **codex**, plus the
+   out-of-table `other` case. `cursor`, `opencode`, `vscode`, `windsurf` and `zed`
+   were not — and `windsurf` is the one that spells the URL key differently, so its
+   merge routine is the least-covered of the set.

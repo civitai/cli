@@ -120,6 +120,14 @@ def main() -> int:
     ap.add_argument("--agent-env", default="", help="VAR=VALUE set in the container, "
                                                     "so the CLI detects that agent")
     ap.add_argument("--max-steps", type=int, default=40)
+    # 🔴 A STEP CAP IS NOT A SPEND CAP. Every turn resends the whole history plus
+    # up to MAX_OUT of tool output, so cumulative prompt tokens grow O(n^2) in
+    # steps. Observed runs took 3-8 steps and cost ~$0.02-0.10; at the 40-step cap
+    # that is roughly 25x, and a model that loops on a failing install — exactly
+    # the failure being measured — is the case that reaches it. This is the only
+    # bound on money.
+    ap.add_argument("--max-cost", type=float, default=1.0,
+                    help="stop the trial once this much USD has been spent (default 1.0)")
     ap.add_argument("--out", default=".")
     a = ap.parse_args()
 
@@ -134,7 +142,20 @@ def main() -> int:
     container = f"dogfood-{a.trial}"
     subprocess.run(["docker", "rm", "-f", container],
                    capture_output=True)
-    run = ["docker", "run", "-d", "--name", container]
+    # 🔴 THE CONTAINER BOUNDS THE FILESYSTEM. These bound the rest of it.
+    # A trial runs model-authored shell, as root in half the images, and
+    # `subprocess` timeouts kill the LOCAL `docker exec` client while whatever it
+    # started keeps running inside — so a fork bomb, a `yes > file`, or a runaway
+    # install would otherwise burn host CPU and disk for the rest of the matrix
+    # and corrupt the timings of the other trials running concurrently.
+    # NOT bounded, and stated in the README rather than implied away: NETWORK
+    # (egress is necessarily open — the trial must fetch prompt.md and reach npm)
+    # and DISK. `--storage-opt size=` was tried and removed: it is accepted only
+    # "for overlay over xfs with 'pquota'", so on an ordinary daemon it does not
+    # restrict the write, it refuses to START THE CONTAINER — a bound that turns
+    # every trial into a failed one on most hosts is worse than a declared gap.
+    run = ["docker", "run", "-d", "--name", container,
+           "--pids-limit", "512", "--memory", "2g", "--cpus", "2"]
     if a.agent_env:
         run += ["-e", a.agent_env]
     run += [a.image, "sleep", "infinity"]
@@ -156,6 +177,9 @@ def main() -> int:
     final = ""
 
     while steps < a.max_steps:
+        if usage_total["cost"] >= a.max_cost:
+            stop = f"max-cost (${usage_total['cost']:.4f} >= ${a.max_cost})"
+            break
         resp = call(a.model, messages, api_key)
         u = resp.get("usage") or {}
         usage_total["prompt_tokens"] += u.get("prompt_tokens", 0)

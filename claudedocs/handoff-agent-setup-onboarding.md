@@ -492,8 +492,12 @@ returns `ok: false` and exit 1 after a **completely correct** setup, forever.
   genuinely is not (it writes a config the running agent never reads, and `--check`
   then reports green on a setup that does not work). Any prompt change here has to
   separate those two cases, and it does not remove the need to fix A.
-- **Next probe:** none needed; it is diagnosed. The decision is whether the fix is
-  in the verdict (recommended, matches precedent) or in `prompt.md`'s wording.
+- **Next probe:** none. Nothing here is undiagnosed — what is missing is a DECISION,
+  and this block does not get to make it. 🔴 **Neither candidate is recommended here.**
+  An earlier version of this very bullet said the verdict fix was *"recommended,
+  matches precedent"* — the exact two words the retraction above kills — and left it
+  in the ACTION bullet, which is where the next session looks. That is the failure
+  this block exists to prevent, committed inside the block that prevents it.
 
 ### ⚠ OPEN — the documented `--prefix` remedy leaves the CLI unreachable (rank 34)
 - as-of: 2026-09-18, from 19 blind trials
@@ -634,6 +638,7 @@ that catches an UNCLAIMED duplicate; the forgery doc mandates it. This table is 
     Checked by: the decision file exists and its named change is merged.
     forcing: none — this is a design call, not a defect to be fixed by the next session
 34. 🔴 **The `--prefix` install remedy leaves `civitai` unreachable from every later shell.**
+    Filed as **cli#665**.
     8 of 8 trials on a non-writable prefix. The written `AGENTS.md` then instructs future
     sessions to run a binary they cannot find, and **0 of 8** agents noticed that — the
     number that carries this item. (8/8 relayed the PATH line and 6/8 warned it would not
@@ -642,7 +647,11 @@ that catches an UNCLAIMED duplicate; the forgery doc mandates it. This table is 
     see the correction in the block above and `refs/…-matrix-2026-09-18.md`.)
     ⚠ Pick the fix before building: (a) step 4 verifies in a NEW shell so the failure is at
     least visible, (b) install to a prefix already on PATH, (c) `AGENTS.md` records the
-    absolute path. (a) is the smallest honest change; (b) and (c) actually fix it.
+    absolute path. (a) is the smallest honest change and only makes the failure VISIBLE;
+    (c) actually fixes it. ⚠ **(b) is NOT sufficient on its own** — `npm config set prefix`
+    writes npm's config, not a shell profile, so it still leaves `bin` off PATH. An earlier
+    draft of this line said "(b) and (c) actually fix it", contradicting the evidence doc
+    forty lines away; the evidence doc was right.
     closing-condition: a blind trial on `df-node-user` or `df-ubuntu-apt` ends with EITHER
     `zsh -lic 'civitai --version'` printing the version, OR the agent's final report stating
     plainly that the CLI is not yet on the user's PATH and the setup is incomplete.
@@ -1715,7 +1724,7 @@ export OPENROUTER_API_KEY=sk-or-...
 cd scripts/dogfood
 for e in node-root node-user ubuntu-apt stale-cli; do docker build -q -t "df-$e" -f "envs/$e.Dockerfile" .; done
 bash driver.sh                          # 4 models x 4 envs, resumable
-bash grade.sh t-claude-noderoot root     # CLOSING_CONDITION=yes|no, measured on the container
+bash grade.sh t-claude-noderoot-claudeid root   # CLOSING_CONDITION=yes|no, from the container
 ```
 
 🔴 **Run BOTH grader controls first** (README §"Validate the grader") — an untouched

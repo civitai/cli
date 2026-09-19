@@ -10,9 +10,40 @@ zsh and curl — nothing else. **Blindness is a mount namespace, not an
 instruction:** this repo, its `AGENTS.md` and the operator's home directory are
 not reachable from inside, so an agent cannot read the source even by accident.
 
-No Civitai credential is involved at any point, and nothing in a trial can spend.
-The only credential is the operator's OpenRouter key, read from
-`OPENROUTER_API_KEY` and never written anywhere.
+No Civitai credential is involved at any point, so no trial can spend Buzz or
+touch a real account. The only credential is the operator's OpenRouter key, read
+from `OPENROUTER_API_KEY` and never written anywhere.
+
+### 🔴 What is isolated, and what is NOT
+
+Read this before running it on your own workstation — you are handing a language
+model an unsandboxed root shell in half of these images.
+
+| | bounded? | by what |
+|---|---|---|
+| filesystem — repo, `$HOME`, credentials | **yes** | mount namespace; the container has none of them |
+| Civitai account / Buzz | **yes** | no Civitai credential exists in a trial |
+| processes | yes | `--pids-limit 512` |
+| memory / CPU | yes | `--memory 2g --cpus 2` |
+| money | yes | `--max-cost` (default $1/trial) — a step cap is not a spend cap |
+| **network** | **NO** | egress is open and must be: the trial has to fetch `prompt.md` and reach npm |
+| **disk** | **NO** | see below |
+
+**The network line is the one that matters.** A model-authored command runs with
+reachability to your LAN, to anything bound on a routable address, and to the
+internet. The container bounds what a trial can *read of yours*; it does not bound
+what it can *reach*. If that is not acceptable, run this on an isolated host.
+
+**Disk is unbounded, deliberately.** `--storage-opt size=` was tried and removed:
+Docker accepts it *"only for overlay over xfs with `pquota`"*, so on an ordinary
+daemon it does not cap the write — it refuses to start the container, turning
+every trial into a failed one. A bound that breaks the harness on most hosts is
+worse than a declared gap. A runaway `npm install` can fill the host's Docker
+storage; watch `docker system df` on a long matrix.
+
+⚠ A `subprocess` timeout kills the local `docker exec` client, not the process it
+started inside the container — which is why the resource limits above exist rather
+than relying on the timeout.
 
 ## Run it
 
