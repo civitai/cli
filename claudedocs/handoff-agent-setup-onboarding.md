@@ -1751,8 +1751,11 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   (`TestEvidencePointersAndFilesAreTheSameSet`, `TestSplitTableCoversEveryEvidenceFile`),
   and `AGENTS.md` has **7 bytes** of headroom against its 30,500 ceiling. A decision that
   is made but not implemented belongs in `claudedocs/refs/`; the implementing PR adds the
-  item, pays the eviction, and moves the file. A cross-reference guard also reads prose
-  like "item 39" as a pointer into that list.
+  item, pays the eviction, and moves the file. 🔴 **A cross-reference guard reads prose of
+  the form `item <N>` as a pointer INTO that numbered list** — so writing the number you
+  intend to add dangles against a list that does not have it yet. It caught me twice: once
+  in the decision record, and again HERE after I had fixed it there. Name it "the entry I
+  was adding", never by number.
 
 ## How to verify
 
