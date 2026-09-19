@@ -129,7 +129,16 @@ docker run -d --name dogfood-ctl-profile -u dev -e CLAUDECODE=1 df-node-user sle
 docker exec -u dev -w /work dogfood-ctl-profile bash -lc \
   'npm install -g --prefix="$HOME/.local" @civitai/cli
    export PATH="$HOME/.local/bin:$PATH"; civitai agent-setup --track app'
-bash grade.sh ctl-profile dev       # MUST report CLOSING_CONDITION=no
+bash grade.sh ctl-profile dev       # see the assertion below
+```
+
+🔴 **Assert the FIELDS, not just the verdict.** `CLOSING_CONDITION=no` alone is
+satisfied by `ctl-neg` too, and by a grader that broke arm A instead — this control
+is only meaningful if arm A is GREEN while arm B is red. Require:
+
+```
+check_ok=true  failed_checks=[authenticated]  mcp_rows=2
+login_version=none  agent_shell_version=0.1.105  CLOSING_CONDITION=no
 ```
 
 Measured against the same container: `bash -lc 'civitai --version'` → `0.1.105`;

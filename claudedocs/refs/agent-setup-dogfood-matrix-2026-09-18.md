@@ -68,8 +68,13 @@ as a regression:
 | untouched container | grader must go RED | `CLOSING_CONDITION=no`, `check_ok=parse-error` |
 | hand-built success (install + `agent-setup` by hand) | grader must go GREEN | `CLOSING_CONDITION=yes`, `check_ok=true` |
 
-Both were re-run after every change to the grader. Two grader defects were found
-and fixed by these controls, and both would have produced confident wrong verdicts:
+Both were re-run after every change to the grader. **THREE grader defects have been
+found, each of which would have produced a confident wrong verdict — but only the
+first two were found BY the controls above.** The third was found by an audit round,
+and the control that pins it (`ctl-profile`) lives in `scripts/dogfood/README.md` and
+is deliberately NOT in the table above, because it postdates it. ⚠ **Running only the
+two tabulated controls does not cover defect 3** — arm B's shell is unguarded on that
+path. Validate from the README's control list, not from this table.
 
 1. 🔴 **`--check --json` prints its error line to STDERR *ahead of* the JSON**, so
    a `2>&1` capture is unparseable — and `jq` failing then reads as "the command
@@ -87,9 +92,13 @@ and fixed by these controls, and both would have produced confident wrong verdic
    the frozen condition names. Measured in one container: wrapped → `0.1.105`,
    `CLOSING_CONDITION=yes`; direct `zsh -lic` → `command not found`,
    `CLOSING_CONDITION=no`. Arm B now runs zsh directly.
-   ⚠ **The grid below is UNAFFECTED** — re-graded under the corrected arm B, the
-   sampled verdicts are unchanged, because every trial installed under
-   `$HOME/.npm-global`, which no `~/.profile` block adds. The defect was latent.
+   ⚠ **The grid below is UNAFFECTED — by complete enumeration, not sampling.** All
+   19 surviving trial containers were re-graded under both arm-B shapes: **19/19
+   identical**, and `~/.local/bin` is absent in all 19. 🔴 **The invariant is "no
+   trial installed under a prefix that ONLY `~/.profile` adds" — i.e. `~/.local/bin`
+   or `~/bin`** — not "every trial used `$HOME/.npm-global`", which an earlier draft
+   said and which is false for 11 of the 19: the root trials install to
+   `/usr/local/bin` and have no `~/.npm-global` at all. The defect was latent.
 
 ## The grid
 

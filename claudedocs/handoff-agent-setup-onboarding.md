@@ -678,8 +678,11 @@ that catches an UNCLAIMED duplicate; the forgery doc mandates it. This table is 
       path in a markdown file puts nothing on any login shell's PATH and changes no
       agent's report. (This bullet is unaffected by the withdrawal above.)
     ⚠ **Scope, stated rather than implied:** this is a fact about these two container
-    images, not about every machine. On a host where a writable already-on-PATH prefix
-    exists, (b) does close arm 1. The graded envs are what decide this item.
+    images, not about every machine. 🔴 **And "already on PATH" is exactly the phrase
+    that produced the false green** — `$HOME/.local/bin` is already on PATH for a BASH
+    login shell and is not for `zsh -lic`, which is the shell arm 1 names. Any claim
+    about (b) must say WHICH login shell's PATH it means. The graded envs decide this
+    item, and arm 1's shell decides what counts there.
     ❌ **All three retracted drafts, recorded so a fourth is not derived:**
     1. *"(b) and (c) actually fix it."*
     2. *"(c) actually fixes it … (b) is NOT sufficient on its own."* — promoted a remedy
