@@ -113,6 +113,54 @@ func TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode(t *testing.T) {
 			"qualifier that the code does not — rewrite both.", exemptForClaude, exemptForOther)
 	}
 
+	// 🔴 THE THIRD AGENT CLASS, WHICH THIS GUARD SAMPLED NOWHERE AND THEREFORE
+	// COULD NOT SEE. `exemptForOther` is derived with "cursor" — an agent that
+	// IS in agentTargets — so "other" above has only ever meant "not claude",
+	// never "not in the table". There are THREE classes, not two: claude, a
+	// known non-claude agent, and an agent this CLI has no config target for.
+	//
+	// Measured when the `mcp-*` rows became exempt for that third class: the
+	// whole package stayed GREEN while the README's exemption sentence was a
+	// false statement about `ok`, and naming the rows in that sentence then went
+	// red with "the README names `mcp-site` as excluded from `ok`, but
+	// checkCountsTowardVerdict COUNTS it" — itself false, and it points a
+	// maintainer at either de-backticking the names (round 3 of #641's measured
+	// wrong fix) or reverting correct code. A ledger that cannot see an
+	// exemption is not a ledger, and its docstring claimed one.
+	//
+	// The identity is asserted ABSENT rather than assumed: if it is ever added
+	// to agentTargets this arm silently stops testing anything.
+	const unknownAgent = "other"
+	if _, known := agentTargets[unknownAgent]; known {
+		t.Fatalf("PREMISE BROKEN: %q is now in agentTargets, so the unknown-agent arm of "+
+			"this ledger is vacuous. Pick an identity the table does not carry.", unknownAgent)
+	}
+	var exemptForUnknown []string
+	for _, name := range all {
+		if !checkCountsTowardVerdict(name, unknownAgent) {
+			exemptForUnknown = append(exemptForUnknown, name)
+		}
+	}
+	// PREMISE: the unknown class must differ from the known one, or the
+	// README's "no config target" qualifier describes a distinction the code
+	// does not make.
+	if len(exemptForUnknown) == len(exemptForOther) {
+		t.Fatalf("PREMISE BROKEN: the exempt set no longer depends on whether the agent is "+
+			"in agentTargets (known=%v, unknown=%v). The README sentence carries a "+
+			"\"no config target\" qualifier that the code does not — rewrite both.",
+			exemptForOther, exemptForUnknown)
+	}
+
+	// Every row exempt for ANY class must be named by the sentence, and the
+	// sentence must name no row that is exempt for none.
+	var exemptAnywhere []string
+	for _, name := range all {
+		if contains(exemptForClaude, name) || contains(exemptForOther, name) ||
+			contains(exemptForUnknown, name) {
+			exemptAnywhere = append(exemptAnywhere, name)
+		}
+	}
+
 	// 🔴 READ THE EXEMPTION SENTENCE, NOT THE SECTION. Round 2 of #641 killed
 	// the previous version of this guard: it asked whether the section MENTIONS
 	// each exempt name anywhere, and `mcp-orch` is mentioned several paragraphs
@@ -162,19 +210,21 @@ func TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode(t *testing.T) {
 			named[name] = true
 		}
 	}
-	for _, name := range exemptForOther {
+	for _, name := range exemptAnywhere {
 		if !named[name] {
-			t.Errorf("checkCountsTowardVerdict exempts %q from `ok`, and the README's "+
-				"exemption sentence does not name it. A `--json` consumer computing its own "+
-				"verdict from that sentence folds %q in and disagrees with the tool it wraps."+
-				"\n  sentence: %q", name, name, strings.TrimSpace(sentence))
+			t.Errorf("checkCountsTowardVerdict exempts %q from `ok` for at least one agent "+
+				"class, and the README's exemption sentence does not name it. A `--json` "+
+				"consumer computing its own verdict from that sentence folds %q in and "+
+				"disagrees with the tool it wraps.\n  sentence: %q",
+				name, name, strings.TrimSpace(sentence))
 		}
 	}
 	for name := range named {
-		if !contains(exemptForOther, name) {
+		if !contains(exemptAnywhere, name) {
 			t.Errorf("the README's exemption sentence names %q as excluded from `ok`, but "+
-				"checkCountsTowardVerdict COUNTS it. A consumer skipping that row misses a "+
-				"real failure.\n  sentence: %q", name, strings.TrimSpace(sentence))
+				"checkCountsTowardVerdict COUNTS it for EVERY agent class. A consumer "+
+				"skipping that row misses a real failure.\n  sentence: %q",
+				name, strings.TrimSpace(sentence))
 		}
 	}
 	// The agent-conditional exemption must carry its condition, or the sentence
@@ -249,6 +299,32 @@ func TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode(t *testing.T) {
 			"checkCountsTowardVerdict, so a reword must keep it true rather than merely "+
 			"keep the words. A consumer on a Claude project that skips `%s` misses a real "+
 			"failure.", wantClause, conditional[0])
+	}
+
+	// 🔴 THE UNKNOWN-AGENT CLAUSE, PINNED WHOLE for the same reason the claude
+	// clause is: the row names appear in the shared sentence anyway, so scanning
+	// for a NAME is satisfied by a reworded falsehood. Built from the derived
+	// set, so a reword has to keep it TRUE rather than merely keep the words.
+	var onlyUnknown []string
+	for _, name := range exemptForUnknown {
+		if !contains(exemptForOther, name) && !contains(exemptForClaude, name) {
+			onlyUnknown = append(onlyUnknown, name)
+		}
+	}
+	if len(onlyUnknown) != 2 {
+		t.Fatalf("PREMISE BROKEN: this guard builds a two-row clause, but the code exempts "+
+			"%v only for an agent with no config target. Rewrite the README clause and this "+
+			"construction together.", onlyUnknown)
+	}
+	wantUnknown := "for an agent this CLI has no config target for — `" +
+		onlyUnknown[0] + "` and `" + onlyUnknown[1] + "`."
+	if !strings.Contains(got, wantUnknown) {
+		t.Errorf("the agent-setup section does not state what the code computes about an "+
+			"agent this CLI has no config target for.\n  want to find: %q\n  (searched the "+
+			"whole section)\n\nThose rows STAY and stay `false` — only the AND changes — so "+
+			"the sentence has to say which rows stop counting and when. A consumer that "+
+			"folds them in reports a failure for a setup that did everything it could.",
+			wantUnknown)
 	}
 }
 

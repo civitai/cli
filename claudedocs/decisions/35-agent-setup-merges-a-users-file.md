@@ -211,7 +211,8 @@ so `ok: true` beside "1 check(s) failed" is unreachable.
 |---|---|---|
 | `authenticated` | never | setup stops before auth on purpose (item 34) |
 | an absent `Authorization` header | never | the correct state for Zed (item 34) |
-| `claude-md` | only for `--agent claude` | **new** |
+| `claude-md` | only for `--agent claude` | the shim is inert for every other agent |
+| `mcp-site` / `mcp-orch` | only when `agentTargets[agent]` is **known** | **new** — see below |
 
 `CLAUDE.md` exists only because Claude Code does not read `AGENTS.md`. Every
 other agent reads `AGENTS.md` directly and the shim is inert for it. Measured: a
@@ -223,6 +224,57 @@ reports that as a failed setup.
 directory wants it. What moved is whether it fails the verdict, and the detail
 says so, because a red row whose exemption is invisible reads as a bug in the
 verdict.
+
+### The `mcp-*` rows for an agent this CLI has no target for
+
+Decided 2026-09-19 by the owner of the `--json` contract; record and the
+rejected alternatives: `claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md`.
+
+For any agent with no entry in `agentTargets` — Gemini CLI, Aider, Cline,
+Continue, and anything shipped after that table was written — `--check`
+returned `ok: false` and exit **1 permanently**, after a completely correct
+setup. There is no config file for this CLI to write, so the two rows can never
+go green and re-running changes nothing, while the hosted prompt's step 4 says
+*"Do not report success if any check fails."* Those two could not both stand.
+Measured in **4 of 4** blind `other`-identity dogfood trials; the de-confounding
+controls show it follows the IDENTITY, not the model.
+
+🔴 **The precedent is `authenticated`, not `claude-md` — and getting that
+backwards is what made this look like a non-problem for a while.** The
+`claude-md` exemption applies where **no work remains** (the shim is inert). On
+this path work DOES remain: the user must paste. The row that matches is
+`authenticated`, where work also remains, the **user** must do it, this CLI
+deliberately will not, and `ok` is `true` anyway.
+
+So `ok` means **"this CLI did everything it can do for you"** — which is already
+what it means for a user who has not logged in. It has never meant "MCP is
+registered".
+
+⚠ **Do not re-derive this from "it is the third instance of the same shape."**
+That framing was drafted and then **refuted** in a round-0 audit: the two
+existing exclusions are not the same shape as each other, and this one is a
+third distinct case. The argument rests on the `authenticated` parallel alone.
+
+**The rows STAY, stay `false`, and keep their detail text** — the user does need
+to paste, and `--check` must keep saying so. Only the AND changed. The human
+view says it twice more: the closing line reads *"This CLI has done everything
+it can for <agent>"* rather than "Setup is complete", and names the manual step.
+
+🔴 **The predicate is DERIVED FROM `civitaiMCPServers`, never a list of two
+names.** The decision record sketched it as `case checkMCPSite, checkMCPOrch:`,
+which does not compile — those check names are bare literals on the server
+table, not `check*` constants. Writing them out would leave a third server
+counting on a path where this CLI still has nowhere to write it.
+
+🔴 **`TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode` was BLIND to this
+and had to be widened.** It derived its "exempt for other agents" set with
+`"cursor"` — an agent that IS in `agentTargets` — so "other" meant *not claude*,
+never *not in the table*. There are **three** classes, and it sampled two: the
+change landed with the whole package green while the README's exemption
+sentence was false, and naming the rows in that sentence then went red claiming
+the code *"COUNTS it"*, which was itself false. A ledger that cannot see an
+exemption is not a ledger. It now samples the unknown class, asserts that
+identity is absent from `agentTargets`, and pins the clause whole.
 
 ## The managed-block states
 

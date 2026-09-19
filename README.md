@@ -471,14 +471,22 @@ token configured for **this CLI** but not exported (this CLI works, your agent
 gets `401` from `orchestration.civitai.com`); or neither. Its `ok` is `true` for
 both of the first two.
 
-🔴 **`ok` is the AND of every check except `authenticated` and — for any agent
-other than `claude` — `claude-md`.** Setup deliberately stops before auth, so the
-payload above, a complete setup with no token, is `"ok": true` and **exits 0**.
-Every other agent reads `AGENTS.md` directly, so the `CLAUDE.md` shim is inert
-for it and its row stays without counting. Read the exempt rows yourself if you
-need them; do not fold them into your own pass/fail — and note that on a
-`claude` project the exempt row is `authenticated` alone, because `claude-md`
-counts there.
+🔴 **`ok` is the AND of every check except `authenticated`, — for any agent
+other than `claude` — `claude-md`, and — for an agent this CLI has no config
+target for — `mcp-site` and `mcp-orch`.** Setup deliberately stops before auth,
+so the payload above, a complete setup with no token, is `"ok": true` and
+**exits 0**. Every other agent reads `AGENTS.md` directly, so the `CLAUDE.md`
+shim is inert for it and its row stays without counting. Read the exempt rows
+yourself if you need them; do not fold them into your own pass/fail — and note
+that on a `claude` project the exempt row is `authenticated` alone, because
+`claude-md` counts there.
+
+🔴 **The `mcp-*` exemption is conditional, and narrow.** For any agent the table
+does know, a missing MCP entry fails the verdict exactly as before; the rows
+**stay, and stay `false`** either way, because you do still have to register
+those servers by hand. `ok` means "this CLI did everything it can do for you" —
+already what it means for a user who has not logged in — never "MCP is
+registered".
 
 An absent `Authorization` header gets **no row of its own**, and nothing fails
 because of one — that is the correct state for Zed and for `--agent other`. If

@@ -380,6 +380,25 @@ func agentSetupVerdict(checks []agentCheckJSON, agent string) bool {
 
 // checkCountsTowardVerdict is the ONE predicate both the verdict and the failed
 // count consult, so `ok: true` beside "1 check(s) failed" is unreachable.
+//
+// 🔴 THE `mcp-*` ROWS DO NOT COUNT FOR AN AGENT THIS CLI HAS NO TARGET FOR, and
+// the precedent is `authenticated`, not `claude-md`. Work DOES remain on that
+// path — the user must paste the printed config by hand — so the `claude-md`
+// reading ("no work remains, so the row is inert") does not reach it. What
+// reaches it is `authenticated`: work remains, the USER must do it, this CLI
+// deliberately will not, and `ok` is `true` anyway. `ok` means "this CLI did
+// everything it can do for you", which is already what it means for a user who
+// has not logged in.
+//
+// Before this, `--check` returned `ok: false` and exit 1 FOREVER on that path,
+// after a completely correct setup — measured in 4 of 4 blind `other`-identity
+// dogfood trials — while the hosted prompt's step 4 says "Do not report success
+// if any check fails". Those two could not both stand.
+// Decision record: claudedocs/decisions/35-agent-setup-merges-a-users-file.md.
+//
+// 🔴 THE ROWS STAY, AND STAY `false`, WITH THEIR DETAIL TEXT. The user does need
+// to paste and `--check` must keep saying so. Nothing is hidden; only the AND
+// changes.
 func checkCountsTowardVerdict(name, agent string) bool {
 	switch name {
 	case checkAuthenticated:
@@ -387,8 +406,32 @@ func checkCountsTowardVerdict(name, agent string) bool {
 	case checkClaudeMD:
 		return agent == agentClaude
 	default:
+		// 🔴 DERIVED FROM THE SERVER TABLE, NEVER A LIST OF TWO NAMES. The
+		// `mcp-*` check names are bare literals on civitaiMCPServers, not
+		// `check*` constants — the decision record's sketch spelled them
+		// `checkMCPSite, checkMCPOrch`, which does not compile. Writing the two
+		// names out here would leave a third server counting toward the verdict
+		// on a path where this CLI still has nowhere to write it, which is the
+		// same drift TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode's
+		// docstring was hardened against.
+		if isMCPCheckName(name) {
+			_, known := agentTargets[agent]
+			return known
+		}
 		return true
 	}
+}
+
+// isMCPCheckName reports whether name is one of the per-server rows
+// agentSetupMCPChecks emits, derived from the table that defines them so a
+// server added later is classified the moment it appears.
+func isMCPCheckName(name string) bool {
+	for _, srv := range civitaiMCPServers {
+		if srv.Check == name {
+			return true
+		}
+	}
+	return false
 }
 
 func newAgentSetupCmd() *cobra.Command {
@@ -613,8 +656,21 @@ func runAgentSetupCheck(emit *agentSetupEmitter, env agentEnv, track, agent, tok
 	}
 	// The rows are already printed; this error exists only to carry the exit
 	// code, so it must not read as a second, competing report of the same facts.
-	return fmt.Errorf("%w: %d check(s) failed — the report above lists them; re-run `civitai agent-setup` to fix "+
-		"what it can write", ErrAgentSetupIncomplete, countFailedChecks(checks, agent))
+	// 🔴 DO NOT PROMISE A RE-RUN FIXES EVERY FAILING ROW.
+	//
+	// ⚠ The decision record justifies this reword as fixing "a no-op loop on the
+	// no-config-target path" — that reason is now FALSE, because the exemption
+	// above means that path no longer fails at all. Recorded rather than quietly
+	// restated: a fix round's own prose is the likeliest next defect.
+	//
+	// What justifies it instead is a case the record never named: for a KNOWN
+	// agent, "re-run to fix what it can write" is CORRECT when `.mcp.json` is
+	// merely missing, and WRONG when the row needs HOME set or a hand-edited
+	// config repaired. Those rows each carry their own remedy in their detail,
+	// so the error points at them rather than promising a blanket fix.
+	return fmt.Errorf("%w: %d check(s) failed — the report above lists them; re-run `civitai agent-setup` to "+
+		"rewrite what it owns, and read each failing row's detail for the ones it does not",
+		ErrAgentSetupIncomplete, countFailedChecks(checks, agent))
 }
 
 func countFailedChecks(checks []agentCheckJSON, agent string) int {
@@ -736,10 +792,21 @@ func agentSetupChecks(env agentEnv, agent, token string) []agentCheckJSON {
 
 // agentSetupMCPChecks reports one row per server.
 //
-// 🔴 "COULD NOT LOOK" IS NOT "NOT REGISTERED", and the details say which. An
-// agent this CLI has no target for, and a user-scoped target with no resolvable
-// home directory, are both genuinely unfinished setups — but a row reading "not
-// registered in " with an empty path is an answer with none of the content.
+// 🔴 "COULD NOT LOOK" IS NOT "NOT REGISTERED", and the details say which. A
+// user-scoped target with no resolvable home directory, and a config this
+// command cannot parse, are genuinely unfinished setups — but a row reading
+// "not registered in " with an empty path is an answer with none of the
+// content.
+//
+// 🔴 THE `agentTargets` MISS IS THE ONE CASE THAT DOES NOT FAIL THE VERDICT,
+// and this docstring used to say the opposite — it grouped that case with the
+// home-directory one as "both genuinely unfinished setups". Superseded by
+// claudedocs/decisions/35-agent-setup-merges-a-users-file.md. The setup IS
+// unfinished, and the row still says so; what changed is who can finish it.
+// Nothing this CLI can do will register a server for an agent it has no config
+// file for, so counting the row made `--check` exit 1 forever after a correct
+// run. checkCountsTowardVerdict excludes these two rows on that path ALONE —
+// the rows stay, stay `false`, and keep their detail text.
 func agentSetupMCPChecks(env agentEnv, agent string) []agentCheckJSON {
 	t, known := agentTargets[agent]
 	if !known {
@@ -815,15 +882,46 @@ func printAgentSetupChecks(w io.Writer, payload agentSetupJSON) {
 		fmt.Fprintln(w, "  "+st.ErrorMsg(label+c.Detail))
 	}
 	fmt.Fprintln(w)
-	if payload.OK {
+	_, knownAgent := agentTargets[payload.Agent]
+	switch {
+	case payload.OK && !knownAgent:
+		// 🔴 "COMPLETE" WOULD BE AN OVERSTATEMENT HERE, AND THE ROWS ABOVE SAY
+		// SO. This CLI has done everything it can — which is what `ok` means —
+		// but the MCP servers are still unregistered and only the user can
+		// finish that. Saying "complete" flat would be the same success-measured-
+		// in-an-environment-the-user-does-not-have shape this path already had.
+		fmt.Fprintln(w, st.Success("This CLI has done everything it can for "+payload.Agent+"."))
+		fmt.Fprintln(w, st.Warn("One manual step remains: register "+mcpCheckNameList()+
+			" by hand — `civitai agent-setup --agent other` prints the JSON to paste."))
+	case payload.OK:
 		fmt.Fprintln(w, st.Success("Setup is complete."))
-	} else {
+	default:
 		fmt.Fprintln(w, st.ErrorMsg("Setup is incomplete — re-run `civitai agent-setup`."))
 	}
 	fmt.Fprintln(w, st.Dim("`authenticated` is reported but never fails this check — setup stops before login on purpose."))
 	if payload.Agent != agentClaude {
 		fmt.Fprintln(w, st.Dim("`claude-md` likewise: "+payload.Agent+" reads "+agentsFilename+" directly, so the shim is inert for it."))
 	}
+	// 🔴 NO THIRD FOOTNOTE FOR THE `mcp-*` EXEMPTION, DELIBERATELY. The two rows
+	// above already render in WARN colour on this path — derived from the SAME
+	// checkCountsTowardVerdict predicate, and that rendering predates this
+	// change — and the Warn line in the switch carries the remedy. A Dim line
+	// restating it made the screen say one fact four times. Round 0 of #669.
+}
+
+// mcpCheckNameList renders the per-server check names for prose, derived from
+// the table so a third server is named the moment it is added.
+func mcpCheckNameList() string {
+	names := make([]string, 0, len(civitaiMCPServers))
+	for _, srv := range civitaiMCPServers {
+		names = append(names, "`"+srv.Check+"`")
+	}
+	// A one-element list needs no separator and Join handles it; the table is a
+	// package-level literal with two entries, so no empty case is reachable.
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,10 @@
 # Decision — `--check`'s verdict for an agent the CLI has no config target for
 
+✅ **SHIPPED — read "Status" at the bottom before acting on anything above it.**
+The code change is **made**; every "not yet"/"must"/"will" in this file is the
+pre-implementation plan, kept as the record of what was decided and why. Three of its
+coupled edits needed correcting against reality, including the one this header states.
+
 🔴 **This lives in `claudedocs/refs/`, NOT `claudedocs/decisions/`, on purpose.**
 That directory is mechanically 1:1 with a numbered `AGENTS.md` item
 (`TestEvidencePointersAndFilesAreTheSameSet`, `TestSplitTableCoversEveryEvidenceFile`),
@@ -9,12 +14,16 @@ new entry the largest in the list — above every existing one. Adding an item t
 every session, and the sequencing would be wrong anyway: an `AGENTS.md` item states a
 rule agents must follow, and this rule is **not true until the code ships**.
 
-**The implementing PR takes that on**: it adds the `AGENTS.md` item, pays the eviction,
-and moves this file to `claudedocs/decisions/NN-…` — at the moment the rule becomes
-true. Until then this is a decision record, not a repo rule.
+❌ **RETRACTED — "the implementing PR adds the `AGENTS.md` item, pays the eviction,
+and moves this file to `claudedocs/decisions/NN-…`."** None of that was needed, and
+none of it was done. **Item 35 already routes here**: its trigger sentence names
+*"`--check`'s verdict"* verbatim, its Code header already lists
+`checkCountsTowardVerdict`, and `claudedocs/decisions/35-agent-setup-merges-a-users-file.md`
+already carries the verdict-exemption table this change extends. `AGENTS.md` is
+unchanged and no eviction was paid. See Status, correction 3.
 
 **Decided 2026-09-19 by the owner of the `--json` contract.** This file records the
-decision and the argument; the code change is **not yet made** — see "Status".
+decision and the argument; for what the code actually does, read decision 35.
 
 ## The question
 
@@ -128,8 +137,38 @@ argument.
 
 ## Status
 
-**DECIDED, NOT IMPLEMENTED.** No code has changed. The arc's closing condition for
-this item is this file plus the change it names, merged.
+✅ **IMPLEMENTED 2026-09-19.** The durable rule now lives in
+[`claudedocs/decisions/35-agent-setup-merges-a-users-file.md`](../decisions/35-agent-setup-merges-a-users-file.md)
+§"The `mcp-*` rows for an agent this CLI has no target for" — read that, not this file,
+for what the code does. This file stays as the dated record of the decision and of the
+alternatives that were rejected.
+
+### Three corrections this file's plan needed, measured during implementation
+
+🔴 **Corrections 1 and 2 are recorded ONCE, in
+[`claudedocs/decisions/35-agent-setup-merges-a-users-file.md`](../decisions/35-agent-setup-merges-a-users-file.md)
+§"The `mcp-*` rows for an agent this CLI has no target for"** — the compile failure in
+this file's `switch` sketch, and the README ledger guard that was blind to the
+unknown-agent class. They lived in both files and the pair has to be kept true in
+lockstep; one copy is the fix. Correction 3 stays here because it is about **this
+file's own header premise**, which decision 35 has no reason to carry:
+
+🔴 **Coupled edit 6's eviction was NOT NEEDED — `AGENTS.md` item 35 already
+   routes here.** Its trigger sentence names *"`--check`'s verdict"* verbatim, its
+   Code header already lists `checkCountsTowardVerdict`, and decision 35 already
+   carries a section titled *"The `--check` verdict: a gate nobody can clear is a
+   gate everyone ignores"* with the exemption table this change extends. So no new
+   numbered item was minted, no eviction was paid, and `AGENTS.md` is unchanged at
+   30,493 bytes. The header's premise — that this rule needs an item of its own —
+   was written without checking item 35. ⚠ **This is the one place the
+   implementation departs from the decision as written**; it is reversible, and the
+   contract's owner can overrule it by minting a new numbered item and paying
+   the eviction.
+
+Edit 4 (the remediation string) shipped, reworded to stop promising that a re-run
+fixes rows a re-run cannot fix. Edit 5 (`prompt.md` and `--agent`) is **NOT in this
+change** — that file lives in `civitai/civitai-developer-docs`, a different repo that
+auto-deploys on push to `main`, so it is a separate PR.
 
 ⚠ **It also unblocks the arc's frozen closing condition**, which requires `ok: true`
-and is unreachable on the `other` path until item 1 lands.
+and was unreachable on the `other` path until item 1 landed.
