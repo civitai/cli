@@ -90,33 +90,48 @@ that wrote it, flagged as such there.
 
 ## State now
 
-- **cli#663 is MERGED** (`07e9031`, squash), verified by CONTENT with a negative control
-  — `scripts/dogfood/`, both `claudedocs/refs/` records and the handoff are on `main`;
-  the same paths are absent at `main~1`. Branch deleted, base clone re-synced (it was
-  3 behind — write-only clones fall silently behind), 27 containers and 4 images removed.
-- **cli#667 is OPEN** — the closing-condition reading correction (below). Two doc lines,
-  no code. It is the only thing left from this arc's last session.
-- **cli#664 and cli#666 MERGED** — the `pins-vs-published` freeze recurred twice in one
-  session (`app-sdk` 0.43.0, then `blocks-react` 0.52.0 mid-session). Both bumps verified
-  by content with a negative control, never by ancestry.
-- **cli#665 OPEN** — rank 34, the real defect.
-- ✅ **Rank 33 was DECIDED 2026-09-19** by the `--json` contract's owner — **the verdict
-  moves, not the prompt**. Record + the six coupled edits:
-  `claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md`. ❌ **Not implemented**:
-  the code still counts `mcp-site`/`mcp-orch` on the `other` path.
+- ✅ **Rank 33 is IMPLEMENTED — `cli#669`**, branch
+  `zach/agent-setup-verdict-unknown-agent`, one commit `f311077`. Awaiting merge
+  behind a round-0 audit. **`checkCountsTowardVerdict` no longer counts
+  `mcp-site`/`mcp-orch` toward `ok` when `agentTargets[agent]` is unknown.** The rows
+  STAY and stay `false`. `ok` now means *"this CLI did everything it can do for you"* —
+  the `authenticated` reading, not the `claude-md` one.
+- **Rank 33's closing condition is MET**, verified verbatim in a clean container with
+  no agent env var: `agent=other`, `ok: true`, rc **0**, both MCP rows PRESENT and
+  still `false`.
 - ✅ **The arc's frozen closing condition is SATISFIED on its own wording** — it asks for
   **a** blind run to reach a working setup, and 4 of 16 cells cleared every clause,
   still passing under the corrected arm B. 🔴 **The arc is open anyway, by choice**:
   12 of 16 failed, which the condition does not ask about and which matters more.
   ⚠ Earlier reports in this arc said "NOT MET" — a stricter reading than the frozen
-  text; corrected in cli#667.
-- **Deploy/verify status:** nothing deployed. This arc has shipped **no production
-  code** — the decided verdict change (rank 33) is still unimplemented.
-- ⚠ **No `clawgate-task:` field**: `clawgate_handoff.sh resolve` exits **5** (nothing
+  text; corrected in cli#667. **Rank 33 additionally makes it REACHABLE on the `other`
+  path**, where it was unreachable by construction. Neither fact closes the arc.
+- **Merged this session, in this order, each verified by CONTENT (never by ancestry —
+  a squash merge never makes the head an ancestor):**
+  - **cli#668** (`5e128ae`) — the pins bump `app-sdk ^0.43.0 → ^0.44.0`, opened by the
+    nightly bumper, which cleared the freeze blocking #669.
+  - **cli#667** (`2b1f45a`) — the closing-condition reading correction.
+- **cli#663 is MERGED** (`07e9031`, squash), verified by CONTENT with a negative control
+  — `scripts/dogfood/`, both `claudedocs/refs/` records and the handoff are on `main`;
+  the same paths are absent at `main~1`.
+- **cli#664 and cli#666 MERGED** — the `pins-vs-published` freeze recurred twice in one
+  earlier session (`app-sdk` 0.43.0, then `blocks-react` 0.52.0). **#668 is the THIRD
+  recurrence.** All verified by content with a negative control.
+- **cli#665 OPEN** — rank 34, the real defect, and now the ONLY thing between the arc
+  and its closing condition.
+- **IN FLIGHT:** a round-0 `/audit-pr` on #669. Nothing else running.
+- **Deploy/verify status:** nothing deployed. `#669` ships CLI code that reaches users
+  only via an npm release, which this session did not cut.
+- ⚠ **No `clawgate-task:` field**: `clawgate_handoff.sh resolve` exited **5** (nothing
   resolved). An unknown session id answers 200 with an empty array, so that zero cannot
   distinguish "touched no task" from "wrong id". Not a clean bill of health.
-- ⚠ **A worktree is still live**: `/home/zach/workspace/civit/cli-cc-fix` on
-  `zach/closing-condition-reading`, held open until cli#667 merges. Remove it after.
+- ⚠ The **22 `dogfood-*` containers** an earlier handoff said were still running are
+  **gone** — `docker ps -q --filter name=dogfood-` returns 0. Re-checking the four
+  passing cells now needs a re-run of `scripts/dogfood/`.
+- ⚠ **Worktrees left live**: `/home/zach/workspace/civit/cli-cc-fix` (branch merged by
+  #667 — safe to remove), `/home/zach/workspace/civit/cli-rank33` (#669, still open),
+  `/home/zach/workspace/civit/cli-ho4` (this doc). Remove by exact path; `git worktree
+  prune` does NOT remove worktrees, it only clears entries whose directories are gone.
 
 ## Open investigations — live diagnosis state
 
@@ -459,7 +474,14 @@ before those rounds' commits were read back.
   does not exist; `git worktree list` shows `cli-596b` on `fix/generate-blob-forgery-r0` at
   `19455c0`. `via: command`
 
-### ✅ DECIDED (2026-09-19) — an agent the CLI does not know can never reach `ok: true` (rank 33)
+### ~~✅ DECIDED (2026-09-19) — an agent the CLI does not know can never reach `ok: true` (rank 33)~~ IMPLEMENTED 2026-09-19 — see "✅ IMPLEMENTED — rank 33 shipped as cli#669" below
+
+🔴 **NOT OPEN, AND ITS CLOSING BULLET IS NOW WRONG.** The block below ends *"Next
+probe: none … what is missing is a DECISION"* — the decision was made **and
+implemented**; `checkCountsTowardVerdict` now excludes the `mcp-*` rows when
+`agentTargets[agent]` is unknown. Read the IMPLEMENTED block at the bottom of this
+section for what actually shipped and for the **three corrections the decision
+record's plan needed**. Measurements below are kept — they are still the baseline.
 - as-of: 2026-09-18, from 19 blind trials; **argument rewritten the same day after
   a round-0 audit refuted its original framing — read the RETRACTED bullet below
   before acting on any part of this block**
@@ -564,13 +586,100 @@ returns `ok: false` and exit 1 after a **completely correct** setup, forever.
   a sweep note that named only three surfaces; ranked item 34, the evidence doc and
   issue cli#665 are the other three.
 
+### ✅ IMPLEMENTED — rank 33 shipped as cli#669, and the decision record's plan needed three corrections
+- as-of: 2026-09-19
+
+**Supersedes the `✅ DECIDED (2026-09-19)` block above, whose "Next probe: none —
+what is missing is a DECISION" is now wrong.** The decision was made *and*
+implemented. The durable rule lives in
+`claudedocs/decisions/35-agent-setup-merges-a-users-file.md`
+§"The `mcp-*` rows for an agent this CLI has no target for".
+
+🔴 **Each correction below was MEASURED, not reasoned. The decision record
+(`claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md`) has been updated with
+all three, and its header retracted.**
+
+- **Correction 1 — the prescribed code does not compile.** The record's sketch reads
+  `case checkMCPSite, checkMCPOrch:`; **those constants do not exist**. The check
+  names are bare literals on the `civitaiMCPServers` table (`agent_setup_mcp.go`).
+  Shipped as a derived `isMCPCheckName` lookup against that table, which is also what
+  `TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode`'s own docstring demands so a
+  third server is covered the moment it is added. `via: command` (build failure)
+- **Correction 2 — coupled edit 3 predicted the WRONG DIRECTION, and the guard was
+  BLIND.** The plan said `readme_agent_setup_claims_test.go` "goes red until the
+  README sentence names the exemption". Measured, in this order:
+  1. code change alone → `go test ./internal/cmd` **ok**, whole package green, with
+     the README sentence left false;
+  2. then adding `` `mcp-site` `` / `` `mcp-orch` `` to that sentence → **FAIL**:
+     *"the README's exemption sentence names \"mcp-site\" as excluded from `ok`, but
+     checkCountsTowardVerdict COUNTS it."* — **which is itself false.**
+
+  Cause: the guard derives `exemptForOther` with `"cursor"` — an agent that **IS** in
+  `agentTargets` — so "other" there has only ever meant *not claude*, never *not in
+  the table*. There are **three** agent classes and it sampled two. Following its
+  failure message leads to de-backticking the names (round 3 of #641's measured wrong
+  fix) or to reverting correct code. Widened to sample the unknown class, assert that
+  identity is absent from `agentTargets`, and pin the clause whole. `via: measurement`
+- **Correction 3 — coupled edit 6's `AGENTS.md` item and its forced eviction were NOT
+  NEEDED.** Item **35** already routes here: its trigger sentence names *"`--check`'s
+  verdict"* verbatim, its Code header already lists `checkCountsTowardVerdict`, and
+  decision 35 already carries the verdict-exemption table this change extends.
+  `AGENTS.md` is **unchanged at 30,493 bytes** and no eviction was paid.
+  ⚠ **This is the ONE place the implementation departs from the decision as written.**
+  It is reversible; the `--json` contract's owner can overrule it by minting a new
+  numbered item and paying the eviction. `via: code`
+- **Ruled out — that the change is a blanket exemption.** Negative control with the
+  MCP config removed, same binary: `claude` ok=false rc=1 · `cursor` ok=false rc=1 ·
+  `vscode` ok=false rc=1 · `other` ok=true rc=0. `via: measurement`
+- **Verification matrix** for the new behavioural guard
+  `TestMCPRowsDoNotFailTheVerdictForAnAgentWithNoConfigTarget`: **RED at
+  `origin/main` (`07e9031`)** on `a correct setup for an unknown agent is ok and
+  exits 0`; green at HEAD; a blanket-exemption mutant dies on its own distinct arm
+  (`a KNOWN agent with no MCP config still fails`). The widened README ledger kills
+  three mutants, each with its own message. `make ci-shallow` (depth-1 tier,
+  committed state) **21/21**. `via: measurement`
+- **Next probe:** none for the mechanism. What remains is **merge sequencing** —
+  #668 then #667 then the doc branch then rebase #669.
+
+### ⚠ OPEN — `pins-vs-published` is red on cli#669, and it is the repo freeze recurring a THIRD time
+
+- as-of: 2026-09-19
+- **Symptom + exact repro:** `pins-vs-published` fails on `cli#669`. Reproduce
+  against live npm, from any checkout:
+  ```bash
+  CIVITAI_CHECK_PUBLISHED_PINS=1 go test ./internal/scaffold \
+      -run TestScaffoldPinsSatisfyPublished -count=1
+  ```
+- **Observed (with values):** `STALE SCAFFOLD PIN — every app created from this
+  template is born stale.` `pinned: ^0.43.0` vs `published: 0.44.0`
+  (`@civitai/app-sdk`). `@civitai/blocks-react ^0.52.0` is still current.
+- **Ruled out — that cli#669 caused it.** That commit touches **no** scaffold or pin
+  file (`git show --name-only` lists six files, none under `internal/scaffold` or
+  `templates/`), and `git diff origin/main -- internal/scaffold templates` is
+  **empty**. `via: command`
+- 🔴 **Ruled out — that main's GREEN is evidence the gate is healthy.** `main`'s
+  `pins-vs-published` reads `success` at `2026-09-19T05:05:39Z`, but the guard queries
+  **live npm**, so that is a *stored green with an expiry date* — upstream published
+  0.44.0 after it ran. The discriminating control is running the guard locally NOW,
+  which fails on a tree whose pin files are byte-identical to `main`. `via: measurement`
+- **The fix is ALREADY OPEN — do not author a second one.** **cli#668**
+  (`automation/bump-scaffold-pins`, opened 11:56:29Z by the nightly) bumps
+  `^0.43.0 → ^0.44.0`, is `MERGEABLE/CLEAN` and **13/13 green**. Found by the
+  `gh pr list --state open` sweep, which is the only thing that sees an unclaimed
+  duplicate.
+- **Leading hypothesis:** not a defect — this is the designed behaviour of a
+  network-querying guard plus a fast-moving upstream. Third recurrence this arc
+  (#664, #666, now #668). It is also **positive evidence for cli#530's closing
+  condition**: a scheduled run produced a bump PR on its own, which is what #540 was
+  meant to restore.
+- **Next probe:** merge #668, then re-run #669's CI and confirm
+  `pins-vs-published` goes green.
+
 ## Next steps (ranked)
 
 🔴 **Ranks 1–14, 18–24 are DONE — numbering preserved** so live `claim-work` slugs keep
-pointing at what they were taken for. Open: **15, 16, 17, 25, 26, 27, 29, 33, 34**.
-
-🔴 **33 and 34 are the only two that stand between the arc and its closing condition.**
-Both are now implementation work; neither is blocked on a decision.
+pointing at what they were taken for. **33 is now DONE-pending-merge.** Open: **15, 16,
+17, 25, 26, 27, 29, 34**.
 
 ➡ **Ranks 23, 28, 30, 31 and 32 were the FORGERY effort and have MOVED** to
 [`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md), which carries its own
@@ -586,12 +695,25 @@ The forwarding map:
 |---|---|---|
 | `agent-setup-onboarding-32` | rank 1 of the forgery doc | `terminal-line-forgery-1` |
 | `agent-setup-onboarding-23` / `-28` / `-30` / `-31` | CLOSED (#574, #605+#624, #604, #612) | none — do not take |
+| `agent-setup-onboarding-33` | ✅ DONE — cli#669 | release it once #669 merges |
 
 ⚠ The only MECHANICAL backstop is the `gh pr list --state open` sweep, which is the one thing
-that catches an UNCLAIMED duplicate. This table is the human half.
+that catches an UNCLAIMED duplicate. This table is the human half. **It earned its keep this
+session**: the sweep found cli#668 already open and stopped a duplicate pins-bump being authored.
 
+🔴 **Do the merge sequence FIRST — it is four commands and it unblocks everything
+else.** `#668` → `#667` → the doc branch → rebase `#669`.
+
+0. **Merge the queue, in order.** `cli#668` (pins bump, 13/13 green — clears the
+   freeze), then `cli#667` (green, operator-reserved), then this handoff's branch
+   `docs/handoff-rank33-shipped`, then rebase `cli#669` and confirm
+   `pins-vs-published` turns green. 🔴 **#667 and the doc branch both edit
+   `handoff-agent-setup-onboarding.md` — merging them out of order clobbers the
+   reading correction.**
+   IN FLIGHT: cli#668, cli#667, cli#669
+   forcing: gate — `pins-vs-published` is red on #669 and branch protection requires it
 15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT
-    re-verified for four sessions. `/home/zach/workspace/civit/civitai-developer-docs`.
+    re-verified for five sessions. `/home/zach/workspace/civit/civitai-developer-docs`.
     One command settles it either way.
     forcing: gate
 16. **`images search --help` sits 14 runes under the 1400 budget.** ⚠ RECOMMENDED FOR
@@ -611,21 +733,10 @@ that catches an UNCLAIMED duplicate. This table is the human half.
     **demoting dated evidence to `claudedocs/refs/`** behind a pointer.
     🔴 Do NOT satisfy this by deleting an open investigation, a gotcha or a ruled-out theory.
     forcing: none
-33. **IMPLEMENT the decided verdict change.** ✅ Decided 2026-09-19; ❌ not implemented —
-    the code still counts `mcp-site`/`mcp-orch` on the `other` path, so `--check` still
-    exits 1 there and the arc's closing condition stays unreachable.
-    Spec + the six coupled edits:
-    `claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md`.
-    🔴 Two edits bite: `agentSetupMCPChecks`'s docstring asserts the OPPOSITE and must be
-    rewritten; and `readme_agent_setup_claims_test.go` goes red until the README's
-    `` `ok` is the AND of every check except … `` sentence names the new conditional
-    exemption — that guard is working as designed, do not de-backtick names to silence it.
-    🔴 It also owes an `AGENTS.md` item, which forces an EVICTION: the file is 30,493
-    bytes against a 30,500 ceiling.
-    closing-condition: on a fresh machine with no agent env var,
-    `civitai agent-setup --track app && civitai agent-setup --check --json` reports
-    `ok: true` and exits 0, with both MCP rows still PRESENT and still `false`.
-    Checked by `scripts/dogfood/grade.sh` on any `other`-identity cell.
+33. ✅ **DONE — shipped as `cli#669`, awaiting merge.** Kept in the list only so a live
+    `claim-work agent-setup-onboarding-33` slug still resolves. Release the claim once
+    #669 merges: `claim-work --release agent-setup-onboarding-33`.
+    IN FLIGHT: cli#669
     forcing: gate
 34. **cli#665 — the `--prefix` remedy leaves `civitai` unreachable from every later shell.**
     8 of 8 trials on a non-writable prefix; **0 of 8** agents connected it to the
@@ -633,6 +744,15 @@ that catches an UNCLAIMED duplicate. This table is the human half.
     🔴 the ranking was abandoned after three wrong drafts; do not write a fourth.
     ⚠ An earlier draft of this item said "5 of 8 reported success anyway" — from a keyword
     regex, RETRACTED. The number that carries the item is **0 of 8**.
+    🔴 **Now the ONLY thing between the arc and its closing condition** — rank 33 landed.
+    forcing: gate
+35. **The decision's coupled edit 5 — `prompt.md` never mentions `--agent`.** Deliberately
+    NOT in #669: that file lives in `civitai/civitai-developer-docs`, which is
+    **branch-tracked and auto-deploys on push to `main`**, so it is a different repo and a
+    different blast radius. It must separate two cases the prompt currently conflates:
+    detection FAILED for an agent that IS in the table (`--agent <name>` is the fix), and
+    the agent genuinely is not in the table (paste by hand — and `--check` now reports
+    `ok: true` there, which the prompt's step 4 wording should stop contradicting).
     forcing: gate
 
 ## Gotchas / decisions / dead-ends
@@ -1792,31 +1912,88 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   belongs to a different arc). The guard's point was not that doc; it was that real work
   had happened since the last handoff write. Answering the guard's *reason* rather than
   its *object* is the difference between dismissing it and using it.
+### Added 2026-09-19 — implementing rank 33
+
+- 🔴 **A DECISION RECORD IS A PLAN, NOT A MEASUREMENT — AND THIS ONE WAS WRONG IN
+  THREE OF ITS SIX COUPLED EDITS.** Its Go snippet did not compile, its test
+  prediction was inverted, and its `AGENTS.md` eviction was unnecessary. None of the
+  three is a criticism of the *decision*, which stands; all three are the difference
+  between writing down what a change will require and running it. **Run each coupled
+  edit's own check before treating the list as a spec.**
+- 🔴 **A GUARD NAMED FOR A DISTINCTION IT DOES NOT SAMPLE.**
+  `TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode` calls its set
+  `exemptForOther` and derives it with `"cursor"` — an agent that IS in the table. So
+  "other" meant *not claude*, never *not in the table*, and a third agent class was
+  invisible. Its docstring says **"THIS IS A LEDGER, NOT A COUNT … adding a third
+  exemption without saying so in the README is red"** — a third exemption was added
+  and it stayed **green**. The variable NAME is what made the gap unreadable.
+  **Ask which values a parameterised guard actually feeds, not what the parameter is
+  called.**
+- 🔴 **THE GUARD'S FAILURE MESSAGE WAS FALSE, AND FOLLOWING IT DESTROYS CORRECT
+  WORK.** Once the README named the rows, it reported *"the README names `mcp-site`
+  as excluded from `ok`, but checkCountsTowardVerdict COUNTS it"* — the code does not
+  count it on that path. The two remedies that message invites are de-backticking the
+  names (round 3 of #641 measured that exact wrong fix) and reverting the code. This
+  file already warns *"A guard whose failure message sends a maintainer to the wrong
+  file is the hazard RULES.md names"* — here the guard was the one that had not been
+  hardened.
+- 🔴 **A STORED CI GREEN EXPIRES WHEN THE GUARD QUERIES THE NETWORK.** `main`'s
+  `pins-vs-published` was `success` at 05:05Z and the same guard failed at 12:00Z with
+  no commit in between, because npm published `@civitai/app-sdk 0.44.0`. **Reading
+  `main`'s stored conclusion is NOT a control for "did my branch break this".** Run
+  the guard locally, or diff the pin files against `origin/main` (here: empty).
+- ⚠ **`gh pr list --state open` found the fix already open (#668) before any was
+  authored.** The sweep is the only mechanism that sees an *unclaimed* duplicate, and
+  it cost one command.
+- ⚠ **A Go binary copied into a slim container needs `CGO_ENABLED=0`.** Without it:
+  `cannot execute: required file not found`, rc **127** — indistinguishable at a
+  glance from "the binary is not there", and it cost a round trip.
+- ⚠ **The `git add` provenance hook reports against the SESSION'S CWD, not the repo
+  being committed.** Committing in a `cli` worktree from a `datapacket-talos` cwd drew
+  a warning naming `claudedocs/refs/r2-b2-tiering-thrash.md`, a file in the *other*
+  repo that the commit does not contain (`git show --name-only | grep -c r2-b2` → 0).
+  Verify against the commit before acting on it.
+- ⚠ **An "item N" reference in prose is CHECKED.** `TestAgentsItemCrossReferencesResolve`
+  failed on the phrase *"minting item 39"* written in a `claudedocs/refs/` file —
+  `AGENTS.md` has items 1..38, and the guard reads prose across the repo, not just
+  `AGENTS.md`. Say "a new numbered item" unless the item exists.
 
 ## How to verify
 
-**The arc's closing condition — a blind dogfood run:**
+**Rank 33's closing condition, verbatim — a fresh machine with no agent env var:**
 
 ```bash
-export OPENROUTER_API_KEY=sk-or-...
-cd scripts/dogfood
-for e in node-root node-user ubuntu-apt stale-cli; do docker build -q -t "df-$e" -f "envs/$e.Dockerfile" .; done
-bash driver.sh                                 # 24 trials: per model, noderoot x 3 identities + 3 envs x 1
-bash grade.sh t-claude-noderoot-claudeid root  # CLOSING_CONDITION=yes|no, measured on the container
+docker run -d --name v33 node:22-bookworm-slim sleep 300
+CGO_ENABLED=0 go -C <cli-worktree> build -o /tmp/civitai-static ./cmd/civitai
+docker cp /tmp/civitai-static v33:/usr/local/bin/civitai
+docker exec v33 bash -lc 'mkdir -p /work && cd /work && civitai agent-setup --track app >/dev/null 2>&1; cd /work && civitai agent-setup --check --json; echo "rc=$?"'
+docker rm -f v33
+```
+Expect `"agent": "other"`, `"ok": true`, **rc 0**, and both `mcp-site` / `mcp-orch`
+rows PRESENT with `"ok": false`. 🔴 **Build with `CGO_ENABLED=0`** — a cgo binary in
+that image fails with `cannot execute: required file not found`, rc 127, which reads
+like a missing binary rather than a link error.
+
+**The guard matrix (what makes the change more than a green suite):**
+
+```bash
+# RED at base: revert ONLY the isMCPCheckName branch, keep the test, then
+go -C <cli-worktree> test ./internal/cmd -run TestMCPRowsDoNotFailTheVerdictForAnAgentWithNoConfigTarget -count=1
+# blanket mutant: make that branch `return false` unconditionally — the
+# "a KNOWN agent with no MCP config still fails" arm must go red, on its own message
 ```
 
-🔴 **Run ALL THREE grader controls first** (`scripts/dogfood/README.md` §"Validate the
-grader") — untouched container `no`, hand-built success `yes`, and `ctl-profile` `no`
-with arm A still green. 🔴 **Running all three certifies ONE of the three recorded
-grader defects**; defects 1 and 2 are pinned by nothing. The controls prove the
-instrument can go red and green — that is necessary, and it is not coverage.
+**The tier CI actually runs — reads COMMITTED state, so commit before running it:**
 
-**Repo gates:** `make ci` AND `make lint` — `make ci` does not run lint, nor
-`pins-vs-published`/`schema-drift`. A green `make ci` is a claim about four steps.
+```bash
+cd <cli-worktree> && make ci-shallow      # expect: 21/21, 0 failures, 0 timeouts
+```
+🔴 `make ci` is **not** what CI runs — it is a full clone. `make ci-shallow` is the
+depth-1 tier, and it grades committed state only.
 
-**The repo freeze, when `pins-vs-published` is red** (it recurred TWICE in one session):
+**The freeze, if `pins-vs-published` is red:**
 
 ```bash
 CIVITAI_CHECK_PUBLISHED_PINS=1 go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -count=1
-gh workflow run bump-scaffold-pins.yml --ref main    # opens a PR; NOT a draft ⇒ the SDK build passed
+gh pr list --repo civitai/cli --state open   # a bump PR probably already exists — do not author a second
 ```
