@@ -436,6 +436,15 @@ PR BODY of cli#663** — which no list named until round 8, which is the first t
 reviewer reads, and which went seven rounds asserting a claim retracted everywhere
 else. `scripts/dogfood/README.md` is a sixth for grader claims specifically.
 
+🔴 **AND A SEVENTH THAT OUTLIVES THIS PR: the cairn subsystem store** (`cairn recall
+--repo <cli-clone> --ref agent-setup`, scope `cli`). It carried the retracted
+"each control has already caught a real grader defect" plus the stale two-control
+prescription until round 9 found it. **It is the most dangerous surface of the set**,
+because every other one dies with the PR while a store entry is what a FUTURE session
+recalls — with no retraction attached and no pointer to this document. Corrected in
+place rather than by appending a note, so a reader who stops at the first matching
+bullet is not left with the false version.
+
 🔴 **The failure is not that a list was short; it is that a LIST was the instrument.**
 A sweep keyed to an enumeration can only reach what someone remembered to enumerate,
 and a corrected count reads as diligence, which is what makes the gap invisible.
