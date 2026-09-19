@@ -76,27 +76,38 @@ that wrote it, flagged as such there.
 
 ## State now
 
-➡ **Ranks 23, 28, 30 and 31 were the FORGERY effort and have moved** —
-their state, evidence, open issues and honest limits are in
-[`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md). In one line:
-all four merged (`752bf50`, `b4acda5`, `a29abb7`, `7c5a39c`), five issues closed,
-**six still open**, and every closure so far has produced its own successor
-(#604 → #612 → #624 → #629). Nothing about them is repeated here.
-
-- **cli#615** — the pin bump, merged `652ba75`, **unfroze the repo** (below).
-- **Claims:** `agent-setup-onboarding-23`, `-28`, `-29`, `-30` and `-31` all RELEASED and
-  verified absent.
-- 🔴 **The base clone was on another session's branch FOUR times this session.** All work was
-  done in dedicated worktrees; nothing was written to it. Check `git branch --show-current`
-  there before any operation.
-
-### Honest limits
-- ➡ **The forgery effort's limits moved too** — the open threat model, the successor chain and
-  the fifteen-for-fifteen audit base rate are in
-  [`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md).
-- 🔴 **The base rate is a fact about THIS repo's work, not only about that arc, and it is the
-  one thing worth carrying across the split: every audit round that has run on either arc found
-  something.** Budget for several rounds; the first clean one is the last.
+- **Branch / PR:** `zach/agent-setup-dogfood-matrix` → **cli#663**, OPEN, 13 commits.
+  `MERGEABLE/BLOCKED` only while CI re-runs on the newest head; every check was green
+  on the prior head except `pins-vs-published`, which the two bumps below cleared.
+- **The arc's closing condition was MEASURED for the first time — and is NOT MET.**
+  4 of 16 blind trials reached it. Evidence:
+  `claudedocs/refs/agent-setup-dogfood-matrix-2026-09-18.md`; harness at
+  `scripts/dogfood/` (committed, re-runnable, un-credentialed).
+- **Verdict is model-independent** across 19 trials — a pure function of *(agent in the
+  CLI's table?, npm prefix writable?)*. Established by de-confounding controls after the
+  first grid bound identity to model; that grid would have shipped "Gemini and Grok fail
+  the onboarding", which is false.
+- **Token efficiency: fine.** 3–8 tool calls/trial; measured 20 URL fetches across 20
+  trials, all the entrypoint — nothing reached the ~103k-token `/apps` surface. $0.66.
+- **DONE this session:**
+  - Harness + evidence record + handoff updates, `8c40bea` → `435a20e`.
+  - **An 11-round audit ladder (round 0 + rounds 1–10), closed on a clean round 10.**
+    Every round before it produced findings. `audit-claims` blocks are PR comments.
+  - **cli#665** filed for rank 34 (the real defect), corrected twice as analysis changed.
+  - **Rank 33 DECIDED** by the `--json` contract's owner — the verdict moves, not the
+    prompt. Record: `claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md`.
+  - **cli#664 and cli#666 merged** (pins `app-sdk` ^0.43.0, `blocks-react` ^0.52.0) —
+    the freeze recurred mid-session and was cleared twice. Both verified by CONTENT with
+    a negative control, never by ancestry.
+  - **cairn `cli/agent-setup` corrected twice, in place** (`cairn put`, not append).
+- **IN FLIGHT:** nothing. No background jobs, no open worktree writes.
+- **Deploy/verify status:** nothing deployed — this PR ships **no production code** by
+  design. The dogfood harness is operator-run and wired to no CI job.
+- ⚠ **22 `dogfood-*` containers are still running** for spot-checking:
+  `docker rm -f $(docker ps -aq --filter name=dogfood-)`.
+- ⚠ **No `clawgate-task:` field**: `clawgate_handoff.sh resolve` exited **5** (nothing
+  resolved). An unknown session id answers 200 with an empty array, so that zero cannot
+  distinguish "touched no task" from "wrong id". Not a clean bill of health.
 
 ## Open investigations — live diagnosis state
 
@@ -546,30 +557,21 @@ returns `ok: false` and exit 1 after a **completely correct** setup, forever.
 
 ## Next steps (ranked)
 
-🔴 **Ranks 1–14, 18–24 are DONE — numbering preserved** so live `claim-work` slugs keep pointing
-at what they were taken for. Open here: **15, 16, 17, 25, 26, 27, 29, 33, 34**.
+🔴 **Ranks 1–14, 18–24 are DONE — numbering preserved** so live `claim-work` slugs keep
+pointing at what they were taken for. Open: **15, 16, 17, 25, 26, 27, 29, 33, 34**.
 
-🔴 **33 and 34 are the only two that stand between the arc and its closing condition, and they
-outrank everything else here** — they are the entire explanation of a 4-of-16 blind-trial
-result, where 16, 17, 25, 26 and 27 are cleanups with no bearing on whether the entrypoint
-works. ⚠ **Both are now work, and neither is blocked on a decision.** 34 is a defect
-(cli#665). 33 **was** a contested design call and was **DECIDED 2026-09-19** by the
-`--json` contract's owner — the verdict moves, not the prompt — so what remains is an
-implementation against `claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md`,
-which names the six coupled edits.
+🔴 **33 and 34 are the only two that stand between the arc and its closing condition.**
+Both are now implementation work; neither is blocked on a decision.
 
 ➡ **Ranks 23, 28, 30, 31 and 32 were the FORGERY effort and have MOVED** to
-[`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md), which now carries its
-own closing condition. Their numbers are retired HERE rather than reused, so a live
-`claim-work` slug still resolves to what it was taken for.
+[`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md), which carries its own
+closing condition. Their numbers are retired HERE rather than reused, so a live `claim-work`
+slug still resolves to what it was taken for.
 
-🔴 **BUT THE SPLIT MINTS A SECOND SLUG FOR ONE ITEM, AND `claim-work` LOCKS PER SLUG — SO
-FORWARD IT BY HAND BEFORE TAKING ANY OF THESE.** `claim-work --slug-for` derives the slug from
-the DOC, so the same work now has two canonical names and **both compare-and-swaps succeed
-independently**: two sessions can take `agent-setup-onboarding-32` and `terminal-line-forgery-1`
-and both work civitai/cli#629. The old names stay derivable from every pre-split transcript and
-PR body, and from the `## Gotchas` notice below, which tells readers those sections cite rank
-numbers like "rank 30". The forwarding map:
+🔴 **THE SPLIT MINTS A SECOND SLUG FOR ONE ITEM, AND `claim-work` LOCKS PER SLUG — FORWARD IT
+BY HAND BEFORE TAKING ANY OF THESE.** `claim-work --slug-for` derives the slug from the DOC, so
+the same work has two canonical names and **both compare-and-swaps succeed independently**.
+The forwarding map:
 
 | retired slug (here) | now | live slug |
 |---|---|---|
@@ -577,17 +579,16 @@ numbers like "rank 30". The forwarding map:
 | `agent-setup-onboarding-23` / `-28` / `-30` / `-31` | CLOSED (#574, #605+#624, #604, #612) | none — do not take |
 
 ⚠ The only MECHANICAL backstop is the `gh pr list --state open` sweep, which is the one thing
-that catches an UNCLAIMED duplicate; the forgery doc mandates it. This table is the human half.
+that catches an UNCLAIMED duplicate. This table is the human half.
 
-15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT re-verified
-    for three sessions. `/home/zach/workspace/civit/civitai-developer-docs`. One command
-    settles it either way; a gate nobody has checked in three sessions is a claim, not a fact.
+15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT
+    re-verified for four sessions. `/home/zach/workspace/civit/civitai-developer-docs`.
+    One command settles it either way.
     forcing: gate
 16. **`images search --help` sits 14 runes under the 1400 budget.** ⚠ RECOMMENDED FOR
     RETIREMENT.
     forcing: none
-17. **Audit at MERGE time.** ⚠ RECOMMENDED FOR CONVERSION, not work — the nine-for-nine base
-    rate argues for a practice, not a backlog item.
+17. **Audit at MERGE time.** ⚠ RECOMMENDED FOR CONVERSION, not work.
     forcing: none
 25. **cli#579 — `saferune.Strip`'s doc claims a byte-for-byte subsequence.** Explicitly inert.
     forcing: none
@@ -595,127 +596,34 @@ that catches an UNCLAIMED duplicate; the forgery doc mandates it. This table is 
     forcing: none
 27. **cli#586 — three near-identical AST expression renderers.**
     forcing: none
-29. ⚠ **HALF DONE — split by initiative is finished; the gotcha split is not.**
-    ✅ The forgery effort is now its own doc with its own closing condition, and this doc's
-    ranks, state and honest limits no longer carry it. Measured: this file was 112,582 bytes
-    before the split.
-    ❌ **The `## Gotchas` section below is STILL NOT split** — it is filed by date and session,
-    so forgery and agent-setup lessons are interleaved. The forgery-specific ones are RESTATED
-    in the new doc; the originals are deliberately left here, because moving half of a
-    date-keyed section makes its dates lie. That is the remaining work.
-    ❌ The other two playbook steps are also untouched: evicting what has CLOSED, and demoting
-    dated evidence to `claudedocs/refs/agent-setup-onboarding.md` behind a pointer.
+29. ⚠ **HALF DONE — the gotcha split is still not done.** The `## Gotchas` section is
+    filed by date, so forgery and agent-setup lessons remain interleaved.
+    ❌ The other two playbook steps are also untouched: **evicting what has CLOSED**, and
+    **demoting dated evidence to `claudedocs/refs/`** behind a pointer.
     🔴 Do NOT satisfy this by deleting an open investigation, a gotcha or a ruled-out theory.
     forcing: none
-33. ✅ **DECIDED 2026-09-19 — the VERDICT moves, not the prompt.**
-    `claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md` is the record.
-    `mcp-site`/`mcp-orch` stop counting toward `ok` when `agentTargets[agent]` is unknown;
-    the rows STAY and stay `false` with their detail, exactly as `authenticated` does.
-    🔴 **DECIDED, NOT IMPLEMENTED — no code has changed.** The decision file lists six
-    coupled edits, two of which bite: the `agentSetupMCPChecks` docstring currently asserts
-    the OPPOSITE and must be rewritten, and `readme_agent_setup_claims_test.go` will go red
-    until the README's `` `ok` is the AND of every check except … `` sentence names the new
-    conditional exemption (that guard is working as designed — do not silence it).
-    🔴 **The deciding argument is the `authenticated` parallel, NOT the "third instance of
-    a shape" count**, which a round-0 audit refuted. Do not restore the refuted premise.
-    closing-condition: the decision file exists ✅ and the change it names is merged ❌.
+33. **IMPLEMENT the decided verdict change.** ✅ Decided 2026-09-19; ❌ not implemented —
+    the code still counts `mcp-site`/`mcp-orch` on the `other` path, so `--check` still
+    exits 1 there and the arc's closing condition stays unreachable.
+    Spec + the six coupled edits:
+    `claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md`.
+    🔴 Two edits bite: `agentSetupMCPChecks`'s docstring asserts the OPPOSITE and must be
+    rewritten; and `readme_agent_setup_claims_test.go` goes red until the README's
+    `` `ok` is the AND of every check except … `` sentence names the new conditional
+    exemption — that guard is working as designed, do not de-backtick names to silence it.
+    🔴 It also owes an `AGENTS.md` item, which forces an EVICTION: the file is 30,493
+    bytes against a 30,500 ceiling.
+    closing-condition: on a fresh machine with no agent env var,
+    `civitai agent-setup --track app && civitai agent-setup --check --json` reports
+    `ok: true` and exits 0, with both MCP rows still PRESENT and still `false`.
+    Checked by `scripts/dogfood/grade.sh` on any `other`-identity cell.
     forcing: gate
-
-    ⬇ **The contested framing below is kept as the record of how the decision was reached.**
-
-33b. **(superseded by the decision above) `--check` can never report `ok: true` for an
-    agent outside the CLI's table, and what to DO about that was genuinely contested.**
-    🔴 **REWRITTEN after a round-0 audit — do not restore the earlier version, which is
-    wrong in a way that reads as well-evidenced.** It called this "the third instance of a
-    shape the file's own comments already recognise twice" and recommended excluding
-    `mcp-site`/`mcp-orch` from the verdict when `agentTargets[agent]` is unknown. Both
-    halves fail:
-    - **The precedent is not a precedent.** `authenticated` is excluded because auth is out
-      of scope BY DESIGN and `claude-md` because the shim is INERT for a non-Claude agent —
-      in both, **no work remains**. On `other`, work remains and has not been done: the MCP
-      servers really are unregistered and the user really must paste.
-    - **The code already decided the opposite, explicitly, and the earlier version did not
-      quote it.** `internal/cmd/agent_setup.go:739-742`, the docstring of the function that
-      emits these very rows: *"An agent this CLI has no target for, and a user-scoped target
-      with no resolvable home directory, **are both genuinely unfinished setups**"*.
-    - 🔴 **And the recommended fix contradicted this arc's own reasoning two paragraphs
-      away.** `refs/…-matrix-2026-09-18.md` rejects forcing `--agent cursor` on this path
-      *because "`--check` then reports a green setup that does not work"* — and excluding the
-      rows produces that same outcome by another route. Disqualifying in one paragraph,
-      recommended in the next.
-    **What survives, and is not contested:** (a) the remediation string *"re-run `civitai
-    agent-setup` to fix what it can write"* names an action that can never change the
-    outcome on this path; (b) `prompt.md` mentions `--agent` **zero** times, so an agent
-    landing on `other` has no documented recovery and the one that recovered did it by
-    asking the user; (c) `prompt.md` step 4's *"Do not report success if any check fails"*
-    and a permanently-`false` verdict cannot both be right.
-    **The open question is which of the two moves** — `prompt.md`'s wording, or the verdict
-    semantics — and it needs a decision from whoever owns the `--json` contract, because
-    `readme_agent_setup_claims_test.go` ledgers consumers against the current one.
-    ⚠ **This also means the arc's frozen closing condition is unreachable on this path.**
-    That is a fact about the CONDITION, not proof the CLI is wrong; resolving it is part of
-    the same decision. Do not quietly widen the condition to make it pass.
-    closing-condition: **a written decision** in `claudedocs/decisions/` naming which of the
-    two surfaces moves and why, plus (a) and (b) fixed in whichever surface it names.
-    Checked by: the decision file exists and its named change is merged.
-    forcing: SUPERSEDED — this block is the record of how rank 33 was DEBATED. The
-    decision is in rank 33 above and in `refs/agent-setup-verdict-decision-2026-09-19.md`.
-    Do not act on this
-    entry's `forcing`, its closing-condition, or its "open question" framing.
-34. 🔴 **The `--prefix` install remedy leaves `civitai` unreachable from every later shell.**
-    Filed as **cli#665**.
-    8 of 8 trials on a non-writable prefix. The written `AGENTS.md` then instructs future
-    sessions to run a binary they cannot find, and **0 of 8** agents noticed that — the
-    number that carries this item. (8/8 relayed the PATH line and 6/8 warned it would not
-    persist, so the agents are not the weak link. ⚠ An earlier draft of this item said
-    "5 of 8 reported success anyway"; that came from a keyword regex and is RETRACTED —
-    see the correction in the block above and `refs/…-matrix-2026-09-18.md`.)
-    🔴 **THREE DRAFTS OF THIS LIST RANKED THE REMEDIES AND ALL THREE WERE WRONG. THE
-    RANKING IS ABANDONED — what follows is a MEASUREMENT, and the enumeration is open.**
-    Do not write a fourth ranking; if you need one, measure your own environment first.
-
-    **Measured 2026-09-18 in both environments the closing condition is graded on**
-    (`df-node-user`, `df-ubuntu-apt`), as the container's own non-root user:
-    login-shell `PATH` is `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
-    — **six directories, none writable by that user** — and neither `~/.local/bin` nor
-    `~/bin` exists or appears on PATH.
-
-    ❌ **DRAFT 4 DREW A CONCLUSION THIS MEASUREMENT DOES NOT SUPPORT, and it is
-    withdrawn:** *"(b) has no implementable target … arm 1 is therefore unreachable on
-    those environments by any listed candidate."* 🔴 **It measured a precondition the
-    remedy itself alters.** Both images' stock `~/.profile` carries
-    `if [ -d "$HOME/.local/bin" ]; then PATH="$HOME/.local/bin:$PATH"; fi` — conditional
-    on EXISTENCE — so `--prefix="$HOME/.local"` creates the directory and puts it on a
-    **bash** login shell's PATH with no profile edit. Measured: `civitai 0.1.105`.
-    🔴 **But zsh never reads `~/.profile`**, and the closing condition names
-    `zsh -lic`. Same container, same install: `zsh -lic 'civitai --version'` →
-    `command not found`. **The two shells disagree**, which is a fact about the remedy
-    and about the condition, not a ranking.
-    **So: no reachability claim is made here.** What is measured is above; what follows
-    from it depends on which shell the condition means, and that is now the open question.
-    - **(c) satisfies neither arm.** It addresses the second-order harm — future agent
-      sessions can still run the CLI — and is worth doing alongside another remedy, but a
-      path in a markdown file puts nothing on any login shell's PATH and changes no
-      agent's report. (This bullet is unaffected by the withdrawal above.)
-    ⚠ **Scope, stated rather than implied:** this is a fact about these two container
-    images, not about every machine. 🔴 **And "already on PATH" is exactly the phrase
-    that produced the false green** — `$HOME/.local/bin` is already on PATH for a BASH
-    login shell and is not for `zsh -lic`, which is the shell arm 1 names. Any claim
-    about (b) must say WHICH login shell's PATH it means. The graded envs decide this
-    item, and arm 1's shell decides what counts there.
-    ❌ **All three retracted drafts, recorded so a fourth is not derived:**
-    1. *"(b) and (c) actually fix it."*
-    2. *"(c) actually fixes it … (b) is NOT sufficient on its own."* — promoted a remedy
-       satisfying no arm.
-    3. *"(b) … satisfies arm 1 by construction … the only candidate that closes the item
-       mechanically."* — refuted by the measurement above. 🔴 Draft 3 also accused draft 2
-       of misreading (b) as `npm config set prefix`; **that accusation was unfair** — the
-       evidence doc defines (b) that way, so draft 2 was reading the source correctly and
-       draft 3 had silently redefined the remedy.
-    closing-condition: a blind trial on `df-node-user` or `df-ubuntu-apt` ends with EITHER
-    `zsh -lic 'civitai --version'` printing the version, OR the agent's final report stating
-    plainly that the CLI is not yet on the user's PATH and the setup is incomplete.
-    `scripts/dogfood/grade.sh` decides the first half; the second is read off the transcript.
+34. **cli#665 — the `--prefix` remedy leaves `civitai` unreachable from every later shell.**
+    8 of 8 trials on a non-writable prefix; **0 of 8** agents connected it to the
+    `AGENTS.md` they had just written. Remedies are mapped to which ARM each satisfies —
+    🔴 the ranking was abandoned after three wrong drafts; do not write a fourth.
+    ⚠ An earlier draft of this item said "5 of 8 reported success anyway" — from a keyword
+    regex, RETRACTED. The number that carries the item is **0 of 8**.
     forcing: gate
 
 ## Gotchas / decisions / dead-ends
@@ -1765,46 +1673,111 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   same content, so it returned empty too — an empty control read as confirmation. Pick a sha
   that genuinely differs (97 insertions, 9/9) before believing the zero.
 
+### Added 2026-09-19 — the first blind multi-model dogfood, and an 11-round ladder
+
+- ⚠ **WHERE THE RANK-33 DELIBERATION LIVES, now that the ranked entry is a one-liner.**
+  The contested framing — the refuted "third instance of a shape" argument, the
+  `agent_setup.go:739-742` docstring that says the opposite, and the internal
+  contradiction with §A2's rejection of `--agent cursor` — is preserved in TWO places
+  and was deliberately not deleted: the `## Open investigations` block headed
+  "✅ DECIDED (2026-09-19) — an agent the CLI does not know can never reach `ok: true`",
+  and in full in `claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md`. A ranked
+  item is a work queue entry, not an argument record; do not reconstruct the argument
+  there.
+
+- 🔴 **A CONTROL THAT CANNOT PRODUCE THE DISCRIMINATING INPUT CANNOT FIND THE DEFECT** —
+  and three drafts of this repo's own docs claimed otherwise. `ctl-neg` yields no JSON and
+  `ctl-pos` yields `ok: true`, so neither can ever produce `ok: false`, which is the ONLY
+  input on which the buggy `jq '.ok // "absent"'` differs from the correct one. Under the
+  bug both controls still match their tabulated expectations exactly. **Validating an
+  instrument in both directions proves it can DISCRIMINATE; it is not coverage of any
+  particular defect.**
+- 🔴 **THE GRADER MEASURED A DIFFERENT SHELL THAN THE CONDITION NAMED — a FALSE GREEN.**
+  Arm B ran `bash -lc "zsh -lic '…'"`. The outer bash login sources `~/.profile`, whose
+  stock `if [ -d "$HOME/.local/bin" ]` block prepends a directory **zsh never reads**.
+  Same container, same install: wrapped → `0.1.105`, direct → `command not found`. The
+  frozen condition names the zsh form. **When a condition names a shell, run THAT shell —
+  a convenience wrapper is a different measurement.**
+- 🔴 **A MEASUREMENT OF A PRECONDITION THE REMEDY ITSELF ALTERS IS NOT EVIDENCE ABOUT THE
+  REMEDY.** "`~/.local/bin` does not exist, therefore that prefix is unavailable" — the
+  remedy is what creates it. Cost: a whole round, and a wrong conclusion published to an
+  issue.
+- 🔴 **CONFOUNDING IS INVISIBLE WHEN THE GRID LOOKS CLEAN.** The first matrix bound agent
+  identity to the model row; the result partitioned perfectly by model and was equally
+  well explained by identity. **A result that looks decisive is exactly when to ask what
+  else predicts it.** Three swap trials inverted the reading.
+- 🔴 **AN ABBREVIATION IS NOT A PREFIX YOU MAY EXTEND.** I took 7-char shas from
+  `git commit` output and appended a guessed 8th character — four of five did not resolve.
+  Then, correcting that, I padded an already-wrong 8-char prefix to **40 characters with
+  invented hex** and certified it because it was "full-length". **A fabricated identifier
+  gets MORE credible as it gets longer, because length is what gets checked instead of
+  resolution.** `git rev-parse` it; `git cat-file -t` it before publishing it.
+- 🔴 **CORRECTING THE COUNT OF A THING IS NOT DOING THE THING — and the corrected count is
+  what makes the miss invisible.** One round changed a sweep note from "three surfaces" to
+  "four" and then swept three. The next found a FIFTH (the PR body) that no list had ever
+  named. The one after found a SIXTH — the cairn store, the only surface that outlives the
+  PR. **Sweep by SEARCHING for the claim (repo + `gh pr view --json body` +
+  `gh issue view` + the store), never by walking an enumeration.**
+- 🔴 **FIXING THE SWEEP INSTRUMENT WHILE LEAVING ITS BOUNDARY UNCHANGED YIELDS A CLEAN
+  RESULT OVER AN INCOMPLETE SET, WHICH READS EXACTLY LIKE COVERAGE.** That is how the
+  store survived a search-based sweep that had just replaced a list-based one.
+- 🔴 **A STORE ENTRY OUTLIVES THE PR; CORRECT IT IN PLACE.** `cairn put`, not an appended
+  correction bullet — a reader who stops at the first matching bullet must not be left
+  with the false version. This arc's own handoff documents that failure mode for
+  append-only sections.
+- 🔴 **WHEN A CLAIM HAS BEEN WRONG THREE TIMES, STOP WRITING A BETTER ONE.** Three drafts
+  of one remedy list, each replacing a false claim with a differently false one. The cure
+  was to abandon the RANKING and state the measurement, with all three retracted drafts
+  recorded so a fourth is not derived. Same for an attribution the record could not
+  settle: state the proved negative and leave the positive unstated.
+- 🔴 **BLINDNESS SHOULD BE A MOUNT NAMESPACE, NOT AN INSTRUCTION.** A container whose
+  filesystem lacks the repo cannot be read from, whatever the agent decides. The deleted
+  `dogfood-sandbox.sh` complex was the CREDENTIALED version of this problem (7 rounds, ~24
+  findings, none about the CLI); un-credentialed it is ~250 lines.
+- 🔴 **AN AGENT'S FINAL REPORT IS NOT EVIDENCE ABOUT THE MACHINE.** Grade the container.
+  Separately: the cheap regex I reached for to *describe* why was itself a bad instrument
+  and produced a number I put in a commit message before checking it.
+- ⚠ **`prompt.md` is ~60 lines was never true** — 89 → 155 → 165 → **169 lines / 7,187
+  bytes**. Do not restate a line count for a file in another repo; measure it.
+- ⚠ **`gh pr merge` returns rc 0 silently.** Verify by CONTENT with a negative control —
+  a squash merge never makes the branch head an ancestor.
+- ⚠ **Merge `main` in; do NOT rebase this branch.** The ladder's `audit-claims` blocks
+  reference commit shas, and a rebase rewrites every one of them.
+- ⚠ **An unquoted heredoc executes backticks.** I posted a claims comment whose sentence
+  about *how to sweep for claims* had its two backticked command names executed and
+  deleted — `across repo +  + .` — with the shell's errors interleaved into unrelated
+  output. Use `<<'EOF'`, and read back what you published.
+- ⚠ **`claudedocs/decisions/` is mechanically 1:1 with a numbered `AGENTS.md` item**
+  (`TestEvidencePointersAndFilesAreTheSameSet`, `TestSplitTableCoversEveryEvidenceFile`),
+  and `AGENTS.md` has **7 bytes** of headroom against its 30,500 ceiling. A decision that
+  is made but not implemented belongs in `claudedocs/refs/`; the implementing PR adds the
+  item, pays the eviction, and moves the file. A cross-reference guard also reads prose
+  like "item 39" as a pointer into that list.
+
 ## How to verify
 
-➡ **The forgery-guard recipes moved** to
-[`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md) — the operand
-enumeration, the `go test -run` filter and the guard traps all live there now.
-🔴 **They were DELETED here rather than left as a second copy, because the copy had
-already diverged and was wrong in the DANGEROUS direction:** its `-run` filter omitted
-`IsLengthBounded` and `SoftWrap`, the guards cli#628 added for cli#605/#624 three commits
-earlier, so a reader following it would have reported the forgery guards green having
-never run the newest one. A duplicated recipe is not a convenience; it is a second thing
-to keep true, and this one was not kept true for three commits.
-
-**The repo freeze, when `pins-vs-published` is red:**
-
-```bash
-CIVITAI_CHECK_PUBLISHED_PINS=1 go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -count=1
-gh workflow run bump-scaffold-pins.yml --ref main    # opens a PR; NOT a draft ⇒ the SDK build passed
-```
-
-**The arc's own closing condition — a blind dogfood run:**
+**The arc's closing condition — a blind dogfood run:**
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-...
 cd scripts/dogfood
 for e in node-root node-user ubuntu-apt stale-cli; do docker build -q -t "df-$e" -f "envs/$e.Dockerfile" .; done
-bash driver.sh    # 24 trials: per model, noderoot x 3 identities + 3 envs x 1. Resumable.
-bash grade.sh t-claude-noderoot-claudeid root   # CLOSING_CONDITION=yes|no, from the container
+bash driver.sh                                 # 24 trials: per model, noderoot x 3 identities + 3 envs x 1
+bash grade.sh t-claude-noderoot-claudeid root  # CLOSING_CONDITION=yes|no, measured on the container
 ```
 
-🔴 **Run ALL THREE grader controls first** (README §"Validate the grader") — an
-untouched container must grade `no`, a hand-built success must grade `yes`, and
-`ctl-profile` must grade `no` with arm A still green. ⚠ **This said "BOTH" and
-"each has already caught a grader defect" from the first commit through six audit
-rounds**, surviving both the round that added the third control and the round that
-retracted that claim elsewhere — so it prescribed two of three, on a justification
-already withdrawn twice, on the surface a resuming session actually acts from.
-🔴 **And running all three certifies ONE of the three recorded grader defects**
-(see the evidence doc's instrument section): defects 1 and 2 are pinned by nothing.
-The controls prove the instrument can go red and green; they are not coverage.
+🔴 **Run ALL THREE grader controls first** (`scripts/dogfood/README.md` §"Validate the
+grader") — untouched container `no`, hand-built success `yes`, and `ctl-profile` `no`
+with arm A still green. 🔴 **Running all three certifies ONE of the three recorded
+grader defects**; defects 1 and 2 are pinned by nothing. The controls prove the
+instrument can go red and green — that is necessary, and it is not coverage.
 
-**Repo gates:** `make ci` AND `make lint` — `make ci` does not run lint, and it does not run
-`schema-drift`, `pins-vs-published` or the other CI jobs either. A green `make ci` is a claim
-about four steps, not about the eight-job gate.
+**Repo gates:** `make ci` AND `make lint` — `make ci` does not run lint, nor
+`pins-vs-published`/`schema-drift`. A green `make ci` is a claim about four steps.
+
+**The repo freeze, when `pins-vs-published` is red** (it recurred TWICE in one session):
+
+```bash
+CIVITAI_CHECK_PUBLISHED_PINS=1 go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -count=1
+gh workflow run bump-scaffold-pins.yml --ref main    # opens a PR; NOT a draft ⇒ the SDK build passed
+```
