@@ -667,8 +667,11 @@ func submitEnvelopeLen(prov Provenance) int {
 // source order. That shipped: this block and ErrBundleTooLarge's were glued
 // together, so `go doc appapi.MaxSubmitBodyBytes` printed the bare const line and
 // `go doc appapi.ErrBundleTooLarge` printed this entire evidence chain as if it
-// were the sentinel's. staticcheck cannot see it — .golangci.yml disables
-// ST1020-ST1022 — so `go doc` is the only check. Run it, do not read for it.
+// were the sentinel's. staticcheck's ST1022 catches exactly this and is now
+// ENABLED in .golangci.yml, so `make lint` is the check — watched red on this
+// declaration before the check was turned on. An earlier version of this comment
+// said staticcheck could not see it and that `go doc` was the only check; that was
+// true while ST1020-ST1022 were disabled and is no longer.
 //
 // 🔴 This IS the server's number, unlike the caps in `internal/pkgzip`, and that is
 // why it lives here: `appapi` is what builds the body, so the body's limit belongs

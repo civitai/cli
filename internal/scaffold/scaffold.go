@@ -34,8 +34,9 @@ const (
 // AllTemplates lists the templates available to `civitai app init`.
 func AllTemplates() []Template { return []Template{Static, PageVite, PageMoney} }
 
-// SDKTemplates are templates whose dev loop needs a mock host (`dev:harness`)
-// rather than a plain `dev` (which renders blank without a host).
+// NeedsHarness reports whether this template's dev loop needs a mock host
+// (`dev:harness`) rather than a plain `dev` (which renders blank without a
+// host).
 func (t Template) NeedsHarness() bool { return t == PageMoney }
 
 // ReadyAckPath is where this template's rendered tree carries the canonical
