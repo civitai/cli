@@ -5,8 +5,10 @@ trial is one model driving one throwaway Docker container whose only contents ar
 an OS, node/npm, zsh and curl. The harness is `scripts/dogfood/`.
 
 **Headline: 4 of 16 matrix trials reached the arc's frozen closing condition, and
-the 12 failures are fully explained by exactly TWO defects — neither of which is
-model-dependent.** Every model read the prompt correctly and followed it. The
+the 12 failures are fully explained by exactly TWO causes — the VERDICT being
+model-independent in both.** ⚠ Only cause **B** is a defect; **A** is a contested
+design call (a round-0 audit refuted this document's first argument about it — see
+the retraction in §A). Every model read the prompt correctly and followed it. The
 prompt is accurate and cheap; it is not sufficient on two axes.
 
 ## 🔴 THE GRID BELOW WAS PRODUCED BY AN EARLIER DRIVER THAN THE ONE COMMITTED
@@ -37,6 +39,12 @@ as a regression:
   below is therefore a **recorded measurement, not a reproducible one**. Treat them
   as evidence about what happened on 2026-09-18, and re-measure rather than re-cite
   if a decision turns on them.
+- ⚠ **The cell selection is not the ONLY difference between this run and a re-run.**
+  The committed runner also applies container resource limits (`--pids-limit 512`,
+  `--memory 2g`, `--cpus 2`) that the trials below ran WITHOUT. Nothing observed
+  here suggests a trial came close to any of them — the work is an `npm install` and
+  a few short commands — but it is a second uncontrolled difference, and attributing
+  a changed result to identity alone would be assuming what has not been checked.
 
 ## Method, and what makes it blind
 
@@ -378,5 +386,9 @@ Stated so an absence is not read as a clean bill of health.
    `other` is not a table entry: `agentTargets` has no row for it, which is the
    entire mechanism of defect A.) Exercised: **claude** and **codex**, plus the
    out-of-table `other` case. `cursor`, `opencode`, `vscode`, `windsurf` and `zed`
-   were not — and `windsurf` is the one that spells the URL key differently, so its
-   merge routine is the least-covered of the set.
+   were not. ⚠ All five have identical coverage — zero — so none is "least
+   covered"; an earlier draft said `windsurf` was, on the grounds that it spells
+   the URL key `serverUrl`. That is a different KEY, not a different write path
+   (it is `formatJSON`, the same routine as claude and cursor). If one is to be
+   prioritised it is `zed`, whose shipped config carries `//` comments and a
+   trailing comma — a parser hazard rather than a spelling one.

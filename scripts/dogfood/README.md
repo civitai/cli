@@ -56,17 +56,24 @@ done
 bash driver.sh                                  # the matrix, 4 trials at a time
 bash grade.sh t-claude-noderoot-claudeid root   # grade one finished trial
 
-# a cheap smoke run — one model, one env, BOTH identities:
+# a cheap smoke run — one model, one env, all three identities (3 trials):
 DOGFOOD_MODELS='google/gemini-3.8-flash|gemini' DOGFOOD_ENVS='df-node-root|noderoot|root' bash driver.sh
 ```
 
-Trial ids are `t-<model>-<env>-<identity>`. Set `FULL_CROSS=1` to run every
-model × env × identity combination instead of the default, which crosses both
-identities only on the cheapest environment.
+Trial ids are `t-<model>-<env>-<identity>`. The three identities are `claudeid`
+(`CLAUDECODE=1`), `codexid` (`CODEX_SANDBOX=1`) and `other` (no signal), and
+`DOGFOOD_IDENTITIES` overrides them the same way `DOGFOOD_MODELS` does. Set
+`FULL_CROSS=1` to run every model × env × identity combination instead of the
+default, which crosses all three only on the cheapest environment — so the
+default matrix is **24** trials, not 16.
 
-`driver.sh` skips a trial whose `runs/<id>/transcript.jsonl` already exists, so it
-is resumable. Each trial writes a full transcript — every message, every command,
-every result, and per-call token usage.
+`driver.sh` is resumable: it skips a trial whose transcript carries a `"kind":
+"end"` record, and **re-runs one that does not**. 🔴 It deliberately does NOT key
+on the file merely existing — `runner.py` opens that file before it creates the
+container, so a crashed or timed-out trial leaves a non-empty transcript with no
+`end` record, and an existence check would skip it forever while the matrix
+reported COMPLETE. Each trial writes a full transcript — every message, every
+command, every result, and per-call token usage.
 
 ## Reading a verdict
 
@@ -114,7 +121,7 @@ first version of this harness gave `claude`/`gpt` a known identity and
 `gemini`/`grok` none. The resulting grid partitioned perfectly by model — and was
 equally well explained by identity. Read the wrong way it says *"Gemini and Grok
 fail the onboarding"*, which is **false**: swap the identities and the outcome
-swaps with them. The default cross runs both identities on the cheapest
+swaps with them. The default cross runs all three identities on the cheapest
 environment for exactly this reason, and a per-model claim is only readable
 between two cells whose identity matches.
 

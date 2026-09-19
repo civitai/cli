@@ -18,8 +18,20 @@ C="dogfood-$TRIAL"
 # container that does not exist returns empty stdout, which is byte-identical to
 # "the CLI is not installed" — so a typo in the trial id prints a confident
 # CLOSING_CONDITION=no about nothing at all.
-if ! docker inspect "$C" >/dev/null 2>&1; then
+# 🔴 RUNNABLE, not merely PRESENT. `docker inspect` succeeds for a container in ANY
+# state, `exited` included — and against a stopped container every exec fails, stdout
+# is empty, and the verdict lands on `check_ok=parse-error`, which is the exact
+# reading this guard exists to separate. Reachable: a daemon restart between a long
+# matrix and grading, a `docker stop`, or a cgroup OOM kill (newly plausible now that
+# --memory is in force).
+STATE=$(docker inspect -f '{{.State.Status}}' "$C" 2>/dev/null)
+if [ -z "$STATE" ]; then
   printf 'no such container: %s — nothing was measured (this is NOT a failing trial)\n' "$C" >&2
+  exit 2
+fi
+if [ "$STATE" != "running" ]; then
+  printf 'container %s is %s, not running — nothing was measured (this is NOT a failing trial)\n' \
+    "$C" "$STATE" >&2
   exit 2
 fi
 

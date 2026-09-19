@@ -40,9 +40,12 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
   impossible bar. 🔴 Settle, not "fix": whether the CLI's verdict is wrong there
   is contested, and the first draft of rank 33 asserted it was and was refuted. Method, grid, controls and limits:
   [`claudedocs/refs/agent-setup-dogfood-matrix-2026-09-18.md`](refs/agent-setup-dogfood-matrix-2026-09-18.md).
-  The harness is committed at `scripts/dogfood/`, so this is re-runnable rather
-  than a one-off reading — ⚠ it feeds every trial the true bytes via `curl`, so it
-  says nothing about the WebFetch-summarisation failure mode.
+  The HARNESS is committed at `scripts/dogfood/` and is re-runnable. ⚠ **The
+  READING is not** — transcripts are gitignored and the committed driver runs a
+  different cell set than the one that produced these numbers, so every per-trial
+  figure is a recorded measurement rather than a reproducible one. The evidence
+  doc opens with that disclosure. ⚠ Every trial also fetched the true bytes via
+  `curl`, so none of this speaks to the WebFetch-summarisation failure mode.
 
 ✅ **THE SECOND EFFORT THAT ACCRETED HERE HAS BEEN SPLIT OUT —
 [`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md).**
@@ -645,13 +648,25 @@ that catches an UNCLAIMED duplicate; the forgery doc mandates it. This table is 
     persist, so the agents are not the weak link. ⚠ An earlier draft of this item said
     "5 of 8 reported success anyway"; that came from a keyword regex and is RETRACTED —
     see the correction in the block above and `refs/…-matrix-2026-09-18.md`.)
-    ⚠ Pick the fix before building: (a) step 4 verifies in a NEW shell so the failure is at
-    least visible, (b) install to a prefix already on PATH, (c) `AGENTS.md` records the
-    absolute path. (a) is the smallest honest change and only makes the failure VISIBLE;
-    (c) actually fixes it. ⚠ **(b) is NOT sufficient on its own** — `npm config set prefix`
-    writes npm's config, not a shell profile, so it still leaves `bin` off PATH. An earlier
-    draft of this line said "(b) and (c) actually fix it", contradicting the evidence doc
-    forty lines away; the evidence doc was right.
+    ⚠ **Pick the fix before building, and pick it by WHICH ARM OF THE CLOSING CONDITION IT
+    SATISFIES** — not by which sounds most thorough. Two drafts of this line ranked them by
+    adjective and both got it wrong; the arms are stated three lines below, so the mapping
+    is checkable and an adjective is not.
+    - **(b) install into a prefix whose `bin` is ALREADY on PATH** → satisfies **arm 1**
+      (`zsh -lic 'civitai --version'` prints a version), by construction. This is the only
+      candidate that closes the item mechanically.
+    - **(a) step 4 verifies in a NEW shell** → satisfies **arm 2** if the agent then reports
+      the setup incomplete. Does not fix the install; makes a silent failure loud.
+    - **(c) `AGENTS.md` records the absolute path** → satisfies **NEITHER arm.** It addresses
+      the second-order harm (future agent sessions can still run the CLI) and is worth doing
+      alongside another remedy, but writing a path into a markdown file puts nothing on the
+      login shell's PATH and changes no agent's report.
+    ❌ **RETRACTED, twice over.** Draft 1: *"(b) and (c) actually fix it"*. Draft 2: *"(c)
+    actually fixes it … (b) is NOT sufficient on its own"* — that rebuttal argued against
+    `npm config set prefix`, which points npm at a NEW prefix and is a different action from
+    (b) as written; and it promoted (c), which satisfies no arm. 🔴 The evidence doc never
+    said (c) fixes it — draft 2 cited it as agreeing while making a stronger claim than it
+    makes.
     closing-condition: a blind trial on `df-node-user` or `df-ubuntu-apt` ends with EITHER
     `zsh -lic 'civitai --version'` printing the version, OR the agent's final report stating
     plainly that the CLI is not yet on the user's PATH and the setup is incomplete.
@@ -1723,7 +1738,7 @@ gh workflow run bump-scaffold-pins.yml --ref main    # opens a PR; NOT a draft �
 export OPENROUTER_API_KEY=sk-or-...
 cd scripts/dogfood
 for e in node-root node-user ubuntu-apt stale-cli; do docker build -q -t "df-$e" -f "envs/$e.Dockerfile" .; done
-bash driver.sh                          # 4 models x 4 envs, resumable
+bash driver.sh                          # 4 models x 4 envs x identity = 24, resumable
 bash grade.sh t-claude-noderoot-claudeid root   # CLOSING_CONDITION=yes|no, from the container
 ```
 

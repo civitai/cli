@@ -37,11 +37,13 @@ ENVS=(
 )
 [ -n "${DOGFOOD_ENVS:-}" ] && read -r -a ENVS <<<"$DOGFOOD_ENVS"
 # short|agent-env  — the identity the CLI will DETECT. Empty env => `other`,
-# which is what every agent with no entry in the CLI's table gets. Both rows
+# which is what every agent with no entry in the CLI's table gets. All three rows
 # matter: `other` is where the verdict differs, not an edge case.
-# 🔴 `codex` is here because the CLI writes TOML for it and JSON for claude — a
-# different merge routine, not a different label — so dropping it would leave the
-# TOML path unexercised. `other` is the no-signal case.
+# 🔴 `codex` is here because the CLI SERIALISES TOML for it and JSON for claude —
+# a different write path, not a different label. ⚠ It exercises the WRITE, not the
+# merge-into-existing branch: every trial starts from an empty project and no
+# image ships a ~/.codex/config.toml, so the trial CREATES that file. The merge
+# paths remain unexercised, as the README and the evidence doc both state.
 IDENTITIES=(
   "claudeid|CLAUDECODE=1"
   "codexid|CODEX_SANDBOX=1"
@@ -49,10 +51,11 @@ IDENTITIES=(
 )
 [ -n "${DOGFOOD_IDENTITIES:-}" ] && read -r -a IDENTITIES <<<"$DOGFOOD_IDENTITIES"
 
-# IDENT_FOR restricts which identities a given env is crossed with, so the full
-# cross does not cost 4x for no information. Default: cross the cheapest env
-# with BOTH identities (that is the de-confounding control), and run the rest
-# under one identity. Set FULL_CROSS=1 for every combination.
+# The default restricts which identities each env is crossed with, so the full
+# cross does not cost 3x for no information: the cheapest env runs ALL THREE
+# identities (that is the de-confounding control) and every other env runs one.
+# Set FULL_CROSS=1 for every combination. (An earlier draft of this comment named
+# an `IDENT_FOR` variable that has never existed.)
 FULL_CROSS="${FULL_CROSS:-0}"
 
 run_one() {  # model short image ienv trial user
@@ -84,7 +87,7 @@ for m in "${MODELS[@]}"; do
     IFS='|' read -r image es euser <<<"$e"
     for i in "${IDENTITIES[@]}"; do
       IFS='|' read -r is ienv <<<"$i"
-      # The de-confounding cell: every model against BOTH identities on one env.
+      # The de-confounding cell: every model against EVERY identity on one env.
       # Without it, model and identity are two names for the same column.
       if [ "$FULL_CROSS" != "1" ] && [ "$es" != "noderoot" ] && [ "$is" != "claudeid" ]; then
         continue
@@ -98,5 +101,5 @@ done
 wait
 echo "MATRIX COMPLETE — $N trial(s). Grade each: bash grade.sh <trial-id> <container-user>"
 echo "🔴 A per-model verdict is only readable against the SAME identity. Compare"
-echo "   t-<model>-noderoot-claudeid against t-<model>-noderoot-other before"
+echo "   t-<model>-noderoot-claudeid against -codexid and -other before"
 echo "   attributing any difference to the model."
