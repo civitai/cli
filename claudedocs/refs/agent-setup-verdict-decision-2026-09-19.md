@@ -145,26 +145,15 @@ alternatives that were rejected.
 
 ### Three corrections this file's plan needed, measured during implementation
 
-1. 🔴 **The `switch` arm above DOES NOT COMPILE.** `checkMCPSite` and `checkMCPOrch`
-   are not constants — the check names are bare literals on `civitaiMCPServers`
-   (`agent_setup_mcp.go`). Implemented as a derived `isMCPCheckName(name)` lookup
-   against that table instead, so a third server is covered the moment it is added.
-   Writing the two names out is the exact drift
-   `TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode`'s docstring was hardened
-   against.
-2. 🔴 **Coupled edit 3 predicted the wrong DIRECTION, and the guard was blind.**
-   The claim was that `readme_agent_setup_claims_test.go` "goes red until the README
-   sentence names the exemption". Measured: the change landed with the **whole package
-   green** and the README sentence left false; and naming the rows in that sentence
-   then went **red** with *"the README names `mcp-site` as excluded from `ok`, but
-   checkCountsTowardVerdict COUNTS it"* — itself false. The guard derives its
-   "exempt for other agents" set with `"cursor"`, an agent that **is** in
-   `agentTargets`, so "other" there has only ever meant *not claude*, never *not in
-   the table*. It sampled two of three agent classes. Widened to sample the unknown
-   class, assert that identity is absent from `agentTargets`, and pin the clause
-   whole. Following the guard's own failure message would have led to de-backticking
-   the names (round 3 of #641's measured wrong fix) or reverting correct code.
-3. 🔴 **Coupled edit 6's eviction was NOT NEEDED — `AGENTS.md` item 35 already
+🔴 **Corrections 1 and 2 are recorded ONCE, in
+[`claudedocs/decisions/35-agent-setup-merges-a-users-file.md`](../decisions/35-agent-setup-merges-a-users-file.md)
+§"The `mcp-*` rows for an agent this CLI has no target for"** — the compile failure in
+this file's `switch` sketch, and the README ledger guard that was blind to the
+unknown-agent class. They lived in both files and the pair has to be kept true in
+lockstep; one copy is the fix. Correction 3 stays here because it is about **this
+file's own header premise**, which decision 35 has no reason to carry:
+
+🔴 **Coupled edit 6's eviction was NOT NEEDED — `AGENTS.md` item 35 already
    routes here.** Its trigger sentence names *"`--check`'s verdict"* verbatim, its
    Code header already lists `checkCountsTowardVerdict`, and decision 35 already
    carries a section titled *"The `--check` verdict: a gate nobody can clear is a

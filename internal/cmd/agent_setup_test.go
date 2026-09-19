@@ -993,6 +993,59 @@ func TestMCPRowsDoNotFailTheVerdictForAnAgentWithNoConfigTarget(t *testing.T) {
 		}
 	})
 
+	t.Run("the human view does not claim the setup is complete", func(t *testing.T) {
+		// 🔴 THE CLOSING LINE IS PAYLOAD AND WAS SHIPPING UNGUARDED (round 0 of
+		// #669). `ok: true` here means "this CLI did everything it can", and the
+		// user still has to paste — so "Setup is complete." would be the
+		// success-measured-in-an-environment-the-user-does-not-have shape this
+		// very path already had. Both directions are pinned: the overstatement
+		// must be ABSENT and the remedy must be PRESENT.
+		dir, _ := agentSetupProject(t)
+		if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", unknownAgent); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		stdout, _, err := run(t, "agent-setup", "--dir", dir, "--agent", unknownAgent, "--check")
+		if err != nil {
+			t.Fatalf("--check must exit 0 on this path: %v\n%s", err, stdout)
+		}
+		if strings.Contains(stdout, "Setup is complete.") {
+			t.Errorf("the unknown-agent path claims the setup is COMPLETE while both MCP "+
+				"servers are still unregistered and only the user can finish that:\n%s", stdout)
+		}
+		// The remedy has to name the rows AND the command that prints what to paste,
+		// or `ok: true` is the last thing the user is told.
+		for _, want := range []string{"One manual step remains", "--agent other"} {
+			if !strings.Contains(stdout, want) {
+				t.Errorf("the unknown-agent path does not tell the user what remains — "+
+					"missing %q:\n%s", want, stdout)
+			}
+		}
+		for _, srv := range civitaiMCPServers {
+			if !strings.Contains(stdout, srv.Check) {
+				t.Errorf("the remedy line does not name %q, so a third server would go "+
+					"unmentioned the moment it is added:\n%s", srv.Check, stdout)
+			}
+		}
+	})
+
+	t.Run("a KNOWN agent's complete setup still says complete", func(t *testing.T) {
+		// The negative half: the reword must not leak onto the ordinary path.
+		dir, _ := agentSetupProject(t)
+		if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentClaude); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		stdout, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentClaude, "--check")
+		if err != nil {
+			t.Fatalf("--check: %v\n%s", err, stdout)
+		}
+		if !strings.Contains(stdout, "Setup is complete.") {
+			t.Errorf("a known agent's complete setup no longer says so:\n%s", stdout)
+		}
+		if strings.Contains(stdout, "One manual step remains") {
+			t.Errorf("the unknown-agent remedy leaked onto a known agent's path:\n%s", stdout)
+		}
+	})
+
 	t.Run("a real non-MCP failure still fails on the unknown path", func(t *testing.T) {
 		// Stops the whole thing being satisfied by `return true` on this path.
 		dir, _ := agentSetupProject(t)

@@ -481,16 +481,12 @@ yourself if you need them; do not fold them into your own pass/fail — and note
 that on a `claude` project the exempt row is `authenticated` alone, because
 `claude-md` counts there.
 
-🔴 **The `mcp-*` exemption is conditional, and narrow.** It applies only to an
-agent with no entry in this CLI's config table — `--agent other`, or anything
-released after that table was written. There is no file for this CLI to write,
-so those rows can never go green and re-running changes nothing; counting them
-meant `--check` exited 1 **forever** after a setup that did everything it could.
-The rows **stay, and stay `false`**, because you do still have to register those
-servers by hand. For any agent the table does know, a missing MCP entry fails
-the verdict exactly as before. `ok` means "this CLI did everything it can do for
-you" — which is already what it means for a user who has not logged in — never
-"MCP is registered".
+🔴 **The `mcp-*` exemption is conditional, and narrow.** For any agent the table
+does know, a missing MCP entry fails the verdict exactly as before; the rows
+**stay, and stay `false`** either way, because you do still have to register
+those servers by hand. `ok` means "this CLI did everything it can do for you" —
+already what it means for a user who has not logged in — never "MCP is
+registered".
 
 An absent `Authorization` header gets **no row of its own**, and nothing fails
 because of one — that is the correct state for Zed and for `--agent other`. If

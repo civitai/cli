@@ -656,13 +656,18 @@ func runAgentSetupCheck(emit *agentSetupEmitter, env agentEnv, track, agent, tok
 	}
 	// The rows are already printed; this error exists only to carry the exit
 	// code, so it must not read as a second, competing report of the same facts.
-	// 🔴 DO NOT PROMISE A RE-RUN FIXES EVERY FAILING ROW. The old wording —
-	// "re-run `civitai agent-setup` to fix what it can write" — named an action
-	// that cannot change the outcome for a row needing HOME set, a hand-edited
-	// config repaired, or a server registered by hand. On the no-config-target
-	// path it was a no-op loop for a setup that was already as complete as this
-	// CLI can make it; that path no longer fails at all, and the remaining
-	// unfixable-by-re-run rows carry their own remedy in their detail.
+	// 🔴 DO NOT PROMISE A RE-RUN FIXES EVERY FAILING ROW.
+	//
+	// ⚠ The decision record justifies this reword as fixing "a no-op loop on the
+	// no-config-target path" — that reason is now FALSE, because the exemption
+	// above means that path no longer fails at all. Recorded rather than quietly
+	// restated: a fix round's own prose is the likeliest next defect.
+	//
+	// What justifies it instead is a case the record never named: for a KNOWN
+	// agent, "re-run to fix what it can write" is CORRECT when `.mcp.json` is
+	// merely missing, and WRONG when the row needs HOME set or a hand-edited
+	// config repaired. Those rows each carry their own remedy in their detail,
+	// so the error points at them rather than promising a blanket fix.
 	return fmt.Errorf("%w: %d check(s) failed — the report above lists them; re-run `civitai agent-setup` to "+
 		"rewrite what it owns, and read each failing row's detail for the ones it does not",
 		ErrAgentSetupIncomplete, countFailedChecks(checks, agent))
@@ -897,10 +902,11 @@ func printAgentSetupChecks(w io.Writer, payload agentSetupJSON) {
 	if payload.Agent != agentClaude {
 		fmt.Fprintln(w, st.Dim("`claude-md` likewise: "+payload.Agent+" reads "+agentsFilename+" directly, so the shim is inert for it."))
 	}
-	if !knownAgent {
-		fmt.Fprintln(w, st.Dim(mcpCheckNameList()+" likewise: this CLI has no config file for "+
-			payload.Agent+" to write, so they are reported but never fail this check."))
-	}
+	// 🔴 NO THIRD FOOTNOTE FOR THE `mcp-*` EXEMPTION, DELIBERATELY. The two rows
+	// above already render in WARN colour on this path — derived from the SAME
+	// checkCountsTowardVerdict predicate, and that rendering predates this
+	// change — and the Warn line in the switch carries the remedy. A Dim line
+	// restating it made the screen say one fact four times. Round 0 of #669.
 }
 
 // mcpCheckNameList renders the per-server check names for prose, derived from
@@ -910,14 +916,12 @@ func mcpCheckNameList() string {
 	for _, srv := range civitaiMCPServers {
 		names = append(names, "`"+srv.Check+"`")
 	}
-	switch len(names) {
-	case 0:
-		return ""
-	case 1:
-		return names[0]
-	default:
-		return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+	// A one-element list needs no separator and Join handles it; the table is a
+	// package-level literal with two entries, so no empty case is reachable.
+	if len(names) < 2 {
+		return strings.Join(names, "")
 	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // ---------------------------------------------------------------------------
