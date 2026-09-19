@@ -177,6 +177,7 @@ scope here and a green matrix says nothing about it.** Linux only: the Homebrew
 branch of the prompt is never executed. Every project directory starts empty, so
 the config-merge paths are unexercised.
 
-Full method, results, and the two causes the first run found (one a defect, one a
-contested design call):
+Full method, results, and the two causes the first run found (one a defect filed as
+cli#665; one a design call, DECIDED 2026-09-19 —
+`claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md`):
 `claudedocs/refs/agent-setup-dogfood-matrix-2026-09-18.md`.

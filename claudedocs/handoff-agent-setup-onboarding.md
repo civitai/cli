@@ -30,15 +30,15 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 
 - 🔴 **MEASURED 2026-09-18 — NOT MET. 4 of 16 blind trials reached it**, and the
   12 failures are explained by exactly two causes (ranks 33 and 34 below — 34 is a
-  defect, 33 is a **contested design call**, see its entry), with
+  defect; 33 was a design call, **DECIDED 2026-09-19** — see its entry), with
   a **model-independent VERDICT** across 19 trials — ⚠ stated at that width on
   purpose: the machine state did not depend on the model, but what the user is
   TOLD about it did (2 of 8 agents omitted the PATH-persistence warning, both the
   same model). "No model-dependent behaviour at all" is false. The condition is
-  additionally **unreachable by construction on the `other` agent path**, which is
-  rank 33 — so a future close-check must SETTLE 33 first or it is grading an
-  impossible bar. 🔴 Settle, not "fix": whether the CLI's verdict is wrong there
-  is contested, and the first draft of rank 33 asserted it was and was refuted. Method, grid, controls and limits:
+  additionally **unreachable by construction on the `other` agent path** — a future
+  close-check must land rank 33 first or it is grading an impossible bar. ✅ **That is
+  no longer contested: decided 2026-09-19** (`refs/agent-setup-verdict-decision-2026-09-19.md`), the verdict
+  moves. ⚠ Decided, NOT implemented — the bar stays impossible until the change merges. Method, grid, controls and limits:
   [`claudedocs/refs/agent-setup-dogfood-matrix-2026-09-18.md`](refs/agent-setup-dogfood-matrix-2026-09-18.md).
   The HARNESS is committed at `scripts/dogfood/` and is re-runnable. ⚠ **The
   READING is not** — transcripts are gitignored and the committed driver runs a
@@ -103,11 +103,11 @@ all four merged (`752bf50`, `b4acda5`, `a29abb7`, `7c5a39c`), five issues closed
 🔴 **THIS SECTION IS APPEND-ONLY, SO A HEADING ALONE IS NOT A STATUS. READ THE
 HEADING PREFIX.** Blocks are never deleted — a corrected reading is worth more than a
 deleted one — so a superseded diagnosis stays in place with its heading rewritten to
-`❌ SUPERSEDED`. **THREE investigations are open below** (was one until
-2026-09-18): "⚠ OPEN — The docs repo cannot be built locally from a pristine main"
-(rank 15), "⚠ OPEN — an agent the CLI does not know can never reach `ok: true`"
-(rank 33) and "⚠ OPEN — the documented `--prefix` remedy leaves the CLI
-unreachable" (rank 34). Everything else here is `✅ RESOLVED` or
+`❌ SUPERSEDED`. **TWO investigations are open below**, and one is DECIDED: "⚠ OPEN —
+The docs repo cannot be built locally from a pristine main" (rank 15) and "⚠ OPEN — the
+documented `--prefix` remedy leaves the CLI unreachable" (rank 34, filed as cli#665);
+"✅ DECIDED — an agent the CLI does not know can never reach `ok: true`" (rank 33) is
+settled but NOT implemented. Everything else here is `✅ RESOLVED` or
 `❌ SUPERSEDED`, and a reader who stops at the first matching heading was previously
 getting the OPPOSITE of the truth — three blocks still said `STILL OPEN` above their
 own resolutions until this delta retired them (2026-09-12).
@@ -439,7 +439,7 @@ before those rounds' commits were read back.
   does not exist; `git worktree list` shows `cli-596b` on `fix/generate-blob-forgery-r0` at
   `19455c0`. `via: command`
 
-### ⚠ OPEN — an agent the CLI does not know can never reach `ok: true` (rank 33)
+### ✅ DECIDED (2026-09-19) — an agent the CLI does not know can never reach `ok: true` (rank 33)
 - as-of: 2026-09-18, from 19 blind trials; **argument rewritten the same day after
   a round-0 audit refuted its original framing — read the RETRACTED bullet below
   before acting on any part of this block**
@@ -552,10 +552,11 @@ at what they were taken for. Open here: **15, 16, 17, 25, 26, 27, 29, 33, 34**.
 🔴 **33 and 34 are the only two that stand between the arc and its closing condition, and they
 outrank everything else here** — they are the entire explanation of a 4-of-16 blind-trial
 result, where 16, 17, 25, 26 and 27 are cleanups with no bearing on whether the entrypoint
-works. ⚠ **But they are different KINDS of item and only 34 is work.** 34 is a defect with a
-mechanical closing condition. **33 is a contested design call** carrying `forcing: none`: its
-first draft asserted a fix, a round-0 audit refuted the argument, and what it needs now is a
-DECISION from the `--json` contract's owner — not an implementation by the next session.
+works. ⚠ **Both are now work, and neither is blocked on a decision.** 34 is a defect
+(cli#665). 33 **was** a contested design call and was **DECIDED 2026-09-19** by the
+`--json` contract's owner — the verdict moves, not the prompt — so what remains is an
+implementation against `claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md`,
+which names the six coupled edits.
 
 ➡ **Ranks 23, 28, 30, 31 and 32 were the FORGERY effort and have MOVED** to
 [`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md), which now carries its
@@ -606,8 +607,24 @@ that catches an UNCLAIMED duplicate; the forgery doc mandates it. This table is 
     dated evidence to `claudedocs/refs/agent-setup-onboarding.md` behind a pointer.
     🔴 Do NOT satisfy this by deleting an open investigation, a gotcha or a ruled-out theory.
     forcing: none
-33. **`--check` can never report `ok: true` for an agent outside the CLI's table, and what
-    to DO about that is genuinely contested.**
+33. ✅ **DECIDED 2026-09-19 — the VERDICT moves, not the prompt.**
+    `claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md` is the record.
+    `mcp-site`/`mcp-orch` stop counting toward `ok` when `agentTargets[agent]` is unknown;
+    the rows STAY and stay `false` with their detail, exactly as `authenticated` does.
+    🔴 **DECIDED, NOT IMPLEMENTED — no code has changed.** The decision file lists six
+    coupled edits, two of which bite: the `agentSetupMCPChecks` docstring currently asserts
+    the OPPOSITE and must be rewritten, and `readme_agent_setup_claims_test.go` will go red
+    until the README's `` `ok` is the AND of every check except … `` sentence names the new
+    conditional exemption (that guard is working as designed — do not silence it).
+    🔴 **The deciding argument is the `authenticated` parallel, NOT the "third instance of
+    a shape" count**, which a round-0 audit refuted. Do not restore the refuted premise.
+    closing-condition: the decision file exists ✅ and the change it names is merged ❌.
+    forcing: gate
+
+    ⬇ **The contested framing below is kept as the record of how the decision was reached.**
+
+33b. **(superseded by the decision above) `--check` can never report `ok: true` for an
+    agent outside the CLI's table, and what to DO about that was genuinely contested.**
     🔴 **REWRITTEN after a round-0 audit — do not restore the earlier version, which is
     wrong in a way that reads as well-evidenced.** It called this "the third instance of a
     shape the file's own comments already recognise twice" and recommended excluding
@@ -641,7 +658,10 @@ that catches an UNCLAIMED duplicate; the forgery doc mandates it. This table is 
     closing-condition: **a written decision** in `claudedocs/decisions/` naming which of the
     two surfaces moves and why, plus (a) and (b) fixed in whichever surface it names.
     Checked by: the decision file exists and its named change is merged.
-    forcing: none — this is a design call, not a defect to be fixed by the next session
+    forcing: SUPERSEDED — this block is the record of how rank 33 was DEBATED. The
+    decision is in rank 33 above and in `refs/agent-setup-verdict-decision-2026-09-19.md`.
+    Do not act on this
+    entry's `forcing`, its closing-condition, or its "open question" framing.
 34. 🔴 **The `--prefix` install remedy leaves `civitai` unreachable from every later shell.**
     Filed as **cli#665**.
     8 of 8 trials on a non-writable prefix. The written `AGENTS.md` then instructs future
