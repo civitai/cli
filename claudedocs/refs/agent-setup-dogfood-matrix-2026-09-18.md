@@ -429,11 +429,19 @@ same install: `zsh -lic 'civitai --version'` → **`command not found`**.
 disagreement is itself the finding: it means the remedy's success depends on which
 login shell the condition means, which nobody has decided.
 
-⚠ **FOUR surfaces describe these same three remedies**, and they disagreed for two
-rounds in opposite directions: this list, the handoff's **ranked item 34**, the
-handoff's **Defect-B investigation block**, and public issue **cli#665**. A sweep
-note that named only three is how the fourth copy survived four audit rounds. Rank
-34 is the one place they are maintained; the others point at it.
+⚠ **FIVE surfaces carry claims about this arc, and every sweep so far enumerated a
+list that was one short.** They are: this document, the handoff's **ranked item 34**,
+the handoff's **Defect-B investigation block**, public issue **cli#665**, and 🔴 **the
+PR BODY of cli#663** — which no list named until round 8, which is the first thing a
+reviewer reads, and which went seven rounds asserting a claim retracted everywhere
+else. `scripts/dogfood/README.md` is a sixth for grader claims specifically.
+
+🔴 **The failure is not that a list was short; it is that a LIST was the instrument.**
+A sweep keyed to an enumeration can only reach what someone remembered to enumerate,
+and a corrected count reads as diligence, which is what makes the gap invisible.
+Sweep by SEARCHING for the claim — across the repo AND `gh pr view --json body` AND
+`gh issue view` — not by walking a list. Rank 34 is the one place the remedies are
+maintained; every other surface should point at it rather than restate it.
 
 ## Token efficiency — the third question the trials were run to answer
 
