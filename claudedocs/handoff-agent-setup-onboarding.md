@@ -90,48 +90,33 @@ that wrote it, flagged as such there.
 
 ## State now
 
-- ✅ **Rank 33 is IMPLEMENTED — `cli#669`**, branch
-  `zach/agent-setup-verdict-unknown-agent`, one commit `f311077`. Awaiting merge
-  behind a round-0 audit. **`checkCountsTowardVerdict` no longer counts
-  `mcp-site`/`mcp-orch` toward `ok` when `agentTargets[agent]` is unknown.** The rows
-  STAY and stay `false`. `ok` now means *"this CLI did everything it can do for you"* —
-  the `authenticated` reading, not the `claude-md` one.
-- **Rank 33's closing condition is MET**, verified verbatim in a clean container with
-  no agent env var: `agent=other`, `ok: true`, rc **0**, both MCP rows PRESENT and
-  still `false`.
-- ✅ **The arc's frozen closing condition is SATISFIED on its own wording** — it asks for
-  **a** blind run to reach a working setup, and 4 of 16 cells cleared every clause,
-  still passing under the corrected arm B. 🔴 **The arc is open anyway, by choice**:
-  12 of 16 failed, which the condition does not ask about and which matters more.
-  ⚠ Earlier reports in this arc said "NOT MET" — a stricter reading than the frozen
-  text; corrected in cli#667. **Rank 33 additionally makes it REACHABLE on the `other`
-  path**, where it was unreachable by construction. Neither fact closes the arc.
-- **Merged this session, in this order, each verified by CONTENT (never by ancestry —
-  a squash merge never makes the head an ancestor):**
-  - **cli#668** (`5e128ae`) — the pins bump `app-sdk ^0.43.0 → ^0.44.0`, opened by the
-    nightly bumper, which cleared the freeze blocking #669.
-  - **cli#667** (`2b1f45a`) — the closing-condition reading correction.
-- **cli#663 is MERGED** (`07e9031`, squash), verified by CONTENT with a negative control
-  — `scripts/dogfood/`, both `claudedocs/refs/` records and the handoff are on `main`;
-  the same paths are absent at `main~1`.
-- **cli#664 and cli#666 MERGED** — the `pins-vs-published` freeze recurred twice in one
-  earlier session (`app-sdk` 0.43.0, then `blocks-react` 0.52.0). **#668 is the THIRD
-  recurrence.** All verified by content with a negative control.
-- **cli#665 OPEN** — rank 34, the real defect, and now the ONLY thing between the arc
-  and its closing condition.
-- **IN FLIGHT:** a round-0 `/audit-pr` on #669. Nothing else running.
-- **Deploy/verify status:** nothing deployed. `#669` ships CLI code that reaches users
-  only via an npm release, which this session did not cut.
-- ⚠ **No `clawgate-task:` field**: `clawgate_handoff.sh resolve` exited **5** (nothing
-  resolved). An unknown session id answers 200 with an empty array, so that zero cannot
-  distinguish "touched no task" from "wrong id". Not a clean bill of health.
-- ⚠ The **22 `dogfood-*` containers** an earlier handoff said were still running are
-  **gone** — `docker ps -q --filter name=dogfood-` returns 0. Re-checking the four
-  passing cells now needs a re-run of `scripts/dogfood/`.
-- ⚠ **Worktrees left live**: `/home/zach/workspace/civit/cli-cc-fix` (branch merged by
-  #667 — safe to remove), `/home/zach/workspace/civit/cli-rank33` (#669, still open),
-  `/home/zach/workspace/civit/cli-ho4` (this doc). Remove by exact path; `git worktree
-  prune` does NOT remove worktrees, it only clears entries whose directories are gone.
+- ✅ **RELEASED — `v0.1.106` is live on npm and Homebrew**, and verified the way that
+  matters: installed from the PUBLIC registry into a clean container that never built
+  the CLI, then exercised. `civitai 0.1.106`, rank 33's `other` path at `ok: true`/exit
+  0 with both MCP rows present and `false`, and rank 34's PATH note in the generated
+  `AGENTS.md` with no machine-specific path. The draft was also artifact-verified BEFORE
+  publishing — sha256 matched against the published `checksums.txt`.
+- ✅ **Rank 33 — `cli#669` MERGED** (`d0b79ae`). `checkCountsTowardVerdict` no longer
+  counts `mcp-site`/`mcp-orch` when `agentTargets[agent]` is unknown. Rows stay, stay
+  `false`. Verified on `main` with a negative control at `main~1`.
+- ✅ **Rank 35 — `civitai-developer-docs#89` MERGED AND LIVE.** `prompt.md` serves
+  **7433 bytes**, step 4 keys on `ok`, the old "if any check fails" wording is gone.
+- ⚠ **Rank 34 — `cli#671` MERGED, but `cli#665` is REOPENED and still open.** What
+  shipped is one unconditional sentence in the managed block. Nothing installs the CLI
+  anywhere reachable; the issue's own body says candidate (c) "satisfies neither arm".
+- 🔴 **`cli#665` was auto-closed BY ACCIDENT and has been reopened.** The PR body said
+  *"Deliberately **not** `Closes #665`"* — GitHub's parser matched the literal substring
+  inside that disclaimer, wrote it into the squash commit, and closed the issue. **Never
+  write a closing keyword inside a negation.**
+- **Also merged:** `#667` (reading correction), `#670` (handoff), `#668`/`#672` (pins —
+  the freeze recurred TWICE more; see gotchas).
+- **OPEN: `cli#673`** — dogfood grader fix (identity in the verdict + a stale stderr
+  claim). CI not checked.
+- 🔴 **A CLUSTER-WIDE CREDENTIAL OUTAGE WAS FOUND WHILE CHASING THIS ARC'S DOCS DEPLOY**
+  and is written up separately:
+  `<talos-infra>/claudedocs/handoff-ghcr-credential-outage.md`. The GHCR token had been
+  revoked ~21h earlier; 50/50 image scans and 8+ pod pulls were failing. Resolved.
+- **IN FLIGHT:** nothing.
 
 ## Open investigations — live diagnosis state
 
@@ -544,7 +529,16 @@ returns `ok: false` and exit 1 after a **completely correct** setup, forever.
   in the ACTION bullet, which is where the next session looks. That is the failure
   this block exists to prevent, committed inside the block that prevents it.
 
-### ⚠ OPEN — the documented `--prefix` remedy leaves the CLI unreachable (rank 34)
+### ~~⚠ OPEN — the documented `--prefix` remedy leaves the CLI unreachable (rank 34)~~ PARTLY ADDRESSED 2026-09-19 — see "✅ SHIPPED — ranks 33/34/35 and v0.1.106" below
+
+🔴 **STILL OPEN AS AN ISSUE, BUT ITS SECOND-ORDER HARM IS FIXED.** The measured
+defect below is unchanged — nothing shipped installs the CLI anywhere a later
+shell can reach, and cli#665's own closing condition is NOT met. What HAS shipped
+(cli#671, in v0.1.106) is the `AGENTS.md` half: the block now tells a reader what
+to do when `civitai` is not on PATH, which addresses the **0 of 8** finding below.
+🔴 **Do NOT read the "Next probe: none" line as current** — the remedies were
+re-opened, two probe-based drafts were built and DELETED, and the reasoning is in
+the shipped block. Measurements below stand.
 - as-of: 2026-09-18, from 19 blind trials
 
 - **Symptom + exact repro:** on any machine where npm's global prefix is not
@@ -675,46 +669,70 @@ all three, and its header retracted.**
 - **Next probe:** merge #668, then re-run #669's CI and confirm
   `pins-vs-published` goes green.
 
+### ✅ SHIPPED — ranks 33/34/35 and v0.1.106, and the three-round arc on rank 34
+- as-of: 2026-09-19
+
+**Supersedes the `⚠ OPEN — the documented --prefix remedy` block above**, whose
+"Next probe: none" is no longer current.
+
+- **Rank 33 shipped as decided**, with three corrections the decision record needed:
+  its Go snippet **did not compile** (`checkMCPSite`/`checkMCPOrch` are not constants —
+  the names are bare literals on `civitaiMCPServers`); its coupled-edit-3 prediction was
+  **inverted** (the README ledger guard derives its exempt set with `"cursor"`, an agent
+  that IS in `agentTargets`, so it sampled two of THREE agent classes and stayed green
+  while the README was false — and went red, falsely, once the rows were named); and its
+  `AGENTS.md` eviction was **unnecessary** because item 35 already routes there.
+- 🔴 **RANK 34 TOOK THREE ATTEMPTS, AND TWO OF THEM REINTRODUCED THE CLASS THE PREVIOUS
+  AUDIT RAISED.** Both drafts detected the unreachable-CLI condition by running a login
+  shell and wrote the binary's ABSOLUTE PATH into `AGENTS.md`:
+  1. stripping `PATH` alone left the profile's idempotence sentinel
+     (`__NIXOS_SET_ENVIRONMENT_DONE`) set, so the profile built **no PATH at all** and a
+     correctly-installed CLI read as unreachable — on the maintainer's own platform;
+  2. stripping sentinels fixed that, and the `cmd.WaitDelay` added for an unrelated hang
+     introduced a THIRD inversion: `exec.ErrWaitDelay` returns **with the shell exited 0
+     and the resolved path already on stdout**, which the probe scored "not reachable"
+     while discarding that answer. Measured: 2s deadline, **30.0s** elapsed, `err=nil`.
+  **Neither fix had a guard that could catch its removal** — deleting `WaitDelay` left
+  the suite green; reverting the sentinel strip left the suite green. Both guards
+  re-implemented their subject instead of calling it, and one asserted the opposite in
+  its own comment.
+- 🔴 **THE FIX WAS DELETING THE PROBE, NOT PATCHING IT A THIRD TIME.** The recurring
+  fault was never a single bug: it was a **per-machine signal whose only consumer was a
+  write into a COMMITTED file**, so every inversion channel put a developer's home
+  directory and a bold-red false directive into a repo other people pull. 631 insertions
+  became 116. Durable rule recorded in
+  `claudedocs/decisions/36-agents-block-per-project.md`: this block may depend on the
+  PROJECT, never on the MACHINE.
+- **Ruled out — that the row was worth keeping.** Measured baseline: 8/8 trials already
+  relayed the PATH line, 6/8 already warned it would not persist. The row's marginal
+  value was ~0 against that. `via: measurement`
+- **Next probe:** the dogfood matrix — see ranked item 36.
+
 ## Next steps (ranked)
 
 🔴 **Ranks 1–14, 18–24 are DONE — numbering preserved** so live `claim-work` slugs keep
-pointing at what they were taken for. **33 is now DONE-pending-merge.** Open: **15, 16,
-17, 25, 26, 27, 29, 34**.
+pointing at what they were taken for. **33 and 35 are now DONE; 34 partly.**
 
 ➡ **Ranks 23, 28, 30, 31 and 32 were the FORGERY effort and have MOVED** to
 [`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md), which carries its own
-closing condition. Their numbers are retired HERE rather than reused, so a live `claim-work`
-slug still resolves to what it was taken for.
+closing condition. Their numbers are retired HERE rather than reused.
 
 🔴 **THE SPLIT MINTS A SECOND SLUG FOR ONE ITEM, AND `claim-work` LOCKS PER SLUG — FORWARD IT
 BY HAND BEFORE TAKING ANY OF THESE.** `claim-work --slug-for` derives the slug from the DOC, so
 the same work has two canonical names and **both compare-and-swaps succeed independently**.
-The forwarding map:
 
 | retired slug (here) | now | live slug |
 |---|---|---|
 | `agent-setup-onboarding-32` | rank 1 of the forgery doc | `terminal-line-forgery-1` |
 | `agent-setup-onboarding-23` / `-28` / `-30` / `-31` | CLOSED (#574, #605+#624, #604, #612) | none — do not take |
-| `agent-setup-onboarding-33` | ✅ DONE — cli#669 | release it once #669 merges |
+| `agent-setup-onboarding-33` / `-34` / `-35` | released 2026-09-19 | free to re-take |
 
 ⚠ The only MECHANICAL backstop is the `gh pr list --state open` sweep, which is the one thing
-that catches an UNCLAIMED duplicate. This table is the human half. **It earned its keep this
-session**: the sweep found cli#668 already open and stopped a duplicate pins-bump being authored.
+that catches an UNCLAIMED duplicate. It earned its keep twice this session — it found the
+already-open pins-bump PR both times, stopping a duplicate being authored.
 
-🔴 **Do the merge sequence FIRST — it is four commands and it unblocks everything
-else.** `#668` → `#667` → the doc branch → rebase `#669`.
-
-0. **Merge the queue, in order.** `cli#668` (pins bump, 13/13 green — clears the
-   freeze), then `cli#667` (green, operator-reserved), then this handoff's branch
-   `docs/handoff-rank33-shipped`, then rebase `cli#669` and confirm
-   `pins-vs-published` turns green. 🔴 **#667 and the doc branch both edit
-   `handoff-agent-setup-onboarding.md` — merging them out of order clobbers the
-   reading correction.**
-   IN FLIGHT: cli#668, cli#667, cli#669
-   forcing: gate — `pins-vs-published` is red on #669 and branch protection requires it
 15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT
-    re-verified for five sessions. `/home/zach/workspace/civit/civitai-developer-docs`.
-    One command settles it either way.
+    re-verified. `/home/zach/workspace/civit/civitai-developer-docs`.
     forcing: gate
 16. **`images search --help` sits 14 runes under the 1400 budget.** ⚠ RECOMMENDED FOR
     RETIREMENT.
@@ -732,27 +750,41 @@ else.** `#668` → `#667` → the doc branch → rebase `#669`.
     ❌ The other two playbook steps are also untouched: **evicting what has CLOSED**, and
     **demoting dated evidence to `claudedocs/refs/`** behind a pointer.
     🔴 Do NOT satisfy this by deleting an open investigation, a gotcha or a ruled-out theory.
+    ⚠ This doc GREW again this session; it is now the largest it has ever been.
     forcing: none
-33. ✅ **DONE — shipped as `cli#669`, awaiting merge.** Kept in the list only so a live
-    `claim-work agent-setup-onboarding-33` slug still resolves. Release the claim once
-    #669 merges: `claim-work --release agent-setup-onboarding-33`.
-    IN FLIGHT: cli#669
-    forcing: gate
-34. **cli#665 — the `--prefix` remedy leaves `civitai` unreachable from every later shell.**
-    8 of 8 trials on a non-writable prefix; **0 of 8** agents connected it to the
-    `AGENTS.md` they had just written. Remedies are mapped to which ARM each satisfies —
-    🔴 the ranking was abandoned after three wrong drafts; do not write a fourth.
+33. ✅ **DONE — merged (`d0b79ae`) and RELEASED in v0.1.106, verified from npm.**
+    Claim released.
+    forcing: gate — satisfied
+34. ⚠ **PARTLY DONE — `cli#671` merged and released; `cli#665` REOPENED and still open.**
+    The `AGENTS.md` half shipped. The install half did not: candidate **(b)**
+    (`--prefix="$HOME/.local"`) is the cause-side remedy and lives in the hosted prompt.
+    🔴 Measured limit on (b): it works for **bash** login shells via the stock
+    `~/.profile` block, and **zsh does not read `~/.profile`** — and the closing
+    condition names `zsh -lic`. So (b) alone does not close it either.
     ⚠ An earlier draft of this item said "5 of 8 reported success anyway" — from a keyword
-    regex, RETRACTED. The number that carries the item is **0 of 8**.
-    🔴 **Now the ONLY thing between the arc and its closing condition** — rank 33 landed.
-    forcing: gate
-35. **The decision's coupled edit 5 — `prompt.md` never mentions `--agent`.** Deliberately
-    NOT in #669: that file lives in `civitai/civitai-developer-docs`, which is
-    **branch-tracked and auto-deploys on push to `main`**, so it is a different repo and a
-    different blast radius. It must separate two cases the prompt currently conflates:
-    detection FAILED for an agent that IS in the table (`--agent <name>` is the fix), and
-    the agent genuinely is not in the table (paste by hand — and `--check` now reports
-    `ok: true` there, which the prompt's step 4 wording should stop contradicting).
+    regex, RETRACTED. The number that carries the item is **0 of 8** (agents that connected
+    the failure to the `AGENTS.md` they had just written). 8/8 relayed the PATH line and
+    6/8 warned it would not persist — the agents were never the weak link.
+    forcing: gate — cli#665 is open and its closing condition is unmet
+35. ✅ **DONE — docs#89 merged and verified LIVE** (7433 B, new step 4 present, old
+    wording gone). Claim released.
+    forcing: gate — satisfied
+36. 🔴 **RUN THE DOGFOOD MATRIX — the arc's effect is UNMEASURED.** Ranks 33+35 were
+    built to move the **12 of 16** failing cells and nobody has re-measured. Its
+    preconditions are NOW met for the first time: the CLI is published and the hosted
+    prompt is live, so a run finally grades the SHIPPED chain rather than half of it.
+    ⚠ Needs `OPENROUTER_API_KEY` (absent from that session) and an explicit call on cost
+    (**24 trials**, not 16 — the README corrects this — at $1/trial) and on the README's
+    stated network caveat: trial egress is deliberately UNBOUNDED and reaches the LAN.
+    🔴 The grader was VALIDATED in both directions first (ctl-neg `no`, ctl-pos `yes`,
+    ctl-profile arm A green / arm B red) and `cli#673` fixes two instrument defects found
+    while doing it — land that before reading a verdict.
+    closing-condition: `scripts/dogfood/grade.sh` reports the per-cell verdicts for a
+    full matrix run, and the `other`-identity cells are compared against the recorded
+    4-of-4 failure.
+    forcing: gate — the arc's headline claim is unmeasured without it
+37. **cli#673 — dogfood grader: identity in the verdict, and a stale stderr claim.**
+    Open, CI unchecked.
     forcing: gate
 
 ## Gotchas / decisions / dead-ends
@@ -1961,6 +1993,42 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   the offending phrase verbatim as the example. A guard that reads prose cannot tell a
   citation from a claim. **Say "a new numbered item", and do not quote the number even
   when explaining the rule.**
+
+### Added 2026-09-19 — shipping the arc, and six instrument misreadings
+
+- 🔴 **A CLOSING KEYWORD INSIDE A NEGATION STILL CLOSES THE ISSUE.** The PR body read
+  *"Deliberately **not** `Closes #665`"*; GitHub matched the substring, put it in the
+  squash commit, and auto-closed an issue whose condition was explicitly unmet. Same
+  shape as this repo's item-N xref guard, which fired on the very bullet documenting it.
+  **A parser reads words, not meaning — do not quote the form you are refusing.**
+- 🔴 **SIX INSTRUMENT MISREADINGS IN ONE SESSION, ALL THE SAME SHAPE: the tool answered
+  confidently about the WRONG OBJECT.** (1) `gh pr checks` served the pre-push rollup
+  after a force-push. (2) `npm view` reported the OLD version minutes after a successful
+  publish — the registry's own JSON had the new one. (3) A Tekton poll read "newest
+  existing PipelineRun" and graded a PRE-rotation failure as the new run, which I
+  reported as "failed again". (4) The same poll matched reason `Succeeded` when Tekton
+  reports **`Completed`**, so it timed out on a build that had already passed.
+  (5) `python3 tool.py $FILES` in zsh passed 66 paths as ONE argument (`${=FILES}`).
+  (6) `handoff_doc.py` was run with `--confirm` twice and its GUIDANCE text was read as
+  success; the actual `status=` line said `behind`, then `failed`. **Read the field that
+  carries the verdict, not the nearest reassuring text.**
+- 🔴 **THE `pins-vs-published` FREEZE RECURRED TWICE MORE IN ONE SESSION** (`#668`
+  `app-sdk ^0.43→^0.44`, then `#672` `^0.44→^0.45` plus `blocks-react ^0.52→^0.53`).
+  Upstream publishes fast enough that any PR sitting a few hours hits it. The diagnostic
+  is always the same two controls — pin files identical to `main`, and the guard failing
+  locally against live npm — and the fix is the nightly, which can be TRIGGERED on demand
+  (`gh workflow run bump-scaffold-pins.yml`) rather than waited for.
+- 🔴 **PINS SHIP IN THE RELEASE.** A stale scaffold at tag time means every app created
+  from that version is born against a package set that does not resolve. Bump BEFORE the
+  tag, not after.
+- ⚠ **A DRAFT RELEASE IS THE GATE BETWEEN REVERSIBLE AND IRREVERSIBLE.** goreleaser sets
+  `draft: true`; publishing the draft is what fires npm AND Homebrew. Verify the ARTIFACT
+  — download it, checksum it against the published `checksums.txt`, run it — before
+  publishing, because the draft is deletable and the publish is not.
+- ⚠ **RESTORING A MUTATION WITH `git checkout --` REVERTED UNCOMMITTED WORK.** A
+  mutation-test restore silently discarded the real change in that file; the end-to-end
+  suite caught it as a template error. **Restore from a `cp` backup, never from git,
+  when the file carries uncommitted work.**
 
 ## How to verify
 
