@@ -36,8 +36,15 @@ if [ "$STATE" != "running" ]; then
 fi
 
 x() { docker exec -u "$U" -w /work "$C" bash -lc "$1" 2>&1; }
-# stdout ONLY. `--check` prints its error line to stderr AHEAD of the JSON, so a
-# merged capture is unparseable and jq's failure reads as "no JSON at all".
+# stdout ONLY. `--check` prints its error line to STDERR and the payload to
+# STDOUT, so a merged capture is unparseable and jq's failure reads as "no JSON
+# at all" — which is indistinguishable from "the CLI is not installed".
+#
+# ⚠ DO NOT RE-DERIVE THIS FROM THE ORDERING. This comment used to say the error
+# line comes AHEAD of the JSON; measured on v0.1.106 it comes AFTER. The ordering
+# is not the mechanism and is not stable — interleaving of two streams never is —
+# so checking it and finding the old claim false would invite deleting a guard
+# that is still load-bearing. The mechanism is that they are DIFFERENT STREAMS.
 xo() { docker exec -u "$U" -w /work "$C" bash -lc "$1" 2>/dev/null; }
 xrc() { docker exec -u "$U" -w /work "$C" bash -lc "$1" >/dev/null 2>&1; echo $?; }
 
@@ -52,6 +59,14 @@ printf '%s\nrc=%s\n' "$CHECK_OUT" "$CHECK_RC"
 # setup from no JSON at all.
 OK=$(printf '%s' "$CHECK_OUT" | jq -r 'if has("ok") then (.ok|tostring) else "absent" end' 2>/dev/null || echo parse-error)
 [ -z "$OK" ] && OK=parse-error
+# 🔴 READ THE IDENTITY THE CONTAINER ACTUALLY REPORTS, NOT THE ONE THE TRIAL ID
+# CLAIMS. The matrix's whole finding is that the verdict is a function of (agent
+# identity, npm prefix writable) — and identity reached a reader only through the
+# filename `t-<model>-<env>-<identity>`, which is an assertion by whoever named
+# the trial, not a measurement of the box. A mislabelled or mis-exported identity
+# would have been graded under the wrong cell with nothing to notice it.
+AGENT_ID=$(printf '%s' "$CHECK_OUT" | jq -r '.agent // "unknown"' 2>/dev/null || echo unknown)
+[ -z "$AGENT_ID" ] && AGENT_ID=unknown
 FAILED=$(printf '%s' "$CHECK_OUT" | jq -r '[.checks[]|select(.ok==false)|.name]|join(",")' 2>/dev/null)
 
 printf -- '--- B: login shell\n'
@@ -98,5 +113,5 @@ MCP_ROWS=$(printf '%s' "$CHECK_OUT" | jq -r '[.checks[]|select(.name|startswith(
 PASS=no
 if [ "$OK" = "true" ] && [ "$LOGIN_RC" = "0" ] && [ -n "$LOGIN_VER" ] \
    && [ "$LOGIN_VER" = "$AGENT_VER" ] && [ "$MCP_ROWS" = "2" ]; then PASS=yes; fi
-printf 'check_ok=%s failed_checks=[%s] mcp_rows=%s rows=[%s] login_version=%s agent_shell_version=%s CLOSING_CONDITION=%s\n' \
-  "$OK" "${FAILED:-}" "$MCP_ROWS" "${ROWS:-}" "${LOGIN_VER:-none}" "${AGENT_VER:-none}" "$PASS"
+printf 'agent=%s check_ok=%s failed_checks=[%s] mcp_rows=%s rows=[%s] login_version=%s agent_shell_version=%s CLOSING_CONDITION=%s\n' \
+  "$AGENT_ID" "$OK" "${FAILED:-}" "$MCP_ROWS" "${ROWS:-}" "${LOGIN_VER:-none}" "${AGENT_VER:-none}" "$PASS"
