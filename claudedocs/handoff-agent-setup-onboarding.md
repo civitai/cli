@@ -28,8 +28,22 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
   reported and must NOT fail `ok` — stopping before auth is deliberate.
   This is frozen as the condition this arc was opened on.
 
-- 🔴 **MEASURED 2026-09-18 — NOT MET. 4 of 16 blind trials reached it**, and the
-  12 failures are explained by exactly two causes (ranks 33 and 34 below — 34 is a
+- ✅ **MEASURED 2026-09-18 — SATISFIED on its own wording, and that wording is
+  narrower than it reads.** It asks for **A** blind run to reach a working setup, not
+  for all of them: **4 of 16 cells did**, each clearing every clause — blind (the
+  container holds no repo), given only the hosted URL, on a machine that did not build
+  the CLI, both halves green — and still passing under the CORRECTED arm B.
+  🔴 **DO NOT CLOSE THE ARC ON THAT.** The same run found the entrypoint fails in
+  **12 of 16** cells, which is the more useful fact and is bigger than what this
+  condition asks. Per this doc's own rule a later finding opens a NEW arc rather than
+  extending a frozen one — so: condition satisfied, arc deliberately left open.
+  ⚠ **An earlier version of this bullet said "NOT MET", and every report built on it
+  said so too.** That applied a stricter reading (*the entrypoint works generally*)
+  than the frozen text, which is the same substitution this arc spent eleven audit
+  rounds on — a better-sounding claim in place of the measured one.
+  ⚠ The 4 passing cells are sourced to measurements recorded on 2026-09-18/19; the
+  trial containers have since been deleted, so re-checking needs a re-run.
+  The 12 failures are explained by exactly two causes (ranks 33 and 34 below — 34 is a
   defect; 33 was a design call, **DECIDED 2026-09-19** — see its entry), with
   a **model-independent VERDICT** across 19 trials — ⚠ stated at that width on
   purpose: the machine state did not depend on the model, but what the user is
@@ -76,38 +90,33 @@ that wrote it, flagged as such there.
 
 ## State now
 
-- **Branch / PR:** `zach/agent-setup-dogfood-matrix` → **cli#663**, OPEN, 13 commits.
-  `MERGEABLE/BLOCKED` only while CI re-runs on the newest head; every check was green
-  on the prior head except `pins-vs-published`, which the two bumps below cleared.
-- **The arc's closing condition was MEASURED for the first time — and is NOT MET.**
-  4 of 16 blind trials reached it. Evidence:
-  `claudedocs/refs/agent-setup-dogfood-matrix-2026-09-18.md`; harness at
-  `scripts/dogfood/` (committed, re-runnable, un-credentialed).
-- **Verdict is model-independent** across 19 trials — a pure function of *(agent in the
-  CLI's table?, npm prefix writable?)*. Established by de-confounding controls after the
-  first grid bound identity to model; that grid would have shipped "Gemini and Grok fail
-  the onboarding", which is false.
-- **Token efficiency: fine.** 3–8 tool calls/trial; measured 20 URL fetches across 20
-  trials, all the entrypoint — nothing reached the ~103k-token `/apps` surface. $0.66.
-- **DONE this session:**
-  - Harness + evidence record + handoff updates, `8c40bea` → `435a20e`.
-  - **An 11-round audit ladder (round 0 + rounds 1–10), closed on a clean round 10.**
-    Every round before it produced findings. `audit-claims` blocks are PR comments.
-  - **cli#665** filed for rank 34 (the real defect), corrected twice as analysis changed.
-  - **Rank 33 DECIDED** by the `--json` contract's owner — the verdict moves, not the
-    prompt. Record: `claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md`.
-  - **cli#664 and cli#666 merged** (pins `app-sdk` ^0.43.0, `blocks-react` ^0.52.0) —
-    the freeze recurred mid-session and was cleared twice. Both verified by CONTENT with
-    a negative control, never by ancestry.
-  - **cairn `cli/agent-setup` corrected twice, in place** (`cairn put`, not append).
-- **IN FLIGHT:** nothing. No background jobs, no open worktree writes.
-- **Deploy/verify status:** nothing deployed — this PR ships **no production code** by
-  design. The dogfood harness is operator-run and wired to no CI job.
-- ⚠ **22 `dogfood-*` containers are still running** for spot-checking:
-  `docker rm -f $(docker ps -aq --filter name=dogfood-)`.
-- ⚠ **No `clawgate-task:` field**: `clawgate_handoff.sh resolve` exited **5** (nothing
+- **cli#663 is MERGED** (`07e9031`, squash), verified by CONTENT with a negative control
+  — `scripts/dogfood/`, both `claudedocs/refs/` records and the handoff are on `main`;
+  the same paths are absent at `main~1`. Branch deleted, base clone re-synced (it was
+  3 behind — write-only clones fall silently behind), 27 containers and 4 images removed.
+- **cli#667 is OPEN** — the closing-condition reading correction (below). Two doc lines,
+  no code. It is the only thing left from this arc's last session.
+- **cli#664 and cli#666 MERGED** — the `pins-vs-published` freeze recurred twice in one
+  session (`app-sdk` 0.43.0, then `blocks-react` 0.52.0 mid-session). Both bumps verified
+  by content with a negative control, never by ancestry.
+- **cli#665 OPEN** — rank 34, the real defect.
+- ✅ **Rank 33 was DECIDED 2026-09-19** by the `--json` contract's owner — **the verdict
+  moves, not the prompt**. Record + the six coupled edits:
+  `claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md`. ❌ **Not implemented**:
+  the code still counts `mcp-site`/`mcp-orch` on the `other` path.
+- ✅ **The arc's frozen closing condition is SATISFIED on its own wording** — it asks for
+  **a** blind run to reach a working setup, and 4 of 16 cells cleared every clause,
+  still passing under the corrected arm B. 🔴 **The arc is open anyway, by choice**:
+  12 of 16 failed, which the condition does not ask about and which matters more.
+  ⚠ Earlier reports in this arc said "NOT MET" — a stricter reading than the frozen
+  text; corrected in cli#667.
+- **Deploy/verify status:** nothing deployed. This arc has shipped **no production
+  code** — the decided verdict change (rank 33) is still unimplemented.
+- ⚠ **No `clawgate-task:` field**: `clawgate_handoff.sh resolve` exits **5** (nothing
   resolved). An unknown session id answers 200 with an empty array, so that zero cannot
   distinguish "touched no task" from "wrong id". Not a clean bill of health.
+- ⚠ **A worktree is still live**: `/home/zach/workspace/civit/cli-cc-fix` on
+  `zach/closing-condition-reading`, held open until cli#667 merges. Remove it after.
 
 ## Open investigations — live diagnosis state
 
@@ -1756,6 +1765,33 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   intend to add dangles against a list that does not have it yet. It caught me twice: once
   in the decision record, and again HERE after I had fixed it there. Name it "the entry I
   was adding", never by number.
+
+### Added 2026-09-19 (close-out) — where the ladder was NOT pointed
+
+- 🔴 **ELEVEN AUDIT ROUNDS WERE POINTED AT THE MECHANISM, AND NOTHING WAS POINTED AT THE
+  VERDICT.** The ladder's recurring finding was one substitution — a better-sounding
+  claim standing in for the measured one — and it kept catching it in guards, counts,
+  attributions and shas. It did not catch the same substitution in **the single line
+  that says whether the arc is done**: the frozen condition asks for **a** blind run to
+  reach a working setup, 4 of 16 did, and every report said "NOT MET" because a stricter
+  reading *sounded* more honest. **A close-check reads the CONDITION'S OWN WORDS; an
+  audit of the work cannot supply that, because the condition is not in the diff.**
+- 🔴 **"STRICTER" IS NOT A SYNONYM FOR "MORE HONEST".** Reporting NOT MET felt
+  conservative and was simply wrong about the text. When a verdict is stricter than its
+  written criterion, that is still a mis-report — and it is the direction nobody
+  challenges, which is exactly why it survived eleven rounds and a merge.
+- ⚠ **The frozen condition and the useful question had drifted apart, and only the
+  measurement exposed it.** It asks *"can an agent do this at all?"* (a feasibility
+  question, answerable by one success). The dogfood answered a different one: *"does it
+  work across agents and environments?"* — 4 of 16. Both are worth knowing; conflating
+  them is what produced the wrong verdict. Per this doc's own rule the second opens a
+  NEW arc rather than extending the frozen one.
+- ⚠ **A guard that fires on a READ can be right when nothing it names is wrong.** The
+  handoff write-back guard fired on `handoff-terminal-line-forgery.md` — a doc this
+  session read while sweeping and deliberately did not touch (its "condition is not met"
+  belongs to a different arc). The guard's point was not that doc; it was that real work
+  had happened since the last handoff write. Answering the guard's *reason* rather than
+  its *object* is the difference between dismissing it and using it.
 
 ## How to verify
 
