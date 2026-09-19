@@ -111,5 +111,5 @@ done
 wait
 echo "MATRIX COMPLETE — $N trial(s). Grade each: bash grade.sh <trial-id> <container-user>"
 echo "🔴 A per-model verdict is only readable against the SAME identity. Compare"
-echo "   t-<model>-noderoot-claudeid against -codexid and -other before"
-echo "   attributing any difference to the model."
+echo "   the t-<model>-noderoot-<id> cells across ids — this run used: ${IDENTITIES[*]%%|*}"
+echo "   — before attributing any difference to the model."

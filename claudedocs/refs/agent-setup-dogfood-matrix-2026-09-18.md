@@ -79,6 +79,17 @@ and fixed by these controls, and both would have produced confident wrong verdic
    as empty, exactly like `null`. A real failing setup was reported as `absent`,
    i.e. the instrument could not distinguish a failed setup from a missing CLI.
    Use `if has("ok") then (.ok|tostring) else "absent" end`.
+3. 🔴 **A FALSE GREEN, found on audit round 4 — the grader was measuring a
+   different shell than the condition names.** Arm B ran `bash -lc "zsh -lic '…'"`;
+   the outer bash login sources `~/.profile`, whose stock
+   `if [ -d "$HOME/.local/bin" ]` block prepends a directory **zsh never reads**.
+   So a CLI installed under `$HOME/.local` satisfied the wrapper and not the shell
+   the frozen condition names. Measured in one container: wrapped → `0.1.105`,
+   `CLOSING_CONDITION=yes`; direct `zsh -lic` → `command not found`,
+   `CLOSING_CONDITION=no`. Arm B now runs zsh directly.
+   ⚠ **The grid below is UNAFFECTED** — re-graded under the corrected arm B, the
+   sampled verdicts are unchanged, because every trial installed under
+   `$HOME/.npm-global`, which no `~/.profile` block adds. The defect was latent.
 
 ## The grid
 
@@ -358,16 +369,31 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin   # all six: w
 ~/.local/bin: does not exist      ~/bin: does not exist
 ```
 
-**So (b) has no implementable target there** — not "insufficient", *unavailable*.
-And since `prompt.md` also forbids the agent editing the user's shell profile,
-**arm 1 of the closing condition is unreachable on the graded environments by any
-candidate listed here**; only arm 2, via (a), can close it there. On a host that
-*does* have a writable already-on-PATH prefix, (b) closes arm 1 — that is a fact
-about the host, and the graded envs are what decide this item.
+❌ **An earlier draft concluded from this that "(b) has no implementable target"
+and that "arm 1 is unreachable on the graded environments by any listed
+candidate". BOTH ARE WITHDRAWN — the measurement above records a precondition the
+remedy itself alters.** Both images' stock `~/.profile` carries a block conditional
+on EXISTENCE:
 
-⚠ This bullet list and the handoff's rank 34 describe the same three remedies.
-They disagreed for two rounds, in opposite directions. If you edit one, sweep the
-other **and** issue cli#665.
+```sh
+if [ -d "$HOME/.local/bin" ] ; then PATH="$HOME/.local/bin:$PATH" ; fi
+```
+
+So `npm install -g --prefix="$HOME/.local"` creates that directory and puts the CLI
+on a **bash** login shell's PATH with no profile edit — measured in both images:
+`civitai 0.1.105`. 🔴 **zsh does not read `~/.profile`** (it reads `.zshenv`,
+`.zprofile`, `.zshrc`), and the closing condition names `zsh -lic`. Same container,
+same install: `zsh -lic 'civitai --version'` → **`command not found`**.
+
+**The two shells disagree, and no reachability claim is made here.** That
+disagreement is itself the finding: it means the remedy's success depends on which
+login shell the condition means, which nobody has decided.
+
+⚠ **FOUR surfaces describe these same three remedies**, and they disagreed for two
+rounds in opposite directions: this list, the handoff's **ranked item 34**, the
+handoff's **Defect-B investigation block**, and public issue **cli#665**. A sweep
+note that named only three is how the fourth copy survived four audit rounds. Rank
+34 is the one place they are maintained; the others point at it.
 
 ## Token efficiency — the third question the trials were run to answer
 

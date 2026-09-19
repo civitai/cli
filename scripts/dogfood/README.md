@@ -103,7 +103,7 @@ old binary. A verdict of `CLOSING_CONDITION=yes` requires both.
 
 ## 🔴 Validate the grader before you read a verdict
 
-Two controls, both of which have caught a real grader defect:
+Three controls. **Each one has caught a real grader defect** — this is not ceremony:
 
 ```bash
 docker run -d --name dogfood-ctl-neg df-node-root sleep infinity
@@ -116,6 +116,26 @@ bash grade.sh ctl-pos root          # MUST report CLOSING_CONDITION=yes
 ```
 
 A grader that has not been watched to go red AND green is a claim about itself.
+
+🔴 **A third control, and the one that caught a false GREEN.** Arm B used to run
+`bash -lc "zsh -lic '…'"`. The outer bash login shell sources `~/.profile`, whose
+stock `if [ -d "$HOME/.local/bin" ]` block prepends a directory **zsh never sees** —
+so a CLI installed under `$HOME/.local` was visible to the wrapper and invisible to
+the shell the closing condition actually names. Build that state and the grader must
+say **no**:
+
+```bash
+docker run -d --name dogfood-ctl-profile -u dev -e CLAUDECODE=1 df-node-user sleep infinity
+docker exec -u dev -w /work dogfood-ctl-profile bash -lc \
+  'npm install -g --prefix="$HOME/.local" @civitai/cli
+   export PATH="$HOME/.local/bin:$PATH"; civitai agent-setup --track app'
+bash grade.sh ctl-profile dev       # MUST report CLOSING_CONDITION=no
+```
+
+Measured against the same container: `bash -lc 'civitai --version'` → `0.1.105`;
+`zsh -lic 'civitai --version'` → `command not found`. The wrapped grader reported
+**yes**; the corrected one reports **no**. ⚠ The 2026-09-18 grid is unaffected — no
+trial installed under `$HOME/.local` — so the defect was latent, not triggered.
 
 ## Agent identity is a dimension, not a detail
 

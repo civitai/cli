@@ -55,8 +55,19 @@ OK=$(printf '%s' "$CHECK_OUT" | jq -r 'if has("ok") then (.ok|tostring) else "ab
 FAILED=$(printf '%s' "$CHECK_OUT" | jq -r '[.checks[]|select(.ok==false)|.name]|join(",")' 2>/dev/null)
 
 printf -- '--- B: login shell\n'
-LOGIN_OUT=$(x "zsh -lic 'civitai --version'")
-LOGIN_RC=$(xrc "zsh -lic 'civitai --version'")
+# 🔴 ARM B RUNS zsh DIRECTLY — NOT THROUGH `x`, WHICH WRAPS EVERYTHING IN
+# `bash -lc`. That wrapper made this measure the wrong shell: the outer bash login
+# sources `~/.profile`, whose stock `if [ -d "$HOME/.local/bin" ]` block prepends a
+# directory that **zsh never sees**, because zsh reads .zshenv/.zprofile/.zshrc and
+# not .profile. MEASURED in df-node-user and df-ubuntu-apt with the CLI installed
+# under $HOME/.local: `bash -lc "zsh -lic 'civitai --version'"` printed 0.1.105,
+# while `zsh -lic 'civitai --version'` printed `command not found`. Opposite
+# verdicts for the same container — and the frozen closing condition names the
+# zsh form, so the wrapper was grading a condition nobody agreed to.
+zexec() { docker exec -u "$U" -w /work "$C" zsh -lic "$1" 2>&1; }
+LOGIN_OUT=$(zexec 'civitai --version')
+docker exec -u "$U" -w /work "$C" zsh -lic 'civitai --version' >/dev/null 2>&1
+LOGIN_RC=$?
 printf '%s\nrc=%s\n' "$LOGIN_OUT" "$LOGIN_RC"
 
 printf -- '--- agent-shell version (for the A/B disagreement)\n'

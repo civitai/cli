@@ -538,9 +538,11 @@ returns `ok: false` and exit 1 after a **completely correct** setup, forever.
   operand.** The recorded instance was a *stale* binary and was fixed with
   `civitai upgrade`; this is an *unreachable* binary produced by the prompt's own
   remedy. A fix aimed at the earlier operand did not generalise.
-- **Next probe:** decide between (a) step 4 verifying in a NEW shell so the failure
-  is visible, (b) a prefix already on PATH, (c) `AGENTS.md` recording the absolute
-  path. (a) is the smallest honest change and is independent of the others.
+- **Next probe:** none — the remedies and what is measured about them live in ranked
+  item 34, which is the ONE place they are maintained. 🔴 **Do not restate them here.**
+  A copy of the ranking lived in this bullet through four audit rounds and was missed by
+  a sweep note that named only three surfaces; ranked item 34, the evidence doc and
+  issue cli#665 are the other three.
 
 ## Next steps (ranked)
 
@@ -658,16 +660,23 @@ that catches an UNCLAIMED duplicate; the forgery doc mandates it. This table is 
     — **six directories, none writable by that user** — and neither `~/.local/bin` nor
     `~/bin` exists or appears on PATH.
 
-    What that measurement settles:
-    - **(b) "install into a prefix already on PATH" HAS NO IMPLEMENTABLE TARGET on either
-      graded environment.** Not "insufficient" — unavailable. Any claim that it closes the
-      item there is asserting a prefix that does not exist.
-    - **Arm 1 is therefore unreachable on those environments by any listed candidate**,
-      because `prompt.md` also forbids the agent editing the user's shell profile. On the
-      graded envs the item can close only via **arm 2**, i.e. **(a)**.
+    ❌ **DRAFT 4 DREW A CONCLUSION THIS MEASUREMENT DOES NOT SUPPORT, and it is
+    withdrawn:** *"(b) has no implementable target … arm 1 is therefore unreachable on
+    those environments by any listed candidate."* 🔴 **It measured a precondition the
+    remedy itself alters.** Both images' stock `~/.profile` carries
+    `if [ -d "$HOME/.local/bin" ]; then PATH="$HOME/.local/bin:$PATH"; fi` — conditional
+    on EXISTENCE — so `--prefix="$HOME/.local"` creates the directory and puts it on a
+    **bash** login shell's PATH with no profile edit. Measured: `civitai 0.1.105`.
+    🔴 **But zsh never reads `~/.profile`**, and the closing condition names
+    `zsh -lic`. Same container, same install: `zsh -lic 'civitai --version'` →
+    `command not found`. **The two shells disagree**, which is a fact about the remedy
+    and about the condition, not a ranking.
+    **So: no reachability claim is made here.** What is measured is above; what follows
+    from it depends on which shell the condition means, and that is now the open question.
     - **(c) satisfies neither arm.** It addresses the second-order harm — future agent
-      sessions can still run the CLI — and is worth doing alongside (a), but a path in a
-      markdown file puts nothing on a login shell's PATH and changes no agent's report.
+      sessions can still run the CLI — and is worth doing alongside another remedy, but a
+      path in a markdown file puts nothing on any login shell's PATH and changes no
+      agent's report. (This bullet is unaffected by the withdrawal above.)
     ⚠ **Scope, stated rather than implied:** this is a fact about these two container
     images, not about every machine. On a host where a writable already-on-PATH prefix
     exists, (b) does close arm 1. The graded envs are what decide this item.
