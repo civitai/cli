@@ -90,33 +90,41 @@ that wrote it, flagged as such there.
 
 ## State now
 
-- ✅ **RELEASED — `v0.1.106` is live on npm and Homebrew**, and verified the way that
-  matters: installed from the PUBLIC registry into a clean container that never built
-  the CLI, then exercised. `civitai 0.1.106`, rank 33's `other` path at `ok: true`/exit
-  0 with both MCP rows present and `false`, and rank 34's PATH note in the generated
-  `AGENTS.md` with no machine-specific path. The draft was also artifact-verified BEFORE
-  publishing — sha256 matched against the published `checksums.txt`.
-- ✅ **Rank 33 — `cli#669` MERGED** (`d0b79ae`). `checkCountsTowardVerdict` no longer
-  counts `mcp-site`/`mcp-orch` when `agentTargets[agent]` is unknown. Rows stay, stay
-  `false`. Verified on `main` with a negative control at `main~1`.
-- ✅ **Rank 35 — `civitai-developer-docs#89` MERGED AND LIVE.** `prompt.md` serves
-  **7433 bytes**, step 4 keys on `ok`, the old "if any check fails" wording is gone.
-- ⚠ **Rank 34 — `cli#671` MERGED, but `cli#665` is REOPENED and still open.** What
-  shipped is one unconditional sentence in the managed block. Nothing installs the CLI
-  anywhere reachable; the issue's own body says candidate (c) "satisfies neither arm".
-- 🔴 **`cli#665` was auto-closed BY ACCIDENT and has been reopened.** The PR body said
-  *"Deliberately **not** `Closes #665`"* — GitHub's parser matched the literal substring
-  inside that disclaimer, wrote it into the squash commit, and closed the issue. **Never
-  write a closing keyword inside a negation.**
-- **Also merged:** `#667` (reading correction), `#670` (handoff), `#668`/`#672` (pins —
-  the freeze recurred TWICE more; see gotchas).
-- **OPEN: `cli#673`** — dogfood grader fix (identity in the verdict + a stale stderr
-  claim). CI not checked.
-- 🔴 **A CLUSTER-WIDE CREDENTIAL OUTAGE WAS FOUND WHILE CHASING THIS ARC'S DOCS DEPLOY**
-  and is written up separately:
-  `<talos-infra>/claudedocs/handoff-ghcr-credential-outage.md`. The GHCR token had been
-  revoked ~21h earlier; 50/50 image scans and 8+ pod pulls were failing. Resolved.
-- **IN FLIGHT:** nothing.
+- ✅ **RELEASED — `v0.1.106` is live on npm and Homebrew**, re-confirmed independently
+  this session: a container that never built the CLI ran `npm install -g @civitai/cli`
+  from the PUBLIC registry and reported `civitai 0.1.106`, then completed setup
+  end-to-end (the `ctl-pos` grader control).
+- ✅ **Rank 33 — `cli#669` MERGED** (`d0b79ae`), and **MEASURED IN A BLIND TRIAL for the
+  first time**: the `gemini × node-root × other` cell, recorded ❌ `no` under mechanism A
+  on 2026-09-18, now grades `CLOSING_CONDITION=yes` on v0.1.106. See the rank-36
+  investigation block below.
+- ✅ **Rank 35 — `civitai-developer-docs#89` MERGED AND LIVE** (7433 B, step 4 keys on `ok`).
+- ⚠ **Rank 34 — `cli#671` MERGED, `cli#665` REOPENED and still open.** Mechanism B is
+  unfixed and was reproduced this session by the `ctl-profile` control: installing under
+  `--prefix="$HOME/.local"`, `bash -lc 'civitai --version'` → `0.1.106` while
+  `zsh -lic 'civitai --version'` → `command not found`.
+- ✅ **`cli#673` MERGED** (`9588fb0`, squash) — dogfood grader: agent identity in the
+  verdict line, and a stale stderr-ordering claim corrected. Verified by CONTENT with a
+  negative control: `AGENT_ID` appears 3× in `scripts/dogfood/grade.sh` at `origin/main`
+  and 0× at `origin/main~1`. All 13 checks were green SHA-pinned at `1b157f3`.
+- ⏳ **IN FLIGHT — the rank-36 matrix**, 18 trials on an operator-chosen model set
+  (`z-ai/glm-5.3-flash`, `xiaomi/mimo-v2.5`, `deepseek/deepseek-v4-pro`), running in
+  `/home/zach/workspace/civit/cli-dogfood36/scripts/dogfood`. 🔴 **Its results are NOT in
+  this doc** — read `runs/*/transcript.jsonl` and re-grade each container.
+- **Deploy/verify status:** nothing new deployed. `#673` touches only the harness and
+  reaches no user.
+- ⚠ **No `clawgate-task:` field**: `clawgate_handoff.sh resolve` exited **5** (nothing
+  resolved). An unknown session id answers 200 with an empty array, so that zero cannot
+  distinguish "touched no task" from "wrong id". Not a clean bill of health.
+- ⚠ **Live worktrees**, remove by EXACT path: `/home/zach/workspace/civit/cli-dogfood36`
+  (the harness run — holds `runs/` and `logs/`, the only copy of this session's
+  transcripts), `/home/zach/workspace/civit/cli-ho674` (this doc),
+  `/home/zach/workspace/civit/cli-rank33` and `/home/zach/workspace/civit/cli-cc-fix`
+  (both merged — safe to remove).
+- ⚠ **Docker state is NOT clean**: four `df-*` images (342 MB each) and ~10
+  `dogfood-*` containers are live, including three `dogfood-ctl-*` controls. The
+  grader can only re-read a RUNNING container, so removing them destroys the ability
+  to re-grade without a re-run.
 
 ## Open investigations — live diagnosis state
 
@@ -708,10 +716,96 @@ all three, and its header retracted.**
   value was ~0 against that. `via: measurement`
 - **Next probe:** the dogfood matrix — see ranked item 36.
 
+### ⏳ IN FLIGHT — rank 36: the first post-ship dogfood measurement, and a 25× cost error in this doc
+- as-of: 2026-09-19
+
+- **Symptom + exact repro:** the arc shipped ranks 33 and 35 to move the 12-of-16
+  failing cells recorded on 2026-09-18, and nobody had re-measured. Preconditions were
+  met for the first time this session (CLI published, hosted prompt live).
+
+- **Observed (with values) — the grader was validated in BOTH directions FIRST**, on the
+  merged `#673` code, asserting the FIELDS and not just the verdict word:
+
+  | control | verdict line |
+  |---|---|
+  | `ctl-neg` (bare container) | `agent=unknown check_ok=parse-error mcp_rows=unreadable login_version=none agent_shell_version=none CLOSING_CONDITION=no` |
+  | `ctl-pos` (public npm install) | `agent=claude check_ok=true failed_checks=[authenticated] mcp_rows=2 login_version=0.1.106 agent_shell_version=0.1.106 CLOSING_CONDITION=yes` |
+  | `ctl-profile` (`--prefix=$HOME/.local`) | `agent=claude check_ok=true failed_checks=[authenticated] mcp_rows=2 login_version=none agent_shell_version=0.1.106 CLOSING_CONDITION=no` |
+
+  `ctl-profile` is the one that carries weight: arm A GREEN while arm B is RED, which is
+  the false-green shape the README pins, and it reproduces mechanism B directly —
+  `bash -lc 'civitai --version'` → `0.1.106`, `zsh -lic 'civitai --version'` →
+  `command not found`.
+
+- **Observed (with values) — the 3-trial smoke matrix** (`gemini-3.8-flash`, `node-root`,
+  all three identities), graded from the containers:
+
+  | cell | recorded 2026-09-18 | measured 2026-09-19 on v0.1.106 |
+  |---|---|---|
+  | `gemini × node-root × claude` | ✅ yes | ✅ `yes` |
+  | `gemini × node-root × codex` | *(never run)* | ✅ `yes` |
+  | `gemini × node-root × other` | ❌ **no** (mechanism A) | ✅ **`yes`** |
+
+  The `other` cell verbatim: `agent=other check_ok=true
+  failed_checks=[mcp-site,mcp-orch,authenticated] mcp_rows=2 login_version=0.1.106
+  agent_shell_version=0.1.106 CLOSING_CONDITION=yes` — both MCP rows still PRESENT and
+  still `false`, which is rank 33's design, and both halves of the closing condition
+  green on a machine that never built the CLI. All three trials stopped `"finished"` in
+  9–10 steps.
+
+- 🔴 **`#673` EARNED ITS KEEP ON ITS FIRST RUN.** The `agent=` field is read from the
+  container's own `--check` JSON, and it matched the trial-id label in all three cells —
+  which is the first time identity has been *measured* rather than asserted by whoever
+  named the trial.
+
+- 🔴 **Ruled out — that a full matrix costs ~$24.** `--max-cost` is a per-trial CAP, not
+  an estimate, and this doc's rank 36 quoted "24 trials at $1/trial" as though it were
+  one. The 3 smoke trials cost **$0.083 total** ($0.028/trial), and this repo's own
+  evidence doc records the entire 19-trial matrix of 2026-09-18 at **$0.66**. A full
+  24-cell run is ~$1. `via: measurement` (the `end` records' `usage.cost`, and
+  `claudedocs/refs/agent-setup-dogfood-matrix-2026-09-18.md` line 469).
+
+- **Ruled out — that a stale model slug would kill the run.** All four default slugs and
+  all three operator-chosen ones resolve live on OpenRouter, and each advertises `tools`
+  + `tool_choice`, which `runner.py` requires. `via: command`
+  (`curl -s https://openrouter.ai/api/v1/models`, 447 models enumerated).
+
+- ⚠ **`~/.config/repo-cos/env` holds a LIVE PAID OpenRouter key** — $49.69 of a $50
+  weekly limit remaining, no expiry — while `<devrc>/SECRETS.md` documents that file as
+  belonging to a service retired 2026-09-07 and says it is safe to delete. That entry is
+  wrong about the key being dead. `via: measurement` (the free `/api/v1/key` endpoint).
+
+- **Leading hypothesis:** mechanism A is closed by the shipped v0.1.106 and mechanism B
+  (rank 34 / `cli#665`) is not, so the post-ship grid should show the four `other` cells
+  flipping to `yes` while every unwritable-prefix cell stays `no`. One of the four is now
+  measured; three are not.
+
+- 🔴 **Stated limit — the model axis was CHANGED mid-run at the operator's direction**,
+  from the recorded `claude-sonnet-5 / gpt-5.6-terra / gemini-3.8-flash / grok-4.6` to
+  `z-ai/glm-5.3-flash / xiaomi/mimo-v2.5 / deepseek/deepseek-v4-pro`. The two sets are
+  DISJOINT, so rank 36's "compare the `other` cells against the recorded 4-of-4 failure"
+  cannot be done cell-for-cell — the in-flight run tests whether the recorded
+  MODEL-INDEPENDENCE holds on three models never tried, which is a different and arguably
+  stronger question. 🔴 **The confound to watch when reading it: a cheap model that
+  simply cannot drive the task produces the same `CLOSING_CONDITION=no` as a broken
+  product.** Only the transcript separates those two; the verdict line cannot.
+
+- **Next probe:** grade every finished container and tabulate by (identity, prefix
+  writable), then read the transcript of any `no` cell before attributing it to the
+  product:
+  ```bash
+  D=/home/zach/workspace/civit/cli-dogfood36/scripts/dogfood
+  for t in "$D"/runs/t-{glm,mimo,dsv4}-*/; do
+    id=$(basename "$t"); u=root
+    case "$id" in *-nodeuser-*|*-ubuntu-*) u=dev ;; esac
+    printf '%-34s ' "$id"; bash "$D/grade.sh" "$id" "$u" 2>&1 | tail -1
+  done
+  ```
+
 ## Next steps (ranked)
 
 🔴 **Ranks 1–14, 18–24 are DONE — numbering preserved** so live `claim-work` slugs keep
-pointing at what they were taken for. **33 and 35 are now DONE; 34 partly.**
+pointing at what they were taken for. **33, 35 and 37 are DONE; 34 partly; 36 in flight.**
 
 ➡ **Ranks 23, 28, 30, 31 and 32 were the FORGERY effort and have MOVED** to
 [`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md), which carries its own
@@ -725,11 +819,10 @@ the same work has two canonical names and **both compare-and-swaps succeed indep
 |---|---|---|
 | `agent-setup-onboarding-32` | rank 1 of the forgery doc | `terminal-line-forgery-1` |
 | `agent-setup-onboarding-23` / `-28` / `-30` / `-31` | CLOSED (#574, #605+#624, #604, #612) | none — do not take |
-| `agent-setup-onboarding-33` / `-34` / `-35` | released 2026-09-19 | free to re-take |
+| `agent-setup-onboarding-33` / `-34` / `-35` / `-37` | released | free to re-take |
 
 ⚠ The only MECHANICAL backstop is the `gh pr list --state open` sweep, which is the one thing
-that catches an UNCLAIMED duplicate. It earned its keep twice this session — it found the
-already-open pins-bump PR both times, stopping a duplicate being authored.
+that catches an UNCLAIMED duplicate.
 
 15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT
     re-verified. `/home/zach/workspace/civit/civitai-developer-docs`.
@@ -750,17 +843,17 @@ already-open pins-bump PR both times, stopping a duplicate being authored.
     ❌ The other two playbook steps are also untouched: **evicting what has CLOSED**, and
     **demoting dated evidence to `claudedocs/refs/`** behind a pointer.
     🔴 Do NOT satisfy this by deleting an open investigation, a gotcha or a ruled-out theory.
-    ⚠ This doc GREW again this session; it is now the largest it has ever been.
     forcing: none
-33. ✅ **DONE — merged (`d0b79ae`) and RELEASED in v0.1.106, verified from npm.**
-    Claim released.
+33. ✅ **DONE — merged (`d0b79ae`), RELEASED in v0.1.106, and now MEASURED**: the
+    `other`-identity cell it was built for grades `yes` in a blind trial. Claim released.
     forcing: gate — satisfied
 34. ⚠ **PARTLY DONE — `cli#671` merged and released; `cli#665` REOPENED and still open.**
-    The `AGENTS.md` half shipped. The install half did not: candidate **(b)**
+    The `AGENTS.md` half shipped; the install half did not. Candidate **(b)**
     (`--prefix="$HOME/.local"`) is the cause-side remedy and lives in the hosted prompt.
-    🔴 Measured limit on (b): it works for **bash** login shells via the stock
-    `~/.profile` block, and **zsh does not read `~/.profile`** — and the closing
-    condition names `zsh -lic`. So (b) alone does not close it either.
+    🔴 Its measured limit is now REPRODUCED, not just argued: the `ctl-profile` control
+    shows `bash -lc` finding the binary at `0.1.106` while `zsh -lic` reports
+    `command not found`, and the closing condition names `zsh -lic`. So (b) alone does
+    not close it.
     ⚠ An earlier draft of this item said "5 of 8 reported success anyway" — from a keyword
     regex, RETRACTED. The number that carries the item is **0 of 8** (agents that connected
     the failure to the `AGENTS.md` they had just written). 8/8 relayed the PATH line and
@@ -769,23 +862,22 @@ already-open pins-bump PR both times, stopping a duplicate being authored.
 35. ✅ **DONE — docs#89 merged and verified LIVE** (7433 B, new step 4 present, old
     wording gone). Claim released.
     forcing: gate — satisfied
-36. 🔴 **RUN THE DOGFOOD MATRIX — the arc's effect is UNMEASURED.** Ranks 33+35 were
-    built to move the **12 of 16** failing cells and nobody has re-measured. Its
-    preconditions are NOW met for the first time: the CLI is published and the hosted
-    prompt is live, so a run finally grades the SHIPPED chain rather than half of it.
-    ⚠ Needs `OPENROUTER_API_KEY` (absent from that session) and an explicit call on cost
-    (**24 trials**, not 16 — the README corrects this — at $1/trial) and on the README's
-    stated network caveat: trial egress is deliberately UNBOUNDED and reaches the LAN.
-    🔴 The grader was VALIDATED in both directions first (ctl-neg `no`, ctl-pos `yes`,
-    ctl-profile arm A green / arm B red) and `cli#673` fixes two instrument defects found
-    while doing it — land that before reading a verdict.
+36. ⏳ **IN FLIGHT — the matrix is RUNNING; grade it and write up the grid.** The grader
+    was validated in all three directions first and the 3-trial smoke already flipped the
+    key cell (see the investigation block). What remains is to grade the 18 in-flight
+    trials, tabulate by (identity, prefix writable), and read the transcript of any `no`
+    cell before attributing it to the product.
+    🔴 The run uses an operator-chosen model set DISJOINT from the recorded grid, so the
+    literal "compare against the recorded 4-of-4 failure" clause cannot be satisfied
+    cell-for-cell by this run — decide explicitly whether to amend the condition or add
+    the three missing `other` cells on the original models (~$0.10).
     closing-condition: `scripts/dogfood/grade.sh` reports the per-cell verdicts for a
     full matrix run, and the `other`-identity cells are compared against the recorded
     4-of-4 failure.
     forcing: gate — the arc's headline claim is unmeasured without it
-37. **cli#673 — dogfood grader: identity in the verdict, and a stale stderr claim.**
-    Open, CI unchecked.
-    forcing: gate
+37. ✅ **DONE — `cli#673` merged** (`9588fb0`), verified by content with a negative
+    control at `main~1`. Claim released.
+    forcing: gate — satisfied
 
 ## Gotchas / decisions / dead-ends
 
@@ -2080,6 +2172,12 @@ Expect `"agent": "other"`, `"ok": true`, **rc 0**, and both `mcp-site` / `mcp-or
 rows PRESENT with `"ok": false`. 🔴 **Build with `CGO_ENABLED=0`** — a cgo binary in
 that image fails with `cannot execute: required file not found`, rc 127, which reads
 like a missing binary rather than a link error.
+
+**🔴 VALIDATE THE GRADER BEFORE READING ANY VERDICT FROM IT — three controls, $0 of API
+spend, and assert the FIELDS, not the verdict word.** The full commands are in
+`scripts/dogfood/README.md`; the values they must produce on v0.1.106 are in the rank-36
+investigation block above. `ctl-profile` is the one that matters: arm A green while arm B
+is red. A `CLOSING_CONDITION=no` alone is also what a grader broken on arm A produces.
 
 **The guard matrix (what makes the change more than a green suite):**
 
