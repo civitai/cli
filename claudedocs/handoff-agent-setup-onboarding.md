@@ -28,8 +28,22 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
   reported and must NOT fail `ok` — stopping before auth is deliberate.
   This is frozen as the condition this arc was opened on.
 
-- 🔴 **MEASURED 2026-09-18 — NOT MET. 4 of 16 blind trials reached it**, and the
-  12 failures are explained by exactly two causes (ranks 33 and 34 below — 34 is a
+- ✅ **MEASURED 2026-09-18 — SATISFIED on its own wording, and that wording is
+  narrower than it reads.** It asks for **A** blind run to reach a working setup, not
+  for all of them: **4 of 16 cells did**, each clearing every clause — blind (the
+  container holds no repo), given only the hosted URL, on a machine that did not build
+  the CLI, both halves green — and still passing under the CORRECTED arm B.
+  🔴 **DO NOT CLOSE THE ARC ON THAT.** The same run found the entrypoint fails in
+  **12 of 16** cells, which is the more useful fact and is bigger than what this
+  condition asks. Per this doc's own rule a later finding opens a NEW arc rather than
+  extending a frozen one — so: condition satisfied, arc deliberately left open.
+  ⚠ **An earlier version of this bullet said "NOT MET", and every report built on it
+  said so too.** That applied a stricter reading (*the entrypoint works generally*)
+  than the frozen text, which is the same substitution this arc spent eleven audit
+  rounds on — a better-sounding claim in place of the measured one.
+  ⚠ The 4 passing cells are sourced to measurements recorded on 2026-09-18/19; the
+  trial containers have since been deleted, so re-checking needs a re-run.
+  The 12 failures are explained by exactly two causes (ranks 33 and 34 below — 34 is a
   defect; 33 was a design call, **DECIDED 2026-09-19** — see its entry), with
   a **model-independent VERDICT** across 19 trials — ⚠ stated at that width on
   purpose: the machine state did not depend on the model, but what the user is
@@ -79,8 +93,11 @@ that wrote it, flagged as such there.
 - **Branch / PR:** `zach/agent-setup-dogfood-matrix` → **cli#663**, OPEN, 13 commits.
   `MERGEABLE/BLOCKED` only while CI re-runs on the newest head; every check was green
   on the prior head except `pins-vs-published`, which the two bumps below cleared.
-- **The arc's closing condition was MEASURED for the first time — and is NOT MET.**
-  4 of 16 blind trials reached it. Evidence:
+- **The arc's closing condition was MEASURED for the first time.** ✅ **Satisfied on
+  its own wording** — it asks for A blind run to reach a working setup and 4 of 16 did.
+  🔴 **The arc is still open by choice**: 12 of 16 failed, which the condition does not
+  ask about and which matters more. (An earlier draft of this line read "NOT MET" — a
+  stricter reading than the frozen text; corrected.) Evidence:
   `claudedocs/refs/agent-setup-dogfood-matrix-2026-09-18.md`; harness at
   `scripts/dogfood/` (committed, re-runnable, un-credentialed).
 - **Verdict is model-independent** across 19 trials — a pure function of *(agent in the
