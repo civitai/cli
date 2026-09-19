@@ -430,3 +430,55 @@ later.
 happens the probe is a manual pre-merge check and nothing runs it on a schedule —
 so a link that dies later dies silently. Saying so is the honest version of "the
 links are verified".
+
+## Fourth: the block must say what to do when `civitai` is not on PATH — WITHOUT a per-machine input (cli#665)
+
+Everything above establishes the block is rendered **per project** — from the
+directory it is written into. This item records an attempt to add a second axis,
+a fact about the **MACHINE**, and why it was abandoned.
+
+**The defect.** On a machine where npm's global prefix is not writable, the
+documented remedy installs into a prefix the user owns and prepends it to PATH
+for the INSTALLING SHELL only. Every row in this block then names a command a
+later session cannot run. Measured 8 of 8 trials (cli#663) — and **0 of 8**
+agents connected the failure to the `AGENTS.md` they had just written. That last
+number is the actionable one: the information was missing from the file itself.
+
+**What shipped:** one unconditional sentence at the top of the command table,
+naming the symptom (`command not found`), the usual cause, and how to find the
+directory (`npm prefix -g`). It is rendered for every project, identically.
+
+🔴 **WHAT WAS REJECTED, AND WHY IT IS RECORDED RATHER THAN RETRIED.** Two
+successive drafts detected the condition — running a login shell with `PATH`
+stripped and asking whether `civitai` resolved — and wrote the binary's
+ABSOLUTE PATH into the block when it did not. Both were measured wrong, each in
+a way the previous fix introduced:
+
+1. Stripping `PATH` alone left the profile's idempotence sentinel set
+   (`__NIXOS_SET_ENVIRONMENT_DONE`), so the profile built no PATH at all and a
+   correctly-installed CLI read as unreachable — on the maintainer's own
+   platform.
+2. Stripping the sentinels too fixed that, and the `cmd.WaitDelay` added to stop
+   an unrelated hang introduced a THIRD inversion: a profile that backgrounds a
+   daemon returns `exec.ErrWaitDelay` **with the shell exited 0 and the answer
+   already on stdout**, which the probe scored as "not reachable" while
+   discarding the resolved path.
+
+🔴 **The shape that matters is not any one bug: it is that a per-machine
+signal's only consumer was a WRITE INTO A COMMITTED FILE.** Every inversion
+channel — a distro sentinel not on the denylist, a backgrounding profile, a
+shell the probe could not run — put one developer's home directory and a
+bold-red false directive into a repo other people pull. The sentinel list was a
+denylist and therefore incomplete by construction; `__ETC_PROFILE_NIX_SOURCED`
+gates PATH on every multi-user Nix host and was missing from it.
+
+**So the rule: this block may depend on the PROJECT, never on the MACHINE.** A
+per-project sentence is wrong for nobody. A per-machine claim is wrong for
+everyone who did not generate it, and nothing detects the staleness — the
+`agents-md` check row is satisfied by block PRESENCE, not by comparing the file
+against a freshly rendered block.
+
+⚠ **This does not close cli#665.** The issue's own body says candidate (c)
+"satisfies neither arm" of its closing condition, and that is still true: this
+ships no install fix. The cause-side remedy is candidate (b), which lives in the
+hosted prompt in another repo.

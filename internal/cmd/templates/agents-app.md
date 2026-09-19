@@ -6,6 +6,14 @@ inside civitai.com. The host page and your app talk over `postMessage`.
 
 ### Commands
 
+🔴 **Every row below starts with `civitai`. If your shell answers
+`command not found`, the CLI is installed but its directory is not on this
+shell's PATH** — the usual cause is an install into a prefix whose `bin` was
+added to PATH for the installing shell only, which no later shell inherits. In
+a shell where `civitai` DOES work, `command -v civitai` prints its full path;
+add that directory to your shell profile so every later session can run these
+commands too.
+
 Every row below is a `civitai` CLI command and is true in any Civitai App
 project. How you RUN this app locally is not — it depends on what was scaffolded
 here — so it has its own section, written from what is actually in this
