@@ -69,12 +69,21 @@ as a regression:
 | hand-built success (install + `agent-setup` by hand) | grader must go GREEN | `CLOSING_CONDITION=yes`, `check_ok=true` |
 
 Both were re-run after every change to the grader. **THREE grader defects have been
-found, each of which would have produced a confident wrong verdict — but only the
-first two were found BY the controls above.** The third was found by an audit round,
-and the control that pins it (`ctl-profile`) lives in `scripts/dogfood/README.md` and
-is deliberately NOT in the table above, because it postdates it. ⚠ **Running only the
-two tabulated controls does not cover defect 3** — arm B's shell is unguarded on that
-path. Validate from the README's control list, not from this table.
+found, each of which would have produced a confident wrong verdict.**
+
+🔴 **NONE OF THE THREE WAS FOUND BY A CONTROL, and two earlier drafts of this
+paragraph claimed otherwise.** Defects 1 and 2 were found on a REAL TRIAL; defect 3
+was found by an audit round. The reason is mechanical and worth keeping: **neither
+tabulated control ever produces `ok: false`** — `ctl-neg` yields no JSON at all and
+`ctl-pos` yields `ok: true` — so neither can discriminate defect 2's `jq` expression,
+which differs from the correct one on `ok: false` and nowhere else. A control that
+cannot produce the discriminating input cannot find the defect.
+
+**What the controls ARE for:** proving the instrument can go red AND green at all,
+which is a different and still necessary claim. `ctl-profile` was WRITTEN to pin
+defect 3 after the fact; it did not find it either. ⚠ Running the two tabulated
+controls certifies neither defect 2 nor defect 3 — validate from the README's full
+control list.
 
 1. 🔴 **`--check --json` prints its error line to STDERR *ahead of* the JSON**, so
    a `2>&1` capture is unparseable — and `jq` failing then reads as "the command

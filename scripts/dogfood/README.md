@@ -103,7 +103,12 @@ old binary. A verdict of `CLOSING_CONDITION=yes` requires both.
 
 ## 🔴 Validate the grader before you read a verdict
 
-Three controls. **Each one has caught a real grader defect** — this is not ceremony:
+Three controls. ⚠ **None of them FOUND a defect** — an earlier draft of this line
+claimed each had, and it was wrong. Two of the three grader defects were found on
+real trials and the third by an audit round; the controls are what prove the
+instrument can go red AND green at all, and `ctl-profile` was written afterwards to
+pin the third. That is still not ceremony — an instrument never watched to do both
+is a claim about itself — but it is a weaker claim than "each caught something":
 
 ```bash
 docker run -d --name dogfood-ctl-neg df-node-root sleep infinity
