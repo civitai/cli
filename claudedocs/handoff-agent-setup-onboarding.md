@@ -648,25 +648,38 @@ that catches an UNCLAIMED duplicate; the forgery doc mandates it. This table is 
     persist, so the agents are not the weak link. ⚠ An earlier draft of this item said
     "5 of 8 reported success anyway"; that came from a keyword regex and is RETRACTED —
     see the correction in the block above and `refs/…-matrix-2026-09-18.md`.)
-    ⚠ **Pick the fix before building, and pick it by WHICH ARM OF THE CLOSING CONDITION IT
-    SATISFIES** — not by which sounds most thorough. Two drafts of this line ranked them by
-    adjective and both got it wrong; the arms are stated three lines below, so the mapping
-    is checkable and an adjective is not.
-    - **(b) install into a prefix whose `bin` is ALREADY on PATH** → satisfies **arm 1**
-      (`zsh -lic 'civitai --version'` prints a version), by construction. This is the only
-      candidate that closes the item mechanically.
-    - **(a) step 4 verifies in a NEW shell** → satisfies **arm 2** if the agent then reports
-      the setup incomplete. Does not fix the install; makes a silent failure loud.
-    - **(c) `AGENTS.md` records the absolute path** → satisfies **NEITHER arm.** It addresses
-      the second-order harm (future agent sessions can still run the CLI) and is worth doing
-      alongside another remedy, but writing a path into a markdown file puts nothing on the
-      login shell's PATH and changes no agent's report.
-    ❌ **RETRACTED, twice over.** Draft 1: *"(b) and (c) actually fix it"*. Draft 2: *"(c)
-    actually fixes it … (b) is NOT sufficient on its own"* — that rebuttal argued against
-    `npm config set prefix`, which points npm at a NEW prefix and is a different action from
-    (b) as written; and it promoted (c), which satisfies no arm. 🔴 The evidence doc never
-    said (c) fixes it — draft 2 cited it as agreeing while making a stronger claim than it
-    makes.
+    🔴 **THREE DRAFTS OF THIS LIST RANKED THE REMEDIES AND ALL THREE WERE WRONG. THE
+    RANKING IS ABANDONED — what follows is a MEASUREMENT, and the enumeration is open.**
+    Do not write a fourth ranking; if you need one, measure your own environment first.
+
+    **Measured 2026-09-18 in both environments the closing condition is graded on**
+    (`df-node-user`, `df-ubuntu-apt`), as the container's own non-root user:
+    login-shell `PATH` is `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
+    — **six directories, none writable by that user** — and neither `~/.local/bin` nor
+    `~/bin` exists or appears on PATH.
+
+    What that measurement settles:
+    - **(b) "install into a prefix already on PATH" HAS NO IMPLEMENTABLE TARGET on either
+      graded environment.** Not "insufficient" — unavailable. Any claim that it closes the
+      item there is asserting a prefix that does not exist.
+    - **Arm 1 is therefore unreachable on those environments by any listed candidate**,
+      because `prompt.md` also forbids the agent editing the user's shell profile. On the
+      graded envs the item can close only via **arm 2**, i.e. **(a)**.
+    - **(c) satisfies neither arm.** It addresses the second-order harm — future agent
+      sessions can still run the CLI — and is worth doing alongside (a), but a path in a
+      markdown file puts nothing on a login shell's PATH and changes no agent's report.
+    ⚠ **Scope, stated rather than implied:** this is a fact about these two container
+    images, not about every machine. On a host where a writable already-on-PATH prefix
+    exists, (b) does close arm 1. The graded envs are what decide this item.
+    ❌ **All three retracted drafts, recorded so a fourth is not derived:**
+    1. *"(b) and (c) actually fix it."*
+    2. *"(c) actually fixes it … (b) is NOT sufficient on its own."* — promoted a remedy
+       satisfying no arm.
+    3. *"(b) … satisfies arm 1 by construction … the only candidate that closes the item
+       mechanically."* — refuted by the measurement above. 🔴 Draft 3 also accused draft 2
+       of misreading (b) as `npm config set prefix`; **that accusation was unfair** — the
+       evidence doc defines (b) that way, so draft 2 was reading the source correctly and
+       draft 3 had silently redefined the remedy.
     closing-condition: a blind trial on `df-node-user` or `df-ubuntu-apt` ends with EITHER
     `zsh -lic 'civitai --version'` printing the version, OR the agent's final report stating
     plainly that the CLI is not yet on the user's PATH and the setup is incomplete.
@@ -1738,7 +1751,7 @@ gh workflow run bump-scaffold-pins.yml --ref main    # opens a PR; NOT a draft �
 export OPENROUTER_API_KEY=sk-or-...
 cd scripts/dogfood
 for e in node-root node-user ubuntu-apt stale-cli; do docker build -q -t "df-$e" -f "envs/$e.Dockerfile" .; done
-bash driver.sh                          # 4 models x 4 envs x identity = 24, resumable
+bash driver.sh    # 24 trials: per model, noderoot x 3 identities + 3 envs x 1. Resumable.
 bash grade.sh t-claude-noderoot-claudeid root   # CLOSING_CONDITION=yes|no, from the container
 ```
 

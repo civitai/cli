@@ -75,6 +75,14 @@ container, so a crashed or timed-out trial leaves a non-empty transcript with no
 reported COMPLETE. Each trial writes a full transcript — every message, every
 command, every result, and per-call token usage.
 
+🔴 **A re-run DESTROYS the partial evidence.** `runner.py` opens the transcript
+`"w"` (truncating) and `docker rm -f`s the container before it starts, so
+re-running `driver.sh` after a matrix with timed-out trials deletes exactly the
+partial transcripts and half-built containers you would want to read to find out
+*why* they timed out. **Copy `runs/` aside before re-running** if the failures are
+what you are investigating. The resume gate trades "skipped forever" for
+"overwritten on the next run"; that is the better default, not a free one.
+
 ## Reading a verdict
 
 `grade.sh` measures the CONTAINER. It never reads what the agent said it did,
@@ -133,5 +141,6 @@ scope here and a green matrix says nothing about it.** Linux only: the Homebrew
 branch of the prompt is never executed. Every project directory starts empty, so
 the config-merge paths are unexercised.
 
-Full method, results and the two defects the first run found:
+Full method, results, and the two causes the first run found (one a defect, one a
+contested design call):
 `claudedocs/refs/agent-setup-dogfood-matrix-2026-09-18.md`.

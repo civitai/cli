@@ -127,8 +127,11 @@ environment:
 **The outcome inverts with the identity and not with the model.** Across all 19
 trials the verdict is a pure function of (agent identity ∈ CLI table?, npm prefix
 writable?). **The VERDICT is model-independent** — and that is the most useful
-single result here, because it means both defects are fixable in the product
-rather than papered over with prose aimed at weaker models.
+single result here: it means each cause can be addressed at its source rather than
+papered over with prose aimed at weaker models. ⚠ Not "both defects are fixable in
+the product" — an earlier draft said that, and §A's own retraction concludes the
+opposite for cause A, whose likelier fix is prompt-side and whose owner is whoever
+holds the `--json` contract.
 
 🔴 **State that at the width it was measured, not wider. "No model-dependent
 behaviour at all" is FALSE, and an earlier draft of this file said it.** Two
@@ -333,16 +336,38 @@ instance was a *stale* binary and was fixed with `civitai upgrade`; this one is 
 it. A fix aimed at the earlier operand did not generalise, which is the reusable
 part.
 
-**Candidate fixes, none yet chosen:**
+**Candidate fixes. 🔴 THE RANKING IS ABANDONED — three drafts of it, here and in
+the handoff, were each wrong. What follows is a measurement; the enumeration is
+open.**
+
 - **(a) Verify in a NEW shell.** Step 4 runs `bash -lc 'civitai --version'` (or
-  `zsh -lic`) rather than a bare `civitai --version`. This does not fix the
-  install; it makes the failure *visible* instead of silent, which is the minimum.
-- **(b) Prefer a prefix that is already on PATH.** `npm config set prefix` writes
-  npm's own config, not a shell profile — but it still does not put `bin` on PATH,
-  so it is not sufficient alone.
+  `zsh -lic`) rather than a bare `civitai --version`. Does not fix the install; it
+  makes the failure *visible* instead of silent.
+- **(b) Install into a prefix already on PATH.** ⚠ Earlier drafts of this bullet
+  described (b) AS `npm config set prefix`, which is a different action — pointing
+  npm at a *new* prefix, which indeed does not put `bin` on PATH. Stated properly,
+  (b) means a prefix whose `bin` is *already* on PATH.
 - **(c) Record the absolute path in `AGENTS.md`** when the CLI was reached through
-  a non-PATH prefix, so future sessions work regardless.
-- (a) is the smallest honest change and is independent of the others.
+  a non-PATH prefix, so future agent sessions work regardless.
+
+🔴 **MEASURED, in both environments this defect's closing condition is graded on**
+(`df-node-user`, `df-ubuntu-apt`, as the container's own non-root user):
+
+```
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin   # all six: writable=no
+~/.local/bin: does not exist      ~/bin: does not exist
+```
+
+**So (b) has no implementable target there** — not "insufficient", *unavailable*.
+And since `prompt.md` also forbids the agent editing the user's shell profile,
+**arm 1 of the closing condition is unreachable on the graded environments by any
+candidate listed here**; only arm 2, via (a), can close it there. On a host that
+*does* have a writable already-on-PATH prefix, (b) closes arm 1 — that is a fact
+about the host, and the graded envs are what decide this item.
+
+⚠ This bullet list and the handoff's rank 34 describe the same three remedies.
+They disagreed for two rounds, in opposite directions. If you edit one, sweep the
+other **and** issue cli#665.
 
 ## Token efficiency — the third question the trials were run to answer
 
@@ -389,6 +414,9 @@ Stated so an absence is not read as a clean bill of health.
    were not. ⚠ All five have identical coverage — zero — so none is "least
    covered"; an earlier draft said `windsurf` was, on the grounds that it spells
    the URL key `serverUrl`. That is a different KEY, not a different write path
-   (it is `formatJSON`, the same routine as claude and cursor). If one is to be
-   prioritised it is `zed`, whose shipped config carries `//` comments and a
-   trailing comma — a parser hazard rather than a spelling one.
+   (it is `formatJSON`, the same routine as claude and cursor). ⚠ A second draft
+   then prioritised `zed` for its JSONC config — but `AllowsComments` is set on
+   **vscode, opencode AND zed**, so that property does not discriminate either.
+   **No ranking is offered.** If one is wanted, `opencode` has the structurally
+   distinct row — a `PreferExisting` target-selection branch no other agent has,
+   whose absence once wrote the servers into a second file.

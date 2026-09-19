@@ -89,7 +89,17 @@ for m in "${MODELS[@]}"; do
       IFS='|' read -r is ienv <<<"$i"
       # The de-confounding cell: every model against EVERY identity on one env.
       # Without it, model and identity are two names for the same column.
-      if [ "$FULL_CROSS" != "1" ] && [ "$es" != "noderoot" ] && [ "$is" != "claudeid" ]; then
+      #
+      # 🔴 THE NON-CROSSED ENVS RUN THE FIRST IDENTITY IN THE LIST, NOT A LITERAL.
+      # This used to compare against the literal `claudeid`, which silently dropped
+      # every non-noderoot env whenever DOGFOOD_IDENTITIES did not happen to contain
+      # that exact name — including BOTH envs rank 34's closing condition is graded
+      # on — while still printing MATRIX COMPLETE. Measured:
+      # `DOGFOOD_IDENTITIES='codexid|…' bash driver.sh` ran 4 trials, all noderoot.
+      # That is the same "reports COMPLETE while cells are missing" failure the
+      # resume guard above exists to prevent, arriving by a different route.
+      if [ "$FULL_CROSS" != "1" ] && [ "$es" != "noderoot" ] \
+         && [ "$is" != "${IDENTITIES[0]%%|*}" ]; then
         continue
       fi
       run_one "$model" "$ms" "$image" "$ienv" "t-${ms}-${es}-${is}" "$euser"
