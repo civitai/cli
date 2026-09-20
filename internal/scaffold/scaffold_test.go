@@ -190,7 +190,7 @@ func TestRenderPageMoney(t *testing.T) {
 	// pins-vs-published guard (TestScaffoldPinsSatisfyPublished) fails CI if they
 	// fall behind npm, so bump BOTH assertions here in lockstep with the .tmpl.
 	mustContain(t, pkg, `"@civitai/blocks-react": "^0.53.0"`)
-	mustContain(t, pkg, `"@civitai/app-sdk": "^0.45.0"`)
+	mustContain(t, pkg, `"@civitai/app-sdk": "^0.46.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk"`)
 	mustContain(t, pkg, `"dev:harness"`)
 	mustContain(t, pkg, `"build"`)
