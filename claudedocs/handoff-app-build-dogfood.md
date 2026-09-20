@@ -38,9 +38,16 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 - **Relationship to `agent-setup-onboarding`:** that arc is NOT superseded and NOT closed.
   Its condition (setup reachability) is a strict PREREQUISITE of this one — an agent that
   cannot get `civitai` on PATH cannot build anything. Its rank 34 / `cli#665` is therefore
-  a live dependency here: **2 of its 6 environments (`node-user`, `ubuntu-apt`) fail 3/3
-  for all three models**, because agents install to `~/.npm-global` which no login shell
-  adds. Until that lands, this arc can only be graded on the writable-prefix environments.
+  a live dependency here: **`node-user` and `ubuntu-apt` fail 3/3 for all three models**,
+  because agents install to `~/.npm-global` which no login shell adds. Until that lands,
+  this arc can only be graded on the writable-prefix environments.
+  🔴 **That is 2 of 4 ENVIRONMENTS — 50%, not 2 of 6 — and an earlier draft got this wrong
+  in the flattering direction.** The prerequisite arc's grid is **6 ROWS over 4 distinct
+  envs**: `node-root` appears three times under three agent identities (claude / codex /
+  other), plus `stale-cli`, `node-user`, `ubuntu-apt`. `scripts/dogfood/envs/` holds
+  exactly **4** Dockerfiles. So the matrix rank 6 can actually run is **2 environments**,
+  not 4, and `cli#665` blocks half of them. Agent identity is very likely irrelevant to an
+  app-build grade, so the 6-row denominator should not be carried into this arc at all.
 - **What the prerequisite arc already established, and it is load-bearing here** (measured
   2026-09-19, 18 trials): the three cheap models — `z-ai/glm-5.3-flash`,
   `xiaomi/mimo-v2.5`, `deepseek/deepseek-v4-pro` — all reach setup on 4 of 6 envs,
@@ -53,10 +60,22 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
   `ubuntu-apt`).
 - **The CLI already has the whole app surface** — `app init`, `app create`, `app validate`,
   `app doctor`, `app dev-tunnel`, `app submit`, `app status`, `app pull`, `app listing`.
-  A grep for auth/network symbols returns **1** hit in `app_validate.go` and **3** each in
-  `app_init.go` / `app_doctor.go`, so an **offline, unauthenticated build loop looks
-  feasible**. ⚠ That is a read of symbol counts, NOT a proof — confirm by running the
-  chain in a network-denied container before designing around it.
+  🔴 **Corrected after round 0 — an earlier draft of this bullet cited a symbol COUNT and
+  the count was measuring the wrong thing.** It read *"a grep for auth/network symbols
+  returns 1 hit in `app_validate.go` and 3 each in `app_init.go`/`app_doctor.go"*; that
+  tuple is not reproducible with any single pattern, and **every one of `app_doctor.go`'s
+  `auth` matches is the substring inside "author"/"authorized"** in comments and help text.
+  Read instead of counted, the real picture is: **`app validate` is local** (imports
+  `fmt io ui validate cobra` — no client, no token), **`app init` has no client or token
+  reference**, and 🔴 **`app doctor` IS auth-gated and network-bound** —
+  `app_doctor.go:450-451` returns `ErrUnauthorized` when `cfg.Token() == ""`, then calls
+  `newListingClient()` / `ListMyListings(...)` at `:453-461`. So an **offline,
+  unauthenticated loop holds for the `{init, validate}` subset the closing condition
+  actually uses, and NOT for `app doctor`** — do not put `doctor` on the trial path.
+  ⚠ **And do not "confirm" this by denying the container network**: `runner.py:151-152`
+  states egress is necessarily open because the trial must fetch `prompt.md` and reach npm,
+  and the agent's whole task IS that URL (`runner.py:43`). A network-denied container
+  cannot start a trial at all. Confirm by reading the command's code, as above.
 - **Precedent for the credentialed variant if it is ever wanted:**
   `claudedocs/handoff-dogfood-3.md` is the *first CREDENTIALED blind dogfood* (2026-08-10).
   This arc deliberately does NOT need it.
@@ -75,7 +94,8 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
   install — exactly the failure being measured — is the case that reaches it. This is the
   only bound on money."* The setup task finished in **7–11 steps**. An app build is
   plausibly **30–80**.
-- 🔴 **Why this is the FIRST item and not a tuning detail:** a trial that hits the step cap
+- 🔴 **Why this is an EARLY item and not a tuning detail** (it is rank 3, behind the two
+  things that make an app-build trial exist at all)**:** a trial that hits the step cap
   or the cost cap emits `CLOSING_CONDITION=no`, which is **indistinguishable from the
   product being broken**. That is precisely the capability confound the prerequisite arc
   went to the trouble of ruling out by measurement; here it returns harder, because a
@@ -86,45 +106,64 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 - **Leading hypothesis:** the runner needs history management — trimming or summarising
   older tool output — before any app-build trial is graded. `MAX_OUT` bounds a single
   command's output but nothing bounds the accumulation.
-- **Next probe:** instrument one app-build trial on the CHEAPEST model with
-  `--max-steps 80 --max-cost 2.0` and record steps, cumulative prompt tokens and cost per
-  step. That curve decides whether trimming is required or merely nice. Do this BEFORE
-  building the render oracle — if the curve is fatal, the oracle grades nothing.
+- **Next probe:** run one app-build trial on the CHEAPEST model with
+  `--max-steps 80 --max-cost 2.0` and read steps, cumulative prompt tokens and cost per
+  step out of `transcript.jsonl`, which already records per-call `usage` (`runner.py:190`)
+  — no instrumentation needed. That curve decides whether trimming is required or merely
+  nice. Do this BEFORE building the render oracle — if the curve is fatal, the oracle
+  grades nothing. ⚠ **Blocked until ranks 1 and 2 land**: there is no app-build trial to
+  run until the runner can receive a brief.
 
 ## Next steps (ranked)
 
-1. **Measure the step/cost curve on one app-build trial** — see the investigation block.
-   Cheapest model, writable-prefix env, `--max-steps 80 --max-cost 2.0`, record cost and
-   prompt tokens per step. This decides whether rank 2 is required.
-   forcing: user — the operator asked for this measurement on 2026-09-20
-2. **Give `runner.py` history management** if rank 1 says so — bound cumulative prompt
-   growth, not just per-command output. Keep the blind-by-mount-namespace property.
-   forcing: user — the operator asked for this measurement on 2026-09-20
-3. **Write the app brief and its behavioural assertion.** One line the agent receives
+🔴 **REORDERED AND CUT after round 0 (`cli#677`), before any claim existed against this
+list — so no `claim-work` slug was re-pointed.** Round 0 found that the old rank 1 could
+not be executed at all (there is no way to give the agent a brief), and that two ranked
+items only restated text the doc already carries. Old ranks 6 and 7 were DELETED, not
+renumbered: 6's dependency is still stated twice below and in "State now", and 7 belongs to
+the prerequisite arc, which already carries it as its own Next probe.
+
+⚠ **On `forcing:` below — read this before quoting it.** The operator asked for the ARC
+("we want to build apps", 2026-09-20). He did **not** ask for any individual item here; the
+decomposition is agent-authored. An earlier draft tagged five items
+*"the operator asked for this measurement"*, which was false of every one of them. The tag
+now names the arc, which is the true forcing function, and this paragraph is the record
+that the breakdown is not itself user-requested.
+
+1. **Give `runner.py` a way to receive the app brief — nothing can run until this exists.**
+   `runner.py:43` is a module constant, `USER = """<the hosted prompt URL>"""`, and the
+   flag list at `:116-131` (`--model --image --trial --user --agent-env --max-steps
+   --max-cost --out`) has **no brief argument**. The closing condition requires the agent
+   be given the URL *and a one-line brief*; today there is no app-build trial to run, only
+   a setup trial. Add the injection path and keep the blind-by-mount-namespace property.
+   forcing: user — the operator asked for this arc on 2026-09-20
+2. **Write the app brief and its behavioural assertion.** One line the agent receives
    alongside the hosted URL, naming a behaviour an untouched `app init` scaffold does NOT
    have, and a single deterministic assertion the browser can make about the rendered
    block. 🔴 Write the assertion FIRST and check the bare scaffold FAILS it — an assertion
    the scaffold already satisfies makes every cell green while measuring nothing.
-   forcing: user — the operator asked for this measurement on 2026-09-20
-4. **Build the render oracle**: serve the built block inside the trial container and drive
-   it headless, asserting the rank-3 behaviour. `civitai app validate` runs first as a
-   fail-fast gate and is reported, never as the verdict. Related tooling that may serve as
-   the driver rather than being rebuilt: `~/.claude/skills/app-blocks/`,
-   `~/.claude/skills/app-capture/`.
-   forcing: user — the operator asked for this measurement on 2026-09-20
-5. **Run the matrix** on `glm-5.3-flash`, `mimo-v2.5`, `deepseek-v4-pro` plus a frontier
-   control, on the writable-prefix environments. Report per-cell, and report the cells that
-   could NOT be run because of the dependency below.
-   forcing: user — the operator asked for this measurement on 2026-09-20
-6. **DEPENDENCY, not this arc's work — `agent-setup-onboarding` rank 34 / `cli#665`.**
-   Agents install to `~/.npm-global`, which no login shell adds, so `node-user` and
-   `ubuntu-apt` fail before any app work starts. This arc cannot grade those two
-   environments until that lands. Do not re-derive it here; read that arc's doc.
-   forcing: gate — `cli#665` is open and blocks 2 of 6 environments
-7. **Close the prerequisite arc's stated measurement gap** if it is cheap to do in the same
-   container pass: its "mechanism A is closed" rests on **1** direct re-measurement plus
-   model-independence, not 4. Its own estimate is three trials at ~$0.08.
-   forcing: none
+   forcing: user — the operator asked for this arc on 2026-09-20
+3. **Run ONE app-build trial and read the step/cost curve** — see the investigation block.
+   Cheapest model, writable-prefix env, `--max-steps 80 --max-cost 2.0`. ⚠ **This is a
+   run-and-analyse task, NOT an instrumentation one**: `runner.py:190` already records
+   per-call `usage` into `transcript.jsonl`, so prompt tokens and cost per step are
+   captured today. The curve decides whether rank 4 is required.
+   forcing: user — the operator asked for this arc on 2026-09-20
+4. **Give `runner.py` history management** if rank 3 says so — bound cumulative prompt
+   growth, not just per-command output.
+   forcing: user — the operator asked for this arc on 2026-09-20
+5. **Build the render oracle**: serve the built block inside the trial container and drive
+   it headless, asserting the rank-2 behaviour. `civitai app validate` runs first as a
+   fail-fast gate and is reported, never as the verdict. 🔴 **Related tooling that may serve
+   as the driver rather than being rebuilt lives in ANOTHER repo** —
+   `<talos-infra>/.claude/skills/app-blocks/` and `<talos-infra>/.claude/skills/app-capture/`.
+   An earlier draft pointed at `~/.claude/skills/...`, where **neither exists**; a session
+   following that finds nothing and rebuilds a headless driver it did not need to.
+   forcing: user — the operator asked for this arc on 2026-09-20
+6. **Run the matrix** on `glm-5.3-flash`, `mimo-v2.5`, `deepseek-v4-pro` plus a frontier
+   control, on the **2 writable-prefix environments** (see the corrected denominator in
+   "State now"). Report per-cell, and report the environments that could NOT be run.
+   forcing: user — the operator asked for this arc on 2026-09-20
 
 ## Gotchas / decisions / dead-ends
 
@@ -136,8 +175,13 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
   cannot drive the task, a harness that runs out of steps, and a broken product all emit
   the same `CLOSING_CONDITION=no`. The prerequisite arc beat it by scanning transcripts for
   `EACCES` counts and remedy attempts — i.e. by finding a signal the three explanations
-  DISAGREE about. Budget for that here: decide, before the matrix runs, which per-trial
-  signal separates "model gave up", "harness ran out" and "product broken".
+  DISAGREE about. 🔴 **For two of the three, the rig ALREADY emits that signal and an
+  earlier draft framed it as open design work:** `runner.py` writes
+  `stop` ∈ {`finished`, `max-steps`, `max-cost (...)`} into the `end` record of
+  `transcript.jsonl` (`:176`, `:181`, `:198`, `:219`), which separates "harness ran out"
+  from the rest. **Read that field; do not re-invent it.** What is genuinely still open is
+  separating "model gave up" from "product broken" *within* `stop=finished` — that is what
+  the prerequisite arc's transcript scan did, and it is the part to design.
 - ⚠ **`--max-steps` is not a spend cap and the module says so.** `--max-cost` is the only
   bound on money. Set both deliberately on every run.
 - ⚠ **The three cheap models are ~5–20× cheaper than the frontier control**, so the
@@ -152,14 +196,23 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## How to verify
 
-**The closing condition, once ranks 1–5 exist** — the verdict is the browser, the
-validator is only a gate:
+**The closing condition, once ranks 1–6 exist** — the verdict is the browser, the
+validator is only a gate. 🔴 **`--model` and `--image` are `required=True`
+(`runner.py:116-117`); an earlier draft omitted both, so the command argparse-failed with
+exit 2 before doing anything.** And every placeholder is a `$VAR`, never `<name>`: inside a
+```bash fence `<` and `>` are shell REDIRECTIONS, so a pasted `<cell>` makes the shell read
+a file named `cell` and the command never runs.
 
 ```bash
 CLI=/home/zach/workspace/civit/cli
+MODEL=z-ai/glm-5.3-flash ; IMAGE=dogfood-node-root ; TRIAL=cell-01 ; CUSER=root
 # per cell: blind trial -> built block -> gate -> render assertion
-(cd "$CLI" && python3 scripts/dogfood/runner.py --trial <cell> --max-steps <n> --max-cost <usd>)
-(cd "$CLI" && bash scripts/dogfood/grade.sh <cell>)   # must report the RENDER assertion, not just validate
+(cd "$CLI" && python3 scripts/dogfood/runner.py \
+   --model "$MODEL" --image "$IMAGE" --trial "$TRIAL" \
+   --max-steps 80 --max-cost 2.0)
+# grade.sh takes a trial-id then a container-user; the 2nd arg defaults to root, which is
+# WRONG the moment node-user becomes gradeable — pass it explicitly.
+(cd "$CLI" && bash scripts/dogfood/grade.sh "$TRIAL" "$CUSER")
 ```
 
 **Before trusting any green cell, run both controls — the rig already has this shape and
@@ -172,7 +225,7 @@ it is what made the prerequisite arc's numbers believable:**
   must FAIL the render assertion. If it passes, the assertion measures nothing and every
   cell is vacuously green.
 
-**The prerequisite that gates 2 of 6 environments:**
+**The prerequisite that gates 2 of the 4 environments:**
 
 ```bash
 gh issue view 665 --repo civitai/cli --json state --jq .state   # OPEN = node-user/ubuntu-apt ungradeable
