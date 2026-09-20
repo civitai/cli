@@ -74,7 +74,7 @@ func doUploadStderr(t *testing.T, client appapi.Submitter) (string, error) {
 	// allowOversize=false is the production default and is inert here: zipPayload
 	// is 17 bytes, so the ceiling guard cannot fire either way. These cases are
 	// about ErrNothingSent, not about the ceiling.
-	err := doUpload(c, client, zipPayload, m, "https://civitai.com/", appapi.Provenance{}, false)
+	err := doUpload(c, client, zipPayload, m, "https://civitai.com/", appapi.Provenance{}, submitInvocation{})
 	return errBuf.String(), err
 }
 

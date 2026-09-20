@@ -30,9 +30,18 @@ linters:
       # evidence. That shipped in #585 (MaxSubmitBodyBytes / ErrBundleTooLarge in
       # internal/appapi) and needed #598 to repair. Enabling these three was
       # measured before it was committed: 1 finding repo-wide, and ST1022 was
-      # watched going red on a re-introduction of the #585 defect itself. They
-      # replace a hand-rolled AST test that asserted the same predicate over
-      # three named symbols in one package.
+      # watched going red on a re-introduction of the #585 defect itself.
+      # 🔴 BUT THEY CATCH ONE HALF OF THAT MECHANISM, NOT BOTH, so the sentence
+      # above describes more than this gate delivers. They fire only on a doc
+      # comment that EXISTS and opens with the wrong identifier — i.e. on the
+      # block that MOVED. The declaration it left BARE is not a finding for any
+      # of the three: measured on this tree, deleting MaxSubmitBodyBytes's whole
+      # doc block (the exact #585 symptom, `go doc` printing the const line and
+      # nothing else) lints rc=0, 0 issues. That half is owned by
+      # internal/appapi/submit_ceiling_doc_nonempty_test.go, which asserts
+      # non-emptiness and deliberately does no name checking. Enabling these
+      # three retired the name-leading assertion of a hand-rolled AST test over
+      # three symbols in one package, and only that assertion.
       # Two families are still turned off for this pragmatic gate:
       #   * ST1000/ST1003/ST1016 — staticcheck's OWN default-off package-comment
       #     form, initialism casing and receiver-name consistency. We replicate

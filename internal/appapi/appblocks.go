@@ -667,11 +667,20 @@ func submitEnvelopeLen(prov Provenance) int {
 // source order. That shipped: this block and ErrBundleTooLarge's were glued
 // together, so `go doc appapi.MaxSubmitBodyBytes` printed the bare const line and
 // `go doc appapi.ErrBundleTooLarge` printed this entire evidence chain as if it
-// were the sentinel's. staticcheck's ST1022 catches exactly this and is now
-// ENABLED in .golangci.yml, so `make lint` is the check — watched red on this
-// declaration before the check was turned on. An earlier version of this comment
-// said staticcheck could not see it and that `go doc` was the only check; that was
-// true while ST1020-ST1022 were disabled and is no longer.
+// were the sentinel's. staticcheck's ST1022 catches the MOVED half of that —
+// ErrBundleTooLarge wearing a doc that opens with another identifier — and is now
+// ENABLED in .golangci.yml, so `make lint` is that check; it was watched red on
+// this declaration before being turned on. An earlier version of this comment
+// said staticcheck could not see any of it and that `go doc` was the only check;
+// that was true while ST1020-ST1022 were disabled and is no longer.
+//
+// 🔴 ST1022 DOES NOT CATCH THE OTHER HALF. It fires only on a doc comment that
+// exists and starts with the wrong name, so the declaration left BARE — this
+// constant, printing as a naked const line, which is what #585 actually looked
+// like from `go doc` — is not a finding for it: measured, deleting this doc block
+// outright lints rc=0, 0 issues. Non-emptiness over these three exported
+// declarations is pinned separately by submit_ceiling_doc_nonempty_test.go. Both
+// checks are needed; neither subsumes the other.
 //
 // 🔴 This IS the server's number, unlike the caps in `internal/pkgzip`, and that is
 // why it lives here: `appapi` is what builds the body, so the body's limit belongs
