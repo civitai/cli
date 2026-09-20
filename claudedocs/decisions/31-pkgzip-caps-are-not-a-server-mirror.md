@@ -205,6 +205,49 @@ That is the measurement behind `#599`, which stays open and unbuilt on purpose:
 its scope depends on decision 1 above, and building the wide version of a guard
 that is about to get narrower is the wrong order.
 
+### 4. The boundary is `>=`, and it was chosen on ASYMMETRY — not on a mechanism
+
+`#602` changed the preflight comparison from `>` to `>=`, so the CLI refuses a
+body of **exactly** `MaxSubmitBodyBytes`. That boundary is reachable in
+production, which is why it moved at all: base64 output is a multiple of 4, so the
+body can land precisely on the ceiling only when the JSON envelope's length is too,
+and exactly one provenance shape makes it so. `civitai app submit --allow-dirty`
+on a 7,864,246-byte zip produces a body of exactly 10485760, and under `>` the
+whole thing uploaded.
+
+🔴 **The reasoning is recorded here because the evidence POINTS BOTH WAYS and the
+losing side is the one with source code behind it.** Two measurements disagree,
+and neither was invented:
+
+- **Next.js's own source** reads `bytesRead > bodySizeLimit`. Read literally, a
+  body of exactly the limit is **ACCEPTED**, which argues for `>`.
+- **An end-to-end submit** of exactly 10485760 bytes came back **413**, which
+  argues for `>=`.
+
+**That contradiction is UNRESOLVED.** Nothing in this repo can settle it — the
+effective boundary is decided by whatever sits in front of the handler, and a unit
+test cannot observe it. So `>=` is **not** a claim about where the server's edge
+is. It is a choice between two error costs:
+
+| if the CLI is wrong | the author pays |
+|---|---|
+| refuses one byte early (`>=`, server would have accepted) | one documented flag, `--allow-oversize`, named in the refusal itself |
+| accepts one byte too many (`>`, server refuses) | the entire upload, then `400: Invalid JSON` — an error naming nothing about size, which is issue #423 |
+
+The asymmetry is the whole argument. `>=` is the cheap-to-be-wrong side.
+
+🔴 **THE FAILURE THIS SUBSECTION EXISTS TO PREVENT: a reader finds the
+Next-source argument and flips the operator back.** It is the stronger-looking
+half of the evidence — it is source code, the other half is one observation — and
+on its own it reads as a plain off-by-one bug in the CLI. Flipping it re-opens the
+case the `>` mutant used to survive: a production `--allow-dirty` submit at
+exactly the ceiling uploads ~10 MB and fails with an error about JSON. If you are
+about to change this operator, you are not fixing an off-by-one; you are taking
+the other side of the table above, and the thing to produce first is a measurement
+that resolves the contradiction. `TestSubmitBodyExactlyAtCeilingIsRefused` in
+`internal/appapi/submit_ceiling_value_test.go` pins the current side and its
+comment carries the same warning.
+
 ---
 
 31. **`internal/pkgzip`'s size caps are the CLI's OWN, not a server mirror, and
