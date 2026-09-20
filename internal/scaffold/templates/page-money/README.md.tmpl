@@ -442,8 +442,9 @@ set it for you):
 | `npm run dev:live` | **live** | The SDK **live host** (`createLiveHost`) — forwards the protocol to the **real Civitai backend** with a real dev token. **Spends REAL Buzz / real compute.** |
 
 **How `dev:live` reaches the backend.** `dev:live` mounts `createLiveHost` from
-`@civitai/blocks-react/testing`, which forwards the App postMessage
-protocol to the real backend using a pasted dev token (Bearer). The live host's
+`@civitai/blocks-react/live` — its own subexport, separate from the mock host on
+`/testing`, precisely because it spends real money — which forwards the App
+postMessage protocol to the real backend using a pasted dev token (Bearer). The live host's
 backend calls go through the **vite dev proxy** (`server.proxy['/api']` in
 `vite.config.ts`), NOT straight to `civitai.com`: `createLiveHost` is configured
 with an empty `backendBaseUrl`, so it fetches `/api/...` SAME-ORIGIN against the
