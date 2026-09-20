@@ -32,17 +32,35 @@ const (
 )
 
 // python3 is what runner.py is written in. A machine without it cannot exercise
-// these paths at all; say so loudly rather than reporting a green.
-func dogfoodPython(t *testing.T) string {
+// these paths at all.
+//
+// 🔴 A SKIP IS A GREEN THAT CHECKED NOTHING, AND `go test ./...` PRINTS NO SKIP
+// REASON WITHOUT -v. So on a contributor's machine this skips (with the reason,
+// under -v) rather than failing for an unrelated missing tool — but under CI it
+// FAILS, because there the skip and the pass are indistinguishable in the log
+// the merge gate is read from, and the runner image is not something this repo
+// gets to be uncertain about. Same reasoning as ready-ack-runtime's refusal to
+// skip when node is missing.
+func dogfoodTool(t *testing.T, names ...string) string {
 	t.Helper()
-	for _, n := range []string{"python3", "python"} {
+	for _, n := range names {
 		if p, err := exec.LookPath(n); err == nil {
 			return p
 		}
 	}
-	t.Skipf("no python3 on PATH — the dogfood runner is a python script, so THIS SUITE CHECKED NOTHING. " +
-		"That is a statement about this machine, not about scripts/dogfood.")
+	msg := "none of " + strings.Join(names, "/") + " on PATH — these tests exercise " +
+		"scripts/dogfood, so without it THIS SUITE CHECKED NOTHING. That is a " +
+		"statement about this machine, not about the harness."
+	if os.Getenv("CI") != "" {
+		t.Fatal(msg + " Under CI that is a defect: build-test would report `ok` having run nothing.")
+	}
+	t.Skip(msg)
 	return ""
+}
+
+func dogfoodPython(t *testing.T) string {
+	t.Helper()
+	return dogfoodTool(t, "python3", "python")
 }
 
 func printTask(t *testing.T, args ...string) (string, int) {
@@ -259,9 +277,7 @@ func TestDogfoodRunnerDeliversAndRecordsTheBrief(t *testing.T) {
 // output.
 func runStubbedDriver(t *testing.T, env []string) (argv []string, code int, out string) {
 	t.Helper()
-	if _, err := exec.LookPath("bash"); err != nil {
-		t.Skipf("no bash on PATH — driver.sh could not be exercised, so THIS TEST CHECKED NOTHING")
-	}
+	bash := dogfoodTool(t, "bash")
 	dir := t.TempDir()
 	src, err := os.ReadFile(filepath.Join(dogfoodDir, "driver.sh"))
 	if err != nil {
@@ -281,7 +297,7 @@ func runStubbedDriver(t *testing.T, env []string) (argv []string, code int, out 
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command("bash", filepath.Join(dir, "driver.sh"))
+	cmd := exec.Command(bash, filepath.Join(dir, "driver.sh"))
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Env = append(cmd.Env, "PATH="+stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	b, err := cmd.CombinedOutput()
