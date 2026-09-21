@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -247,6 +248,117 @@ func TestDogfoodCredentialIsInjectedByPathNotByValue(t *testing.T) {
 	}
 	if !sawInstall {
 		t.Fatalf("no installer exec placing it under ~/.config/civitai\n%v", cap.Subprocess)
+	}
+}
+
+// ── the in-container installer ───────────────────────────────────────────────
+
+// The installer script, read out of runner.py by importing it — never by
+// regexing the source, which would pass on a file whose Python no longer parses.
+func installScript(t *testing.T) string {
+	t.Helper()
+	py := dogfoodPython(t)
+	out, err := exec.Command(py, "-c",
+		"import importlib.util,sys;"+
+			"spec=importlib.util.spec_from_file_location('r', sys.argv[1]);"+
+			"m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m);"+
+			"sys.stdout.write(m.INSTALL_SH)",
+		filepath.Join(dogfoodDir, "runner.py")).Output()
+	if err != nil {
+		t.Fatalf("reading INSTALL_SH out of runner.py: %v", err)
+	}
+	if !strings.Contains(string(out), "config/civitai") {
+		t.Fatalf("that is not the installer script: %q", out)
+	}
+	return string(out)
+}
+
+// 🔴 THE SCRIPT RUNS AS ROOT, SO `$HOME` IS ROOT'S HOME AND NOT THE TRIAL
+// USER'S. Falling back to it would install the credential where the trial cannot
+// read it, and the trial would then grade as an ordinary "not authenticated"
+// failure — the capability confound, arriving through the setup step. It must
+// resolve the named user's home or REFUSE.
+//
+// Run on the host with a stubbed `getent`, against a staging path substituted
+// into the script, so nothing touches the operator's real ~/.config/civitai.
+func TestDogfoodCredentialInstallerResolvesTheUsersHome(t *testing.T) {
+	sh := dogfoodTool(t, "sh")
+	raw := installScript(t)
+	dir := t.TempDir()
+	stage := filepath.Join(dir, "staged-credential")
+	if err := os.WriteFile(stage, []byte("token: planted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The only edit is the staging PATH constant — the logic under test is
+	// byte-for-byte what runner.py ships.
+	script := strings.ReplaceAll(raw, "/tmp/.dogfood-credential", stage)
+	if script == raw {
+		t.Fatal("the staging path constant moved; this test would have run against the real /tmp path")
+	}
+
+	home := filepath.Join(dir, "home")
+	stub := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(stub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Answers for `dev`, and for nobody else — so the refusal arm is a real
+	// lookup failure rather than a missing binary.
+	getent := "#!/bin/sh\n[ \"$2\" = dev ] || exit 2\necho \"dev:x:1000:1000::" + home + ":/bin/sh\"\n"
+	if err := os.WriteFile(filepath.Join(stub, "getent"), []byte(getent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(user string) (string, int) {
+		cmd := exec.Command(sh, "-c", script, "sh", user)
+		cmd.Env = append(os.Environ(), "PATH="+stub+string(os.PathListSeparator)+os.Getenv("PATH"))
+		out, err := cmd.CombinedOutput()
+		code := 0
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		} else if err != nil {
+			t.Fatalf("running the installer: %v\n%s", err, out)
+		}
+		return string(out), code
+	}
+
+	// Arm 1: the user resolves. The credential lands under THAT home, the
+	// staging copy is gone, and the mode is tight.
+	out, code := run("dev")
+	if code != 0 {
+		t.Fatalf("installer exited %d for a resolvable user, want 0\n%s", code, out)
+	}
+	dest := filepath.Join(home, ".config", "civitai", "config.yaml")
+	body, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("the credential was not installed at %s: %v\n%s", dest, err, out)
+	}
+	if string(body) != "token: planted\n" {
+		t.Fatalf("installed content is %q, want the staged bytes", body)
+	}
+	if fi, err := os.Stat(dest); err != nil {
+		t.Fatal(err)
+	} else if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("installed mode is %v, want 0600 — the trial's own shell is not the only reader "+
+			"of a container filesystem", fi.Mode().Perm())
+	}
+	if _, err := os.Stat(stage); !os.IsNotExist(err) {
+		t.Fatalf("the staging copy at %s survived the install (err=%v) — a second copy of the "+
+			"credential is left where anything in the container can read it", stage, err)
+	}
+
+	// Arm 2: the user does not resolve. It must REFUSE and say so — under
+	// `set -e` the obvious `[ … ] || { … && … ; }` fallback chain exits silently
+	// at the first false branch, which is a failure with no diagnosis.
+	if err := os.WriteFile(stage, []byte("token: planted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, code = run("nobody-who-has-no-passwd-entry")
+	if code == 0 {
+		t.Fatalf("installer accepted an unresolvable user:\n%s", out)
+	}
+	if !strings.Contains(out, "cannot resolve a home directory") {
+		t.Fatalf("the refusal does not say what went wrong (exit %d):\n%s", code, out)
 	}
 }
 

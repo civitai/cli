@@ -142,9 +142,24 @@ CRED_STAGE = "/tmp/.dogfood-credential"
 INSTALL_SH = r"""
 set -e
 u="$1"
+# 🔴 RESOLVE THE TRIAL USER'S HOME, AND FAIL IF IT CANNOT BE RESOLVED. This runs
+# as root (docker cp writes the staging file as root, and a non-root trial user
+# could neither chown it nor remove it from a sticky /tmp), so `$HOME` here is
+# ROOT'S home, not the trial user's. Falling back to it would install the
+# credential where the trial cannot read it — and the trial would then grade as
+# an ordinary "not authenticated" failure, which is the confound this whole
+# harness exists not to introduce. Refuse instead; the caller turns a non-zero
+# exit into a recorded `credential install failed`.
+# ⚠ `if`, not `[ … ] || { … && … ; }`. Under `set -e` that idiom EXITS when the
+# inner `&&` is false — so a missing /home/<u> would kill the script at the
+# first fallback and the message below would never print.
 h=$(getent passwd "$u" 2>/dev/null | cut -d: -f6)
-[ -n "$h" ] || h="$HOME"
-[ -n "$h" ] || h=/root
+if [ -z "$h" ] && [ -d "/home/$u" ]; then h="/home/$u"; fi
+if [ -z "$h" ] && [ "$u" = "root" ] && [ -d /root ]; then h=/root; fi
+if [ -z "$h" ]; then
+  echo "cannot resolve a home directory for container user '$u'" >&2
+  exit 1
+fi
 d="$h/.config/civitai"
 mkdir -p "$d"
 cp """ + CRED_STAGE + r""" "$d/config.yaml"
