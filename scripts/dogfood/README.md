@@ -60,7 +60,56 @@ bash grade.sh t-claude-noderoot-claudeid root   # grade one finished trial
 DOGFOOD_MODELS='google/gemini-3.8-flash|gemini' DOGFOOD_ENVS='df-node-root|noderoot|root' bash driver.sh
 ```
 
-Trial ids are `t-<model>-<env>-<identity>`. The three identities are `claudeid`
+## Two kinds of trial: setup, and app-build
+
+By default a trial's whole task is the hosted URL — *can an agent reach a
+working setup?* Give it a **brief** and the task becomes the URL plus one
+operator-typed line, and the question becomes *can an agent BUILD something?*
+
+```bash
+# preview the exact task. Starts no container, calls no API, spends nothing.
+python3 runner.py --print-task --brief "$(cat briefs/celsius.brief.txt)"
+
+# one app-build trial
+python3 runner.py --model "$MODEL" --image df-node-root --trial ab-01 \
+  --brief "$(cat briefs/celsius.brief.txt)"
+
+# the whole matrix as app-build trials, in their own trial-id namespace
+DOGFOOD_BRIEF="$(cat briefs/celsius.brief.txt)" DOGFOOD_TRIAL_PREFIX=ta bash driver.sh
+```
+
+- **With no brief the task is BYTE-IDENTICAL to what it has always been** — not
+  "equivalent". An app-build trial is a setup trial plus one appended
+  paragraph, so every setup grid already measured stays comparable.
+  `--print-task` exists so that can be diffed rather than asserted.
+- **The brief is appended raw**, with no framing sentence of the harness's own.
+  Framing would be Civitai knowledge injected by the rig, and the trial's
+  premise is that the only such knowledge is the URL and what the operator
+  typed. Blindness is a mount namespace; this keeps the message channel honest
+  about the same thing.
+- **One line, enforced.** Both `runner.py --brief` and `DOGFOOD_BRIEF` refuse a
+  value containing a newline: a multi-line brief is nearly always a file that
+  got splatted onto the command line, which is the one route by which repo
+  content could reach a blind trial.
+- **`brief` is written into the transcript's `start` record, always** — empty
+  string included. A graded cell has to be traceable to the brief it was run
+  with, and the trial id cannot carry that (same reason `grade.sh` reads the
+  agent identity out of the container rather than out of the filename).
+- 🔴 **`driver.sh` REFUSES to run a brief under the default `t-` prefix.** Trial
+  ids are `<prefix>-<model>-<env>-<identity>` and the resume guard skips any id
+  whose transcript already has an `end` record — so an app matrix in the setup
+  matrix's namespace would skip every cell, each "complete" from a *different
+  task*, while printing `MATRIX COMPLETE`. Set `DOGFOOD_TRIAL_PREFIX`.
+
+`briefs/` holds each brief and the behavioural assertion that grades it —
+`briefs/celsius.md` is the worked one, with its controls. 🔴 **An assertion is
+only worth running once an untouched `civitai app init` scaffold has been
+watched to FAIL it**; a brief the scaffold already satisfies makes every cell
+green while measuring nothing. `briefs/celsius.md` records that control for all
+three templates. The tests for the injection path itself are
+`dogfood_brief_test.go` in the repo root (`go test -run Dogfood .`).
+
+Trial ids are `<prefix>-<model>-<env>-<identity>`, `t-` by default. The three identities are `claudeid`
 (`CLAUDECODE=1`), `codexid` (`CODEX_SANDBOX=1`) and `other` (no signal), and
 `DOGFOOD_IDENTITIES` overrides them the same way `DOGFOOD_MODELS` does. Set
 `FULL_CROSS=1` to run every model × env × identity combination instead of the

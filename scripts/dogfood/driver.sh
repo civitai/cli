@@ -58,6 +58,40 @@ IDENTITIES=(
 # an `IDENT_FOR` variable that has never existed.)
 FULL_CROSS="${FULL_CROSS:-0}"
 
+# ── the app brief ────────────────────────────────────────────────────────────
+# DOGFOOD_BRIEF turns every cell from a SETUP trial into an APP-BUILD trial by
+# appending one operator-typed line to the task (runner.py's --brief). Empty =>
+# the matrix this file has always run, with a byte-identical task.
+#
+#   DOGFOOD_BRIEF="$(cat briefs/celsius.brief.txt)" DOGFOOD_TRIAL_PREFIX=ta bash driver.sh
+#
+# 🔴 AND IT REFUSES TO RUN UNDER THE DEFAULT PREFIX, BECAUSE THE RESUME GUARD
+# WOULD OTHERWISE SKIP THE WHOLE MATRIX. Trial ids are `<prefix>-<model>-<env>-
+# <identity>` and the guard in run_one() skips any id whose transcript already
+# carries an `end` record. Run the setup matrix, then run an app matrix under
+# the same prefix, and EVERY cell is skipped as "complete" while this script
+# prints MATRIX COMPLETE — the third instance of the failure the two comments
+# in run_one() and in the identity loop below already exist to prevent, and the
+# only one where the skipped cells hold a DIFFERENT task. Make the operator say
+# which namespace the run lands in; there is no safe default to guess.
+BRIEF="${DOGFOOD_BRIEF:-}"
+PREFIX="${DOGFOOD_TRIAL_PREFIX:-t}"
+case "$BRIEF" in
+  *$'\n'*|*$'\r'*)
+    echo "DOGFOOD_BRIEF must be a single line — runner.py refuses a multi-line brief" >&2
+    exit 1 ;;
+esac
+if [ -n "$BRIEF" ] && [ "$PREFIX" = "t" ]; then
+  cat >&2 <<'MSG'
+refusing to run: DOGFOOD_BRIEF is set but DOGFOOD_TRIAL_PREFIX is still the
+default `t`, which is the SETUP matrix's namespace. An app-build cell would
+collide with the setup cell of the same name, and the resume guard would skip
+it as already complete — reporting MATRIX COMPLETE having run nothing.
+Set a distinct namespace, e.g. DOGFOOD_TRIAL_PREFIX=ta
+MSG
+  exit 1
+fi
+
 run_one() {  # model short image ienv trial user
   local model=$1 image=$3 ienv=$4 trial=$5 euser=$6
   # 🔴 GATE ON COMPLETION, NOT ON EXISTENCE. runner.py opens transcript.jsonl in
@@ -76,6 +110,7 @@ run_one() {  # model short image ienv trial user
   fi
   local args=(--model "$model" --image "$image" --trial "$trial" --user "$euser" --out runs)
   [ -n "$ienv" ] && args+=(--agent-env "$ienv")
+  [ -n "$BRIEF" ] && args+=(--brief "$BRIEF")
   ( timeout 1500 python3 runner.py "${args[@]}" >"logs/$trial.out" 2>"logs/$trial.err"
     echo "done $trial rc=$?" ) &
 }
@@ -102,7 +137,7 @@ for m in "${MODELS[@]}"; do
          && [ "$is" != "${IDENTITIES[0]%%|*}" ]; then
         continue
       fi
-      run_one "$model" "$ms" "$image" "$ienv" "t-${ms}-${es}-${is}" "$euser"
+      run_one "$model" "$ms" "$image" "$ienv" "${PREFIX}-${ms}-${es}-${is}" "$euser"
       N=$((N+1))
       if [ $((N % 4)) -eq 0 ]; then wait; fi
     done
