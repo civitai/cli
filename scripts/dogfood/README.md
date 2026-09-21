@@ -266,6 +266,37 @@ so they need no daemon — but they do drive a **real** browser, and they FAIL
 rather than skip under `$CI` (a skip and a pass read the same in a merge log).
 `ci.yml`'s `build-test` resolves one into `CIVITAI_CHROME` before `go test ./...`.
 
+#### Launching the browser (`launch()` in `briefs/_cdp.mjs`)
+
+🔴 **THE LAUNCH IS ITS OWN FAILURE DOMAIN AND IT MADE `build-test` FLAKY ON
+EVERY PR** — measured 2026-09-21 over four runs, on `main` and on three PRs, one
+of them a docs-only change to a single markdown file. The browser printed its
+dbus startup noise, no DevTools endpoint arrived inside the deadline, the
+assertion reported a `harness error`, `oracle.sh` correctly returned exit 2 /
+*nothing was measured*, and the job went red **with zero `--- FAIL:` lines in a
+31 KB log**. Two of those runs went green on re-run with no change. Everything
+downstream was working; nothing upstream was watching the browser.
+
+What the launch does about it, and the standing of each part:
+
+| | |
+|---|---|
+| **Its own budget.** `CIVITAI_ASSERT_LAUNCH_MS` (default 30 s), separate from `CIVITAI_ASSERT_WAIT_MS` (15 s). | A cold browser binding a port and a React tree mounting are unrelated quantities. Measured in the failing jobs themselves, `chromium --version` took **1.9–6.5 s** on the runner against **0.02 s** on a dev box — 100–300× slower, 3.4× spread. ⚠ It does not separate the passing runs from the failing ones, so it sizes the budget; it does not diagnose the stall. |
+| **Flags that skip startup work.** `--password-store=basic` plus the no-background-network group. | The runner's `DBUS_SESSION_BUS_ADDRESS` is unparseable — reproduce the exact CI stderr with `DBUS_SESSION_BUS_ADDRESS=bogus:path=/nope`. Measured: the flag removes one session-bus round trip (4 `dbus/bus.cc` errors → 3), the keyring probe, which is the last one before the DevTools line. Three of the four failures stalled after exactly three; **the fourth stalled after one, so this is not the whole mechanism.** ⚠ Null result worth not re-deriving: *clearing* the env var changes nothing (4 either way). |
+| **Release builds preferred.** `google-chrome` before `chromium`. | `ubuntu-latest` ships both, and `/usr/bin/chromium` there is a raw `chromium-browser-snapshots` build (152.0.7977.0) while `google-chrome` is a release (152.0.7977.82). ⚠ A determinism argument, **not** a measurement. |
+| **The process is killed when a launch fails.** | The old code walked away from it; all four CI logs end with the runner's own `Terminate orphan process: pid (…) (chrome)`. |
+| **A bounded retry** — `CIVITAI_ASSERT_LAUNCH_ATTEMPTS`, default 2. | The backstop, not the fix. 🔴 **It is loud on SUCCESS**: a launch that needed a second attempt prints `BROWSER LAUNCH RETRY` with the first attempt's diagnostics, and `ci.yml`'s browser-smoke step turns that string into a `::warning`. That is the only thing keeping it from being a way to stop noticing a browser that has started failing half the time. A browser that never works still fails, after exactly N attempts, with every attempt's output in the message. |
+
+⚠ **The stall was never reproduced locally.** `TestCdpLaunch*` in
+`dogfood_cdp_launch_test.go` are therefore invariant guards on the launch's
+behaviour, driven by a fake browser, and only the orphan one is a regression
+test. Do not read them as evidence the flake is gone.
+
+`ci.yml` gained a **browser smoke step** that runs `launch()` before `go test`,
+carrying both controls: it fails a binary that exits 3 without printing (so it
+can still go red) and it fails the job by name if the resolved browser cannot
+bind a debugging port, instead of that surfacing eighty lines into a Go test.
+
 - 🔴 **`scopes=` is REPORTED and decides nothing**, exactly like the validate
   gate. A manifest is a declaration, not a behaviour — a block can declare
   `posts:write:self` and post nothing, and the platform grants scopes at review

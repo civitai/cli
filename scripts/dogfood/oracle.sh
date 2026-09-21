@@ -175,9 +175,17 @@ ASSERT="$HERE/briefs/$BRIEF.assert.mjs"
 # a browser the assertion exits 2 with its own message, but by then a server is
 # running inside someone's container and the reason is three layers down. A
 # trial image ships no Chromium — that is why the browser is the host's.
+#
+# 🔴 THE ORDER IS RELEASE-BUILDS-FIRST AND IT IS PINNED. `ubuntu-latest` carries
+# a release `google-chrome` AND a raw `chromium-browser-snapshots` build at
+# `/usr/bin/chromium`; naming chromium first drove every CI run on an
+# un-release-qualified trunk snapshot. The same list lives in
+# `scripts/dogfood/briefs/_cdp.mjs`, `.github/workflows/ci.yml` and
+# `dogfood_oracle_test.go`, and
+# `TestEveryBrowserResolverAgreesOnTheSameOrder` fails when they drift.
 BROWSER="${CIVITAI_CHROME:-}"
 if [ -z "$BROWSER" ]; then
-  for b in chromium chromium-browser google-chrome google-chrome-stable chrome; do
+  for b in google-chrome google-chrome-stable chromium chromium-browser chrome; do
     if command -v "$b" >/dev/null 2>&1; then BROWSER="$(command -v "$b")"; break; fi
   done
 fi
