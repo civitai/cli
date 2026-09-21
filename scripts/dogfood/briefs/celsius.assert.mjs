@@ -16,7 +16,7 @@
 // that file's header for the reasoning; it is load-bearing and is not repeated
 // here.
 
-import { launch, cdp, openPage, resolveTarget, SEND_HOST_INIT, labelExpr } from './_cdp.mjs';
+import { launch, cdp, openPage, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, labelExpr } from './_cdp.mjs';
 
 const TARGET = process.argv[2];
 if (!TARGET) {
@@ -49,7 +49,8 @@ async function main() {
   await c.open;
 
   const evidence = {
-    target: TARGET, url, input: INPUT_C, expected: EXPECT_F, hostInit: SEND_HOST_INIT,
+    target: TARGET, url, input: INPUT_C, expected: EXPECT_F,
+    hostInit: SEND_HOST_INIT, hostViewer: HOST_VIEWER_LABEL,
   };
   let pass = false;
   let reason = null;

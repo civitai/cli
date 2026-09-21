@@ -43,6 +43,66 @@ state machine**: the prompt input, the `ready` resting state, the Post gate bein
 CLOSED before anything has been generated, and the Generate click driving the
 machine into `generating`. That is what this grades.
 
+## 🔴 It grades the SIGNED-IN branch, and that is a decision, not an oversight
+
+The oracle presents a signed-in viewer: `BLOCK_INIT.viewer` is the object
+civitai.com's own `withSignedInFlag()` builds — `{ id, username, signedIn: true }`,
+and deliberately **no `status`** (the platform withholds the viewer's moderation
+state from third-party iframes, civitai #2521). `context.viewerUserId` /
+`viewerUsername` track it, because on the page slot the host sends the identity
+through both channels.
+
+It used to present `viewer: null`, and that made this brief **ungradeable for
+the apps most likely to pass it**. Measured on `ab-genpost-mimo-01`
+(2026-09-21): a reasonable generate-then-post app rendered
+`<div data-testid="status">ready</div><p>Please sign in to generate images.</p>`
+and scored `RENDER=no`, `observed=ready`, `reason: timed out … waiting for
+[data-testid="prompt"]`. Nothing about that verdict was about the model.
+
+Three reasons the signed-in branch is the right one to grade, in order of weight:
+
+1. **The platform refuses this brief's behaviour to an anonymous viewer.** A
+   block token minted for an anonymous viewer carries `sub: "anon"`, and
+   civitai's block-scope middleware hard-rejects `posts:write:self` for that
+   subject and requires a positive `buzzBudget` claim for `ai:write:budgeted`.
+   So an anonymous-only oracle grades a branch in which the thing the brief asks
+   for cannot exist — the capability confound arriving through the instrument.
+2. **The `page-money` scaffold every cell derives from ships an explicit
+   signed-out branch**: `const anon = ready && !viewer`, and where the signed-in
+   tree renders the Generate button (`data-testid="pm-generate"`) the anonymous
+   one renders `Sign in to generate` (`data-testid="pm-signin"`) instead. ⚠ Be
+   precise about the blast radius — the prompt field and the rest of the form
+   still render for an anonymous viewer, which is why `celsius.md`'s scaffold
+   measurement shows "the full generation form". What an anonymous viewer does
+   NOT get is a control labelled `generate`, which is step 4 of this assertion.
+   So a scaffold-derived app that keeps the template's branch cannot reach a
+   `yes` for any reason that is about the model.
+3. **Every other host emulation in the ecosystem defaults to signed-in and makes
+   anonymous the opt-IN**: the SDK's `createMockHost`
+   (`DEFAULT_VIEWER = { id: 2, username: 'dev-viewer', signedIn: true }`),
+   `createLiveHost` (whose anonymous viewer is a *fallback*), and this repo's own
+   page-money harness, where `?viewer=anon` is the knob you add.
+
+⚠ **It buys the block nothing.** The seeded token stays `{ raw: '', scopes: [] }`,
+and on the platform every privileged path re-derives identity from the JWT `sub`
+rather than from anything the block was handed — so a populated `viewer` cannot
+make a generation or a post appear to succeed. `InlineTransport.sendRequest`
+rejects unconditionally regardless. `TestOracleSeedsTheProductionViewerAndNoCredential`
+asserts the seeded object from inside the page rather than by reading the source.
+
+**The control arm is `CIVITAI_ASSERT_ANON_VIEWER=1`**, which is also how to grade
+a block's signed-out branch on purpose. Measured both ways on
+`ab-genpost-mimo-01`, 2026-09-21:
+
+| viewer | `RENDER` | `observed` |
+|---|---|---|
+| signed-in (the default) | **yes** | `ready>generating` |
+| `CIVITAI_ASSERT_ANON_VIEWER=1` | no | `ready` (body: *"Please sign in to generate images."*) |
+
+⚠ The brief says nothing about anonymity, so a `no` under the control arm is not
+a finding about the model — it is the branch the harness selected. The cell
+carries `viewer=` for exactly that reason.
+
 **Read a green cell as exactly:** *the model wired a generate-then-post flow
 whose controls and status machine behave as the brief specified.* Not *"a
 generation ran"*. Not *"a post was created"*. Those need a credentialed live run
@@ -154,9 +214,15 @@ render verdict, not because it grades anything.
 ```bash
 node briefs/genpost.assert.mjs <dir>              # serves the dir and grades it
 node briefs/genpost.assert.mjs http://host:port   # grades something already served
-bash oracle.sh <trial-id> <container-user> genpost
+bash oracle.sh <trial-id> <container-user>        # brief DERIVED from the trial
 bash grade.sh  <trial-id> <container-user> genpost
 ```
+
+🔴 **`oracle.sh` derives the brief from the trial's own transcript** and refuses
+(exit 2) when a name you pass disagrees with it — the `genpost` argument above
+is a cross-check, not an input. If the trial was driven from another checkout,
+point `DOGFOOD_RUNS` at its `runs/` directory or the oracle has nothing to
+derive from and will say so rather than guess.
 
 Exit `0` = pass, `1` = the assertion failed, `2` = the harness could not run
 (no browser, bad usage) — only the middle one is a statement about the block.
