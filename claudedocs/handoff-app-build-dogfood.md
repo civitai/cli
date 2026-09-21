@@ -33,62 +33,53 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-🔴 **HEADLINE: a cheap open model BUILT A PASSING APP. The arc's mechanism is proven; its
-frozen condition is NOT yet met.** `xiaomi/mimo-v2.5`, blind, 73 steps, **$0.0237**, graded
-by a headless browser:
+🔴 **THE RESULT STANDS AND IS UNCHANGED: a cheap open model built a PASSING app.**
+`xiaomi/mimo-v2.5`, blind, 73 steps, **$0.0237** — `brief=genpost brief_source=transcript-text
+gate=pass viewer=signed-in observed=ready>generating RENDER=yes`, re-run independently, with
+the negative control (unmodified `page-money` scaffold) still `gate=pass … RENDER=no`.
+**The frozen condition is still NOT met** — it requires *"three cheap models with a frontier
+control"* and we have **2 of 4 cells on 1 environment**. Rank 6 is the only item between
+here and a gradeable verdict.
 
-```
-brief=genpost brief_source=transcript-text gate=pass gate_rc=0
-scopes=ai:write:budgeted,posts:write:self viewer=signed-in
-observed=ready>generating RENDER=yes
-```
-
-`pass:true`, `postDisabled:true` (the Post gate closed as the brief demands), `status`
-transitioning `ready → generating`. **Re-run independently rather than accepted from a
-report.** The negative control holds in the same pass: the unmodified `page-money` scaffold
-grades **`gate=pass … RENDER=no`** — the validator says fine, the browser says nothing
-rendered. That disagreement is the arc's founding thesis and it survives the viewer change.
-
-🔴 **WHY THE CONDITION IS STILL OPEN — read the frozen text, not the headline.** It ends
-*"Graded per cell across the three cheap models, with a frontier control."* We have **2 of 4
-cells** (`mimo` PASS, `glm` FAIL-explained), on **1 environment** of the 2 currently
-gradeable. `deepseek-v4-pro` and the frontier control have not run. **The one item between
-here and the condition is rank 6.**
-
-- ✅ **Rank 7's TRIAL ran; rank 7's OBJECTIVE did not complete.** The operator asked for an
-  app integrating generation and posting **submitted for review**. Two credentialed trials
-  ran and **`submissions=0`, `generations=0`** in both. Nothing was submitted. The frozen
-  condition never mentioned `submit`, which is exactly why it was recorded separately —
-  **do not read `RENDER=yes` as the submit objective being met.**
-- ✅ **ACCOUNT UNCHANGED ACROSS BOTH CREDENTIALED RUNS.** Buzz **4,101,822** → **4,101,822**
-  (delta **0**), 13 listings → 13, no `ab-*` listing reached the account, and none of the
-  ~10 operator-owned apps was touched. The residual risk the operator accepted did not
-  materialise. Verified from the account, never from an agent's report.
-- ✅ **Four harness/doc PRs merged tonight**, each verified by content with a negative
-  control: **`cli#683`** (`8603fc3`) credential path that does not leak + the `genpost`
-  brief · **`cli#684`** (`7151ca3`) a truncated trial can no longer be recorded as finished
-  · **`cli#685`** (`bdeddef1`) the agent-facing doc fixes · **`cli#686`** (`0af4045`) the
-  oracle's brief resolution and signed-in viewer.
-- 🔴 **THE GLM FAILURE IS FULLY EXPLAINED AND IT WAS NOT WHAT IT LOOKED LIKE.** See the
-  investigation block. In one line: it **never wrote a single line of code** in 66 steps,
-  and its `stop: "finished"` was a **harness mislabel of a truncation** — the final turn hit
-  `max_tokens` exactly (8,000, of which 7,992 were reasoning) and returned nothing.
-- 🔶 **The three specimen containers are the arc's regression fixtures.** `dogfood-ab-curve-01`
-  (celsius, `RENDER=yes observed=212`), `dogfood-ab-genpost-mimo-01` (genpost, **`RENDER=yes`**),
-  `dogfood-ab-genpost-glm-01` (unmodified scaffold, `RENDER=no` — the negative control).
-  **Do not destroy them**; re-creating any of them costs a trial. 🔴 **And one is already
-  gone: `runs/ab-curve-01/transcript.jsonl` was DESTROYED by a routine worktree cleanup**,
-  so the successful celsius run has no per-step record and two analyses hit that wall. The
-  container survives; the transcript does not. **Copy a trial's `runs/<trial>/` out of the
-  worktree before removing it.**
-- **Claims:** all released.
+- ✅ **Six PRs merged in `civitai/cli`**, each verified by content with a negative control:
+  `#683` `8603fc3` (credential path + `genpost` brief) · `#684` `7151ca3` (a truncated trial
+  can no longer read as `finished`) · `#685` `bdeddef1` (agent-facing doc fixes) ·
+  `#686` `0af4045` (oracle brief resolution + signed-in viewer) · `#682` `cadc69bb` (this
+  doc). Plus `#679` `336eb9ed` earlier, which unblocked the repo.
+- 🔶 **TWO PRs OPEN, and the merge ORDER matters — `#688` must land first.**
+  - **`#688`** (`f9a88345`, `automation/bump-scaffold-pins`) — **13/13 green, 0 non-success,
+    `CLEAN`.** Bumps pins `^0.48.0`/`^0.55.0` → `^0.49.0`/`^0.56.0` across all four literal
+    sites. **Merge this first.**
+  - **`#687`** (`34764e99`, `fix/ci-browser-launch`) — 13/13 completed, and its **only**
+    non-success is `pins-vs-published`, i.e. the stale pins `#688` fixes. `BLOCKED` solely
+    on that. Rebase onto the greened `main`, then merge.
+- 🔴 **`main` IS RED RIGHT NOW** — `build-test failure` on `cadc69bb`, a **docs-only**
+  commit. Fifth occurrence of the Chromium launch flake. `#687` is the fix; see the
+  investigation block for what it can and cannot claim.
+- 🔴 **`scaffold-currency` PASSED on `#688`, and that is the load-bearing fact about the
+  pin bump.** That job installs `@latest` explicitly, so it reds on a **broken export**
+  rather than a stale caret. Its green is the evidence that `blocks-react@0.56.0` did NOT
+  move or remove anything the templates import — unlike `0.55.0`, which relocated
+  `createLiveHost` to `/live` and forced a seven-file migration (`#679`). **Nothing else in
+  the toolchain answers that question before merge.**
+- 🔴 **A CHEAP, CONCRETE IMPROVEMENT FOUND BY ACCIDENT: a `workflow_dispatch` bump PR GETS
+  CHECKS; the cron one does NOT.** `#676` (cron-authored, this morning) merged `CLEAN` with
+  its checks never having run and left `main` red for a day —
+  `.github/workflows/bump-scaffold-pins.yml:232-239` documents the loop-guard. `#688`,
+  triggered by hand via `gh workflow run`, got all 13. **Making the nightly sweep dispatch
+  its own validation would close the hole that bit us this morning.**
+- **Account unchanged across both credentialed trials:** Buzz **4,101,822 → 4,101,822**
+  (delta **0**), 13 listings, no `ab-*` reached the account, none of the ~10 operator-owned
+  apps touched. `generations=0 submissions=0` in both runs.
+- ⚠ **No `clawgate-task:` field** — `clawgate_handoff.sh resolve` exited **5**. An unknown
+  session id answers 200 with an empty array, so that zero cannot distinguish "touched no
+  task" from "wrong id". Not a clean bill of health.
 
 ### Carried forward — durable values a `State now` replace would otherwise eat
 
-🔴 **RANK 3'S TABLE, kept because an appended block points AT it.** The investigation block
-"✅ ANSWERED 2026-09-21 — the harness CAN carry an app-build task" says *"see the State-now
-table"*. This is the second update in which deleting it would have left that pointer
-dangling. `xiaomi/mimo-v2.5`, `df-node-root`, celsius brief:
+🔴 **RANK 3'S TABLE, kept because an appended block points AT it** ("✅ ANSWERED 2026-09-21
+— the harness CAN carry an app-build task" says *"see the State-now table"*). This is the
+**third** update in which deleting it would have left that pointer dangling:
 
 | | measured | cap set |
 |---|---|---|
@@ -98,21 +89,23 @@ dangling. `xiaomi/mimo-v2.5`, `df-node-root`, celsius brief:
 | per-call prompt | 452 → **45,328** | — |
 | `stop` | **`finished`** | — |
 
-🔴 **THE PRE-RUN BASELINE, captured 2026-09-21 BEFORE any credentialed trial — it cannot be
-re-derived after the fact.** Buzz **Blue 1,305,157 · Green 947,618 · Yellow 1,849,047 ·
-TOTAL 4,101,822**; **13** listings. The `dogfood-3` precedent grades spend as a balance
-DELTA rather than believing the agent, and that only works with a pre-reading. A
-credentialed run started without one is ungradeable on spend however well it goes.
+🔴 **THE PRE-RUN BASELINE — cannot be re-derived after the fact.** Buzz **Blue 1,305,157 ·
+Green 947,618 · Yellow 1,849,047 · TOTAL 4,101,822**; **13** listings. Spend is graded as a
+DELTA against this, never from an agent's report.
 
-**The prerequisite arc's baseline, which every cost figure here is read against.** Measured
-2026-09-19 over 18 trials: the three cheap models reach SETUP on 4 of 6 grid rows,
-model-independently, at **mean $0.0058/trial** (21 trials = $0.1211), frontier control
-**5–20× dearer**. So a genpost app-build cell at $0.0237 is ~4× a setup trial.
+**The prerequisite arc's baseline:** 18 trials, 2026-09-19, three cheap models reach SETUP
+on 4 of 6 grid rows, model-independently, **mean $0.0058/trial**, frontier control **5–20×
+dearer**. A genpost app-build cell at $0.0237 is ~4× a setup trial.
 
-**The credentialed precedent.** `claudedocs/handoff-dogfood-3.md` is the *first CREDENTIALED
-blind dogfood* (2026-08-10): 3 generations, 61 Buzz, 2 submissions, verified from the
-account (4,187,454 → 4,187,393). It also records real `submit`/`withdraw` defects, including
-**permanent loss of captioned screenshots** — read it before any run that submits.
+**The credentialed precedent:** `claudedocs/handoff-dogfood-3.md` — 3 generations, 61 Buzz,
+2 submissions, verified from the account (4,187,454 → 4,187,393). Records real
+`submit`/`withdraw` defects incl. **permanent loss of captioned screenshots**.
+
+**The three specimen containers are regression fixtures — do not destroy:**
+`dogfood-ab-curve-01` (celsius `RENDER=yes observed=212`), `dogfood-ab-genpost-mimo-01`
+(genpost **`RENDER=yes`**), `dogfood-ab-genpost-glm-01` (unmodified scaffold `RENDER=no`,
+the negative control). 🔴 `runs/ab-curve-01/transcript.jsonl` was **destroyed by a routine
+worktree cleanup** — copy `runs/<trial>/` out before removing a worktree.
 
 ## Open investigations — live diagnosis state
 
@@ -275,36 +268,79 @@ the arc concluded.** Two defects compounded — one model-side, one harness-side
 - **Next probe:** re-measure carry cost on a post-`cli#685` trial to price the fix. Free if
   folded into rank 6.
 
+### ⚠ OPEN — the CI Chromium launch flake: a fix is proposed but the stall was never reproduced
+- as-of: 2026-09-21
+
+- **Symptom + exact repro:** `build-test` fails with **no failing test name at all**.
+  Measured on five runs — `35557830290`, `35563154222`, `35567753483`, `35616180491`, and
+  `main`'s current `cadc69bb` — across `main` itself and three PRs including a **docs-only**
+  one. In a 31,141-byte log there are **zero `--- FAIL:` lines** and every other package
+  reports `ok`:
+  ```
+  {"assertion":"celsius","pass":false,"reason":"harness error: browser never printed a
+   DevTools endpoint:\n[ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not
+   parse server address: Unknown address type ..."}
+  oracle: the assertion could not run (exit 2) — nothing was measured (this is NOT a failing trial)
+  FAIL github.com/civitai/cli
+  ```
+- 🔴 **The oracle behaves CORRECTLY** — it exits 2 and says *nothing was measured* rather
+  than emitting a false `RENDER=no`. The job fails because the render-oracle tests
+  deliberately refuse to skip under `$CI`. **Do not "fix" this by loosening them to a
+  skip**; a skip here is a green that checked nothing, and `ci.yml` forbids it in-line.
+- **Observed (with values) — the number that did not exist until `#687`'s smoke step
+  shipped:** a healthy cold launch on that runner is **`[cdp] browser launched in 3546ms`**
+  against a **15,000 ms** budget — ~4× headroom on a machine with **3.4× run-to-run
+  spread**. And the 15 s was never chosen for *launching*: it is the wait for a React tree
+  to mount, reused for an unrelated quantity.
+- **Ruled out — that clearing `DBUS_SESSION_BUS_ADDRESS` is the mechanism.** Null result.
+  `via: measurement`
+- **Ruled out — that the error string alone reproduces it.** `DBUS_SESSION_BUS_ADDRESS=bogus:path=/nope`
+  reproduces the CI stderr **byte for byte** and Chromium still reaches a DevTools endpoint
+  in ~110 ms. `via: measurement`
+- **Ruled out — that `chromium --version` latency predicts failure.** 1.9–6.5 s in failing
+  jobs vs 0.02 s locally, but 2.2 s passed and 2.8 s failed — an environment speed class,
+  not a predictor. `via: measurement`
+- **Leading hypothesis:** a thin timeout against a slow cold launch, plus one blocking
+  session-bus round trip. `--password-store=basic` removes exactly one (`4 dbus errors → 3`),
+  and **three of four failures stalled after exactly three**.
+- 🔴 **Counter-evidence, stated rather than buried: the FOURTH failure stalled after ONE
+  dbus error**, which that flag cannot explain. So the fix is **"rarer, not provably gone"**
+  — the author's own words, and the honest position.
+- **Next probe:** none locally; the stall was never reproduced. **The closing condition is
+  MECHANICAL and needs nobody to remember it** — a retried launch prints
+  `BROWSER LAUNCH RETRY`, which `ci.yml` renders as a `::warning` on the job. **If that
+  warning appears in `build-test` after `#687` merges, the launch is still sick.**
+
 ## Next steps (ranked)
 
-🔴 **Numbering frozen; ranks 1–5 settled, 4 deleted by measurement.**
+🔴 **Numbering frozen.** Ranks 1–5 settled; 4 deleted by measurement.
 
 ⚠ **On `forcing:` — the operator asked for the ARC, not for individual items; the
-decomposition is agent-authored. Rank 7 is the exception: he asked for that one in those
-words on 2026-09-21.**
+decomposition is agent-authored. Rank 7 is the exception (asked for in those words on
+2026-09-21).**
 
 1. ✅ **DONE** — brief-injection path (`cli#678`). forcing: user — satisfied
 2. ✅ **DONE** — the celsius brief and assertion (`cli#678`). forcing: user — satisfied
-3. ✅ **DONE** — the step/cost curve; 65 steps, $0.0145. forcing: user — satisfied
-4. ❌ **DELETED** — history management is not required; rank 3 measured the condition it was
-   gated on and the answer was no. forcing: gate — retired
-5. ✅ **DONE** — the render oracle (`cli#681`), plus two defect fixes (`cli#686`).
+3. ✅ **DONE** — the step/cost curve. forcing: user — satisfied
+4. ❌ **DELETED** — history management not required; rank 3 measured it. forcing: gate — retired
+5. ✅ **DONE** — the render oracle (`cli#681`) + two defect fixes (`cli#686`).
    forcing: user — satisfied
-6. 🔴 **THE ONLY ITEM BETWEEN HERE AND THE FROZEN CONDITION — run the matrix.** It requires
-   **three cheap models plus a frontier control**; we have 2 of 4 cells on 1 environment.
-   Outstanding: `deepseek-v4-pro` and the frontier control, on the genpost brief. Budget,
-   now grounded rather than guessed: cheap cells measured **$0.0145–$0.0918**, so the
-   remaining cheap cell is ~$0.05 and the frontier control 5–20× that. ⚠ `cli#665` still
-   blocks 2 of the 4 environments. ⚠ Re-measure carry cost while running it, to price
-   `cli#685`.
+6. 🔴 **THE ONLY ITEM BEFORE THE FROZEN CONDITION CAN BE GRADED — run the matrix.**
+   Outstanding: **`deepseek-v4-pro`** and the **frontier control**, on the genpost brief.
+   Cheap cells measured $0.0145–$0.0918, so ~$0.05 for the remaining cheap cell, 5–20× for
+   the frontier. ⚠ `cli#665` still blocks 2 of the 4 environments. ⚠ Re-measure carry cost
+   while running, to price `cli#685`.
    forcing: user — the operator asked for this arc on 2026-09-20
-7. 🔶 **PARTIALLY DONE — the credentialed run happened; nothing was submitted.** Two
-   credentialed trials, `generations=0 submissions=0`, account unchanged. The app mimo built
-   passes the brief but was never submitted for review. **`app submit` remains outside the
-   frozen condition** — closing rank 6 does not close this, and closing this does not close
-   rank 6. Decide explicitly whether a submit is still wanted before running another
-   credentialed cell.
+7. 🔶 **PARTIALLY DONE — the credentialed run happened; NOTHING WAS SUBMITTED.**
+   `generations=0 submissions=0` in both trials. The app mimo built passes the brief and was
+   never submitted. 🔴 **`app submit` is OUTSIDE the frozen condition** — closing rank 6 does
+   not close this, and closing this does not close rank 6. Decide explicitly whether a
+   submit is still wanted before spending another credentialed cell.
    forcing: user — the operator asked for this on 2026-09-21
+8. **Merge `#688`, then rebase and merge `#687`** — in that order. `#688` is green;
+   `#687`'s only red is the stale pins `#688` fixes. Until both land, `main` stays red on
+   `build-test` and every PR in the repo looks unmergeable.
+   forcing: gate — `main` is red on a required check
 
 ## Gotchas / decisions / dead-ends
 
@@ -438,28 +474,69 @@ words on 2026-09-21.**
   must NOT be loosened into a skip)"*). **Unfixed, and it will keep training people to merge
   through a required check.**
 
+### Added 2026-09-21 (late) — the pin treadmill, and a control that was not one
+
+- 🔴 **UPSTREAM PUBLISHES FASTER THAN THE SWEEP, AND IT BIT THREE TIMES IN ONE DAY.** npm
+  published `app-sdk@0.49.0` / `blocks-react@0.56.0` at **15:33:32Z** — after `main`'s green
+  pins run (15:19:22Z) and before `#687`'s (15:40:50Z). Nothing anyone did caused it.
+  `bump-scaffold-pins.yml:64-69` already measured the cause: **six minors in 19 days, a
+  ~3.6-day mean** against what was then a 7-day sweep. They moved to daily; daily is still
+  slower than upstream. **Every window between a publish and the next sweep reds every open
+  PR on a required check for reasons unrelated to its content.**
+- 🔴 **MY NEGATIVE CONTROL WAS MUDDIED BY THE ARC'S OWN EARLIER TEXT — THIRD TIME TODAY.**
+  Verifying `#682` I grepped `RENDER=yes` and got **2 hits at `main~1`**, because the
+  celsius specimen already graded that way. The discriminating string was
+  `ready>generating` (**2 on main, 0 at `main~1`**). **Pick a string the NEW content
+  introduces, never the identifier the work has been discussing all along.** Same shape as
+  the `local/share/opencode/auth.json` path count earlier in the day.
+- ⚠ **A `count=1` replace in a mutation sweep can hit a DOC COMMENT instead of the code.**
+  `#687`'s author had a mutant report SURVIVED for exactly that reason; re-run correctly it
+  was killed. **A survivor is a claim about the sweep before it is a claim about the guard.**
+- ⚠ **`gh api … check-runs | jq` can die on control characters** in a check's output
+  (`Invalid string: control characters from U+0000 through U+001F must be escaped`). Use
+  `gh api --jq` (server-side) rather than piping into `jq`. A failed parse printed empty
+  counts beside a reassuring echo — read the counts, not the banner.
+
 ## How to verify
 
-**The headline result — re-grade the specimen, free, no trial:**
+**The headline result — free, no trial, re-grade the specimen:**
 
 ```bash
 CLI=/home/zach/workspace/civit/cli
-# the oracle now DERIVES the brief from the trial's transcript; runs/ must be present
 (cd "$CLI/scripts/dogfood" && nix-shell -p chromium --run \
    'CIVITAI_CHROME=$(command -v chromium) bash oracle.sh ab-genpost-mimo-01 root')
 ```
 Expect `brief=genpost brief_source=transcript-text … observed=ready>generating RENDER=yes`.
-🔴 **And always re-run the NEGATIVE control beside it** — `ab-genpost-glm-01` must stay
+🔴 **Always re-run the NEGATIVE control beside it** — `ab-genpost-glm-01` must stay
 `RENDER=no` with `gate=pass`. A change that makes both pass has broken the oracle.
+⚠ The oracle now DERIVES the brief from `runs/<trial>/transcript.jsonl`; that directory must
+be present or it refuses rather than defaulting.
 
-**The account side — the only trustworthy evidence about spend:**
+**The account — the only trustworthy evidence about spend:**
 
 ```bash
 civitai buzz      # TOTAL must equal 4101822 unless a generation was intended
 civitai app list  # 13 listings; every pre-existing slug unchanged; no ab-* present
 ```
 
-**The stop reason is now trustworthy** — `finished` / `truncated` / `empty-reply` /
-`stopped-unknown:<v>` are distinguishable, and `finish_reason` is recorded. A cell reporting
-`finished` with an empty `final` should no longer exist; if one appears, read
-`finish_reason` before believing it.
+**The merge order, and why `main` is red:**
+
+```bash
+gh pr view 688 --repo civitai/cli --json mergeStateStatus   # green -> merge FIRST
+gh pr view 687 --repo civitai/cli --json mergeStateStatus   # blocked only by stale pins
+gh api repos/civitai/cli/commits/$(git -C "$CLI" rev-parse origin/main)/check-runs \
+  --jq '.check_runs[]|select(.conclusion=="failure")|.name'
+```
+🔴 **Attribute any `build-test` red by FAILING TEST NAME, never by the verdict.** The flake
+produces **zero** `--- FAIL:` lines; if you see named tests, it is not the flake. And assert
+the log is non-empty before believing any grep over it — `gh api … /logs` can return 0 bytes,
+which greps as "no failures".
+## Defects (batched)
+
+- `bump-scaffold-pins.yml` validates `pins-vs-published` in-job but has **no in-job
+  equivalent for `scaffold-currency`** — the half that actually broke on `#676`. A pin bump
+  cannot catch a moved export; only `scaffold-currency` can, and it does not run on a
+  cron-authored bump PR.
+- The nightly sweep's PRs do not trigger checks (GitHub loop-guard); a hand `workflow_dispatch`
+  does. Making the sweep dispatch its own validation closes it.
+- `cli#665` open — blocks 2 of the 4 trial environments.
