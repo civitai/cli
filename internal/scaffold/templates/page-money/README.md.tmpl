@@ -6,6 +6,7 @@ as a full-page (W10) app at `/apps/run/{{ .Slug }}` and spends Buzz to generate
 an image: pick a checkpoint, optionally layer on a few LoRAs (each with a
 weight) → estimate → (lazy consent) → submit → poll → result.
 
+{{ .HookIndex }}
 ## What this is
 
 A sandboxed static web app served in an iframe by the Civitai host. Its UI is
@@ -32,7 +33,9 @@ manifest schema requires alongside it) and commit *that* lockfile instead:
 A lockfile that disagrees with `buildCommand` is the most common build failure
 there is — `civitai app validate` catches it before you submit.
 
-The money path uses the SDK hooks — never raw `window.parent.postMessage`:
+The money path uses the SDK hooks — never raw `window.parent.postMessage`. These
+are the ones THIS sample calls; the full export list is the index at the top of
+this file:
 
 - `useBuzzWorkflow()` — `estimate` / `submit` / `poll` (the spend).
 - `useBuzzBalance()` — the viewer's per-pool balance (`{ blue, green, yellow }`),
@@ -573,6 +576,17 @@ The two reads use **different credentials** — by design, and security-critical
 > via your personal key through the proxy) still works. The balance resolves in
 > **`dev:harness`** (synthetic, wired to the `balance` scenario) and on the **real
 > platform** (the civitai host answers `GET_BUZZ_BALANCE` natively).
+
+> **`dev:harness` is the wide one — do not infer its limits from `dev:live`'s.**
+> The mock host answers the whole block→host protocol, so hooks that `dev:live`
+> refuses work there, INCLUDING posting: `CREATE_POST_FROM_APP`
+> (`useCreatePostFromApp()`), `PUBLISH_GENERATION_OUTPUTS`, `SAVE_IMAGE`,
+> `GET_IMAGES_BY_IDS`, `SET_COLLECTION_FOLLOW`, `OPEN_IMAGE_UPLOAD`,
+> `GET_WILDCARD_PACK` and the App-Storage + shared-storage message families are
+> all mocked. You do not need to read `mockHost.js` to find that out, and you do
+> not need beta access or Buzz to exercise any of them. The authority is the set
+> of message types `createMockHost` handles in
+> `@civitai/blocks-react/testing` — this list is checked against it.
 
 ### Scenarios (exercise the money / error / storage UX for free)
 
