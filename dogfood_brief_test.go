@@ -269,6 +269,142 @@ func TestDogfoodRunnerDeliversAndRecordsTheBrief(t *testing.T) {
 	}
 }
 
+// ── the brief's NAME ─────────────────────────────────────────────────────────
+
+// The committed prose of a brief. Read rather than pinned: the point of
+// `--brief-name` is that the name and the text agree, so the test has to use
+// whatever text a run today would actually send.
+func dogfoodBriefText(t *testing.T, name string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dogfoodDir, "briefs", name+".brief.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+// 🔴 THE TRANSCRIPT RECORDS WHICH BRIEF, NOT ONLY ITS PROSE. The render oracle
+// has to map a graded cell back to `briefs/<name>.assert.mjs`, and from prose
+// alone the only route is an exact match against `briefs/*.brief.txt` — which
+// stops resolving every already-run trial the moment a brief file is reworded,
+// and cannot resolve an ad-hoc brief at all. The field is emitted
+// UNCONDITIONALLY (empty string included) on the same contract `brief` has, so
+// "this run named no brief" is a positive assertion rather than an absence
+// indistinguishable from an older runner's transcript.
+func TestDogfoodRunnerRecordsTheBriefName(t *testing.T) {
+	py := dogfoodPython(t)
+	genpost := dogfoodBriefText(t, "genpost")
+	for _, tc := range []struct {
+		name  string
+		brief string
+		extra []string
+		want  string
+	}{
+		{"named", genpost, []string{"--brief-name", "genpost"}, "genpost"},
+		{"an ad-hoc brief names nothing", `Build a thing with data-testid="x".`, nil, ""},
+		{"a setup trial names nothing", "", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			args := []string{
+				filepath.Join(dogfoodDir, "testdata", "fake_trial.py"),
+				filepath.Join(dogfoodDir, "runner.py"),
+				filepath.Join(dir, "runs"), filepath.Join(dir, "capture.json"),
+			}
+			if tc.brief != "" {
+				args = append(args, tc.brief)
+			}
+			if len(tc.extra) > 0 {
+				args = append(args, "--")
+				args = append(args, tc.extra...)
+			}
+			cmd := exec.Command(py, args...)
+			// Same reason as TestDogfoodRunnerDeliversAndRecordsTheBrief: a
+			// __pycache__ hit would run bytecode predating the edit under test.
+			cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("fake trial failed: %v\n%s", err, out)
+			}
+			tr, err := os.ReadFile(filepath.Join(dir, "runs", "faketrial", "transcript.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var saw bool
+			for _, line := range strings.Split(strings.TrimSpace(string(tr)), "\n") {
+				var r struct {
+					Kind      string  `json:"kind"`
+					BriefName *string `json:"brief_name"`
+				}
+				if err := json.Unmarshal([]byte(line), &r); err != nil {
+					t.Fatalf("transcript line is not JSON: %q", line)
+				}
+				if r.Kind != "start" {
+					continue
+				}
+				saw = true
+				if r.BriefName == nil {
+					t.Fatal(`the "start" record carries no "brief_name" field — a grader can only ` +
+						`resolve this cell's assertion by matching prose, which a reworded brief breaks`)
+				}
+				if *r.BriefName != tc.want {
+					t.Fatalf("start.brief_name = %q, want %q", *r.BriefName, tc.want)
+				}
+			}
+			if !saw {
+				t.Fatalf("no start record in:\n%s", tr)
+			}
+		})
+	}
+}
+
+// 🔴 AND A MISLABELLED ONE IS REFUSED BEFORE A CONTAINER OR AN API CALL EXISTS.
+// A `--brief-name` is recorded as a FACT and then believed by every later
+// grade, so the cheapest moment to catch a wrong one is before the matrix runs
+// and the most expensive is after it has been paid for. Both directions: a name
+// with no assertion behind it, and a name whose committed text is not the text
+// being sent.
+func TestDogfoodRunnerRefusesAMislabelledBriefName(t *testing.T) {
+	genpost := dogfoodBriefText(t, "genpost")
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		wantMsg string
+	}{
+		{
+			name:    "a name with no assertion behind it",
+			args:    []string{"--brief", genpost, "--brief-name", "no-such-brief"},
+			wantMsg: "has no assertion",
+		},
+		{
+			name:    "a name whose committed text is not the text being sent",
+			args:    []string{"--brief", genpost, "--brief-name", "celsius"},
+			wantMsg: "disagrees with --brief",
+		},
+		{
+			// The empty-brief version of the same mistake: naming a brief while
+			// sending a setup trial's task.
+			name:    "a name with no brief text at all",
+			args:    []string{"--brief-name", "genpost"},
+			wantMsg: "disagrees with --brief",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, code := printTask(t, tc.args...)
+			if code != 2 {
+				t.Fatalf("exit %d, want 2 (argparse usage error)\noutput: %q", code, out)
+			}
+			// printTask captures stdout only; argparse writes to stderr, so
+			// re-run for the message rather than asserting on an empty string.
+			py := dogfoodPython(t)
+			full, _ := exec.Command(py, append([]string{
+				filepath.Join(dogfoodDir, "runner.py"), "--print-task"}, tc.args...)...).CombinedOutput()
+			if !strings.Contains(string(full), tc.wantMsg) {
+				t.Fatalf("the refusal does not say %q:\n%s", tc.wantMsg, full)
+			}
+		})
+	}
+}
+
 // ── driver.sh ────────────────────────────────────────────────────────────────
 
 // Run driver.sh in a throwaway copy of scripts/dogfood with a STUB python3
@@ -285,6 +421,28 @@ func runStubbedDriver(t *testing.T, env []string) (argv []string, code int, out 
 	}
 	if err := os.WriteFile(filepath.Join(dir, "driver.sh"), src, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	// The committed brief TEXTS come along, because driver.sh resolves a brief's
+	// NAME by matching its text against them. Without these the name-derivation
+	// branch would be unreachable here and its test would pass vacuously.
+	briefs, gerr := filepath.Glob(filepath.Join(dogfoodDir, "briefs", "*.brief.txt"))
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if len(briefs) < 2 {
+		t.Fatalf("found %d brief text(s) — the stubbed driver would exercise no name derivation", len(briefs))
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "briefs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range briefs {
+		raw, err := os.ReadFile(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "briefs", filepath.Base(b)), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	stubDir := filepath.Join(dir, "stub")
 	if err := os.MkdirAll(stubDir, 0o755); err != nil {
@@ -370,6 +528,79 @@ func TestDogfoodDriverPassesTheBrief(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(argv, " "), "ta-mshort-eshort-idshort") {
 		t.Fatalf("DOGFOOD_TRIAL_PREFIX did not reach the trial id: %v", argv)
+	}
+}
+
+// 🔴 THE NAME REACHES THE RUNNER BY BOTH ROUTES, AND THEY CANNOT DISAGREE. An
+// operator names the brief (`DOGFOOD_BRIEF_NAME`) or pastes its text
+// (`DOGFOOD_BRIEF`); either way the runner is handed both, so a graded cell can
+// be resolved to `briefs/<name>.assert.mjs` without matching prose. The third
+// row is the one that keeps this honest: an ad-hoc brief matching no committed
+// text must still RUN, and must record no name rather than a guessed one.
+//
+// ⚠ That third row is an INVARIANT guard, not regression coverage: it passes on
+// the pre-change driver too, which had no derivation to get wrong. The first two
+// rows are the regression ones.
+func TestDogfoodDriverPassesTheBriefName(t *testing.T) {
+	genpost := dogfoodBriefText(t, "genpost")
+	for _, tc := range []struct {
+		name      string
+		env       []string
+		wantBrief string
+		wantName  string // "" => --brief-name must NOT appear
+	}{
+		{
+			name:      "named: the text is read from the brief file",
+			env:       []string{"DOGFOOD_BRIEF_NAME=genpost"},
+			wantBrief: genpost,
+			wantName:  "genpost",
+		},
+		{
+			name:      "pasted: the name is derived from the text",
+			env:       []string{"DOGFOOD_BRIEF=" + genpost},
+			wantBrief: genpost,
+			wantName:  "genpost",
+		},
+		{
+			name:      "an ad-hoc brief still runs, and names nothing",
+			env:       []string{`DOGFOOD_BRIEF=Build a thing nobody committed a brief for.`},
+			wantBrief: `Build a thing nobody committed a brief for.`,
+			wantName:  "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			argv, code, out := runStubbedDriver(t, append(append([]string{},
+				append(tc.env, "DOGFOOD_TRIAL_PREFIX=ta")...), oneCellEnv...))
+			if code != 0 {
+				t.Fatalf("driver.sh exited %d, want 0\n%s", code, out)
+			}
+			valueOf := func(flag string) (string, bool) {
+				for i, a := range argv {
+					if a == flag {
+						if i+1 >= len(argv) {
+							t.Fatalf("%s has no value: %v", flag, argv)
+						}
+						return argv[i+1], true
+					}
+				}
+				return "", false
+			}
+			got, ok := valueOf("--brief")
+			if !ok || got != tc.wantBrief {
+				t.Fatalf("--brief = %q (present=%v), want %q: %v", got, ok, tc.wantBrief, argv)
+			}
+			gotName, hasName := valueOf("--brief-name")
+			if tc.wantName == "" {
+				if hasName {
+					t.Fatalf("an ad-hoc brief was labelled --brief-name %q — a guessed name is "+
+						"worse than none, because every later grade believes it", gotName)
+				}
+				return
+			}
+			if !hasName || gotName != tc.wantName {
+				t.Fatalf("--brief-name = %q (present=%v), want %q: %v", gotName, hasName, tc.wantName, argv)
+			}
+		})
 	}
 }
 

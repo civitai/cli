@@ -16,6 +16,11 @@
 # container, drives it with a headless browser, and its `RENDER=` + `observed=`
 # are appended to the verdict line below.
 #
+# ⚠ The brief name you pass is a REQUEST, not the brief. oracle.sh derives the
+# brief from the trial's own transcript and REFUSES (exit 2 -> RENDER=unmeasured)
+# when the two disagree, so the `render_brief=` on the verdict line below is the
+# RESOLVED name read back off the oracle, never the string handed in here.
+#
 # 🔴 OPT-IN, AND SILENT OTHERWISE, ON PURPOSE. The setup grid of 2026-09-18 was
 # graded by the two arms above and nothing else. Running a render oracle by
 # default would append fields to every already-measured cell's line and make an
@@ -152,7 +157,17 @@ if [ -n "$BRIEF" ]; then
     R_PASS=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^RENDER=//p' | head -1)
     # REPORTED, not part of the verdict — see the note in oracle.sh.
     R_SCOPES=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^scopes=//p' | head -1)
-    RENDER_FIELDS=" render_brief=$BRIEF validate_gate=${R_GATE:-unknown} scopes=${R_SCOPES:-unknown} observed=${R_OBS:-} RENDER=${R_PASS:-unreadable}"
+    # 🔴 THE BRIEF ON THE CELL IS THE ONE THE ORACLE RESOLVED, NOT THE ONE THIS
+    # SCRIPT WAS HANDED. The oracle derives the brief from the trial's own
+    # transcript and refuses on a disagreement, so labelling the cell with
+    # `$BRIEF` would be re-asserting the unverified request next to a verdict
+    # measured under the verified one.
+    R_BRIEF=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^brief=//p' | head -1)
+    R_SRC=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^brief_source=//p' | head -1)
+    # Which viewer the block was shown. A `no` graded against an anonymous
+    # viewer is a different finding from a `no` graded against a signed-in one.
+    R_VIEWER=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^viewer=//p' | head -1)
+    RENDER_FIELDS=" render_brief=${R_BRIEF:-$BRIEF} brief_source=${R_SRC:-unknown} validate_gate=${R_GATE:-unknown} scopes=${R_SCOPES:-unknown} viewer=${R_VIEWER:-unknown} observed=${R_OBS:-} RENDER=${R_PASS:-unreadable}"
   fi
 fi
 

@@ -75,10 +75,10 @@ python3 runner.py --print-task --brief "$(cat briefs/celsius.brief.txt)"
 
 # one app-build trial
 python3 runner.py --model "$MODEL" --image df-node-root --trial ab-01 \
-  --brief "$(cat briefs/celsius.brief.txt)"
+  --brief "$(cat briefs/celsius.brief.txt)" --brief-name celsius
 
 # the whole matrix as app-build trials, in their own trial-id namespace
-DOGFOOD_BRIEF="$(cat briefs/celsius.brief.txt)" DOGFOOD_TRIAL_PREFIX=ta bash driver.sh
+DOGFOOD_BRIEF_NAME=celsius DOGFOOD_TRIAL_PREFIX=ta bash driver.sh
 ```
 
 - **With no brief the task is BYTE-IDENTICAL to what it has always been** — not
@@ -98,6 +98,17 @@ DOGFOOD_BRIEF="$(cat briefs/celsius.brief.txt)" DOGFOOD_TRIAL_PREFIX=ta bash dri
   string included. A graded cell has to be traceable to the brief it was run
   with, and the trial id cannot carry that (same reason `grade.sh` reads the
   agent identity out of the container rather than out of the filename).
+- 🔴 **`brief_name` rides alongside it, on the same contract, because the PROSE
+  IS NOT AN IDENTIFIER.** The render oracle has to map a graded cell back to
+  `briefs/<name>.assert.mjs`, and from prose alone the only route is an exact
+  match against `briefs/*.brief.txt` — which stops resolving every already-run
+  trial the moment a brief file is reworded, and cannot resolve an ad-hoc brief
+  at all. `--brief-name` / `DOGFOOD_BRIEF_NAME` records it, and `driver.sh` also
+  derives it when you paste a committed brief's text, so the two cannot
+  disagree. `runner.py` refuses a name with no assertion behind it, or one whose
+  committed text is not the text being sent, **before** a container or an API
+  call exists — a mislabelled name is recorded as a fact and then believed by
+  every later grade. An ad-hoc brief still runs and simply records no name.
 - 🔴 **`driver.sh` REFUSES to run a brief under the default `t-` prefix.** Trial
   ids are `<prefix>-<model>-<env>-<identity>` and the resume guard skips any id
   whose transcript already has an `end` record — so an app matrix in the setup
@@ -113,14 +124,14 @@ reaching them.
 
 ```bash
 python3 runner.py --model "$MODEL" --image df-node-root --trial c-01 \
-  --brief "$(cat briefs/genpost.brief.txt)" \
+  --brief "$(cat briefs/genpost.brief.txt)" --brief-name genpost \
   --credential-file ~/.config/civitai/config.yaml \
   --app-prefix dogfood4- --max-generations 3 --max-submissions 1
 
 # the whole matrix, credentialed (driver.sh refuses without DOGFOOD_APP_PREFIX)
 DOGFOOD_CREDENTIAL_FILE=~/.config/civitai/config.yaml \
 DOGFOOD_APP_PREFIX=dogfood4- DOGFOOD_MAX_GENERATIONS=3 DOGFOOD_MAX_SUBMISSIONS=1 \
-DOGFOOD_BRIEF="$(cat briefs/genpost.brief.txt)" DOGFOOD_TRIAL_PREFIX=tc bash driver.sh
+DOGFOOD_BRIEF_NAME=genpost DOGFOOD_TRIAL_PREFIX=tc bash driver.sh
 ```
 
 ### 🔴 The secret does not reach the artifacts
@@ -185,15 +196,39 @@ drives it from a headless browser **on the host** (a trial image ships no
 Chromium), runs the brief's assertion, and prints one summary line.
 
 ```bash
-bash oracle.sh <trial-id> <container-user> [brief]     # default brief: celsius
+bash oracle.sh <trial-id> <container-user> [brief]     # brief DERIVED from the trial
 bash grade.sh  <trial-id> <container-user> [brief]     # setup arms + the render arm
 ```
 
 A graded cell then carries both verdicts on one line:
 
 ```
-agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius validate_gate=pass scopes=none observed=212 RENDER=yes
+agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius brief_source=transcript-name validate_gate=pass scopes=none viewer=signed-in observed=212 RENDER=yes
 ```
+
+- 🔴 **The brief is DERIVED from the trial, and the argument is only a
+  cross-check.** It used to be an optional positional defaulting to `celsius`,
+  and the cost was measured: `oracle.sh ab-genpost-mimo-01 root`, against a
+  trial built from the `genpost` brief, ran the CELSIUS assertion, timed out
+  waiting for `[data-testid="celsius"]` and printed `RENDER=no` — byte-identical
+  to the verdict a model that built nothing earns. `runner.py` records the brief
+  in the trial's `start` record (`brief` = the prose, `brief_name` = the name),
+  so `oracle.sh` reads it out of `<runs>/<trial>/transcript.jsonl` and **refuses
+  (exit 2) when an argument disagrees** rather than picking one. `brief_source=`
+  says how it was resolved: `transcript-name`, `transcript-text`,
+  `argument-unverified`, `argument-trial-recorded-no-brief`, or
+  `default-trial-recorded-no-brief` (a setup cell, which built no app). Point
+  `DOGFOOD_RUNS` at the directory the trial was driven from if it is not
+  `scripts/dogfood/runs`.
+- 🔴 **The oracle presents a SIGNED-IN viewer, reported as `viewer=`.** It used
+  to seed `viewer: null`, and an auth-gated app — the shape the CLI's own
+  `page-money` scaffold ships, `const anon = ready && !viewer` and a sign-in
+  CTA — then rendered its signed-out branch and graded `RENDER=no`. That verdict
+  was about the harness. The seeded object is byte-for-byte what civitai.com's
+  `withSignedInFlag()` emits (`{ id, username, signedIn: true }`, no `status`),
+  and the token stays empty so it buys the block no capability. Set
+  `CIVITAI_ASSERT_ANON_VIEWER=1` for the control arm, which is also how you
+  grade a block's signed-out branch deliberately.
 
 - 🔴 **`civitai app validate` is a GATE, not the verdict, and it does not even
   short-circuit.** It runs first because it is cheap and offline, and its result

@@ -74,8 +74,35 @@ FULL_CROSS="${FULL_CROSS:-0}"
 # in run_one() and in the identity loop below already exist to prevent, and the
 # only one where the skipped cells hold a DIFFERENT task. Make the operator say
 # which namespace the run lands in; there is no safe default to guess.
+#
+# 🔴 AND IT CARRIES THE BRIEF'S NAME, NOT JUST ITS TEXT. The grader has to map a
+# graded cell back to `briefs/<name>.assert.mjs`, and from prose alone the only
+# route is an exact match against `briefs/*.brief.txt` — which stops resolving
+# every already-run trial the moment a brief file is reworded. Two ways in, and
+# they cannot disagree:
+#
+#   DOGFOOD_BRIEF_NAME=genpost                      # reads briefs/genpost.brief.txt
+#   DOGFOOD_BRIEF="$(cat briefs/genpost.brief.txt)" # name derived by exact match
+#
+# An ad-hoc DOGFOOD_BRIEF matching no brief file is still allowed and still
+# runs — it simply records no name, and oracle.sh will then require the brief to
+# be named explicitly (and say that it was not verified).
 BRIEF="${DOGFOOD_BRIEF:-}"
+BRIEF_NAME="${DOGFOOD_BRIEF_NAME:-}"
 PREFIX="${DOGFOOD_TRIAL_PREFIX:-t}"
+if [ -n "$BRIEF_NAME" ] && [ -z "$BRIEF" ]; then
+  [ -f "briefs/$BRIEF_NAME.brief.txt" ] || {
+    echo "DOGFOOD_BRIEF_NAME=$BRIEF_NAME has no briefs/$BRIEF_NAME.brief.txt" >&2
+    exit 1
+  }
+  BRIEF="$(cat "briefs/$BRIEF_NAME.brief.txt")"
+fi
+if [ -z "$BRIEF_NAME" ] && [ -n "$BRIEF" ]; then
+  for f in briefs/*.brief.txt; do
+    [ -f "$f" ] || continue
+    [ "$(cat "$f")" = "$BRIEF" ] && BRIEF_NAME="$(basename "$f" .brief.txt)"
+  done
+fi
 case "$BRIEF" in
   *$'\n'*|*$'\r'*)
     echo "DOGFOOD_BRIEF must be a single line — runner.py refuses a multi-line brief" >&2
@@ -151,6 +178,7 @@ run_one() {  # model short image ienv trial user
   local args=(--model "$model" --image "$image" --trial "$trial" --user "$euser" --out runs)
   [ -n "$ienv" ] && args+=(--agent-env "$ienv")
   [ -n "$BRIEF" ] && args+=(--brief "$BRIEF")
+  [ -n "$BRIEF_NAME" ] && args+=(--brief-name "$BRIEF_NAME")
   # The credential is passed as a PATH, never as a value — see runner.py's
   # credential section for the three surfaces that keeps it off.
   [ -n "$CREDENTIAL" ] && args+=(--credential-file "$CREDENTIAL")

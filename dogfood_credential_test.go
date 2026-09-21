@@ -390,7 +390,14 @@ func TestDogfoodUncredentialedRunIsUnchanged(t *testing.T) {
 	tr := runFakeTrial(t, []string{"echo hello"}, "")
 
 	want := map[string][]string{
-		"start": {"agent_env", "brief", "container", "image", "kind", "model", "t", "trial", "user"},
+		// `brief_name` joined the `start` record with the oracle's brief-derivation
+		// fix, on exactly the contract `brief` already had: emitted
+		// UNCONDITIONALLY, empty string included, so "this run named no brief" is
+		// a POSITIVE assertion rather than an absence indistinguishable from an
+		// older runner's transcript. Additive and never read by the model, so no
+		// already-measured grid's TASK moved — that claim lives in
+		// TestDogfoodTaskDefaultIsByteIdentical, which is untouched.
+		"start": {"agent_env", "brief", "brief_name", "container", "image", "kind", "model", "t", "trial", "user"},
 		// `finish_reason` joined the `end` record deliberately, and it is the
 		// ONE key added since the setup grid was measured. It is additive and
 		// present on every `end` record, so a `jq` over a directory of old and

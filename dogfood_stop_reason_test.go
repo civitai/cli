@@ -419,22 +419,59 @@ func TestDogfoodSummaryCarriesPerTurnReasoningAndFinishReason(t *testing.T) {
 	}
 }
 
-// 🔴 A `stop` VALUE IS READ BY PEOPLE AND BY grade.sh/oracle.sh. Neither
-// grader reads the transcript at all — they measure the container — so the new
-// vocabulary cannot change how a cell grades. That is a claim about those two
-// files, so it is pinned here rather than asserted in a commit message: if a
-// future change makes either of them branch on `stop`, this goes red and the
-// grading impact has to be thought about deliberately.
+// 🔴 A `stop` VALUE IS READ BY PEOPLE, NOT BY grade.sh/oracle.sh, SO WIDENING
+// THE VOCABULARY CANNOT CHANGE HOW A CELL GRADES. That is a claim about those
+// two files, so it is pinned here rather than asserted in a commit message.
+//
+// ⚠ THIS GUARD USED TO BE "neither grader reads transcript.jsonl at all", AND
+// THAT IS NO LONGER TRUE — deliberately. oracle.sh reads the `start` record to
+// derive WHICH BRIEF a trial was run with (see its "WHICH BRIEF" section): the
+// old `${3:-celsius}` default graded a `genpost` trial against the `celsius`
+// assertion and printed the same `RENDER=no` a model that built nothing earns.
+// It fired here first, which is what this guard is for; the claim was then
+// narrowed to the one its name makes rather than deleted.
+//
+// Three halves, and each covers a route the others do not:
+//   - no grader mentions a `stop` VALUE, so none can compare against a literal;
+//   - no grader selects the `end` record, where every `stop` value lives — that
+//     covers a grader that read one into a variable and compared indirectly;
+//   - oracle.sh's one transcript read IS the `start` record, which is what makes
+//     the second bullet a structural property and not a spelling.
 func TestGradersDoNotReadTheStopVocabulary(t *testing.T) {
+	// Deliberately NOT the bare word "finished": grade.sh's own header says
+	// "Grade one finished trial", which is English rather than a `stop` value.
+	vocab := []string{"truncated", "empty-reply", "stopped-unknown", "max-steps", "finish_reason"}
+	src := map[string]string{}
 	for _, name := range []string{"grade.sh", "oracle.sh"} {
-		src, err := os.ReadFile(filepath.Join(dogfoodDir, name))
+		raw, err := os.ReadFile(filepath.Join(dogfoodDir, name))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(src), "transcript.jsonl") {
-			t.Fatalf("%s now reads the transcript. The `stop` vocabulary widened "+
-				"(finished / truncated / empty-reply / stopped-unknown:*) — check what that "+
-				"does to a cell's grade before deleting this guard.", name)
+		src[name] = string(raw)
+		for _, v := range vocab {
+			if strings.Contains(src[name], v) {
+				t.Errorf("%s mentions the `stop` value %q. The vocabulary widened "+
+					"(finished / truncated / empty-reply / stopped-unknown:*) — check what a "+
+					"grader branching on it does to a cell before keeping this.", name, v)
+			}
 		}
+		for _, sel := range []string{`kind=="end"`, `"kind": "end"`, `.stop`} {
+			if strings.Contains(src[name], sel) {
+				t.Errorf("%s selects the transcript's `end` record (%q), which is where every "+
+					"`stop` value lives. A grader must score the CONTAINER, not what the model "+
+					"said about itself.", name, sel)
+			}
+		}
+	}
+	if strings.Contains(src["grade.sh"], "transcript.jsonl") {
+		t.Errorf("grade.sh now reads the transcript. Only oracle.sh does, and only the `start` " +
+			"record — see the note above this test.")
+	}
+	// The positive half. Without it the `end`-selector ban above is a claim
+	// about spelling: a grader that streamed the whole file would pass it.
+	if !strings.Contains(src["oracle.sh"], `select(.kind=="start")`) {
+		t.Errorf("oracle.sh no longer reads the transcript by selecting the `start` record. " +
+			"Whatever it reads instead may reach the `stop` vocabulary, which this guard can " +
+			"no longer rule out.")
 	}
 }

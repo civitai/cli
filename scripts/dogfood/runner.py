@@ -588,6 +588,24 @@ def main() -> int:
                     help="one-line app brief, appended to the hosted URL as the "
                          "second paragraph of the task. Omitted or empty => the "
                          "task is byte-identical to a setup trial.")
+    # 🔴 THE BRIEF'S NAME, BECAUSE ITS PROSE IS NOT AN IDENTIFIER. `--brief`
+    # records the brief's TEXT, which is the only thing the model sees and the
+    # only thing worth pinning for reproducibility — but a grader has to map
+    # that text back to `briefs/<name>.assert.mjs`, and the only way to do that
+    # from prose is an exact string match against `briefs/*.brief.txt`. That
+    # match stops resolving EVERY already-run trial the moment anyone rewords a
+    # brief file, and it cannot resolve an ad-hoc brief at all. Recording the
+    # name makes the mapping a fact about the run instead of a re-derivation.
+    # oracle.sh prefers it and falls back to the prose match for trials run
+    # before this field existed.
+    ap.add_argument("--brief-name", default="",
+                    help="the name of the brief --brief holds, e.g. `genpost`. "
+                         "Recorded in the transcript's `start` record so a "
+                         "grader can resolve briefs/<name>.assert.mjs without "
+                         "matching prose. Must name an existing "
+                         "briefs/<name>.assert.mjs, and when "
+                         "briefs/<name>.brief.txt exists its text must equal "
+                         "--brief.")
     ap.add_argument("--print-task", action="store_true",
                     help="print the exact user message this invocation would send "
                          "and exit. Starts no container, calls no API, spends "
@@ -672,6 +690,23 @@ def main() -> int:
         ap.error("--brief must be a single line (got an embedded newline). The "
                  "brief is operator-typed text, not a file — piping a file in is "
                  "how repo content reaches a blind trial.")
+
+    # 🔴 VALIDATED HERE, BEFORE A CONTAINER OR AN API CALL EXISTS. A
+    # `--brief-name` that names nothing, or that names a brief whose committed
+    # text is not the text being sent, would be recorded as a fact and then
+    # believed by every later grade — the cheapest possible moment to catch it
+    # is now, and the most expensive is after a paid matrix has run.
+    if a.brief_name:
+        briefs = pathlib.Path(__file__).resolve().parent / "briefs"
+        if not (briefs / f"{a.brief_name}.assert.mjs").is_file():
+            ap.error(f"--brief-name {a.brief_name!r} has no assertion at "
+                     f"{briefs}/{a.brief_name}.assert.mjs — a grader would "
+                     f"resolve this trial to a brief it cannot run.")
+        text_file = briefs / f"{a.brief_name}.brief.txt"
+        if text_file.is_file() and text_file.read_text().strip() != a.brief.strip():
+            ap.error(f"--brief-name {a.brief_name!r} disagrees with --brief: "
+                     f"{text_file} holds different text. Recording the name "
+                     f"anyway would mislabel every cell of this matrix.")
 
     if a.print_task:
         # Exactly the bytes task() produced, with nothing appended — so a diff
@@ -760,8 +795,17 @@ def main() -> int:
     # That makes absence the signal for "no credential", which is weaker than
     # the positive assertion `brief` gets; the key set is pinned on both sides by
     # TestDogfoodUncredentialedStartRecordIsUnchanged.
+    #
+    # 🔴 `brief_name` RIDES ALONGSIDE, UNCONDITIONALLY, FOR THE SAME REASON. It
+    # is the empty string on a setup trial and on any ad-hoc brief, which is a
+    # POSITIVE "this run named no brief" rather than an absence indistinguishable
+    # from an older runner's transcript. It exists because the brief's PROSE is
+    # not an identifier: a grader mapping text back to
+    # `briefs/<name>.assert.mjs` can only do so by exact match, and that match
+    # breaks for every already-run trial the moment a brief file is reworded.
     start = dict(trial=a.trial, model=a.model, image=a.image, user=a.user,
-                 agent_env=a.agent_env, brief=a.brief, container=container)
+                 agent_env=a.agent_env, brief=a.brief, brief_name=a.brief_name,
+                 container=container)
     if a.credential_file:
         # 🔴 A MARKER, NEVER THE VALUE. A sha256 prefix is not reversible and is
         # not a substring of the token; it exists so two runs can be told apart
