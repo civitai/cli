@@ -3,6 +3,7 @@
 //
 //   node celsius.assert.mjs <dir>            # serves the dir, drives it, grades it
 //   node celsius.assert.mjs http://host:port # grades something already served
+//   node celsius.assert.mjs <dir|url> a,b    # …presenting the scopes `a` and `b`
 //
 // Prints one JSON line and exits 0 (pass) or 1 (fail). This is the PREDICATE,
 // not the render oracle: it drives a block that is already built and reachable.
@@ -16,13 +17,19 @@
 // that file's header for the reasoning; it is load-bearing and is not repeated
 // here.
 
-import { launch, cdp, openPage, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, labelExpr } from './_cdp.mjs';
+import { launch, cdp, openPage, parseScopes, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, labelExpr } from './_cdp.mjs';
 
 const TARGET = process.argv[2];
 if (!TARGET) {
-  console.error('usage: celsius.assert.mjs <dir|url>');
+  console.error('usage: celsius.assert.mjs <dir|url> [scope,scope,…]');
   process.exit(2);
 }
+// The block's OWN declared scopes, read out of its `block.manifest.json` by
+// `oracle.sh` and handed down here rather than re-parsed. Absent = `[]`, which
+// is what a hand-run assertion grades and what this file graded before the
+// argument existed. See `hostBootstrap` in `_cdp.mjs` for why an empty list is
+// not a neutral default.
+const SCOPES = parseScopes(process.argv[3]);
 // Named rather than left to fail as `WebSocket is not defined` three frames
 // deep: the global landed in node 22, and a trial image is free to ship an
 // older one.
@@ -51,13 +58,14 @@ async function main() {
   const evidence = {
     target: TARGET, url, input: INPUT_C, expected: EXPECT_F,
     hostInit: SEND_HOST_INIT, hostViewer: HOST_VIEWER_LABEL,
+    hostScopes: SCOPES.join(',') || 'none',
   };
   let pass = false;
   let reason = null;
   let page = null;
 
   try {
-    page = await openPage(c, url);
+    page = await openPage(c, url, { scopes: SCOPES });
 
     // ── step 1: the input exists ─────────────────────────────────────────────
     await page.waitFor(`!!document.querySelector('${SEL_IN}')`, `${SEL_IN} to appear`);

@@ -297,12 +297,28 @@ carrying both controls: it fails a binary that exits 3 without printing (so it
 can still go red) and it fails the job by name if the resolved browser cannot
 bind a debugging port, instead of that surfacing eighty lines into a Go test.
 
-- 🔴 **`scopes=` is REPORTED and decides nothing**, exactly like the validate
-  gate. A manifest is a declaration, not a behaviour — a block can declare
-  `posts:write:self` and post nothing, and the platform grants scopes at review
-  rather than at manifest time. It is on the cell because a generate-then-post
-  app declaring only `ai:write:budgeted` is worth seeing next to the render
-  verdict. Pinned in both directions by `TestOracleReportsScopesWithoutDeciding`.
+- 🔴 **`scopes=` decides no verdict**, exactly like the validate gate. A manifest
+  is a declaration, not a behaviour — a block can declare `posts:write:self` and
+  post nothing, and the platform grants scopes at review rather than at manifest
+  time. It is on the cell because a generate-then-post app declaring only
+  `ai:write:budgeted` is worth seeing next to the render verdict. Pinned in both
+  directions by `TestOracleReportsScopesWithoutDeciding`.
+- 🔴 **…but it is not inert: the same list is SEEDED as the bootstrap's
+  `token.scopes`, and an empty list was never the neutral default.** The oracle
+  seeded `scopes: []` unconditionally until 2026-09-21. Measured on
+  `ab-genpost-dsv4-01`: a correct generate-then-post app whose Generate handler
+  reads `hasBudgetedScope(token.scopes)` and asks the host for consent when that
+  is false never reached `generating`, and the cell read `RENDER=no
+  observed=ready` — the verdict a model that built nothing earns, about the
+  harness. An empty list grades the **refused** branch, rewarding an app that
+  flips a status optimistically over one that checks consent first. `oracle.sh`
+  reads the manifest once and hands the list to the assertion as an argument;
+  `token.raw` stays `''`, so scopes buy a *branch* and never a *capability*, and
+  a disagreement between the cell's `scopes=` and the list the assertion reports
+  seeding is exit 2 (nothing measured). Four-arm measurement and the shippability
+  control — an untouched `page-money` scaffold still grades `no` with both scopes
+  seeded — in `briefs/genpost.md`; pinned by
+  `TestOracleSeedsTheBlocksDeclaredScopes`.
 
 ### The briefs
 

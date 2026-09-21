@@ -32,7 +32,10 @@
 // host pushes never arrive. So a block that AWAITS a host reply — a real
 // generation, a real post — never gets one here. Every assertion in this
 // directory must be satisfiable WITHOUT a host round-trip, and must say so in
-// its own doc. A green cell is never evidence that the money path works.
+// its own doc. A green cell is never evidence that the money path works. That
+// holds with the block's declared scopes seeded (see `hostBootstrap`): the
+// scope list picks a BRANCH, `token.raw` would be the CAPABILITY, and it stays
+// empty.
 //
 // 🔴 AND IT PRESENTS A SIGNED-IN VIEWER, BECAUSE AN ANONYMOUS-ONLY HOST GRADES
 // A BRANCH THE BRIEF CANNOT BE SATISFIED IN. This used to seed `viewer: null`
@@ -150,16 +153,34 @@ export const ANON_VIEWER = process.env.CIVITAI_ASSERT_ANON_VIEWER === '1';
  *     reason that is about the model.
  *
  * ⚠ IT BUYS THE BLOCK NO CAPABILITY, AND THAT IS CHECKED, NOT ASSUMED. The
- * token below stays `{ raw: '', scopes: [] }`, and on the platform every
- * privileged path re-derives identity from the JWT `sub` rather than from
- * anything the block was handed — so a populated `viewer` cannot make a
- * generation or a post appear to succeed. `InlineTransport.sendRequest`
- * rejects unconditionally anyway. `fxGenpostBootstrapProbe` in
- * dogfood_oracle_test.go asserts the seeded object from inside the page.
+ * token below stays `raw: ''`, and on the platform every privileged path
+ * re-derives identity from the JWT `sub` rather than from anything the block was
+ * handed — so a populated `viewer` cannot make a generation or a post appear to
+ * succeed. `InlineTransport.sendRequest` rejects unconditionally anyway.
+ * `fxGenpostBootstrapProbe` in dogfood_oracle_test.go asserts the seeded object
+ * from inside the page. The scope LIST is not empty any more — see
+ * `hostBootstrap` — and that changes which branch a block takes, never what it
+ * can complete.
  */
 export const HOST_VIEWER = ANON_VIEWER
   ? null
   : { id: 2, username: 'dogfood-oracle-viewer', signedIn: true };
+
+/**
+ * Parse the comma-separated scope list an assertion was handed into the array
+ * `token.scopes` is. Empty, absent or all-whitespace means "this block declared
+ * none", which is `[]` — the same value the oracle renders as `scopes=none`.
+ *
+ * 🔴 ONE PARSER, AND IT IS NOT THIS ONE. The authoritative read of a block's
+ * declared scopes is `oracle.sh`'s single `jq` over the trial's own
+ * `block.manifest.json`; this only turns the string that read produced back into
+ * a list. Adding a second manifest parser here would give the cell's `scopes=`
+ * field and the block's `token.scopes` two independent sources that can disagree
+ * without anything noticing.
+ */
+export function parseScopes(csv) {
+  return String(csv ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+}
 
 /**
  * The inline bootstrap a host injects on its own document. Field names and
@@ -167,10 +188,39 @@ export const HOST_VIEWER = ANON_VIEWER
  * this object to the same `snapshotFromInit()` the iframe path uses — a missing
  * field surfaces as `undefined` inside the block, not as an error here.
  *
- * The CREDENTIAL half is deliberately inert: no real token, an empty scope
- * list. A block that tries to spend with it gets a rejected request, which is
- * the correct outcome for a grading run. The VIEWER half is not inert and must
- * not be — see `HOST_VIEWER`.
+ * 🔴 THE SCOPE LIST IS THE BLOCK'S OWN MANIFEST'S, NOT AN EMPTY ONE, AND THAT
+ * CHANGE HAS A MEASUREMENT BEHIND IT. This used to seed `scopes: []`
+ * unconditionally, with a comment calling the whole credential half "deliberately
+ * inert". The cost was measured on `ab-genpost-dsv4-01` (2026-09-21): a correct
+ * generate-then-post app whose Generate handler reads
+ * `hasBudgetedScope(token.scopes)` and, when it is false, asks the host for
+ * consent *instead of* generating — the consent-first shape the SDK's own
+ * `useRequestConsent` exists for — never reached `setStatus('generating')`, so
+ * the assertion timed out and the cell read `RENDER=no observed=ready`. That
+ * verdict was about the harness's scope list. One knob, four arms, same
+ * containers:
+ *
+ *     deepseek, scopes []                          RENDER=no   observed=ready
+ *     deepseek, scopes from its manifest           RENDER=yes  observed=ready>generating>ready
+ *     unmodified page-money scaffold, seeded       RENDER=no   (the arm that decides
+ *                                                   shippability: seeding is not
+ *                                                   permissiveness)
+ *     mimo (positive control), seeded              RENDER=yes  observed=ready>generating>ready
+ *
+ * An empty list does not grade a neutral branch — it grades the *refused* one,
+ * rewarding an app that flips a status optimistically and penalising one that
+ * checks consent first. Seeding what the manifest declares grades the branch the
+ * platform would put the block on, because the platform's own grant is derived
+ * from that same declaration at review time.
+ *
+ * 🔴 `raw` STAYS EMPTY, AND THAT IS THE LOAD-BEARING HALF. Scopes buy the block
+ * a BRANCH, never a CAPABILITY: `InlineTransport.sendRequest` rejects
+ * unconditionally whatever the scope list says, so briefs/genpost.md's premise —
+ * no generation and no post can complete here, on any machine — is untouched. A
+ * bootstrap carrying a real `raw` would make a green cell earnable with a
+ * credential the oracle handed over, which is a different and much worse
+ * instrument. `fxGenpostBootstrapProbe` in dogfood_oracle_test.go asserts BOTH
+ * halves from inside the page: the scopes match the manifest, and `raw` is `''`.
  *
  * `context.viewerUserId` / `viewerUsername` track `HOST_VIEWER` rather than
  * being hardcoded: on the page slot the host sends the viewer's identity
@@ -178,25 +228,27 @@ export const HOST_VIEWER = ANON_VIEWER
  * model-slot allowlist that drops them), so a block is free to gate on either,
  * and a bootstrap where the two disagree is a state no host produces.
  */
-export const HOST_BOOTSTRAP = {
-  blockInstanceId: 'dogfood-oracle-instance',
-  blockId: 'dogfood-oracle-block',
-  appId: 'dogfood-oracle-app',
-  token: { raw: '', scopes: [], expiresAt: new Date(0).toISOString() },
-  context: {
-    slotId: 'app.page',
-    entityType: 'none',
-    slug: 'dogfood-oracle-block',
-    subPath: '',
-    viewerUserId: HOST_VIEWER ? HOST_VIEWER.id : null,
-    viewerUsername: HOST_VIEWER ? HOST_VIEWER.username : null,
+export function hostBootstrap(scopes = []) {
+  return {
+    blockInstanceId: 'dogfood-oracle-instance',
+    blockId: 'dogfood-oracle-block',
+    appId: 'dogfood-oracle-app',
+    token: { raw: '', scopes: [...scopes], expiresAt: new Date(0).toISOString() },
+    context: {
+      slotId: 'app.page',
+      entityType: 'none',
+      slug: 'dogfood-oracle-block',
+      subPath: '',
+      viewerUserId: HOST_VIEWER ? HOST_VIEWER.id : null,
+      viewerUsername: HOST_VIEWER ? HOST_VIEWER.username : null,
+      theme: 'light',
+    },
+    settings: { publisherSettings: {}, userSettings: {} },
+    viewer: HOST_VIEWER,
     theme: 'light',
-  },
-  settings: { publisherSettings: {}, userSettings: {} },
-  viewer: HOST_VIEWER,
-  theme: 'light',
-  renderMode: 'iframe',
-};
+    renderMode: 'iframe',
+  };
+}
 
 export const SEND_HOST_INIT = process.env.CIVITAI_ASSERT_NO_HOST !== '1';
 
@@ -464,20 +516,26 @@ export async function resolveTarget(target) {
  * Open a page, seeding the host bootstrap ahead of the document's first script,
  * and return the helpers every assertion in this directory needs.
  *
+ * `scopes` is the block's own declared scope list, handed down from `oracle.sh`
+ * (which reads it out of the trial's `block.manifest.json`). It defaults to `[]`
+ * — a hand-run `node briefs/<brief>.assert.mjs <dir>` with no scope argument
+ * grades the no-scope branch, which is what it graded before this parameter
+ * existed.
+ *
  * 🔴 `Page.addScriptToEvaluateOnNewDocument` BEFORE `Page.navigate`, never a
  * `Runtime.evaluate` after the load. The block's bundle calls `getTransport()`
  * on its first module evaluation and the transport is a process-wide singleton
  * whose FIRST construction wins, so a global set even one tick late is read by
  * nothing. This CDP method runs its source before any script in the document.
  */
-export async function openPage(c, url) {
+export async function openPage(c, url, { scopes = [] } = {}) {
   const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
   await c.send('Page.enable', {}, sessionId);
   await c.send('Runtime.enable', {}, sessionId);
   if (SEND_HOST_INIT) {
     await c.send('Page.addScriptToEvaluateOnNewDocument', {
-      source: `window.__CIVITAI_BLOCK_CONTEXT__ = ${JSON.stringify(HOST_BOOTSTRAP)};`,
+      source: `window.__CIVITAI_BLOCK_CONTEXT__ = ${JSON.stringify(hostBootstrap(scopes))};`,
     }, sessionId);
   }
   await c.send('Page.navigate', { url }, sessionId);

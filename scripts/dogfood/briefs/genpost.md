@@ -83,12 +83,14 @@ Three reasons the signed-in branch is the right one to grade, in order of weight
    `createLiveHost` (whose anonymous viewer is a *fallback*), and this repo's own
    page-money harness, where `?viewer=anon` is the knob you add.
 
-⚠ **It buys the block nothing.** The seeded token stays `{ raw: '', scopes: [] }`,
-and on the platform every privileged path re-derives identity from the JWT `sub`
-rather than from anything the block was handed — so a populated `viewer` cannot
-make a generation or a post appear to succeed. `InlineTransport.sendRequest`
-rejects unconditionally regardless. `TestOracleSeedsTheProductionViewerAndNoCredential`
+⚠ **It buys the block nothing.** The seeded token stays `raw: ''`, and on the
+platform every privileged path re-derives identity from the JWT `sub` rather than
+from anything the block was handed — so a populated `viewer` cannot make a
+generation or a post appear to succeed. `InlineTransport.sendRequest` rejects
+unconditionally regardless. `TestOracleSeedsTheProductionViewerAndNoCredential`
 asserts the seeded object from inside the page rather than by reading the source.
+The scope list is *not* empty — see **Scopes are seeded, and decide no verdict**
+below — and that changes which branch a block takes, never what it can complete.
 
 **The control arm is `CIVITAI_ASSERT_ANON_VIEWER=1`**, which is also how to grade
 a block's signed-out branch on purpose. Measured both ways on
@@ -96,8 +98,15 @@ a block's signed-out branch on purpose. Measured both ways on
 
 | viewer | `RENDER` | `observed` |
 |---|---|---|
-| signed-in (the default) | **yes** | `ready>generating` |
+| signed-in (the default) | **yes** | `ready>generating>ready` |
 | `CIVITAI_ASSERT_ANON_VIEWER=1` | no | `ready` (body: *"Please sign in to generate images."*) |
+
+⚠ **That `observed` string lengthened when the scope seed landed** — it read
+`ready>generating` while the oracle seeded an empty scope list. With `mimo`'s
+declared scopes presented, consent is already granted, so the app reaches the
+submit, the stub transport rejects it, and the machine settles back on `ready`.
+The verdict is `seq.includes('generating')`, so it is unaffected. Re-measured
+2026-09-21 on `ab-genpost-mimo-01`.
 
 ⚠ The brief says nothing about anonymity, so a `no` under the control arm is not
 a finding about the model — it is the branch the harness selected. The cell
@@ -199,24 +208,69 @@ even if the ids had matched.
 the whole reason the frozen closing condition refuses it as the verdict; it stays
 the cheap offline fail-fast gate, reported as `validate_gate=`.
 
-### Scopes are REPORTED, never the verdict
+### Scopes are seeded, and decide no verdict
 
-`oracle.sh` reads `scopes` out of the trial's `block.manifest.json` and puts them
-on the cell as `scopes=`. **It decides nothing** — same standing as
-`validate_gate=`. A manifest is a declaration, not a behaviour: a block can
-declare `posts:write:self` and post nothing, and the platform grants scopes at
-review, not at manifest time. It is on the cell because a generate-then-post app
-that declares only `ai:write:budgeted` is a finding worth seeing next to the
-render verdict, not because it grades anything.
+`oracle.sh` reads `scopes` out of the trial's `block.manifest.json` with one
+`jq`, puts them on the cell as `scopes=`, and hands the same list to the
+assertion, which seeds it as the bootstrap's `token.scopes`. **It decides no
+verdict** — same standing as `validate_gate=`. A manifest is a declaration, not a
+behaviour: a block can declare `posts:write:self` and post nothing, and the
+platform grants scopes at review, not at manifest time.
+`TestOracleReportsScopesWithoutDeciding` pins both directions — a manifest
+declaring nothing can still grade `yes`, one declaring both can still grade `no`.
+
+🔴 **But it is not inert, and an empty list was never the neutral choice.** The
+oracle seeded `scopes: []` unconditionally until 2026-09-21, and the cost was
+measured on `ab-genpost-dsv4-01`: a correct generate-then-post app whose Generate
+handler reads `hasBudgetedScope(token.scopes)` and, when that is false, asks the
+host for consent *instead of* generating — the consent-first shape the SDK's own
+`useRequestConsent` exists for — never reached `setStatus('generating')`. The
+assertion timed out and the cell read `RENDER=no observed=ready`, which is
+byte-identical to the verdict a model that built nothing earns. An empty list
+does not grade a neutral branch; it grades the **refused** one, rewarding an app
+that flips a status optimistically and penalising one that checks consent first.
+
+One knob (`token.scopes`), four arms, same oracle build, same containers,
+2026-09-21:
+
+| arm | scopes | `RENDER` | `observed` |
+|---|---|---|---|
+| `dsv4` (deepseek) | empty | no | `ready` |
+| `dsv4` | `ai:write:budgeted,posts:write:self` | **yes** | `ready>generating>ready` |
+| `glm` — unmodified `page-money` scaffold (negative control) | `ai:write:budgeted` (its own manifest's) | **no** | `''` |
+| `mimo` (positive control) | seeded | yes | `ready>generating>ready` |
+
+🔴 **The third row is the one that decides shippability**: seeding scopes is not
+permissiveness. `TestOracleSeedsTheBlocksDeclaredScopes` carries all of it — the
+consent-gated app graded `yes`, the *same* app under a manifest declaring nothing
+graded `no` (so the value provably comes from the manifest and not from a list
+baked into the harness), and a generate-only app plus an untouched scaffold still
+graded `no` with both scopes seeded.
+
+🔴 **`raw` stays empty, and that is the load-bearing half.** Scopes buy the block
+a *branch*, never a *capability*: `InlineTransport.sendRequest` rejects
+unconditionally whatever the scope list says, so this brief's "no generation and
+no post can complete here" premise is untouched.
+`TestOracleSeedsTheProductionViewerAndNoCredential` asserts both halves from
+inside the page — the scopes match the manifest, and `token.raw` is `''` — and
+`oracle.sh` refuses (exit 2) if its own `scopes=` field and the list the
+assertion reports having seeded ever disagree.
 
 ## Run it
 
 ```bash
 node briefs/genpost.assert.mjs <dir>              # serves the dir and grades it
 node briefs/genpost.assert.mjs http://host:port   # grades something already served
+node briefs/genpost.assert.mjs <dir> a:b,c:d      # …presenting the scopes a:b and c:d
 bash oracle.sh <trial-id> <container-user>        # brief DERIVED from the trial
 bash grade.sh  <trial-id> <container-user> genpost
 ```
+
+⚠ **A hand-run assertion presents NO scopes unless you pass them.** Only
+`oracle.sh` knows the block's manifest; run by hand against a directory, the
+second argument is the only thing that can tell the assertion what the block
+declared, and without it a consent-gated app grades `no` for a reason that is
+about the invocation. Prefer `oracle.sh`, which derives it.
 
 🔴 **`oracle.sh` derives the brief from the trial's own transcript** and refuses
 (exit 2) when a name you pass disagrees with it — the `genpost` argument above
