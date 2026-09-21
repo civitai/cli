@@ -33,73 +33,69 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-🔴 **BOTH BLOCKING PRs ARE MERGED AND `main` IS GREEN.** `#688` → **`ef411fa`** (pins
-`^0.48.0`/`^0.55.0` → `^0.49.0`/`^0.56.0`, 13/13), then `#687` rebased onto it →
-**`3ffebca`** (13/13, `pins-vs-published` flipped to success). `main` at `3ffebca`:
-**12 checks, 0 non-success.** The state that made every PR look unmergeable is gone.
-
-🔴 **THE THIRD CHEAP CELL RAN — AND ITS `RENDER=no` IS AN INSTRUMENT VERDICT, NOT A MODEL
-VERDICT. DO NOT RECORD DEEPSEEK AS A FAILURE.** `deepseek/deepseek-v4-pro`, blind, identity
-`other`, **50 steps**, `stop=finished` / `finish_reason=stop`, **$0.1859**:
+🔴 **TWO OF THE THREE CHEAP MODELS BUILT A PASSING APP. `deepseek-v4-pro` PASSES — its
+earlier `RENDER=no` was the ORACLE, and that is now MEASURED, not theorised.**
 
 ```
-brief=genpost brief_source=transcript-name gate=pass gate_rc=0
-scopes=ai:write:budgeted,posts:write:self viewer=signed-in
-app_dir=/work/ab-prompt-to-post observed=ready RENDER=no
-render_reason=timed out after 15000ms waiting for the status to leave "ready"
+ab-genpost-dsv4-01  scopes seeded → observed=ready>generating>ready RENDER=yes
+ab-genpost-dsv4-01  scopes empty  → observed=ready                 RENDER=no
 ```
 
-**The app is brief-compliant and the assertion is what refuses it.** Chain, each link
-measured: `_cdp.mjs` seeds the host token as **`{ raw: '', scopes: [] }`** deliberately
-(*"it buys the block no capability"*); deepseek's `App.tsx:41` computes
-`const granted = hasBudgetedScope(token.scopes)` → **false**; its `handleGenerate`
-(`:157-172`) therefore takes `if (!granted) { requestConsent(...); return; }` and **never
-calls `doGenerate()`**, so `setStatus('generating')` at `:114` never runs. The brief asks
-for `generating` *"while a generation is in flight"* — **no generation is ever in flight**,
-so holding `ready` satisfies the brief's letter. 🔴 **mimo passed only because it sets
-`setStatus('generating')` BEFORE `await requestConsent()`** (`App.tsx:115` then `:120`).
-**The assertion therefore rewards setting a UI status optimistically before the app knows
-it may generate, and penalises the app that checks first.**
+Four arms, all clean — the negative control is what makes this a safe reading rather than a
+convenient one:
 
-🔴 **This was established, not inferred — and the first probe returned a reassuring zero.**
-An old-value harvest added to the recorder returned `replacedValues=[]` on deepseek, which
-is indistinguishable from a probe wired to nothing; the same probe on **mimo** returned a
-**non-empty** list, proving the harvest works. Zero DOM mutations across the full 15 s is
-what sent the search to the click handler rather than to a batched transient.
+| arm | token scopes | verdict |
+|---|---|---|
+| `deepseek` | empty (today's shipped oracle) | `RENDER=no observed=ready` |
+| **`deepseek`** | **seeded** | **`RENDER=yes observed=ready>generating>ready`** |
+| `glm` — unmodified `page-money` scaffold, the NEGATIVE control | seeded | **`RENDER=no`** ✓ still fails |
+| `mimo` — the POSITIVE control | seeded | `RENDER=yes` ✓ unchanged |
 
-- **So the matrix is 2 GRADEABLE CELLS + 1 UNGRADEABLE**, not 2 pass / 1 fail:
-  `mimo` **PASS**, `glm` **FAIL-explained** (never wrote code; truncation mislabelled
-  `finished`), `deepseek` **UNGRADEABLE — the oracle cannot present a consent grant.**
-- 🔴 **OPERATOR DECISION 2026-09-21: NO FRONTIER CONTROL.** The frozen condition says
-  *"across the three cheap models, **with a frontier control**"*, so the control arm is
-  **dropped by decision, not pending**. Combined with the line above, the frozen condition
-  is **NOT met**: 1 clean pass, 1 explained fail, 1 ungradeable, 0 control.
-  **Never report it as met.**
-- 🔴 **ACCOUNT UNCHANGED, verified from the account and not from a report.** Buzz
-  **4,101,822 → 4,101,822** (delta **0**), the `app list` table **byte-identical** to the
-  pre-run capture, **no `ab-*` listing**, `gen=0 sub=0` on every command. The run carried
-  `--max-submissions 1` (operator permitted one) and used none. ⚠ `civitai app create`
-  **scaffolds locally and creates no listing** — do not read step 11's
-  `app create ab-prompt-to-post` as an account mutation.
-- ✅ **THE PREFIX CAP WAS WATCHED TO REFUSE, in-run:** step 10
-  `civitai app create prompt-to-post` → **`verdict=refused`**; step 11 with the `ab-`
-  prefix → `verdict=run`. A mechanical cap going red on a real command, which is stronger
-  evidence than any test of it.
-- ✅ **Both specimens re-graded on the post-`#687` oracle this session** —
-  `ab-genpost-mimo-01` `observed=ready>generating RENDER=yes`, `ab-genpost-glm-01`
-  `gate=pass … RENDER=no`. Both launched `attempt 1 of 2`, **no retry**, so `#687`'s own
-  "still sick" signal did not fire.
+**So seeding scopes does not buy a bad app a pass, and does not change a good app's
+verdict.** It removes exactly one thing: a branch production never exhibits.
+
+🔴 **THE CHEAP ARM OF THE MATRIX, FINAL:** `mimo` **PASS** · `deepseek` **PASS** ·
+`glm` **FAIL, explained** (wrote zero code in 66 steps; its `finished` was a truncation).
+**2 of 3 cheap models can build an App Block from the hosted prompt plus one line of brief.**
+
+🔴 **AND THE FROZEN CONDITION IS STILL NOT MET — do not round this up.** It reads *"Graded
+per cell across the three cheap models, **with a frontier control**"*. The control arm was
+**dropped by operator decision** on 2026-09-21, and the deepseek pass currently exists only
+under a **probe patch in a throwaway worktree** — the shipped oracle still grades it `no`.
+**Two things stand between this and a closeable condition: rank 10 (ship the fix) and a
+decision on whether a condition written with a control arm may close without one.**
+
+- 🔴 **OPERATOR DECISION 2026-09-21: NO FRONTIER CONTROL.** The frozen condition names one
+  (*"with a frontier control"*), so the control arm is **dropped by decision, not
+  pending** — re-opening it is one trial. Carried verbatim because a later session reading
+  "2 of 3 PASS" will otherwise assume the control is merely outstanding.
+- ✅ **Both blocking PRs merged, `main` green.** `#688` → **`ef411fa`** (pins
+  `^0.48.0`/`^0.55.0` → `^0.49.0`/`^0.56.0`), then `#687` rebased onto it → **`3ffebca`**.
+  `main` at `3ffebca`: **12 checks, 0 non-success.**
+- **The deepseek cell:** blind, identity `other`, `df-node-root`, **50 steps**,
+  `stop=finished` / `finish_reason=stop`, **$0.1859**, `gate=pass`, manifest declaring
+  `ai:write:budgeted,posts:write:self`, app at `/work/ab-prompt-to-post`.
+- 🔴 **ACCOUNT UNCHANGED, verified from the account.** Buzz **4,101,822 → 4,101,822**
+  (delta **0**), `app list` **byte-identical**, **no `ab-*` listing**, `gen=0 sub=0`. The
+  run carried `--max-submissions 1` (operator permitted one) and used none. ⚠ `civitai app
+  create` **scaffolds locally and creates no listing** — step 11's `app create ab-…` is not
+  an account mutation.
+- ✅ **The prefix cap was WATCHED TO REFUSE, in-run:** step 10 `civitai app create
+  prompt-to-post` → **`verdict=refused`**; step 11 with the `ab-` prefix → `verdict=run`.
+- 🔴 **EVIDENCE SECURED OUT OF THE WORKTREE:**
+  **`~/.cache/dogfood-runs-2026-09-21/ab-genpost-dsv4-01/`** (1 `end` record, 50 commands),
+  because `runs/` inside a worktree is one `git worktree remove` from gone — which already
+  destroyed `ab-curve-01`'s transcript.
 - ⚠ **No `clawgate-task:` field** — `clawgate_handoff.sh resolve` exited **5**. An unknown
   session id answers 200 with an empty array, so that zero cannot distinguish "touched no
   task" from "wrong id". Not a clean bill of health.
-- **Claims:** none taken — rank 6 was worked under an explicit operator instruction naming
-  it, not drawn from the queue.
+- **Claims:** none taken.
 
 ### Carried forward — durable values a `State now` replace would otherwise eat
 
 🔴 **RANK 3'S TABLE, kept because an appended block points AT it** ("✅ ANSWERED 2026-09-21
 — the harness CAN carry an app-build task" says *"see the State-now table"*). This is the
-**fourth** update in which deleting it would have left that pointer dangling:
+**fifth** update in which deleting it would have left that pointer dangling:
 
 | | measured | cap set |
 |---|---|---|
@@ -114,8 +110,7 @@ Green 947,618 · Yellow 1,849,047 · TOTAL 4,101,822**; **13** listings. Spend i
 DELTA against this, never from an agent's report. Re-confirmed unchanged after the third
 credentialed trial, 2026-09-21.
 
-**Per-cell cost, now three points rather than two** — the frontier estimate was for
-`gemini-3.8-flash` and deepseek is NOT cheap at app-build length:
+**Per-cell cost — four points now:**
 
 | cell | model | steps | stop | cost |
 |---|---|---|---|---|
@@ -124,11 +119,10 @@ credentialed trial, 2026-09-21.
 | `ab-genpost-mimo-01` | mimo-v2.5 | 73 | finished | **$0.0237** |
 | `ab-genpost-dsv4-01` | deepseek-v4-pro | 50 | finished | **$0.1859** |
 
-🔴 **$0.1859 is ~3.7× the ~$0.05 the plan budgeted and ~7.8× the mimo cell** — in FEWER
-steps (50 vs 73), so it is model price, not task length. The prerequisite arc's
-"cheap models are 5–20× under the frontier" is a SETUP-trial figure; at app-build length
-deepseek is within ~1.5× of the frontier estimate. **Do not price an app-build cell from
-the setup grid.**
+🔴 **$0.1859 is ~3.7× the ~$0.05 budgeted and ~7.8× the mimo cell, in FEWER steps (50 vs
+73)** — model price, not task length. The prerequisite arc's *"cheap models are 5–20× under
+the frontier"* is a **SETUP-trial** figure (7–11 steps). **Price an app-build cell from an
+app-build cell.**
 
 **The prerequisite arc's baseline:** 18 trials, 2026-09-19, three cheap models reach SETUP
 on 4 of 6 grid rows, model-independently, **mean $0.0058/trial**.
@@ -139,16 +133,16 @@ on 4 of 6 grid rows, model-independently, **mean $0.0058/trial**.
 
 **The FOUR specimen containers are regression fixtures — do not destroy:**
 `dogfood-ab-curve-01` (celsius `RENDER=yes observed=212`), `dogfood-ab-genpost-mimo-01`
-(genpost **`RENDER=yes`**), `dogfood-ab-genpost-glm-01` (unmodified scaffold `RENDER=no`,
-the negative control), **`dogfood-ab-genpost-dsv4-01`** (the consent-gated app — the
-fixture for the defect below). 🔴 `runs/ab-curve-01/transcript.jsonl` was **destroyed by a
-routine worktree cleanup** — copy `runs/<trial>/` out before removing a worktree.
+(genpost `RENDER=yes`), `dogfood-ab-genpost-glm-01` (unmodified scaffold `RENDER=no`, the
+negative control), **`dogfood-ab-genpost-dsv4-01`** (the consent-gated app — the fixture
+that proves the inert-token defect, and the one rank 10 must re-grade).
 
-**Where each trial's evidence lives** (none of it is in the primary clone):
+**Where each trial's evidence lives** (none is in the primary clone):
 `ab-genpost-mimo-01` + `ab-genpost-glm-01` → `/tmp/wt-verify686-1071809/scripts/dogfood/runs`
 (both — the one to point `DOGFOOD_RUNS` at); **`ab-genpost-dsv4-01` →
-`/tmp/wt-rank6/scripts/dogfood/ab-genpost-dsv4-01`, NOT under a `runs/` dir**, because
-`runner.py --out` defaults to `.`. 🔴 **Copy it out before that worktree is removed.**
+`~/.cache/dogfood-runs-2026-09-21/ab-genpost-dsv4-01/`** (durable), mirrored at
+`/tmp/wt-rank6/scripts/dogfood/ab-genpost-dsv4-01` (throwaway — `runner.py --out` defaults
+to `.`, so it is NOT under a `runs/` dir).
 
 ## Open investigations — live diagnosis state
 
@@ -458,9 +452,48 @@ same mechanism: it is neither free nor possible.
   same model and diff carry cost. Until then the doc-stack block's figures are a claim
   about `0.1.106` and nothing newer.
 
+### ✅ MEASURED 2026-09-21 — the inert token WAS the cause; deepseek passes, and the fix is controlled
+- as-of: 2026-09-21
+
+🔴 **This RESOLVES the block above it, "🔴 OPEN — the oracle seeds a signed-in viewer with an
+EMPTY SCOPE LIST". Its diagnosis was right and its status is now closed; its "Leading
+hypothesis" and "Next probe" have BOTH been run — do not re-run them.** (The tool appends
+and cannot edit an earlier heading, so this paragraph is the retirement marker.)
+
+- **Observed (with values), the experiment.** One knob (`token.scopes`), four arms, same
+  oracle build, same containers:
+
+  | arm | scopes | `observed` | verdict |
+  |---|---|---|---|
+  | deepseek | empty | `ready` | `RENDER=no` |
+  | deepseek | `ai:write:budgeted,posts:write:self` | `ready>generating>ready` | **`RENDER=yes`** |
+  | glm scaffold (neg control) | seeded | `''` | `RENDER=no` |
+  | mimo (pos control) | seeded | `ready>generating>ready` | `RENDER=yes` |
+
+  `via: measurement`
+- 🔴 **Ruled out — that the patch itself changed the verdict.** The patched file with the
+  env var UNSET reproduced `observed=ready RENDER=no` byte-for-byte. That control ran FIRST,
+  before the arm anyone wanted to believe. `via: measurement`
+- 🔴 **Ruled out — that seeding scopes makes the oracle permissive.** The unmodified
+  `page-money` scaffold still grades `RENDER=no` with scopes seeded. This is the arm that
+  decides whether the fix is shippable, and it holds. `via: measurement`
+- **Ruled out — that it perturbs the known-good cell.** mimo stays `RENDER=yes`. Its
+  `observed` lengthens `ready>generating` → `ready>generating>ready` because with consent
+  granted it reaches the submit, which the stub rejects — the verdict is
+  `seq.includes('generating')`, so it is unaffected. **Expect that string to change when
+  rank 10 lands; it is not a regression.** `via: measurement`
+- 🔴 **What the fix must preserve, and the evidence it still does:** `raw` stayed **empty**
+  in every arm, so `InlineTransport.sendRequest` still rejects unconditionally and
+  *"nothing can complete here"* — the property `#686` asserted from inside the page —
+  remains true. Scopes buy the block a *branch*, never a capability.
+- **Next probe:** none for the diagnosis. The remaining work is shipping it (rank 10):
+  seed `token.scopes` from the block's own manifest, which the oracle already parses (it
+  prints `scopes=`), and update `fxGenpostBootstrapProbe` in `dogfood_oracle_test.go`,
+  which asserts the seeded object from inside the page and will go red.
+
 ## Next steps (ranked)
 
-🔴 **Numbering frozen.** Ranks 1–5 settled; 4 deleted by measurement; 8 done this session.
+🔴 **Numbering frozen.** Ranks 1–5 settled; 4 deleted by measurement; 8 done 2026-09-21.
 
 ⚠ **On `forcing:` — the operator asked for the ARC, not for individual items; the
 decomposition is agent-authored. Rank 7 is the exception (asked for in those words on
@@ -472,11 +505,13 @@ decomposition is agent-authored. Rank 7 is the exception (asked for in those wor
 4. ❌ **DELETED** — history management not required; rank 3 measured it. forcing: gate — retired
 5. ✅ **DONE** — the render oracle (`cli#681`) + two defect fixes (`cli#686`).
    forcing: user — satisfied
-6. 🔶 **ALL THREE CHEAP CELLS HAVE RUN; THE FROZEN CONDITION IS STILL NOT MET.** `mimo`
-   PASS · `glm` FAIL-explained · `deepseek` **UNGRADEABLE** (rank 10) · frontier control
-   **dropped by operator decision**. ⚠ `cli#665` still blocks 2 of the 4 environments, so
-   this stays **1 environment**. **Closing this needs rank 10 first**, and then a decision
-   on whether a condition written with a control arm can close without one.
+6. 🔶 **THE CHEAP ARM IS COMPLETE: 2 of 3 PASS** (`mimo`, `deepseek`), 1 FAIL-explained
+   (`glm`). **It still does not close**, for two named reasons: the deepseek pass exists
+   only under rank 10's unshipped patch, and the **frontier control was dropped by operator
+   decision**, which the frozen text names. ⚠ `cli#665` still blocks 2 of the 4
+   environments, so this stays **1 environment**. **Decide explicitly whether a condition
+   written with a control arm may close without one** — that is a judgement for the
+   operator, not something a later session should quietly assume either way.
    forcing: user — the operator asked for this arc on 2026-09-20
 7. 🔶 **DECIDED 2026-09-21: a submission IS permitted** — the deepseek cell carried
    `--max-submissions 1` and used none (`sub=0`), as did both earlier trials. 🔴 **`app
@@ -489,13 +524,16 @@ decomposition is agent-authored. Rank 7 is the exception (asked for in those wor
    the doc fix.** Blocked until a release exists. Touches `civitai/cli` only.
    forcing: user — the operator asked to price `cli#685` as part of rank 6; measurement
    showed it cannot be done there
-10. 🔴 **FIX THE ORACLE'S INERT TOKEN, THEN RE-GRADE `ab-genpost-dsv4-01`.** Seed
-    `token.scopes` from the block's own manifest while keeping `raw` empty, so the
-    transport still rejects and *"nothing can complete here"* stays true. **The re-grade is
-    free — the container is still up.** Until this lands, the deepseek cell is ungradeable
-    and rank 6 cannot be closed honestly. Touches
-    `scripts/dogfood/briefs/_cdp.mjs` and `dogfood_oracle_test.go`.
-    forcing: gate — rank 6's verdict is unobtainable without it
+10. 🔴 **SHIP THE ORACLE FIX — the design is now MEASURED, not proposed.** Seed
+    `token.scopes` from the block's own manifest in `scripts/dogfood/briefs/_cdp.mjs`,
+    keeping `raw` empty; update `fxGenpostBootstrapProbe` in `dogfood_oracle_test.go`
+    (it asserts the seeded object and WILL go red). **The controls are already run and
+    recorded in the investigation block — the negative control holds.** 🔴 **Regression
+    coverage to add while there: a fixture app that gates on `token.scopes` must grade
+    `RENDER=yes`, and the unmodified scaffold must still grade `no`** — the second without
+    the first is the vacuous half. Until this lands, the shipped oracle grades a correct app
+    `no` and rank 6 cannot be closed honestly. Touches `civitai/cli` only.
+    forcing: gate — rank 6's verdict is unobtainable from the shipped instrument
 
 ## Gotchas / decisions / dead-ends
 
@@ -696,8 +734,8 @@ gh api "repos/civitai/cli/commits/$SHA/check-runs" \
   --jq '.total_count, ([.check_runs[]|select(.conclusion!="success")]|length)'   # expect 12, 0
 ```
 
-**The two graded specimens — free, no trial, and ALWAYS run the pair.** A change that makes
-both pass has broken the oracle:
+**The two long-standing specimens — free, no trial, and ALWAYS run the pair.** A change that
+makes both pass has broken the oracle:
 
 ```bash
 WT=/tmp/wt-rank6; R=/tmp/wt-verify686-1071809/scripts/dogfood/runs
@@ -706,23 +744,35 @@ for t in ab-genpost-mimo-01 ab-genpost-glm-01; do
      "CIVITAI_CHROME=\$(command -v chromium) bash oracle.sh $t root" 2>&1 | tail -1)
 done
 ```
-Expect `RENDER=yes observed=ready>generating` then `RENDER=no`, both `gate=pass`.
+Expect `RENDER=yes` then `RENDER=no`, both `gate=pass`.
 
-🔴 **`/tmp/wt-rank6` carries an UNCOMMITTED PROBE** in
-`scripts/dogfood/briefs/genpost.assert.mjs` (the old-value harvest, marked
-`PROBE ONLY (not committed)`). It only ADDS an `evidence.replacedValues` field and changes
-no verdict — but **grade from a clean worktree if a verdict is going in a report**, or
-`git -C /tmp/wt-rank6 checkout -- scripts/dogfood/briefs/genpost.assert.mjs` first.
+🔴 **`/tmp/wt-rank6` CARRIES TWO UNCOMMITTED PROBES**, both marked `PROBE ONLY (not
+committed)`: an old-value harvest in `briefs/genpost.assert.mjs` (adds
+`evidence.replacedValues`, changes no verdict) and the scope seed in `briefs/_cdp.mjs`
+(reads `CIVITAI_PROBE_SCOPES`, **empty by default so the shipped behaviour is unchanged**).
+**Grade from a clean worktree for anything going in a report**, or
+`git -C /tmp/wt-rank6 checkout -- scripts/dogfood/briefs/`.
 
-**The deepseek cell** — note the runs-dir override, since it was not driven by `driver.sh`:
+**Reproduce the inert-token result — the whole four-arm experiment, no trial, ~4 minutes:**
 
 ```bash
-WT=/tmp/wt-rank6
-(cd "$WT/scripts/dogfood" && DOGFOOD_RUNS="$WT/scripts/dogfood" nix-shell -p chromium --run \
-   'CIVITAI_CHROME=$(command -v chromium) bash oracle.sh ab-genpost-dsv4-01 root')
+WT=/tmp/wt-rank6; D="$WT/scripts/dogfood"; R=/tmp/wt-verify686-1071809/scripts/dogfood/runs
+# arm 1 — control: patch present, scopes UNSET. MUST be RENDER=no.
+(cd "$D" && DOGFOOD_RUNS="$D" nix-shell -p chromium --run \
+   'CIVITAI_CHROME=$(command -v chromium) bash oracle.sh ab-genpost-dsv4-01 root' | tail -1)
+# arm 2 — the result. MUST be RENDER=yes observed=ready>generating>ready.
+(cd "$D" && CIVITAI_PROBE_SCOPES='ai:write:budgeted,posts:write:self' DOGFOOD_RUNS="$D" \
+   nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) \
+   CIVITAI_PROBE_SCOPES="$CIVITAI_PROBE_SCOPES" bash oracle.sh ab-genpost-dsv4-01 root' | tail -1)
+# arm 3 — the arm that decides shippability: scaffold + scopes MUST stay RENDER=no.
+(cd "$D" && CIVITAI_PROBE_SCOPES='ai:write:budgeted,posts:write:self' DOGFOOD_RUNS="$R" \
+   nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) \
+   CIVITAI_PROBE_SCOPES="$CIVITAI_PROBE_SCOPES" bash oracle.sh ab-genpost-glm-01 root' | tail -1)
 ```
-Expect `observed=ready RENDER=no` **until rank 10 lands** — and read that as the harness,
-not the model. The app's own branch is readable directly:
+🔴 **Run arm 1 before arm 2.** A patched file that changes the verdict on its own would make
+arm 2 meaningless, and arm 1 is the only thing that rules it out.
+
+The app's own gating branch, readable directly:
 ```bash
 docker exec dogfood-ab-genpost-dsv4-01 bash -lc \
   'sed -n "41p;157,172p" /work/ab-prompt-to-post/src/App.tsx'
