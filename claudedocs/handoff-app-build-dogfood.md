@@ -73,10 +73,21 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
   component that READS correctly and one that RENDERS correctly are different claims — and
   this arc exists precisely because the cheap oracle lies. **n=1**: one model, one
   environment, one brief, no repeat, no control model.
-- 🔶 **Rank 5 IN FLIGHT.** A live specimen container `dogfood-ab-curve-01` is being held as
-  the oracle's positive control — it carries the built app above. **Do not destroy it**;
-  re-creating it costs a trial.
-- **Claims:** `app-build-dogfood-1` / `-2` released on merge. `-3` and `-5` held.
+- ✅ **RANK 5 SHIPPED — `cli#681` merged** (squash `9d7b5a2a`), and the preliminary yes
+  above is now a MEASURED one: the oracle grades the specimen `RENDER=yes observed=212`,
+  re-run independently rather than accepted from a report. 🔴 **The negative control is the
+  load-bearing half** — an untouched `static` scaffold grades `gate=pass … RENDER=no`, so
+  the validator and the browser DISAGREE on a bare scaffold exactly as the arc predicted.
+- ⚠ **A briefing error worth carrying: `BLOCK_INIT` cannot be POSTED to a block, and it
+  fails SILENTLY.** The oracle brief said it must post `BLOCK_INIT`; a block's transport
+  drops any message whose `event.origin` is outside the allowlist baked into the bundle,
+  and a scaffold allowlists `https://civitai.com` only. The working route is seeding
+  `window.__CIVITAI_BLOCK_CONTEXT__` before the first script — the branch the SDK's own
+  detector takes first. Measured both ways on a real `page-money` build.
+- **The specimen `dogfood-ab-curve-01` is still held** and was NOT mutated by the oracle
+  (`/work` byte-identical afterwards). **Do not destroy it**; re-creating it costs a trial.
+- **Claims:** `app-build-dogfood-1` / `-2` released on merge; `-3` and `-5` release when
+  `cli#680` and `cli#681` land.
 - **Carried forward — the prerequisite arc's baseline, which rank 3's number is read
   against.** Measured 2026-09-19 over 18 trials: the three cheap models
   (`z-ai/glm-5.3-flash`, `xiaomi/mimo-v2.5`, `deepseek/deepseek-v4-pro`) all reach SETUP on
@@ -172,13 +183,17 @@ that the breakdown is not itself user-requested.
    Recorded rather than silently dropped so nobody re-derives the O(n²) worry from the
    superseded block and rebuilds it.
    forcing: gate — retired; the condition it was gated on measured NO
-5. 🔶 **IN FLIGHT — build the render oracle.** Serve the built block in the trial container,
-   drive it headless, run `briefs/celsius.assert.mjs`, and carry the `observed` value into
-   the cell. `civitai app validate` stays a reported fail-fast GATE, never the verdict.
-   Positive control: the live `dogfood-ab-curve-01`. Negative control: a bare scaffold,
-   which must FAIL. 🔴 If a bare scaffold ever passes the oracle, every matrix cell is
-   vacuously green — that is the failure mode this arc was designed around.
-   forcing: user — the operator asked for this arc on 2026-09-20
+5. ✅ **DONE — the render oracle is built and BOTH controls are measured.** Shipped in
+   `cli#681` (squash `9d7b5a2a`): `scripts/dogfood/oracle.sh` + `serve-block.mjs`, wired
+   into `grade.sh`, with `civitai app validate` demoted to a reported fail-fast GATE.
+   **Positive control** — re-run independently against the live specimen, not taken from a
+   report: `gate=pass gate_rc=0 observed=212 RENDER=yes`, i.e. a real browser typed `100`
+   into the model-authored app and read back exactly `212`.
+   🔴 **Negative control, and it is the arc's whole thesis as an observed fact:** an
+   untouched `static` scaffold grades **`gate=pass … RENDER=no`** — the validator passes
+   while the browser says nothing rendered. That disagreement is why the verdict is the
+   browser. Operating detail: `scripts/dogfood/README.md`.
+   forcing: user — satisfied
 6. **Run the matrix** on `glm-5.3-flash`, `mimo-v2.5`, `deepseek-v4-pro` plus a frontier
    control, on the **2 writable-prefix environments**. Report per-cell, and report the
    environments that could NOT be run.
