@@ -33,62 +33,69 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-🔴 **HEADLINE: a cheap open model BUILT A PASSING APP. The arc's mechanism is proven; its
-frozen condition is NOT yet met.** `xiaomi/mimo-v2.5`, blind, 73 steps, **$0.0237**, graded
-by a headless browser:
+🔴 **TWO OF THE THREE CHEAP MODELS BUILT A PASSING APP. `deepseek-v4-pro` PASSES — its
+earlier `RENDER=no` was the ORACLE, and that is now MEASURED, not theorised.**
 
 ```
-brief=genpost brief_source=transcript-text gate=pass gate_rc=0
-scopes=ai:write:budgeted,posts:write:self viewer=signed-in
-observed=ready>generating RENDER=yes
+ab-genpost-dsv4-01  scopes seeded → observed=ready>generating>ready RENDER=yes
+ab-genpost-dsv4-01  scopes empty  → observed=ready                 RENDER=no
 ```
 
-`pass:true`, `postDisabled:true` (the Post gate closed as the brief demands), `status`
-transitioning `ready → generating`. **Re-run independently rather than accepted from a
-report.** The negative control holds in the same pass: the unmodified `page-money` scaffold
-grades **`gate=pass … RENDER=no`** — the validator says fine, the browser says nothing
-rendered. That disagreement is the arc's founding thesis and it survives the viewer change.
+Four arms, all clean — the negative control is what makes this a safe reading rather than a
+convenient one:
 
-🔴 **WHY THE CONDITION IS STILL OPEN — read the frozen text, not the headline.** It ends
-*"Graded per cell across the three cheap models, with a frontier control."* We have **2 of 4
-cells** (`mimo` PASS, `glm` FAIL-explained), on **1 environment** of the 2 currently
-gradeable. `deepseek-v4-pro` and the frontier control have not run. **The one item between
-here and the condition is rank 6.**
+| arm | token scopes | verdict |
+|---|---|---|
+| `deepseek` | empty (today's shipped oracle) | `RENDER=no observed=ready` |
+| **`deepseek`** | **seeded** | **`RENDER=yes observed=ready>generating>ready`** |
+| `glm` — unmodified `page-money` scaffold, the NEGATIVE control | seeded | **`RENDER=no`** ✓ still fails |
+| `mimo` — the POSITIVE control | seeded | `RENDER=yes` ✓ unchanged |
 
-- ✅ **Rank 7's TRIAL ran; rank 7's OBJECTIVE did not complete.** The operator asked for an
-  app integrating generation and posting **submitted for review**. Two credentialed trials
-  ran and **`submissions=0`, `generations=0`** in both. Nothing was submitted. The frozen
-  condition never mentioned `submit`, which is exactly why it was recorded separately —
-  **do not read `RENDER=yes` as the submit objective being met.**
-- ✅ **ACCOUNT UNCHANGED ACROSS BOTH CREDENTIALED RUNS.** Buzz **4,101,822** → **4,101,822**
-  (delta **0**), 13 listings → 13, no `ab-*` listing reached the account, and none of the
-  ~10 operator-owned apps was touched. The residual risk the operator accepted did not
-  materialise. Verified from the account, never from an agent's report.
-- ✅ **Four harness/doc PRs merged tonight**, each verified by content with a negative
-  control: **`cli#683`** (`8603fc3`) credential path that does not leak + the `genpost`
-  brief · **`cli#684`** (`7151ca3`) a truncated trial can no longer be recorded as finished
-  · **`cli#685`** (`bdeddef1`) the agent-facing doc fixes · **`cli#686`** (`0af4045`) the
-  oracle's brief resolution and signed-in viewer.
-- 🔴 **THE GLM FAILURE IS FULLY EXPLAINED AND IT WAS NOT WHAT IT LOOKED LIKE.** See the
-  investigation block. In one line: it **never wrote a single line of code** in 66 steps,
-  and its `stop: "finished"` was a **harness mislabel of a truncation** — the final turn hit
-  `max_tokens` exactly (8,000, of which 7,992 were reasoning) and returned nothing.
-- 🔶 **The three specimen containers are the arc's regression fixtures.** `dogfood-ab-curve-01`
-  (celsius, `RENDER=yes observed=212`), `dogfood-ab-genpost-mimo-01` (genpost, **`RENDER=yes`**),
-  `dogfood-ab-genpost-glm-01` (unmodified scaffold, `RENDER=no` — the negative control).
-  **Do not destroy them**; re-creating any of them costs a trial. 🔴 **And one is already
-  gone: `runs/ab-curve-01/transcript.jsonl` was DESTROYED by a routine worktree cleanup**,
-  so the successful celsius run has no per-step record and two analyses hit that wall. The
-  container survives; the transcript does not. **Copy a trial's `runs/<trial>/` out of the
-  worktree before removing it.**
-- **Claims:** all released.
+**So seeding scopes does not buy a bad app a pass, and does not change a good app's
+verdict.** It removes exactly one thing: a branch production never exhibits.
+
+🔴 **THE CHEAP ARM OF THE MATRIX, FINAL:** `mimo` **PASS** · `deepseek` **PASS** ·
+`glm` **FAIL, explained** (wrote zero code in 66 steps; its `finished` was a truncation).
+**2 of 3 cheap models can build an App Block from the hosted prompt plus one line of brief.**
+
+🔴 **AND THE FROZEN CONDITION IS STILL NOT MET — do not round this up.** It reads *"Graded
+per cell across the three cheap models, **with a frontier control**"*. The control arm was
+**dropped by operator decision** on 2026-09-21, and the deepseek pass currently exists only
+under a **probe patch in a throwaway worktree** — the shipped oracle still grades it `no`.
+**Two things stand between this and a closeable condition: rank 10 (ship the fix) and a
+decision on whether a condition written with a control arm may close without one.**
+
+- 🔴 **OPERATOR DECISION 2026-09-21: NO FRONTIER CONTROL.** The frozen condition names one
+  (*"with a frontier control"*), so the control arm is **dropped by decision, not
+  pending** — re-opening it is one trial. Carried verbatim because a later session reading
+  "2 of 3 PASS" will otherwise assume the control is merely outstanding.
+- ✅ **Both blocking PRs merged, `main` green.** `#688` → **`ef411fa`** (pins
+  `^0.48.0`/`^0.55.0` → `^0.49.0`/`^0.56.0`), then `#687` rebased onto it → **`3ffebca`**.
+  `main` at `3ffebca`: **12 checks, 0 non-success.**
+- **The deepseek cell:** blind, identity `other`, `df-node-root`, **50 steps**,
+  `stop=finished` / `finish_reason=stop`, **$0.1859**, `gate=pass`, manifest declaring
+  `ai:write:budgeted,posts:write:self`, app at `/work/ab-prompt-to-post`.
+- 🔴 **ACCOUNT UNCHANGED, verified from the account.** Buzz **4,101,822 → 4,101,822**
+  (delta **0**), `app list` **byte-identical**, **no `ab-*` listing**, `gen=0 sub=0`. The
+  run carried `--max-submissions 1` (operator permitted one) and used none. ⚠ `civitai app
+  create` **scaffolds locally and creates no listing** — step 11's `app create ab-…` is not
+  an account mutation.
+- ✅ **The prefix cap was WATCHED TO REFUSE, in-run:** step 10 `civitai app create
+  prompt-to-post` → **`verdict=refused`**; step 11 with the `ab-` prefix → `verdict=run`.
+- 🔴 **EVIDENCE SECURED OUT OF THE WORKTREE:**
+  **`~/.cache/dogfood-runs-2026-09-21/ab-genpost-dsv4-01/`** (1 `end` record, 50 commands),
+  because `runs/` inside a worktree is one `git worktree remove` from gone — which already
+  destroyed `ab-curve-01`'s transcript.
+- ⚠ **No `clawgate-task:` field** — `clawgate_handoff.sh resolve` exited **5**. An unknown
+  session id answers 200 with an empty array, so that zero cannot distinguish "touched no
+  task" from "wrong id". Not a clean bill of health.
+- **Claims:** none taken.
 
 ### Carried forward — durable values a `State now` replace would otherwise eat
 
-🔴 **RANK 3'S TABLE, kept because an appended block points AT it.** The investigation block
-"✅ ANSWERED 2026-09-21 — the harness CAN carry an app-build task" says *"see the State-now
-table"*. This is the second update in which deleting it would have left that pointer
-dangling. `xiaomi/mimo-v2.5`, `df-node-root`, celsius brief:
+🔴 **RANK 3'S TABLE, kept because an appended block points AT it** ("✅ ANSWERED 2026-09-21
+— the harness CAN carry an app-build task" says *"see the State-now table"*). This is the
+**fifth** update in which deleting it would have left that pointer dangling:
 
 | | measured | cap set |
 |---|---|---|
@@ -98,21 +105,44 @@ dangling. `xiaomi/mimo-v2.5`, `df-node-root`, celsius brief:
 | per-call prompt | 452 → **45,328** | — |
 | `stop` | **`finished`** | — |
 
-🔴 **THE PRE-RUN BASELINE, captured 2026-09-21 BEFORE any credentialed trial — it cannot be
-re-derived after the fact.** Buzz **Blue 1,305,157 · Green 947,618 · Yellow 1,849,047 ·
-TOTAL 4,101,822**; **13** listings. The `dogfood-3` precedent grades spend as a balance
-DELTA rather than believing the agent, and that only works with a pre-reading. A
-credentialed run started without one is ungradeable on spend however well it goes.
+🔴 **THE PRE-RUN BASELINE — cannot be re-derived after the fact.** Buzz **Blue 1,305,157 ·
+Green 947,618 · Yellow 1,849,047 · TOTAL 4,101,822**; **13** listings. Spend is graded as a
+DELTA against this, never from an agent's report. Re-confirmed unchanged after the third
+credentialed trial, 2026-09-21.
 
-**The prerequisite arc's baseline, which every cost figure here is read against.** Measured
-2026-09-19 over 18 trials: the three cheap models reach SETUP on 4 of 6 grid rows,
-model-independently, at **mean $0.0058/trial** (21 trials = $0.1211), frontier control
-**5–20× dearer**. So a genpost app-build cell at $0.0237 is ~4× a setup trial.
+**Per-cell cost — four points now:**
 
-**The credentialed precedent.** `claudedocs/handoff-dogfood-3.md` is the *first CREDENTIALED
-blind dogfood* (2026-08-10): 3 generations, 61 Buzz, 2 submissions, verified from the
-account (4,187,454 → 4,187,393). It also records real `submit`/`withdraw` defects, including
-**permanent loss of captioned screenshots** — read it before any run that submits.
+| cell | model | steps | stop | cost |
+|---|---|---|---|---|
+| `ab-curve-01` | mimo-v2.5 (celsius) | 65 | finished | **$0.0145** |
+| `ab-genpost-glm-01` | glm-5.3-flash | 66 | (truncated, mislabelled) | ~$0.0918 |
+| `ab-genpost-mimo-01` | mimo-v2.5 | 73 | finished | **$0.0237** |
+| `ab-genpost-dsv4-01` | deepseek-v4-pro | 50 | finished | **$0.1859** |
+
+🔴 **$0.1859 is ~3.7× the ~$0.05 budgeted and ~7.8× the mimo cell, in FEWER steps (50 vs
+73)** — model price, not task length. The prerequisite arc's *"cheap models are 5–20× under
+the frontier"* is a **SETUP-trial** figure (7–11 steps). **Price an app-build cell from an
+app-build cell.**
+
+**The prerequisite arc's baseline:** 18 trials, 2026-09-19, three cheap models reach SETUP
+on 4 of 6 grid rows, model-independently, **mean $0.0058/trial**.
+
+**The credentialed precedent:** `claudedocs/handoff-dogfood-3.md` — 3 generations, 61 Buzz,
+2 submissions, verified from the account (4,187,454 → 4,187,393). Records real
+`submit`/`withdraw` defects incl. **permanent loss of captioned screenshots**.
+
+**The FOUR specimen containers are regression fixtures — do not destroy:**
+`dogfood-ab-curve-01` (celsius `RENDER=yes observed=212`), `dogfood-ab-genpost-mimo-01`
+(genpost `RENDER=yes`), `dogfood-ab-genpost-glm-01` (unmodified scaffold `RENDER=no`, the
+negative control), **`dogfood-ab-genpost-dsv4-01`** (the consent-gated app — the fixture
+that proves the inert-token defect, and the one rank 10 must re-grade).
+
+**Where each trial's evidence lives** (none is in the primary clone):
+`ab-genpost-mimo-01` + `ab-genpost-glm-01` → `/tmp/wt-verify686-1071809/scripts/dogfood/runs`
+(both — the one to point `DOGFOOD_RUNS` at); **`ab-genpost-dsv4-01` →
+`~/.cache/dogfood-runs-2026-09-21/ab-genpost-dsv4-01/`** (durable), mirrored at
+`/tmp/wt-rank6/scripts/dogfood/ab-genpost-dsv4-01` (throwaway — `runner.py --out` defaults
+to `.`, so it is NOT under a `runs/` dir).
 
 ## Open investigations — live diagnosis state
 
@@ -275,36 +305,235 @@ the arc concluded.** Two defects compounded — one model-side, one harness-side
 - **Next probe:** re-measure carry cost on a post-`cli#685` trial to price the fix. Free if
   folded into rank 6.
 
+### ⚠ OPEN — the CI Chromium launch flake: a fix is proposed but the stall was never reproduced
+- as-of: 2026-09-21
+
+- **Symptom + exact repro:** `build-test` fails with **no failing test name at all**.
+  Measured on five runs — `35557830290`, `35563154222`, `35567753483`, `35616180491`, and
+  `main`'s current `cadc69bb` — across `main` itself and three PRs including a **docs-only**
+  one. In a 31,141-byte log there are **zero `--- FAIL:` lines** and every other package
+  reports `ok`:
+  ```
+  {"assertion":"celsius","pass":false,"reason":"harness error: browser never printed a
+   DevTools endpoint:\n[ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not
+   parse server address: Unknown address type ..."}
+  oracle: the assertion could not run (exit 2) — nothing was measured (this is NOT a failing trial)
+  FAIL github.com/civitai/cli
+  ```
+- 🔴 **The oracle behaves CORRECTLY** — it exits 2 and says *nothing was measured* rather
+  than emitting a false `RENDER=no`. The job fails because the render-oracle tests
+  deliberately refuse to skip under `$CI`. **Do not "fix" this by loosening them to a
+  skip**; a skip here is a green that checked nothing, and `ci.yml` forbids it in-line.
+- **Observed (with values) — the number that did not exist until `#687`'s smoke step
+  shipped:** a healthy cold launch on that runner is **`[cdp] browser launched in 3546ms`**
+  against a **15,000 ms** budget — ~4× headroom on a machine with **3.4× run-to-run
+  spread**. And the 15 s was never chosen for *launching*: it is the wait for a React tree
+  to mount, reused for an unrelated quantity.
+- **Ruled out — that clearing `DBUS_SESSION_BUS_ADDRESS` is the mechanism.** Null result.
+  `via: measurement`
+- **Ruled out — that the error string alone reproduces it.** `DBUS_SESSION_BUS_ADDRESS=bogus:path=/nope`
+  reproduces the CI stderr **byte for byte** and Chromium still reaches a DevTools endpoint
+  in ~110 ms. `via: measurement`
+- **Ruled out — that `chromium --version` latency predicts failure.** 1.9–6.5 s in failing
+  jobs vs 0.02 s locally, but 2.2 s passed and 2.8 s failed — an environment speed class,
+  not a predictor. `via: measurement`
+- **Leading hypothesis:** a thin timeout against a slow cold launch, plus one blocking
+  session-bus round trip. `--password-store=basic` removes exactly one (`4 dbus errors → 3`),
+  and **three of four failures stalled after exactly three**.
+- 🔴 **Counter-evidence, stated rather than buried: the FOURTH failure stalled after ONE
+  dbus error**, which that flag cannot explain. So the fix is **"rarer, not provably gone"**
+  — the author's own words, and the honest position.
+- **Next probe:** none locally; the stall was never reproduced. **The closing condition is
+  MECHANICAL and needs nobody to remember it** — a retried launch prints
+  `BROWSER LAUNCH RETRY`, which `ci.yml` renders as a `::warning` on the job. **If that
+  warning appears in `build-test` after `#687` merges, the launch is still sick.**
+
+### 🔴 OPEN — the oracle seeds a signed-in viewer with an EMPTY SCOPE LIST, so a consent-gated app can never pass
+- as-of: 2026-09-21
+
+🔴 **This is the `cli#686` viewer defect one layer deeper, and it is the third time this arc
+has found the instrument wrong rather than the model.** `#686` fixed *"no viewer, so an
+auth-gated app renders a branch production never exhibits"*. The same sentence is now true
+of **capability**: a viewer is present, the token is inert, and an app that gates on the
+token's scopes renders a branch production never exhibits.
+
+- **Symptom + exact repro:** `bash oracle.sh ab-genpost-dsv4-01 root` →
+  `observed=ready RENDER=no`, `render_reason=timed out after 15000ms waiting for the status
+  to leave "ready" after clicking generate`, with `gate=pass` and the manifest declaring
+  **both** `ai:write:budgeted` and `posts:write:self`.
+- **Observed (with values), the full chain:**
+  - `scripts/dogfood/briefs/_cdp.mjs` seeds the credential half as **`{ raw: '',
+    scopes: [] }`**, described in-file as *"deliberately inert … it buys the block no
+    capability"*.
+  - The app: `App.tsx:41` `const granted = hasBudgetedScope(token.scopes)`;
+    `:157-172` `handleGenerate` → `if (!granted) { consentPendingRef.current = true;
+    requestConsent({ scopes: ['ai:write:budgeted'] }); return; }`; `:114`
+    `setStatus('generating')` lives inside `doGenerate`, which is never reached.
+  - The DOM produced **zero mutations** in the 15 s after the click — an old-value harvest
+    added to the recorder returned `replacedValues=[]`.
+  `via: measurement` + `via: code`
+- 🔴 **Ruled out — that the empty harvest meant the probe was wired to nothing.** The
+  identical probe on `ab-genpost-mimo-01` returned a **non-empty** list. That positive
+  control is what makes the deepseek zero a reading rather than a silence.
+  `via: measurement`
+- **Ruled out — that a missing `data-testid="generate"` caused it.** The assertion locates
+  the control by **label** (`labelExpr(GENERATE_LABEL)`, `genpost.assert.mjs:155,169`), and
+  the brief only asks for *"a button labelled Generate"*. It was found; `generateDisabled`
+  came back `true`/`false`, never `null`. `via: code`
+- **Ruled out — that the status transition was a batched React transient the recorder
+  missed.** It is a real weakness (`INSTALL_RECORDER`'s `push` reads `textContent` fresh at
+  callback time, and MutationObserver batches per microtask checkpoint, so the in-file
+  claim that it catches a machine passing *"through `generating` and out the other side"*
+  is **narrower than it reads**) — but it is not what happened here: zero mutations means
+  nothing was ever committed. `via: measurement`
+- 🔴 **The grading consequence, which is the real finding:** mimo passes because it calls
+  `setStatus('generating')` **before** `await requestConsent()`; deepseek fails because it
+  checks consent **first**. **The assertion rewards an optimistic UI status and penalises
+  the app that verifies it may generate before claiming it is generating.** That is
+  backwards, and it is a property of the harness, not of either model.
+- **Leading hypothesis for the fix:** seed a token whose `scopes` carry what the block's
+  own manifest declares (the oracle already parses it — it prints `scopes=`), while leaving
+  `raw` empty so the transport still rejects. That keeps *"nothing can complete here"* true
+  — the property `#686` asserted from inside the page — while removing a branch production
+  never exhibits. ⚠ It needs its own control: an app that spends without checking must
+  still not appear to succeed.
+- **Next probe:** re-grade `ab-genpost-dsv4-01` with `token.scopes` seeded from the
+  manifest. If it flips to `RENDER=yes`, the cell is a PASS and the matrix reads 2/3 with
+  one explained failure. **That single re-grade is free — the container is still up.**
+
+### ✅ CLOSED 2026-09-21 — the CI Chromium launch flake: `#687` merged and `main` went green
+- as-of: 2026-09-21
+
+🔴 **This RETIRES the block above it, "⚠ OPEN — the CI Chromium launch flake: a fix is
+proposed but the stall was never reproduced". Its measurements stand; its OPEN status does
+not, and its "Next probe: none locally" instruction is obsolete** — the mechanical closing
+condition it named has now been evaluated once and did not fire. (The tool appends and
+cannot edit an earlier heading, so this paragraph is the retirement marker.)
+
+- **Observed (with values):** `#687` merged as `3ffebca`; `main`'s check-runs at that SHA
+  read **`MAIN_TOTAL=12 MAIN_FAILURES=0`**, `build-test success`. Four oracle runs this
+  session all printed `attempt 1 of 2` (136–167 ms) with **no `BROWSER LAUNCH RETRY`**.
+  `via: measurement`
+- 🔴 **Ruled out — that this proves the flake is gone. It does not, and the block's own
+  author already said so.** The honest position stays **"rarer, not provably gone"**: one
+  green `main` run is one sample of an intermittent failure, and the four local launches
+  were on this workstation, not the CI runner. The closing condition **stays armed** and
+  costs nothing — `ci.yml` renders a retry as a `::warning`. `via: assumed`
+- **Next probe:** none. Watch `build-test` warnings passively.
+
+### 🔴 OPEN — pricing `cli#685` CANNOT ride along with rank 6; it is blocked on a release
+- as-of: 2026-09-21
+
+🔴 **This CORRECTS rank 6's own instruction** (*"⚠ Re-measure carry cost while running, to
+price `cli#685`"*) **and the doc-cost block's** *"Next probe: re-measure carry cost on a
+post-`cli#685` trial … **Free if folded into rank 6.**" Both sentences are wrong about the
+same mechanism: it is neither free nor possible.
+
+- **Symptom + exact repro:** step 5 of every trial is `npm install -g @civitai/cli`. A
+  trial runs the **published** CLI, never this repo's tree, so a merged-but-unreleased doc
+  fix is invisible to every cell.
+- **Observed (with values), three agreeing reads:** `npm view @civitai/cli version` →
+  **`0.1.106`** (`time.modified` 2026-09-19T19:41Z); `git tag --contains bdeddef` →
+  **empty**, `git describe origin/main` → **`v0.1.106`**; and the running container's own
+  artefact, `head -c 600 /work/ab-prompt-to-post/README.md | grep -c useCreatePostFromApp`
+  → **0**, at the byte offset (388) where `#685` places the 36-hook index.
+  `via: measurement`
+- **Ruled out — that the deepseek cell prices the fix.** `civitai --version` inside its
+  container reads **0.1.106**. `via: measurement`
+- 🔴 **The consequence is load-bearing for the matrix, and it is favourable:** glm, mimo and
+  deepseek all ran the **same pre-`#685` doc stack**, so the three cheap cells differ on the
+  **model axis alone**. A release landing mid-matrix would have confounded exactly the
+  comparison the frozen condition asks for.
+- **Observed — the cost is still being paid:** the deepseek trial spent steps 26–31
+  grepping `node_modules` for `useCreatePostFromApp` / `BlockCreatePostRequest` /
+  `firstImageUrl`, the same reverse-engineering that cost glm **706,371 carry tokens,
+  28.2% of its run**. `via: measurement`
+- **Next probe:** cut a release containing `bdeddef`, then re-run ONE genpost cell on the
+  same model and diff carry cost. Until then the doc-stack block's figures are a claim
+  about `0.1.106` and nothing newer.
+
+### ✅ MEASURED 2026-09-21 — the inert token WAS the cause; deepseek passes, and the fix is controlled
+- as-of: 2026-09-21
+
+🔴 **This RESOLVES the block above it, "🔴 OPEN — the oracle seeds a signed-in viewer with an
+EMPTY SCOPE LIST". Its diagnosis was right and its status is now closed; its "Leading
+hypothesis" and "Next probe" have BOTH been run — do not re-run them.** (The tool appends
+and cannot edit an earlier heading, so this paragraph is the retirement marker.)
+
+- **Observed (with values), the experiment.** One knob (`token.scopes`), four arms, same
+  oracle build, same containers:
+
+  | arm | scopes | `observed` | verdict |
+  |---|---|---|---|
+  | deepseek | empty | `ready` | `RENDER=no` |
+  | deepseek | `ai:write:budgeted,posts:write:self` | `ready>generating>ready` | **`RENDER=yes`** |
+  | glm scaffold (neg control) | seeded | `''` | `RENDER=no` |
+  | mimo (pos control) | seeded | `ready>generating>ready` | `RENDER=yes` |
+
+  `via: measurement`
+- 🔴 **Ruled out — that the patch itself changed the verdict.** The patched file with the
+  env var UNSET reproduced `observed=ready RENDER=no` byte-for-byte. That control ran FIRST,
+  before the arm anyone wanted to believe. `via: measurement`
+- 🔴 **Ruled out — that seeding scopes makes the oracle permissive.** The unmodified
+  `page-money` scaffold still grades `RENDER=no` with scopes seeded. This is the arm that
+  decides whether the fix is shippable, and it holds. `via: measurement`
+- **Ruled out — that it perturbs the known-good cell.** mimo stays `RENDER=yes`. Its
+  `observed` lengthens `ready>generating` → `ready>generating>ready` because with consent
+  granted it reaches the submit, which the stub rejects — the verdict is
+  `seq.includes('generating')`, so it is unaffected. **Expect that string to change when
+  rank 10 lands; it is not a regression.** `via: measurement`
+- 🔴 **What the fix must preserve, and the evidence it still does:** `raw` stayed **empty**
+  in every arm, so `InlineTransport.sendRequest` still rejects unconditionally and
+  *"nothing can complete here"* — the property `#686` asserted from inside the page —
+  remains true. Scopes buy the block a *branch*, never a capability.
+- **Next probe:** none for the diagnosis. The remaining work is shipping it (rank 10):
+  seed `token.scopes` from the block's own manifest, which the oracle already parses (it
+  prints `scopes=`), and update `fxGenpostBootstrapProbe` in `dogfood_oracle_test.go`,
+  which asserts the seeded object from inside the page and will go red.
+
 ## Next steps (ranked)
 
-🔴 **Numbering frozen; ranks 1–5 settled, 4 deleted by measurement.**
+🔴 **Numbering frozen.** Ranks 1–5 settled; 4 deleted by measurement; 8 done 2026-09-21.
 
 ⚠ **On `forcing:` — the operator asked for the ARC, not for individual items; the
-decomposition is agent-authored. Rank 7 is the exception: he asked for that one in those
-words on 2026-09-21.**
+decomposition is agent-authored. Rank 7 is the exception (asked for in those words on
+2026-09-21); ranks 9 and 10 trace to asks made the same day.**
 
 1. ✅ **DONE** — brief-injection path (`cli#678`). forcing: user — satisfied
 2. ✅ **DONE** — the celsius brief and assertion (`cli#678`). forcing: user — satisfied
-3. ✅ **DONE** — the step/cost curve; 65 steps, $0.0145. forcing: user — satisfied
-4. ❌ **DELETED** — history management is not required; rank 3 measured the condition it was
-   gated on and the answer was no. forcing: gate — retired
-5. ✅ **DONE** — the render oracle (`cli#681`), plus two defect fixes (`cli#686`).
+3. ✅ **DONE** — the step/cost curve. forcing: user — satisfied
+4. ❌ **DELETED** — history management not required; rank 3 measured it. forcing: gate — retired
+5. ✅ **DONE** — the render oracle (`cli#681`) + two defect fixes (`cli#686`).
    forcing: user — satisfied
-6. 🔴 **THE ONLY ITEM BETWEEN HERE AND THE FROZEN CONDITION — run the matrix.** It requires
-   **three cheap models plus a frontier control**; we have 2 of 4 cells on 1 environment.
-   Outstanding: `deepseek-v4-pro` and the frontier control, on the genpost brief. Budget,
-   now grounded rather than guessed: cheap cells measured **$0.0145–$0.0918**, so the
-   remaining cheap cell is ~$0.05 and the frontier control 5–20× that. ⚠ `cli#665` still
-   blocks 2 of the 4 environments. ⚠ Re-measure carry cost while running it, to price
-   `cli#685`.
+6. 🔶 **THE CHEAP ARM IS COMPLETE: 2 of 3 PASS** (`mimo`, `deepseek`), 1 FAIL-explained
+   (`glm`). **It still does not close**, for two named reasons: the deepseek pass exists
+   only under rank 10's unshipped patch, and the **frontier control was dropped by operator
+   decision**, which the frozen text names. ⚠ `cli#665` still blocks 2 of the 4
+   environments, so this stays **1 environment**. **Decide explicitly whether a condition
+   written with a control arm may close without one** — that is a judgement for the
+   operator, not something a later session should quietly assume either way.
    forcing: user — the operator asked for this arc on 2026-09-20
-7. 🔶 **PARTIALLY DONE — the credentialed run happened; nothing was submitted.** Two
-   credentialed trials, `generations=0 submissions=0`, account unchanged. The app mimo built
-   passes the brief but was never submitted for review. **`app submit` remains outside the
-   frozen condition** — closing rank 6 does not close this, and closing this does not close
-   rank 6. Decide explicitly whether a submit is still wanted before running another
-   credentialed cell.
+7. 🔶 **DECIDED 2026-09-21: a submission IS permitted** — the deepseek cell carried
+   `--max-submissions 1` and used none (`sub=0`), as did both earlier trials. 🔴 **`app
+   submit` is OUTSIDE the frozen condition.** A cap that ALLOWS a submit does not produce
+   one: this needs a BRIEF that asks for a submit, not a permission.
    forcing: user — the operator asked for this on 2026-09-21
+8. ✅ **DONE** — `#688` merged (`ef411fa`), then `#687` rebased and merged (`3ffebca`);
+   `main` green, 12 checks, 0 failures. forcing: gate — satisfied
+9. **Cut a release containing `bdeddef` (`cli#685`), then re-run one genpost cell to price
+   the doc fix.** Blocked until a release exists. Touches `civitai/cli` only.
+   forcing: user — the operator asked to price `cli#685` as part of rank 6; measurement
+   showed it cannot be done there
+10. 🔴 **SHIP THE ORACLE FIX — the design is now MEASURED, not proposed.** Seed
+    `token.scopes` from the block's own manifest in `scripts/dogfood/briefs/_cdp.mjs`,
+    keeping `raw` empty; update `fxGenpostBootstrapProbe` in `dogfood_oracle_test.go`
+    (it asserts the seeded object and WILL go red). **The controls are already run and
+    recorded in the investigation block — the negative control holds.** 🔴 **Regression
+    coverage to add while there: a fixture app that gates on `token.scopes` must grade
+    `RENDER=yes`, and the unmodified scaffold must still grade `no`** — the second without
+    the first is the vacuous half. Until this lands, the shipped oracle grades a correct app
+    `no` and rank 6 cannot be closed honestly. Touches `civitai/cli` only.
+    forcing: gate — rank 6's verdict is unobtainable from the shipped instrument
 
 ## Gotchas / decisions / dead-ends
 
@@ -438,28 +667,148 @@ words on 2026-09-21.**
   must NOT be loosened into a skip)"*). **Unfixed, and it will keep training people to merge
   through a required check.**
 
+### Added 2026-09-21 (late) — the pin treadmill, and a control that was not one
+
+- 🔴 **UPSTREAM PUBLISHES FASTER THAN THE SWEEP, AND IT BIT THREE TIMES IN ONE DAY.** npm
+  published `app-sdk@0.49.0` / `blocks-react@0.56.0` at **15:33:32Z** — after `main`'s green
+  pins run (15:19:22Z) and before `#687`'s (15:40:50Z). Nothing anyone did caused it.
+  `bump-scaffold-pins.yml:64-69` already measured the cause: **six minors in 19 days, a
+  ~3.6-day mean** against what was then a 7-day sweep. They moved to daily; daily is still
+  slower than upstream. **Every window between a publish and the next sweep reds every open
+  PR on a required check for reasons unrelated to its content.**
+- 🔴 **MY NEGATIVE CONTROL WAS MUDDIED BY THE ARC'S OWN EARLIER TEXT — THIRD TIME TODAY.**
+  Verifying `#682` I grepped `RENDER=yes` and got **2 hits at `main~1`**, because the
+  celsius specimen already graded that way. The discriminating string was
+  `ready>generating` (**2 on main, 0 at `main~1`**). **Pick a string the NEW content
+  introduces, never the identifier the work has been discussing all along.** Same shape as
+  the `local/share/opencode/auth.json` path count earlier in the day.
+- ⚠ **A `count=1` replace in a mutation sweep can hit a DOC COMMENT instead of the code.**
+  `#687`'s author had a mutant report SURVIVED for exactly that reason; re-run correctly it
+  was killed. **A survivor is a claim about the sweep before it is a claim about the guard.**
+- ⚠ **`gh api … check-runs | jq` can die on control characters** in a check's output
+  (`Invalid string: control characters from U+0000 through U+001F must be escaped`). Use
+  `gh api --jq` (server-side) rather than piping into `jq`. A failed parse printed empty
+  counts beside a reassuring echo — read the counts, not the banner.
+
+### Added 2026-09-21 (late) — the merge round, and a verdict that was about the instrument
+
+- 🔴 **THE THIRD INSTRUMENT DEFECT OF THE ARC, AND THE PATTERN IS NOW UNMISTAKABLE: when a
+  cell grades `no`, the harness has been wrong more often than the model.** `#686` fixed an
+  anonymous viewer and a defaulted brief; this session found an inert token. **Before
+  recording a `RENDER=no` as a model result, find the branch the app actually took** — here
+  it was three source reads (`_cdp.mjs` seed → `granted` → `handleGenerate`) and cost
+  minutes, against a wrong headline that would have stood indefinitely.
+- 🔴 **A PROBE'S ZERO NEEDED ITS POSITIVE CONTROL AND THE CONTROL CHANGED THE READING.** The
+  old-value harvest returned `[]` on deepseek — which is what a probe wired to nothing also
+  returns. Running the **same** probe on the passing mimo cell returned a non-empty list,
+  and only then was the zero evidence. **Never quote a probe's zero without the arm that
+  makes it non-zero.**
+- 🔴 **A MERGED FIX IS NOT A SHIPPED FIX WHEN THE HARNESS INSTALLS FROM npm.** Rank 6 said
+  pricing `cli#685` was *"free if folded into rank 6"*; it is impossible until a release.
+  **Check the fix is in the ARTEFACT the measurement loads** — npm's `latest`, not
+  `origin/main`.
+- ⚠ **DEEPSEEK IS NOT A CHEAP MODEL AT APP-BUILD LENGTH: $0.1859 in 50 steps, ~7.8× the
+  mimo cell in FEWER steps.** The "5–20× under the frontier" figure comes from the SETUP
+  grid, where a trial is 7–11 steps. **Price an app-build cell from an app-build cell.**
+- ⚠ **The rebase of `#687` was the whole fix for its `BLOCKED` state** — its only
+  non-success was `pins-vs-published`, a check about its **base**, not its diff. A PR can be
+  red on a fact that is true of `main`; rebasing, not editing, is the remedy. (The store's
+  `scaffold` entry already records the general case from 2026-09-01.)
+- ⚠ **`civitai app create` scaffolds LOCALLY and creates no listing.** A credentialed
+  trial's `app create ab-…` at step 11 is not an account mutation — checked against
+  `app list`, which was byte-identical before and after.
+- ⚠ **Both PRs' landings were confirmed by `mergedAt` + `mergeCommit.oid` and the new
+  `origin/main` tip**, never by `git merge-base --is-ancestor`, which is permanently false
+  after a squash merge.
+
 ## How to verify
 
-**The headline result — re-grade the specimen, free, no trial:**
+**The merges, by content rather than by ancestry:**
 
 ```bash
 CLI=/home/zach/workspace/civit/cli
-# the oracle now DERIVES the brief from the trial's transcript; runs/ must be present
-(cd "$CLI/scripts/dogfood" && nix-shell -p chromium --run \
-   'CIVITAI_CHROME=$(command -v chromium) bash oracle.sh ab-genpost-mimo-01 root')
+git -C $CLI fetch origin main -q
+git -C $CLI log origin/main --oneline -3          # expect 3ffebca, ef411fa, cadc69b
+SHA=$(git -C $CLI rev-parse origin/main)
+gh api "repos/civitai/cli/commits/$SHA/check-runs" \
+  --jq '.total_count, ([.check_runs[]|select(.conclusion!="success")]|length)'   # expect 12, 0
 ```
-Expect `brief=genpost brief_source=transcript-text … observed=ready>generating RENDER=yes`.
-🔴 **And always re-run the NEGATIVE control beside it** — `ab-genpost-glm-01` must stay
-`RENDER=no` with `gate=pass`. A change that makes both pass has broken the oracle.
 
-**The account side — the only trustworthy evidence about spend:**
+**The two long-standing specimens — free, no trial, and ALWAYS run the pair.** A change that
+makes both pass has broken the oracle:
+
+```bash
+WT=/tmp/wt-rank6; R=/tmp/wt-verify686-1071809/scripts/dogfood/runs
+for t in ab-genpost-mimo-01 ab-genpost-glm-01; do
+  (cd "$WT/scripts/dogfood" && DOGFOOD_RUNS="$R" nix-shell -p chromium --run \
+     "CIVITAI_CHROME=\$(command -v chromium) bash oracle.sh $t root" 2>&1 | tail -1)
+done
+```
+Expect `RENDER=yes` then `RENDER=no`, both `gate=pass`.
+
+🔴 **`/tmp/wt-rank6` CARRIES TWO UNCOMMITTED PROBES**, both marked `PROBE ONLY (not
+committed)`: an old-value harvest in `briefs/genpost.assert.mjs` (adds
+`evidence.replacedValues`, changes no verdict) and the scope seed in `briefs/_cdp.mjs`
+(reads `CIVITAI_PROBE_SCOPES`, **empty by default so the shipped behaviour is unchanged**).
+**Grade from a clean worktree for anything going in a report**, or
+`git -C /tmp/wt-rank6 checkout -- scripts/dogfood/briefs/`.
+
+**Reproduce the inert-token result — the whole four-arm experiment, no trial, ~4 minutes:**
+
+```bash
+WT=/tmp/wt-rank6; D="$WT/scripts/dogfood"; R=/tmp/wt-verify686-1071809/scripts/dogfood/runs
+# arm 1 — control: patch present, scopes UNSET. MUST be RENDER=no.
+(cd "$D" && DOGFOOD_RUNS="$D" nix-shell -p chromium --run \
+   'CIVITAI_CHROME=$(command -v chromium) bash oracle.sh ab-genpost-dsv4-01 root' | tail -1)
+# arm 2 — the result. MUST be RENDER=yes observed=ready>generating>ready.
+(cd "$D" && CIVITAI_PROBE_SCOPES='ai:write:budgeted,posts:write:self' DOGFOOD_RUNS="$D" \
+   nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) \
+   CIVITAI_PROBE_SCOPES="$CIVITAI_PROBE_SCOPES" bash oracle.sh ab-genpost-dsv4-01 root' | tail -1)
+# arm 3 — the arm that decides shippability: scaffold + scopes MUST stay RENDER=no.
+(cd "$D" && CIVITAI_PROBE_SCOPES='ai:write:budgeted,posts:write:self' DOGFOOD_RUNS="$R" \
+   nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) \
+   CIVITAI_PROBE_SCOPES="$CIVITAI_PROBE_SCOPES" bash oracle.sh ab-genpost-glm-01 root' | tail -1)
+```
+🔴 **Run arm 1 before arm 2.** A patched file that changes the verdict on its own would make
+arm 2 meaningless, and arm 1 is the only thing that rules it out.
+
+The app's own gating branch, readable directly:
+```bash
+docker exec dogfood-ab-genpost-dsv4-01 bash -lc \
+  'sed -n "41p;157,172p" /work/ab-prompt-to-post/src/App.tsx'
+```
+
+🔴 **Read `stop` before any verdict** — `truncated` is a harness limit, not a model failure,
+which is what `#684` exists to make visible. The deepseek cell reads
+`stop=finished finish_reason=stop steps=50`.
+
+**The account — the only trustworthy evidence about spend:**
 
 ```bash
 civitai buzz      # TOTAL must equal 4101822 unless a generation was intended
 civitai app list  # 13 listings; every pre-existing slug unchanged; no ab-* present
 ```
+## Defects (batched)
 
-**The stop reason is now trustworthy** — `finished` / `truncated` / `empty-reply` /
-`stopped-unknown:<v>` are distinguishable, and `finish_reason` is recorded. A cell reporting
-`finished` with an empty `final` should no longer exist; if one appears, read
-`finish_reason` before believing it.
+- `bump-scaffold-pins.yml` validates `pins-vs-published` in-job but has **no in-job
+  equivalent for `scaffold-currency`** — the half that actually broke on `#676`. A pin bump
+  cannot catch a moved export; only `scaffold-currency` can, and it does not run on a
+  cron-authored bump PR.
+- The nightly sweep's PRs do not trigger checks (GitHub loop-guard); a hand `workflow_dispatch`
+  does. Making the sweep dispatch its own validation closes it. ⚠ **Still true after this
+  session** — `#688` was hand-dispatched and got all 13 checks.
+- `cli#665` open — blocks 2 of the 4 trial environments. Confirmed still OPEN 2026-09-21.
+- 🔴 **`_cdp.mjs` seeds `token: { raw: '', scopes: [] }`, so a block that gates generation
+  on a budgeted scope can never reach `generating`.** The assertion consequently rewards
+  setting a UI status optimistically and penalises checking consent first. Rank 10.
+- ⚠ **`genpost.assert.mjs`'s `INSTALL_RECORDER` claims more than it delivers.** Its comment
+  says polling cannot catch a machine passing *"through `generating` and out the other
+  side"* and a MutationObserver can; but `push` reads `textContent` **fresh at callback
+  time** and MutationObserver batches per microtask checkpoint, so a transition and its
+  revert inside one React commit read as the final value only. Harvesting
+  `characterDataOldValue` / `removedNodes` closes it. **Not what broke the deepseek cell** —
+  recorded so the comment is not trusted beyond what it does.
+- ⚠ **`runner.py --out` defaults to `.` while `oracle.sh`/`grade.sh` read `runs/<trial>/`.**
+  Only `driver.sh` passes `--out runs`, and the README's own one-trial example omits it, so
+  a hand-rolled trial is ungradeable until the dir is moved or `DOGFOOD_RUNS` names its
+  parent. Nothing errors.
