@@ -101,6 +101,60 @@ DOGFOOD_BRIEF="$(cat briefs/celsius.brief.txt)" DOGFOOD_TRIAL_PREFIX=ta bash dri
   matrix's namespace would skip every cell, each "complete" from a *different
   task*, while printing `MATRIX COMPLETE`. Set `DOGFOOD_TRIAL_PREFIX`.
 
+## The render oracle — the verdict for an app-build trial
+
+`oracle.sh` is what turns "the agent produced files" into "a browser watched the
+block do the thing". It serves the built block **inside the trial container**,
+drives it from a headless browser **on the host** (a trial image ships no
+Chromium), runs the brief's assertion, and prints one summary line.
+
+```bash
+bash oracle.sh <trial-id> <container-user> [brief]     # default brief: celsius
+bash grade.sh  <trial-id> <container-user> [brief]     # setup arms + the render arm
+```
+
+A graded cell then carries both verdicts on one line:
+
+```
+agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius validate_gate=pass observed=212 RENDER=yes
+```
+
+- 🔴 **`civitai app validate` is a GATE, not the verdict, and it does not even
+  short-circuit.** It runs first because it is cheap and offline, and its result
+  is reported as `validate_gate=`. It decides nothing: an untouched
+  `civitai app init` scaffold PASSES it (measured, `✓ <dir> is valid`), so a
+  validate-keyed grade cannot tell *scaffolded* from *built* and would return a
+  confident `yes` to a question it never asked. Nor does a failing gate abort the
+  render — that would substitute the validator for the verdict in exactly the
+  case where the verdict matters, and would throw away `observed`.
+- 🔴 **`observed=` is on the cell on purpose.** The assertion is strict — `212 °F`
+  fails where `212` passes — so without the value a working converter with a unit
+  suffix is indistinguishable from a block that rendered nothing.
+- 🔴 **`RENDER=unmeasured` is a third state, and it is not `no`.** `oracle.sh`
+  exits **2** when it measured nothing at all (no browser, no such container, a
+  stopped container, a server the host could not reach, an assertion that could
+  not run). Folding that into `no` would report *"the model did not build the
+  app"* about a run in which no block was ever loaded — the capability confound,
+  arriving through the grader.
+- 🔴 **It emulates a host before the bundle runs.** A block built from the
+  `page-money` template renders nothing but *"Connecting to host…"* until a host
+  delivers its runtime context, so the oracle seeds
+  `window.__CIVITAI_BLOCK_CONTEXT__` (the branch the SDK's own transport detector
+  takes) before navigation. Measured both ways in `briefs/celsius.md`. Set
+  `CIVITAI_ASSERT_NO_HOST=1` for the control arm.
+- **It never mutates the trial.** One file into the container's `/tmp`, one node
+  process, killed by its reported PID on the way out. `/work` is read only, and
+  no `docker rm`/`stop`/`commit` appears in `oracle.sh` — a graded container is
+  evidence, and re-creating one costs a real trial.
+- **Not bounded:** the in-container server binds `0.0.0.0` so the host browser
+  can reach it over the bridge. That is inside the network exposure the isolation
+  table above already declares open; it closes nothing and opens nothing new.
+
+Tests: `go test . -run 'TestOracle|TestGrade|TestServeBlock'`. Docker is stubbed,
+so they need no daemon — but they do drive a **real** browser, and they FAIL
+rather than skip under `$CI` (a skip and a pass read the same in a merge log).
+`ci.yml`'s `build-test` resolves one into `CIVITAI_CHROME` before `go test ./...`.
+
 `briefs/` holds each brief and the behavioural assertion that grades it —
 `briefs/celsius.md` is the worked one, with its controls. 🔴 **An assertion is
 only worth running once an untouched `civitai app init` scaffold has been

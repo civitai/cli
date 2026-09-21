@@ -15,6 +15,35 @@
 // node and nothing else. This speaks CDP over node's built-in WebSocket (node
 // >= 22) to whatever Chromium is on the box.
 //
+// 🔴 WHY IT EMULATES A HOST BEFORE THE BUNDLE RUNS. An App Block is built to be
+// iframed by civitai.com, which delivers its runtime context over a postMessage
+// `BLOCK_INIT` handshake. Opened directly, no parent ever sends one, so a block
+// that gates its UI on `ready` parks on "Connecting to host…" forever — measured
+// on the `page-money` scaffold, which renders nothing but a spinner. Grading a
+// working converter as a timeout because of that would be the capability
+// confound arriving through the instrument, again.
+//
+// 🔴 AND WHY VIA `window.__CIVITAI_BLOCK_CONTEXT__` RATHER THAN A postMessage.
+// A block's `IframeTransport` DROPS any inbound message whose `event.origin` is
+// not in the allowlist baked in at build time — `.env.production` of a
+// scaffolded app allowlists `https://civitai.com` and nothing else — so a
+// `BLOCK_INIT` posted from whatever port this oracle serves on is discarded
+// before it reaches the block, silently. The SDK's own transport detector
+// branches FIRST on this global (`BlockTransportDetector.detect`:
+// `win.__CIVITAI_BLOCK_CONTEXT__` present -> InlineTransport), which reads the
+// bootstrap straight off the window with no origin gate. So this is the
+// supported same-document path, not a bypass of the cross-origin one.
+// MEASURED 2026-09-20 against a freshly built `page-money` scaffold: without the
+// bootstrap the body reads "LOADING / Connecting to host…"; with it the app
+// renders its full generation form.
+// Set `CIVITAI_ASSERT_NO_HOST=1` to skip the injection — that is the control
+// arm, and it is what proves the injection is doing something.
+//
+// ⚠ It is a v1 stub on the SDK side: `sendRequest` rejects and host pushes never
+// arrive, so a block that AWAITS a host reply still hangs. This brief needs no
+// host round-trip, so that gap is out of its scope — but do not read a pass here
+// as evidence that the money path works.
+//
 // 🔴 WHY IT TYPES INSTEAD OF ASSIGNING `input.value`. Setting `.value` from
 // script does not fire an `input` event, so a React app built with
 // `useState` + `onChange` — the shape both page templates ship — would never
@@ -56,6 +85,35 @@ const EXPECT_F = '212';
 const SEL_IN = '[data-testid="celsius"]';
 const SEL_OUT = '[data-testid="fahrenheit"]';
 const BUTTON_LABEL = 'convert';
+
+// The inline bootstrap a host injects on its own document. Field names and shape
+// follow the SDK's `BLOCK_INIT` payload, because `InlineTransport` feeds this
+// object to the same `snapshotFromInit()` the iframe path uses — a missing field
+// surfaces as `undefined` inside the block, not as an error here.
+//
+// The values are deliberately inert: no real token, no real viewer, an empty
+// scope list. A block that tries to spend with them gets a rejected request,
+// which is the correct outcome for a grading run.
+const HOST_BOOTSTRAP = {
+  blockInstanceId: 'dogfood-oracle-instance',
+  blockId: 'dogfood-oracle-block',
+  appId: 'dogfood-oracle-app',
+  token: { raw: '', scopes: [], expiresAt: new Date(0).toISOString() },
+  context: {
+    slotId: 'app.page',
+    entityType: 'none',
+    slug: 'dogfood-oracle-block',
+    subPath: '',
+    viewerUserId: null,
+    viewerUsername: null,
+    theme: 'light',
+  },
+  settings: { publisherSettings: {}, userSettings: {} },
+  viewer: null,
+  theme: 'light',
+  renderMode: 'iframe',
+};
+const SEND_HOST_INIT = process.env.CIVITAI_ASSERT_NO_HOST !== '1';
 
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript',
@@ -168,7 +226,9 @@ async function main() {
   const c = cdp(ws);
   await c.open;
 
-  const evidence = { target: TARGET, url, input: INPUT_C, expected: EXPECT_F };
+  const evidence = {
+    target: TARGET, url, input: INPUT_C, expected: EXPECT_F, hostInit: SEND_HOST_INIT,
+  };
   let pass = false;
   let reason = null;
   let sessionId = null;
@@ -178,6 +238,17 @@ async function main() {
     ({ sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true }));
     await c.send('Page.enable', {}, sessionId);
     await c.send('Runtime.enable', {}, sessionId);
+    // 🔴 BEFORE `Page.navigate`, AND VIA addScriptToEvaluateOnNewDocument — not
+    // a `Runtime.evaluate` after the load. The block's bundle calls
+    // `getTransport()` on its first module evaluation and the transport is a
+    // process-wide singleton whose FIRST construction wins, so a global set even
+    // one tick late is read by nothing. This CDP method runs its source before
+    // any script in the document.
+    if (SEND_HOST_INIT) {
+      await c.send('Page.addScriptToEvaluateOnNewDocument', {
+        source: `window.__CIVITAI_BLOCK_CONTEXT__ = ${JSON.stringify(HOST_BOOTSTRAP)};`,
+      }, sessionId);
+    }
     await c.send('Page.navigate', { url }, sessionId);
 
     const evalJs = async (expr) => {

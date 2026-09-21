@@ -105,6 +105,42 @@ either way, so the scaffold control stands — but an oracle (rank 5) that grade
 a page-money-derived app must send the host handshake, or every such cell will
 time out for a reason that is the oracle's, not the model's.
 
+## The host handshake — how it is sent, and why not by `postMessage`
+
+**RESOLVED 2026-09-20.** The assertion now seeds
+`window.__CIVITAI_BLOCK_CONTEXT__` before the page's first script runs
+(CDP `Page.addScriptToEvaluateOnNewDocument`, ahead of `Page.navigate`).
+
+🔴 **A `BLOCK_INIT` postMessage cannot work here and fails SILENTLY.** A block's
+`IframeTransport` drops any inbound message whose `event.origin` is not in the
+allowlist compiled into the bundle, and a scaffold's `.env.production` allowlists
+`https://civitai.com,https://www.civitai.com` — nothing else. Served from an
+oracle's own ephemeral port, a posted `BLOCK_INIT` is discarded before the block
+sees it, with no error anywhere. The SDK's transport detector branches on the
+global FIRST (`BlockTransportDetector.detect`: `win.__CIVITAI_BLOCK_CONTEXT__`
+present → `InlineTransport`), which reads the bootstrap off the window with no
+origin gate — the supported same-document path, not a way around the
+cross-origin one.
+
+Measured against a freshly `npm install && npm run build`-ed `page-money`
+scaffold (vite 8.3.0, Chromium 153.0.8010.47 / node 24.20.0):
+
+| arm | `document.body.innerText` | `pass` |
+|---|---|---|
+| bootstrap injected | `Sc Page Money / Text to image / Prompt* / Model / …` — the full generation form | `false` |
+| `CIVITAI_ASSERT_NO_HOST=1` | `LOADING / Connecting to host…` | `false` |
+
+Both fail, because the scaffold still has no `[data-testid="celsius"]` — that is
+the scaffold control doing its job. What changed is the **reason**: with the
+handshake the block is failing on its own merits, without it the oracle was
+grading its own timeout. A model-authored app that keeps the template's host gate
+would have graded `no` either way before this, and can now grade `yes`.
+
+⚠ **It is a v1 stub on the SDK side.** `InlineTransport.sendRequest` rejects and
+host pushes never arrive, so a block that AWAITS a host reply still hangs. This
+brief needs no host round-trip; do not read a pass as evidence that the money
+path works.
+
 ## Run it
 
 ```bash
