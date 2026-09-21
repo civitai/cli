@@ -700,9 +700,10 @@ manifest and the handshake, not this.
 
 A scaffolded App is a sandboxed iframe, and locally there is no host to send
 `BLOCK_INIT` — so `npm run dev` shows you your own UI and nothing of the
-protocol. The **`page-money`** template ships a dev **harness** (the SDK's
-[`@civitai/blocks-react/testing`](https://www.npmjs.com/package/@civitai/blocks-react)
-hosts) to close that gap, with two modes:
+protocol. The **`page-money`** template ships a dev **harness** built on the
+SDK's [`@civitai/blocks-react`](https://www.npmjs.com/package/@civitai/blocks-react)
+hosts to close that gap, with two modes. The two live on deliberately separate
+subexports — the mock host on `/testing`, the real-money one on `/live`:
 
 | Command | Mode | What it does |
 |---|---|---|
