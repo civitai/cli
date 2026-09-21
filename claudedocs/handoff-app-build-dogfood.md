@@ -798,9 +798,19 @@ civitai app list  # 13 listings; every pre-existing slug unchanged; no ab-* pres
   does. Making the sweep dispatch its own validation closes it. ⚠ **Still true after this
   session** — `#688` was hand-dispatched and got all 13 checks.
 - `cli#665` open — blocks 2 of the 4 trial environments. Confirmed still OPEN 2026-09-21.
-- 🔴 **`_cdp.mjs` seeds `token: { raw: '', scopes: [] }`, so a block that gates generation
+- ~~🔴 **`_cdp.mjs` seeds `token: { raw: '', scopes: [] }`, so a block that gates generation
   on a budgeted scope can never reach `generating`.** The assertion consequently rewards
-  setting a UI status optimistically and penalises checking consent first. Rank 10.
+  setting a UI status optimistically and penalises checking consent first. Rank 10.~~
+  **FIXED — rank 10 shipped.** `oracle.sh` reads the manifest once and hands the declared
+  scope list to the assertion as an argument (`node <brief>.assert.mjs <url> <csv>`), which
+  seeds it as `token.scopes`; `raw` stays `''`, so scopes buy a *branch* and never a
+  *capability*. Regression coverage is `TestOracleSeedsTheBlocksDeclaredScopes` (red at
+  `origin/main` with `RENDER=no observed=ready`, green at HEAD) plus the updated
+  `fxGenpostBootstrapProbe`, which now asserts the seeded scopes match the manifest from
+  inside the page. ⚠ **`observed` on a scope-gated cell lengthens `ready>generating` →
+  `ready>generating>ready`** — with consent granted the app reaches the submit, which the
+  stub rejects. The verdict is `seq.includes('generating')`, so it is unaffected; any doc
+  quoting the old string is stale, not a regression.
 - ⚠ **`genpost.assert.mjs`'s `INSTALL_RECORDER` claims more than it delivers.** Its comment
   says polling cannot catch a machine passing *"through `generating` and out the other
   side"* and a MutationObserver can; but `push` reads `textContent` **fresh at callback

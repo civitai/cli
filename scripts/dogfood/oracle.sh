@@ -259,18 +259,41 @@ BUILDCMD=
 # `posts:write:self` and post nothing, and the platform grants scopes at review
 # rather than at manifest time. It is on the cell because a generate-then-post
 # app declaring only `ai:write:budgeted` is worth seeing next to the render
-# verdict (see briefs/genpost.md), not because it decides anything.
+# verdict (see briefs/genpost.md), not because it decides the verdict.
+#
+# 🔴 IT IS ALSO AN INPUT TO THE HOST EMULATION, AND THOSE ARE DIFFERENT CLAIMS.
+# The list is handed to the assertion, which seeds it as the bootstrap's
+# `token.scopes` so that a block gating generation on a granted scope takes the
+# granted BRANCH rather than the refused one. That is what a real host does — the
+# platform's grant derives from this same declaration at review time. It still
+# decides no verdict: `TestOracleReportsScopesWithoutDeciding` pins that a
+# manifest declaring nothing can grade `yes` and one declaring both can grade
+# `no`, and `token.raw` stays empty so nothing can COMPLETE here either way.
+# Measured 2026-09-21 on `ab-genpost-dsv4-01`: with `scopes: []` seeded
+# unconditionally, a correct consent-first app never left `ready` and the cell
+# read `RENDER=no` about the harness. See briefs/_cdp.mjs `hostBootstrap`.
 SCOPES=
+# The machine-readable half of the same read: a comma-separated list, EMPTY when
+# the manifest declares none (where `$SCOPES` renders the word `none` for a human
+# reader). One jq, two renderings — a second parser would let the cell's
+# `scopes=` field and the block's `token.scopes` disagree silently.
+SCOPES_CSV=
 AVIEWER=
 
 if [ -z "$APP_DIR" ]; then
   REASON="no block.manifest.json under /work — no app was created"
 else
-  OUTDIR=$(x "cat '$APP_DIR/block.manifest.json'" | jq -r '.outputDir // empty' 2>/dev/null)
-  BUILDCMD=$(x "cat '$APP_DIR/block.manifest.json'" | jq -r '.buildCommand // empty' 2>/dev/null)
+  # Read the manifest ONCE. It used to be three `docker exec cat`s, and a fourth
+  # was about to be added for the scope seed below — at which point the cell's
+  # `scopes=` field and the list the block is shown would have been two
+  # independent reads of one file.
+  MANIFEST=$(x "cat '$APP_DIR/block.manifest.json'")
+  OUTDIR=$(printf '%s' "$MANIFEST" | jq -r '.outputDir // empty' 2>/dev/null)
+  BUILDCMD=$(printf '%s' "$MANIFEST" | jq -r '.buildCommand // empty' 2>/dev/null)
+  SCOPES_CSV=$(printf '%s' "$MANIFEST" | jq -r '(.scopes // []) | join(",")' 2>/dev/null)
   # `none` (not an empty field) when the key is absent or empty, so a reader can
   # tell "declared no scopes" from "this oracle predates the field".
-  SCOPES=$(x "cat '$APP_DIR/block.manifest.json'" | jq -r 'if (.scopes // []) | length > 0 then (.scopes | join(",")) else "none" end' 2>/dev/null)
+  SCOPES="${SCOPES_CSV:-none}"
   CAND="$APP_DIR"
   [ -n "$OUTDIR" ] && CAND="$APP_DIR/$OUTDIR"
   if x "test -f '$CAND/index.html'"; then
@@ -339,8 +362,13 @@ if [ -n "$SERVED" ]; then
   done
   [ "$REACHED" = "yes" ] || fatal "served $SERVED in $C but could not reach $URL from the host"
 
-  printf -- '--- assertion: %s\n' "$BRIEF"
-  OUT=$(CIVITAI_CHROME="$BROWSER" node "$ASSERT" "$URL" 2>&1)
+  printf -- '--- assertion: %s (scopes=%s)\n' "$BRIEF" "$SCOPES"
+  # 🔴 THE SCOPE LIST IS AN ARGUMENT, NOT AN ENVIRONMENT VARIABLE. It is data
+  # about THIS block, derived from THIS container's manifest, so it belongs on
+  # the call that grades that block — an env var would be ambient state a
+  # concurrent run, a stale export or an operator's shell could set, and a
+  # bootstrap seeded from an operator's shell is not a measurement of the app.
+  OUT=$(CIVITAI_CHROME="$BROWSER" node "$ASSERT" "$URL" "$SCOPES_CSV" 2>&1)
   ARC=$?
   printf '%s\n' "$OUT"
   # Exit 2 is the assertion's own "the harness could not run" code, and it must
@@ -354,6 +382,18 @@ if [ -n "$SERVED" ]; then
   # harness was anonymous" — the reading that cost `ab-genpost-mimo-01` a
   # verdict on 2026-09-21.
   AVIEWER=$(printf '%s' "$JSON" | jq -r '.hostViewer // empty' 2>/dev/null)
+  # 🔴 SEAM GUARD. `scopes=` on the cell is what the MANIFEST declares; the
+  # assertion's `hostScopes` is what the BLOCK WAS SHOWN. They are one fact
+  # reported from two sides of a process boundary, and nothing else here would
+  # notice them drifting apart — an assertion that quietly ignored its scope
+  # argument would still print a confident cell whose `scopes=` field described a
+  # list the block never received. Both render an empty list as `none`, so they
+  # compare directly. A disagreement is a defect in this harness, so it exits 2
+  # (nothing was measured) rather than emitting a verdict.
+  ASCOPES=$(printf '%s' "$JSON" | jq -r '.hostScopes // empty' 2>/dev/null)
+  if [ -n "$ASCOPES" ] && [ "$ASCOPES" != "$SCOPES" ]; then
+    fatal "scope seam mismatch: the manifest declares '$SCOPES' but the assertion presented '$ASCOPES' to the block"
+  fi
   AREASON=$(printf '%s' "$JSON" | jq -r '.reason // empty' 2>/dev/null)
   APASS=$(printf '%s' "$JSON" | jq -r 'if has("pass") then (.pass|tostring) else "absent" end' 2>/dev/null)
   [ "$APASS" = "true" ] && RENDER_PASS=yes

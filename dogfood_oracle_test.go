@@ -257,7 +257,7 @@ if (!b || !b.viewer) {
 // host sends, and otherwise names the discrepancy — which the genpost assertion
 // then carries out as `observed`, so a failure says WHICH field is wrong.
 //
-// The three things it pins, and why each is a hazard rather than a nicety:
+// The four things it pins, and why each is a hazard rather than a nicety:
 //
 //   - `viewer` is a present object with a NUMERIC id. `isValidBlockInitPayload`,
 //     compiled into every already-deployed block bundle, rejects a viewer that
@@ -267,9 +267,18 @@ if (!b || !b.viewer) {
 //     through `withSignedInFlag()`, which PICKS `{ id, username, signedIn }` and
 //     deliberately omits `status` (civitai #2521). A wider fake lets a block
 //     read a field production never sends and still grade green here.
-//   - the TOKEN stays empty. Seeding a viewer must buy the block no capability:
-//     if a green cell could be earned with a credential the oracle handed over,
-//     the brief's "no generation and no post can complete here" premise is gone.
+//   - `token.scopes` is EXACTLY what this fixture's manifest declares. It is run
+//     with fxManifestScoped, so the list below is that manifest's, spelled out
+//     rather than computed — a probe that recomputed it from the same source the
+//     oracle reads could agree with a broken oracle. This crosses a process
+//     boundary (oracle.sh -> `node <brief>.assert.mjs <url> <csv>` -> the
+//     bootstrap), and nothing else in this suite can see that plumbing break:
+//     the cell's own `scopes=` field is read straight off the manifest and stays
+//     right whatever the block was shown.
+//   - the token's `raw` stays EMPTY. Scopes must buy the block a BRANCH and
+//     never a CAPABILITY: if a green cell could be earned with a credential the
+//     oracle handed over, the brief's "no generation and no post can complete
+//     here" premise is gone.
 const fxGenpostBootstrapProbe = `<!doctype html><meta charset="utf-8"><body>
 <input data-testid="prompt" type="text">
 <button id="gen">Generate</button>
@@ -287,10 +296,39 @@ document.getElementById('gen').onclick = function () {
     if (k !== 'id+signedIn+username') bad.push('viewer-keys:' + k);
   }
   if (t.raw !== '') bad.push('token-raw-nonempty');
-  if (!t.scopes || t.scopes.length !== 0) bad.push('token-scopes:' + JSON.stringify(t.scopes));
+  if (!t.scopes || t.scopes.join(',') !== 'ai:write:budgeted,posts:write:self') {
+    bad.push('token-scopes:' + JSON.stringify(t.scopes));
+  }
   if (c.viewerUserId !== (v ? v.id : null)) bad.push('context-viewer-mismatch');
   document.querySelector('[data-testid="status"]').textContent =
     bad.length ? bad.join(',') : 'generating';
+};
+</script></body>`
+
+// 🔴 THE CONSENT-FIRST APP, AND IT IS NOT A HYPOTHETICAL EITHER. This is the
+// shape of `ab-genpost-dsv4-01` (2026-09-21): `const granted =
+// hasBudgetedScope(token.scopes)`, and a `handleGenerate` that asks the host for
+// consent and RETURNS when it is false, so `setStatus('generating')` never runs
+// and the DOM produces no mutation at all after the click. Under the oracle's
+// old unconditional `scopes: []` bootstrap that graded `RENDER=no
+// observed=ready` — a verdict about the harness's scope list, which rewarded
+// flipping a status optimistically and penalised checking consent first.
+//
+// The un-granted branch does NOTHING on purpose: the real app's `requestConsent`
+// is a host call the stub transport swallows, so the measured signature is a
+// TIMEOUT at `observed=ready`, not a wrong word.
+const fxGenpostScopeGated = `<!doctype html><meta charset="utf-8"><body>
+<input data-testid="prompt" type="text">
+<button id="gen">Generate</button>
+<button id="post" disabled>Post</button>
+<div data-testid="status">ready</div>
+<script>
+var t = (window.__CIVITAI_BLOCK_CONTEXT__ || {}).token || {};
+var granted = (t.scopes || []).indexOf('ai:write:budgeted') !== -1;
+var s = document.querySelector('[data-testid="status"]');
+document.getElementById('gen').onclick = function () {
+  if (!granted) return;
+  s.textContent = 'generating';
 };
 </script></body>`
 
@@ -977,11 +1015,18 @@ func TestOracleCarriesTheGenpostStatusSequence(t *testing.T) {
 	}
 }
 
-// 🔴 SCOPES ARE REPORTED AND DECIDE NOTHING — the same standing as the validate
-// gate, and pinned in both directions for the same reason that one is: a field
-// wired as part of the verdict passes a one-sided test. A manifest declaring no
-// scopes must still be able to grade `yes`, and one declaring both must still be
-// able to grade `no`.
+// 🔴 SCOPES DECIDE NO VERDICT — the same standing as the validate gate, and
+// pinned in both directions for the same reason that one is: a field wired as
+// part of the verdict passes a one-sided test. A manifest declaring no scopes
+// must still be able to grade `yes`, and one declaring both must still be able
+// to grade `no`.
+//
+// ⚠ "Decides no verdict" is NOT "is inert". Since the scope seed landed, the
+// declared list is also an INPUT to the host emulation — it picks which branch a
+// consent-gated block takes, exactly as a real host's grant would. Those are
+// different claims and this test only makes the first;
+// TestOracleSeedsTheBlocksDeclaredScopes makes the second, and its own control
+// arm is what keeps the two from collapsing into "scopes make things pass".
 func TestOracleReportsScopesWithoutDeciding(t *testing.T) {
 	browser := oracleBrowser(t)
 	for _, tc := range []struct {
@@ -1010,6 +1055,148 @@ func TestOracleReportsScopesWithoutDeciding(t *testing.T) {
 			if got := summaryField(t, out, "RENDER"); got != tc.wantRender {
 				t.Fatalf("RENDER=%s, want %s — the verdict followed the manifest, not the browser\n%s",
 					got, tc.wantRender, out)
+			}
+		})
+	}
+}
+
+// 🔴 THE ORACLE SHOWS THE BLOCK THE SCOPES ITS OWN MANIFEST DECLARES — AND THE
+// SECOND HALF IS THE ONE THAT MAKES THIS COVERAGE RATHER THAN A CELEBRATION.
+//
+// Row 1 is the regression test: a consent-first generate-then-post app graded
+// `yes`. It is RED on pre-change code — with `scopes: []` seeded unconditionally
+// the Generate click does nothing, the assertion times out and the cell reads
+// `RENDER=no observed=ready`, which is byte-identical to the verdict a model
+// that built nothing earns. That was measured on `ab-genpost-dsv4-01`.
+//
+// Row 2 is the control that proves the value comes from the MANIFEST rather than
+// from a list somebody baked into the harness: the SAME fixture, a manifest
+// declaring nothing, still `no`. Without it, hardcoding `ai:write:budgeted` in
+// _cdp.mjs would pass row 1 — and would then grade every block as though it had
+// been granted a scope it never asked for.
+//
+// Rows 3 and 4 are the arm that decides whether the change is shippable at all:
+// seeding scopes must not make the oracle PERMISSIVE. A generate-only app with
+// the right test ids and an untouched scaffold both still grade `no` with both
+// scopes seeded — the same result `ab-genpost-glm-01` (an unmodified
+// `page-money` scaffold) gave on the live containers.
+func TestOracleSeedsTheBlocksDeclaredScopes(t *testing.T) {
+	browser := oracleBrowser(t)
+	for _, tc := range []struct {
+		name       string
+		manifest   string
+		html       string
+		wantRender string
+		wantObs    string
+	}{
+		{
+			name:     "a consent-gated app is shown its declared scopes and can generate",
+			manifest: fxManifestScoped, html: fxGenpostScopeGated,
+			wantRender: "yes", wantObs: "ready>generating",
+		},
+		{
+			name:     "the same app, manifest declaring nothing (control)",
+			manifest: fxManifestBuilt, html: fxGenpostScopeGated,
+			wantRender: "no", wantObs: "ready",
+		},
+		{
+			name:     "scopes do not buy a generate-only app a Post control",
+			manifest: fxManifestScoped, html: fxGenpostNoPost,
+			wantRender: "no",
+		},
+		{
+			name:     "scopes do not buy an untouched scaffold a pass",
+			manifest: fxManifestScoped, html: fxScaffold,
+			wantRender: "no",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := append(stubOracleEnv(t, stubEnv{
+				state: "running", civitaiRC: "0", transcript: startRecord("", "genpost"),
+				manifest: tc.manifest, outputDir: "dist", appHTML: tc.html,
+			}), "CIVITAI_CHROME="+browser)
+			out, code := runScript(t, "oracle.sh", env, "ctl", "root")
+			if code != 0 {
+				t.Fatalf("exit %d, want 0\n%s", code, out)
+			}
+			// 🔴 POSITIVE CONTROL ON THE FIXTURE TREE. Three of the four rows
+			// expect `no`, and so does a run that never found the app — so
+			// without this a broken fixture tree would make them pass for a
+			// reason that has nothing to do with scopes.
+			if got := summaryField(t, out, "app_dirs"); got != "1" {
+				t.Fatalf("app_dirs=%s, want 1 — the fixture app was never found, so this arm's "+
+					"verdict is about the harness, not the scope seed\n%s", got, out)
+			}
+			if got := summaryField(t, out, "RENDER"); got != tc.wantRender {
+				t.Fatalf("RENDER=%s, want %s\n%s", got, tc.wantRender, out)
+			}
+			// `observed` separates "the click drove the machine" from "the click
+			// did nothing", which is the whole difference the seed makes. A bare
+			// verdict cannot tell them apart.
+			if tc.wantObs != "" {
+				var obs string
+				for _, line := range strings.Split(out, "\n") {
+					if strings.HasPrefix(line, `{"assertion"`) {
+						var j struct {
+							Observed string `json:"observed"`
+						}
+						if err := json.Unmarshal([]byte(line), &j); err != nil {
+							t.Fatalf("assertion line is not JSON: %q", line)
+						}
+						obs = j.Observed
+					}
+				}
+				if obs != tc.wantObs {
+					t.Fatalf("observed = %q, want %q\n%s", obs, tc.wantObs, out)
+				}
+			}
+		})
+	}
+}
+
+// 🔴 AND THE TWO SIDES OF THE PROCESS BOUNDARY AGREE. `scopes=` on the cell is
+// read off the manifest by oracle.sh; `hostScopes` is reported back by the
+// assertion that actually seeded the bootstrap. An assertion that ignored its
+// scope argument would still produce a cell whose `scopes=` field named a list
+// the block never received — a confident, wrong, unnoticeable cell. The oracle
+// refuses (exit 2, nothing measured) on a disagreement; this pins that the two
+// are in fact wired to each other on the happy path.
+func TestOracleAgreesWithTheAssertionOnWhichScopesWereSeeded(t *testing.T) {
+	browser := oracleBrowser(t)
+	for _, tc := range []struct {
+		manifest string
+		want     string
+	}{
+		{fxManifestScoped, "ai:write:budgeted,posts:write:self"},
+		{fxManifestBuilt, "none"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			env := append(stubOracleEnv(t, stubEnv{
+				state: "running", civitaiRC: "0", transcript: startRecord("", "genpost"),
+				manifest: tc.manifest, outputDir: "dist", appHTML: fxGenpost,
+			}), "CIVITAI_CHROME="+browser)
+			out, code := runScript(t, "oracle.sh", env, "ctl", "root")
+			if code != 0 {
+				t.Fatalf("exit %d, want 0 — a scope seam mismatch exits 2\n%s", code, out)
+			}
+			if got := summaryField(t, out, "scopes"); got != tc.want {
+				t.Fatalf("scopes=%s, want %s\n%s", got, tc.want, out)
+			}
+			var seeded string
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(line, `{"assertion"`) {
+					var j struct {
+						HostScopes string `json:"hostScopes"`
+					}
+					if err := json.Unmarshal([]byte(line), &j); err != nil {
+						t.Fatalf("assertion line is not JSON: %q", line)
+					}
+					seeded = j.HostScopes
+				}
+			}
+			if seeded != tc.want {
+				t.Fatalf("the assertion reported hostScopes=%q, want %q — the cell's scopes= field "+
+					"and the list the block was shown are not the same fact\n%s", seeded, tc.want, out)
 			}
 		})
 	}
@@ -1069,13 +1256,14 @@ func TestOracleShowsTheBlockASignedInViewer(t *testing.T) {
 	}
 }
 
-// 🔴 AND THE SEEDED VIEWER BUYS THE BLOCK NOTHING. A host emulation that hands
-// a block a viewer AND a usable credential would make the `genpost` brief's
-// premise false — briefs/genpost.md says in as many words that no generation
-// and no post can complete here, on any machine, and the assertion grades the
-// state machine only on that basis. This reads the bootstrap from INSIDE the
-// page, so it is a claim about what the block receives rather than about what
-// _cdp.mjs says.
+// 🔴 AND THE SEEDED VIEWER AND SCOPES BUY THE BLOCK NOTHING. A host emulation
+// that hands a block a viewer AND a usable credential would make the `genpost`
+// brief's premise false — briefs/genpost.md says in as many words that no
+// generation and no post can complete here, on any machine, and the assertion
+// grades the state machine only on that basis. Scopes are a BRANCH, `token.raw`
+// is the CAPABILITY, and only the first of those is seeded. This reads the
+// bootstrap from INSIDE the page, so it is a claim about what the block receives
+// rather than about what _cdp.mjs says.
 func TestOracleSeedsTheProductionViewerAndNoCredential(t *testing.T) {
 	browser := oracleBrowser(t)
 	run := func(t *testing.T, anon bool) (string, string) {
@@ -1113,8 +1301,10 @@ func TestOracleSeedsTheProductionViewerAndNoCredential(t *testing.T) {
 		t.Fatalf("RENDER=%s, want yes. The probe drives the status machine only when the seeded "+
 			"bootstrap is exactly what a real host sends; `observed` names the field that is "+
 			"wrong — a `viewer-keys:` value means the fake is wider or narrower than "+
-			"civitai.com's own withSignedInFlag(), a `token-` value means the oracle handed the "+
-			"block a credential and briefs/genpost.md's premise is void.\n%s", render, out)
+			"civitai.com's own withSignedInFlag(), a `token-scopes:` value means the manifest's "+
+			"declared scopes did not reach the block (the oracle.sh -> assert.mjs argv -> "+
+			"hostBootstrap plumbing), and `token-raw-nonempty` means the oracle handed the block "+
+			"a credential and briefs/genpost.md's premise is void.\n%s", render, out)
 	}
 }
 
