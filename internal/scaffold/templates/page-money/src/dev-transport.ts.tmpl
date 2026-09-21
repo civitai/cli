@@ -10,7 +10,14 @@
 // BEFORE any hook (or the mock host) runs. That's what this does.
 
 import { getTransport } from '@civitai/blocks-react';
-import { createLiveHost, resetTransport } from '@civitai/blocks-react/testing';
+import { resetTransport } from '@civitai/blocks-react/testing';
+// 🔴 `createLiveHost` lives on `/live`, NOT `/testing` (moved in
+// @civitai/blocks-react@0.55.0). The split is the warning: everything on
+// `/testing` is a mock, while `createLiveHost` forwards the real App-Block
+// protocol to the real backend and a successful generation DEBITS THE TOKEN
+// HOLDER'S OWN BUZZ. Keep these two imports on separate lines so the money
+// path is visible at the import site.
+import { createLiveHost } from '@civitai/blocks-react/live';
 
 /**
  * Dev harness modes. Selected by `VITE_HARNESS_MODE` (the `dev:harness` and
