@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run ONE runner.py trial offline: no Docker, no OpenRouter, no money.
 
-    fake_trial.py <runner.py> <outdir> <capture.json> [brief]
+    fake_trial.py <runner.py> <outdir> <capture.json> [brief] [-- <extra runner args>]
 
 Imports runner.py as a module, replaces the two things that touch the outside
 world — `subprocess.run` (Docker) and `urllib.request.urlopen` (OpenRouter) —
@@ -16,8 +16,22 @@ model-facing message is the entire task a blind agent receives, so a change
 that quietly stops delivering it would otherwise be invisible until a matrix
 came back mysteriously all-red.
 
-The fake response carries NO tool_calls, so the loop stops at `finished` after
-one turn and the container shell is never reached.
+🔴 AND SO THE CREDENTIAL PATH CAN BE PROVED, NOT ASSERTED. The capture records
+EVERY `subprocess.run` argv the runner issued — which is the process-argv
+surface a token must never reach — so the leak test can grep it with the same
+pattern it greps the transcript and the command log with. `FAKE_TOOL_OUTPUT`
+makes the stub Docker echo an arbitrary string back as a command's output, so
+a trial in which the model `cat`s the credential file can be reproduced
+offline and the redactor watched to catch it.
+
+Env knobs:
+  FAKE_TOOL_COMMAND   a command to have the fake model "run" (default: none,
+                      so the loop stops after one turn with no tool calls)
+  FAKE_TOOL_OUTPUT    what the stub Docker returns as that command's output
+  FAKE_TRIAL_ID       the trial id (default `faketrial`)
+
+The fake response carries no tool_calls once FAKE_TOOL_COMMAND has been served
+once, so the loop always terminates.
 """
 import importlib.util
 import json
@@ -28,19 +42,42 @@ import types
 import urllib.request
 
 runner_path, outdir, capture_path = sys.argv[1], sys.argv[2], sys.argv[3]
-brief = sys.argv[4] if len(sys.argv) > 4 else ""
+rest = sys.argv[4:]
+extra = []
+if "--" in rest:
+    i = rest.index("--")
+    extra = rest[i + 1:]
+    rest = rest[:i]
+brief = rest[0] if rest else ""
 
 spec = importlib.util.spec_from_file_location("dogfood_runner", runner_path)
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 
 captured = {}
+# One command per assistant turn, newline-separated, in order. A cap that only
+# fires on the Nth invocation cannot be tested with a single turn.
+TOOL_COMMANDS = [c for c in os.environ.get("FAKE_TOOL_COMMAND", "").split("\n") if c]
+TOOL_OUTPUT = os.environ.get("FAKE_TOOL_OUTPUT", "")
 
 
 def fake_run(cmd, *a, **kw):
-    """Stands in for every Docker call. Records nothing but the fact of it."""
-    captured.setdefault("subprocess", []).append(list(cmd))
-    return subprocess.CompletedProcess(cmd, 0, stdout="fake\n", stderr="")
+    """Stands in for every Docker call, and RECORDS ITS FULL ARGV.
+
+    The argv list is the leak surface `ps` would expose on a real run, so the
+    test greps exactly this.
+    """
+    cmd = list(cmd)
+    captured.setdefault("subprocess", []).append(cmd)
+    out = "fake\n"
+    # `docker exec … bash -lc <command>` is how sh() runs the model's command;
+    # hand back the planted output so the redactor has something to catch.
+    if TOOL_OUTPUT and "exec" in cmd and "bash" in cmd and "-lc" in cmd:
+        out = TOOL_OUTPUT + "\n"
+    # runner.py reads bytes from sh() and str everywhere it passes text=True.
+    if kw.get("text"):
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+    return subprocess.CompletedProcess(cmd, 0, stdout=out.encode(), stderr=b"")
 
 
 class _Resp:
@@ -57,11 +94,25 @@ class _Resp:
         return False
 
 
+_served = {"n": 0}
+
+
 def fake_urlopen(req, *a, **kw):
     captured["url"] = req.full_url
-    captured["payload"] = json.loads(req.data.decode())
+    captured.setdefault("payloads", []).append(json.loads(req.data.decode()))
+    captured["payload"] = captured["payloads"][0]
+    if _served["n"] < len(TOOL_COMMANDS):
+        cmd = TOOL_COMMANDS[_served["n"]]
+        _served["n"] += 1
+        msg = {"content": None, "tool_calls": [{
+            "id": "call_%d" % _served["n"], "type": "function",
+            "function": {"name": "bash",
+                         "arguments": json.dumps({"command": cmd})},
+        }]}
+    else:
+        msg = {"content": "done", "tool_calls": []}
     return _Resp(json.dumps({
-        "choices": [{"message": {"content": "done", "tool_calls": []}}],
+        "choices": [{"message": msg}],
         "usage": {"prompt_tokens": 11, "completion_tokens": 3, "cost": 0.0001},
     }).encode())
 
@@ -74,10 +125,12 @@ runner.subprocess = types.SimpleNamespace(
 urllib.request.urlopen = fake_urlopen
 
 os.environ["OPENROUTER_API_KEY"] = "sk-or-fake-not-a-real-key"
+trial = os.environ.get("FAKE_TRIAL_ID", "faketrial")
 argv = ["runner.py", "--model", "fake/model", "--image", "fake-image",
-        "--trial", "faketrial", "--out", outdir]
+        "--trial", trial, "--out", outdir]
 if brief:
     argv += ["--brief", brief]
+argv += extra
 sys.argv = argv
 
 rc = runner.main()

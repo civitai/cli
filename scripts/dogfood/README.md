@@ -10,9 +10,12 @@ zsh and curl — nothing else. **Blindness is a mount namespace, not an
 instruction:** this repo, its `AGENTS.md` and the operator's home directory are
 not reachable from inside, so an agent cannot read the source even by accident.
 
-No Civitai credential is involved at any point, so no trial can spend Buzz or
-touch a real account. The only credential is the operator's OpenRouter key, read
-from `OPENROUTER_API_KEY` and never written anywhere.
+By default no Civitai credential is involved at any point, so no trial can spend
+Buzz or touch a real account. The only credential is then the operator's
+OpenRouter key, read from `OPENROUTER_API_KEY` and never written anywhere.
+`--credential-file` opts one trial into a **credentialed run** — see
+[Credentialed trials](#credentialed-trials-and-the-run-caps) for what that
+changes, what it bounds, and what it does not.
 
 ### 🔴 What is isolated, and what is NOT
 
@@ -22,7 +25,7 @@ model an unsandboxed root shell in half of these images.
 | | bounded? | by what |
 |---|---|---|
 | filesystem — repo, `$HOME`, credentials | **yes** | mount namespace; the container has none of them |
-| Civitai account / Buzz | **yes** | no Civitai credential exists in a trial |
+| Civitai account / Buzz | **yes, unless `--credential-file`** | no Civitai credential exists in a default trial; with one, see the caps below |
 | processes | yes | `--pids-limit 512` |
 | memory / CPU | yes | `--memory 2g --cpus 2` |
 | money | yes | `--max-cost` (default $1/trial) — a step cap is not a spend cap |
@@ -101,6 +104,79 @@ DOGFOOD_BRIEF="$(cat briefs/celsius.brief.txt)" DOGFOOD_TRIAL_PREFIX=ta bash dri
   matrix's namespace would skip every cell, each "complete" from a *different
   task*, while printing `MATRIX COMPLETE`. Set `DOGFOOD_TRIAL_PREFIX`.
 
+## Credentialed trials, and the run caps
+
+A default trial has no Civitai credential, so `civitai generate` — the CLI's only
+irreversibly money-spending surface — and every `app` command that reaches the
+account are **structurally unreachable**. `--credential-file` opts one trial into
+reaching them.
+
+```bash
+python3 runner.py --model "$MODEL" --image df-node-root --trial c-01 \
+  --brief "$(cat briefs/genpost.brief.txt)" \
+  --credential-file ~/.config/civitai/config.yaml \
+  --app-prefix dogfood4- --max-generations 3 --max-submissions 1
+
+# the whole matrix, credentialed (driver.sh refuses without DOGFOOD_APP_PREFIX)
+DOGFOOD_CREDENTIAL_FILE=~/.config/civitai/config.yaml \
+DOGFOOD_APP_PREFIX=dogfood4- DOGFOOD_MAX_GENERATIONS=3 DOGFOOD_MAX_SUBMISSIONS=1 \
+DOGFOOD_BRIEF="$(cat briefs/genpost.brief.txt)" DOGFOOD_TRIAL_PREFIX=tc bash driver.sh
+```
+
+### 🔴 The secret does not reach the artifacts
+
+The flag takes a **path**, never a value, and the file is `docker cp`'d in and
+installed by a fixed script. That keeps the credential off the three surfaces a
+run leaves behind:
+
+| surface | what keeps it off |
+|---|---|
+| **process argv** (`ps`) | only the path is ever an argument. `docker run -e CIVITAI_TOKEN=…` would put the value in argv for every process on the host; `TestDogfoodCredentialIsInjectedByPathNotByValue` fails if anyone reintroduces it |
+| **`transcript.jsonl` / `commands.log` / stdout** | every value written goes through a redactor keyed on the credential's own strings, so even a trial in which the model `cat`s the config file records `[REDACTED:<sha8>]` |
+| **the container's shell history** | `docker exec … bash -lc` is non-interactive, so bash writes no history file — and nothing in the install path holds the value anyway |
+
+What is recorded is `credentialed: true` plus `credential_sha256`, a 12-hex
+prefix of the file's digest: not reversible, not a substring, and enough to tell
+two runs apart.
+
+⚠ **What this does NOT do.** The credential is a real file inside the container
+and the model runs shell as a user who can read it — it must, or the CLI cannot
+authenticate. The guarantee is about what leaves the container and lands in the
+artifacts you keep, not about hiding the credential from the trial.
+
+**Prove it rather than trusting this table:**
+`go test . -run TestDogfoodCredential -v`. `TestDogfoodCredentialNeverLeaks`
+plants a canary, runs a trial that `cat`s the config, greps all three surfaces
+for zero hits — and runs the same grep over the un-redacted file first, because a
+grep that finds nothing because its PATTERN is wrong is indistinguishable from
+one that finds nothing because there is nothing there.
+
+### The caps — what is mechanical and what is not
+
+| cap | flag | mechanical? |
+|---|---|---|
+| app-name prefix on anything the trial creates or mutates | `--app-prefix` | **yes** — a mismatched `app init` / `create` / `submit` / `listing` is refused and never executed. With no slug on the command line it reads every `block.manifest.json` under `/work` and requires all of them to carry the prefix |
+| generation cap | `--max-generations N` | **yes** — the N+1th `civitai generate` is refused before the `docker exec` |
+| submission cap | `--max-submissions N` | **yes** — same, for `civitai app submit` |
+| `app withdraw` | `--allow-withdraw` to permit | **yes** — refused by default. It permanently destroys a listing's captioned screenshots and names a publication-request id no prefix check can resolve to an app |
+| command log | always on | **yes** — `runs/<trial>/commands.log`, one line per command with its verdict and the counters |
+
+🔴 **They classify COMMAND TEXT, and that is the boundary.** A model that writes
+a command into a file and runs the file, or builds it at runtime out of pieces
+the classifier does not see, is not stopped. The fail-closed rule narrows this —
+a segment naming the CLI *and* a spending or publishing verb, with no invocation
+the harness can parse (`eval "civitai app submit"`, `c=civitai`), is refused —
+and it does not close it. The threat model is the one
+`claudedocs/handoff-dogfood-3.md` settled on: a **cooperative** agent. These stop
+the ordinary accident, not an adversary. The bound people want for an adversary
+needs a second uid, a container with no credential in it, or a platform-capped
+token; a better classifier is not that.
+
+**The caps arm themselves when a credential is present**, so an operator does not
+have to remember three flags for the bound to exist. With no credential and no
+cap flag nothing is judged at all, and the transcript is byte-for-byte what it
+has always been — pinned by `TestDogfoodUncredentialedRunIsUnchanged`.
+
 ## The render oracle — the verdict for an app-build trial
 
 `oracle.sh` is what turns "the agent produced files" into "a browser watched the
@@ -116,7 +192,7 @@ bash grade.sh  <trial-id> <container-user> [brief]     # setup arms + the render
 A graded cell then carries both verdicts on one line:
 
 ```
-agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius validate_gate=pass observed=212 RENDER=yes
+agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius validate_gate=pass scopes=none observed=212 RENDER=yes
 ```
 
 - 🔴 **`civitai app validate` is a GATE, not the verdict, and it does not even
@@ -155,13 +231,39 @@ so they need no daemon — but they do drive a **real** browser, and they FAIL
 rather than skip under `$CI` (a skip and a pass read the same in a merge log).
 `ci.yml`'s `build-test` resolves one into `CIVITAI_CHROME` before `go test ./...`.
 
-`briefs/` holds each brief and the behavioural assertion that grades it —
-`briefs/celsius.md` is the worked one, with its controls. 🔴 **An assertion is
+- 🔴 **`scopes=` is REPORTED and decides nothing**, exactly like the validate
+  gate. A manifest is a declaration, not a behaviour — a block can declare
+  `posts:write:self` and post nothing, and the platform grants scopes at review
+  rather than at manifest time. It is on the cell because a generate-then-post
+  app declaring only `ai:write:budgeted` is worth seeing next to the render
+  verdict. Pinned in both directions by `TestOracleReportsScopesWithoutDeciding`.
+
+### The briefs
+
+| brief | what a green cell means | doc |
+|---|---|---|
+| `celsius` | the agent built *something that runs* — a converter wired to prescribed hooks | `briefs/celsius.md` |
+| `genpost` | the agent wired a *generate-then-post* flow: prompt, a Post control gated shut until a generation succeeds, and a status machine the Generate click drives | `briefs/genpost.md` |
+
+🔴 **`genpost` cannot see a generation or a post happen, and never will here.**
+The oracle's host emulation is the SDK's `InlineTransport`, a v1 stub whose
+`sendRequest` rejects and which delivers no host pushes — so an assertion that
+waited for an image or a post id would time out against a perfect app. It grades
+the block's own state machine on the near side of the request. Read a green cell
+as *"the flow is wired and gated correctly"*, never as *"the money path works"*.
+
+`briefs/` holds each brief and the behavioural assertion that grades it;
+`_cdp.mjs` is the browser plumbing they share. 🔴 **An assertion is
 only worth running once an untouched `civitai app init` scaffold has been
 watched to FAIL it**; a brief the scaffold already satisfies makes every cell
-green while measuring nothing. `briefs/celsius.md` records that control for all
-three templates. The tests for the injection path itself are
-`dogfood_brief_test.go` in the repo root (`go test -run Dogfood .`).
+green while measuring nothing. Both briefs' docs record that control for all
+three templates — and for `genpost` the scaffold control is not enough on its
+own, because `page-money` already ships a prompt field and a Generate button, so
+`briefs/genpost.md` also records a complete *generate-only* app failing it.
+The tests for the injection path itself are
+`dogfood_brief_test.go` in the repo root (`go test -run Dogfood .`), and
+`TestEveryBriefHasASiblingGuard` there is the ledger: a new `<name>.brief.txt`
+needs `<name>.assert.mjs`, `<name>.md` and a `Test<Name>BriefAndAssertionAgree`.
 
 Trial ids are `<prefix>-<model>-<env>-<identity>`, `t-` by default. The three identities are `claudeid`
 (`CLAUDECODE=1`), `codexid` (`CODEX_SANDBOX=1`) and `other` (no signal), and

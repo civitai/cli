@@ -92,6 +92,42 @@ MSG
   exit 1
 fi
 
+# ── the credential and the run caps ──────────────────────────────────────────
+# A credentialed matrix reaches a REAL account. Everything here is pass-through
+# to runner.py, which owns the enforcement; the driver's only job is to refuse
+# the two mistakes that are invisible afterwards.
+CREDENTIAL="${DOGFOOD_CREDENTIAL_FILE:-}"
+APP_PREFIX="${DOGFOOD_APP_PREFIX:-}"
+MAX_GENERATIONS="${DOGFOOD_MAX_GENERATIONS:-}"
+MAX_SUBMISSIONS="${DOGFOOD_MAX_SUBMISSIONS:-}"
+if [ -n "$CREDENTIAL" ]; then
+  # 🔴 SAME RESUME-GUARD TRAP AS THE BRIEF, AND WORSE. A credentialed cell run
+  # under the setup matrix's namespace is skipped as "complete" by an
+  # UNCREDENTIALED transcript of the same id — so the run that was supposed to
+  # reach the account reaches nothing, and MATRIX COMPLETE is printed over it.
+  if [ "$PREFIX" = "t" ]; then
+    cat >&2 <<'MSG'
+refusing to run: DOGFOOD_CREDENTIAL_FILE is set but DOGFOOD_TRIAL_PREFIX is
+still the default `t`, the SETUP matrix's namespace. Set a distinct namespace,
+e.g. DOGFOOD_TRIAL_PREFIX=tc
+MSG
+    exit 1
+  fi
+  [ -s "$CREDENTIAL" ] || {
+    echo "refusing to run: DOGFOOD_CREDENTIAL_FILE=$CREDENTIAL is missing or empty" >&2
+    exit 1
+  }
+  # 🔴 A CREDENTIALED MATRIX WITH NO APP PREFIX CANNOT BE TOLD FROM THE
+  # ACCOUNT'S REAL APPS AFTERWARDS, and the prefix is also what the runner's
+  # refusal keys on — without it, every mutating `app` command is ungated.
+  [ -n "$APP_PREFIX" ] || {
+    echo "refusing to run: a credentialed matrix needs DOGFOOD_APP_PREFIX, e.g." >&2
+    echo "  DOGFOOD_APP_PREFIX=dogfood4-  — it is what keeps the trial off the" >&2
+    echo "  account's existing apps and what makes its own apps identifiable." >&2
+    exit 1
+  }
+fi
+
 run_one() {  # model short image ienv trial user
   local model=$1 image=$3 ienv=$4 trial=$5 euser=$6
   # 🔴 GATE ON COMPLETION, NOT ON EXISTENCE. runner.py opens transcript.jsonl in
@@ -111,6 +147,12 @@ run_one() {  # model short image ienv trial user
   local args=(--model "$model" --image "$image" --trial "$trial" --user "$euser" --out runs)
   [ -n "$ienv" ] && args+=(--agent-env "$ienv")
   [ -n "$BRIEF" ] && args+=(--brief "$BRIEF")
+  # The credential is passed as a PATH, never as a value — see runner.py's
+  # credential section for the three surfaces that keeps it off.
+  [ -n "$CREDENTIAL" ] && args+=(--credential-file "$CREDENTIAL")
+  [ -n "$APP_PREFIX" ] && args+=(--app-prefix "$APP_PREFIX")
+  [ -n "$MAX_GENERATIONS" ] && args+=(--max-generations "$MAX_GENERATIONS")
+  [ -n "$MAX_SUBMISSIONS" ] && args+=(--max-submissions "$MAX_SUBMISSIONS")
   ( timeout 1500 python3 runner.py "${args[@]}" >"logs/$trial.out" 2>"logs/$trial.err"
     echo "done $trial rc=$?" ) &
 }

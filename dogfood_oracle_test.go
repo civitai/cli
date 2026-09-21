@@ -126,10 +126,105 @@ if (window.__CIVITAI_BLOCK_CONTEXT__) {
 }
 </script></body>`
 
+// ── the `genpost` brief's fixtures ───────────────────────────────────────────
+// A generate-then-post app as the brief specifies it: the Post control exists
+// and is CLOSED until something has been generated, and the Generate click
+// drives the status machine through `generating`. Plain DOM, for the same reason
+// fxGood is: this exercises the ORACLE, not the SDK.
+const fxGenpost = `<!doctype html><meta charset="utf-8"><body>
+<input data-testid="prompt" type="text">
+<button id="gen">Generate</button>
+<button id="post" disabled>Post</button>
+<div data-testid="status">ready</div>
+<script>
+var s = document.querySelector('[data-testid="status"]');
+document.getElementById('gen').onclick = function () {
+  s.textContent = 'generating';
+  setTimeout(function () {
+    s.textContent = 'generated';
+    document.getElementById('post').disabled = false;
+  }, 30);
+};
+</script></body>`
+
+// 🔴 THE CONTROL THAT MATTERS MORE THAN THE SCAFFOLD ONE. A complete, working
+// generate-only app carrying the exact test ids the brief names — what a model
+// that read the first half of the brief would build — and the `page-money`
+// scaffold ALREADY ships that shape. If the oracle grades this `yes`, the brief
+// measures the test ids and nothing about posting.
+const fxGenpostNoPost = `<!doctype html><meta charset="utf-8"><body>
+<input data-testid="prompt" type="text">
+<button id="gen">Generate</button>
+<div data-testid="status">ready</div>
+<script>
+var s = document.querySelector('[data-testid="status"]');
+document.getElementById('gen').onclick = function () { s.textContent = 'generating'; };
+</script></body>`
+
+// 🔴 THE FIXTURE THAT REACHES THE DISABLED CHECK. Without it, mutating the
+// `postDisabled !== true` branch away SURVIVES — the no-Post fixture above
+// throws one line earlier, so the disabled guard never executes and its
+// assertion is unreachable. Measured: M9 of the mutation battery survived until
+// this row existed.
+const fxGenpostPostEnabled = `<!doctype html><meta charset="utf-8"><body>
+<input data-testid="prompt" type="text">
+<button id="gen">Generate</button>
+<button id="post">Post</button>
+<div data-testid="status">ready</div>
+<script>
+var s = document.querySelector('[data-testid="status"]');
+document.getElementById('gen').onclick = function () { s.textContent = 'generating'; };
+</script></body>`
+
+// 🔴 AND THE ONE THAT REACHES THE STATUS PREDICATE. Everything the brief names
+// is present and the Generate button does nothing — the shape of an app wired
+// up to the eye and not to anything. Same story: mutating `pass =
+// seq.includes(STATUS_BUSY)` to `pass = true` survived until this row existed,
+// because every other failing fixture throws before the predicate is evaluated.
+const fxGenpostInertGenerate = `<!doctype html><meta charset="utf-8"><body>
+<input data-testid="prompt" type="text">
+<button id="gen">Generate</button>
+<button id="post" disabled>Post</button>
+<div data-testid="status">ready</div>
+<script>document.getElementById('gen').onclick = function () {};</script></body>`
+
+// 🔴 THE NEAR-MISS THE PREDICATE ITSELF HAS TO CATCH. A working app whose state
+// machine uses a different word — it moves, it just never says `generating`.
+// Without this row, mutating the predicate to `pass = true` SURVIVES: every
+// other failing fixture THROWS before the predicate is evaluated, so the
+// comparison is unreachable. Measured: M10 survived until this row existed.
+const fxGenpostWrongWord = `<!doctype html><meta charset="utf-8"><body>
+<input data-testid="prompt" type="text">
+<button id="gen">Generate</button>
+<button id="post" disabled>Post</button>
+<div data-testid="status">ready</div>
+<script>
+var s = document.querySelector('[data-testid="status"]');
+document.getElementById('gen').onclick = function () { s.textContent = 'submitting'; };
+</script></body>`
+
+// Same story one step earlier: the resting word is wrong. Without this the
+// `initialStatus !== STATUS_IDLE` guard is unreachable (M11).
+const fxGenpostWrongIdle = `<!doctype html><meta charset="utf-8"><body>
+<input data-testid="prompt" type="text">
+<button id="gen">Generate</button>
+<button id="post" disabled>Post</button>
+<div data-testid="status">idle</div>
+<script>
+var s = document.querySelector('[data-testid="status"]');
+document.getElementById('gen').onclick = function () { s.textContent = 'generating'; };
+</script></body>`
+
 const fxManifestBuilt = `{"blockId":"fixture","version":"0.1.0","name":"Fixture","type":"block",
 "buildCommand":"npm run build","outputDir":"dist"}`
 
 const fxManifestStatic = `{"blockId":"fixture","version":"0.1.0","name":"Fixture","type":"block"}`
+
+// A manifest declaring the two scopes a generate-then-post app needs. `scopes`
+// is REPORTED on the cell and decides nothing — see briefs/genpost.md.
+const fxManifestScoped = `{"blockId":"fixture","version":"0.1.0","name":"Fixture","type":"block",
+"scopes":["ai:write:budgeted","posts:write:self"],
+"buildCommand":"npm run build","outputDir":"dist"}`
 
 // ── the stub docker ──────────────────────────────────────────────────────────
 
@@ -495,6 +590,121 @@ func TestOracleServesANoBuildApp(t *testing.T) {
 	}
 	if got := summaryField(t, out, "RENDER"); got != "yes" {
 		t.Fatalf("RENDER=%s, want yes\n%s", got, out)
+	}
+}
+
+// ── the `genpost` brief ──────────────────────────────────────────────────────
+
+// 🔴 THE ORACLE GRADES THE SECOND BRIEF, AND THE POST GATE IS WHAT IT GRADES ON.
+// Both arms are required. A `yes` on the first alone is satisfied by an oracle
+// that can reach a block at all; it is the SECOND row — a complete generate-only
+// app, with the right test ids, graded `no` — that separates this brief from one
+// the `page-money` scaffold already satisfies.
+func TestOracleGradesTheGenpostBrief(t *testing.T) {
+	browser := oracleBrowser(t)
+	for _, tc := range []struct {
+		name       string
+		html       string
+		wantRender string
+		wantReason string
+	}{
+		{"a generate-then-post app", fxGenpost, "yes", ""},
+		{"generate only, no Post control", fxGenpostNoPost, "no", `labelled "post"`},
+		{"Post open before anything exists to post", fxGenpostPostEnabled, "no", "is enabled before any generation"},
+		{"Generate does nothing", fxGenpostInertGenerate, "no", "waiting for the status to leave"},
+		{"the machine moves but never says generating", fxGenpostWrongWord, "no", `never read "generating"`},
+		{"the resting word is wrong", fxGenpostWrongIdle, "no", "at rest, expected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := append(stubOracleEnv(t, stubEnv{
+				state: "running", civitaiRC: "0",
+				manifest: fxManifestScoped, outputDir: "dist", appHTML: tc.html,
+			}), "CIVITAI_CHROME="+browser)
+			out, code := runScript(t, "oracle.sh", env, "ctl", "root", "genpost")
+			if code != 0 {
+				t.Fatalf("exit %d, want 0\n%s", code, out)
+			}
+			if got := summaryField(t, out, "RENDER"); got != tc.wantRender {
+				t.Fatalf("RENDER=%s, want %s\n%s", got, tc.wantRender, out)
+			}
+			if tc.wantReason != "" && !strings.Contains(out, tc.wantReason) {
+				t.Fatalf("the reason does not say %q:\n%s", tc.wantReason, out)
+			}
+		})
+	}
+}
+
+// 🔴 `observed` IS THE STATUS SEQUENCE, NOT THE FINAL VALUE — and it has to
+// reach the cell, for the same reason celsius's `212 °F` does. With a stub host
+// every correct app ends in its own failure state a moment after `generating`,
+// so a cell carrying only where it ENDED would make every correct app look
+// broken. This pins the transition.
+func TestOracleCarriesTheGenpostStatusSequence(t *testing.T) {
+	browser := oracleBrowser(t)
+	env := append(stubOracleEnv(t, stubEnv{
+		state: "running", civitaiRC: "0",
+		manifest: fxManifestScoped, outputDir: "dist", appHTML: fxGenpost,
+	}), "CIVITAI_CHROME="+browser)
+	out, code := runScript(t, "oracle.sh", env, "ctl", "root", "genpost")
+	if code != 0 {
+		t.Fatalf("exit %d, want 0\n%s", code, out)
+	}
+	var obs string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, `{"assertion"`) {
+			var j struct {
+				Observed string `json:"observed"`
+			}
+			if err := json.Unmarshal([]byte(line), &j); err != nil {
+				t.Fatalf("assertion line is not JSON: %q", line)
+			}
+			obs = j.Observed
+		}
+	}
+	if !strings.Contains(obs, "ready") || !strings.Contains(obs, "generating") {
+		t.Fatalf("observed = %q, want the transition it recorded — a bare final value cannot "+
+			"tell a working app from one whose button does nothing\n%s", obs, out)
+	}
+	if got := summaryField(t, out, "observed"); !strings.Contains(got, "generating") {
+		t.Fatalf("observed=%q on the summary line does not carry the sequence — the cell loses it\n%s", got, out)
+	}
+}
+
+// 🔴 SCOPES ARE REPORTED AND DECIDE NOTHING — the same standing as the validate
+// gate, and pinned in both directions for the same reason that one is: a field
+// wired as part of the verdict passes a one-sided test. A manifest declaring no
+// scopes must still be able to grade `yes`, and one declaring both must still be
+// able to grade `no`.
+func TestOracleReportsScopesWithoutDeciding(t *testing.T) {
+	browser := oracleBrowser(t)
+	for _, tc := range []struct {
+		name       string
+		manifest   string
+		html       string
+		wantScopes string
+		wantRender string
+	}{
+		{"declared, app works", fxManifestScoped, fxGenpost, "ai:write:budgeted,posts:write:self", "yes"},
+		{"none declared, app works", fxManifestBuilt, fxGenpost, "none", "yes"},
+		{"declared, app does not", fxManifestScoped, fxGenpostNoPost, "ai:write:budgeted,posts:write:self", "no"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := append(stubOracleEnv(t, stubEnv{
+				state: "running", civitaiRC: "0",
+				manifest: tc.manifest, outputDir: "dist", appHTML: tc.html,
+			}), "CIVITAI_CHROME="+browser)
+			out, code := runScript(t, "oracle.sh", env, "ctl", "root", "genpost")
+			if code != 0 {
+				t.Fatalf("exit %d, want 0\n%s", code, out)
+			}
+			if got := summaryField(t, out, "scopes"); got != tc.wantScopes {
+				t.Fatalf("scopes=%s, want %s (it must be REPORTED)\n%s", got, tc.wantScopes, out)
+			}
+			if got := summaryField(t, out, "RENDER"); got != tc.wantRender {
+				t.Fatalf("RENDER=%s, want %s — the verdict followed the manifest, not the browser\n%s",
+					got, tc.wantRender, out)
+			}
+		})
 	}
 }
 
