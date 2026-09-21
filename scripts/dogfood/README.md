@@ -288,6 +288,68 @@ partial transcripts and half-built containers you would want to read to find out
 what you are investigating. The resume gate trades "skipped forever" for
 "overwritten on the next run"; that is the better default, not a free one.
 
+## 🔴 How a trial ends — the `stop` vocabulary
+
+A trial's `end` record and the one-line `.out` summary both carry `stop`, and a
+truncated trial used to be indistinguishable from a finished one. Measured on
+`ab-genpost-glm-01` (z-ai/glm-5.3-flash): the last assistant message had
+`content: null`, no tool calls, and `completion_tokens: 8000` — **exactly the
+`max_tokens` the harness sent** — of which **7,992 were reasoning. The model
+exhausted its output budget inside its reasoning channel and returned nothing,
+and the harness recorded `stop: "finished"`.** `finish_reason` appeared nowhere
+in `runner.py`, `grade.sh` or `oracle.sh`; OpenRouter had been sending it all
+along and the harness dropped it. That is a **harness limit reported as a task
+outcome**, the one confound this harness exists not to introduce.
+
+`finish_reason` is now recorded on every `assistant` record and on the `end`
+record, and the terminal state is split:
+
+| `stop` | means | what the provider said |
+|---|---|---|
+| `finished` | the model stopped on its own and left a report | `finish_reason` in `stop`/`end_turn`/`stop_sequence`/`eos`/`complete`, content non-empty |
+| `truncated` | **a harness limit, not a result** — the output budget ran out | `length` (or a provider-native `max_tokens`/`model_length`/`max_output_tokens`) |
+| `empty-reply` | the model stopped on its own and said nothing | a natural stop, content empty/null/whitespace |
+| `stopped-unknown:<value>` | the harness has **no evidence** the reply completed | anything else, `none` when the field was absent |
+| `max-steps` / `max-cost (…)` | the harness stopped the loop | unchanged |
+
+🔴 **An absent or unrecognised `finish_reason` does NOT become `finished`.**
+`finished` is a positive claim that the provider said the model chose to stop,
+so it is only made when the provider actually did. Defaulting the unknown case
+to success is precisely the defect above, one provider vocabulary later. The raw
+value rides in the string so a new word is diagnosable from the `.out` line
+alone. `stopped-unknown:*` is a statement about the *instrument*, not the model.
+
+**Grading is unaffected.** `grade.sh` and `oracle.sh` measure the container and
+never open `transcript.jsonl`, so no cell's `CLOSING_CONDITION` changes value
+because of the new vocabulary — pinned by `TestGradersDoNotReadTheStopVocabulary`,
+which goes red if either script starts reading it. `driver.sh`'s resume guard
+greps for `"kind": "end"` and is likewise indifferent. **What changes is what a
+human reads**: a `truncated` cell must not be counted as a model failure.
+
+### The output ceiling, and the model's own reasoning
+
+- `--max-tokens` (default **32000**, `DOGFOOD_MAX_TOKENS` in `driver.sh`).
+  8,000 left that model **8 tokens** after its reasoning. Its per-turn reasoning
+  burn ran 2,141 → 4,238 → 2,021 → 7,992; only the first three are uncensored
+  observations, since the fourth *is* the cap. 32000 is 4× the budget that was
+  exhausted and ~7.5× the largest burst we have seen complete. It is a
+  **ceiling, not a spend cap** — tokens are billed as generated and `--max-cost`
+  (still $1) is the only bound on money.
+- The runner now sends the provider's **`reasoning_details`** (verbatim, so
+  signatures survive) and `reasoning` back in the assistant history. Previously
+  it appended only `content` + `tool_calls`; for a model whose `content` was
+  `null` on 66 of 67 turns, its entire contribution to its own history was the
+  text of the shell commands it ran — **87.8% of its output discarded every
+  turn**, then re-derived inside the budget that truncated it. Turn it off with
+  `--no-carry-reasoning` (history grows faster; prompt cost is already O(n²) in
+  steps). A provider that returns neither field sends exactly the message shape
+  it always did — `TestDogfoodAssistantHistoryIsUnchangedWithoutReasoning`.
+- The `.out` summary now carries `finish_reason`, a `reasoning_tokens` total and
+  a **per-turn `turns` array** (`completion_tokens`, `reasoning_tokens`,
+  `finish_reason`). The escalation above was plainly visible in the transcript
+  and completely invisible in the summary an operator actually reads; a total
+  cannot show an escalation.
+
 ## Reading a verdict
 
 `grade.sh` measures the CONTAINER. It never reads what the agent said it did,

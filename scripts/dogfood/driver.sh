@@ -100,6 +100,10 @@ CREDENTIAL="${DOGFOOD_CREDENTIAL_FILE:-}"
 APP_PREFIX="${DOGFOOD_APP_PREFIX:-}"
 MAX_GENERATIONS="${DOGFOOD_MAX_GENERATIONS:-}"
 MAX_SUBMISSIONS="${DOGFOOD_MAX_SUBMISSIONS:-}"
+# Pass-through so a matrix can be run under a different output ceiling without
+# editing runner.py. Empty => runner.py's own default. It is a ceiling, not a
+# spend cap; money is still bounded by runner.py's --max-cost.
+MAX_TOKENS="${DOGFOOD_MAX_TOKENS:-}"
 if [ -n "$CREDENTIAL" ]; then
   # 🔴 SAME RESUME-GUARD TRAP AS THE BRIEF, AND WORSE. A credentialed cell run
   # under the setup matrix's namespace is skipped as "complete" by an
@@ -153,6 +157,7 @@ run_one() {  # model short image ienv trial user
   [ -n "$APP_PREFIX" ] && args+=(--app-prefix "$APP_PREFIX")
   [ -n "$MAX_GENERATIONS" ] && args+=(--max-generations "$MAX_GENERATIONS")
   [ -n "$MAX_SUBMISSIONS" ] && args+=(--max-submissions "$MAX_SUBMISSIONS")
+  [ -n "$MAX_TOKENS" ] && args+=(--max-tokens "$MAX_TOKENS")
   ( timeout 1500 python3 runner.py "${args[@]}" >"logs/$trial.out" 2>"logs/$trial.err"
     echo "done $trial rc=$?" ) &
 }

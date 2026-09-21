@@ -24,11 +24,29 @@ makes the stub Docker echo an arbitrary string back as a command's output, so
 a trial in which the model `cat`s the credential file can be reproduced
 offline and the redactor watched to catch it.
 
+🔴 AND SO A TRUNCATED TURN CAN BE REPLAYED. `FAKE_FINAL_RESPONSE` serves a
+whole recorded OpenRouter response body as the final turn, which is how the
+real `ab-genpost-glm-01` truncation — a turn with `content: null`, no tool
+calls and `completion_tokens` equal to the budget — is driven through the
+classifier from bytes rather than from a hand-built dict.
+
 Env knobs:
   FAKE_TOOL_COMMAND   a command to have the fake model "run" (default: none,
                       so the loop stops after one turn with no tool calls)
   FAKE_TOOL_OUTPUT    what the stub Docker returns as that command's output
   FAKE_TRIAL_ID       the trial id (default `faketrial`)
+  FAKE_FINISH_REASON  finish_reason on the FINAL turn (default `stop`; the
+                      literal `__absent__` omits the field entirely, which is
+                      what a provider that does not send it looks like)
+  FAKE_FINAL_CONTENT  content on the final turn (default `done`; set it to the
+                      empty string for an empty reply, or to `__null__` for
+                      the JSON null the real truncation carried)
+  FAKE_REASONING      a `reasoning` string returned on every turn
+  FAKE_REASONING_DETAILS  a JSON array returned as `reasoning_details`
+  FAKE_REASONING_TOKENS   per-turn usage.completion_tokens_details.reasoning_tokens
+  FAKE_FINAL_RESPONSE path to a JSON file holding a COMPLETE response body to
+                      return verbatim as the final turn. Overrides every knob
+                      above for that turn.
 
 The fake response carries no tool_calls once FAKE_TOOL_COMMAND has been served
 once, so the loop always terminates.
@@ -59,6 +77,18 @@ captured = {}
 # fires on the Nth invocation cannot be tested with a single turn.
 TOOL_COMMANDS = [c for c in os.environ.get("FAKE_TOOL_COMMAND", "").split("\n") if c]
 TOOL_OUTPUT = os.environ.get("FAKE_TOOL_OUTPUT", "")
+
+# 🔴 THE DEFAULT IS A WELL-BEHAVED PROVIDER, AND IT IS STATED RATHER THAN
+# IMPLIED. Every test written before finish_reason existed runs through this
+# path, so the default has to be the one that means "the model chose to stop"
+# — otherwise those tests would start asserting a classification they were
+# never about.
+FINISH_REASON = os.environ.get("FAKE_FINISH_REASON", "stop")
+FINAL_CONTENT = os.environ.get("FAKE_FINAL_CONTENT", "done")
+REASONING = os.environ.get("FAKE_REASONING", "")
+REASONING_DETAILS = os.environ.get("FAKE_REASONING_DETAILS", "")
+REASONING_TOKENS = int(os.environ.get("FAKE_REASONING_TOKENS", "0") or 0)
+FINAL_RESPONSE = os.environ.get("FAKE_FINAL_RESPONSE", "")
 
 
 def fake_run(cmd, *a, **kw):
@@ -97,10 +127,22 @@ class _Resp:
 _served = {"n": 0}
 
 
+def _reasoning_fields() -> dict:
+    out = {}
+    if REASONING:
+        out["reasoning"] = REASONING
+    if REASONING_DETAILS:
+        out["reasoning_details"] = json.loads(REASONING_DETAILS)
+    return out
+
+
 def fake_urlopen(req, *a, **kw):
     captured["url"] = req.full_url
     captured.setdefault("payloads", []).append(json.loads(req.data.decode()))
     captured["payload"] = captured["payloads"][0]
+    usage = {"prompt_tokens": 11, "completion_tokens": 3, "cost": 0.0001}
+    if REASONING_TOKENS:
+        usage["completion_tokens_details"] = {"reasoning_tokens": REASONING_TOKENS}
     if _served["n"] < len(TOOL_COMMANDS):
         cmd = TOOL_COMMANDS[_served["n"]]
         _served["n"] += 1
@@ -108,13 +150,22 @@ def fake_urlopen(req, *a, **kw):
             "id": "call_%d" % _served["n"], "type": "function",
             "function": {"name": "bash",
                          "arguments": json.dumps({"command": cmd})},
-        }]}
-    else:
-        msg = {"content": "done", "tool_calls": []}
-    return _Resp(json.dumps({
-        "choices": [{"message": msg}],
-        "usage": {"prompt_tokens": 11, "completion_tokens": 3, "cost": 0.0001},
-    }).encode())
+        }], **_reasoning_fields()}
+        choice = {"message": msg, "finish_reason": "tool_calls"}
+        return _Resp(json.dumps({"choices": [choice], "usage": usage}).encode())
+    # The terminal turn. A recorded body wins outright: replaying real bytes is
+    # the only version of this that cannot quietly disagree with the artifact.
+    if FINAL_RESPONSE:
+        with open(FINAL_RESPONSE, "rb") as f:
+            return _Resp(f.read())
+    content = FINAL_CONTENT
+    if content == "__null__":
+        content = None
+    msg = {"content": content, "tool_calls": [], **_reasoning_fields()}
+    choice = {"message": msg}
+    if FINISH_REASON != "__absent__":
+        choice["finish_reason"] = FINISH_REASON
+    return _Resp(json.dumps({"choices": [choice], "usage": usage}).encode())
 
 
 runner.subprocess = types.SimpleNamespace(
