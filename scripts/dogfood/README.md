@@ -75,10 +75,10 @@ python3 runner.py --print-task --brief "$(cat briefs/celsius.brief.txt)"
 
 # one app-build trial
 python3 runner.py --model "$MODEL" --image df-node-root --trial ab-01 \
-  --brief "$(cat briefs/celsius.brief.txt)"
+  --brief "$(cat briefs/celsius.brief.txt)" --brief-name celsius
 
 # the whole matrix as app-build trials, in their own trial-id namespace
-DOGFOOD_BRIEF="$(cat briefs/celsius.brief.txt)" DOGFOOD_TRIAL_PREFIX=ta bash driver.sh
+DOGFOOD_BRIEF_NAME=celsius DOGFOOD_TRIAL_PREFIX=ta bash driver.sh
 ```
 
 - **With no brief the task is BYTE-IDENTICAL to what it has always been** — not
@@ -98,6 +98,17 @@ DOGFOOD_BRIEF="$(cat briefs/celsius.brief.txt)" DOGFOOD_TRIAL_PREFIX=ta bash dri
   string included. A graded cell has to be traceable to the brief it was run
   with, and the trial id cannot carry that (same reason `grade.sh` reads the
   agent identity out of the container rather than out of the filename).
+- 🔴 **`brief_name` rides alongside it, on the same contract, because the PROSE
+  IS NOT AN IDENTIFIER.** The render oracle has to map a graded cell back to
+  `briefs/<name>.assert.mjs`, and from prose alone the only route is an exact
+  match against `briefs/*.brief.txt` — which stops resolving every already-run
+  trial the moment a brief file is reworded, and cannot resolve an ad-hoc brief
+  at all. `--brief-name` / `DOGFOOD_BRIEF_NAME` records it, and `driver.sh` also
+  derives it when you paste a committed brief's text, so the two cannot
+  disagree. `runner.py` refuses a name with no assertion behind it, or one whose
+  committed text is not the text being sent, **before** a container or an API
+  call exists — a mislabelled name is recorded as a fact and then believed by
+  every later grade. An ad-hoc brief still runs and simply records no name.
 - 🔴 **`driver.sh` REFUSES to run a brief under the default `t-` prefix.** Trial
   ids are `<prefix>-<model>-<env>-<identity>` and the resume guard skips any id
   whose transcript already has an `end` record — so an app matrix in the setup
@@ -113,14 +124,14 @@ reaching them.
 
 ```bash
 python3 runner.py --model "$MODEL" --image df-node-root --trial c-01 \
-  --brief "$(cat briefs/genpost.brief.txt)" \
+  --brief "$(cat briefs/genpost.brief.txt)" --brief-name genpost \
   --credential-file ~/.config/civitai/config.yaml \
   --app-prefix dogfood4- --max-generations 3 --max-submissions 1
 
 # the whole matrix, credentialed (driver.sh refuses without DOGFOOD_APP_PREFIX)
 DOGFOOD_CREDENTIAL_FILE=~/.config/civitai/config.yaml \
 DOGFOOD_APP_PREFIX=dogfood4- DOGFOOD_MAX_GENERATIONS=3 DOGFOOD_MAX_SUBMISSIONS=1 \
-DOGFOOD_BRIEF="$(cat briefs/genpost.brief.txt)" DOGFOOD_TRIAL_PREFIX=tc bash driver.sh
+DOGFOOD_BRIEF_NAME=genpost DOGFOOD_TRIAL_PREFIX=tc bash driver.sh
 ```
 
 ### 🔴 The secret does not reach the artifacts
@@ -185,15 +196,39 @@ drives it from a headless browser **on the host** (a trial image ships no
 Chromium), runs the brief's assertion, and prints one summary line.
 
 ```bash
-bash oracle.sh <trial-id> <container-user> [brief]     # default brief: celsius
+bash oracle.sh <trial-id> <container-user> [brief]     # brief DERIVED from the trial
 bash grade.sh  <trial-id> <container-user> [brief]     # setup arms + the render arm
 ```
 
 A graded cell then carries both verdicts on one line:
 
 ```
-agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius validate_gate=pass scopes=none observed=212 RENDER=yes
+agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius brief_source=transcript-name validate_gate=pass scopes=none viewer=signed-in observed=212 RENDER=yes
 ```
+
+- 🔴 **The brief is DERIVED from the trial, and the argument is only a
+  cross-check.** It used to be an optional positional defaulting to `celsius`,
+  and the cost was measured: `oracle.sh ab-genpost-mimo-01 root`, against a
+  trial built from the `genpost` brief, ran the CELSIUS assertion, timed out
+  waiting for `[data-testid="celsius"]` and printed `RENDER=no` — byte-identical
+  to the verdict a model that built nothing earns. `runner.py` records the brief
+  in the trial's `start` record (`brief` = the prose, `brief_name` = the name),
+  so `oracle.sh` reads it out of `<runs>/<trial>/transcript.jsonl` and **refuses
+  (exit 2) when an argument disagrees** rather than picking one. `brief_source=`
+  says how it was resolved: `transcript-name`, `transcript-text`,
+  `argument-unverified`, `argument-trial-recorded-no-brief`, or
+  `default-trial-recorded-no-brief` (a setup cell, which built no app). Point
+  `DOGFOOD_RUNS` at the directory the trial was driven from if it is not
+  `scripts/dogfood/runs`.
+- 🔴 **The oracle presents a SIGNED-IN viewer, reported as `viewer=`.** It used
+  to seed `viewer: null`, and an auth-gated app — the shape the CLI's own
+  `page-money` scaffold ships, `const anon = ready && !viewer` and a sign-in
+  CTA — then rendered its signed-out branch and graded `RENDER=no`. That verdict
+  was about the harness. The seeded object is byte-for-byte what civitai.com's
+  `withSignedInFlag()` emits (`{ id, username, signedIn: true }`, no `status`),
+  and the token stays empty so it buys the block no capability. Set
+  `CIVITAI_ASSERT_ANON_VIEWER=1` for the control arm, which is also how you
+  grade a block's signed-out branch deliberately.
 
 - 🔴 **`civitai app validate` is a GATE, not the verdict, and it does not even
   short-circuit.** It runs first because it is cheap and offline, and its result
@@ -287,6 +322,68 @@ partial transcripts and half-built containers you would want to read to find out
 *why* they timed out. **Copy `runs/` aside before re-running** if the failures are
 what you are investigating. The resume gate trades "skipped forever" for
 "overwritten on the next run"; that is the better default, not a free one.
+
+## 🔴 How a trial ends — the `stop` vocabulary
+
+A trial's `end` record and the one-line `.out` summary both carry `stop`, and a
+truncated trial used to be indistinguishable from a finished one. Measured on
+`ab-genpost-glm-01` (z-ai/glm-5.3-flash): the last assistant message had
+`content: null`, no tool calls, and `completion_tokens: 8000` — **exactly the
+`max_tokens` the harness sent** — of which **7,992 were reasoning. The model
+exhausted its output budget inside its reasoning channel and returned nothing,
+and the harness recorded `stop: "finished"`.** `finish_reason` appeared nowhere
+in `runner.py`, `grade.sh` or `oracle.sh`; OpenRouter had been sending it all
+along and the harness dropped it. That is a **harness limit reported as a task
+outcome**, the one confound this harness exists not to introduce.
+
+`finish_reason` is now recorded on every `assistant` record and on the `end`
+record, and the terminal state is split:
+
+| `stop` | means | what the provider said |
+|---|---|---|
+| `finished` | the model stopped on its own and left a report | `finish_reason` in `stop`/`end_turn`/`stop_sequence`/`eos`/`complete`, content non-empty |
+| `truncated` | **a harness limit, not a result** — the output budget ran out | `length` (or a provider-native `max_tokens`/`model_length`/`max_output_tokens`) |
+| `empty-reply` | the model stopped on its own and said nothing | a natural stop, content empty/null/whitespace |
+| `stopped-unknown:<value>` | the harness has **no evidence** the reply completed | anything else, `none` when the field was absent |
+| `max-steps` / `max-cost (…)` | the harness stopped the loop | unchanged |
+
+🔴 **An absent or unrecognised `finish_reason` does NOT become `finished`.**
+`finished` is a positive claim that the provider said the model chose to stop,
+so it is only made when the provider actually did. Defaulting the unknown case
+to success is precisely the defect above, one provider vocabulary later. The raw
+value rides in the string so a new word is diagnosable from the `.out` line
+alone. `stopped-unknown:*` is a statement about the *instrument*, not the model.
+
+**Grading is unaffected.** `grade.sh` and `oracle.sh` measure the container and
+never open `transcript.jsonl`, so no cell's `CLOSING_CONDITION` changes value
+because of the new vocabulary — pinned by `TestGradersDoNotReadTheStopVocabulary`,
+which goes red if either script starts reading it. `driver.sh`'s resume guard
+greps for `"kind": "end"` and is likewise indifferent. **What changes is what a
+human reads**: a `truncated` cell must not be counted as a model failure.
+
+### The output ceiling, and the model's own reasoning
+
+- `--max-tokens` (default **32000**, `DOGFOOD_MAX_TOKENS` in `driver.sh`).
+  8,000 left that model **8 tokens** after its reasoning. Its per-turn reasoning
+  burn ran 2,141 → 4,238 → 2,021 → 7,992; only the first three are uncensored
+  observations, since the fourth *is* the cap. 32000 is 4× the budget that was
+  exhausted and ~7.5× the largest burst we have seen complete. It is a
+  **ceiling, not a spend cap** — tokens are billed as generated and `--max-cost`
+  (still $1) is the only bound on money.
+- The runner now sends the provider's **`reasoning_details`** (verbatim, so
+  signatures survive) and `reasoning` back in the assistant history. Previously
+  it appended only `content` + `tool_calls`; for a model whose `content` was
+  `null` on 66 of 67 turns, its entire contribution to its own history was the
+  text of the shell commands it ran — **87.8% of its output discarded every
+  turn**, then re-derived inside the budget that truncated it. Turn it off with
+  `--no-carry-reasoning` (history grows faster; prompt cost is already O(n²) in
+  steps). A provider that returns neither field sends exactly the message shape
+  it always did — `TestDogfoodAssistantHistoryIsUnchangedWithoutReasoning`.
+- The `.out` summary now carries `finish_reason`, a `reasoning_tokens` total and
+  a **per-turn `turns` array** (`completion_tokens`, `reasoning_tokens`,
+  `finish_reason`). The escalation above was plainly visible in the transcript
+  and completely invisible in the summary an operator actually reads; a total
+  cannot show an escalation.
 
 ## Reading a verdict
 

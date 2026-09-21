@@ -33,7 +33,7 @@
 // page-money-derived cell separable from a page-money scaffold. The scaffold
 // control in genpost.md records all three templates failing.
 
-import { launch, cdp, openPage, resolveTarget, SEND_HOST_INIT, CLICKABLES, labelExpr } from './_cdp.mjs';
+import { launch, cdp, openPage, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, CLICKABLES, labelExpr } from './_cdp.mjs';
 
 const TARGET = process.argv[2];
 if (!TARGET) {
@@ -111,7 +111,10 @@ async function main() {
   const c = cdp(ws);
   await c.open;
 
-  const evidence = { target: TARGET, url, prompt: PROMPT_TEXT, hostInit: SEND_HOST_INIT };
+  const evidence = {
+    target: TARGET, url, prompt: PROMPT_TEXT,
+    hostInit: SEND_HOST_INIT, hostViewer: HOST_VIEWER_LABEL,
+  };
   let pass = false;
   let reason = null;
   let page = null;

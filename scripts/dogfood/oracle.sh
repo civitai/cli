@@ -5,6 +5,10 @@
 #
 #   oracle.sh <trial-id> [container-user] [brief-name]
 #
+# The brief is DERIVED from the trial's own transcript. The third argument is an
+# optional cross-check, not an input: when it disagrees with what the trial was
+# run with, this refuses rather than picking one. See "WHICH BRIEF" below.
+#
 # Exit 0 = something was measured (pass or fail). Exit 2 = NOTHING was measured.
 # That split is the whole point: a harness that cannot reach the block must not
 # emit the same verdict as a block that does not work.
@@ -38,19 +42,134 @@ HERE="$(dirname "$0")"
 
 TRIAL="${1:?trial id}"
 U="${2:-root}"
-BRIEF="${3:-${DOGFOOD_ASSERT:-celsius}}"
+# NOT the brief — a REQUEST for one, reconciled below against what the trial was
+# actually run with. There is deliberately no default here; the old
+# `${3:-${DOGFOOD_ASSERT:-celsius}}` is the defect this section exists to close.
+REQUESTED="${3:-${DOGFOOD_ASSERT:-}}"
 C="dogfood-$TRIAL"
-ASSERT="$HERE/briefs/$BRIEF.assert.mjs"
 SERVER="$HERE/serve-block.mjs"
+# Where runner.py wrote this trial's transcript. driver.sh runs it as
+# `--out runs` from this directory, so that is the default; point DOGFOOD_RUNS
+# elsewhere when the trial was driven from another checkout.
+RUNS="${DOGFOOD_RUNS:-$HERE/runs}"
+TRANSCRIPT="$RUNS/$TRIAL/transcript.jsonl"
+# The brief a trial that demonstrably had NONE is graded against. Only ever
+# reached when the transcript positively records an empty brief — i.e. a setup
+# cell — and the run says so on its own summary line.
+FALLBACK_BRIEF=celsius
 
 fatal() { printf 'oracle: %s — nothing was measured (this is NOT a failing trial)\n' "$1" >&2; exit 2; }
 
-[ -f "$ASSERT" ] || fatal "no assertion for brief '$BRIEF' at $ASSERT"
 [ -f "$SERVER" ] || fatal "missing $SERVER"
 
 # ── the instrument, before any verdict ───────────────────────────────────────
 command -v docker >/dev/null || fatal "no docker on PATH"
 command -v node   >/dev/null || fatal "no node on PATH (the assertion runs on the HOST)"
+command -v jq     >/dev/null || fatal "no jq on PATH (the brief is read out of the trial's transcript)"
+
+# ── WHICH BRIEF: read off the trial, never defaulted in silence ──────────────
+# 🔴 THE BRIEF USED TO BE AN OPTIONAL POSITIONAL DEFAULTING TO `celsius`, WHICH
+# IS A GRADE AGAINST THE WRONG QUESTION WITH NOTHING TO NOTICE IT. Measured
+# 2026-09-21: `oracle.sh ab-genpost-mimo-01 root` — a trial built from the
+# genpost brief — ran the CELSIUS assertion, timed out waiting for
+# `[data-testid="celsius"]`, and printed `RENDER=no`. That is byte-identical to
+# the verdict a model that built nothing earns, and it was nearly reported as
+# one.
+#
+# The trial knows the answer: runner.py records the brief in its `start` record.
+# So the brief is DERIVED here, and an explicit argument that DISAGREES with the
+# transcript is REFUSED rather than resolved — a disagreement means the operator
+# and the transcript hold different beliefs about what was asked, and a verdict
+# under either of them is worthless. Refusing exits 2 (nothing measured), which
+# grade.sh already renders as `RENDER=unmeasured` and no reader can mistake for
+# a statement about the block.
+#
+# 🔴 TWO WAYS TO IDENTIFY A BRIEF, AND THE NAME IS THE GOOD ONE. `start.brief`
+# holds the brief's PROSE, not its name, so resolving it means matching that
+# prose against `briefs/*.brief.txt` — which silently stops resolving every
+# already-run trial the moment anyone rewords a brief file. runner.py therefore
+# records `brief_name` too (`--brief-name`, added with this change) and that is
+# preferred when present. The prose match remains for trials run before the
+# field existed; it is exact, so it either resolves or refuses.
+norm() { printf '%s' "${1-}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+
+T_NAME=
+T_TEXT=
+HAVE_START=no
+if [ -f "$TRANSCRIPT" ]; then
+  # `head -1` after jq rather than `head -1` before it: a trial killed mid-write
+  # leaves a half-written final line, and jq streams every well-formed record
+  # ahead of it before complaining.
+  #
+  # 🔴 ONLY THE `start` RECORD, EVER. Everything else in a transcript is the
+  # MODEL'S OWN OUTPUT and its terminal classification; a grader that branched
+  # on any of it would be scoring a trial by what it said rather than by what
+  # the container holds, which is the mistake grade.sh's AGENT_ID read exists to
+  # avoid. Pinned by TestGradersDoNotReadTheStopVocabulary.
+  START=$(jq -c 'select(.kind=="start")' "$TRANSCRIPT" 2>/dev/null | head -1)
+  if [ -n "$START" ]; then
+    HAVE_START=yes
+    T_NAME=$(printf '%s' "$START" | jq -r '.brief_name // ""' 2>/dev/null)
+    T_TEXT=$(norm "$(printf '%s' "$START" | jq -r '.brief // ""' 2>/dev/null)")
+  fi
+fi
+
+DERIVED=
+BRIEF_SOURCE=
+if [ "$HAVE_START" = "yes" ] && [ -n "$T_NAME" ]; then
+  DERIVED="$T_NAME"
+  BRIEF_SOURCE=transcript-name
+  # A transcript that names a brief AND carries prose that is not that brief's
+  # is internally inconsistent — one of the two was written by hand. Refuse:
+  # picking either would be guessing which half is the lie.
+  NAMED_FILE="$HERE/briefs/$T_NAME.brief.txt"
+  if [ -f "$NAMED_FILE" ] && [ -n "$T_TEXT" ] \
+     && [ "$(norm "$(cat "$NAMED_FILE")")" != "$T_TEXT" ]; then
+    fatal "$TRANSCRIPT is self-inconsistent: it records brief_name='$T_NAME' but its brief TEXT is not the contents of $NAMED_FILE"
+  fi
+elif [ "$HAVE_START" = "yes" ] && [ -n "$T_TEXT" ]; then
+  HITS=()
+  for f in "$HERE"/briefs/*.brief.txt; do
+    [ -f "$f" ] || continue
+    n=$(basename "$f" .brief.txt)
+    [ "$(norm "$(cat "$f")")" = "$T_TEXT" ] && HITS+=("$n")
+  done
+  case "${#HITS[@]}" in
+    1) DERIVED="${HITS[0]}"; BRIEF_SOURCE=transcript-text ;;
+    0) fatal "the brief recorded in $TRANSCRIPT matches none of $HERE/briefs/*.brief.txt — either a brief file was reworded after this trial ran (re-run it, or grade it from the trial's own brief text) or this trial was run with an ad-hoc brief that has no assertion" ;;
+    *) fatal "the brief recorded in $TRANSCRIPT matches ${#HITS[@]} brief files (${HITS[*]}) — two briefs carry the same text, so the trial cannot be attributed to either" ;;
+  esac
+fi
+
+# Reconcile. The disagreement branch is the whole point of this block.
+BRIEF_NOTE=
+if [ -n "$REQUESTED" ] && [ -n "$DERIVED" ] && [ "$REQUESTED" != "$DERIVED" ]; then
+  fatal "brief disagreement: you asked for '$REQUESTED' but $TRANSCRIPT records '$DERIVED' ($BRIEF_SOURCE). Refusing to grade — one of the two is wrong and a verdict under either is worthless"
+fi
+if [ -n "$DERIVED" ]; then
+  BRIEF="$DERIVED"
+elif [ -n "$REQUESTED" ]; then
+  BRIEF="$REQUESTED"
+  if [ "$HAVE_START" = "yes" ]; then
+    BRIEF_SOURCE=argument-trial-recorded-no-brief
+    BRIEF_NOTE="⚠ $TRANSCRIPT records NO brief for this trial (a setup cell, or a runner that predates --brief), so nothing verified '$REQUESTED'."
+  else
+    BRIEF_SOURCE=argument-unverified
+    BRIEF_NOTE="⚠ no transcript for '$TRIAL' at $TRANSCRIPT (set DOGFOOD_RUNS to the directory the trial was driven from), so nothing verified '$REQUESTED'."
+  fi
+elif [ "$HAVE_START" = "yes" ]; then
+  # The case the arc's setup cells are in: the transcript POSITIVELY records an
+  # empty brief, so the trial built no app and every brief grades it the same
+  # `no app was created`. Defensible — and said out loud rather than assumed.
+  BRIEF="$FALLBACK_BRIEF"
+  BRIEF_SOURCE=default-trial-recorded-no-brief
+  BRIEF_NOTE="⚠ $TRANSCRIPT records an EMPTY brief — this is a setup trial that built no app. Grading it against the default '$FALLBACK_BRIEF' assertion; the verdict is 'no app was created', not a statement about any brief."
+else
+  fatal "no brief and no way to derive one: nothing was passed and no transcript for '$TRIAL' exists at $TRANSCRIPT (set DOGFOOD_RUNS to the directory the trial was driven from). Refusing to guess — a grade against the wrong brief is a confident \`no\` that reads as a model which built nothing"
+fi
+
+ASSERT="$HERE/briefs/$BRIEF.assert.mjs"
+[ -f "$ASSERT" ] || fatal "no assertion for brief '$BRIEF' at $ASSERT"
 
 # 🔴 RESOLVE THE BROWSER HERE, NOT BY LETTING THE ASSERTION FAIL LATER. Without
 # a browser the assertion exits 2 with its own message, but by then a server is
@@ -77,6 +196,15 @@ docker exec "$C" sh -c 'command -v node >/dev/null' \
   || fatal "no node inside $C — the block cannot be served from where it was built"
 
 printf '=== render oracle: %s (brief=%s) ===\n' "$TRIAL" "$BRIEF"
+
+# Deliberately NOT prefixed `brief=`: that prefix is how grade.sh and the Go
+# tests find the SUMMARY line, and a second line starting with it would be read
+# as one.
+printf -- '--- brief resolution\n'
+printf 'resolved_brief=%s source=%s requested=%s transcript=%s\n' \
+  "$BRIEF" "$BRIEF_SOURCE" "${REQUESTED:-none}" \
+  "$([ "$HAVE_START" = "yes" ] && printf '%s' "$TRANSCRIPT" || printf '(none at %s)' "$TRANSCRIPT")"
+[ -n "$BRIEF_NOTE" ] && printf '%s\n' "$BRIEF_NOTE"
 
 # ── locate the app ───────────────────────────────────────────────────────────
 # The app is wherever the model put a manifest. Reading the trial id or guessing
@@ -125,6 +253,7 @@ BUILDCMD=
 # app declaring only `ai:write:budgeted` is worth seeing next to the render
 # verdict (see briefs/genpost.md), not because it decides anything.
 SCOPES=
+AVIEWER=
 
 if [ -z "$APP_DIR" ]; then
   REASON="no block.manifest.json under /work — no app was created"
@@ -211,6 +340,12 @@ if [ -n "$SERVED" ]; then
   [ "$ARC" = "2" ] && fatal "the assertion could not run (exit 2): $OUT"
   JSON=$(printf '%s\n' "$OUT" | grep -a '^{' | tail -1)
   OBSERVED=$(printf '%s' "$JSON" | jq -r 'if has("observed") then (.observed|tostring) else "" end' 2>/dev/null)
+  # Which viewer the block was actually shown, read back from the assertion
+  # rather than re-derived here: one rule, one place. Without it a cell cannot
+  # tell "the model built nothing" from "the model built a sign-in CTA and the
+  # harness was anonymous" — the reading that cost `ab-genpost-mimo-01` a
+  # verdict on 2026-09-21.
+  AVIEWER=$(printf '%s' "$JSON" | jq -r '.hostViewer // empty' 2>/dev/null)
   AREASON=$(printf '%s' "$JSON" | jq -r '.reason // empty' 2>/dev/null)
   APASS=$(printf '%s' "$JSON" | jq -r 'if has("pass") then (.pass|tostring) else "absent" end' 2>/dev/null)
   [ "$APASS" = "true" ] && RENDER_PASS=yes
@@ -228,7 +363,7 @@ printf -- '--- render verdict\n'
 # strict (`212 °F` fails where `212` passes) and a bare `no` cannot tell a
 # near-miss from a block that rendered nothing.
 printf 'render_reason=%s\n' "${REASON:-none}"
-printf 'brief=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s scopes=%s served=%s observed=%s RENDER=%s\n' \
-  "$BRIEF" "$APP_COUNT" "${APP_DIR:-none}" "$GATE" "${GATE_RC:-none}" "${SCOPES:-none}" \
-  "${SERVED:-none}" "$(printf '%q' "${OBSERVED:-}")" "$RENDER_PASS"
+printf 'brief=%s brief_source=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s scopes=%s viewer=%s served=%s observed=%s RENDER=%s\n' \
+  "$BRIEF" "$BRIEF_SOURCE" "$APP_COUNT" "${APP_DIR:-none}" "$GATE" "${GATE_RC:-none}" "${SCOPES:-none}" \
+  "${AVIEWER:-unmeasured}" "${SERVED:-none}" "$(printf '%q' "${OBSERVED:-}")" "$RENDER_PASS"
 exit 0

@@ -141,6 +141,17 @@ host pushes never arrive, so a block that AWAITS a host reply still hangs. This
 brief needs no host round-trip; do not read a pass as evidence that the money
 path works.
 
+⚠ **The bootstrap's viewer changed on 2026-09-21 and the table above predates
+it.** It now carries a SIGNED-IN viewer (`{ id, username, signedIn: true }`,
+byte-for-byte civitai.com's `withSignedInFlag()`), because an anonymous-only
+host grades a block's signed-out branch — the full reasoning, the control arm
+(`CIVITAI_ASSERT_ANON_VIEWER=1`) and the measurement that forced it are in
+`genpost.md`. **The two rows above were NOT re-measured under the new viewer.**
+What was measured: a real celsius app (`ab-curve-01`) still grades
+`RENDER=yes observed=212` with the signed-in viewer, and nothing in
+`celsius.assert.mjs` reads the viewer at all. Re-run the scaffold arms before
+quoting them.
+
 ## Run it
 
 ```bash

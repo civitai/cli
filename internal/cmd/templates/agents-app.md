@@ -4,6 +4,26 @@
 This project is a **Civitai App**: a web app that runs in a sandboxed iframe
 inside civitai.com. The host page and your app talk over `postMessage`.
 
+### Docs — fetch these BEFORE writing code
+
+Nothing in this repository is the API reference. The hooks, the message bridge,
+the manifest fields and the scopes are documented on the docs site, and the
+`.md` suffix serves the plain-text source an agent can read directly.
+
+- **`https://developer.civitai.com/apps/reference/hooks.md`** — the COMPLETE
+  hook reference. Fetch it first: every capability this platform has is a hook,
+  and a capability you cannot find here probably exists under a name you have
+  not guessed. It is ~40 KB, so page it rather than giving up on it.
+- Reference (manifest, scopes, hooks, message bridge, CLI):
+  https://developer.civitai.com/apps/reference/
+- Guide: https://developer.civitai.com/apps/guide/
+- Example apps you can read end-to-end:
+  https://developer.civitai.com/apps/examples
+- Full doc index for agents: https://developer.civitai.com/llms.txt
+
+Reading `node_modules/@civitai/blocks-react/dist/*.d.ts` to find out what the
+SDK can do is the expensive way round. Fetch the reference.
+
 ### Commands
 
 🔴 **Every row below starts with `civitai`. If your shell answers
@@ -22,10 +42,27 @@ directory.
 | Task | Command |
 |---|---|
 | Scaffold a new app | `civitai app create <name>` |
+| …choosing the template | `civitai app create <name> --template static\|page-vite\|page-money` |
 | Check the manifest | `civitai app validate` |
 | Package and submit for review | `civitai app submit` |
 | Diagnose an incomplete store listing | `civitai app doctor` |
 | Your local app inside the REAL host (needs a local dev server already running — see below) | `civitai app dev-tunnel` |
+
+**Pick the template on purpose — `create` defaults to the biggest one.** With no
+`--template`, `civitai app create` scaffolds `page-money`, which is by a wide
+margin the largest of the three: around forty files, with a README and an
+`src/App.tsx` of tens of KB each. That is the right starting point when you are
+building a Buzz-spending generation app, because it is a working one. For
+anything else it is a large amount of sample code to read and then delete.
+
+- `static` — one `index.html` plus a little JS. No build step, nothing to
+  install. The smallest thing that can be a Civitai App.
+- `page-vite` — Vite + React, a build step, no SDK wiring. The one to pick when
+  you want a UI framework but not the money path.
+- `page-money` — Vite + React + TypeScript wired to the App SDK: estimate →
+  consent → submit → poll → Buzz spend, with a mock-host dev harness. **The
+  default.** Reading it end-to-end is expensive; treat it as a reference you
+  copy from, and delete what your app does not use.
 
 ### Local development
 {{ if eq .Kind "npm" }}
@@ -101,12 +138,4 @@ fixed list. As of this CLI version:
 - **`civitai app validate` is a local mirror. The server is authoritative.** A
   clean local validate is necessary, never sufficient.
 
-### Docs
-
-- Guide: https://developer.civitai.com/apps/guide/
-- Reference (manifest, scopes, hooks, message bridge, CLI):
-  https://developer.civitai.com/apps/reference/
-- Example apps you can read end-to-end:
-  https://developer.civitai.com/apps/examples
-- Full doc index for agents: https://developer.civitai.com/llms.txt
 <!-- END civitai agent-setup -->

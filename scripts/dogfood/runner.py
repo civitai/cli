@@ -11,7 +11,8 @@ Usage:
             [--brief "<one line>"] [--agent-env CLAUDECODE=1]
             [--credential-file ~/.config/civitai/config.yaml]
             [--app-prefix dogfood4-] [--max-generations 3] [--max-submissions 1]
-            [--max-steps 40] [--out <dir>]
+            [--max-steps 40] [--max-tokens 32000] [--no-carry-reasoning]
+            [--out <dir>]
   runner.py --print-task [--brief "<one line>"]   # offline; spends nothing
 """
 import argparse
@@ -93,6 +94,88 @@ TOOLS = [{
 }]
 
 MAX_OUT = 12000  # bytes of combined output handed back per command
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The terminal state.
+#
+# 🔴 THE DEFECT THIS REPLACES. The loop used to read `if not calls: stop =
+# "finished"` — it branched on the ABSENCE OF TOOL CALLS ALONE, and
+# `finish_reason` appeared nowhere in this file. A cell that exhausted its
+# output budget inside a reasoning channel and returned nothing was therefore
+# recorded byte-identically to a cell that completed and wrote an empty report.
+# MEASURED, trial `ab-genpost-glm-01`: the last assistant message had
+# `content: null`, no tool calls, and `completion_tokens: 8000` — EXACTLY the
+# `max_tokens` this file sends — of which 7,992 were reasoning. It was recorded
+# `stop: "finished"`. That is a harness limit reported as a task outcome, which
+# is the one confound this arc exists not to introduce.
+#
+# The fix is to read the field the provider already sends and to refuse to
+# collapse the cases. The vocabulary below is deliberately NOT a boolean: a
+# reader greps the `stop` value and must never have to reopen a transcript to
+# find out whether the model chose to stop.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# A provider saying "the model chose to stop". OpenRouter normalises to `stop`;
+# the others are spellings that reach us when a provider's own value is passed
+# through. Anything OUTSIDE this set — an absent value included — is not
+# evidence that the reply completed.
+NATURAL_STOP = ("stop", "end_turn", "stop_sequence", "eos", "complete")
+# The output budget ran out. `length` is OpenRouter's normalised spelling; the
+# rest are provider-native values seen in the wild.
+TRUNCATED_STOP = ("length", "max_tokens", "model_length", "max_output_tokens")
+
+
+def classify_stop(finish_reason, content) -> str:
+    """The terminal `stop` value for a turn that made no tool call.
+
+    🔴 TRUNCATION OUTRANKS CONTENT. A `length` finish with a non-empty
+    `content` is still a report that was cut off mid-sentence, and grading it
+    as a finished one is the same confound in a quieter form.
+
+    🔴 AN UNRECOGNISED OR ABSENT `finish_reason` MAPS TO `stopped-unknown:<v>`,
+    NEVER TO `finished`. The whole measured defect is an unrecognised terminal
+    condition rendered as success; defaulting the unknown case to success
+    reintroduces it for every provider whose vocabulary we have not met yet.
+    `finished` is a POSITIVE claim that the provider said the model stopped on
+    its own, so the harness may only make it when the provider actually did.
+    The raw value rides in the string (`none` when absent) so a new vocabulary
+    word is diagnosable from the one-line `.out` summary without reopening the
+    transcript.
+    """
+    fr = (finish_reason or "").strip().lower()
+    if fr in TRUNCATED_STOP:
+        return "truncated"
+    if fr in NATURAL_STOP:
+        return "finished" if (content or "").strip() else "empty-reply"
+    return "stopped-unknown:" + (fr or "none")
+
+
+def reasoning_echo(msg: dict) -> dict:
+    """The provider's own reasoning, in the shape it must be sent BACK in.
+
+    🔴 WHY THIS EXISTS. The loop used to append only `content` + `tool_calls`
+    to the history. For a model whose `content` is `null` on 66 of 67 turns —
+    measured, `ab-genpost-glm-01` — the model's entire contribution to its own
+    history was the text of the shell commands it ran, and 87.8% of its output
+    tokens were discarded the moment they arrived. Each turn then re-derived
+    what the previous turn had already worked out, inside the same budget that
+    truncated it.
+
+    🔴 `reasoning_details` VERBATIM, NOT A RECONSTRUCTED STRING. The blocks
+    carry provider signatures, and a provider that validates them rejects
+    anything rebuilt from the flat text. `reasoning` is the fallback for
+    providers that return only that shape. Both are simply absent for providers
+    that return neither, which is what keeps the default request shape
+    unchanged for a non-reasoning model.
+    """
+    out = {}
+    details = msg.get("reasoning_details")
+    if isinstance(details, list) and details:
+        out["reasoning_details"] = details
+    text = msg.get("reasoning")
+    if isinstance(text, str) and text.strip():
+        out["reasoning"] = text
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -458,10 +541,10 @@ def workspace_slugs(container: str, user: str) -> list:
     return re.findall(r'"blockId"\s*:\s*"([^"]*)"', p.stdout or "")
 
 
-def call(model: str, messages: list, api_key: str) -> dict:
+def call(model: str, messages: list, api_key: str, max_tokens: int) -> dict:
     payload = json.dumps({
         "model": model, "messages": messages, "tools": TOOLS,
-        "tool_choice": "auto", "max_tokens": 8000,
+        "tool_choice": "auto", "max_tokens": max_tokens,
     }).encode()
     req = urllib.request.Request(
         API, data=payload, headers={
@@ -505,6 +588,24 @@ def main() -> int:
                     help="one-line app brief, appended to the hosted URL as the "
                          "second paragraph of the task. Omitted or empty => the "
                          "task is byte-identical to a setup trial.")
+    # 🔴 THE BRIEF'S NAME, BECAUSE ITS PROSE IS NOT AN IDENTIFIER. `--brief`
+    # records the brief's TEXT, which is the only thing the model sees and the
+    # only thing worth pinning for reproducibility — but a grader has to map
+    # that text back to `briefs/<name>.assert.mjs`, and the only way to do that
+    # from prose is an exact string match against `briefs/*.brief.txt`. That
+    # match stops resolving EVERY already-run trial the moment anyone rewords a
+    # brief file, and it cannot resolve an ad-hoc brief at all. Recording the
+    # name makes the mapping a fact about the run instead of a re-derivation.
+    # oracle.sh prefers it and falls back to the prose match for trials run
+    # before this field existed.
+    ap.add_argument("--brief-name", default="",
+                    help="the name of the brief --brief holds, e.g. `genpost`. "
+                         "Recorded in the transcript's `start` record so a "
+                         "grader can resolve briefs/<name>.assert.mjs without "
+                         "matching prose. Must name an existing "
+                         "briefs/<name>.assert.mjs, and when "
+                         "briefs/<name>.brief.txt exists its text must equal "
+                         "--brief.")
     ap.add_argument("--print-task", action="store_true",
                     help="print the exact user message this invocation would send "
                          "and exit. Starts no container, calls no API, spends "
@@ -543,6 +644,39 @@ def main() -> int:
     # bound on money.
     ap.add_argument("--max-cost", type=float, default=1.0,
                     help="stop the trial once this much USD has been spent (default 1.0)")
+    # 🔴 8000 LEFT THE MODEL 8 TOKENS AFTER ITS REASONING. Measured on
+    # `ab-genpost-glm-01`: the final turn spent 7,992 of an 8,000-token budget
+    # reasoning and returned `content: null`, which the old loop recorded as
+    # `finished`. The per-turn reasoning burn escalated 2,141 -> 4,238 -> 2,021
+    # -> 7,992 across that trial; only the first three are UNCENSORED
+    # observations, because the fourth is the cap itself and so is a lower
+    # bound, not a measurement.
+    #
+    # 32000 is 4x the budget that was exhausted and ~7.5x the largest burst we
+    # have ever seen complete (4,238). It is a CEILING, NOT A SPEND: tokens are
+    # billed as generated, and the only bound on money is --max-cost, which is
+    # untouched. A model whose provider caps output below this fails LOUDLY —
+    # call() raises on a non-retryable HTTP code, the trial dies without an
+    # `end` record and driver.sh re-runs it — which is strictly better than a
+    # silent truncation graded as a result. ⚠ UNVERIFIED: whether OpenRouter
+    # clamps an over-large max_tokens or rejects it is provider-dependent and
+    # was not measured (checking it costs a real call). Lower this flag if a
+    # model 400s.
+    ap.add_argument("--max-tokens", type=int, default=32000,
+                    help="output-token ceiling per turn (default 32000). A "
+                         "ceiling, not a spend cap — money is bounded by "
+                         "--max-cost.")
+    # 🔴 THE ESCAPE HATCH FOR THE HISTORY CHANGE, NOT A TUNING KNOB. Carrying
+    # reasoning back grows the prompt faster (history is already O(n^2) in
+    # steps), so an operator who wants a cell measured under the OLD history
+    # shape — or who hits a provider that rejects an echoed block — can turn it
+    # off without editing this file. Default ON: discarding 87.8% of a model's
+    # output every turn is the defect, not the baseline.
+    ap.add_argument("--no-carry-reasoning", dest="carry_reasoning",
+                    action="store_false",
+                    help="do not send the provider's reasoning blocks back in "
+                         "the assistant history (default: send them when the "
+                         "provider returns them).")
     ap.add_argument("--out", default=".")
     a = ap.parse_args()
 
@@ -556,6 +690,23 @@ def main() -> int:
         ap.error("--brief must be a single line (got an embedded newline). The "
                  "brief is operator-typed text, not a file — piping a file in is "
                  "how repo content reaches a blind trial.")
+
+    # 🔴 VALIDATED HERE, BEFORE A CONTAINER OR AN API CALL EXISTS. A
+    # `--brief-name` that names nothing, or that names a brief whose committed
+    # text is not the text being sent, would be recorded as a fact and then
+    # believed by every later grade — the cheapest possible moment to catch it
+    # is now, and the most expensive is after a paid matrix has run.
+    if a.brief_name:
+        briefs = pathlib.Path(__file__).resolve().parent / "briefs"
+        if not (briefs / f"{a.brief_name}.assert.mjs").is_file():
+            ap.error(f"--brief-name {a.brief_name!r} has no assertion at "
+                     f"{briefs}/{a.brief_name}.assert.mjs — a grader would "
+                     f"resolve this trial to a brief it cannot run.")
+        text_file = briefs / f"{a.brief_name}.brief.txt"
+        if text_file.is_file() and text_file.read_text().strip() != a.brief.strip():
+            ap.error(f"--brief-name {a.brief_name!r} disagrees with --brief: "
+                     f"{text_file} holds different text. Recording the name "
+                     f"anyway would mislabel every cell of this matrix.")
 
     if a.print_task:
         # Exactly the bytes task() produced, with nothing appended — so a diff
@@ -644,8 +795,17 @@ def main() -> int:
     # That makes absence the signal for "no credential", which is weaker than
     # the positive assertion `brief` gets; the key set is pinned on both sides by
     # TestDogfoodUncredentialedStartRecordIsUnchanged.
+    #
+    # 🔴 `brief_name` RIDES ALONGSIDE, UNCONDITIONALLY, FOR THE SAME REASON. It
+    # is the empty string on a setup trial and on any ad-hoc brief, which is a
+    # POSITIVE "this run named no brief" rather than an absence indistinguishable
+    # from an older runner's transcript. It exists because the brief's PROSE is
+    # not an identifier: a grader mapping text back to
+    # `briefs/<name>.assert.mjs` can only do so by exact match, and that match
+    # breaks for every already-run trial the moment a brief file is reworded.
     start = dict(trial=a.trial, model=a.model, image=a.image, user=a.user,
-                 agent_env=a.agent_env, brief=a.brief, container=container)
+                 agent_env=a.agent_env, brief=a.brief, brief_name=a.brief_name,
+                 container=container)
     if a.credential_file:
         # 🔴 A MARKER, NEVER THE VALUE. A sha256 prefix is not reversible and is
         # not a substring of the token; it exists so two runs can be told apart
@@ -656,7 +816,8 @@ def main() -> int:
         except RuntimeError as e:
             rec("start", **start)
             rec("end", stop=f"credential install failed: {e}", steps=0,
-                usage={"prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0}, final="")
+                usage={"prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0},
+                final="", finish_reason=None)
             print(f"credential install failed: {e}", file=sys.stderr)
             log.close()
             cmdlog.close()
@@ -692,27 +853,62 @@ def main() -> int:
     steps = 0
     stop = "max-steps"
     final = ""
+    finish_reason = None
+    # 🔴 PER-TURN, BECAUSE THE TOTAL CANNOT SEE AN ESCALATION. The `.out`
+    # summary reported only cumulative usage, so `ab-genpost-glm-01`'s reasoning
+    # burn climbing 2,141 -> 4,238 -> 2,021 -> 7,992 into the cap was plainly
+    # visible in the transcript and completely invisible in the summary an
+    # operator actually reads. One row per assistant turn, cheap and greppable.
+    turns = []
 
     while steps < a.max_steps:
         if usage_total["cost"] >= a.max_cost:
             stop = f"max-cost (${usage_total['cost']:.4f} >= ${a.max_cost})"
             break
-        resp = call(a.model, messages, api_key)
+        resp = call(a.model, messages, api_key, a.max_tokens)
         u = resp.get("usage") or {}
         usage_total["prompt_tokens"] += u.get("prompt_tokens", 0)
         usage_total["completion_tokens"] += u.get("completion_tokens", 0)
         usage_total["cost"] += u.get("cost", 0.0) or 0.0
-        msg = resp["choices"][0]["message"]
+        choice = resp["choices"][0]
+        # The field the harness used to drop on the floor. Read off the CHOICE,
+        # not the message — that is where every OpenAI-shaped API puts it.
+        finish_reason = choice.get("finish_reason")
+        msg = choice["message"]
         calls = msg.get("tool_calls") or []
-        rec("assistant", content=msg.get("content"), tool_calls=calls, usage=u)
+        echo = reasoning_echo(msg) if a.carry_reasoning else {}
+        # `or 0` on BOTH halves: a provider may send `completion_tokens_details:
+        # null`, and may send the key with a null value. Either would make the
+        # summary's `sum()` raise at the very end of a trial that already cost
+        # money — a crash in the reporting path is the worst place for one.
+        reasoning_tokens = (u.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
+        turns.append({"after_steps": steps,
+                      "completion_tokens": u.get("completion_tokens", 0),
+                      "reasoning_tokens": reasoning_tokens,
+                      "finish_reason": finish_reason})
+        arec = dict(content=msg.get("content"), tool_calls=calls, usage=u,
+                    finish_reason=finish_reason)
+        # Only when there IS reasoning, so a non-reasoning provider's record is
+        # what it has always been. It is a LENGTH, not the text: enough to prove
+        # from the artifact that the echo happened, without doubling a
+        # transcript that is already the largest thing a trial leaves behind.
+        if echo:
+            arec["reasoning_chars"] = sum(
+                len(json.dumps(v)) if not isinstance(v, str) else len(v)
+                for v in echo.values())
+        rec("assistant", **arec)
         messages.append({
             "role": "assistant",
             "content": msg.get("content") or "",
+            **echo,
             **({"tool_calls": calls} if calls else {}),
         })
         if not calls:
             final = msg.get("content") or ""
-            stop = "finished"
+            # 🔴 NOT `stop = "finished"`. See classify_stop — a turn with no
+            # tool calls is four different outcomes, and three of them are the
+            # harness's fault rather than the model's.
+            stop = classify_stop(finish_reason, final)
             break
         for c in calls:
             steps += 1
@@ -743,9 +939,21 @@ def main() -> int:
             messages.append({"role": "tool", "tool_call_id": c["id"],
                              "content": result})
 
-    end = dict(stop=stop, steps=steps, usage=usage_total, final=final)
+    # `finish_reason` is the LAST one the provider sent, and it is present on
+    # every `end` record including `max-steps`/`max-cost` ones — a uniform key
+    # set is what lets a reader `jq` a directory of transcripts without
+    # branching on which stop it was.
+    end = dict(stop=stop, steps=steps, usage=usage_total, final=final,
+               finish_reason=finish_reason)
+    # `usage` is left at its three historical keys deliberately: per-turn
+    # reasoning already rides in each `assistant` record's `usage`, and
+    # re-basing `end.usage` would make every already-measured grid's totals
+    # non-comparable for no new information.
     summary = {"trial": a.trial, "model": a.model, "image": a.image,
-               "stop": stop, "steps": steps, "usage": usage_total}
+               "stop": stop, "finish_reason": finish_reason,
+               "steps": steps, "usage": usage_total,
+               "reasoning_tokens": sum(t["reasoning_tokens"] for t in turns),
+               "turns": turns}
     if armed:
         end.update(generations=caps.generations, submissions=caps.submissions)
         summary.update(generations=caps.generations, submissions=caps.submissions)

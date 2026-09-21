@@ -53,6 +53,15 @@ type fakeTrial struct {
 
 func runFakeTrial(t *testing.T, commands []string, toolOutput string, extra ...string) fakeTrial {
 	t.Helper()
+	return runFakeTrialEnv(t, nil, commands, toolOutput, extra...)
+}
+
+// The same offline trial, with extra environment handed to fake_trial.py — the
+// knobs that shape what the STUB PROVIDER returns (finish_reason, an empty or
+// null content, reasoning blocks, a whole recorded response body). Kept
+// separate so the common case stays a three-argument call.
+func runFakeTrialEnv(t *testing.T, env []string, commands []string, toolOutput string, extra ...string) fakeTrial {
+	t.Helper()
 	py := dogfoodPython(t)
 	dir := t.TempDir()
 	capture := filepath.Join(dir, "capture.json")
@@ -73,6 +82,7 @@ func runFakeTrial(t *testing.T, commands []string, toolOutput string, extra ...s
 		"PYTHONDONTWRITEBYTECODE=1",
 		"FAKE_TOOL_COMMAND="+strings.Join(commands, "\n"),
 		"FAKE_TOOL_OUTPUT="+toolOutput)
+	cmd.Env = append(cmd.Env, env...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("fake trial failed: %v\n%s", err, out)
@@ -380,8 +390,23 @@ func TestDogfoodUncredentialedRunIsUnchanged(t *testing.T) {
 	tr := runFakeTrial(t, []string{"echo hello"}, "")
 
 	want := map[string][]string{
-		"start": {"agent_env", "brief", "container", "image", "kind", "model", "t", "trial", "user"},
-		"end":   {"final", "kind", "steps", "stop", "t", "usage"},
+		// `brief_name` joined the `start` record with the oracle's brief-derivation
+		// fix, on exactly the contract `brief` already had: emitted
+		// UNCONDITIONALLY, empty string included, so "this run named no brief" is
+		// a POSITIVE assertion rather than an absence indistinguishable from an
+		// older runner's transcript. Additive and never read by the model, so no
+		// already-measured grid's TASK moved — that claim lives in
+		// TestDogfoodTaskDefaultIsByteIdentical, which is untouched.
+		"start": {"agent_env", "brief", "brief_name", "container", "image", "kind", "model", "t", "trial", "user"},
+		// `finish_reason` joined the `end` record deliberately, and it is the
+		// ONE key added since the setup grid was measured. It is additive and
+		// present on every `end` record, so a `jq` over a directory of old and
+		// new transcripts needs no branch; the grid's own comparability lives
+		// in the TASK (TestDogfoodTaskDefaultIsByteIdentical) and in
+		// `end.usage`, neither of which moved. The `stop` VOCABULARY did widen
+		// — see TestDogfoodTerminalStatesAreDistinguishable — which is the
+		// point of the change, not a side effect of it.
+		"end": {"final", "finish_reason", "kind", "steps", "stop", "t", "usage"},
 	}
 	seen := map[string]bool{}
 	for _, line := range strings.Split(strings.TrimSpace(readFile(t, tr.transcript)), "\n") {

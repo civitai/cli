@@ -1,0 +1,58 @@
+{
+  "_comment": [
+    "The final OpenRouter turn of trial `ab-genpost-glm-01` (model z-ai/glm-5.3-flash),",
+    "the run that proved the defect: the model exhausted its output budget inside its",
+    "reasoning channel and returned nothing, and the harness recorded `stop: \"finished\"`.",
+    "",
+    "PROVENANCE, field by field, because they are not equally strong:",
+    "  * `usage` is VERBATIM from runs/ab-genpost-glm-01/transcript.jsonl's last",
+    "    `assistant` record. `completion_tokens` is 8000 — EXACTLY the `max_tokens`",
+    "    the harness sent — of which 7992 were reasoning, leaving 8 for a reply.",
+    "  * `message.content: null` and `message.tool_calls: []` are likewise verbatim.",
+    "  * `finish_reason: \"length\"` is RECONSTRUCTED, not recorded. The harness never",
+    "    read the field — that IS the defect — so no artifact of that trial contains",
+    "    it. `length` is the value OpenRouter normalises an exhausted output budget",
+    "    to, and completion_tokens == max_tokens is the independent evidence that the",
+    "    budget is what ran out. Stated here so nobody later quotes it as measured.",
+    "",
+    "Replayed byte-for-byte by testdata/fake_trial.py via FAKE_FINAL_RESPONSE."
+  ],
+  "id": "gen-redacted",
+  "model": "z-ai/glm-5.3-flash",
+  "object": "chat.completion",
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "length",
+      "native_finish_reason": "length",
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": []
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 76252,
+    "completion_tokens": 8000,
+    "total_tokens": 84252,
+    "cost": 0.006173356,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 73920,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.006173356,
+      "upstream_inference_prompt_cost": 0.002413356,
+      "upstream_inference_completions_cost": 0.00376
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 7992,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    }
+  }
+}

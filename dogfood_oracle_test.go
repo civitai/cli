@@ -215,6 +215,74 @@ var s = document.querySelector('[data-testid="status"]');
 document.getElementById('gen').onclick = function () { s.textContent = 'generating'; };
 </script></body>`
 
+// 🔴 THE AUTH-GATED APP, AND IT IS NOT A HYPOTHETICAL. This is the shape of
+// `ab-genpost-mimo-01` (`const anon = ready && !viewer` → a sign-in CTA), which
+// is the shape the CLI's own `page-money` scaffold ships — sign-in CTA, `pm-
+// signin` test id and all. Under the oracle's old `viewer: null` bootstrap it
+// rendered `<div data-testid="status">ready</div><p>Please sign in…</p>` and
+// graded `RENDER=no`, a verdict about the harness's viewer rather than about
+// the model. Both arms are required: without the anonymous control the seeded
+// viewer is not shown to be what makes this pass.
+const fxGenpostAuthGated = `<!doctype html><meta charset="utf-8"><body>
+<div id="root"></div>
+<script>
+var b = window.__CIVITAI_BLOCK_CONTEXT__;
+var r = document.getElementById('root');
+if (!b || !b.viewer) {
+  r.innerHTML = '<div data-testid="status">ready</div><p>Please sign in to generate images.</p>';
+} else {
+  r.innerHTML = '<input data-testid="prompt" type="text">' +
+    '<button id="gen">Generate</button><button id="post" disabled>Post</button>' +
+    '<div data-testid="status">ready</div>';
+  document.getElementById('gen').onclick = function () {
+    document.querySelector('[data-testid="status"]').textContent = 'generating';
+  };
+}
+</script></body>`
+
+// 🔴 THE SEAM GUARD: what the oracle actually PUTS on the window, asserted from
+// inside the page rather than by reading _cdp.mjs's source. It drives the
+// status machine to `generating` only when the bootstrap is exactly what a real
+// host sends, and otherwise names the discrepancy — which the genpost assertion
+// then carries out as `observed`, so a failure says WHICH field is wrong.
+//
+// The three things it pins, and why each is a hazard rather than a nicety:
+//
+//   - `viewer` is a present object with a NUMERIC id. `isValidBlockInitPayload`,
+//     compiled into every already-deployed block bundle, rejects a viewer that
+//     is neither null nor an object with a numeric `id` — a rejected BLOCK_INIT
+//     is silently re-sent, not surfaced.
+//   - its key set is EXACTLY production's. civitai.com funnels both hosts
+//     through `withSignedInFlag()`, which PICKS `{ id, username, signedIn }` and
+//     deliberately omits `status` (civitai #2521). A wider fake lets a block
+//     read a field production never sends and still grade green here.
+//   - the TOKEN stays empty. Seeding a viewer must buy the block no capability:
+//     if a green cell could be earned with a credential the oracle handed over,
+//     the brief's "no generation and no post can complete here" premise is gone.
+const fxGenpostBootstrapProbe = `<!doctype html><meta charset="utf-8"><body>
+<input data-testid="prompt" type="text">
+<button id="gen">Generate</button>
+<button id="post" disabled>Post</button>
+<div data-testid="status">ready</div>
+<script>
+document.getElementById('gen').onclick = function () {
+  var b = window.__CIVITAI_BLOCK_CONTEXT__ || {};
+  var v = b.viewer, t = b.token || {}, c = b.context || {};
+  var bad = [];
+  if (!v) { bad.push('viewer-null'); }
+  else {
+    if (typeof v.id !== 'number') bad.push('viewer-id-not-number');
+    var k = Object.keys(v).sort().join('+');
+    if (k !== 'id+signedIn+username') bad.push('viewer-keys:' + k);
+  }
+  if (t.raw !== '') bad.push('token-raw-nonempty');
+  if (!t.scopes || t.scopes.length !== 0) bad.push('token-scopes:' + JSON.stringify(t.scopes));
+  if (c.viewerUserId !== (v ? v.id : null)) bad.push('context-viewer-mismatch');
+  document.querySelector('[data-testid="status"]').textContent =
+    bad.length ? bad.join(',') : 'generating';
+};
+</script></body>`
+
 const fxManifestBuilt = `{"blockId":"fixture","version":"0.1.0","name":"Fixture","type":"block",
 "buildCommand":"npm run build","outputDir":"dist"}`
 
@@ -289,13 +357,59 @@ type stubEnv struct {
 	// outputDir: when non-empty the HTML is written there, mimicking a built app.
 	outputDir string
 	noNode    bool
+	// The trial's transcript, written to <runs>/ctl/transcript.jsonl. Empty =>
+	// no transcript at all, which is its own case: the oracle then has nothing
+	// to derive the brief from.
+	transcript string
+}
+
+// One `start` record as runner.py writes it. `brief` is the prose the model was
+// sent; `briefName` is the name runner.py records alongside it.
+func startRecord(brief, briefName string) string {
+	b, err := json.Marshal(map[string]any{
+		"t": 1.0, "kind": "start", "trial": "ctl", "model": "fake/model",
+		"image": "fake-image", "user": "root", "agent_env": "",
+		"brief": brief, "brief_name": briefName, "container": "dogfood-ctl",
+	})
+	if err != nil {
+		panic(err)
+	}
+	// Plus an `end` record, so the fixture is a transcript rather than one line.
+	return string(b) + "\n" + `{"t":2.0,"kind":"end","stop":"finished"}` + "\n"
+}
+
+// The committed prose of a brief, read rather than pinned: these tests are
+// about a transcript's recorded brief resolving to the right NAME, so they must
+// exercise whatever text a trial run today would actually carry.
+func briefText(t *testing.T, name string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(oracleDir, "briefs", name+".brief.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 // Builds a stub PATH and a fixture tree, and returns the env for running
 // oracle.sh / grade.sh against it.
 func stubOracleEnv(t *testing.T, s stubEnv) []string {
 	t.Helper()
-	dir := t.TempDir()
+	// 🔴 NOT t.TempDir(), AND THE REASON IS A VACUOUS GREEN THAT WAS ALREADY
+	// LIVE. t.TempDir() builds its path out of the TEST NAME, the stub docker
+	// substitutes that path into the oracle's `find /work …` command text, and
+	// the oracle writes `/work` unquoted (correctly — on a real daemon it is a
+	// fixed path). So a subtest whose NAME contains a shell metacharacter makes
+	// every in-"container" command a bash syntax error, `manifests=0`, and
+	// `RENDER=no` — which is the expected value of every negative case here.
+	// Measured 2026-09-21: `TestOracleSendsTheHostHandshake/without_it_(control)`
+	// — the control arm that proves the host injection does anything — was
+	// passing for that reason and not for its own. A name-independent directory
+	// removes the class rather than the one instance.
+	dir, err := os.MkdirTemp("", "dogfood-oracle-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	stub := filepath.Join(dir, "bin")
 	work := filepath.Join(dir, "work")
 	tmp := filepath.Join(dir, "tmp")
@@ -331,6 +445,17 @@ func stubOracleEnv(t *testing.T, s stubEnv) []string {
 	// 🔴 The stub dir goes FIRST on PATH but the rest of PATH is kept: the stub
 	// rewrites container paths and then needs the real `find`, `cat`, `node` and
 	// the browser to carry the command out.
+	// 🔴 DOGFOOD_RUNS IS ALWAYS SET, EVEN WITH NO TRANSCRIPT. The oracle now
+	// derives the brief from `<runs>/<trial>/transcript.jsonl`, whose default is
+	// `scripts/dogfood/runs` — a directory a contributor who has driven a real
+	// matrix HAS, and whose contents would then decide these tests' verdicts.
+	// Pointing it at a temp dir is what keeps them a claim about the oracle.
+	runs := filepath.Join(dir, "runs")
+	if s.transcript != "" {
+		write(filepath.Join(runs, "ctl", "transcript.jsonl"), s.transcript, 0o644)
+	} else if err := os.MkdirAll(runs, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	node := "1"
 	if s.noNode {
 		node = "0"
@@ -341,6 +466,12 @@ func stubOracleEnv(t *testing.T, s stubEnv) []string {
 		"STUB_ROOT=" + work,
 		"STUB_TMP=" + tmp,
 		"STUB_NODE=" + node,
+		"DOGFOOD_RUNS=" + runs,
+		// Never inherit an operator's shell default for the brief: it would
+		// silently become the `requested` arm of every case below.
+		"DOGFOOD_ASSERT=",
+		// Same for the viewer control arm, which two tests below set explicitly.
+		"CIVITAI_ASSERT_ANON_VIEWER=",
 	}
 }
 
@@ -407,6 +538,162 @@ func TestOracleRefusesWhenNothingCanBeMeasured(t *testing.T) {
 			// otherwise find one attached to a run that measured nothing.
 			if strings.Contains(out, "RENDER=") {
 				t.Fatalf("a run that measured nothing still printed a RENDER verdict:\n%s", out)
+			}
+		})
+	}
+}
+
+// ── which brief: derived from the trial, never guessed ───────────────────────
+
+// 🔴 THE BRIEF USED TO BE AN OPTIONAL POSITIONAL DEFAULTING TO `celsius`, AND
+// THE COST WAS MEASURED, NOT IMAGINED. `oracle.sh ab-genpost-mimo-01 root` —
+// against a trial built from the `genpost` brief — ran the CELSIUS assertion,
+// timed out waiting for `[data-testid="celsius"]` and printed `RENDER=no`,
+// which is byte-identical to the verdict a model that built nothing earns.
+// runner.py records the brief in the trial's own `start` record, so the oracle
+// reads it from there.
+//
+// These cases never LAUNCH a browser — no manifest, so the verdict is "no app
+// was created" and no block is ever served. They still call oracleBrowser
+// because oracle.sh RESOLVES a browser up front, deliberately, so that an
+// unreachable one is reported before a server is started inside someone's
+// container. Same skip-locally / fail-under-CI rule as everywhere else here: a
+// skip is a green that checked nothing.
+func TestOracleDerivesTheBriefFromTheTrial(t *testing.T) {
+	browser := oracleBrowser(t)
+	for _, tc := range []struct {
+		name       string
+		transcript string
+		args       []string
+		wantBrief  string
+		wantSource string
+		wantNote   string
+	}{
+		{
+			name:       "no argument at all: the trial's recorded prose decides",
+			transcript: startRecord(briefText(t, "genpost"), ""),
+			args:       []string{"ctl", "root"},
+			wantBrief:  "genpost",
+			wantSource: "transcript-text",
+		},
+		{
+			// The field runner.py gained with this change. Preferred over the
+			// prose because prose is not an identifier: rewording a brief file
+			// un-resolves every trial already run against it.
+			name:       "a recorded brief_name is preferred over matching prose",
+			transcript: startRecord("", "genpost"),
+			args:       []string{"ctl", "root"},
+			wantBrief:  "genpost",
+			wantSource: "transcript-name",
+		},
+		{
+			name:       "an argument that AGREES is accepted",
+			transcript: startRecord(briefText(t, "genpost"), ""),
+			args:       []string{"ctl", "root", "genpost"},
+			wantBrief:  "genpost",
+			wantSource: "transcript-text",
+		},
+		{
+			// A setup cell: the transcript POSITIVELY records an empty brief, so
+			// the trial built no app and every brief grades it identically. The
+			// default is defensible here — and it has to SAY so, or a reader
+			// cannot tell this cell from one graded against a derived brief.
+			name:       "a setup trial defaults, and says so out loud",
+			transcript: startRecord("", ""),
+			args:       []string{"ctl", "root"},
+			wantBrief:  "celsius",
+			wantSource: "default-trial-recorded-no-brief",
+			wantNote:   "records an EMPTY brief",
+		},
+		{
+			// No transcript to check against: the argument is used, and the run
+			// states that nothing verified it.
+			name:       "no transcript: the argument is used and marked unverified",
+			args:       []string{"ctl", "root", "genpost"},
+			wantBrief:  "genpost",
+			wantSource: "argument-unverified",
+			wantNote:   "nothing verified 'genpost'",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := append(stubOracleEnv(t, stubEnv{
+				state: "running", civitaiRC: "-", transcript: tc.transcript,
+			}), "CIVITAI_CHROME="+browser)
+			out, code := runScript(t, "oracle.sh", env, tc.args...)
+			if code != 0 {
+				t.Fatalf("exit %d, want 0\n%s", code, out)
+			}
+			if got := summaryField(t, out, "brief"); got != tc.wantBrief {
+				t.Fatalf("brief=%s, want %s — the oracle graded against the wrong question\n%s",
+					got, tc.wantBrief, out)
+			}
+			if got := summaryField(t, out, "brief_source"); got != tc.wantSource {
+				t.Fatalf("brief_source=%s, want %s\n%s", got, tc.wantSource, out)
+			}
+			if tc.wantNote != "" && !strings.Contains(out, tc.wantNote) {
+				t.Fatalf("the run did not state %q — an unverified or defaulted brief must not "+
+					"be silent:\n%s", tc.wantNote, out)
+			}
+		})
+	}
+}
+
+// 🔴 AND WHEN IT CANNOT BE SURE, IT REFUSES — it does not pick. Every case here
+// is one in which a verdict would be a confident statement about the wrong
+// question, and exit 2 is what grade.sh renders as `RENDER=unmeasured`.
+func TestOracleRefusesRatherThanGradeTheWrongBrief(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		transcript string
+		args       []string
+		wantMsg    string
+	}{
+		{
+			// THE ORIGINAL DEFECT, with the operator now wrong instead of the
+			// default. Either way, one of the two beliefs is false.
+			name:       "the argument disagrees with the trial",
+			transcript: startRecord(briefText(t, "genpost"), ""),
+			args:       []string{"ctl", "root", "celsius"},
+			wantMsg:    "brief disagreement",
+		},
+		{
+			name:       "the recorded brief matches no brief file",
+			transcript: startRecord("Build something nobody committed a brief for.", ""),
+			args:       []string{"ctl", "root"},
+			wantMsg:    "matches none of",
+		},
+		{
+			// A transcript that names one brief and quotes another was written
+			// by hand somewhere. Picking either half is guessing which is the
+			// lie.
+			name:       "the transcript names one brief and quotes another",
+			transcript: startRecord(briefText(t, "celsius"), "genpost"),
+			args:       []string{"ctl", "root"},
+			wantMsg:    "self-inconsistent",
+		},
+		{
+			// Nothing passed, nothing to derive from. This is exactly where the
+			// old default fired, and it is the case with the least information.
+			name:    "nothing passed and no transcript to derive from",
+			args:    []string{"ctl", "root"},
+			wantMsg: "no brief and no way to derive one",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := stubOracleEnv(t, stubEnv{
+				state: "running", civitaiRC: "-", transcript: tc.transcript,
+			})
+			out, code := runScript(t, "oracle.sh", env, tc.args...)
+			if code != 2 {
+				t.Fatalf("exit %d, want 2 (nothing measured)\n%s", code, out)
+			}
+			if !strings.Contains(out, tc.wantMsg) {
+				t.Fatalf("the refusal does not say %q:\n%s", tc.wantMsg, out)
+			}
+			// The property that matters more than the message: a run that could
+			// not establish WHICH question to ask must not answer one.
+			if strings.Contains(out, "RENDER=") {
+				t.Fatalf("a run that could not resolve the brief still printed a verdict:\n%s", out)
 			}
 		})
 	}
@@ -570,6 +857,15 @@ func TestOracleSendsTheHostHandshake(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("exit %d, want 0\n%s", code, out)
 			}
+			// 🔴 POSITIVE CONTROL ON THE FIXTURE TREE, because the expected value
+			// of the control arm is `no` and so is the value a run that never
+			// found the app produces. Measured 2026-09-21: this subtest's own
+			// name once made that happen (see stubOracleEnv). A `no` earned by
+			// an empty /work is not evidence about the handshake.
+			if got := summaryField(t, out, "app_dirs"); got != "1" {
+				t.Fatalf("app_dirs=%s, want 1 — the fixture app was never found, so this arm's "+
+					"verdict is about the harness, not the handshake\n%s", got, out)
+			}
 			if got := summaryField(t, out, "RENDER"); got != tc.wantRender {
 				t.Fatalf("RENDER=%s, want %s\n%s", got, tc.wantRender, out)
 			}
@@ -708,6 +1004,109 @@ func TestOracleReportsScopesWithoutDeciding(t *testing.T) {
 	}
 }
 
+// ── the viewer the oracle presents ───────────────────────────────────────────
+
+// 🔴 THE ORACLE PRESENTS A SIGNED-IN VIEWER, AND THE CONTROL ARM PROVES IT IS
+// THE VIEWER DOING THE WORK. Measured on `ab-genpost-mimo-01` (2026-09-21): a
+// generate-then-post app that gates its UI on the viewer — the shape this
+// repo's own `page-money` scaffold ships — graded `RENDER=no observed=ready`
+// under the old `viewer: null` bootstrap, with `Please sign in to generate
+// images.` in its body. That verdict was about the harness.
+//
+// Why signed-in is the RIGHT default rather than the convenient one: the
+// platform refuses this brief's behaviour to an anonymous subject (a block
+// token minted for an anonymous viewer carries `sub: "anon"`, and civitai's
+// block-scope middleware hard-rejects `posts:write:self` for it), so an
+// anonymous-only oracle grades a branch in which the thing the brief asks for
+// cannot exist. Every other host emulation in the ecosystem agrees: the SDK's
+// `createMockHost`, `createLiveHost`'s anon FALLBACK, and this repo's own
+// page-money harness (`?viewer=anon` is the opt-IN) all default to signed in.
+func TestOracleShowsTheBlockASignedInViewer(t *testing.T) {
+	browser := oracleBrowser(t)
+	for _, tc := range []struct {
+		name       string
+		anon       bool
+		wantRender string
+		wantViewer string
+	}{
+		{"signed in (the default)", false, "yes", "signed-in"},
+		{"anonymous (the control arm)", true, "no", "anonymous"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := append(stubOracleEnv(t, stubEnv{
+				state: "running", civitaiRC: "0", transcript: startRecord("", "genpost"),
+				manifest: fxManifestScoped, outputDir: "dist", appHTML: fxGenpostAuthGated,
+			}), "CIVITAI_CHROME="+browser)
+			if tc.anon {
+				env = append(env, "CIVITAI_ASSERT_ANON_VIEWER=1")
+			}
+			out, code := runScript(t, "oracle.sh", env, "ctl", "root")
+			if code != 0 {
+				t.Fatalf("exit %d, want 0\n%s", code, out)
+			}
+			if got := summaryField(t, out, "RENDER"); got != tc.wantRender {
+				t.Fatalf("RENDER=%s, want %s — an auth-gated app is graded on the branch the "+
+					"harness's viewer selects\n%s", got, tc.wantRender, out)
+			}
+			// 🔴 The cell has to SAY which viewer it graded against. Without it a
+			// `no` cannot be told from "the model built a sign-in CTA and the
+			// harness was anonymous" — which is the whole defect, one layer up.
+			if got := summaryField(t, out, "viewer"); got != tc.wantViewer {
+				t.Fatalf("viewer=%s, want %s\n%s", got, tc.wantViewer, out)
+			}
+		})
+	}
+}
+
+// 🔴 AND THE SEEDED VIEWER BUYS THE BLOCK NOTHING. A host emulation that hands
+// a block a viewer AND a usable credential would make the `genpost` brief's
+// premise false — briefs/genpost.md says in as many words that no generation
+// and no post can complete here, on any machine, and the assertion grades the
+// state machine only on that basis. This reads the bootstrap from INSIDE the
+// page, so it is a claim about what the block receives rather than about what
+// _cdp.mjs says.
+func TestOracleSeedsTheProductionViewerAndNoCredential(t *testing.T) {
+	browser := oracleBrowser(t)
+	run := func(t *testing.T, anon bool) (string, string) {
+		t.Helper()
+		env := append(stubOracleEnv(t, stubEnv{
+			state: "running", civitaiRC: "0", transcript: startRecord("", "genpost"),
+			manifest: fxManifestScoped, outputDir: "dist", appHTML: fxGenpostBootstrapProbe,
+		}), "CIVITAI_CHROME="+browser)
+		if anon {
+			env = append(env, "CIVITAI_ASSERT_ANON_VIEWER=1")
+		}
+		out, code := runScript(t, "oracle.sh", env, "ctl", "root")
+		if code != 0 {
+			t.Fatalf("exit %d, want 0\n%s", code, out)
+		}
+		return out, summaryField(t, out, "RENDER")
+	}
+
+	// POSITIVE CONTROL FIRST: the probe must be able to SEE the bootstrap at
+	// all. Without this a probe wired to nothing — one whose `bad` list is
+	// always empty because it reads an object that is never there — would make
+	// the green arm below vacuous.
+	anonOut, anonRender := run(t, true)
+	if anonRender != "no" {
+		t.Fatalf("the bootstrap probe passed with an anonymous viewer — it cannot be reading the "+
+			"viewer at all, so its green arm proves nothing\n%s", anonOut)
+	}
+	if !strings.Contains(anonOut, "viewer-null") {
+		t.Fatalf("the probe failed for some reason other than the anonymous viewer — it is not "+
+			"measuring what this test claims:\n%s", anonOut)
+	}
+
+	out, render := run(t, false)
+	if render != "yes" {
+		t.Fatalf("RENDER=%s, want yes. The probe drives the status machine only when the seeded "+
+			"bootstrap is exactly what a real host sends; `observed` names the field that is "+
+			"wrong — a `viewer-keys:` value means the fake is wider or narrower than "+
+			"civitai.com's own withSignedInFlag(), a `token-` value means the oracle handed the "+
+			"block a credential and briefs/genpost.md's premise is void.\n%s", render, out)
+	}
+}
+
 // ── grade.sh wiring ──────────────────────────────────────────────────────────
 
 // Without a brief, grade.sh must be what it was: the setup grid of 2026-09-18
@@ -756,7 +1155,14 @@ func TestGradeCarriesTheRenderResultOntoTheVerdictLine(t *testing.T) {
 	if line == "" {
 		t.Fatalf("no verdict line:\n%s", out)
 	}
-	for _, want := range []string{"render_brief=celsius", "validate_gate=pass", "observed=212", "RENDER=yes"} {
+	// `brief_source=` and `viewer=` are on the cell for the same reason
+	// `observed=` is: without them a reader cannot tell a verdict measured
+	// against a brief the TRIAL recorded from one measured against a brief
+	// somebody typed, nor a `no` earned signed-in from a `no` earned anonymous.
+	for _, want := range []string{
+		"render_brief=celsius", "brief_source=", "validate_gate=pass",
+		"viewer=signed-in", "observed=212", "RENDER=yes",
+	} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("the verdict line is missing %q:\n%s", want, line)
 		}
