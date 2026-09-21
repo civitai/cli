@@ -55,21 +55,40 @@ import (
 // wording is the point: this line is read by an agent deciding whether to follow
 // the link. Pinning the whole section costs a test edit for a cosmetic reword,
 // which is the price of a machine-readable claim about what the section says.
-const wantDocsSection = `### Docs
+const wantDocsSection = `### Docs — fetch these BEFORE writing code
 
-- Guide: https://developer.civitai.com/apps/guide/
+Nothing in this repository is the API reference. The hooks, the message bridge,
+the manifest fields and the scopes are documented on the docs site, and the
+` + "`.md`" + ` suffix serves the plain-text source an agent can read directly.
+
+- **` + "`https://developer.civitai.com/apps/reference/hooks.md`" + `** — the COMPLETE
+  hook reference. Fetch it first: every capability this platform has is a hook,
+  and a capability you cannot find here probably exists under a name you have
+  not guessed. It is ~40 KB, so page it rather than giving up on it.
 - Reference (manifest, scopes, hooks, message bridge, CLI):
   https://developer.civitai.com/apps/reference/
+- Guide: https://developer.civitai.com/apps/guide/
 - Example apps you can read end-to-end:
   https://developer.civitai.com/apps/examples
-- Full doc index for agents: https://developer.civitai.com/llms.txt`
+- Full doc index for agents: https://developer.civitai.com/llms.txt
+
+Reading ` + "`node_modules/@civitai/blocks-react/dist/*.d.ts`" + ` to find out what the
+SDK can do is the expensive way round. Fetch the reference.`
 
 // docsLinkRe pulls the link SET out of a section. The expected set is derived
 // from the golden above rather than written out again, so the two cannot
 // disagree. It exists for the failure MESSAGE: a whole-string mismatch reports a
 // diff, while the set reports "a link was added" or "a link was removed", which
 // is the edit somebody actually made.
-var docsLinkRe = regexp.MustCompile(`https?://[^\s)]+`)
+//
+// 🔴 THE EXCLUDED SET INCLUDES A BACKTICK AND AN ASTERISK. The section's first
+// bullet writes its URL inside a code span — `…/hooks.md` — because that bullet
+// is an INSTRUCTION to fetch that exact string, and a bare link in a bullet of
+// links is not read as one. With only `\s` and `)` excluded, the match ran past
+// the closing backtick and every consumer downstream got a URL with punctuation
+// welded to it: the probe fetches a 404, and the ledger walk searches for a
+// needle no file contains.
+var docsLinkRe = regexp.MustCompile("https?://[^\\s)`*]+")
 
 // docsSectionOf returns the `### Docs` section of a rendered block, from its
 // heading to the end of the block, with surrounding whitespace trimmed. The
@@ -253,6 +272,9 @@ var docsURLSpellingLedger = map[string]string{
 		"this file's own prose about the URL",
 	"claudedocs/decisions/36-agents-block-per-project.md": "AGENTS.md item 36's evidence file: it quotes the added " +
 		"line verbatim and tabulates each URL's measured status",
+	"internal/scaffold/hooks.go": "the page-money README's hook index sends the reader to the same hooks " +
+		"reference when a row's scope column is blank — a SECOND shipped artefact carrying the URL, and it " +
+		"is written into every scaffolded project exactly as the managed block is",
 }
 
 // docsURLLedgerExemptPrefix is the ONE exemption, and it is not a convenience.

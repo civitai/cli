@@ -258,8 +258,72 @@ func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, d
 		return fmt.Errorf("internal error: scaffolded manifest failed validation:\n  %s", joinLines(validate.Messages(res.Errors)))
 	}
 
+	agentsNote := writeScaffoldAgentsMD(destDir)
+
 	printScaffoldResult(out, display, slug, tmpl, destDir, abs, written)
+	if len(agentsNote) > 0 {
+		fmt.Fprintln(out)
+		for _, line := range agentsNote {
+			// One Dim() per line: ui.Dim pads a multi-line string to a box, which
+			// leaves trailing spaces on every line but the longest.
+			fmt.Fprintln(out, ui.Dim("  "+line))
+		}
+	}
 	return nil
+}
+
+// writeScaffoldAgentsMD refreshes AGENTS.md inside the project that was just
+// scaffolded, and returns the one line the scaffold output prints about it ("" =
+// say nothing).
+//
+// 🔴 WHY THE SCAFFOLDER WRITES IT AT ALL. `AGENTS.md`'s Local-development
+// section is DERIVED from the directory it is written into (agent_setup_project.go),
+// and until now nothing re-derived it after `app create` put a project there. So
+// an author who ran `civitai agent-setup` first — in an empty directory, which
+// the command explicitly supports — got the "No Civitai App has been scaffolded
+// in this directory" branch, and it STAYED that way: `app create` never re-ran
+// the derivation. Measured on a blind dogfood run: the file the CLI designates
+// as the source of truth for scaffolding, running and validating this project
+// described an empty directory for 58 of the run's 66 steps, and the section
+// that names the run/test commands was the not-scaffolded placeholder.
+//
+// 🔴 A DIRECT WRITE, NOT A PROMPT, AND THE REASON IS THE FAILING CASE. The
+// reader this defect hurts is an AGENT running non-interactively — `--yes`, no
+// TTY — which is exactly the invocation a prompt cannot reach; a prompt would
+// leave the measured failure untouched and add a question to the one path that
+// was already fine. The write is also as safe as a write gets: `scaffold.Render`
+// has just REFUSED to run in a non-empty directory, so this AGENTS.md is one
+// this command created and no author has touched. `mergeAgentsMD` is used
+// anyway rather than a blind overwrite, so the three-case rule still holds if
+// that ever stops being true.
+//
+// 🔴 AGENTS.md ONLY — NOT CLAUDE.md, NOT THE MCP CONFIG. Those two are about the
+// AUTHOR'S AGENT, not about the project: which agent it is, where its config
+// lives and whether a credential is in the environment are all questions
+// `agent-setup` answers by detection, and `app create` has detected nothing. The
+// line this returns points at `agent-setup` for exactly that reason.
+//
+// 🔴 IT NEVER FAILS THE SCAFFOLD. The project on disk is complete and valid by
+// the time this runs; an unwritable AGENTS.md is worth a sentence, not the loss
+// of a successful scaffold. The sentence names the file and the error so the
+// outcome is never silent.
+func writeScaffoldAgentsMD(destDir string) []string {
+	path, content, action, err := planAgentsMD(destDir)
+	if err == nil && action != actionUnchanged {
+		err = writeProjectFile(path, content)
+	}
+	if err != nil {
+		return []string{
+			fmt.Sprintf("Could not write %s: %v", path, err),
+			fmt.Sprintf("Run `civitai agent-setup --dir %s` once the cause is fixed — without it your", destDir),
+			"coding agent's instructions describe an empty directory.",
+		}
+	}
+	return []string{
+		"Wrote AGENTS.md — your coding agent's instructions for THIS project, derived from",
+		"what was just scaffolded. Run `civitai agent-setup` in it to also register the",
+		"Civitai MCP servers and (for Claude Code) the CLAUDE.md that imports it.",
+	}
 }
 
 // installStepFmt is next-step 1 for the templates that install. It is shared by

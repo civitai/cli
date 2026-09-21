@@ -95,6 +95,17 @@ type Data struct {
 	Name string
 }
 
+// renderData is what the templates actually execute against: the caller's Data
+// plus the values this package derives for them. It is unexported because it is
+// not part of the scaffolding contract — a caller supplies the project's
+// identity and nothing else.
+type renderData struct {
+	Data
+	// HookIndex is the rendered markdown of every `@civitai/blocks-react` hook.
+	// See hooks.go for why it is in the README at all.
+	HookIndex string
+}
+
 // outputName maps an embedded template filename to its on-disk name.
 // `.tmpl` is stripped; some names are rewritten because go:embed cannot embed
 // files whose names begin with a dot:
@@ -133,6 +144,13 @@ func Render(tmpl Template, destDir string, data Data) ([]string, error) {
 		return nil, err
 	}
 
+	// 🔴 THE HOOK INDEX IS RENDERED IN, NOT STORED IN THE TEMPLATE. Keeping the
+	// list in Go (hooks.go) means it has exactly one spelling: the `.tmpl` cannot
+	// fall behind `SDKHooks`, and there is no generator anybody has to remember
+	// to run. `renderData` embeds `Data`, so `{{ .Slug }}` / `{{ .Name }}` still
+	// resolve exactly as before — the public argument type is unchanged.
+	view := renderData{Data: data, HookIndex: RenderHookIndex()}
+
 	var written []string
 	err := fs.WalkDir(templatesFS, root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -156,7 +174,7 @@ func Render(tmpl Template, destDir string, data Data) ([]string, error) {
 			return fmt.Errorf("parse template %s: %w", rel, err)
 		}
 		var buf bytes.Buffer
-		if err := t.Execute(&buf, data); err != nil {
+		if err := t.Execute(&buf, view); err != nil {
 			return fmt.Errorf("render template %s: %w", rel, err)
 		}
 		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
