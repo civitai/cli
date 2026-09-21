@@ -33,74 +33,86 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-- ✅ **Ranks 1, 2, 3, 5 SHIPPED; rank 4 DELETED by measurement.** `cli#678` (brief
-  injection + the celsius brief), `cli#679` (unblocked both required checks), `cli#677`
-  (this doc), `cli#681` (the render oracle, squash `9d7b5a2a`), `cli#680` (rank 3 measured,
-  squash `39c2785`). All verified by content with negative controls.
-- ✅ **The oracle works and BOTH controls are measured.** Positive: the live specimen grades
-  `gate=pass gate_rc=0 observed=212 RENDER=yes`, re-run independently. Negative: an
-  untouched `static` scaffold grades `gate=pass … RENDER=no` — the validator passes while
-  the browser says nothing rendered.
-- 🔴 **SCOPE CHANGED BY OPERATOR DIRECTION, 2026-09-21 — and it is WIDER than the frozen
-  closing condition.** The ask is now: **one agent (`z-ai/glm-5.3-flash`), build an app that
-  integrates GENERATION and POSTING, and SUBMIT IT FOR REVIEW.** Read carefully against the
-  Goal above: a gen+posting app with its own assertion *would* satisfy the frozen condition,
-  but **`app submit` is nowhere in it**. The submit is a NEW objective, not another round of
-  this one. Recorded here rather than quietly folded in, because the condition is frozen and
-  a later session must not read a submitted app as evidence the condition was met.
-- 🔴 **BASELINE CAPTURED 2026-09-21, BEFORE ANY CREDENTIALED RUN — this is the control and
-  it cannot be re-derived after the fact.** The `dogfood-3` precedent's discipline is to
-  verify from the ACCOUNT, never from the agent's report.
+🔴 **HEADLINE: a cheap open model BUILT A PASSING APP. The arc's mechanism is proven; its
+frozen condition is NOT yet met.** `xiaomi/mimo-v2.5`, blind, 73 steps, **$0.0237**, graded
+by a headless browser:
 
-  | | value |
-  |---|---|
-  | Buzz Blue | 1,305,157 |
-  | Buzz Green | 947,618 |
-  | Buzz Yellow | 1,849,047 |
-  | **Buzz TOTAL** | **4,101,822** |
-  | listings visible to `app list` | 13 |
+```
+brief=genpost brief_source=transcript-text gate=pass gate_rc=0
+scopes=ai:write:budgeted,posts:write:self viewer=signed-in
+observed=ready>generating RENDER=yes
+```
 
-  🔴 **If a credentialed run happens and this number was not read first, the run is
-  UNGRADEABLE** — the same class as the pre-registration failures recorded elsewhere in
-  this repo, where the grading instrument had no pre-period.
-- 🔴 **BLOCKER FOUND — the harness cannot carry a credential without leaking it.** See the
-  investigation block. A PR is in flight (`feat/dogfood-credentialed-trial`) adding a
-  non-recording credential path, a second brief for generation + posting, and mechanical
-  caps. **No trial has been run and nothing has been spent.**
-- ⚠ **I UNDERSTATED THE BLAST RADIUS TO THE OPERATOR AND THEN CORRECTED IT.** The approval
-  question said the account owned "two approved published apps" (`sensei`, `comfy`), taken
-  from a truncated `app doctor`. `app list` shows **13 listings, ~10 owned by
-  `zachlowdenzx`** — also `radio`, `cosmetic-studio`, `panorama-360`, `model-benchmarking`,
-  `custom-generators`, `playable-collections`, `app-requests`, `vitrine`. The decision was
-  taken on the smaller number; the bounds are unchanged and the precedent ran on this same
-  account, but the correction is on the record.
-- **Claims:** all released. `app-build-dogfood-1/-2/-3/-5` are done and free.
-- **Carried forward — RANK 3'S TABLE.** Kept here deliberately: the appended investigation
-  block "✅ ANSWERED 2026-09-21 — the harness CAN carry an app-build task" says *"see the
-  State-now table"*, so deleting it would leave that block pointing at nothing.
-  `xiaomi/mimo-v2.5`, `df-node-root`, brief delivered:
+`pass:true`, `postDisabled:true` (the Post gate closed as the brief demands), `status`
+transitioning `ready → generating`. **Re-run independently rather than accepted from a
+report.** The negative control holds in the same pass: the unmodified `page-money` scaffold
+grades **`gate=pass … RENDER=no`** — the validator says fine, the browser says nothing
+rendered. That disagreement is the arc's founding thesis and it survives the viewer change.
 
-  | | measured | cap set |
-  |---|---|---|
-  | steps | **65** | 80 |
-  | total cost | **$0.0145** | $0.50 |
-  | prompt tokens | 1,564,496 | — |
-  | completion tokens | 9,468 | — |
-  | per-call prompt | 452 → **45,328** (~100× over 66 calls) | — |
-  | `stop` | **`finished`** | — |
+🔴 **WHY THE CONDITION IS STILL OPEN — read the frozen text, not the headline.** It ends
+*"Graded per cell across the three cheap models, with a frontier control."* We have **2 of 4
+cells** (`mimo` PASS, `glm` FAIL-explained), on **1 environment** of the 2 currently
+gradeable. `deepseek-v4-pro` and the frontier control have not run. **The one item between
+here and the condition is rank 6.**
 
-  The O(n²) growth is real and does not matter at this price; `stop=finished` is what makes
-  it a completed task rather than a harness limit.
-- **Carried forward — the prerequisite arc's baseline, which rank 3's number is read
-  against.** Measured 2026-09-19 over 18 trials: the three cheap models reach SETUP on 4 of
-  6 grid rows, model-independently, at **mean $0.0058/trial** (21 trials = $0.1211), with
-  the frontier control **5–20× dearer**. So an app-build trial at **$0.0145** is ~2.5× a
-  setup trial.
-- **Carried forward — the credentialed precedent, now directly load-bearing for rank 7.**
-  `claudedocs/handoff-dogfood-3.md` is the *first CREDENTIALED blind dogfood* (2026-08-10):
-  3 generations, 61 Buzz, 2 submissions, verified from the account
-  (4,187,454 → 4,187,393). Read it before running rank 7 — it also records real
-  `submit`/`withdraw` defects, including permanent loss of captioned screenshots.
+- ✅ **Rank 7's TRIAL ran; rank 7's OBJECTIVE did not complete.** The operator asked for an
+  app integrating generation and posting **submitted for review**. Two credentialed trials
+  ran and **`submissions=0`, `generations=0`** in both. Nothing was submitted. The frozen
+  condition never mentioned `submit`, which is exactly why it was recorded separately —
+  **do not read `RENDER=yes` as the submit objective being met.**
+- ✅ **ACCOUNT UNCHANGED ACROSS BOTH CREDENTIALED RUNS.** Buzz **4,101,822** → **4,101,822**
+  (delta **0**), 13 listings → 13, no `ab-*` listing reached the account, and none of the
+  ~10 operator-owned apps was touched. The residual risk the operator accepted did not
+  materialise. Verified from the account, never from an agent's report.
+- ✅ **Four harness/doc PRs merged tonight**, each verified by content with a negative
+  control: **`cli#683`** (`8603fc3`) credential path that does not leak + the `genpost`
+  brief · **`cli#684`** (`7151ca3`) a truncated trial can no longer be recorded as finished
+  · **`cli#685`** (`bdeddef1`) the agent-facing doc fixes · **`cli#686`** (`0af4045`) the
+  oracle's brief resolution and signed-in viewer.
+- 🔴 **THE GLM FAILURE IS FULLY EXPLAINED AND IT WAS NOT WHAT IT LOOKED LIKE.** See the
+  investigation block. In one line: it **never wrote a single line of code** in 66 steps,
+  and its `stop: "finished"` was a **harness mislabel of a truncation** — the final turn hit
+  `max_tokens` exactly (8,000, of which 7,992 were reasoning) and returned nothing.
+- 🔶 **The three specimen containers are the arc's regression fixtures.** `dogfood-ab-curve-01`
+  (celsius, `RENDER=yes observed=212`), `dogfood-ab-genpost-mimo-01` (genpost, **`RENDER=yes`**),
+  `dogfood-ab-genpost-glm-01` (unmodified scaffold, `RENDER=no` — the negative control).
+  **Do not destroy them**; re-creating any of them costs a trial. 🔴 **And one is already
+  gone: `runs/ab-curve-01/transcript.jsonl` was DESTROYED by a routine worktree cleanup**,
+  so the successful celsius run has no per-step record and two analyses hit that wall. The
+  container survives; the transcript does not. **Copy a trial's `runs/<trial>/` out of the
+  worktree before removing it.**
+- **Claims:** all released.
+
+### Carried forward — durable values a `State now` replace would otherwise eat
+
+🔴 **RANK 3'S TABLE, kept because an appended block points AT it.** The investigation block
+"✅ ANSWERED 2026-09-21 — the harness CAN carry an app-build task" says *"see the State-now
+table"*. This is the second update in which deleting it would have left that pointer
+dangling. `xiaomi/mimo-v2.5`, `df-node-root`, celsius brief:
+
+| | measured | cap set |
+|---|---|---|
+| steps | **65** | 80 |
+| total cost | **$0.0145** | $0.50 |
+| prompt tokens | 1,564,496 | — |
+| per-call prompt | 452 → **45,328** | — |
+| `stop` | **`finished`** | — |
+
+🔴 **THE PRE-RUN BASELINE, captured 2026-09-21 BEFORE any credentialed trial — it cannot be
+re-derived after the fact.** Buzz **Blue 1,305,157 · Green 947,618 · Yellow 1,849,047 ·
+TOTAL 4,101,822**; **13** listings. The `dogfood-3` precedent grades spend as a balance
+DELTA rather than believing the agent, and that only works with a pre-reading. A
+credentialed run started without one is ungradeable on spend however well it goes.
+
+**The prerequisite arc's baseline, which every cost figure here is read against.** Measured
+2026-09-19 over 18 trials: the three cheap models reach SETUP on 4 of 6 grid rows,
+model-independently, at **mean $0.0058/trial** (21 trials = $0.1211), frontier control
+**5–20× dearer**. So a genpost app-build cell at $0.0237 is ~4× a setup trial.
+
+**The credentialed precedent.** `claudedocs/handoff-dogfood-3.md` is the *first CREDENTIALED
+blind dogfood* (2026-08-10): 3 generations, 61 Buzz, 2 submissions, verified from the
+account (4,187,454 → 4,187,393). It also records real `submit`/`withdraw` defects, including
+**permanent loss of captioned screenshots** — read it before any run that submits.
 
 ## Open investigations — live diagnosis state
 
@@ -191,47 +203,107 @@ an earlier heading, so this paragraph is the retirement marker.)
   indistinguishable from a grep that finds nothing because the secret is absent. Require the
   test to demonstrate it DOES find a planted secret.
 
+### ✅ EXPLAINED 2026-09-21 — glm never wrote code, and "finished" was a truncation
+- as-of: 2026-09-21
+
+🔴 **This CLOSES the question "why did the genpost trial fail", and the answer changes what
+the arc concluded.** Two defects compounded — one model-side, one harness-side.
+
+- **Observed (with values), the harness defect:** the final assistant record carried
+  `content: null`, `tool_calls: []`, `completion_tokens: 8000` — **exactly** the
+  `max_tokens` the harness sent — of which **7,992 were reasoning**. `runner.py` branched on
+  absence of tool calls alone and **never read `finish_reason`** (it appeared nowhere in
+  `runner.py`, `grade.sh` or `oracle.sh`). So a cell that ran out of output budget was
+  indistinguishable from one that completed with an empty report. **Fixed in `cli#684`**;
+  the stop vocabulary is now `finished` / `truncated` / `empty-reply` /
+  `stopped-unknown:<value>`, and an unknown value deliberately does NOT become `finished`.
+  `via: measurement` (the transcript's own usage block)
+- **Observed, the model-side fact:** **zero writes across 66 steps**, established two
+  independent ways — a regex over all 65 commands (no `cat >`, `tee`, `sed -i`, redirect
+  into a file) and the container filesystem (every `src/` file carrying the scaffold's
+  creation mtime). It engaged the brief — it researched `useCreatePostFromApp`, `scopes`,
+  `useRequestConsent`, `Textarea`, `Button` in order — and never implemented any of it.
+  `via: measurement`
+- **Ruled out — that it was blocked.** 1 of 65 commands exited non-zero (a `civitai
+  --version` before install). It hit one real blocker, a scaffold missing
+  `@testing-library/dom`, and **fixed it at step 32**, then read for 34 more steps.
+  `via: measurement`
+- **Ruled out — that the brief was evicted from context.** The harness never prunes; the
+  brief was `messages[1]` on all 67 requests. It was **diluted 1:800 by tool output**, not
+  evicted. `via: code` + `via: measurement`
+- **Ruled out — that documentation volume caused it.** Docs were **13.1%** of bytes read;
+  our own scaffold source and `node_modules` were **68.9% of carry cost**. `MAX_OUT`
+  crowding was not the mechanism (4 of 65 commands hit the cap). `via: measurement`
+- 🔴 **REFUTED BY EXPERIMENT — that the doc gap caused the failure.** `mimo-v2.5`, given the
+  **identical** brief, scaffold, harness and unfixed docs, started writing at step 40 and
+  produced a passing app. **The doc stack is a COST problem, not the failure cause.**
+  `via: measurement` (the mimo trial)
+- **Leading hypothesis for the remaining gap:** a planning failure specific to glm —
+  87.8% of its completion tokens went to reasoning the harness then **discarded** between
+  turns, so it re-derived its situation 67 times. `cli#684` now carries `reasoning_details`
+  back. **NOT ESTABLISHED**: the transcript stores no reasoning text, and proving it needs a
+  re-run on the fixed harness (~$0.09).
+- **Next probe:** none required for this arc. If anyone wants the planning hypothesis
+  settled, re-run glm on the fixed harness and compare.
+
+### ⚠ OPEN — the documentation stack is a measured cost problem
+- as-of: 2026-09-21
+
+- **Observed (with values):** carry cost = bytes × steps remaining, because the harness
+  resends the whole history each turn. Ranked that way over glm's run: scaffold source
+  **40.7%**, `node_modules` **28.2%**, scaffold README **12.8%**, the hosted prompt **5.1%**
+  (4th-highest single read, because it is first and is resent 66 times).
+- **The single largest attributable waste:** `useCreatePostFromApp` was documented **nowhere**
+  in the local stack — not the 40 KB scaffold README, not `AGENTS.md`, not the hosted prompt,
+  not 5,908 lines of scaffold source. Reverse-engineering it from `node_modules` cost
+  **706,371 carry tokens, 28.2% of the run**. **Fixed in `cli#685`** — a complete 36-hook
+  index now lands at byte 388 of the README, single-sourced from `internal/scaffold/hooks.go`
+  with a guard that fails in both directions.
+- **Also fixed in `cli#685`:** `AGENTS.md` was stale for **58 of 66 steps** (`app create`
+  never re-ran `agent-setup`, so it said "No Civitai App has been scaffolded"); the docs
+  links sat at 90% depth as a bare list and the agent made **exactly one HTTP request in 66
+  steps**; `--template` was absent from the commands table while the default is the 37-file
+  `page-money`.
+- 🔴 **A briefing error of mine, corrected by measurement:** I named
+  `hostHandlerParity.ts` as the source for the mock-host capability table. It covers the
+  three REAL hosts, not `createMockHost`. The published SDK answers directly — and
+  `CREATE_POST_FROM_APP` **is** mocked, which is what glm spent ~380,000 carry tokens
+  discovering by reading `mockHost.js` line by line.
+- **Still open:** 96.3% of glm's prompt tokens were **cache reads**, so quoting 2.5M as
+  fresh overstates it; and ~4 of the 6.3× cost gap between the runs is **model price**, not
+  tokens. The doc stack owns the 1.6× volume difference, not the 6.3×.
+- **Next probe:** re-measure carry cost on a post-`cli#685` trial to price the fix. Free if
+  folded into rank 6.
+
 ## Next steps (ranked)
 
-🔴 **Numbering stays stable.** Ranks 1–5 are settled; the operator's new direction is added
-as rank 7 rather than rewriting rank 6, so the two objectives stay separable — one is inside
-the frozen closing condition and the other is not.
+🔴 **Numbering frozen; ranks 1–5 settled, 4 deleted by measurement.**
 
-⚠ **Carried forward from round 0 — on `forcing:` below, read this before quoting it.** The
-operator asked for the ARC ("we want to build apps", 2026-09-20). He did **not** ask for any
-individual item here; the decomposition is agent-authored. An earlier draft tagged five items
-*"the operator asked for this measurement"*, which was false of every one of them. The tag
-names the arc, which is the true forcing function, and this paragraph is the record that the
-breakdown is not itself user-requested. ⚠ **Rank 7 is the one exception** — the operator
-asked for that item specifically, in those words, on 2026-09-21.
+⚠ **On `forcing:` — the operator asked for the ARC, not for individual items; the
+decomposition is agent-authored. Rank 7 is the exception: he asked for that one in those
+words on 2026-09-21.**
 
-1. ✅ **DONE — brief-injection path.** `cli#678`.
+1. ✅ **DONE** — brief-injection path (`cli#678`). forcing: user — satisfied
+2. ✅ **DONE** — the celsius brief and assertion (`cli#678`). forcing: user — satisfied
+3. ✅ **DONE** — the step/cost curve; 65 steps, $0.0145. forcing: user — satisfied
+4. ❌ **DELETED** — history management is not required; rank 3 measured the condition it was
+   gated on and the answer was no. forcing: gate — retired
+5. ✅ **DONE** — the render oracle (`cli#681`), plus two defect fixes (`cli#686`).
    forcing: user — satisfied
-2. ✅ **DONE — the celsius brief and its assertion.** `cli#678`.
-   forcing: user — satisfied
-3. ✅ **DONE — the step/cost curve.** 65 steps, $0.0145.
-   forcing: user — satisfied
-4. ❌ **DELETED, NOT DEFERRED — history management is not required.** Rank 3 measured the
-   condition it was gated on and the answer was no.
-   forcing: gate — retired
-5. ✅ **DONE — the render oracle.** `cli#681`, both controls measured.
-   forcing: user — satisfied
-6. **The matrix — 3 cheap models × 2 writable-prefix environments, celsius brief.** This is
-   the item that grades the FROZEN closing condition. ~$0.09 plus a frontier control at
-   5–20×. ⚠ Still gated by `cli#665` for the other two environments, and its brief touches
-   no SDK surface (`"scopes": []`), so a green matrix means "can scaffold and wire UI plus
-   arithmetic", NOT "can build an app that spends Buzz".
+6. 🔴 **THE ONLY ITEM BETWEEN HERE AND THE FROZEN CONDITION — run the matrix.** It requires
+   **three cheap models plus a frontier control**; we have 2 of 4 cells on 1 environment.
+   Outstanding: `deepseek-v4-pro` and the frontier control, on the genpost brief. Budget,
+   now grounded rather than guessed: cheap cells measured **$0.0145–$0.0918**, so the
+   remaining cheap cell is ~$0.05 and the frontier control 5–20× that. ⚠ `cli#665` still
+   blocks 2 of the 4 environments. ⚠ Re-measure carry cost while running it, to price
+   `cli#685`.
    forcing: user — the operator asked for this arc on 2026-09-20
-7. 🔶 **IN FLIGHT — the CREDENTIALED run: one agent (`glm-5.3-flash`), an app integrating
-   generation and posting, submitted for review.** Operator direction 2026-09-21, approved
-   under the `dogfood-3` precedent's bounds: identifiable app prefix, generation cap,
-   submission cap, `--max-cost` per generate, command log, **and verification from the
-   account balance above rather than the agent's report**.
-   🔴 **`app submit` is OUTSIDE the frozen closing condition** — do not report a successful
-   submit as the arc closing. 🔴 **The no-touch rule for the ~10 existing listings is PROSE
-   in a brief and nothing enforces it**; an account token is an account token, and
-   `app withdraw` permanently destroys captioned screenshots (`handoff-dogfood-3.md`).
-   Blocked on the credential-leak fix landing first.
+7. 🔶 **PARTIALLY DONE — the credentialed run happened; nothing was submitted.** Two
+   credentialed trials, `generations=0 submissions=0`, account unchanged. The app mimo built
+   passes the brief but was never submitted for review. **`app submit` remains outside the
+   frozen condition** — closing rank 6 does not close this, and closing this does not close
+   rank 6. Decide explicitly whether a submit is still wanted before running another
+   credentialed cell.
    forcing: user — the operator asked for this on 2026-09-21
 
 ## Gotchas / decisions / dead-ends
@@ -325,27 +397,69 @@ asked for that item specifically, in those words, on 2026-09-21.
   account token. A run that includes submit therefore cannot be credential-bounded, only
   behaviour-bounded, and behaviour bounds on a blind model are prose.
 
+### Added 2026-09-21 — the instrument was wrong more often than the models were
+
+- 🔴 **I GRADED AN APP AGAINST THE WRONG ASSERTION AND NEARLY REPORTED IT AS THE RESULT.**
+  `oracle.sh` took the brief as an **optional third positional arg defaulting to `celsius`**.
+  Run against a genpost trial without that arg, it ran the celsius assertion, timed out on
+  `[data-testid="celsius"]`, and printed `RENDER=no`. The app was correct the whole time.
+  **Fixed in `cli#686`:** the brief is now derived from the trial's own transcript, and an
+  argument that DISAGREES with it is refused rather than silently preferred — a disagreement
+  means someone is confused and a verdict either way is worthless.
+- 🔴 **A NEGATIVE CONTROL WAS PASSING VACUOUSLY, AND THE MECHANISM IS REUSABLE.** In the
+  oracle's own tests, `stubOracleEnv` built fixtures under `t.TempDir()`, whose path carries
+  the **test name**, which was spliced into an unquoted `find /work …`. A subtest name with a
+  shell metacharacter produced a syntax error → `manifests=0` → `RENDER=no` — **the expected
+  value of every negative case**. So the control passed for entirely the wrong reason. Found
+  and fixed inside `cli#686`. **Ask what value a broken harness returns; if it equals your
+  expected failure value, the control proves nothing.**
+- 🔴 **AN ORACLE'S ENVIRONMENT IS PART OF ITS VERDICT.** Seeding no signed-in viewer made
+  every auth-gated app fail on a branch production never exhibits — civitai's block-scope
+  middleware **hard-rejects** `posts:write:self` for an anonymous subject, so the brief's
+  behaviour cannot exist there. `cli#686` seeds a viewer shaped byte-for-byte like
+  production's `withSignedInFlag()`, while the stub transport still rejects every request —
+  asserted from inside the page, not by reading source, so "nothing can complete here"
+  remains true.
+- 🔴 **A ROUTINE WORKTREE CLEANUP DESTROYED THE CONTROL RUN'S TRANSCRIPT.** `runs/` lived
+  inside the worktree; `git worktree remove` took it. Two separate analyses then had no
+  per-step data for the one successful run they most needed to compare against. **Copy
+  `runs/<trial>/` out before removing a worktree** — the container survives a cleanup, the
+  transcript does not.
+- ⚠ **A WATCHDOG GREP OVER A WHOLE JSON RECORD RAISES FALSE ALARMS FROM DOCUMENTATION.** My
+  spend monitor matched `civitai generate|app submit` anywhere in a record, and fired four
+  times on the CLI's **own help text and an `AGENTS.md` table** appearing in tool *results*.
+  The authoritative signal is the runner's own `generations`/`submissions` counters, which
+  are enforced before `docker exec`. **Match the command field, not the record.**
+- ⚠ **`main` is intermittently red on a Chromium launch flake** (`dbus` address failure →
+  `browser never printed a DevTools endpoint`). The oracle correctly reports `exit 2 —
+  nothing was measured (this is NOT a failing trial)`, and `build-test` fails anyway because
+  the tests refuse to skip under CI. Seen on at least three runs; clears on re-run. The CI
+  config asks for the fix by name (*"Add a browser install step here (the tests themselves
+  must NOT be loosened into a skip)"*). **Unfixed, and it will keep training people to merge
+  through a required check.**
+
 ## How to verify
 
-**The credentialed run, graded from the ACCOUNT — the only method that does not trust the
-agent's own report:**
+**The headline result — re-grade the specimen, free, no trial:**
 
 ```bash
-civitai buzz        # compare TOTAL against the baseline recorded in State now (4,101,822)
-civitai app list    # compare against 13 listings; every pre-existing slug must be UNCHANGED
+CLI=/home/zach/workspace/civit/cli
+# the oracle now DERIVES the brief from the trial's transcript; runs/ must be present
+(cd "$CLI/scripts/dogfood" && nix-shell -p chromium --run \
+   'CIVITAI_CHROME=$(command -v chromium) bash oracle.sh ab-genpost-mimo-01 root')
 ```
-🔴 Run both **before** any credentialed trial as well, in case the baseline above has aged.
-The delta is the spend; the listing set is the blast-radius check.
+Expect `brief=genpost brief_source=transcript-text … observed=ready>generating RENDER=yes`.
+🔴 **And always re-run the NEGATIVE control beside it** — `ab-genpost-glm-01` must stay
+`RENDER=no` with `gate=pass`. A change that makes both pass has broken the oracle.
 
-**The credential must not appear in any artefact the run leaves behind:**
+**The account side — the only trustworthy evidence about spend:**
 
 ```bash
-T=scripts/dogfood/runs/<trial>/transcript.jsonl
-grep -c 'access_token\|refresh_token\|eyJ' "$T"        # expect 0
+civitai buzz      # TOTAL must equal 4101822 unless a generation was intended
+civitai app list  # 13 listings; every pre-existing slug unchanged; no ab-* present
 ```
-🔴 **A zero here is worthless without a positive control.** Plant a known string in a scratch
-copy and confirm the same grep DOES find it; only then does the zero mean the secret is
-absent rather than the pattern being wrong.
 
-**Rank 3's curve, and the brief reaching the model** — unchanged; see the commands recorded
-in the previous revision of this section.
+**The stop reason is now trustworthy** — `finished` / `truncated` / `empty-reply` /
+`stopped-unknown:<v>` are distinguishable, and `finish_reason` is recorded. A cell reporting
+`finished` with an empty `final` should no longer exist; if one appears, read
+`finish_reason` before believing it.
