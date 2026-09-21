@@ -89,10 +89,26 @@ jobs:
       # and an unconditional apt/snap install would cost every PR minutes for
       # something already present. If this step is what goes red, the fix is one
       # line — add an install here — NOT loosening the test into a skip.
+      #
+      # 🔴 THE ORDER PUTS RELEASE BUILDS FIRST, AND IT CHANGED FOR A REASON.
+      # `ubuntu-latest` ships BOTH: `/usr/bin/google-chrome` is a
+      # `google-chrome-stable` .deb, and `/usr/bin/chromium` is a symlink into
+      # `/usr/local/share/chromium/`, which `install-google-chrome.sh` unzips
+      # straight out of the `chromium-browser-snapshots` bucket at whatever
+      # per-commit revision sits nearest Chrome's. The versions say it plainly —
+      # Chrome 152.0.7977.82 against Chromium 152.0.7977.0. The old order named
+      # `chromium` first, so this job drove an un-release-qualified trunk
+      # snapshot with a shipped release on the same disk. ⚠ That is a
+      # determinism argument, not a measurement: nothing here has shown the
+      # snapshot launching less reliably than the release.
+      #
+      # The same list is in scripts/dogfood/briefs/_cdp.mjs,
+      # scripts/dogfood/oracle.sh and dogfood_oracle_test.go, and
+      # `TestEveryBrowserResolverAgreesOnTheSameOrder` fails when they drift.
       - name: resolve a browser for the render-oracle tests
         run: |
           set -uo pipefail
-          for b in chromium chromium-browser google-chrome google-chrome-stable chrome; do
+          for b in google-chrome google-chrome-stable chromium chromium-browser chrome; do
             if command -v "$b" >/dev/null 2>&1; then
               echo "CIVITAI_CHROME=$(command -v "$b")" >> "$GITHUB_ENV"
               "$b" --version || true
@@ -101,6 +117,66 @@ jobs:
           done
           echo "::error::no Chromium/Chrome on this runner. The render-oracle tests refuse to skip under CI, so \`go test ./...\` will fail. Add a browser install step here (the tests themselves must NOT be loosened into a skip)."
           exit 1
+
+      # 🔴 A RESOLVED BROWSER IS NOT A WORKING BROWSER, AND THAT GAP IS WHAT
+      # MADE THIS JOB FLAKY. Measured 2026-09-21 over four runs — `main` and
+      # three PRs, one of them a single markdown file — the step above resolved
+      # `/usr/bin/chromium` and printed its version, and `go test ./...` then
+      # died with:
+      #
+      #   {"assertion":"celsius","pass":false,"reason":"harness error: browser
+      #    never printed a DevTools endpoint: [ERROR:dbus/bus.cc:405] Failed to
+      #    connect to the bus: Could not parse server address: …"}
+      #   oracle: the assertion could not run (exit 2) — nothing was measured
+      #
+      # In a 31 KB log that produced ZERO `--- FAIL:` lines and every other
+      # package `ok`: the oracle behaved correctly (exit 2, "nothing was
+      # measured", rather than a false `RENDER=no`) and the job went red with no
+      # failing test to point at. Two of those runs went green on re-run with no
+      # change, so the intermittency is in the browser's startup, not in the
+      # code under test.
+      #
+      # This step launches the browser through the harness's own `launch()`
+      # BEFORE any test does. Three things it buys, none of which the version
+      # print above can: (1) a browser that cannot bind a debugging port fails
+      # here, by name, in three lines, instead of eighty lines into a Go test;
+      # (2) it publishes the cold-launch time on every run, which is the
+      # distribution nobody had while diagnosing this; (3) a launch that needed
+      # a retry raises a ::warning EVEN THOUGH IT SUCCEEDED, which is the half a
+      # retry normally hides — "the browser has started failing half the time"
+      # must not be absorbed into a green.
+      - name: browser smoke — the resolved browser must actually launch
+        run: |
+          set -uo pipefail
+
+          # NEGATIVE CONTROL — can this step still go red? A smoke test that
+          # reports success whatever it is pointed at is indistinguishable from
+          # a working browser. One attempt and a short budget so the control
+          # costs ~0s: the fake exits 3 immediately.
+          ctl="$RUNNER_TEMP/not-a-browser"
+          printf '#!/bin/sh\nexit 3\n' > "$ctl" && chmod +x "$ctl"
+          if CIVITAI_CHROME="$ctl" CIVITAI_ASSERT_LAUNCH_ATTEMPTS=1 CIVITAI_ASSERT_LAUNCH_MS=2000 \
+             node -e 'import("./scripts/dogfood/briefs/_cdp.mjs").then(async (m) => { const { proc } = await m.launch(); proc.kill("SIGKILL"); })' \
+             >/dev/null 2>&1; then
+            echo "::error::the browser smoke test reported SUCCESS for a binary that exits 3 without printing anything. It is not testing the browser, so its verdict about the real one means nothing."
+            exit 1
+          fi
+
+          # THE REAL LAUNCH. `|| true` then judged by CONTENT: the step must
+          # distinguish "failed" from "succeeded after a retry", and an exit
+          # code cannot say the second thing.
+          node -e 'import("./scripts/dogfood/briefs/_cdp.mjs").then(async (m) => { const { proc } = await m.launch(); proc.kill("SIGKILL"); console.log("SMOKE OK"); })' \
+            > "$RUNNER_TEMP/browser-smoke.log" 2>&1 || true
+          cat "$RUNNER_TEMP/browser-smoke.log"
+
+          if ! grep -aq 'SMOKE OK' "$RUNNER_TEMP/browser-smoke.log"; then
+            echo "::error::$CIVITAI_CHROME resolved but never printed a DevTools endpoint. Every render-oracle test will report a harness error and this job will go red with no failing test name. Do NOT loosen the tests into a skip and do NOT make the oracle swallow this — fix or replace the browser (see LAUNCH_FLAGS / LAUNCH_MS in scripts/dogfood/briefs/_cdp.mjs)."
+            exit 1
+          fi
+
+          if grep -aq 'BROWSER LAUNCH RETRY' "$RUNNER_TEMP/browser-smoke.log"; then
+            echo "::warning title=browser launch retried::the browser did not start on the first attempt. This run is green, but the launch flake is still live — read the attempt diagnostics above before treating this job's colour as a statement about the browser."
+          fi
 
       # Shape (2): `gofmt -s -l .` prints NOTHING and exits 0 both when every
       # file is clean AND when it walked zero files, so its silence is not by

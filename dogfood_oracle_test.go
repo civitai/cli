@@ -44,6 +44,17 @@ const oracleDir = "scripts/dogfood"
 // indistinguishable in the log the merge gate is read from. ci.yml's build-test
 // job resolves a browser into CIVITAI_CHROME before `go test ./...` for exactly
 // this reason.
+//
+// 🔴 `oracleBrowserNames` IS ONE OF FOUR COPIES OF THE SAME PREFERENCE ORDER —
+// the others are in `scripts/dogfood/briefs/_cdp.mjs` (`BROWSER_NAMES`),
+// `scripts/dogfood/oracle.sh` and `.github/workflows/ci.yml`. They must agree,
+// or this suite resolves a different browser from the one the assertions it
+// drives will pick, and `TestEveryBrowserResolverAgreesOnTheSameOrder` in
+// dogfood_cdp_launch_test.go is what enforces that.
+var oracleBrowserNames = []string{
+	"google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome",
+}
+
 func oracleBrowser(t *testing.T) string {
 	t.Helper()
 	if p := os.Getenv("CIVITAI_CHROME"); p != "" {
@@ -51,7 +62,7 @@ func oracleBrowser(t *testing.T) string {
 			return p
 		}
 	}
-	for _, n := range []string{"chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"} {
+	for _, n := range oracleBrowserNames {
 		if p, err := exec.LookPath(n); err == nil {
 			return p
 		}

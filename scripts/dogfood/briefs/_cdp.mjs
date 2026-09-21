@@ -50,10 +50,63 @@ import { readFile, mkdtemp, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, extname, normalize, sep } from 'node:path';
 
-/** The deadline each individual wait gets. A built bundle has to download,
- * parse and mount before its first element exists; a static file is there at
- * first paint. */
+/** The deadline each individual IN-PAGE wait gets. A built bundle has to
+ * download, parse and mount before its first element exists; a static file is
+ * there at first paint. */
 export const WAIT_MS = Number(process.env.CIVITAI_ASSERT_WAIT_MS || 15000);
+
+/**
+ * The deadline the BROWSER LAUNCH gets — deliberately NOT `WAIT_MS`.
+ *
+ * 🔴 THESE ARE TWO UNRELATED QUANTITIES AND SHARING ONE NUMBER IS WHAT MADE
+ * `build-test` FLAKY ON EVERY PR, INCLUDING DOCS-ONLY ONES. `WAIT_MS` is "how
+ * long may a React tree take to mount" — a property of the block under test.
+ * This is "how long may a cold browser process take to bind a debugging port on
+ * whatever machine CI handed us" — a property of the machine, which nobody
+ * here chose and which is far more variable than a mount.
+ *
+ * Measured 2026-09-21, four `build-test` runs on `main` and on three PRs (one
+ * of them a single markdown file): the browser printed its dbus startup noise
+ * and then produced NO DevTools endpoint inside 15 s, the assertion exited 2
+ * ("nothing was measured"), and the job went red with zero `--- FAIL:` lines.
+ * Two of those runs went green on re-run with no change.
+ *
+ * The number 15000 was never chosen for this. How slow is a GitHub runner?
+ * `chromium --version` — a bare exec that does essentially no work — was
+ * measured IN THE FAILING JOBS THEMSELVES at 1.9 s, 2.2 s, 2.8 s, 4.7 s, 5.0 s
+ * and 6.5 s. The same command on a warm developer box takes 0.02 s. That is
+ * 100–300× slower with a 3.4× spread between runs, on the cheapest possible
+ * browser invocation; a full launch with a fresh profile is a great deal more
+ * work than that. ⚠ Note what this does NOT say: the `--version` time does not
+ * separate the passing runs from the failing ones (2.2 s passed, 2.8 s failed),
+ * so it is evidence about the ENVIRONMENT's speed class, not a per-run
+ * predictor.
+ */
+export const LAUNCH_MS = Number(process.env.CIVITAI_ASSERT_LAUNCH_MS || 30000);
+
+/**
+ * How many times a launch may be attempted before the harness gives up.
+ *
+ * 🔴 A RETRY IS AN EXCELLENT WAY TO STOP NOTICING A BROKEN BROWSER, so this one
+ * is bounded, LOUD ON SUCCESS, and not the primary fix. `launchOnce` below
+ * removes the startup work that can actually stall (see `LAUNCH_FLAGS`) and
+ * `LAUNCH_MS` gives the launch a budget sized for the machine; this covers only
+ * the residual tail of an environment neither this repo nor this browser
+ * controls.
+ *
+ * What keeps it honest is that a retry is never silent. Every attempt prints a
+ * line naming the attempt number, the elapsed ms and the browser's own output,
+ * and a launch that needed a retry prints a `BROWSER LAUNCH RETRY` warning even
+ * though it SUCCEEDED — which is the half a retry normally hides. `ci.yml`'s
+ * browser-smoke step greps for exactly that string and raises a `::warning` on
+ * it, so "the browser has started failing half the time" is visible in the run
+ * rather than absorbed into a green.
+ *
+ * Set `CIVITAI_ASSERT_LAUNCH_ATTEMPTS=1` to take the retry away — which is what
+ * the negative control in `ci.yml` does, so the failing path stays measured.
+ */
+export const LAUNCH_ATTEMPTS = Math.max(
+  1, Number(process.env.CIVITAI_ASSERT_LAUNCH_ATTEMPTS || 2) || 1);
 
 /** The control arm for the viewer, exactly as `CIVITAI_ASSERT_NO_HOST` is the
  * control arm for the handshake: set `CIVITAI_ASSERT_ANON_VIEWER=1` and the
@@ -180,11 +233,40 @@ export async function serve(dir) {
   return { url: `http://127.0.0.1:${srv.address().port}/`, close: () => srv.close() };
 }
 
+/**
+ * The browser binaries this harness will accept, in preference order.
+ *
+ * 🔴 RELEASE BUILDS FIRST, CONTINUOUS-BUILD SNAPSHOTS LAST, AND THAT ORDER IS
+ * NOT COSMETIC ON THE RUNNER THIS REPO'S CI USES. `ubuntu-latest` ships BOTH:
+ * `/usr/bin/google-chrome` is a `google-chrome-stable` .deb — a release —
+ * while `/usr/bin/chromium` is a symlink into `/usr/local/share/chromium/`,
+ * unzipped by `install-google-chrome.sh` straight out of the
+ * `chromium-browser-snapshots` bucket at whatever per-commit revision sits
+ * nearest Chrome's. The version strings say it: Chrome `152.0.7977.82` against
+ * Chromium `152.0.7977.0`. The old order named `chromium` first, so every CI
+ * run drove an un-release-qualified trunk snapshot while a shipped release sat
+ * on the same disk.
+ *
+ * ⚠ SAY WHAT THIS IS AND IS NOT. It is a determinism argument — prefer the
+ * build someone qualified — not a measurement: no run here has shown the
+ * snapshot launching less reliably than the release. It is listed as part of
+ * the launch-flake fix because it is free and it narrows the population, not
+ * because it is the mechanism.
+ *
+ * 🔴 THIS LIST EXISTS FOUR TIMES AND THEY MUST AGREE: here, in
+ * `scripts/dogfood/oracle.sh`, in `.github/workflows/ci.yml`'s resolve step,
+ * and in `dogfood_oracle_test.go`'s `oracleBrowser`. One rule, four places, so
+ * it is pinned by `TestEveryBrowserResolverAgreesOnTheSameOrder` rather than by
+ * a comment asking nicely.
+ */
+export const BROWSER_NAMES = [
+  'google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'chrome',
+];
+
 export async function findChrome() {
   if (process.env.CIVITAI_CHROME) return process.env.CIVITAI_CHROME;
-  const names = ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'chrome'];
   for (const d of (process.env.PATH || '').split(':')) {
-    for (const n of names) {
+    for (const n of BROWSER_NAMES) {
       const p = join(d, n);
       try { await access(p); return p; } catch { /* next */ }
     }
@@ -192,26 +274,142 @@ export async function findChrome() {
   throw new Error('no Chromium on PATH; set CIVITAI_CHROME to a browser binary');
 }
 
+/**
+ * The launch flags, grouped by what each group buys.
+ *
+ * 🔴 THE `--password-store` LINE IS THE MEASURED ONE. The CI failures all
+ * carried the same stderr — `dbus/bus.cc:405 Failed to connect to the bus:
+ * Could not parse server address: Unknown address type` — and that string is
+ * REPRODUCIBLE: set `DBUS_SESSION_BUS_ADDRESS` to anything with a transport
+ * type libdbus does not know (`bogus:path=/nope`) and chromium emits it
+ * verbatim. So the runner's session-bus address is unparseable, and every
+ * session-bus lookup chromium makes during startup fails.
+ *
+ * Measured on chromium 153 with that bogus address, `--user-data-dir` fresh:
+ *
+ *     no extra flags          4 `dbus/bus.cc` errors, then DevTools listening
+ *     --password-store=basic  3 `dbus/bus.cc` errors, then DevTools listening
+ *
+ * i.e. the flag removes exactly one session-bus round trip — the password-store
+ * / keyring probe, which is the LAST one before the DevTools line and the only
+ * one chromium makes synchronously on the startup path. Three of the four CI
+ * failures stalled after exactly THREE dbus errors, i.e. precisely where that
+ * probe is; the fourth stalled after one, so this is not the whole story and is
+ * not claimed to be. ⚠ And the null result, because it looked promising and is
+ * worth not re-deriving: CLEARING `DBUS_SESSION_BUS_ADDRESS` in the child does
+ * nothing — 4 errors either way — so the fix is not an env fix.
+ *
+ * The remaining groups remove startup work whose cost is disk and network on a
+ * machine measured at 100–300× slower than a dev box (see `LAUNCH_MS`): the
+ * variations seed, the component updater, safe-browsing list fetches, sync, the
+ * default-apps scan, the search-engine choice screen. None of them touch page
+ * loading — the block under test fetches over the loopback server as before.
+ */
+export const LAUNCH_FLAGS = [
+  '--headless=new', '--remote-debugging-port=0',
+  '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
+  '--no-first-run', '--no-default-browser-check',
+  // Do not go looking for a keyring over a session bus that does not work.
+  '--password-store=basic', '--use-mock-keychain',
+  // Do not go to the network before binding the debugging port.
+  '--disable-background-networking', '--disable-component-update',
+  '--disable-client-side-phishing-detection', '--disable-sync',
+  '--disable-default-apps', '--no-service-autorun', '--metrics-recording-only',
+  '--disable-search-engine-choice-screen',
+];
+
+/** One launch attempt. Resolves with a live browser, or throws having KILLED
+ * the process it started and attached the browser's own output as
+ * `.diagnostics`. */
+async function launchOnce(bin) {
+  // A fresh profile PER ATTEMPT. A stalled attempt leaves a half-written
+  // profile behind and handing that to the retry would make attempt 2 a
+  // strictly worse experiment than attempt 1.
+  const profile = await mkdtemp(join(tmpdir(), 'civitai-assert-'));
+  const started = Date.now();
+  const proc = spawn(bin, [...LAUNCH_FLAGS, `--user-data-dir=${profile}`, 'about:blank'],
+    { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  // 🔴 BOTH STREAMS. The endpoint has always arrived on stderr, but a browser
+  // that fails in a new way may say so on stdout, and a diagnostic that drops
+  // half of what the process said is how "nothing was printed" gets reported
+  // about a process that printed the answer.
+  let buf = '';
+  proc.stdout.on('data', (d) => { buf += d; });
+  proc.stderr.on('data', (d) => { buf += d; });
+
+  try {
+    const ws = await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (fn, v) => { if (!settled) { settled = true; clearTimeout(to); fn(v); } };
+      const to = setTimeout(() => finish(reject,
+        new Error(`no DevTools endpoint within ${LAUNCH_MS}ms`)), LAUNCH_MS);
+      const scan = () => { const m = buf.match(/ws:\/\/\S+/); if (m) finish(resolve, m[0]); };
+      proc.stdout.on('data', scan);
+      proc.stderr.on('data', scan);
+      proc.on('exit', (c, sig) => finish(reject,
+        new Error(`browser exited ${c}${sig ? ` on ${sig}` : ''}`)));
+      proc.on('error', (e) => finish(reject,
+        new Error(`browser could not be started: ${e.message}`)));
+      scan(); // anything that arrived before these listeners were attached
+    });
+    return { proc, ws, ms: Date.now() - started };
+  } catch (e) {
+    // 🔴 KILL IT. The old code left the process running on every timeout —
+    // visible in the CI logs of all four failures as the runner's own
+    // `Terminate orphan process: pid (…) (chrome)` cleanup. A leak was merely
+    // untidy while nothing retried; with a retry it is a second browser
+    // competing for the same machine, which would make attempt 2 fail for a
+    // reason attempt 1 created.
+    try { proc.kill('SIGKILL'); } catch { /* already gone */ }
+    e.diagnostics = buf;
+    e.ms = Date.now() - started;
+    throw e;
+  }
+}
+
+const indent = (s) => String(s || '(the browser printed nothing at all)')
+  .replace(/\n+$/, '').split('\n').map((l) => `      ${l}`).join('\n');
+
 export async function launch() {
   const bin = await findChrome();
-  const profile = await mkdtemp(join(tmpdir(), 'civitai-assert-'));
-  const proc = spawn(bin, [
-    '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
-    '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
-    '--no-first-run', '--no-default-browser-check', 'about:blank',
-  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const failures = [];
 
-  const ws = await new Promise((resolve, reject) => {
-    let buf = '';
-    const to = setTimeout(() => reject(new Error(`browser never printed a DevTools endpoint:\n${buf}`)), WAIT_MS);
-    proc.stderr.on('data', (d) => {
-      buf += d;
-      const m = buf.match(/ws:\/\/\S+/);
-      if (m) { clearTimeout(to); resolve(m[0]); }
-    });
-    proc.on('exit', (c) => { clearTimeout(to); reject(new Error(`browser exited ${c}:\n${buf}`)); });
-  });
-  return { proc, ws };
+  for (let attempt = 1; attempt <= LAUNCH_ATTEMPTS; attempt++) {
+    try {
+      const { proc, ws, ms } = await launchOnce(bin);
+      if (attempt > 1) {
+        // 🔴 LOUD ON SUCCESS. This is the line that stops the retry from being
+        // a way to stop noticing a browser that has started failing: a green
+        // run whose browser needed two goes SAYS SO. ci.yml greps for
+        // `BROWSER LAUNCH RETRY`.
+        console.error(
+          `[cdp] ⚠ BROWSER LAUNCH RETRY: ${bin} launched on attempt ${attempt} of ` +
+          `${LAUNCH_ATTEMPTS} (${ms}ms). This run is green, but the browser FAILED ` +
+          `${attempt - 1} time(s) first:\n${failures.join('\n')}`);
+      } else {
+        console.error(`[cdp] browser launched in ${ms}ms (${bin}, attempt 1 of ${LAUNCH_ATTEMPTS})`);
+      }
+      return { proc, ws };
+    } catch (e) {
+      failures.push(
+        `    attempt ${attempt}/${LAUNCH_ATTEMPTS} failed after ${e.ms ?? 0}ms: ${e.message}\n` +
+        `${indent(e.diagnostics)}`);
+      console.error(
+        `[cdp] browser launch attempt ${attempt} of ${LAUNCH_ATTEMPTS} FAILED after ` +
+        `${e.ms ?? 0}ms: ${e.message}`);
+    }
+  }
+
+  // 🔴 STILL FAILS LOUDLY, AND KEEPS THE PHRASE. The assertion turns this into
+  // its `harness error:` reason and oracle.sh turns THAT into exit 2 / nothing
+  // was measured — the property that stops a browser this harness cannot start
+  // being reported as an app that does not work. Every attempt's diagnostics
+  // ride along, so a genuinely unavailable browser is more legible than before,
+  // not less.
+  throw new Error(
+    `browser never printed a DevTools endpoint (${bin}, ${LAUNCH_ATTEMPTS} attempt(s), ` +
+    `all failed, ${LAUNCH_MS}ms each):\n${failures.join('\n')}`);
 }
 
 /** Minimal CDP client. `flatten: true` puts page-session messages on the browser
