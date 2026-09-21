@@ -79,6 +79,29 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # 🔴 THE RENDER-ORACLE TESTS REFUSE TO SKIP UNDER CI, so this job has to be
+      # able to give them a browser. They drive a real headless Chromium against
+      # a real served block (scripts/dogfood/oracle.sh); a skip here and a pass
+      # here are indistinguishable in the log the merge gate is read from, which
+      # is why the helper fails instead — see dogfood_oracle_test.go.
+      #
+      # Resolved rather than installed: the ubuntu runner image ships browsers,
+      # and an unconditional apt/snap install would cost every PR minutes for
+      # something already present. If this step is what goes red, the fix is one
+      # line — add an install here — NOT loosening the test into a skip.
+      - name: resolve a browser for the render-oracle tests
+        run: |
+          set -uo pipefail
+          for b in chromium chromium-browser google-chrome google-chrome-stable chrome; do
+            if command -v "$b" >/dev/null 2>&1; then
+              echo "CIVITAI_CHROME=$(command -v "$b")" >> "$GITHUB_ENV"
+              "$b" --version || true
+              exit 0
+            fi
+          done
+          echo "::error::no Chromium/Chrome on this runner. The render-oracle tests refuse to skip under CI, so \`go test ./...\` will fail. Add a browser install step here (the tests themselves must NOT be loosened into a skip)."
+          exit 1
+
       # Shape (2): `gofmt -s -l .` prints NOTHING and exits 0 both when every
       # file is clean AND when it walked zero files, so its silence is not by
       # itself evidence about this repo. Two controls, closing different halves.
