@@ -150,7 +150,9 @@ if [ -n "$BRIEF" ]; then
     R_GATE=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^gate=//p' | head -1)
     R_OBS=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^observed=//p' | head -1)
     R_PASS=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^RENDER=//p' | head -1)
-    RENDER_FIELDS=" render_brief=$BRIEF validate_gate=${R_GATE:-unknown} observed=${R_OBS:-} RENDER=${R_PASS:-unreadable}"
+    # REPORTED, not part of the verdict — see the note in oracle.sh.
+    R_SCOPES=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^scopes=//p' | head -1)
+    RENDER_FIELDS=" render_brief=$BRIEF validate_gate=${R_GATE:-unknown} scopes=${R_SCOPES:-unknown} observed=${R_OBS:-} RENDER=${R_PASS:-unreadable}"
   fi
 fi
 

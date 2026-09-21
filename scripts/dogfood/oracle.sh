@@ -118,12 +118,22 @@ OBSERVED=
 REASON=
 OUTDIR=
 BUILDCMD=
+# 🔴 REPORTED, NEVER THE VERDICT — the same standing as the validate gate. A
+# manifest is a DECLARATION, not a behaviour: a block can declare
+# `posts:write:self` and post nothing, and the platform grants scopes at review
+# rather than at manifest time. It is on the cell because a generate-then-post
+# app declaring only `ai:write:budgeted` is worth seeing next to the render
+# verdict (see briefs/genpost.md), not because it decides anything.
+SCOPES=
 
 if [ -z "$APP_DIR" ]; then
   REASON="no block.manifest.json under /work — no app was created"
 else
   OUTDIR=$(x "cat '$APP_DIR/block.manifest.json'" | jq -r '.outputDir // empty' 2>/dev/null)
   BUILDCMD=$(x "cat '$APP_DIR/block.manifest.json'" | jq -r '.buildCommand // empty' 2>/dev/null)
+  # `none` (not an empty field) when the key is absent or empty, so a reader can
+  # tell "declared no scopes" from "this oracle predates the field".
+  SCOPES=$(x "cat '$APP_DIR/block.manifest.json'" | jq -r 'if (.scopes // []) | length > 0 then (.scopes | join(",")) else "none" end' 2>/dev/null)
   CAND="$APP_DIR"
   [ -n "$OUTDIR" ] && CAND="$APP_DIR/$OUTDIR"
   if x "test -f '$CAND/index.html'"; then
@@ -218,7 +228,7 @@ printf -- '--- render verdict\n'
 # strict (`212 °F` fails where `212` passes) and a bare `no` cannot tell a
 # near-miss from a block that rendered nothing.
 printf 'render_reason=%s\n' "${REASON:-none}"
-printf 'brief=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s served=%s observed=%s RENDER=%s\n' \
-  "$BRIEF" "$APP_COUNT" "${APP_DIR:-none}" "$GATE" "${GATE_RC:-none}" "${SERVED:-none}" \
-  "$(printf '%q' "${OBSERVED:-}")" "$RENDER_PASS"
+printf 'brief=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s scopes=%s served=%s observed=%s RENDER=%s\n' \
+  "$BRIEF" "$APP_COUNT" "${APP_DIR:-none}" "$GATE" "${GATE_RC:-none}" "${SCOPES:-none}" \
+  "${SERVED:-none}" "$(printf '%q' "${OBSERVED:-}")" "$RENDER_PASS"
 exit 0

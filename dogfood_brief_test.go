@@ -444,3 +444,93 @@ func TestCelsiusBriefAndAssertionAgree(t *testing.T) {
 		t.Fatal("the assertion's 100 -> 212 constants moved; celsius.md records the control results for those values")
 	}
 }
+
+// The same relationship for `genpost`. Its hooks are the two test ids, the two
+// button labels and the two status words — and the STATUS WORDS are the half
+// that is easy to reword in prose and forget in code, because the brief spells
+// them in English ("holding exactly ready") while the assertion holds them as
+// string constants.
+func TestGenpostBriefAndAssertionAgree(t *testing.T) {
+	briefRaw, err := os.ReadFile(filepath.Join(dogfoodDir, "briefs", "genpost.brief.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	brief := strings.TrimSpace(string(briefRaw))
+	if brief == "" || strings.Contains(brief, "\n") {
+		t.Fatalf("the brief must be exactly one non-empty line, got %q", brief)
+	}
+	assertRaw, err := os.ReadFile(filepath.Join(dogfoodDir, "briefs", "genpost.assert.mjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion := string(assertRaw)
+
+	for _, hook := range []string{
+		`data-testid="prompt"`, `data-testid="status"`, "Generate", "Post", "ready", "generating",
+	} {
+		if !strings.Contains(brief, hook) {
+			t.Fatalf("the brief no longer names %q — reword the assertion with it", hook)
+		}
+	}
+	for _, hook := range []string{
+		`[data-testid="prompt"]`, `[data-testid="status"]`,
+		"'generate'", "'post'", "STATUS_IDLE = 'ready'", "STATUS_BUSY = 'generating'",
+	} {
+		if !strings.Contains(assertion, hook) {
+			t.Fatalf("the assertion no longer looks for %q — the brief still asks for it", hook)
+		}
+	}
+	// 🔴 THE POST GATE IS THE LOAD-BEARING STEP, AND IT IS THE ONE A
+	// "simplification" would drop. The page-money scaffold already ships a
+	// prompt field and a Generate button wired to a real submitWorkflow, so an
+	// assertion keyed on generation alone is satisfied by an untouched scaffold
+	// and measures nothing. Both halves must survive: the control must EXIST and
+	// it must be DISABLED at rest.
+	if !strings.Contains(brief, "disabled") {
+		t.Fatal("the brief no longer asks for the Post control to start disabled — without that " +
+			"clause the brief is satisfiable by a generate-only app, which the page-money " +
+			"scaffold already is (see briefs/genpost.md)")
+	}
+	if !strings.Contains(assertion, "postDisabled") {
+		t.Fatal("the assertion no longer checks whether the Post control is disabled — see the " +
+			"neg-postenabled control in briefs/genpost.md")
+	}
+}
+
+// 🔴 THE LEDGER. The two tests above pin one pair each; nothing pins that a
+// THIRD brief gets a guard at all. A brief with no drift guard is the failure
+// this whole pair exists to prevent, arriving by addition instead of by edit:
+// every cell of its matrix would fail for a reason nobody typed, and no test
+// would be red. Adding briefs/<name>.brief.txt therefore means adding
+// <name>.assert.mjs, <name>.md, and a Test<Name>BriefAndAssertionAgree here.
+func TestEveryBriefHasASiblingGuard(t *testing.T) {
+	briefs, err := filepath.Glob(filepath.Join(dogfoodDir, "briefs", "*.brief.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// POSITIVE CONTROL: a glob that matched nothing would make every assertion
+	// below vacuous, and "no briefs found" is exactly what a moved directory
+	// looks like.
+	if len(briefs) < 2 {
+		t.Fatalf("found %d brief(s) under %s/briefs — this ledger cannot have checked anything",
+			len(briefs), dogfoodDir)
+	}
+	self, err := os.ReadFile("dogfood_brief_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range briefs {
+		name := strings.TrimSuffix(filepath.Base(b), ".brief.txt")
+		for _, sibling := range []string{name + ".assert.mjs", name + ".md"} {
+			if _, err := os.Stat(filepath.Join(dogfoodDir, "briefs", sibling)); err != nil {
+				t.Errorf("brief %q has no %s: %v", name, sibling, err)
+			}
+		}
+		want := "func Test" + strings.ToUpper(name[:1]) + name[1:] + "BriefAndAssertionAgree("
+		if !strings.Contains(string(self), want) {
+			t.Errorf("brief %q has no drift guard — add `%s…}` to this file. Without one, a "+
+				"reworded brief that leaves its assertion behind produces a matrix in which "+
+				"every cell fails for a reason nobody typed.", name, want)
+		}
+	}
+}
