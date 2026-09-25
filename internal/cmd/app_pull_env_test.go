@@ -71,6 +71,20 @@ func TestGitRunnerScrubsTheRelocatingEnvironment(t *testing.T) {
 // own repository — a runner that reset them would change behaviour nobody asked
 // it to change. `GIT_AUTHOR_NAME` is not in the relocating set, so it must still
 // reach git.
+//
+// 🔴 IT IS AN INVARIANT GUARD, NOT A REGRESSION TEST FOR THIS CHANGE — it stays
+// GREEN with the payload line deleted, so do not count it as coverage of the
+// scrub itself. The mutant it uniquely kills is `c.Env = []string{}` written AT
+// THIS RUNNER, bypassing the helper: the helper's own test still passes (helper
+// untouched), and the scrub test above still passes (an empty env contains no
+// GIT_DIR to obey), so this is the only thing standing between that edit and
+// main. Narrow, but a plausible future "hardening".
+//
+// ⚠️ AND IT DOES NOT FAIL WHERE ITS NAME SUGGESTS. Both realistic over-scrub
+// mutants red it at the `gitRunner commit` line — git exits 128 with "unable to
+// auto-detect email address" once the identity variables are gone — not at the
+// `%an` comparison below. The test works; the `%an` assertion is not what does
+// the killing.
 func TestGitRunnerLeavesOrdinaryConfigAlone(t *testing.T) {
 	requireGit(t)
 	gitFixtureEnv(t)
@@ -117,20 +131,36 @@ func mustGitOut(t *testing.T, dir string, args ...string) string {
 
 // configValue reads one local config key, returning "" when it is unset.
 //
-// 🔴 IT READS THE CONFIG FILE OFF DISK RATHER THAN SHELLING OUT TO `git config`,
-// and that is the point: the test is manipulating GIT_DIR, so a reader that went
-// through git could be relocated by the very variable under test and would be
-// unable to tell the two repositories apart. Reading the bytes at a path the
-// environment cannot redirect is the only way this assertion means anything.
+// 🔴 IT MUST NOT READ THROUGH A RELOCATABLE `git config`. Measured: with GIT_DIR
+// aimed at the decoy, `git -C <target> config --local --get probe.scrubbed`
+// returns the DECOY's value — so a `-C`-based reader would have read the same
+// repository for both assertions and made the scrub test silently vacuous.
+//
+// ⚠️ It is NOT the only immune reader, and an earlier version of this comment
+// claimed it was. `git config -f <path> --get <key>` is equally immune
+// (measured: correct value under the same poisoned env, rc 1 + empty on an unset
+// key). Reading the file is kept because it needs no subprocess and cannot be
+// affected by any future env variable at all; the one-exec form is a fine
+// alternative, not a worse one.
+//
+// The parse is deliberately minimal and only has to hold for a fresh `git init`
+// fixture: it is section-BLIND (any section with the same leaf key wins) and
+// does not handle `[section "sub"]`, multi-values or quoted values. The key is
+// required to be dotted, because a dotless one would otherwise index out of
+// range rather than fail with something a reader can act on.
 func configValue(t *testing.T, repo, key string) string {
 	t.Helper()
+	_, leaf, dotted := strings.Cut(key, ".")
+	if !dotted {
+		t.Fatalf("configValue needs a dotted key like `section.name`, got %q", key)
+	}
 	b, err := os.ReadFile(filepath.Join(repo, ".git", "config"))
 	if err != nil {
 		t.Fatalf("reading %s config: %v", repo, err)
 	}
 	for _, line := range strings.Split(string(b), "\n") {
 		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if ok && strings.TrimSpace(k) == strings.SplitN(key, ".", 2)[1] {
+		if ok && strings.TrimSpace(k) == leaf {
 			return strings.TrimSpace(v)
 		}
 	}

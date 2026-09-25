@@ -40,12 +40,38 @@ type submissionLister func(ctx context.Context, blockID string) ([]appapi.Submis
 // the user's terminal so clone/pull progress is visible.
 //
 // 🔴 IT SCRUBS gitEnvOverrides, AND ON THIS RUNNER THAT IS NOT DEFENCE IN DEPTH.
-// Every variable in that list BEATS both `-C` and `c.Dir`, and git EXPORTS
-// GIT_DIR and GIT_INDEX_FILE to its hooks — so a `civitai app pull` invoked from
-// a `pre-push` / `post-commit` hook, or under `git rebase -x`, inherits a GIT_DIR
-// aimed at the repository that invoked the hook. The dirty-tree guard already
-// scrubs for this reason (app_submit_dirty_guard.go), but there the misdirection
-// only produces a wrong ANSWER: every call through it is a read.
+// Every variable in that list BEATS both `-C` and `c.Dir`. The dirty-tree guard
+// already scrubs for this reason (app_submit_dirty_guard.go), but there the
+// misdirection only produces a wrong ANSWER: every call through it is a read.
+//
+// 🔴 WHICH INVOCATIONS ACTUALLY CARRY ONE — MEASURED, because the obvious answer
+// is wrong and both this comment and its sibling asserted it for a while. git
+// hooks are NOT the vector. On git 2.55.0, dumping the seven from real hooks:
+//
+//	pre-push, post-merge, post-checkout   → NONE of the seven
+//	pre-commit, post-commit               → GIT_INDEX_FILE=.git/index only,
+//	                                        RELATIVE, and no GIT_DIR
+//	git rebase -x                         → none of the seven
+//
+// and the relative form is harmless here: with cwd at the host repo, a clone and
+// a `-C <app> fetch`/`merge --ff-only` left the host's index untouched. So the
+// once-stated "a `civitai app pull` from a pre-push hook inherits a GIT_DIR" is
+// FALSE, and a maintainer who checks it in two minutes finds it false.
+//
+// The invocations that DO export a relocating variable, also measured:
+//
+//	a child of `git --git-dir=X --work-tree=Y <alias>`  → GIT_DIR + GIT_WORK_TREE,
+//	                                                      both ABSOLUTE
+//	server-side receive hooks                           → GIT_DIR
+//	anything that sets an ABSOLUTE GIT_INDEX_FILE       → writes stage into that
+//	                                                      foreign index
+//
+// That last one is the sharpest: with an absolute GIT_INDEX_FILE, a `-C <app>
+// merge --ff-only` stages into a THIRD repository's index. So the hazard is real
+// and the scrub is worth its one line — the reachability story just is not the
+// one everybody reaches for first. Treat this as prophylactic hardening: no
+// incident is on record, and nothing in this repo documents running `app pull`
+// under such a wrapper.
 //
 // Here every call is a WRITE — `clone`, `fetch`, `merge --ff-only` — so the same
 // misdirection merges the app's canonical repository into whatever repository
@@ -59,9 +85,21 @@ type submissionLister func(ctx context.Context, blockID string) ([]appapi.Submis
 // `status.renames`, `core.excludesFile` and friends, which are the user's own
 // answer to what their tree looks like.
 //
-// It cannot affect the `clone` call site, which passes no `-C` and no `dir`: a
-// GIT_DIR set there would previously have MISdirected the clone, so removing it
-// can only make that path more correct, never less.
+// 🔴 THE CLONE CALL SITE IS SAFE, BUT NOT FOR THE REASON FIRST WRITTEN HERE.
+// That reason was "a GIT_DIR set there would previously have MISdirected the
+// clone", and it is FALSE: measured on git 2.55.0, `GIT_DIR=<decoy>/.git git
+// clone -- <src> <target>` clones correctly into <target> and leaves the decoy
+// byte-identical — `git clone` ignores GIT_DIR. The conclusion survives on
+// stronger evidence the first version did not give:
+//
+//	GIT_DIR + GIT_WORK_TREE   → `fatal: working tree '<decoy>' already exists`,
+//	                            rc 128 — the clone is REFUSED outright
+//	absolute GIT_INDEX_FILE   → the clone succeeds AND stages the cloned files
+//	                            into the DECOY's index
+//	GIT_OBJECT_DIRECTORY      → rc 128, broken checkout
+//
+// So scrubbing strictly improves the clone path too; the middle row is the
+// actual write-into-a-foreign-repo, and it is the argument worth keeping.
 var gitRunner = func(dir string, args ...string) error {
 	if _, err := exec.LookPath("git"); err != nil {
 		return fmt.Errorf("git is required for `civitai app pull` but was not found on PATH")
