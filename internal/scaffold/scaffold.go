@@ -95,17 +95,6 @@ type Data struct {
 	Name string
 }
 
-// renderData is what the templates actually execute against: the caller's Data
-// plus the values this package derives for them. It is unexported because it is
-// not part of the scaffolding contract — a caller supplies the project's
-// identity and nothing else.
-type renderData struct {
-	Data
-	// HookIndex is the rendered markdown of every `@civitai/blocks-react` hook.
-	// See hooks.go for why it is in the README at all.
-	HookIndex string
-}
-
 // outputName maps an embedded template filename to its on-disk name.
 // `.tmpl` is stripped; some names are rewritten because go:embed cannot embed
 // files whose names begin with a dot:
@@ -144,12 +133,19 @@ func Render(tmpl Template, destDir string, data Data) ([]string, error) {
 		return nil, err
 	}
 
-	// 🔴 THE HOOK INDEX IS RENDERED IN, NOT STORED IN THE TEMPLATE. Keeping the
-	// list in Go (hooks.go) means it has exactly one spelling: the `.tmpl` cannot
-	// fall behind `SDKHooks`, and there is no generator anybody has to remember
-	// to run. `renderData` embeds `Data`, so `{{ .Slug }}` / `{{ .Name }}` still
-	// resolve exactly as before — the public argument type is unchanged.
-	view := renderData{Data: data, HookIndex: RenderHookIndex()}
+	// 🔴 THE TEMPLATES SEE `Data` AND NOTHING ELSE, and that is now the whole
+	// story. There used to be an unexported `renderData` wrapper carrying a
+	// derived `HookIndex` — a 36-row markdown table of every
+	// `@civitai/blocks-react` hook, generated from a Go table (`hooks.go`) and
+	// rendered into the page-money README. It was retired: the hosted developer
+	// reference (spelled once, in `README.md.tmpl`) is canonical, the README now
+	// points at it, and keeping a second copy in this repo was a
+	// drift surface for a route no measured trial took (two graded dogfood runs
+	// read the scaffolded README zero times and fetched the hosted page four).
+	// `Data` is a struct, so a template still referencing `{{ .HookIndex }}`
+	// fails execution with `can't evaluate field HookIndex` rather than rendering
+	// a blank — the removal cannot be half-done.
+	view := data
 
 	var written []string
 	err := fs.WalkDir(templatesFS, root, func(p string, d fs.DirEntry, err error) error {

@@ -272,9 +272,13 @@ var docsURLSpellingLedger = map[string]string{
 		"this file's own prose about the URL",
 	"claudedocs/decisions/36-agents-block-per-project.md": "AGENTS.md item 36's evidence file: it quotes the added " +
 		"line verbatim and tabulates each URL's measured status",
-	"internal/scaffold/hooks.go": "the page-money README's hook index sends the reader to the same hooks " +
-		"reference when a row's scope column is blank — a SECOND shipped artefact carrying the URL, and it " +
-		"is written into every scaffolded project exactly as the managed block is",
+	"internal/scaffold/templates/page-money/README.md.tmpl": "the page-money README now POINTS at the hosted " +
+		"hooks reference instead of shipping a local 36-row copy of it — a SECOND shipped artefact carrying " +
+		"the URL, written into every scaffolded project exactly as the managed block is. It used to be " +
+		"`internal/scaffold/hooks.go`, which rendered the retired index and carried the URL in its footnote; " +
+		"retiring the index moved the spelling into the template rather than removing it",
+	"internal/scaffold/readme_claims_test.go": "the guard that the scaffolded README names the hosted hooks " +
+		"reference within the first 3 KB pins the URL as a const, so it is a third place the spelling can rot",
 }
 
 // docsURLLedgerExemptPrefix is the ONE exemption, and it is not a convenience.

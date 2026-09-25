@@ -32,7 +32,13 @@ classifier from bytes rather than from a hand-built dict.
 
 Env knobs:
   FAKE_TOOL_COMMAND   a command to have the fake model "run" (default: none,
-                      so the loop stops after one turn with no tool calls)
+                      so the loop stops after one turn with no tool calls).
+                      NEWLINE-separated for several turns, which means it cannot
+                      carry a multi-line command — use FAKE_TOOL_COMMANDS_JSON.
+  FAKE_TOOL_COMMANDS_JSON  a JSON array of commands, one per turn. Takes
+                      precedence over FAKE_TOOL_COMMAND. The only way to feed a
+                      here-document (or anything else spanning lines) as ONE
+                      command.
   FAKE_TOOL_OUTPUT    what the stub Docker returns as that command's output
   FAKE_TRIAL_ID       the trial id (default `faketrial`)
   FAKE_FINISH_REASON  finish_reason on the FINAL turn (default `stop`; the
@@ -83,7 +89,20 @@ spec.loader.exec_module(runner)
 captured = {}
 # One command per assistant turn, newline-separated, in order. A cap that only
 # fires on the Nth invocation cannot be tested with a single turn.
-TOOL_COMMANDS = [c for c in os.environ.get("FAKE_TOOL_COMMAND", "").split("\n") if c]
+#
+# 🔴 FAKE_TOOL_COMMANDS_JSON EXISTS BECAUSE THE NEWLINE SEPARATOR CANNOT CARRY A
+# MULTI-LINE COMMAND, and the here-document defects are multi-line BY DEFINITION:
+# fed through FAKE_TOOL_COMMAND, `cat > f << 'EOF' … EOF` arrives as four separate
+# assistant turns, so the classifier never sees the shape under test and the test
+# passes or fails for reasons that have nothing to do with it. (Measured while
+# writing dogfood_classifier_precision_test.go: a heredoc arm reported verdicts
+# [refused run run run] — four steps for one command.) The JSON form takes
+# precedence and leaves every existing caller byte-identical.
+_commands_json = os.environ.get("FAKE_TOOL_COMMANDS_JSON", "")
+if _commands_json:
+    TOOL_COMMANDS = json.loads(_commands_json)
+else:
+    TOOL_COMMANDS = [c for c in os.environ.get("FAKE_TOOL_COMMAND", "").split("\n") if c]
 TOOL_OUTPUT = os.environ.get("FAKE_TOOL_OUTPUT", "")
 
 # 🔴 THE DEFAULT IS A WELL-BEHAVED PROVIDER, AND IT IS STATED RATHER THAN

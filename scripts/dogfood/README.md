@@ -166,7 +166,7 @@ one that finds nothing because there is nothing there.
 
 | cap | flag | mechanical? |
 |---|---|---|
-| app-name prefix on anything the trial creates or mutates | `--app-prefix` | **yes** — a mismatched `app init` / `create` / `submit` / `listing` is refused and never executed. With no slug on the command line it reads every `block.manifest.json` under `/work` and requires all of them to carry the prefix |
+| app-name prefix on anything the trial creates or mutates | `--app-prefix` | **yes** — a mismatched `app init` / `create` / `submit` / `listing` is refused and never executed. It reads the positional app-name argument plus the value of any flag `GATED_FLAGS` (runner.py) marks slug-bearing — `--slug`, `--from`, `--name`, `--dir` — in both the `--slug x` and `--slug=x` spelling. With no slug on the command line it reads every `block.manifest.json` under `/work` and requires all of them to carry the prefix. **Other flags' values are not app names:** `--template static` used to be refused as if `static` were a slug, and the agent that believed it measured the wrong scaffold |
 | generation cap | `--max-generations N` | **yes** — the N+1th `civitai generate` is refused before the `docker exec` |
 | submission cap | `--max-submissions N` | **yes** — same, for `civitai app submit` |
 | `app withdraw` | `--allow-withdraw` to permit | **yes** — refused by default. It permanently destroys a listing's captioned screenshots and names a publication-request id no prefix check can resolve to an app |
@@ -177,8 +177,16 @@ one that finds nothing because there is nothing there.
 a command into a file and runs the file, or builds it at runtime out of pieces
 the classifier does not see, is not stopped. The fail-closed rule narrows this —
 a segment naming the CLI *and* a spending or publishing verb, with no invocation
-the harness can parse (`eval "civitai app submit"`, `c=civitai`), is refused —
-and it does not close it. The threat model is the one
+the harness can parse (`eval "civitai app submit"`), is refused —
+and it does not close it. **A HERE-DOCUMENT BODY IS NOT COMMAND TEXT** and is
+stripped before any of this runs (`strip_heredoc_bodies`): it is stdin for the
+opener's command, the shell never executes it, and classifying it refused an
+agent's own `block.manifest.json` for quoting "Civitai" next to the word
+"generated". ⚠ Inline redirect content that is an *argument* (`echo '…' > f`) IS
+still classified, because to a shell it genuinely is command text. ⚠ And
+`c=civitai; $c app submit` is **not** refused, at this ref or before it: segment 1
+names the CLI with no verb, segment 2 names a verb with no "civitai", so neither
+trips the rule. The threat model is the one
 `claudedocs/handoff-dogfood-3.md` settled on: a **cooperative** agent. These stop
 the ordinary accident, not an adversary. The bound people want for an adversary
 needs a second uid, a container with no credential in it, or a platform-capped

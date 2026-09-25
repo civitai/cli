@@ -6,7 +6,21 @@ as a full-page (W10) app at `/apps/run/{{ .Slug }}` and spends Buzz to generate
 an image: pick a checkpoint, optionally layer on a few LoRAs (each with a
 weight) → estimate → (lazy consent) → submit → poll → result.
 
-{{ .HookIndex }}
+## Every hook the SDK exports
+
+The COMPLETE, always-current list is
+<https://developer.civitai.com/apps/reference/hooks.md>. **Fetch it first.** Every
+capability this platform has is a hook, so if it is not there it is not a hook —
+check that page before concluding the platform cannot do something. It is
+generated from the published `@civitai/blocks-react`, so unlike a copy pasted into
+this file it cannot fall behind the package you actually installed.
+
+**A declared scope is not a granted scope.** `ai:write:budgeted` and
+`posts:write:self` are consent-gated: they are dropped from the token until the
+viewer consents, so you get a 403 while the manifest and the runtime both look
+correct — call `useRequestConsent()` and retry. A hook the reference lists with no
+scope is host-mediated (the host resolves the viewer from your block token).
+
 ## What this is
 
 A sandboxed static web app served in an iframe by the Civitai host. Its UI is
@@ -34,8 +48,8 @@ A lockfile that disagrees with `buildCommand` is the most common build failure
 there is — `civitai app validate` catches it before you submit.
 
 The money path uses the SDK hooks — never raw `window.parent.postMessage`. These
-are the ones THIS sample calls; the full export list is the index at the top of
-this file:
+are the ones THIS sample calls; the full export list is the hosted reference
+linked at the top of this file:
 
 - `useBuzzWorkflow()` — `estimate` / `submit` / `poll` (the spend).
 - `useBuzzBalance()` — the viewer's per-pool balance (`{ blue, green, yellow }`),
