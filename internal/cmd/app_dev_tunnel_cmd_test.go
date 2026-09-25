@@ -136,6 +136,7 @@ func TestAppDevTunnelDeclaresManifestScopes(t *testing.T) {
   "version": "0.1.0",
   "name": "Demo",
   "type": "block",
+  "auth": "oauth",
   "scopes": ["ai:write:budgeted", "user:read:self"],
   "page": { "path": "/", "title": "Demo" }
 }`
@@ -154,6 +155,12 @@ func TestAppDevTunnelDeclaresManifestScopes(t *testing.T) {
 	// The manifest scopes serialized into the mint request under the tRPC json key.
 	if !strings.Contains(gotBody, `"declaredScopes":["ai:write:budgeted","user:read:self"]`) {
 		t.Errorf("start body should carry the manifest scopes as declaredScopes: %s", gotBody)
+	}
+	if !strings.Contains(gotBody, `"declaredAuth":"oauth"`) {
+		t.Errorf("start body should carry the manifest auth as declaredAuth: %s", gotBody)
+	}
+	if !strings.Contains(errOut, "Declaring auth: oauth") {
+		t.Errorf("expected the 'Declaring auth' line on stderr, got: %s", errOut)
 	}
 	// The dev is shown what the tunnel is requesting (spend-consent transparency).
 	if !strings.Contains(errOut, "Declaring scopes: ai:write:budgeted, user:read:self") {
@@ -283,6 +290,9 @@ func TestAppDevTunnelNoManifestScopesOmitsField(t *testing.T) {
 	}
 	if strings.Contains(gotBody, "declaredScopes") {
 		t.Errorf("no manifest scopes must omit declaredScopes: %s", gotBody)
+	}
+	if strings.Contains(gotBody, "declaredAuth") {
+		t.Errorf("no manifest must omit declaredAuth: %s", gotBody)
 	}
 	if strings.Contains(errOut, "Declaring scopes") {
 		t.Errorf("no scopes must not print a declaration line: %s", errOut)

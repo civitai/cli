@@ -30,6 +30,24 @@ type Manifest struct {
 	BuildCommand string   `json:"buildCommand"`
 	OutputDir    string   `json:"outputDir"`
 	Scopes       []string `json:"scopes"`
+	Auth         string   `json:"auth"`
+}
+
+// LoadAuth reads the manifest's `auth` ("block-token" or "oauth") with the same
+// degrade-to-nothing rules as LoadScopes; anything else reads as "".
+func LoadAuth(dir string) string {
+	raw, err := os.ReadFile(Path(dir))
+	if err != nil {
+		return ""
+	}
+	var m Manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return ""
+	}
+	if m.Auth == "oauth" || m.Auth == "block-token" {
+		return m.Auth
+	}
+	return ""
 }
 
 // LoadScopes reads the `scopes` array from the manifest in dir, degrading

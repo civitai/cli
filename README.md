@@ -824,6 +824,14 @@ if you Ctrl-C the DNS wait, and again just above the URL, with the
 `vite.config.ts` fix. Apps scaffolded by `civitai app create` (the `page-money`
 template) already satisfy all of it.
 
+**What the tunnel declares.** The command reads `scopes` and `auth` from the
+`block.manifest.json` it is standing in and sends them with the mint, printing
+`Declaring scopes: …` and `Declaring auth: oauth` so you see what the tunnel
+token will carry. With `"auth": "oauth"` the host hands your local app a real
+OAuth token at any app status, including before you ever submit; without it, or
+with an older manifest, it gets the block token. A missing or malformed
+manifest sends neither and is never fatal.
+
 **Flags.** The defaults match what the scaffold's `npm run dev:tunnel` binds, so
 most authors pass none of these:
 

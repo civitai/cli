@@ -98,7 +98,7 @@ const (
 // tunnelAPI is the subset of the API client the session core needs (seam for a
 // mock in tests).
 type tunnelAPI interface {
-	StartDevTunnel(ctx context.Context, blockID, sshPublicKey string, declaredScopes []string) (*appapi.DevTunnelSession, error)
+	StartDevTunnel(ctx context.Context, blockID, sshPublicKey string, declaredScopes []string, declaredAuth string) (*appapi.DevTunnelSession, error)
 	StopDevTunnel(ctx context.Context, sessionID, blockID string) (bool, error)
 	// WhoAmI resolves the signed-in identity — used to enrich a 403 mint refusal
 	// with which account the CLI is authenticated as (the usual cause is being
@@ -156,7 +156,10 @@ type tunnelSessionDeps struct {
 	// StartDevTunnel so the server can grant them to an UNSUBMITTED app's tunnel
 	// token. Empty/nil = read-only (no spend) — never fatal.
 	declaredScopes []string
-	port           int
+	// declaredAuth is the LOCAL manifest's `auth` ("oauth" or "block-token"),
+	// which decides the token kind the tunnel mints; "" leaves it to the server.
+	declaredAuth string
+	port         int
 	// localHost is the resolved host the developer's dev server is bound to
 	// ("localhost" by default = loopback; e.g. 10.42.0.100 for a container). Used
 	// by BOTH the pre-flight probe and the live tunnel proxy so the two agree.
@@ -375,6 +378,7 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 			// valid subset instead of 400ing the mint (keeping that "never blocks"
 			// promise).
 			declaredScopes := boundDeclaredScopes(manifest.LoadScopes("."))
+			declaredAuth := manifest.LoadAuth(".")
 
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -391,6 +395,7 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 				dialer:                 devtunnel.NewSSHDialer(cmd.ErrOrStderr()),
 				blockID:                blockID,
 				declaredScopes:         declaredScopes,
+				declaredAuth:           declaredAuth,
 				port:                   port,
 				localHost:              lh,
 				endpoint:               ep,
@@ -497,13 +502,16 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 		}
 		fmt.Fprintf(d.errw, "%s\n", ui.Dim(fmt.Sprintf("Declaring scopes: %s", strings.Join(display, ", "))))
 	}
+	if d.declaredAuth != "" {
+		fmt.Fprintf(d.errw, "%s\n", ui.Dim(fmt.Sprintf("Declaring auth: %s", d.declaredAuth)))
+	}
 
 	key, err := d.keygen()
 	if err != nil {
 		return fmt.Errorf("generate ephemeral tunnel key: %w", err)
 	}
 
-	sess, err := d.api.StartDevTunnel(ctx, d.blockID, key.AuthorizedKey, d.declaredScopes)
+	sess, err := d.api.StartDevTunnel(ctx, d.blockID, key.AuthorizedKey, d.declaredScopes, d.declaredAuth)
 	if err != nil {
 		// A 403 mint refusal is the common "wrong account" case — enrich it with
 		// the signed-in identity + how to switch accounts. This runs on the

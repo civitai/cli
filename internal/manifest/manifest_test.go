@@ -123,6 +123,22 @@ func TestLoadScopes(t *testing.T) {
 	}
 }
 
+func TestLoadAuth(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, `{"blockId":"x","auth":"oauth"}`)
+	if got := LoadAuth(dir); got != "oauth" {
+		t.Errorf("LoadAuth = %q, want oauth", got)
+	}
+	dir2 := t.TempDir()
+	write(t, dir2, `{"blockId":"x","auth":"basic"}`)
+	if got := LoadAuth(dir2); got != "" {
+		t.Errorf("LoadAuth (unknown value) = %q, want empty", got)
+	}
+	if got := LoadAuth(t.TempDir()); got != "" {
+		t.Errorf("LoadAuth (missing) = %q, want empty", got)
+	}
+}
+
 func TestSetBlockIDPreservesOrderAndFields(t *testing.T) {
 	dir := t.TempDir()
 	src := `{

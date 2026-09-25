@@ -1991,6 +1991,7 @@ type startDevTunnelInput struct {
 	BlockID        string   `json:"blockId"`
 	SSHPublicKey   string   `json:"sshPublicKey"`
 	DeclaredScopes []string `json:"declaredScopes,omitempty"`
+	DeclaredAuth   string   `json:"declaredAuth,omitempty"`
 }
 
 // stopDevTunnelInput mirrors the blocks.stopDevTunnel zod input (one of the two
@@ -2002,8 +2003,8 @@ type stopDevTunnelInput struct {
 
 // StartDevTunnel POSTs blocks.startDevTunnel and returns the minted session. The
 // OAuth access token is refreshed transparently on a 401.
-func (c *Client) StartDevTunnel(ctx context.Context, blockID, sshPublicKey string, declaredScopes []string) (*DevTunnelSession, error) {
-	body, err := json.Marshal(map[string]any{"json": startDevTunnelInput{BlockID: blockID, SSHPublicKey: sshPublicKey, DeclaredScopes: declaredScopes}})
+func (c *Client) StartDevTunnel(ctx context.Context, blockID, sshPublicKey string, declaredScopes []string, declaredAuth string) (*DevTunnelSession, error) {
+	body, err := json.Marshal(map[string]any{"json": startDevTunnelInput{BlockID: blockID, SSHPublicKey: sshPublicKey, DeclaredScopes: declaredScopes, DeclaredAuth: declaredAuth}})
 	if err != nil {
 		return nil, err
 	}

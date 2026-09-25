@@ -49,6 +49,7 @@ type fakeTunnelAPI struct {
 	startCalls  []struct {
 		blockID, pubKey string
 		declaredScopes  []string
+		declaredAuth    string
 	}
 
 	stopErr   error
@@ -83,13 +84,14 @@ func (f *fakeTunnelAPI) whoamiCount() int {
 	return f.whoamiCall
 }
 
-func (f *fakeTunnelAPI) StartDevTunnel(_ context.Context, blockID, pubKey string, declaredScopes []string) (*appapi.DevTunnelSession, error) {
+func (f *fakeTunnelAPI) StartDevTunnel(_ context.Context, blockID, pubKey string, declaredScopes []string, declaredAuth string) (*appapi.DevTunnelSession, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.startCalls = append(f.startCalls, struct {
 		blockID, pubKey string
 		declaredScopes  []string
-	}{blockID, pubKey, declaredScopes})
+		declaredAuth    string
+	}{blockID, pubKey, declaredScopes, declaredAuth})
 	if f.onStart != nil {
 		f.onStart()
 	}
