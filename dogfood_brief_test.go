@@ -728,8 +728,106 @@ func TestGenpostBriefAndAssertionAgree(t *testing.T) {
 	}
 }
 
-// 🔴 THE LEDGER. The two tests above pin one pair each; nothing pins that a
-// THIRD brief gets a guard at all. A brief with no drift guard is the failure
+// 🔴 `ship` IS `genpost` PLUS A SUBMIT INSTRUCTION, AND THAT RELATIONSHIP IS
+// WHAT THIS PINS — not two independent word lists.
+//
+// The render half of a ship cell is graded by the GENPOST assertion (ship.assert.mjs
+// delegates to it, deliberately: one predicate, one place). That delegation is
+// only correct while the ship brief asks for the same renderable behaviour, so
+// the guard is the whole normalised string — `ship` must literally BEGIN with
+// `genpost`'s text — rather than a set of keywords that a reworded brief could
+// still spell while asking for something different. A cosmetic reword of
+// `genpost` fails this test; that is the price of a machine-readable claim, and
+// the remedy is to move both files together.
+//
+// 🔴 AND THE SUBMIT CLAUSE IS THE HALF THE WHOLE BRIEF EXISTS FOR. Four
+// credentialed trials ran with `--max-submissions 1` and all four submitted
+// nothing, because the genpost brief never asks. A cap that ALLOWS a submit does
+// not produce one. If the trailing clause is ever dropped, `ship` becomes
+// `genpost` under a second name and every ship cell grades `SHIP=no` for a reason
+// nobody typed.
+func TestShipBriefAndAssertionAgree(t *testing.T) {
+	briefRaw, err := os.ReadFile(filepath.Join(dogfoodDir, "briefs", "ship.brief.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	brief := strings.TrimSpace(string(briefRaw))
+	if brief == "" || strings.Contains(brief, "\n") {
+		t.Fatalf("the brief must be exactly one non-empty line, got %q", brief)
+	}
+	genpost := dogfoodBriefText(t, "genpost")
+
+	// (a) The render half, pinned as the WHOLE string rather than as keywords.
+	if !strings.HasPrefix(brief, genpost) {
+		t.Fatalf("the ship brief no longer begins with the genpost brief verbatim.\n"+
+			" ship: %q\ngenpost: %q\n\nship.assert.mjs delegates to genpost.assert.mjs, so the two briefs' "+
+			"renderable half must be the same text. Move both files together.", brief, genpost)
+	}
+	// (b) The submit half exists and is not empty whitespace.
+	tail := strings.TrimSpace(strings.TrimPrefix(brief, genpost))
+	if tail == "" {
+		t.Fatal("the ship brief is byte-identical to the genpost brief — it asks for no submit, " +
+			"which is the exact defect it exists to fix: four credentialed trials with a submission " +
+			"PERMITTED submitted nothing because no brief asked")
+	}
+	if !strings.Contains(strings.ToLower(tail), "submit") {
+		t.Fatalf("the ship brief's trailing clause does not ask for a submit: %q", tail)
+	}
+	// 🔴 (c) AND IT MUST NOT NAME A CLI FLAG. The brief is appended RAW, with no
+	// framing of the harness's own, so the only Civitai knowledge a trial gets is
+	// the hosted URL and what the operator typed. Naming `--yes` (which a
+	// headless submit genuinely needs — `confirmSubmit` refuses a non-TTY without
+	// it) would hand the trial a fact it is supposed to discover, and would make
+	// a green cell a statement about the brief rather than about the onboarding.
+	if strings.Contains(brief, "--") {
+		t.Fatalf("the brief names a command-line flag: %q. The brief is what the OPERATOR typed; "+
+			"a flag in it is Civitai knowledge injected by the rig", brief)
+	}
+
+	// (d) The assertion is the genpost one, by delegation, and the constants it
+	// grades against still live in the file that owns them.
+	assertRaw, err := os.ReadFile(filepath.Join(dogfoodDir, "briefs", "ship.assert.mjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion := string(assertRaw)
+	if !strings.Contains(assertion, "genpost.assert.mjs") {
+		t.Fatal("ship.assert.mjs no longer delegates to genpost.assert.mjs. If it has been forked, " +
+			"the same predicate is now open-coded at two sites and briefs/genpost.md's scaffold and " +
+			"generate-only controls are no longer controls for THIS assertion — give it its own " +
+			"constants here and its own controls in ship.md, or restore the delegation")
+	}
+	// The delegate's constants, checked THROUGH the delegation: this is the
+	// relationship the ship brief actually depends on, and asserting it here is
+	// what stops a genpost refactor silently emptying the ship cell's render half.
+	delegateRaw, err := os.ReadFile(filepath.Join(dogfoodDir, "briefs", "genpost.assert.mjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	delegate := string(delegateRaw)
+	for _, hook := range []string{
+		`[data-testid="prompt"]`, `[data-testid="status"]`,
+		"'generate'", "'post'", "STATUS_IDLE = 'ready'", "STATUS_BUSY = 'generating'",
+		"postDisabled",
+	} {
+		if !strings.Contains(delegate, hook) {
+			t.Fatalf("genpost.assert.mjs no longer looks for %q, and ship.assert.mjs delegates to it — "+
+				"the ship brief still asks for it", hook)
+		}
+	}
+
+	// (e) The SHIP half has a verdict path at all. The assertion above grades the
+	// DOM and CANNOT see a submission (the oracle's host stub rejects every
+	// request and `token.raw` is empty), so a ship brief whose only grader is
+	// browser-shaped measures exactly the genpost brief under a new name.
+	if _, err := os.Stat(filepath.Join(dogfoodDir, "ship.verdict.sh")); err != nil {
+		t.Fatalf("no %s/ship.verdict.sh: %v — the ship brief's submit half would be ungraded, and "+
+			"an ungraded half is indistinguishable from a passing one", dogfoodDir, err)
+	}
+}
+
+// 🔴 THE LEDGER. The tests above pin one pair each; nothing pins that a
+// FOURTH brief gets a guard at all. A brief with no drift guard is the failure
 // this whole pair exists to prevent, arriving by addition instead of by edit:
 // every cell of its matrix would fail for a reason nobody typed, and no test
 // would be red. Adding briefs/<name>.brief.txt therefore means adding
