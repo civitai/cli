@@ -127,7 +127,7 @@ built blind by `xiaomi/mimo-v2.5` for **$0.0170**, submitted, operator-approved,
 and `https://ab-img-poster.civit.ai/` returned **HTTP 200**. What the feedback removes is the
 word *working*, not the chain.
 
-🔴 **RANK 3'S TABLE** (an appended block points at it): mimo-v2.5, celsius, **65 steps /
+🔴 **RANK 3'S TABLE** (kept as the arc's only record of the step/cost curve): mimo-v2.5, celsius, **65 steps /
 $0.0145 / 1,564,496 prompt tokens / per-call 452 → 45,328 / `stop=finished`**, caps 80/$0.50.
 
 🔴 **BASELINES DRIFT — RE-READ, NEVER QUOTE.** Buzz was 4,101,822 (09-21), 4,074,196 (09-25).
@@ -150,30 +150,6 @@ the image `dogfood-fixture/ab-ship-mimo-02:pre-consent-fix` taken before the app
 **first-version** submission destroys captioned media permanently.
 
 ## Open investigations — live diagnosis state
-
-### ✅ ANSWERED 2026-09-21 — the harness CAN carry an app-build task; rank 4 is not needed
-- as-of: 2026-09-21
-
-🔴 **This RESOLVES a now-PRUNED block, "The harness cannot run a task this long — O(n²)
-prompt growth against a 40-step cap" (as-of 2026-09-20). Its measurements stand; its
-CONCLUSION does not.** That block said history management was needed "before any app-build
-trial is graded", and made it rank 1. Measurement says otherwise. **Do not act on its Next
-probe — it has been run, and this is the result.** (The tool appends here and cannot edit
-an earlier heading, so this paragraph is the retirement marker.)
-
-- **Observed (with values):** see the State-now table — 65 steps against an 80 cap,
-  $0.0145 against a $0.50 cap, `stop=finished`.
-- **Ruled out — that the step or cost cap would bite on the happy path.** It did neither,
-  with ~19% step headroom and ~34× cost headroom. `via: measurement`
-- **Ruled out — that O(n²) prompt growth is a cost problem HERE.** The growth is real and
-  visible (452 → 45,328 per call, 1.56M total), and at this model's price the entire run
-  is 1.5 cents. The mechanism was correctly identified; the consequence was overestimated.
-  `via: measurement`
-- **Still open, and the caps should STAY:** a model that LOOPS is the case that reaches a
-  cap, and that case has not been observed. Keep `--max-steps` and `--max-cost` set
-  deliberately per run. Also unmeasured: a frontier model on the same task would spend
-  5–20× more per the prerequisite arc's figures — still small, but not re-derived here.
-- **Next probe:** none for rank 4. It is deleted, not deferred.
 
 ### ✅ EXPLAINED 2026-09-21 — glm never wrote code, and "finished" was a truncation
 - as-of: 2026-09-21
@@ -246,26 +222,6 @@ the arc concluded.** Two defects compounded — one model-side, one harness-side
   tokens. The doc stack owns the 1.6× volume difference, not the 6.3×.
 - **Next probe:** re-measure carry cost on a post-`cli#685` trial to price the fix. Free if
   folded into rank 6.
-
-### ✅ CLOSED 2026-09-21 — the CI Chromium launch flake: `#687` merged and `main` went green
-- as-of: 2026-09-21
-
-🔴 **This RETIRES a now-PRUNED block, "⚠ OPEN — the CI Chromium launch flake: a fix is
-proposed but the stall was never reproduced". Its measurements stand; its OPEN status does
-not, and its "Next probe: none locally" instruction is obsolete** — the mechanical closing
-condition it named has now been evaluated once and did not fire. (The tool appends and
-cannot edit an earlier heading, so this paragraph is the retirement marker.)
-
-- **Observed (with values):** `#687` merged as `3ffebca`; `main`'s check-runs at that SHA
-  read **`MAIN_TOTAL=12 MAIN_FAILURES=0`**, `build-test success`. Four oracle runs this
-  session all printed `attempt 1 of 2` (136–167 ms) with **no `BROWSER LAUNCH RETRY`**.
-  `via: measurement`
-- 🔴 **Ruled out — that this proves the flake is gone. It does not, and the block's own
-  author already said so.** The honest position stays **"rarer, not provably gone"**: one
-  green `main` run is one sample of an intermittent failure, and the four local launches
-  were on this workstation, not the CI runner. The closing condition **stays armed** and
-  costs nothing — `ci.yml` renders a retry as a `::warning`. `via: assumed`
-- **Next probe:** none. Watch `build-test` warnings passively.
 
 ### 🔴 OPEN — pricing `cli#685` CANNOT ride along with rank 6; it is blocked on a release
 - as-of: 2026-09-21
