@@ -160,42 +160,10 @@ destroyed `ab-curve-01`'s transcript:** `ab-genpost-mimo-01` + `ab-genpost-glm-0
 
 ## Open investigations — live diagnosis state
 
-### 🔴 The harness cannot run a task this long — O(n²) prompt growth against a 40-step cap
-- as-of: 2026-09-20
-
-- **Symptom + exact repro:** read `scripts/dogfood/runner.py:118-131`. `--max-steps`
-  defaults to **40**; `--max-cost` defaults to **$1.0**; `MAX_OUT = 12000` bytes of tool
-  output are handed back per command (`:61`), and every turn resends the entire history.
-- **Observed (with values):** the module's own comment states it —
-  *"cumulative prompt tokens grow O(n^2) in steps. Observed runs took 3-8 steps and cost
-  ~$0.02-0.10; at the 40-step cap that is roughly 25x, and a model that loops on a failing
-  install — exactly the failure being measured — is the case that reaches it. This is the
-  only bound on money."* The setup task finished in **7–11 steps**. An app build is
-  plausibly **30–80**.
-- 🔴 **Why this is an EARLY item and not a tuning detail** (it is rank 3, behind the two
-  things that make an app-build trial exist at all)**:** a trial that hits the step cap
-  or the cost cap emits `CLOSING_CONDITION=no`, which is **indistinguishable from the
-  product being broken**. That is precisely the capability confound the prerequisite arc
-  went to the trouble of ruling out by measurement; here it returns harder, because a
-  longer task reaches the cap on the happy path rather than only when looping.
-- **Ruled out — that raising `--max-steps` alone fixes it.** The growth is quadratic in
-  steps *because the whole history is resent*; raising the cap raises the cost it is the
-  only bound on. `via: code` (`runner.py:122-129`, the comment and the loop at `:179`)
-- **Leading hypothesis:** the runner needs history management — trimming or summarising
-  older tool output — before any app-build trial is graded. `MAX_OUT` bounds a single
-  command's output but nothing bounds the accumulation.
-- **Next probe:** run one app-build trial on the CHEAPEST model with
-  `--max-steps 80 --max-cost 2.0` and read steps, cumulative prompt tokens and cost per
-  step out of `transcript.jsonl`, which already records per-call `usage` (`runner.py:190`)
-  — no instrumentation needed. That curve decides whether trimming is required or merely
-  nice. Do this BEFORE building the render oracle — if the curve is fatal, the oracle
-  grades nothing. ⚠ **Blocked until ranks 1 and 2 land**: there is no app-build trial to
-  run until the runner can receive a brief.
-
 ### ✅ ANSWERED 2026-09-21 — the harness CAN carry an app-build task; rank 4 is not needed
 - as-of: 2026-09-21
 
-🔴 **This RESOLVES the block above it, "The harness cannot run a task this long — O(n²)
+🔴 **This RESOLVES a now-PRUNED block, "The harness cannot run a task this long — O(n²)
 prompt growth against a 40-step cap" (as-of 2026-09-20). Its measurements stand; its
 CONCLUSION does not.** That block said history management was needed "before any app-build
 trial is graded", and made it rank 1. Measurement says otherwise. **Do not act on its Next
@@ -215,37 +183,6 @@ an earlier heading, so this paragraph is the retirement marker.)
   deliberately per run. Also unmeasured: a frontier model on the same task would spend
   5–20× more per the prerequisite arc's figures — still small, but not re-derived here.
 - **Next probe:** none for rank 4. It is deleted, not deferred.
-
-### 🔴 The harness cannot carry a credential — `--agent-env` writes its value into the transcript
-- as-of: 2026-09-21
-
-- **Symptom + exact repro:** read `scripts/dogfood/runner.py:237-238`:
-  ```python
-  rec("start", trial=a.trial, model=a.model, image=a.image, user=a.user,
-      agent_env=a.agent_env, brief=a.brief, container=container)
-  ```
-  `--agent-env VAR=VALUE` (`:162`, applied at `:223-224`) is the ONLY mechanism for getting
-  a variable into the trial container.
-- **Observed (with values):** the `start` row of `runs/<trial>/transcript.jsonl` carries
-  `agent_env` **verbatim**. Confirmed by reading the existing
-  `runs/ab-curve-01/transcript.jsonl`, whose `start` row carries `brief` in full by the
-  same call — the identical code path.
-- 🔴 **Why this is a security defect and not an inconvenience:** the only available
-  credential route would write a **live Civitai account token in plaintext** into a file
-  that persists on disk, is read by humans and agents afterwards, and is routinely quoted
-  into reports. The token in question authorises spending Buzz, submitting, and mutating
-  ~10 published listings.
-- **Ruled out — that the secret could simply be redacted at read time.** The value is
-  written at trial start and the file is the durable artefact; redacting a reader does not
-  unwrite the token. `via: code` (`runner.py:237`)
-- **Leading hypothesis:** the injection must happen through a path that never passes the
-  secret to `rec()` — e.g. copying the credential into the container after create, and
-  recording only a non-reversible marker (a boolean plus a short digest prefix).
-- **Next probe:** none needed to diagnose; the fix is in flight on
-  `feat/dogfood-credentialed-trial`. 🔴 **The thing to CHECK when it lands is the leak test's
-  POSITIVE CONTROL** — a grep that finds nothing because its pattern is wrong is
-  indistinguishable from a grep that finds nothing because the secret is absent. Require the
-  test to demonstrate it DOES find a planted secret.
 
 ### ✅ EXPLAINED 2026-09-21 — glm never wrote code, and "finished" was a truncation
 - as-of: 2026-09-21
@@ -319,106 +256,10 @@ the arc concluded.** Two defects compounded — one model-side, one harness-side
 - **Next probe:** re-measure carry cost on a post-`cli#685` trial to price the fix. Free if
   folded into rank 6.
 
-### ⚠ OPEN — the CI Chromium launch flake: a fix is proposed but the stall was never reproduced
-- as-of: 2026-09-21
-
-- **Symptom + exact repro:** `build-test` fails with **no failing test name at all**.
-  Measured on five runs — `35557830290`, `35563154222`, `35567753483`, `35616180491`, and
-  `main`'s current `cadc69bb` — across `main` itself and three PRs including a **docs-only**
-  one. In a 31,141-byte log there are **zero `--- FAIL:` lines** and every other package
-  reports `ok`:
-  ```
-  {"assertion":"celsius","pass":false,"reason":"harness error: browser never printed a
-   DevTools endpoint:\n[ERROR:dbus/bus.cc:405] Failed to connect to the bus: Could not
-   parse server address: Unknown address type ..."}
-  oracle: the assertion could not run (exit 2) — nothing was measured (this is NOT a failing trial)
-  FAIL github.com/civitai/cli
-  ```
-- 🔴 **The oracle behaves CORRECTLY** — it exits 2 and says *nothing was measured* rather
-  than emitting a false `RENDER=no`. The job fails because the render-oracle tests
-  deliberately refuse to skip under `$CI`. **Do not "fix" this by loosening them to a
-  skip**; a skip here is a green that checked nothing, and `ci.yml` forbids it in-line.
-- **Observed (with values) — the number that did not exist until `#687`'s smoke step
-  shipped:** a healthy cold launch on that runner is **`[cdp] browser launched in 3546ms`**
-  against a **15,000 ms** budget — ~4× headroom on a machine with **3.4× run-to-run
-  spread**. And the 15 s was never chosen for *launching*: it is the wait for a React tree
-  to mount, reused for an unrelated quantity.
-- **Ruled out — that clearing `DBUS_SESSION_BUS_ADDRESS` is the mechanism.** Null result.
-  `via: measurement`
-- **Ruled out — that the error string alone reproduces it.** `DBUS_SESSION_BUS_ADDRESS=bogus:path=/nope`
-  reproduces the CI stderr **byte for byte** and Chromium still reaches a DevTools endpoint
-  in ~110 ms. `via: measurement`
-- **Ruled out — that `chromium --version` latency predicts failure.** 1.9–6.5 s in failing
-  jobs vs 0.02 s locally, but 2.2 s passed and 2.8 s failed — an environment speed class,
-  not a predictor. `via: measurement`
-- **Leading hypothesis:** a thin timeout against a slow cold launch, plus one blocking
-  session-bus round trip. `--password-store=basic` removes exactly one (`4 dbus errors → 3`),
-  and **three of four failures stalled after exactly three**.
-- 🔴 **Counter-evidence, stated rather than buried: the FOURTH failure stalled after ONE
-  dbus error**, which that flag cannot explain. So the fix is **"rarer, not provably gone"**
-  — the author's own words, and the honest position.
-- **Next probe:** none locally; the stall was never reproduced. **The closing condition is
-  MECHANICAL and needs nobody to remember it** — a retried launch prints
-  `BROWSER LAUNCH RETRY`, which `ci.yml` renders as a `::warning` on the job. **If that
-  warning appears in `build-test` after `#687` merges, the launch is still sick.**
-
-### 🔴 OPEN — the oracle seeds a signed-in viewer with an EMPTY SCOPE LIST, so a consent-gated app can never pass
-- as-of: 2026-09-21
-
-🔴 **This is the `cli#686` viewer defect one layer deeper, and it is the third time this arc
-has found the instrument wrong rather than the model.** `#686` fixed *"no viewer, so an
-auth-gated app renders a branch production never exhibits"*. The same sentence is now true
-of **capability**: a viewer is present, the token is inert, and an app that gates on the
-token's scopes renders a branch production never exhibits.
-
-- **Symptom + exact repro:** `bash oracle.sh ab-genpost-dsv4-01 root` →
-  `observed=ready RENDER=no`, `render_reason=timed out after 15000ms waiting for the status
-  to leave "ready" after clicking generate`, with `gate=pass` and the manifest declaring
-  **both** `ai:write:budgeted` and `posts:write:self`.
-- **Observed (with values), the full chain:**
-  - `scripts/dogfood/briefs/_cdp.mjs` seeds the credential half as **`{ raw: '',
-    scopes: [] }`**, described in-file as *"deliberately inert … it buys the block no
-    capability"*.
-  - The app: `App.tsx:41` `const granted = hasBudgetedScope(token.scopes)`;
-    `:157-172` `handleGenerate` → `if (!granted) { consentPendingRef.current = true;
-    requestConsent({ scopes: ['ai:write:budgeted'] }); return; }`; `:114`
-    `setStatus('generating')` lives inside `doGenerate`, which is never reached.
-  - The DOM produced **zero mutations** in the 15 s after the click — an old-value harvest
-    added to the recorder returned `replacedValues=[]`.
-  `via: measurement` + `via: code`
-- 🔴 **Ruled out — that the empty harvest meant the probe was wired to nothing.** The
-  identical probe on `ab-genpost-mimo-01` returned a **non-empty** list. That positive
-  control is what makes the deepseek zero a reading rather than a silence.
-  `via: measurement`
-- **Ruled out — that a missing `data-testid="generate"` caused it.** The assertion locates
-  the control by **label** (`labelExpr(GENERATE_LABEL)`, `genpost.assert.mjs:155,169`), and
-  the brief only asks for *"a button labelled Generate"*. It was found; `generateDisabled`
-  came back `true`/`false`, never `null`. `via: code`
-- **Ruled out — that the status transition was a batched React transient the recorder
-  missed.** It is a real weakness (`INSTALL_RECORDER`'s `push` reads `textContent` fresh at
-  callback time, and MutationObserver batches per microtask checkpoint, so the in-file
-  claim that it catches a machine passing *"through `generating` and out the other side"*
-  is **narrower than it reads**) — but it is not what happened here: zero mutations means
-  nothing was ever committed. `via: measurement`
-- 🔴 **The grading consequence, which is the real finding:** mimo passes because it calls
-  `setStatus('generating')` **before** `await requestConsent()`; deepseek fails because it
-  checks consent **first**. **The assertion rewards an optimistic UI status and penalises
-  the app that verifies it may generate before claiming it is generating.** That is
-  backwards, and it is a property of the harness, not of either model.
-- **Leading hypothesis for the fix:** seed a token whose `scopes` carry what the block's
-  own manifest declares (the oracle already parses it — it prints `scopes=`), while leaving
-  `raw` empty so the transport still rejects. That keeps *"nothing can complete here"* true
-  — the property `#686` asserted from inside the page — while removing a branch production
-  never exhibits. ⚠ It needs its own control: an app that spends without checking must
-  still not appear to succeed.
-- **Next probe:** re-grade `ab-genpost-dsv4-01` with `token.scopes` seeded from the
-  manifest. If it flips to `RENDER=yes`, the cell is a PASS and the matrix reads 2/3 with
-  one explained failure. **That single re-grade is free — the container is still up.**
-
 ### ✅ CLOSED 2026-09-21 — the CI Chromium launch flake: `#687` merged and `main` went green
 - as-of: 2026-09-21
 
-🔴 **This RETIRES the block above it, "⚠ OPEN — the CI Chromium launch flake: a fix is
+🔴 **This RETIRES a now-PRUNED block, "⚠ OPEN — the CI Chromium launch flake: a fix is
 proposed but the stall was never reproduced". Its measurements stand; its OPEN status does
 not, and its "Next probe: none locally" instruction is obsolete** — the mechanical closing
 condition it named has now been evaluated once and did not fire. (The tool appends and
@@ -469,7 +310,7 @@ same mechanism: it is neither free nor possible.
 ### ✅ MEASURED 2026-09-21 — the inert token WAS the cause; deepseek passes, and the fix is controlled
 - as-of: 2026-09-21
 
-🔴 **This RESOLVES the block above it, "🔴 OPEN — the oracle seeds a signed-in viewer with an
+🔴 **This RESOLVES a now-PRUNED block, "🔴 OPEN — the oracle seeds a signed-in viewer with an
 EMPTY SCOPE LIST". Its diagnosis was right and its status is now closed; its "Leading
 hypothesis" and "Next probe" have BOTH been run — do not re-run them.** (The tool appends
 and cannot edit an earlier heading, so this paragraph is the retirement marker.)
@@ -508,7 +349,7 @@ and cannot edit an earlier heading, so this paragraph is the retirement marker.)
 ### ✅ SHIPPED 2026-09-21 — `cli#690` seeds the manifest's scopes; the cheap arm is 2 of 3
 - as-of: 2026-09-21
 
-🔴 **This CLOSES the two blocks above it — "🔴 OPEN — the oracle seeds a signed-in viewer
+🔴 **This CLOSES two blocks, one now PRUNED — "🔴 OPEN — the oracle seeds a signed-in viewer
 with an EMPTY SCOPE LIST" and "✅ MEASURED — the inert token WAS the cause". Their evidence
 stands; their OPEN status and their Next-probe instructions are both spent. Do not re-run
 the four-arm experiment to confirm this** — it is now the shipped behaviour of `main`, and
