@@ -85,6 +85,14 @@ exit contract `oracle.sh` reads all pass through untouched.
    against *those constants in that file*. A fork silently stops being the thing
    they were run against.
 
+🔴 **The delegation carries the UNCONSENTED ARM too, and that is load-bearing
+here rather than incidental.** `ship.assert.mjs` spawns the delegate with
+`env: process.env`, so `CIVITAI_ASSERT_UNCONSENTED=1` reaches it unchanged — which
+matters because the app that motivated the arm, `ab-ship-mimo-02`, is a **`ship`**
+cell. A fork of the assertion would have had to grow the arm separately, and the
+one trial that shipped a live user-facing defect is the one that would have been
+left behind. See the seven-fixture re-grade in `genpost.md`.
+
 **Why by SPAWN rather than by import:** `genpost.assert.mjs` is exercised by a
 real browser under `TestOracleGradesTheGenpostBrief` and five siblings.
 Refactoring it to export a grader would put that working, measured file in the

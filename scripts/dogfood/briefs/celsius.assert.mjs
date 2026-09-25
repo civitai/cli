@@ -17,7 +17,7 @@
 // that file's header for the reasoning; it is load-bearing and is not repeated
 // here.
 
-import { launch, cdp, openPage, parseScopes, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, labelExpr } from './_cdp.mjs';
+import { launch, cdp, openPage, parseScopes, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, HOST_ARM, seededScopes, labelExpr } from './_cdp.mjs';
 
 const TARGET = process.argv[2];
 if (!TARGET) {
@@ -58,7 +58,17 @@ async function main() {
   const evidence = {
     target: TARGET, url, input: INPUT_C, expected: EXPECT_F,
     hostInit: SEND_HOST_INIT, hostViewer: HOST_VIEWER_LABEL,
-    hostScopes: SCOPES.join(',') || 'none',
+    // 🔴 THIS BRIEF HAS NO CONSENT PREDICATE AND STILL HAS TO REPORT THE ARM,
+    // BECAUSE THE ARM IS AMBIENT. `CIVITAI_ASSERT_UNCONSENTED=1` left in a shell
+    // empties `token.scopes` for EVERY assertion in this directory, celsius
+    // included. Reporting the declared list as `hostScopes` while the block was
+    // shown an empty one would be a cell describing a bootstrap the block never
+    // received — the exact seam `oracle.sh`'s scope guard exists to catch, made
+    // invisible by this file not participating in it. So: `hostScopesDeclared` is
+    // the argument, `hostScopes` is what was seeded, `hostArm` says which.
+    hostScopesDeclared: SCOPES.join(',') || 'none',
+    hostScopes: seededScopes(SCOPES).join(',') || 'none',
+    hostArm: HOST_ARM,
   };
   let pass = false;
   let reason = null;

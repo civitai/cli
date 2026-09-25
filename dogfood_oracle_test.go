@@ -542,6 +542,15 @@ func stubOracleEnv(t *testing.T, s stubEnv) []string {
 		"DOGFOOD_ASSERT=",
 		// Same for the viewer control arm, which two tests below set explicitly.
 		"CIVITAI_ASSERT_ANON_VIEWER=",
+		// 🔴 AND FOR EVERY OTHER ARM KNOB, BECAUSE THEY ARE AMBIENT AND THIS SUITE
+		// IS RUN FROM AN OPERATOR'S SHELL. A stale `CIVITAI_ASSERT_UNCONSENTED=1`
+		// export would silently re-arm every case below onto a different predicate
+		// — and the cases that expect `no` would keep passing, for a reason that has
+		// nothing to do with what they test. Tests that WANT an arm append it after
+		// this slice, and the later assignment wins.
+		"CIVITAI_ASSERT_UNCONSENTED=",
+		"CIVITAI_ASSERT_NO_HOST_PICKS=",
+		"CIVITAI_ASSERT_NO_HOST=",
 	}
 }
 

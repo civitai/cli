@@ -53,7 +53,20 @@
 // page-money-derived cell separable from a page-money scaffold. The scaffold
 // control in genpost.md records all three templates failing.
 
-import { launch, cdp, openPage, parseScopes, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, HOST_PICKS_LABEL, CLICKABLES, labelExpr, sleep } from './_cdp.mjs';
+// 🔴 AND THERE IS A SECOND ARM, BECAUSE EVERY PARAGRAPH ABOVE GRADES THE
+// ALREADY-CONSENTED VIEWER AND NO REAL USER STARTS THERE.
+// `CIVITAI_ASSERT_UNCONSENTED=1` seeds `token.scopes` EMPTY and replaces the
+// predicate: instead of "did the Generate click drive the machine to
+// `generating`", it asks "did the block ASK THE HOST FOR CONSENT". The two arms
+// answer different questions about the same trial and both verdicts are real; the
+// cell's `arm=` field is what says which one you are reading.
+//
+// It exists because this file graded `ab-ship-mimo-02` `RENDER=yes` and that app,
+// once deployed, failed for a real user on the very first click — see
+// `UNCONSENTED` in `_cdp.mjs` for the defect, the three reasons the default arm is
+// structurally blind to it, and the measurement that the split is not a
+// per-vendor story.
+import { launch, cdp, openPage, parseScopes, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, HOST_PICKS_LABEL, HOST_ARM, UNCONSENTED, CONSENT_MESSAGE, seededScopes, CLICKABLES, labelExpr, sleep } from './_cdp.mjs';
 
 const TARGET = process.argv[2];
 if (!TARGET) {
@@ -109,6 +122,20 @@ const PROMPT_TEXT = 'a red cube on a white table';
  */
 const PREREQ_CLICK_LIMIT = 4;
 const PREREQ_SETTLE_MS = 400;
+/**
+ * How long the UNCONSENTED arm waits for a consent ask after the Generate click
+ * before reading the ledger.
+ *
+ * 🔴 IT IS A SETTLE, NOT A `waitFor`, AND THAT IS DELIBERATE. A `waitFor` would
+ * burn the full `WAIT_MS` on every app that never asks — which in this arm is the
+ * expected FAILING case, so the common path would be the slow one. More
+ * importantly, an ask is SYNCHRONOUS from the click on every shape measured (the
+ * SDK's `requestConsent` is a plain `sendMessage`, and the two consent-first
+ * fixtures call it in the click handler before any await), so a long wait buys
+ * nothing a short one does not already have. The four `PREREQ_SETTLE_MS` windows
+ * step 6 may already have spent are on top of this.
+ */
+const CONSENT_SETTLE_MS = 1200;
 
 // A recorder for every value `[data-testid="status"]` ever holds, installed
 // BEFORE the click. 🔴 Polling cannot do this job: the machine may pass through
@@ -163,7 +190,16 @@ async function main() {
   const evidence = {
     target: TARGET, url, prompt: PROMPT_TEXT,
     hostInit: SEND_HOST_INIT, hostViewer: HOST_VIEWER_LABEL,
-    hostScopes: SCOPES.join(',') || 'none',
+    // 🔴 TWO SCOPE FIELDS, NOT ONE, AND `oracle.sh` CHECKS A DIFFERENT SEAM WITH
+    // EACH. `hostScopesDeclared` is the argument that crossed the process
+    // boundary — it must equal the manifest's declaration, whatever arm is
+    // running, which is what catches an assertion that ignored its argument.
+    // `hostScopes` is what the BLOCK WAS SHOWN, so on the unconsented arm it is
+    // `none`; comparing THAT against the manifest would make the arm look like a
+    // harness defect. Both come from `_cdp.mjs` rather than being recomputed here.
+    hostScopesDeclared: SCOPES.join(',') || 'none',
+    hostScopes: seededScopes(SCOPES).join(',') || 'none',
+    hostArm: HOST_ARM,
   };
   let pass = false;
   let reason = null;
@@ -193,9 +229,26 @@ async function main() {
     // per-cell evidence that the generation the app just attempted could not have
     // completed — rather than a promise in a docblock that nothing checks.
     evidence.hostRefused = seen.refused.join(',') || 'none';
+    // 🔴 EVERY FIRE-AND-FORGET MESSAGE THE BLOCK SENT, ON BOTH ARMS. Nothing
+    // answered any of them (see `blockMessageSource`), so this adds no capability
+    // — it is pure evidence, and it is the field that makes "this green app never
+    // asked for consent" visible on a DEFAULT-arm cell instead of only to the arm
+    // that goes looking.
+    evidence.hostMessages = seen.messages.join(',') || 'none';
+    // The decided fact of the unconsented arm, reported on both so a reader can
+    // compare the same trial across arms without re-parsing `hostMessages`.
+    evidence.consentRequested = seen.messages.some(
+      (m) => m === CONSENT_MESSAGE || m.startsWith(`${CONSENT_MESSAGE}:`));
     evidence.pickerShim = `${HOST_PICKS_LABEL}:docs=${page.shim.documents},sites=${page.shim.sites}` +
       (page.shim.unmatched ? `,unmatched=${page.shim.unmatched}` : '') +
       (page.shim.skipped ? `,skipped=${page.shim.skipped}` : '');
+    // 🔴 ITS OWN FIELD, NOT A SUFFIX ON `pickerShim`. The two patches fail
+    // independently and regrade different apps; a reader who sees
+    // `messageShim: sites=0,unmatched=1` knows a consent ask could not have been
+    // OBSERVED, which is a completely different finding from a picker that could
+    // not be ANSWERED.
+    evidence.messageShim = `sites=${page.shim.messageSites}` +
+      (page.shim.messageUnmatched ? `,unmatched=${page.shim.messageUnmatched}` : '');
   };
 
   /**
@@ -226,6 +279,101 @@ async function main() {
    * — is likewise a verdict, because none of those are what an unanswered pick does.
    */
   const pickerBlind = () => !!page && page.shim.unmatched > 0;
+
+  /**
+   * TRUE when this oracle served a bundle carrying the SDK's inline transport and
+   * could not instrument a single one of its `sendMessage` no-ops.
+   *
+   * 🔴 THE SAME HAZARD AS `pickerBlind`, ONE AXIS OVER, AND IT REGRADES THE
+   * DEFECT THIS ARM WAS BUILT FOR. If the `sendMessage` needle stops matching — a
+   * bundler reshapes the method, the SDK implements it for real — then a consent
+   * ask is never RECORDED, `consentRequested` is false, and the unconsented arm
+   * reads `no`: byte-identical to the verdict a consent-blind app earns, and
+   * attributed to the model. So an unconsented run that saw no ask on a bundle it
+   * could not instrument is `unmeasured`, not `no`.
+   *
+   * ⚠ IT DEGRADES ONE OUTCOME ONLY. A blind run that DID somehow see an ask is
+   * reported (nothing was harmed), and a blind run that failed earlier — no
+   * prompt, the wrong resting word, no Post control — is still a verdict, because
+   * none of those are what an unobserved message does. `messageShim` carries
+   * `unmatched=` on the cell either way.
+   */
+  const consentBlind = () => !!page && page.shim.messageUnmatched > 0;
+
+  /**
+   * The DEFAULT arm's steps 6-tail and 7: the gate must open and the Generate
+   * click must drive the status machine to `generating`.
+   *
+   * 🔴 IT IS A FUNCTION SO THE TWO ARMS ARE SIBLINGS RATHER THAN ONE BEING THE
+   * EARLY-RETURN OF THE OTHER. Its body is UNCHANGED from before the unconsented
+   * arm existed — including the `pickerBlind` unmeasured branch and the
+   * `slice(beforeClick)` scoping — because the standing requirement on this change
+   * is that no fixture's DEFAULT verdict moves. A reader comparing it against
+   * `origin/main` should find only the wrapping.
+   */
+  const gradeTheGenerateClick = async () => {
+    if (evidence.generateDisabled === true) {
+      // 🔴 THE ONE PLACE A `no` IS NOT SAFE TO EMIT. A gate that did not open,
+      // on a page whose inline transport this oracle could not instrument, is
+      // EXACTLY the signature an unanswerable pick produces — so the honest
+      // report is "nothing was measured", not "the model did not build the app".
+      // `oracle.sh` renders exit 2 as `RENDER=unmeasured`, which is the state it
+      // already keeps for precisely this confound.
+      if (pickerBlind()) {
+        unmeasured = true;
+        throw new Error(`harness error: the "${GENERATE_LABEL}" control is still disabled with ` +
+          `the prompt typed, and this oracle could not instrument ${page.shim.unmatched} ` +
+          `response(s) carrying the SDK's inline transport (${evidence.pickerShim}) — so a host ` +
+          `resource pick could not have been answered here. That is an instrument failure, not a ` +
+          `verdict about the block: patchInlineTransport's needle no longer matches this bundle's ` +
+          `spelling of the stub. Clicked ${JSON.stringify(evidence.prereqClicks)}.`);
+      }
+      throw new Error(`the "${GENERATE_LABEL}" control is still disabled with the prompt typed` +
+        ` (clicked ${evidence.prereqClicks.length} host affordance(s): ` +
+        `${JSON.stringify(evidence.prereqClicks)}; host answered ${evidence.hostAnswered})`);
+    }
+    // Where the recorder's sequence stood BEFORE the Generate click. Everything
+    // after this index is attributable to that click and nothing else — see the
+    // predicate at the end of step 7.
+    const beforeClick = JSON.parse(await page.evalJs(READ_RECORDER)).length;
+    evidence.statusBeforeClick = await page.evalJs(
+      `(document.querySelector('${SEL_STATUS}').textContent || '').trim()`);
+
+    // ── step 7: click Generate, and grade only what follows the click ────────
+    const clicked = await page.evalJs(`(() => {
+      const hit = ${labelExpr(GENERATE_LABEL)};
+      if (!hit) return null;
+      hit.click();
+      return true;
+    })()`);
+    if (!clicked) throw new Error(`the "${GENERATE_LABEL}" control vanished before it could be clicked`);
+
+    await page.waitFor(
+      `(window.__dogfoodStatusSeen || []).slice(${beforeClick}).length > 0`,
+      `the status to move after clicking ${GENERATE_LABEL}`);
+    const seq = JSON.parse(await page.evalJs(READ_RECORDER));
+    // 🔴 `observed` IS THE WHOLE SEQUENCE, NOT THE FINAL VALUE. The stub host
+    // rejects the request, so a correct app lands on its own failure state a
+    // moment later; reporting only where it ended would make every correct app
+    // look broken. The sequence shows the transition that actually matters.
+    evidence.observed = seq.join('>');
+    // 🔴 AFTER THE CLICK, NOT ANYWHERE IN THE SEQUENCE. Step 6 may now click other
+    // controls while the recorder is live, so `seq.includes(STATUS_BUSY)` would
+    // accept an app whose PICKER button, not its Generate button, drove the
+    // machine. Slicing at `beforeClick` keeps the verdict a claim about Generate.
+    // For a cell that clicked nothing in step 6 — every arm that passed before
+    // this existed — the slice is the whole post-click tail and the predicate is
+    // unchanged.
+    pass = seq.slice(beforeClick).includes(STATUS_BUSY);
+    if (!pass) {
+      reason = `the status never read ${JSON.stringify(STATUS_BUSY)} after the ` +
+        `${GENERATE_LABEL} click; it went ${JSON.stringify(evidence.observed)}`;
+    }
+    // Re-read: the Generate click is what fires the workflow requests, so the
+    // refusal list is only complete AFTER it. The earlier call is for the
+    // still-disabled throw above, which happens before any of that.
+    await captureHostEvidence();
+  };
 
   try {
     page = await openPage(c, url, { scopes: SCOPES });
@@ -313,67 +461,50 @@ async function main() {
       }
     }
     await captureHostEvidence();
-    if (evidence.generateDisabled === true) {
-      // 🔴 THE ONE PLACE A `no` IS NOT SAFE TO EMIT. A gate that did not open,
-      // on a page whose inline transport this oracle could not instrument, is
-      // EXACTLY the signature an unanswerable pick produces — so the honest
-      // report is "nothing was measured", not "the model did not build the app".
-      // `oracle.sh` renders exit 2 as `RENDER=unmeasured`, which is the state it
-      // already keeps for precisely this confound.
-      if (pickerBlind()) {
-        unmeasured = true;
-        throw new Error(`harness error: the "${GENERATE_LABEL}" control is still disabled with ` +
-          `the prompt typed, and this oracle could not instrument ${page.shim.unmatched} ` +
-          `response(s) carrying the SDK's inline transport (${evidence.pickerShim}) — so a host ` +
-          `resource pick could not have been answered here. That is an instrument failure, not a ` +
-          `verdict about the block: patchInlineTransport's needle no longer matches this bundle's ` +
-          `spelling of the stub. Clicked ${JSON.stringify(evidence.prereqClicks)}.`);
+
+    // ── the UNCONSENTED arm's own step 7, and it grades a different thing ─────
+    // 🔴 IT BRANCHES *BEFORE* THE STILL-DISABLED THROW BELOW, AND THAT IS THE
+    // WHOLE POINT. On an unconsented token, an app that DISABLES Generate until
+    // the scope arrives is CORRECT — and in this arm the scope can never arrive,
+    // because a grant would need a `TOKEN_REFRESH` push and inline mode receives
+    // none (see `CONSENT_MESSAGE`). Reaching the default arm's throw would fail
+    // exactly the apps that handle the state best.
+    if (UNCONSENTED) {
+      // Click Generate when it is live; a disabled one is a legitimate design
+      // here, so its state is REPORTED and decides nothing.
+      evidence.generateClicked = evidence.generateDisabled !== true
+        && !!(await page.evalJs(`(() => {
+          const hit = ${labelExpr(GENERATE_LABEL)};
+          if (!hit || hit.disabled === true || hit.getAttribute('aria-disabled') === 'true') return false;
+          hit.click();
+          return true;
+        })()`));
+      await sleep(CONSENT_SETTLE_MS);
+      await captureHostEvidence();
+      try { evidence.observed = JSON.parse(await page.evalJs(READ_RECORDER)).join('>'); } catch { /* none */ }
+      pass = evidence.consentRequested === true;
+      if (!pass) {
+        // 🔴 UNMEASURED BEFORE `no`, for the same reason `pickerBlind` exists: an
+        // ask this oracle could not have OBSERVED and an app that never asked are
+        // the same bare `no`, and only one of them is about the block.
+        if (consentBlind()) {
+          unmeasured = true;
+          throw new Error(`harness error: no ${CONSENT_MESSAGE} was observed on the UNCONSENTED arm, ` +
+            `and this oracle could not instrument ${page.shim.messageUnmatched} response(s) carrying ` +
+            `the SDK's inline transport (${evidence.messageShim}) — so an ask could not have been ` +
+            `SEEN here. That is an instrument failure, not a verdict about the block: ` +
+            `patchInlineTransport's sendMessage needle no longer matches this bundle.`);
+        }
+        reason = `the block never asked the host for consent on an UNCONSENTED token ` +
+          `(scopes=none, viewer signed in): Generate was ` +
+          `${evidence.generateDisabled === true ? 'disabled and nothing else asked either'
+            : `clicked and sent ${evidence.hostMessages}`}. ` +
+          `A real first-time viewer of this block gets whatever its no-consent path does — ` +
+          `for ab-ship-mimo-02 that was "Generation failed. Please try again.".`;
       }
-      throw new Error(`the "${GENERATE_LABEL}" control is still disabled with the prompt typed` +
-        ` (clicked ${evidence.prereqClicks.length} host affordance(s): ` +
-        `${JSON.stringify(evidence.prereqClicks)}; host answered ${evidence.hostAnswered})`);
+    } else {
+      await gradeTheGenerateClick();
     }
-    // Where the recorder's sequence stood BEFORE the Generate click. Everything
-    // after this index is attributable to that click and nothing else — see the
-    // predicate at the end of step 7.
-    const beforeClick = JSON.parse(await page.evalJs(READ_RECORDER)).length;
-    evidence.statusBeforeClick = await page.evalJs(
-      `(document.querySelector('${SEL_STATUS}').textContent || '').trim()`);
-
-    // ── step 7: click Generate, and grade only what follows the click ────────
-    const clicked = await page.evalJs(`(() => {
-      const hit = ${labelExpr(GENERATE_LABEL)};
-      if (!hit) return null;
-      hit.click();
-      return true;
-    })()`);
-    if (!clicked) throw new Error(`the "${GENERATE_LABEL}" control vanished before it could be clicked`);
-
-    await page.waitFor(
-      `(window.__dogfoodStatusSeen || []).slice(${beforeClick}).length > 0`,
-      `the status to move after clicking ${GENERATE_LABEL}`);
-    const seq = JSON.parse(await page.evalJs(READ_RECORDER));
-    // 🔴 `observed` IS THE WHOLE SEQUENCE, NOT THE FINAL VALUE. The stub host
-    // rejects the request, so a correct app lands on its own failure state a
-    // moment later; reporting only where it ended would make every correct app
-    // look broken. The sequence shows the transition that actually matters.
-    evidence.observed = seq.join('>');
-    // 🔴 AFTER THE CLICK, NOT ANYWHERE IN THE SEQUENCE. Step 6 may now click other
-    // controls while the recorder is live, so `seq.includes(STATUS_BUSY)` would
-    // accept an app whose PICKER button, not its Generate button, drove the
-    // machine. Slicing at `beforeClick` keeps the verdict a claim about Generate.
-    // For a cell that clicked nothing in step 6 — every arm that passed before
-    // this existed — the slice is the whole post-click tail and the predicate is
-    // unchanged.
-    pass = seq.slice(beforeClick).includes(STATUS_BUSY);
-    if (!pass) {
-      reason = `the status never read ${JSON.stringify(STATUS_BUSY)} after the ` +
-        `${GENERATE_LABEL} click; it went ${JSON.stringify(evidence.observed)}`;
-    }
-    // Re-read: the Generate click is what fires the workflow requests, so the
-    // refusal list is only complete AFTER it. The earlier call is for the
-    // still-disabled throw above, which happens before any of that.
-    await captureHostEvidence();
   } catch (e) {
     reason = e.message;
     // 🔴 REPORT WHAT WAS ON THE PAGE WHEN IT FAILED. A bare `no` is the

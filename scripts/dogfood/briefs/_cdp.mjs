@@ -55,6 +55,14 @@
 // and the exact boundary of what the answer buys the block (a BRANCH; never a
 // capability — every non-picker request still rejects with the SDK's own error).
 //
+// 🔴 AND SINCE 2026-09-25 IT CAN PRESENT AN *UNCONSENTED* ONE, WHICH IS THE
+// STATE EVERY NEW USER IS IN. `CIVITAI_ASSERT_UNCONSENTED=1` seeds `token.scopes`
+// EMPTY — the value this file seeded unconditionally before #690 — and switches
+// the assertion's predicate from "did the machine reach `generating`" to "did the
+// block ASK THE HOST FOR CONSENT". It is an ARM, not a control: it takes the
+// scope seed away *and* changes the question. See `UNCONSENTED` for the defect
+// that made it necessary and `blockMessageSource` for how an ask is observed.
+//
 // 🔴 AND IT PRESENTS A SIGNED-IN VIEWER, BECAUSE AN ANONYMOUS-ONLY HOST GRADES
 // A BRANCH THE BRIEF CANNOT BE SATISFIED IN. This used to seed `viewer: null`
 // with an "inert on purpose" comment, and the cost was measured on
@@ -184,6 +192,53 @@ export const HOST_VIEWER = ANON_VIEWER
   ? null
   : { id: 2, username: 'dogfood-oracle-viewer', signedIn: true };
 
+// ── the unconsented arm ──────────────────────────────────────────────────────
+
+/**
+ * Present the viewer's DEFAULT state — signed in, and having granted the block
+ * NOTHING — instead of the already-consented one.
+ *
+ * 🔴 WHY THIS EXISTS: THE ORACLE GRADED A LIVE, BROKEN APP `RENDER=yes`.
+ * `ab-ship-mimo-02` was graded green, submitted, approved and deployed to
+ * https://ab-img-poster.civit.ai/, and then FAILED FOR A REAL USER: clicking
+ * Generate produced `Generation failed. Please try again.` and the operator had
+ * to find "review permissions" by hand. Its `handleGenerate` calls `estimate`
+ * and `submit` without ever requesting consent, and its catch branches on
+ * `signInRequired` and `declined` only — so a missing-scope refusal falls
+ * through to the generic error string (src/App.jsx, measured in
+ * `dogfood-ab-ship-mimo-02` 2026-09-25).
+ *
+ * 🔴 AND THE ORACLE COULD NOT SEE IT, FOR THREE COMPOUNDING REASONS:
+ *   - `InlineTransport` rejects every request, so "generation fails for
+ *     everyone" and "generation works" leave the IDENTICAL status trace
+ *     `ready>generating>ready`. The assertion grades the status word, and both
+ *     apps produce it.
+ *   - #690 seeds `token.scopes` from the manifest and #708 answers resource
+ *     picks. Both fixed real false negatives — and TOGETHER they mean an app
+ *     that never asks for consent is indistinguishable from one that asks
+ *     correctly, because the harness has already granted what the ask was for.
+ *   - EVERY NEW USER STARTS UNCONSENTED. That is the DEFAULT state, and the
+ *     oracle exclusively graded the already-consented path.
+ *
+ * ⚠ AND IT IS NOT A VENDOR STORY. Measured over all five built fixtures
+ * (2026-09-25): two of the three consent-correct apps and two of the three
+ * consent-blind ones come from the same two models. The discriminator is the
+ * app, not who wrote it — see the matrix in `genpost.md`.
+ *
+ * 🔴 IT REMOVES CAPABILITY, IT NEVER ADDS ANY. `[]` is the list this file seeded
+ * unconditionally before #690, `token.raw` is still `''`, and the arm answers no
+ * new request type — it only WATCHES one that was already a no-op. So the
+ * invariant #690 and #708 were careful about is not merely preserved here, it is
+ * strictly stronger: this arm cannot make anything succeed that the default arm
+ * could not.
+ */
+export const UNCONSENTED = process.env.CIVITAI_ASSERT_UNCONSENTED === '1';
+
+/** Which arm the cell was graded on. On the summary line and in the assertion's
+ * JSON, because two runs of the same trial now legitimately disagree and a
+ * verdict read without this cannot tell which question it answers. */
+export const HOST_ARM = UNCONSENTED ? 'unconsented' : 'consented';
+
 /**
  * Parse the comma-separated scope list an assertion was handed into the array
  * `token.scopes` is. Empty, absent or all-whitespace means "this block declared
@@ -247,11 +302,17 @@ export function parseScopes(csv) {
  * and a bootstrap where the two disagree is a state no host produces.
  */
 export function hostBootstrap(scopes = []) {
+  // 🔴 THE UNCONSENTED ARM OVERRIDES THE SEED HERE, AT THE ONE PLACE THE LIST
+  // BECOMES THE BLOCK'S. Filtering it in the assertion instead would leave the
+  // arm's own `hostScopes` field and the object on the window two independent
+  // reads that can disagree — the seam `oracle.sh`'s scope guard exists to
+  // catch. `seededScopes` below is what a cell reports, so the two cannot drift.
+  const seeded = UNCONSENTED ? [] : scopes;
   return {
     blockInstanceId: 'dogfood-oracle-instance',
     blockId: 'dogfood-oracle-block',
     appId: 'dogfood-oracle-app',
-    token: { raw: '', scopes: [...scopes], expiresAt: new Date(0).toISOString() },
+    token: { raw: '', scopes: [...seeded], expiresAt: new Date(0).toISOString() },
     context: {
       slotId: 'app.page',
       entityType: 'none',
@@ -266,6 +327,19 @@ export function hostBootstrap(scopes = []) {
     theme: 'light',
     renderMode: 'iframe',
   };
+}
+
+/**
+ * The scope list the block WAS ACTUALLY SHOWN, derived from the same call the
+ * bootstrap is built with rather than re-implemented beside it.
+ *
+ * `oracle.sh` compares the manifest's declaration against `hostScopesDeclared`
+ * (the argument crossing the process boundary) and this against the arm — so an
+ * arm that silently failed to empty the list is caught rather than reported as a
+ * consent verdict earned on a consented token.
+ */
+export function seededScopes(scopes = []) {
+  return hostBootstrap(scopes).token.scopes;
 }
 
 export const SEND_HOST_INIT = process.env.CIVITAI_ASSERT_NO_HOST !== '1';
@@ -313,6 +387,45 @@ export const INLINE_STUB_MESSAGE = 'InlineTransport.sendRequest is not implement
  * rather than spelled twice: the source rewrite and the shim have to agree or the
  * patch silently falls back to the original rejection. */
 export const INLINE_HOST_GLOBAL = '__CIVITAI_DOGFOOD_INLINE_HOST__';
+
+/**
+ * The page global the patched `sendMessage` reports to. SEPARATE from
+ * {@link INLINE_HOST_GLOBAL} on purpose: that one ANSWERS a request, this one
+ * only WATCHES a fire-and-forget message. Sharing one entry point would put a
+ * path that must never answer anything through a function whose whole job is
+ * answering, which is the shape a later edit widens by accident.
+ */
+export const INLINE_MESSAGE_GLOBAL = '__CIVITAI_DOGFOOD_INLINE_MESSAGE__';
+
+/**
+ * The outbound message type a consent ask carries, read off the SDK rather than
+ * guessed.
+ *
+ * 🔴 A CONSENT ASK IS A `sendMessage`, NOT A `sendRequest`, AND THAT IS WHY
+ * #708's SHIM COULD NOT SEE IT. `useRequestConsent` (blocks-react
+ * `src/hooks/useRequestConsent.ts`) does exactly two things:
+ *
+ *     armConsentRefusalLatch(transport);
+ *     transport.sendMessage({ type: 'REQUEST_CONSENT', ...(payload ? { payload } : {}) });
+ *
+ * and `InlineTransport.sendMessage` is an INTENTIONAL NO-OP in v1 — an empty
+ * body with a `// v2 will invoke platform APIs directly` comment in it. So in
+ * this oracle a consent ask has historically produced NOTHING: no request, no
+ * rejection, no DOM change, no console line. An app that asks and an app that
+ * never asks were byte-identical to the instrument.
+ *
+ * 🔴 AND THE ORACLE MUST NOT "ANSWER" IT, BECAUSE THE HOST DOES NOT EITHER. The
+ * SDK is explicit — "Fire-and-forget: the host doesn't reply. On grant the host
+ * re-mints the block token and pushes a TOKEN_REFRESH" — and
+ * `InlineTransport.onMessage` returns a no-op unsubscribe, so inline mode
+ * receives no pushes at all and a `TOKEN_REFRESH` could not be delivered even if
+ * this oracle invented one. Granting is therefore not merely undesirable here,
+ * it is UNREACHABLE; and it would also be the one thing the invariant forbids,
+ * since a granted scope is what stands between a block and a spend. **Observing
+ * is both necessary and sufficient: the brief's question is whether the app
+ * ASKED, and the answer it would have got changes nothing it can complete.**
+ */
+export const CONSENT_MESSAGE = 'REQUEST_CONSENT';
 
 /**
  * The request types this oracle will ANSWER. Everything else — every workflow
@@ -417,9 +530,46 @@ export const HOST_RESOURCE_PICKS = {
  * transport at all, or the SDK reworded its stub. Both are reported on the cell
  * (`pickerShim`) rather than assumed, because a silent 0 here and a block that
  * never opens a picker produce the same green.
+ *
+ * 🔴 IT ALSO INSTRUMENTS `sendMessage`, AND THAT HALF ONLY WATCHES. See
+ * {@link CONSENT_MESSAGE} for why a consent ask arrives there rather than on
+ * `sendRequest`. `messageHits` is counted and reported separately from `hits`
+ * because the two needles can fail independently and their consequences differ:
+ * a missed `sendRequest` regrades a picker-gated app, a missed `sendMessage`
+ * regrades a consent-correct one.
+ *
+ * 🔴 THE MESSAGE NEEDLE INSERTS, IT NEVER REPLACES, AND IT REFUSES A NON-EMPTY
+ * BODY. It matches only the opening brace of a `sendMessage` whose body is
+ * whitespace and `//` comments (the published `dist` no-op is a comment, not an
+ * empty `{}` — measured on blocks-react 0.57.1) and whose class carries the
+ * stub message within 400 characters. So if the SDK ever IMPLEMENTS
+ * `sendMessage` for real, this stops matching and says so via `messageUnmatched`
+ * — rather than silently deleting the implementation, which a body-replacing
+ * patch would do. Measured 2026-09-25 across 7 real spellings (five trial
+ * bundles from blocks-react 0.53.1/0.57.x, the published `dist`, the TS source):
+ * 1 hit each, and 0 on a real-bodied `sendMessage`, on a class with no stub
+ * nearby, on one 500 characters away, and on a v2-style implementation.
  */
 export function patchInlineTransport(code) {
   const src = String(code);
+  // Built per call, for the same `lastIndex` reason as the request needle.
+  //
+  // ⚠ `arguments` rather than a captured parameter name, and the same
+  // `typeof`-guard as the request patch: the name is the minifier's (measured
+  // `sendMessage(r)`, `sendMessage(e)`, `sendMessage(_message)`), while
+  // `arguments[0]` is name-independent.
+  const msgNeedle = new RegExp(
+    String.raw`(sendMessage\s*\(\s*[^)]*\)\s*(?::\s*void\s*)?\{)`
+    + String.raw`(?=(?:\s|//[^\n]*)*\}[\s\S]{0,400}?`
+    + INLINE_STUB_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    + `)`,
+    'g');
+  let messageHits = 0;
+  const withMessages = src.replace(msgNeedle, (_m, open) => {
+    messageHits += 1;
+    const g = `globalThis.${INLINE_MESSAGE_GLOBAL}`;
+    return `${open}${g}&&${g}(typeof arguments==="undefined"?undefined:arguments[0]);`;
+  });
   // Built fresh per call: a module-level /g regex carries `lastIndex` between
   // callers, which is how a second file silently starts matching from an offset.
   // 🔴 `new` IS OPTIONAL AND THE QUOTE CAN BE A BACKTICK, BOTH MEASURED RATHER
@@ -440,12 +590,17 @@ export function patchInlineTransport(code) {
     + String.raw`\1\s*\)\s*\)`,
     'g');
   let hits = 0;
-  const out = src.replace(needle, (original) => {
+  const out = withMessages.replace(needle, (original) => {
     hits += 1;
     const g = `globalThis.${INLINE_HOST_GLOBAL}`;
     return `(${g}?${g}(typeof arguments==="undefined"?undefined:arguments[0]):${original})`;
   });
-  return { code: hits ? out : src, hits };
+  // 🔴 EITHER needle having matched means the body must be delivered. Returning
+  // `src` whenever `hits === 0` — which is what this did while there was only
+  // one needle — would silently throw away a `sendMessage` patch on any bundle
+  // whose reject expression a minifier had reshaped, i.e. exactly the bundle the
+  // blindness counters exist for.
+  return { code: (hits || messageHits) ? out : src, hits, messageHits };
 }
 
 /**
@@ -503,6 +658,42 @@ export function inlineHostSource() {
     }
     refused.push(type || '(untyped)');
     return Promise.reject(new Error(STUB));
+  };
+})();`;
+}
+
+/**
+ * The page-side recorder the patched `sendMessage` reports to. Runs before the
+ * block's first script, like the bootstrap and the host shim.
+ *
+ * 🔴 IT ANSWERS NOTHING AND RETURNS NOTHING. `sendMessage` is `void` in the SDK
+ * and a no-op in `InlineTransport`, so the patched method still returns
+ * `undefined` having done nothing the block can observe — this only appends a
+ * type name to an array. That is the entire difference between this and #708's
+ * shim, and it is what makes the unconsented arm incapable of granting a block
+ * anything: there is no reply channel here to grant it on.
+ *
+ * 🔴 AND IT CANNOT THROW INTO THE BLOCK. `sendMessage` was a guaranteed no-op
+ * before this patch; a recorder that threw would turn it into a throw, which is
+ * a behaviour change on the DEFAULT arm too. Everything is inside a try/catch
+ * whose catch does nothing.
+ *
+ * Each entry is `TYPE` or `TYPE:<scopes hint>`, because the hint is the half
+ * `resolveUngrantableConsentNotice` keys the refusal path on — a bare
+ * `requestConsent()` opens the dialog but can never receive a
+ * `CONSENT_UNAVAILABLE`, so a cell that could not tell the two apart would hide
+ * a real (if lesser) defect.
+ */
+export function blockMessageSource() {
+  return `(() => {
+  var sent = [];
+  window.__dogfoodBlockMessages = sent;
+  window.${INLINE_MESSAGE_GLOBAL} = function (message) {
+    try {
+      var type = (message && message.type) || '(untyped)';
+      var hint = message && message.payload && message.payload.scopes;
+      sent.push(Array.isArray(hint) ? type + ':' + hint.join('+') : type);
+    } catch (e) { /* a recorder must never change what sendMessage does */ }
   };
 })();`;
 }
@@ -808,21 +999,29 @@ async function patchPausedResponse(c, sessionId, params, shim) {
     if (params.responseErrorReason || params.responseStatusCode === undefined) return cont();
     const { body, base64Encoded } = await c.send('Fetch.getResponseBody', { requestId }, sessionId);
     const text = base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : String(body);
-    const { code, hits } = patchInlineTransport(text);
-    if (!hits) {
-      // 🔴 THE INSTRUMENT'S OWN FAILURE SIGNAL, AND IT IS WHY `sites=0` IS NOT
-      // ENOUGH ON ITS OWN. A response that carries the SDK's stub MESSAGE but
-      // matched no needle is an inline transport this oracle could not instrument
-      // — the message is a string literal a minifier must preserve, while the
-      // expression around it is not (measured: 0.53.1 emits `Error(\`…\`)`, 0.57.2
-      // `new Error("…")`). Without this counter that state is indistinguishable
-      // from "this block does not bundle the SDK at all", and the two have
-      // opposite consequences for a `no`. See `pickerBlind` in genpost.assert.mjs.
-      if (text.includes(INLINE_STUB_MESSAGE)) shim.unmatched += 1;
-      return cont();
+    const { code, hits, messageHits } = patchInlineTransport(text);
+    // 🔴 THE TWO NEEDLES ARE COUNTED INDEPENDENTLY, AND BEFORE ANY RETURN. They
+    // fail for different reasons and their failures regrade different apps: a
+    // missed `sendRequest` regrades a picker-gated app (`pickerBlind`), a missed
+    // `sendMessage` regrades a consent-correct one (`consentBlind`). Folding them
+    // into one counter would let either hide behind the other's success.
+    //
+    // 🔴 THE INSTRUMENT'S OWN FAILURE SIGNAL, AND IT IS WHY `sites=0` IS NOT
+    // ENOUGH ON ITS OWN. A response that carries the SDK's stub MESSAGE but
+    // matched no needle is an inline transport this oracle could not instrument —
+    // the message is a string literal a minifier must preserve, while the
+    // expression around it is not (measured: 0.53.1 emits `Error(\`…\`)`, 0.57.2
+    // `new Error("…")`). Without these counters that state is indistinguishable
+    // from "this block does not bundle the SDK at all", and the two have opposite
+    // consequences for a `no`.
+    if (text.includes(INLINE_STUB_MESSAGE)) {
+      if (!hits) shim.unmatched += 1;
+      if (!messageHits) shim.messageUnmatched += 1;
     }
+    if (!hits && !messageHits) return cont();
     shim.documents += 1;
     shim.sites += hits;
+    shim.messageSites += messageHits;
     await c.send('Fetch.fulfillRequest', {
       requestId,
       responseCode: params.responseStatusCode,
@@ -881,9 +1080,21 @@ export async function openPage(c, url, { scopes = [] } = {}) {
   // document; `unmatched` counts responses that carry the SDK's stub message in a
   // spelling no needle matched — the instrument-blind state; `skipped` counts
   // responses the interception could not read at all.
-  const shim = { documents: 0, sites: 0, unmatched: 0, skipped: 0 };
+  // `messageSites` / `messageUnmatched` are the same pair for the `sendMessage`
+  // half — the one a consent ask arrives on. See `CONSENT_MESSAGE`.
+  const shim = {
+    documents: 0, sites: 0, unmatched: 0, skipped: 0,
+    messageSites: 0, messageUnmatched: 0,
+  };
   if (SEND_HOST_PICKS) {
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: inlineHostSource() }, sessionId);
+    // 🔴 INSTALLED ON BOTH ARMS, NOT ONLY THE UNCONSENTED ONE. It answers
+    // nothing and returns nothing, so it cannot move a verdict; and a default-arm
+    // cell that carries `messages=` is how a reader sees that a green app never
+    // asked for consent at all — the evidence that made this arm necessary. Gating
+    // it on the arm would mean the only runs able to see the defect are the ones
+    // already looking for it.
+    await c.send('Page.addScriptToEvaluateOnNewDocument', { source: blockMessageSource() }, sessionId);
     c.on('Fetch.requestPaused', (params, evSessionId) => {
       if (evSessionId && evSessionId !== sessionId) return;
       return patchPausedResponse(c, sessionId, params, shim);
@@ -944,15 +1155,18 @@ export async function openPage(c, url, { scopes = [] } = {}) {
    * What the host shim was asked for and what it did about it, read out of the
    * page. `answered` is the picker requests it satisfied; `refused` is every other
    * request type it turned down with the SDK's own error — which is the half that
-   * SHOWS, per cell, that the money path still cannot complete.
+   * SHOWS, per cell, that the money path still cannot complete. `messages` is
+   * every FIRE-AND-FORGET message the block sent, which nothing answered — the
+   * ledger a consent ask lands in. See `CONSENT_MESSAGE`.
    */
   const hostRequests = async () => {
     try {
       return JSON.parse(await evalJs(`JSON.stringify({
         answered: window.__dogfoodHostPicks || [],
         refused: window.__dogfoodHostRefused || [],
+        messages: window.__dogfoodBlockMessages || [],
       })`));
-    } catch { return { answered: [], refused: [] }; }
+    } catch { return { answered: [], refused: [], messages: [] }; }
   };
   return { sessionId, evalJs, waitFor, typeInto, bodyHtml, hostRequests, shim };
 }
