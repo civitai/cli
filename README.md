@@ -829,8 +829,12 @@ template) already satisfy all of it.
 `Declaring scopes: …` and `Declaring auth: oauth` so you see what the tunnel
 token will carry. With `"auth": "oauth"` the host hands your local app a real
 OAuth token at any app status, including before you ever submit; without it, or
-with an older manifest, it gets the block token. A missing or malformed
-manifest sends neither and is never fatal.
+with an older manifest, it gets the block token. **Neither is ever fatal:** a
+missing, unreadable or malformed manifest simply declares nothing (you still need
+a `blockId` — from that manifest or from the argument). An `auth` that is neither
+`block-token` nor `oauth` — a typo, or the wrong case — is **dropped with a
+warning** rather than sent, because the tunnel does not run the validator that
+would otherwise report it; `civitai app validate` names the finding.
 
 **Flags.** The defaults match what the scaffold's `npm run dev:tunnel` binds, so
 most authors pass none of these:

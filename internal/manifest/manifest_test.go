@@ -1,9 +1,12 @@
 package manifest
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	cli "github.com/civitai/cli"
 )
 
 func write(t *testing.T, dir, content string) {
@@ -123,19 +126,86 @@ func TestLoadScopes(t *testing.T) {
 	}
 }
 
+// TestLoadAuth covers EVERY value the vendored schema admits, not just the one
+// this field was added for: a suite that asserts only `oauth` lets a mutant
+// dropping `block-token` from the accepted set pass, which silently deletes that
+// app's `Declaring auth:` transparency line. It also pins the second return,
+// which is the whole difference between "declared nothing" (say nothing) and
+// "declared something we dropped" (warn).
 func TestLoadAuth(t *testing.T) {
-	dir := t.TempDir()
-	write(t, dir, `{"blockId":"x","auth":"oauth"}`)
-	if got := LoadAuth(dir); got != "oauth" {
-		t.Errorf("LoadAuth = %q, want oauth", got)
+	cases := []struct {
+		name           string
+		manifest       string // "" = write no manifest at all
+		wantAuth       string
+		wantUnrecognzd bool
+	}{
+		{name: "oauth", manifest: `{"blockId":"x","auth":"oauth"}`, wantAuth: "oauth"},
+		{name: "block-token", manifest: `{"blockId":"x","auth":"block-token"}`, wantAuth: "block-token"},
+		{name: "unknown value warns", manifest: `{"blockId":"x","auth":"basic"}`, wantUnrecognzd: true},
+		{name: "case mismatch is unknown", manifest: `{"blockId":"x","auth":"OAuth"}`, wantUnrecognzd: true},
+		{name: "empty string is silence", manifest: `{"blockId":"x","auth":""}`},
+		{name: "no auth key is silence", manifest: `{"blockId":"x"}`},
+		{name: "malformed json is silence", manifest: `{"blockId":`},
+		{name: "missing manifest is silence"},
 	}
-	dir2 := t.TempDir()
-	write(t, dir2, `{"blockId":"x","auth":"basic"}`)
-	if got := LoadAuth(dir2); got != "" {
-		t.Errorf("LoadAuth (unknown value) = %q, want empty", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.manifest != "" {
+				write(t, dir, tc.manifest)
+			}
+			auth, unrecognized := LoadAuth(dir)
+			if auth != tc.wantAuth {
+				t.Errorf("LoadAuth auth = %q, want %q", auth, tc.wantAuth)
+			}
+			if unrecognized != tc.wantUnrecognzd {
+				t.Errorf("LoadAuth unrecognized = %v, want %v", unrecognized, tc.wantUnrecognzd)
+			}
+		})
 	}
-	if got := LoadAuth(t.TempDir()); got != "" {
-		t.Errorf("LoadAuth (missing) = %q, want empty", got)
+}
+
+// TestAuthKindsComeFromTheVendoredSchema is the both-directions guard on the
+// single-sourcing. It fails when the derivation BREAKS (an empty or short set,
+// which would make LoadAuth reject everything and silently stop declaring auth)
+// and equally when the vendored schema's enum GROWS or SHRINKS under it.
+//
+// 🔴 A RED HERE IS NOT A BUG, IT IS THE SIGNAL THIS TEST EXISTS FOR. The schema
+// is re-vendored from the live canonical URL by scripts/check-canonical-schema.sh,
+// so the enum changes without anyone editing Go — and LoadAuth then forwards the
+// new kind automatically, which is correct but undocumented. Update the want list
+// below AND the README's "What the tunnel declares" paragraph, which names the
+// kinds in prose.
+func TestAuthKindsComeFromTheVendoredSchema(t *testing.T) {
+	want := []string{"block-token", "oauth"}
+	got := AuthKinds()
+	if len(got) != len(want) {
+		t.Fatalf("AuthKinds() = %v (%d kinds), want %v (%d).\n"+
+			"An EMPTY/short set means the derivation broke — LoadAuth now admits nothing and the\n"+
+			"tunnel silently stops declaring auth. A LONGER one means the vendored schema's `auth`\n"+
+			"enum grew: LoadAuth already forwards the new kind, so update this want list and the\n"+
+			"README's \"What the tunnel declares\" paragraph.", got, len(got), want, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("AuthKinds()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	// Positive control: prove the set really came from the embedded schema rather
+	// than from a literal in this package, by reading the schema independently.
+	var doc struct {
+		Properties struct {
+			Auth struct {
+				Enum []string `json:"enum"`
+			} `json:"auth"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(cli.SchemaJSON, &doc); err != nil {
+		t.Fatalf("the embedded schema must parse: %v", err)
+	}
+	if len(doc.Properties.Auth.Enum) != len(want) {
+		t.Errorf("schema /properties/auth/enum = %v, want %d entries — the schema and AuthKinds() must be the SAME list",
+			doc.Properties.Auth.Enum, len(want))
 	}
 }
 

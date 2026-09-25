@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/civitai/cli/internal/manifest"
 )
 
 // startDevTunnelRoute is the non-batched tRPC mint route. The forbidden-mint
@@ -165,6 +167,90 @@ func TestAppDevTunnelDeclaresManifestScopes(t *testing.T) {
 	// The dev is shown what the tunnel is requesting (spend-consent transparency).
 	if !strings.Contains(errOut, "Declaring scopes: ai:write:budgeted, user:read:self") {
 		t.Errorf("expected the 'Declaring scopes' transparency line on stderr, got: %s", errOut)
+	}
+}
+
+// TestAppDevTunnelWarnsOnUnrecognizedManifestAuth: an `auth` the vendored schema
+// does not admit (here a typo'd case, carrying an ANSI escape) is DROPPED from the
+// mint — never fatal — but the author is told, because `dev-tunnel` does not run
+// the validator that would otherwise report the typo. Without the warning they get
+// a block token the SDK refuses for a signed-in viewer and no on-screen reason.
+//
+// 🔴 It also pins the property that makes the `Declaring auth:` line safe to print
+// UNSANITIZED: the author's value never reaches the terminal. Relaxing LoadAuth to
+// pass unknown values through would turn that line into an ANSI injection from a
+// crafted manifest, and this test is what goes red.
+func TestAppDevTunnelWarnsOnUnrecognizedManifestAuth(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == startDevTunnelRoute {
+			raw, _ := io.ReadAll(r.Body)
+			gotBody = string(raw)
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{"json": map[string]any{"message": "Dev tunnels are not available"}},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"username": "tester", "id": 7})
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	// The value is an unknown kind AND an ANSI injection attempt (JSON \u001b = ESC,
+	// escaped here so this SOURCE file carries no raw control byte — staticcheck
+	// ST1018 is the only thing that catches those, and `make ci` does not run lint).
+	const m = `{
+  "blockId": "demo",
+  "version": "0.1.0",
+  "name": "Demo",
+  "type": "block",
+  "auth": "\u001b[31mBlockToken",
+  "page": { "path": "/", "title": "Demo" }
+}`
+	if err := os.WriteFile(filepath.Join(dir, "block.manifest.json"), []byte(m), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	port := listenLocal(t)
+	_, errOut, err := run(t, "app", "dev-tunnel", "--port", fmt.Sprint(port))
+
+	// Never fatal on the manifest. Reaching the mint AT ALL is the proof: a fatal
+	// manifest read short-circuits in RunE, long before any request is sent. (Do
+	// not assert on the error text here — the expected 403 contains the word
+	// "auth" inside "Apps-author", which made an earlier version of this guard
+	// fail for the wrong reason.)
+	if !strings.Contains(gotBody, `"blockId":"demo"`) {
+		t.Fatalf("an unrecognised auth must not stop the mint; got body %q, err %v", gotBody, err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "dev tunnels are not available") {
+		t.Errorf("the only expected failure is the dark mint, got: %v", err)
+	}
+	if strings.Contains(gotBody, "declaredAuth") {
+		t.Errorf("an unrecognised auth must not be forwarded: %s", gotBody)
+	}
+	// The author is told, and told what the admitted kinds are.
+	if !strings.Contains(errOut, `ignoring the manifest's "auth"`) {
+		t.Errorf("expected the unrecognised-auth warning on stderr, got: %s", errOut)
+	}
+	for _, kind := range manifest.AuthKinds() {
+		if !strings.Contains(errOut, kind) {
+			t.Errorf("the warning should name the admitted kind %q, got: %s", kind, errOut)
+		}
+	}
+	if !strings.Contains(errOut, "civitai app validate") {
+		t.Errorf("the warning should name the command that reports the finding, got: %s", errOut)
+	}
+	// And the author's own bytes never reach the terminal.
+	if strings.Contains(errOut, "\x1b[31m") || strings.Contains(errOut, "BlockToken") {
+		t.Errorf("the manifest's raw auth value must NEVER be echoed: %q", errOut)
+	}
+	if strings.Contains(errOut, "Declaring auth:") {
+		t.Errorf("a dropped auth must not print a Declaring line: %s", errOut)
 	}
 }
 
