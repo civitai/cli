@@ -358,12 +358,76 @@ bind a debugging port, instead of that surfacing eighty lines into a Go test.
   seeded — in `briefs/genpost.md`; pinned by
   `TestOracleSeedsTheBlocksDeclaredScopes`.
 
+## The ship verdict — the account arm, and the one thing the browser cannot see
+
+`oracle.sh` grades the DOM. A **submission** is server state: it leaves nothing in
+the DOM, the oracle's host emulation rejects every request, and `token.raw` is
+empty — so no browser assertion can ever see one. `ship.verdict.sh` is the other
+instrument.
+
+```bash
+bash ship.verdict.sh <trial-id> <container-user>    # T0 = SUBMITTED
+```
+
+It reads `civitai app status --json` **inside the trial's own container**, with
+the trial's own credential, and counts a row only when all three hold:
+
+1. `status == "pending"` — it is in the moderation queue now
+2. `blockId` ∈ the blockIds in the trial's own `block.manifest.json` files
+3. `submittedAt` inside this trial's run window (`start.t`…`end.t` from its own
+   `transcript.jsonl`, ± `DOGFOOD_SHIP_GRACE_S`, default 300 s)
+
+🔴 **CONJUNCT 2 IS THE WHOLE POINT AND WITHOUT IT THE SCRIPT IS A LIE.** The
+account a credentialed trial authenticates as owns roughly a dozen REAL published
+apps, each with a submission row. A verdict that asked only *"is there a pending
+submission?"* would grade the operator's back catalogue as the trial's success —
+the same "negative control passing for the wrong reason" that has already cost
+this arc two wrong headlines. Conjunct 2 alone is still not enough: it passes on a
+**re-grade** of an older trial, which is what conjunct 3 removes.
+
+🔴 **`RENDER=unmeasured`'s twin: exit 2 is a THIRD STATE AND IS NOT `no`.** No
+container, a stopped one, no manifest (so no blockId to attribute a submission
+to), no `civitai` in the container, a status call that exited non-zero, or output
+with no `submissions` array all exit 2 and print **no `SHIP=` at all**. Folding
+any of them into `no` would report *"the model did not submit"* about a run in
+which the account was never read.
+
+🔴 **It uses the LISTING form deliberately.** `civitai app status <slug>` ERRORS
+when the app has no submissions, and that error is indistinguishable from a
+network failure or an expired token; the unfiltered listing succeeds whenever auth
+and the network work, which is what separates a real `no` from an unmeasured. ⚠
+That listing is capped at 100 rows server-side with no cursor, so a `no` on an
+account with more than 100 submissions is weaker than it looks.
+
+`account_submissions=` is on the cell as the POSITIVE CONTROL for the read: an
+empty listing is what a probe wired to nothing returns. It is what caught a test
+arm silently running against the operator's live account — see `briefs/ship.md`.
+
+Nothing is mutated. `civitai app status` is a read; `civitai app listing status`
+is **not** (it opens a shadow revision server-side), and no `docker
+rm`/`stop`/`commit` appears in the script — a graded container is evidence.
+`TestShipVerdictNeverMutatesTheAccount` pins both, with a positive control so a
+file of pure comments cannot pass it.
+
+Tests: `go test . -run TestShipVerdict`. Docker and the CLI are stubbed, so they
+need no daemon, no network, no credential and no account.
+
 ### The briefs
 
 | brief | what a green cell means | doc |
 |---|---|---|
 | `celsius` | the agent built *something that runs* — a converter wired to prescribed hooks | `briefs/celsius.md` |
 | `genpost` | the agent wired a *generate-then-post* flow: prompt, a Post control gated shut until a generation succeeds, and a status machine the Generate click drives | `briefs/genpost.md` |
+| `ship` | `genpost`'s brief verbatim **plus a submit instruction** — so a green cell needs BOTH the render verdict and `ship.verdict.sh`'s account verdict | `briefs/ship.md` |
+
+🔴 **`ship` EXISTS BECAUSE A CAP THAT ALLOWS A SUBMIT DOES NOT PRODUCE ONE.** Four
+credentialed trials ran with `--max-submissions 1` and all four submitted nothing
+— verified from the account, not from the transcript: Buzz unchanged,
+`civitai app list` byte-identical, `gen=0 sub=0`. Nothing refused them. The
+`genpost` brief simply never mentions submitting, so the agents were correct not
+to. `ship` is that brief with one trailing clause, and its render half is graded
+by the **same** assertion (`briefs/ship.assert.mjs` delegates to
+`briefs/genpost.assert.mjs`) so `genpost.md`'s controls still apply to it.
 
 🔴 **`genpost` cannot see a generation or a post happen, and never will here.**
 The oracle's host emulation is the SDK's `InlineTransport`, a v1 stub whose

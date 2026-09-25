@@ -387,8 +387,19 @@ case "${1:-}" in
     raw="${1:-}"
     # The container's own node. Answered here rather than by hiding the real
     # node from PATH, which the stub itself needs to carry commands out.
+    #
+    # 🔴 THE SAME ANSWER FOR THE CONTAINER'S OWN CLI, AND IT IS NOT COSMETIC. The
+    # stub keeps the host PATH behind it (it needs the real find/cat/node), so a
+    # test that omits its civitai stub in order to say "the container has no CLI"
+    # gets the OPERATOR'S INSTALLED civitai instead. Measured while writing
+    # dogfood_ship_verdict_test.go: the "no civitai in the container" arm ran a
+    # REAL, credentialed "civitai app status --json" against the operator's
+    # account and came back with 100 rows. It is a read, so nothing was changed --
+    # but the arm was measuring the operator's machine, and a verdict-shaped test
+    # must never be able to reach a live account by accident.
     case "$raw" in
-      *"command -v node"*) [ "${STUB_NODE:-1}" = "1" ] || exit 1 ;;
+      *"command -v node"*)    [ "${STUB_NODE:-1}" = "1" ]    || exit 1 ;;
+      *"command -v civitai"*) [ "${STUB_CIVITAI:-1}" = "1" ] || exit 1 ;;
     esac
     cmd="$(rw "$raw")"
     if [ "$det" = "1" ]; then bash -c "$cmd" & exit 0; fi
