@@ -491,7 +491,9 @@ checkpoint the passing cells shipped — and the brief never forbade a picker. `
   | `ab-genpost-mimo-01` (pos control) | `RENDER=yes ready>generating>ready` | unchanged |
   | `ab-genpost-dsv4-01` (pos control) | `RENDER=yes ready>generating>ready` | unchanged |
 
-  `via: measurement`
+  Re-measured a third time after the `unmeasured` path landed: all four hold, and **none
+  went unmeasured** — `glm-01` carries no `unmatched=`, so the blind branch cannot reach the
+  negative control. `via: measurement`
 - ⚠ **The negative control is WEAKER than it reads.** `glm-01` stays `no` because it never
   renders `[data-testid="prompt"]` at all (it was never built), so it fails at step 1 and does
   **not** exercise the picker path. The arm that actually tests "a pick buys nothing" is
@@ -502,6 +504,20 @@ checkpoint the passing cells shipped — and the brief never forbade a picker. `
   everything except `OPEN_RESOURCE_PICKER` and `OPEN_CHECKPOINT_PICKER`. `ab-ship-mimo-02`'s own
   cell is the evidence — `hostRefused: ESTIMATE_WORKFLOW`, i.e. it reached `generating`, asked
   the host to price a workflow, and was refused. `via: measurement`
+- 🔴 **The needle was WRONG on the second real bundle anyone tried, and the failure was
+  SILENT.** `ab-genpost-mimo-01` (blocks-react 0.53.1) minifies the same stub to
+  `` Promise.reject(Error(`…`)) `` — no `new`, template literal — so it patched **0 sites**
+  while its cell stayed green, *only* because that app never opens a picker. `new` is now
+  optional. **One bundle is not a general claim; two are not either.** `via: measurement`
+- 🔴 **Which is why `sites=0` now has a THIRD state.** The mirror case — 0 sites on an app
+  that DOES request a pick — produces `RENDER=no observed=ready`, byte-identical to the
+  defect above and attributed to the model. So when a served response carries the stub's
+  MESSAGE in a spelling no needle matched (`pickerShim: …,unmatched=N`) **and** the Generate
+  gate did not open, the assertion exits **2** and the cell reads `RENDER=unmeasured`.
+  Deliberately not keyed on `sites === 0` alone, which is the common harmless case (a block
+  that does not bundle the SDK's inline transport); and only the gate-that-did-not-open
+  outcome is degraded. **If a fourth cell reads `unmeasured` with `unmatched=`, fix the
+  needle — do not read it as a statement about the app.** `via: measurement`
 - **Next probe:** none. If a future SDK ships a real inline transport, delete the patch — the
   shim already falls back to the SDK's original rejection when no page shim is installed.
 

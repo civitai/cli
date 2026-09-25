@@ -326,7 +326,38 @@ post or a purchase — and it is held by
 shrinks.
 
 **The control arm is `CIVITAI_ASSERT_NO_HOST_PICKS=1`**, which is also how to
-grade a block's dismissed-picker branch on purpose.
+grade a block's dismissed-picker branch on purpose. It grades `no`, not
+`unmeasured`: there the operator deliberately turned the picker off and the cell
+says so (`pickerShim: unanswered:…`).
+
+### 🔴 A pick that could not be answered is `unmeasured`, never `no`
+
+`sites=0` is a **silent instrument failure**, and the harmless reading of it is
+not the one that matters. If the needle stops matching a bundle — a minifier
+reshapes the reject expression, the SDK rewords its stub — then a pick is never
+answered, Generate stays shut, the status never leaves `ready`, and the cell reads
+`RENDER=no`: byte-identical to the verdict `ab-ship-mimo-02` earned above, and
+attributed to the model. The bug comes back silently, through somebody else's
+build tool.
+
+It is not hypothetical: the needle **was** wrong on the second real bundle anyone
+looked at (blocks-react 0.53.1 emits ``Error(`…`)`` with no `new`) and patched 0
+sites while that cell stayed green — only because that app never opens a picker.
+
+So the assertion has a **third state**. When a served response carries the stub's
+*message* (a string literal a minifier must preserve) in a spelling no needle
+matched — `pickerShim: …,unmatched=N` — **and** the Generate gate did not open
+with the prompt typed, it exits **2**, which `oracle.sh` renders as
+`RENDER=unmeasured` with no verdict line at all. That is the state this harness
+already keeps for exactly this confound.
+
+⚠ **Deliberately NOT "`sites === 0`"**, which is the common, harmless case — a
+block that does not bundle the SDK's inline transport at all — and which must keep
+its ordinary verdict. And it degrades exactly one outcome: a blind run that still
+reaches `generating`, or that fails for a reason an unanswered pick cannot produce
+(no Post control, the wrong resting word, no prompt element), is still a verdict.
+`TestABlindPickerInstrumentReportsUnmeasuredNotNo` carries both arms — the refusal
+*and* the non-refusal.
 
 ## Run it
 
