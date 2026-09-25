@@ -347,6 +347,25 @@ func TestSubmitRefusesWhenHistoryHasDiverged(t *testing.T) {
 	if !strings.Contains(err.Error(), "--no-pull") {
 		t.Errorf("the refusal must name --no-pull:\n%s", err.Error())
 	}
+
+	// 🔴 AND THE WAY OUT HAS TO WORK. An earlier revision recommended
+	// `civitai app pull`, whose sync path is `fetch` + `merge --ff-only`
+	// (app_pull.go) — and a fast-forward is exactly what a divergence makes
+	// impossible. Measured on git 2.x, a 1-ahead/1-behind repo answers
+	// `merge --ff-only FETCH_HEAD` with "Diverging branches can't be
+	// fast-forwarded" and rc=128. A refusal whose advice cannot work is worse
+	// than one that offers none: it teaches the reader to skip to the override.
+	if strings.Contains(err.Error(), "civitai app pull") {
+		t.Errorf("the refusal recommends `civitai app pull`, which runs `merge --ff-only` and CANNOT resolve a "+
+			"divergence — it fails rc=128 on exactly this state:\n%s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "FETCH_HEAD") {
+		t.Errorf("the refusal must name FETCH_HEAD — the sync has already fetched it, so it is the one ref the "+
+			"reader can act on regardless of how their remotes are configured:\n%s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "rebase FETCH_HEAD") {
+		t.Errorf("the refusal must give a runnable reconcile command:\n%s", err.Error())
+	}
 }
 
 // --- THE ESCAPE HATCH ---------------------------------------------------

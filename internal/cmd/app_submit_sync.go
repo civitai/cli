@@ -237,7 +237,7 @@ func syncRemoteCommits(
 		// Diverged: the author committed locally AND the repo moved. A
 		// fast-forward is impossible and a merge or rebase would rewrite history
 		// nobody asked this command to touch.
-		return zero, divergedError(app, ahead, behind)
+		return zero, divergedError(dir, app, ahead, behind)
 	}
 
 	// Behind only: fast-forward. This is the case the whole guard exists for —
@@ -288,18 +288,35 @@ func pluralCommits(n int) string {
 
 // divergedError builds the one refusal this guard issues.
 //
-// It states the CONSEQUENCE rather than the rule, and names both ways out. The
-// reader is someone who has local commits and a repo that moved, so "reconcile
-// them" is the actual next step and `--no-pull` is the override for the author
-// who knows their bundle is the one that should win.
-func divergedError(app string, ahead, behind int) error {
+// It states the CONSEQUENCE rather than the rule, and names a way out that
+// WORKS.
+//
+// 🔴 IT MUST NOT RECOMMEND `civitai app pull`, AND AN EARLIER REVISION DID.
+// That command's sync path is `fetch` + `merge --ff-only` (app_pull.go), and
+// a fast-forward is precisely what a divergence makes impossible — measured on
+// git 2.x, a 1-ahead/1-behind repo answers `merge --ff-only FETCH_HEAD` with
+// "Diverging branches can't be fast-forwarded" and **rc=128**. So the refusal
+// was sending the reader to a command guaranteed to fail the same way, which is
+// worse than saying nothing: an instruction that does not work teaches people
+// to skip straight to the override, and then the guard is decoration.
+//
+// 🔴 IT NAMES `FETCH_HEAD`, WHICH THIS GUARD HAS JUST WRITTEN. The sync fetched
+// before classifying, so FETCH_HEAD is populated in the author's repo at the
+// moment they read this — making the command copy-pasteable and, unlike
+// anything phrased in terms of `origin`, correct no matter how (or whether)
+// their remotes are configured. `rebase` is offered first because it keeps the
+// author's work on top of the website's; `merge` is there for anyone who would
+// rather not rewrite local commits.
+func divergedError(dir, app string, ahead, behind int) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "refusing to submit %s — your local history and the app's canonical repository have diverged: "+
 		"%s here that the repository does not have, and %s there that you do not.\n",
 		app, pluralCommits(ahead), pluralCommits(behind))
 	b.WriteString("The website can commit to that repository too (editing the manifest in the web form does exactly that), " +
 		"so submitting now would package a tree that is missing those changes and silently overwrite them.\n")
-	b.WriteString("Reconcile them first — `civitai app pull . --app " + app + "` after committing or stashing, or rebase onto the fetched head — " +
-		"or pass --no-pull to submit this tree exactly as it is")
+	fmt.Fprintf(&b, "The fetched head is already in your repo as FETCH_HEAD, so reconcile with one of:\n"+
+		"  git -C %s rebase FETCH_HEAD    # replay your commits on top of the website's\n"+
+		"  git -C %s merge FETCH_HEAD     # keep both histories, with a merge commit\n", dir, dir)
+	b.WriteString("Then run the submit again — or pass --no-pull to submit this tree exactly as it is")
 	return civitai.Tag(ErrDivergedFromRemote, errors.New(b.String()))
 }
