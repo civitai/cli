@@ -301,7 +301,7 @@ genEl.onclick = function () { statusEl.textContent = 'failed'; };
 //
 // ⚠ BUILT FROM A REAL TRANSFORM, NOT A TEXTBOOK ONE. Two real bundles already
 // disagreed about this expression (`new Error("…")` in blocks-react 0.57.2,
-// ``Error(`…`)`` in 0.53.1); constant-hoisting is the ordinary next variant, and
+// “Error(`…`)“ in 0.53.1); constant-hoisting is the ordinary next variant, and
 // the point of the fixture is that the harness must not be able to tell which
 // unknown spelling it is looking at — only that it could not install.
 const fxUnmatchableStub = `const STUB_MESSAGE = 'InlineTransport.sendRequest is not implemented in v1';
@@ -581,7 +581,7 @@ func TestOnlyTheGenerateClickCanEarnTheVerdict(t *testing.T) {
 // somebody else's build tool.
 //
 // It is not hypothetical. The needle WAS wrong on the second real bundle anyone
-// looked at (blocks-react 0.53.1 emits ``Error(`…`)`` with no `new`) and patched 0
+// looked at (blocks-react 0.53.1 emits “Error(`…`)“ with no `new`) and patched 0
 // sites while its cell stayed green — only because that app never opens a picker.
 //
 // `oracle.sh` already owns the right state for this and says so in its own words:
