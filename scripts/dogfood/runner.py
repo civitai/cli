@@ -453,8 +453,156 @@ DANGEROUS_VERBS = ("generate", "submit", "withdraw", "listing")
 # Wrappers to step over when looking for the executable.
 WRAPPERS = ("env", "sudo", "nice", "ionice", "stdbuf", "nohup", "command", "exec", "builtin")
 
+# ─────────────────────────────────────────────────────────────────────────────
+# WHICH FLAGS CAN NAME AN APP — the ledger the prefix cap parses argv with.
+#
+# 🔴 WHY THIS EXISTS: THE CAP USED TO TREAT EVERY FLAG VALUE AS A SLUG, AND THAT
+# COST A MEASUREMENT. `civitai app create ab-image-generator --template static`
+# was REFUSED on trial `ab-genpost-dsv4-02` (2026-09-25) because `static` — the
+# value of `--template` — matched the slug shape and did not start with the
+# trial's prefix. The app name was already correct. The agent believed the
+# refusal, dropped `--template static`, and fell back to the 320 KB `page-money`
+# default: a FALSE refusal silently changed which scaffold the experiment
+# measured. Two of that trial's three refusals were this.
+#
+# 🔴 AND WHY IT IS A LEDGER RATHER THAN "SKIP FLAGS". Skipping every token that
+# starts with `-` is what #698 fixed: `--slug=some-other-app` then yielded no
+# candidate at all, fell through to the "read every block.manifest.json under
+# /work" branch, and was ACCEPTED while `--slug` pointed at a real listing on the
+# operator's account. So the classifier cannot ignore flags and it cannot treat
+# them all alike — it has to know which ones carry an app identity.
+#
+# Roles:
+#   "slug"  — the value IS or SELECTS an app. Always a candidate, in both the
+#             attached (`--slug=x`) and separated (`--slug x`) spelling.
+#   "value" — the flag consumes the next token, and that token is not an app.
+#             Its value is NOT a candidate, and — the half that fixes the defect
+#             above — it is not mistaken for a positional either.
+#   "bool"  — the flag consumes nothing, so the next bare token is still a
+#             positional.
+#
+# 🔴 AN UNKNOWN FLAG DEFAULTS TO "bool", WHICH IS THE OVER-REFUSING DIRECTION ON
+# PURPOSE. If the CLI gains `--foo bar`, `bar` is read as a positional and the
+# trial gets a false refusal it can report — noisy, and identical to the
+# behaviour before this change. The opposite default would silently stop
+# collecting a real slug. The ledger is reconciled against `internal/cmd` by
+# TestDogfoodGatedFlagLedgerCoversTheCLI (dogfood_classifier_precision_test.go),
+# which fails when the CLI's flag set GROWS or SHRINKS — because a NEW
+# slug-bearing flag nobody ledgers is a silent hole in the cap, not a false
+# refusal.
+GATED_FLAGS = {
+    # --- Flags whose value names or selects an app. ---
+    # The blockId itself.
+    "slug": "slug",
+    # "fork from an existing published app slug".
+    "from": "slug",
+    # `app init`/`app create` SLUGIFY the display name into the blockId when
+    # --slug is absent, so this names an app just as directly.
+    "name": "slug",
+    # On `app listing` this picks the directory whose block.manifest.json
+    # supplies the blockId — i.e. it selects the target listing. (On
+    # init/create it is only an output path, but a flag gets one role; the
+    # stricter one is correct, and `--dir=sensei` is a pinned arm of
+    # TestDogfoodAttachedSlugFlagDoesNotBypassThePrefixCap.)
+    "dir": "slug",
+
+    # --- Flags that consume a value which is not an app. ---
+    "template": "value", "t": "value",
+    "out": "value", "o": "value",
+    "caption": "value",
+    "changelog": "value",
+    "tagline": "value",
+    "description": "value",
+    "category": "value",
+    # ⚠ `--clear` IS BOOL ON `set-source-repo` AND StringSlice ON `set-text`.
+    # It is ledgered "value" for the one that can carry a slug-shaped token:
+    # `set-text --clear tagline` would otherwise offer `tagline` as a candidate
+    # and false-refuse. `set-source-repo`'s positional is a URL, which cannot
+    # match the slug shape, so consuming it costs nothing.
+    "clear": "value",
+
+    # --- Flags that consume nothing. ---
+    "yes": "bool", "y": "bool",
+    "package-only": "bool",
+    "skip-validate": "bool",
+    "allow-downgrade": "bool",
+    "allow-dirty": "bool",
+    "allow-oversize": "bool",
+    "json": "bool",
+    # root's persistent flags, which every gated command also accepts.
+    "no-update-check": "bool",
+    "no-color": "bool",
+    "color": "bool",
+}
+
 _SEG = re.compile(r"\|\||&&|[;|&\n]")
 _ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# A here-document opener: `<<WORD`, `<< 'WORD'`, `<<-"WORD"`.
+#
+# 🔴 THE LOOKAROUNDS ARE WHAT KEEP A HERESTRING OUT. `<<<` is a herestring, not a
+# heredoc — it has no body and consumes no following lines. Without `(?<!<)` the
+# regex simply starts one character later and matches the LAST TWO of the three
+# `<`, so `grep x <<< "civitai generate"` was read as opening a heredoc delimited
+# by `civitai generate` and every following line was dropped unclassified.
+# Measured while writing the table guard; it is the under-classifying direction,
+# i.e. the one that hides a real command.
+_HEREDOC_OPEN = re.compile(r"(?<!<)<<(?!<)(-?)\s*(?:'([^']*)'|\"([^\"]*)\"|([A-Za-z_][A-Za-z0-9_]*))")
+
+
+def strip_heredoc_bodies(command: str) -> str:
+    """The command with every here-document BODY removed.
+
+    🔴 A FILE BEING WRITTEN IS DATA, NOT A COMMAND, AND CLASSIFYING IT AS ONE
+    COST TWO STEPS. On trial `ab-genpost-dsv4-02` step 25 the agent wrote its own
+    `block.manifest.json` with `cat > … << 'ENDOFFILE'`. `segments()` splits on
+    newlines, so every LINE of that JSON became a segment to classify, and one of
+    them —
+
+        "posts:write:self": "Posts generated images to the user's Civitai profile…"
+
+    — names "Civitai" and contains "generate" inside "generated", which is
+    exactly the fail-closed rule's trigger: a segment that mentions the CLI and a
+    dangerous verb but yields no invocation. The write was refused. The agent's
+    next move was `python3`, which is absent from the trial image (rc=127), so the
+    one false refusal cost two steps.
+
+    The body of a here-document is stdin for the command on the opener line. It
+    is never executed by the shell, so it must never be classified. The opener
+    line itself IS command text and is kept.
+
+    An UNTERMINATED heredoc swallows the rest of the input, and that is faithful
+    rather than a hole: bash also treats everything to EOF as the body, so a
+    trailing `eval "civitai app submit"` under an unterminated `<< EOF` is written
+    into the file and not run.
+
+    ⚠ WHAT THIS DOES NOT COVER, stated rather than implied: inline redirect
+    content that is an ARGUMENT — `echo '…' > f`, `printf … > f` — is still
+    command text to this classifier, because to a shell it genuinely is. A
+    literal `civitai generate` inside such a string is still refused. That is the
+    over-refusing direction and it is not what was measured.
+    """
+    lines = command.split("\n")
+    kept = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        kept.append(line)
+        i += 1
+        for m in _HEREDOC_OPEN.finditer(line):
+            word = m.group(2) if m.group(2) is not None else (
+                m.group(3) if m.group(3) is not None else m.group(4))
+            dashed = m.group(1) == "-"
+            while i < len(lines):
+                probe = lines[i]
+                i += 1
+                # `<<-` strips leading TABS from the terminator. Comparing on a
+                # stripped line is more lenient than bash, which ends the body
+                # EARLIER than bash would — i.e. it classifies MORE text, the
+                # over-refusing direction.
+                candidate = probe.lstrip("\t") if dashed else probe
+                if candidate.strip() == word:
+                    break
+    return "\n".join(kept)
 
 
 def segments(command: str):
@@ -488,44 +636,89 @@ def invocation(segment: str):
     return [t for t in toks[i + 1:]]
 
 
-def positional(argv, skip: int):
-    """Every token after `skip` leading subcommand words that could be a slug.
+ARG_ORIGIN = "argument"
 
-    🔴 `--slug=NAME` IS A TOKEN THAT STARTS WITH `-` AND CARRIES THE TARGET.
-    This used to `continue` on any token beginning with `-`, which dropped the
-    attached form of every flag — so `civitai app listing status
-    --slug=some-other-app` yielded NO candidate at all, fell through to
-    _prefix_ok's "read every block.manifest.json under /work" branch, and was
-    ACCEPTED: the workspace manifests all carry the prefix while `--slug`
-    pointed somewhere else entirely. The separated form
-    (`--slug some-other-app`) was caught, because its value is a bare token;
-    the two spellings are interchangeable to cobra and were not to this. That
-    is a bypass of the app-prefix cap for EVERY gated verb — `app init`,
-    `app create`, `app submit` and the whole `app listing` group — not just
-    the one it was found on.
 
-    So an `--opt=value` token contributes its VALUE. The flag name itself never
-    does: the caller matches a strict slug shape, and `--slug` would not match
-    it anyway, but splitting keeps the two halves from being confused.
+def slug_candidates(argv, skip: int):
+    """Every token after `skip` leading subcommand words that could name an app,
+    paired with WHERE it came from — `ARG_ORIGIN`, or the flag spelling
+    (`"--slug"`, `"-t"`). The origin is what lets a refusal name the offending
+    token's ROLE instead of telling the trial to rename an app whose name was
+    never the problem.
 
-    ⚠ IT STILL DOES NOT KNOW WHICH FLAGS TAKE A VALUE, and that is deliberate:
-    every non-flag token is offered as a candidate, so `--tagline x` offers
-    `x`. That over-collects and therefore over-refuses, which is the safe
-    direction here and is the behaviour the separated form already had — this
-    change makes the attached form agree with it rather than introducing a new
-    strictness. Where nothing is collected at all the caller falls back to
-    reading every manifest in the container, which is the stricter check.
+    Two defects meet here and the fix has to satisfy both.
+
+    🔴 (A) `--slug=NAME` IS A TOKEN THAT STARTS WITH `-` AND CARRIES THE TARGET.
+    Before #698 this dropped every token beginning with `-`, so the attached form
+    of `--slug` yielded NO candidate at all, fell through to _prefix_ok's "read
+    every block.manifest.json under /work" branch, and was ACCEPTED: the
+    workspace manifests all carry the prefix while `--slug` pointed somewhere
+    else entirely. A bypass of the app-prefix cap for EVERY gated verb. Both
+    spellings of every "slug"-role flag in `GATED_FLAGS` are therefore collected.
+
+    🔴 (B) A FLAG'S VALUE IS NOT AN APP NAME JUST BECAUSE IT IS SLUG-SHAPED.
+    #698's fix collected every non-flag token, so `--template static` offered
+    `static` and `civitai app create ab-image-generator --template static` was
+    REFUSED with "Rename the app and retry" — while the app name was correct. So
+    a flag with a "value" role CONSUMES its next token, which is how `static`
+    stops being mistaken for a positional.
+
+    The two are not in tension once the classifier knows the flags: (A) is about
+    which flag VALUES are collected, (B) about which bare tokens are positionals.
+    `GATED_FLAGS` answers both, and an unknown flag is assumed to take nothing —
+    the over-collecting, over-refusing default.
+
+    Everything after a bare `--` is a positional, as it is to cobra.
     """
     out = []
-    for tok in argv[skip:]:
-        if tok.startswith("-"):
-            if "=" in tok:
-                value = tok.split("=", 1)[1]
-                if value:
-                    out.append(value)
+    i, n = skip, len(argv)
+    while i < n:
+        tok = argv[i]
+        i += 1
+        if tok == "--":
+            out.extend((rest, ARG_ORIGIN) for rest in argv[i:])
+            return out
+        if tok.startswith("--") and len(tok) > 2:
+            name, eq, attached = tok[2:].partition("=")
+            role = GATED_FLAGS.get(name, "bool")
+            if eq:
+                if role == "slug" and attached:
+                    out.append((attached, "--" + name))
+                continue
+            if role in ("slug", "value") and i < n:
+                value = argv[i]
+                i += 1
+                if role == "slug":
+                    out.append((value, "--" + name))
             continue
-        out.append(tok)
+        if tok.startswith("-") and len(tok) > 1:
+            # A shorthand cluster, as cobra parses it: `-y`, `-ty`, `-t static`,
+            # `-tstatic`, `-t=static`. The first value-taking shorthand in the
+            # cluster takes the remainder (or the next token) and ends it.
+            shorts = tok[1:]
+            for k, ch in enumerate(shorts):
+                role = GATED_FLAGS.get(ch, "bool")
+                if role == "bool":
+                    continue
+                rest = shorts[k + 1:]
+                if rest.startswith("="):
+                    rest = rest[1:]
+                if not rest and i < n:
+                    rest = argv[i]
+                    i += 1
+                if role == "slug" and rest:
+                    out.append((rest, "-" + ch))
+                break
+            continue
+        out.append((tok, ARG_ORIGIN))
     return out
+
+
+def origin_phrase(origin: str) -> str:
+    """How a refusal should describe where a candidate came from."""
+    if origin == ARG_ORIGIN:
+        return "the app-name argument"
+    return "the value of `%s`" % origin
 
 
 class Caps:
@@ -548,13 +741,35 @@ class Caps:
         """Refusal string if this command targets a slug outside the prefix."""
         if not self.app_prefix:
             return None
-        named = positional(argv, skip)
-        offenders = [s for s in named
+        named = slug_candidates(argv, skip)
+        offenders = [(s, origin) for s, origin in named
                      if re.fullmatch(r"[a-z0-9][a-z0-9-]*", s) and not s.startswith(self.app_prefix)]
         if offenders:
+            # 🔴 THE MESSAGE NAMES THE TOKEN'S ROLE, AND THE OLD ONE DID NOT.
+            # It always ended "Rename the app and retry." — which on trial
+            # `ab-genpost-dsv4-02` was said about `static`, the value of
+            # `--template`, while the app name was already correct. The agent
+            # followed it, dropped `--template static`, and measured a different
+            # scaffold than the brief asked for. A remedy that names the wrong
+            # fix is worse than no remedy: it is actionable and wrong.
+            flags = []
+            for _, origin in offenders:
+                if origin != ARG_ORIGIN and origin not in flags:
+                    flags.append(origin)
+            renaming = any(origin == ARG_ORIGIN for _, origin in offenders)
+            if flags and renaming:
+                remedy = ("Rename the app, and point %s at an app whose name starts with %r."
+                          % (" / ".join("`%s`" % f for f in flags), self.app_prefix))
+            elif flags:
+                remedy = ("Point %s at an app whose name starts with %r — the app name itself is "
+                          "not what was refused." % (" / ".join("`%s`" % f for f in flags), self.app_prefix))
+            else:
+                remedy = "Rename the app and retry."
             return ("refused by the run harness: this trial may only touch apps whose name "
-                    "starts with %r, and this command names %s. Rename the app and retry."
-                    % (self.app_prefix, ", ".join(repr(o) for o in offenders)))
+                    "starts with %r, and this command names %s. %s"
+                    % (self.app_prefix,
+                       ", ".join("%r (%s)" % (s, origin_phrase(o)) for s, o in offenders),
+                       remedy))
         if named:
             return None
         # No slug on the command line: the CLI will read block.manifest.json.
@@ -570,13 +785,24 @@ class Caps:
         return None
 
     def judge(self, command: str):
-        for seg in segments(command):
+        # A here-document body is stdin for the opener's command, never something
+        # the shell executes — see strip_heredoc_bodies for the measured false
+        # refusal this removes.
+        for seg in segments(strip_heredoc_bodies(command)):
             argv = invocation(seg)
             if argv is None:
                 # 🔴 FAIL CLOSED on a segment that names the CLI and a dangerous
                 # verb but yields no invocation this can read — `eval "civitai
-                # app submit"`, `sh -c 'civitai generate …'`, `c=civitai`. It is
-                # narrow by design: `command -v civitai` names no verb and runs.
+                # app submit"`, `sh -c 'civitai generate …'`. It is narrow by
+                # design: `command -v civitai` names no verb and runs.
+                #
+                # ⚠ THIS COMMENT USED TO LIST `c=civitai` AND THAT WAS FALSE —
+                # measured at 6579978 and here. `c=civitai; $c app submit` splits
+                # into a segment that names the CLI with NO verb and a segment
+                # that names a verb with NO "civitai", so neither trips the test
+                # below. It is a real gap, it is unchanged by this commit, and it
+                # is recorded rather than implied so nobody reads the rule as
+                # wider than it is.
                 low = seg.lower()
                 if "civitai" in low and any(v in low for v in DANGEROUS_VERBS):
                     return ("refused by the run harness: this segment names the civitai CLI and "
