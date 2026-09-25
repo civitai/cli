@@ -98,7 +98,7 @@ const (
 // tunnelAPI is the subset of the API client the session core needs (seam for a
 // mock in tests).
 type tunnelAPI interface {
-	StartDevTunnel(ctx context.Context, blockID, sshPublicKey string, declaredScopes []string) (*appapi.DevTunnelSession, error)
+	StartDevTunnel(ctx context.Context, blockID, sshPublicKey string, declaredScopes []string, declaredAuth string) (*appapi.DevTunnelSession, error)
 	StopDevTunnel(ctx context.Context, sessionID, blockID string) (bool, error)
 	// WhoAmI resolves the signed-in identity — used to enrich a 403 mint refusal
 	// with which account the CLI is authenticated as (the usual cause is being
@@ -156,7 +156,18 @@ type tunnelSessionDeps struct {
 	// StartDevTunnel so the server can grant them to an UNSUBMITTED app's tunnel
 	// token. Empty/nil = read-only (no spend) — never fatal.
 	declaredScopes []string
-	port           int
+	// declaredAuth is the LOCAL manifest's `auth`, which decides the token kind
+	// the tunnel mints; "" leaves it to the server. Always one of the vendored
+	// schema's own kinds (manifest.AuthKinds) or empty — never raw manifest text,
+	// which is what lets it be printed below without sanitizing.
+	declaredAuth string
+	// authUnrecognized is set when the manifest DID declare an `auth` that the
+	// vendored schema does not admit. It is the difference between "the author
+	// said nothing" and "the author said something this CLI had to drop" — only
+	// the second earns a warning, because `dev-tunnel` never runs the validator
+	// that would otherwise report the typo.
+	authUnrecognized bool
+	port             int
 	// localHost is the resolved host the developer's dev server is bound to
 	// ("localhost" by default = loopback; e.g. 10.42.0.100 for a container). Used
 	// by BOTH the pre-flight probe and the live tunnel proxy so the two agree.
@@ -375,6 +386,7 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 			// valid subset instead of 400ing the mint (keeping that "never blocks"
 			// promise).
 			declaredScopes := boundDeclaredScopes(manifest.LoadScopes("."))
+			declaredAuth, authUnrecognized := manifest.LoadAuth(".")
 
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -391,6 +403,8 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 				dialer:                 devtunnel.NewSSHDialer(cmd.ErrOrStderr()),
 				blockID:                blockID,
 				declaredScopes:         declaredScopes,
+				declaredAuth:           declaredAuth,
+				authUnrecognized:       authUnrecognized,
 				port:                   port,
 				localHost:              lh,
 				endpoint:               ep,
@@ -497,13 +511,31 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 		}
 		fmt.Fprintf(d.errw, "%s\n", ui.Dim(fmt.Sprintf("Declaring scopes: %s", strings.Join(display, ", "))))
 	}
+	// Same transparency, for the token KIND. Safe to print unsanitized ONLY
+	// because manifest.LoadAuth returns a member of the vendored schema's own
+	// enum or nothing at all — see the 🔴 note on manifest.authKinds before
+	// relaxing that.
+	if d.declaredAuth != "" {
+		fmt.Fprintf(d.errw, "%s\n", ui.Dim(fmt.Sprintf("Declaring auth: %s", d.declaredAuth)))
+	}
+	// A declared-but-unrecognised `auth` is the one case the scopes line's stated
+	// rationale ("it catches manifest typos before a click") does NOT cover: the
+	// value is dropped, nothing is sent, and without this the author sees no line
+	// at all — then gets a block token the SDK refuses for a signed-in viewer,
+	// with nothing on screen explaining why. Still never fatal; the value itself
+	// is deliberately NOT echoed (it is unsanitized author text).
+	if d.authUnrecognized {
+		fmt.Fprintf(d.errw, "%s\n", ui.Warn(fmt.Sprintf(
+			"ignoring the manifest's \"auth\": not one of %s — the tunnel will mint the default token kind. Run `civitai app validate` to see the finding.",
+			strings.Join(manifest.AuthKinds(), ", "))))
+	}
 
 	key, err := d.keygen()
 	if err != nil {
 		return fmt.Errorf("generate ephemeral tunnel key: %w", err)
 	}
 
-	sess, err := d.api.StartDevTunnel(ctx, d.blockID, key.AuthorizedKey, d.declaredScopes)
+	sess, err := d.api.StartDevTunnel(ctx, d.blockID, key.AuthorizedKey, d.declaredScopes, d.declaredAuth)
 	if err != nil {
 		// A 403 mint refusal is the common "wrong account" case — enrich it with
 		// the signed-in identity + how to switch accounts. This runs on the
