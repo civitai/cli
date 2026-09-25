@@ -25,52 +25,59 @@ the way it sourced the `{block-token, oauth}` allowlist regenerated the bug it e
 
 ## State now
 
-- **Branch / PR:** `cli#696`, head `feat/dev-tunnel-declared-auth`, author **koenbeuk**,
-  `OPEN` / `MERGEABLE` / `CLEAN`. **Taken over at the operator's instruction 2026-09-25**
-  (*"we can just take over the branch and pr"*); pushed directly — same-repo branch,
-  `isCrossRepository: false`.
-- ✅ **DONE — `5437fd3` pushed to `feat/dev-tunnel-declared-auth`** (`4da2bd8..5437fd3`),
-  remote confirmed at that sha. **All 13 checks terminal, 0 non-terminal, 0 failures.**
-  Comment explaining the takeover: `cli#696` comment `5834585337`.
-- ✅ **Three fixes, each mutation-verified** (table below): the allowlist is now DERIVED from
-  `schema/app-block.manifest.schema.json`'s own `auth` enum in `internal/manifest/manifest.go`;
-  `LoadAuth` returns `(auth string, unrecognized bool)`; an unrecognised-but-present `auth`
-  now WARNS on stderr instead of vanishing.
-- 🔴 **NOT MERGED, and merging is not mine.** The PR is another author's and AGENTS.md gates
-  anything touching the published binary. Rank 1 is the operator's or koenbeuk's call.
-- ⚠ **No `clawgate-task:` field** — `clawgate_handoff.sh resolve` exited **5** (0 tasks for
-  this session). An unknown session id answers 200 with an empty array, so that zero cannot
-  distinguish "touched no task" from "wrong id". Not a clean bill of health.
+🔴 **THE ARC IS CLOSED. The frozen closing condition is ADDRESSED, and every half of it was
+measured — including the mutant half, which is the half a green suite cannot answer.**
+
+🔴 **AUTHORIZATION PROVENANCE — carried forward, because nothing else records it and all three
+steps are things an agent may NOT self-authorize.** `#696` was **koenbeuk's** PR, and
+`isCrossRepository: false` (same-repo branch) is what made pushing to it possible at all.
+(1) **Taken over at the operator's instruction 2026-09-25** — *"we can just take over the
+branch and pr"*. (2) **Merged and released at the operator's instruction the same day** —
+*"yes, you drive the merge and publish when ready"*, given AFTER the npm irreversibility and
+AGENTS.md's two separate 🚫 Never consents (tag; publish-the-draft) were put on the table.
+AGENTS.md conditions both on *"without the maintainer"*, and the maintainer directed them.
+**A later session must not read this as precedent: the next release needs its own consent.**
+
+- ✅ **`cli#696` MERGED** as **`ebc08f4`** (squash, 2026-09-25T15:32:57Z). Verified **by
+  CONTENT on `origin/main`**, never by ancestry (`--is-ancestor` is permanently false after
+  a squash): 5 × `authKinds` and 2 × `TestAuthKindsComeFromTheVendoredSchema` in
+  `internal/manifest/`, 3 × `declaredAuth` in `internal/appapi/appblocks.go`.
+- ✅ **`v0.1.108` RELEASED AND PUBLISHED** (tag at `ebc08f4`; `release.yml` run
+  `36155432727` success; published 15:40:51Z). **All three channels verified
+  independently of the workflows' own green:**
+
+  | channel | evidence |
+  |---|---|
+  | GitHub | 14 assets, full cross-product incl. **windows/arm64**; `sha256sum -c` OK against `checksums.txt` |
+  | npm | registry JSON `dist-tags.latest = 0.1.108`, `time[0.1.108] = 15:42:35.890Z`; `@civitai/cli@0.1.108` resolves |
+  | Homebrew | `tools/caskcheck`: *"cask version 0.1.108; 4 archive URL(s) checked, all publicly downloadable"* + *"lag: cask matches the latest published release"*; `darwin_arm64` sha256 matches byte-for-byte over UNAUTHENTICATED HTTP |
+
+- 🔴 **THE FEATURE IS IN THE SHIPPED BYTES, NOT JUST ON `main` — with both controls.**
+  `Declaring auth`, `ignoring the manifest's` and `declaredAuth` are all PRESENT in the
+  0.1.108 linux/amd64 binary and **ABSENT in 0.1.107**, with a nonsense-string negative
+  control holding. The binary prints `civitai 0.1.108`, so the ldflags stamped. This is the
+  dogfood arc's own lesson applied: grepping `origin/main` says nothing about what a user
+  installs.
+- ✅ **The merged-tree gate was re-run because the base MOVED** two commits (`#698`, `#699`)
+  after the PR's checks ran: integration tree = 21/21 packages, `go vet` clean,
+  `gofmt -s -l .` 0 files, `golangci-lint 2.13.2` 0 issues, **and M1 still dies**
+  (`TestLoadAuth/block-token`: `LoadAuth auth="" want "block-token"`).
+- ✅ **`main` green at `ebc08f4`:** 12/12 — all eight CI jobs plus the four CodeQL analyses,
+  0 failures. ⚠ The PR showed **13**; the missing one is the PR-only `CodeQL` aggregate,
+  which has no meaning on a push. `gh api .../status` returning `state=pending count=0` is
+  the empty-statuses artifact, NOT a pending check.
+- ⚠ **No `clawgate-task:` field** — `clawgate_handoff.sh resolve` exited **5**. An unknown
+  session id answers 200 with an empty array, so that zero cannot distinguish "touched no
+  task" from "wrong id". Not a clean bill of health.
 - **Claims:** `app-build-dogfood-696` taken and **released**. None held.
-- **Base clone** `/home/zach/workspace/civit/cli` ff-merged to `origin/main` `6f9bf96` (it
-  was 1 behind; `#698`, another session's dogfood spend-cap work, had landed).
 
-### The measurement that justifies the whole change — cannot be re-derived after merge
+### 🔴 SIDE EFFECT ON ANOTHER ARC — `handoff-app-build-dogfood.md` rank 9 is now UNBLOCKED
 
-**Mutation results. Full suite (`go test ./... -count=1`, Chromium on PATH) each time,
-against a green 21/21 baseline:**
-
-| mutant | before `5437fd3` | after |
-|---|---|---|
-| allowlist re-typed as `{oauth}` only | 🔴 **SURVIVED** (rc=0, 0 failing tests) | killed — `TestLoadAuth/block-token` |
-| derivation reads the wrong schema key | (did not exist) | killed — 4 tests incl. the pin guard |
-| delete the warning (= pre-change code) | (did not exist) | killed — the new cmd test |
-
-🔴 **`block-token` appeared in ZERO test files in the repo before this change** — that is why
-M1 survived. Positive controls proving the harness could see that line at base: dropping the
-`oauth` arm was killed by `TestLoadAuth` + `TestAppDevTunnelDeclaresManifestScopes`; `if true`
-was killed by `TestLoadAuth`.
-
-**The drift path, measured, which is the argument for deriving rather than re-typing:**
-`scripts/check-canonical-schema.sh` fetches `https://civitai.com/schemas/app-block/v1.json`
-and `diff`s it against the vendored copy on **every** CI run (job `schema-drift`), so the enum
-is not hand-maintained. `auth` itself arrived that way: **`01d993c` "chore(schema): re-vendor
-embedded manifest schema from canonical (#693)", +5 lines, merged one day before #696 opened.**
-And `civitai app validate` reads the enum straight from that file — measured, on a manifest
-declaring `"auth":"basic"`: `auth: value must be one of 'block-token', 'oauth'`.
-
-**Local verification of `5437fd3`:** `go test ./...` **21/21** with Chromium present ·
-`go vet` clean · `gofmt -s -l .` **0 files** · `golangci-lint 2.13.2` **0 issues**.
+That doc's rank 9 (*"cut a release containing `bdeddef` (`cli#685`), then re-run one genpost
+cell to price the doc fix"*) records itself as **blocked because trials install from npm and
+`#685` was in no tag**. Measured today: `git tag --contains bdeddef` → **`v0.1.107`**, and
+`0.1.108` is now npm `latest`. **That blocker is gone and that doc is stale on the point.**
+The pricing re-run is now possible; it was not when that doc was written.
 
 ## Open investigations — live diagnosis state
 
@@ -130,11 +137,13 @@ declaring `"auth":"basic"`: `auth: value must be one of 'block-token', 'oauth'`.
 
 ## Next steps (ranked)
 
-1. **Merge `cli#696`** (or hand it back to koenbeuk to merge). It is `MERGEABLE`/`CLEAN`
-   with 13/13 checks terminal and 0 failures on `5437fd3`. Touches `civitai/cli` only.
-   🔴 Not an agent's call — AGENTS.md gates anything affecting the published binary, and it
-   is another author's PR.
-   forcing: user — the operator said "we can just take over the branch and pr" on 2026-09-25
+🔴 **Numbering frozen. Rank 1 closed 2026-09-25 — the arc's own condition is answered, and
+ranks 2 and 3 are NOT continuations of it.**
+
+1. ✅ **DONE — `cli#696` merged (`ebc08f4`) and released as `v0.1.108`**, verified on all
+   three channels and in the shipped bytes.
+   forcing: user — the operator said "we can just take over the branch and pr", then "yes,
+   you drive the merge and publish when ready", both 2026-09-25 — satisfied
 
 2. **Settle the `dev-token` auth question** by asking on `cli#696` / reading
    `civitai/civitai#5122`, per the first Open-investigations block's Next probe. Touches
@@ -195,46 +204,70 @@ declaring `"auth":"basic"`: `auth: value must be one of 'block-token', 'oauth'`.
   dance — but `maintainerCanModify: false`, which is about THEIR ability to be edited, not
   yours to push.
 
+### Added 2026-09-25 (release) — three reads that were wrong in the reassuring direction
+
+- 🔴 **A RELEASE'S `createdAt` IS THE COMMIT DATE, NOT WHEN THE DRAFT WAS CUT — and I built a
+  whole (wrong) inference on it.** v0.1.107 reads `createdAt=06:07:55Z publishedAt=14:21:40Z`
+  and I called that an 8-hour draft gap; `git show -s --format=%cI 4d4a45e` is
+  **`2026-09-25T01:07:55-05:00` = 06:07:55Z exactly**. The real draft→publish gap was ~2
+  minutes (goreleaser ran at 14:19:18Z). **To time a draft, read the `release.yml` RUN's
+  `createdAt`, never the release object's.** The conclusion (the `draft: true` gate held, a
+  human published) survived; the measurement behind it did not.
+- 🔴 **`npm view` DISAGREED WITH THE REGISTRY, AND THE REGISTRY WAS RIGHT — by 16 seconds.**
+  Post-publish `npm view @civitai/cli version` → `0.1.107` and `@0.1.108` → **404**, while
+  both workflows reported success. That is the shape of "a workflow's success is a claim
+  about the WORKFLOW, not the consumer", so the instinct is to suspect the publish. The
+  discriminating read is the registry's own JSON: `time[0.1.108] = 15:42:35.890Z` against my
+  query at **15:42:19Z**. It was a true absence at the moment I looked. **Before diagnosing a
+  publish failure, get a TIMESTAMPED read from the registry rather than a client that caches.**
+- ⚠ **`sorted()` OVER VERSION STRINGS IS LEXICAL** — it reported "last 4 versions:
+  0.1.96…0.1.99" for a registry that already held 0.1.108, because `'0.1.99' > '0.1.108'` as
+  text. Nearly read as "0.1.108 is missing". **Test MEMBERSHIP (`'0.1.108' in versions`) and
+  read `dist-tags`; never sort version strings to find the newest.**
+- ✅ **`tools/caskcheck` is the right instrument for the tap and it answered in one line** —
+  *"4 archive URL(s) checked, all publicly downloadable"* plus a `lag:` line asserting the
+  cask matches the latest PUBLISHED release. It fetches over **unauthenticated** HTTP on
+  purpose: a draft's assets are visible to any repo token, so an authenticated check cannot
+  see the 404 a real `brew install` would hit. Run it after every publish; do not hand-roll it.
+- ⚠ **A repo's check count differs between a PR and a push, and the difference is not a gap.**
+  13 on the PR, 12 on `main`: the extra is the PR-only `CodeQL` aggregate. Assert a MINIMUM
+  count and enumerate the names — a bare "12 vs 13" reads as a missing gate.
+
 ## How to verify
 
-**The three guards, from a clean checkout of `origin/main` — ~1 minute, no network:**
+**The arc's verdict, post-release — the shipped artefact, not the source (~1 min):**
 
 ```bash
-CLI=/home/zach/workspace/civit/cli
-git -C "$CLI" worktree add --detach /tmp/wt-696v origin/main
-cd /tmp/wt-696v && go test ./internal/manifest/... ./internal/cmd/... -count=1 \
-  -run 'TestLoadAuth|TestAuthKindsComeFromTheVendoredSchema|TestAppDevTunnelWarnsOnUnrecognizedManifestAuth' -v
+# 1. the feature is in what users install, and was NOT in the previous release
+cd "$(mktemp -d)"
+gh release download v0.1.108 --repo civitai/cli -p 'civitai_0.1.108_linux_amd64' -p checksums.txt
+grep 'civitai_0.1.108_linux_amd64$' checksums.txt | sha256sum -c -        # must print OK
+chmod +x civitai_0.1.108_linux_amd64 && ./civitai_0.1.108_linux_amd64 --version   # civitai 0.1.108
+for s in 'Declaring auth' "ignoring the manifest's"; do
+  printf '%s: ' "$s"; grep -c -a -- "$s" civitai_0.1.108_linux_amd64; done        # each >= 1
 ```
 
-Expect `TestLoadAuth` (8 subtests incl. `block-token`), `TestAuthKindsComeFromTheVendoredSchema`
-and `TestAppDevTunnelWarnsOnUnrecognizedManifestAuth` all PASS.
+🔴 **A string count alone is not the verdict — take the 0.1.107 control too.** The same two
+greps against `civitai_0.1.107_linux_amd64` must return **0**; without that arm a build that
+always contained the strings is indistinguishable from one this release added them to.
 
-🔴 **The green suite is NOT the verdict — M1 is.** Re-run the mutant that survived at base;
-if it survives again, the guard is absent whatever the suite says:
+**The three channels:**
 
 ```bash
-# in /tmp/wt-696v — replace the derived membership test with a re-typed literal
-python3 - <<'EOF'
-p='internal/manifest/manifest.go'; s=open(p).read()
-old='\tif _, ok := authKinds()[m.Auth]; ok {'
-assert s.count(old)==1
-open(p,'w').write(s.replace(old,'\tif m.Auth == "oauth" {'))
-EOF
-go test ./internal/manifest/... -count=1 -run TestLoadAuth   # MUST fail on /block-token
-git checkout -- internal/manifest/manifest.go
-git -C "$CLI" worktree remove --force /tmp/wt-696v
+curl -s https://registry.npmjs.org/@civitai%2Fcli | python3 -c \
+  "import json,sys; d=json.load(sys.stdin); print(d['dist-tags'], '0.1.108' in d['versions'])"
+# 🔴 do NOT sort the version list to read the newest — sorted() is LEXICAL and puts 0.1.99
+#    above 0.1.108. Use membership + dist-tags.
+go run ./tools/caskcheck     # OK: cask version 0.1.108 … lag: cask matches the latest published release
 ```
 
-**The full suite, if you need it — note the Chromium requirement:**
+**The source-side guards (unchanged, still the regression coverage):**
 
 ```bash
-nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) go test ./... -count=1'
-# expect 21 ok, 0 FAIL. WITHOUT chromium, 4 render-oracle tests fail for environmental reasons.
+go test ./internal/manifest/... ./internal/cmd/... -count=1 \
+  -run 'TestLoadAuth|TestAuthKindsComeFromTheVendoredSchema|TestAppDevTunnelWarnsOnUnrecognizedManifestAuth'
 ```
 
-**The PR itself:**
-
-```bash
-gh pr view 696 --json state,mergedAt,mergeStateStatus,headRefName
-gh pr checks 696   # 13 checks, all terminal; `lint` reports but does not gate
-```
+🔴 **And M1 — a green suite cannot tell a working guard from an absent one.** Replace
+`if _, ok := authKinds()[m.Auth]; ok {` with `if m.Auth == "oauth" {` and
+`go test ./internal/manifest/... -run TestLoadAuth` MUST fail on `/block-token`.
