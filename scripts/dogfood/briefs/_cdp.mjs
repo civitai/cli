@@ -809,7 +809,18 @@ async function patchPausedResponse(c, sessionId, params, shim) {
     const { body, base64Encoded } = await c.send('Fetch.getResponseBody', { requestId }, sessionId);
     const text = base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : String(body);
     const { code, hits } = patchInlineTransport(text);
-    if (!hits) return cont();
+    if (!hits) {
+      // 🔴 THE INSTRUMENT'S OWN FAILURE SIGNAL, AND IT IS WHY `sites=0` IS NOT
+      // ENOUGH ON ITS OWN. A response that carries the SDK's stub MESSAGE but
+      // matched no needle is an inline transport this oracle could not instrument
+      // — the message is a string literal a minifier must preserve, while the
+      // expression around it is not (measured: 0.53.1 emits `Error(\`…\`)`, 0.57.2
+      // `new Error("…")`). Without this counter that state is indistinguishable
+      // from "this block does not bundle the SDK at all", and the two have
+      // opposite consequences for a `no`. See `pickerBlind` in genpost.assert.mjs.
+      if (text.includes(INLINE_STUB_MESSAGE)) shim.unmatched += 1;
+      return cont();
+    }
     shim.documents += 1;
     shim.sites += hits;
     await c.send('Fetch.fulfillRequest', {
@@ -867,8 +878,10 @@ export async function openPage(c, url, { scopes = [] } = {}) {
   }
   // What the picker patch actually did, so the cell can say so instead of a
   // reader assuming it. `sites` is how many stubs were rewritten across the whole
-  // document; `skipped` counts responses the interception could not read at all.
-  const shim = { documents: 0, sites: 0, skipped: 0 };
+  // document; `unmatched` counts responses that carry the SDK's stub message in a
+  // spelling no needle matched — the instrument-blind state; `skipped` counts
+  // responses the interception could not read at all.
+  const shim = { documents: 0, sites: 0, unmatched: 0, skipped: 0 };
   if (SEND_HOST_PICKS) {
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: inlineHostSource() }, sessionId);
     c.on('Fetch.requestPaused', (params, evSessionId) => {

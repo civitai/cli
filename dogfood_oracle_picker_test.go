@@ -292,6 +292,75 @@ document.getElementById('pick').onclick = async function () {
 genEl.onclick = function () { statusEl.textContent = 'failed'; };
 `
 
+// 🔴 A STUB SPELLING THE NEEDLE CANNOT MATCH, AND IT IS A REALISTIC ONE. The
+// message is hoisted into a binding, so the literal is still in the file — which
+// is what a minifier must preserve and what `unmatched` keys on — while the
+// `Promise.reject(...)` expression no longer carries it. Every needle in
+// `patchInlineTransport` matches on the literal SITTING INSIDE the reject call,
+// so this patches 0 sites.
+//
+// ⚠ BUILT FROM A REAL TRANSFORM, NOT A TEXTBOOK ONE. Two real bundles already
+// disagreed about this expression (`new Error("…")` in blocks-react 0.57.2,
+// ``Error(`…`)`` in 0.53.1); constant-hoisting is the ordinary next variant, and
+// the point of the fixture is that the harness must not be able to tell which
+// unknown spelling it is looking at — only that it could not install.
+const fxUnmatchableStub = `const STUB_MESSAGE = 'InlineTransport.sendRequest is not implemented in v1';
+class InlineTransport {
+  sendRequest(_request, _responseType, _opts) {
+      return Promise.reject(new Error(STUB_MESSAGE));
+  }
+}
+const transport = new InlineTransport();
+`
+
+// 🔴 THE UNMEASURED FIXTURE: an app that DOES ask for a pick, on a bundle this
+// oracle cannot instrument. Without the `pickerBlind` branch it grades
+// `RENDER=no` — byte-identical to the verdict `ab-ship-mimo-02` earned and
+// attributed to the model — which is this whole PR's defect, silently
+// reintroduced by a minifier.
+const fxUnmatchablePickerGatedApp = fxUnmatchableStub + fxSdkPickers + `
+const root = document.getElementById('root');
+root.innerHTML = '<input data-testid="prompt" type="text">' +
+  '<button id="pick">Select Model</button>' +
+  '<button id="gen" disabled>Generate</button>' +
+  '<button id="post" disabled>Post</button>' +
+  '<div data-testid="status">ready</div>';
+const promptEl = document.querySelector('[data-testid="prompt"]');
+const statusEl = document.querySelector('[data-testid="status"]');
+const genEl = document.getElementById('gen');
+let model = null;
+function sync() { genEl.disabled = !(promptEl.value.trim() && model); }
+promptEl.addEventListener('input', sync);
+document.getElementById('pick').onclick = async function () {
+  try {
+    model = await openPicker({ resourceType: 'Checkpoint' });
+    sync();
+  } catch (e) { console.error('picker:', e.message); }
+};
+genEl.onclick = function () { statusEl.textContent = 'generating'; };
+`
+
+// 🔴 THE OVER-REFUSAL CONTROL, and it is the half that keeps `pickerBlind` from
+// being a blanket refusal. SAME uninstrumentable bundle, but the app needs no
+// pick: Generate opens on a typed prompt. The instrument being blind harmed
+// nothing here, so this must still earn an ordinary verdict — `RENDER=yes` — with
+// the blindness merely REPORTED on the cell.
+const fxUnmatchableNoPickApp = fxUnmatchableStub + `
+const root = document.getElementById('root');
+root.innerHTML = '<input data-testid="prompt" type="text">' +
+  '<button id="gen">Generate</button>' +
+  '<button id="post" disabled>Post</button>' +
+  '<div data-testid="status">ready</div>';
+const statusEl = document.querySelector('[data-testid="status"]');
+document.getElementById('gen').onclick = async function () {
+  statusEl.textContent = 'generating';
+  try {
+    await transport.sendRequest({ type: 'ESTIMATE_WORKFLOW', payload: {} }, 'WORKFLOW_ESTIMATE');
+    statusEl.textContent = 'spend-completed';
+  } catch (e) { statusEl.textContent = 'ready'; }
+};
+`
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 // The assertion's one JSON line, parsed. The oracle's summary line carries the
@@ -304,8 +373,13 @@ func assertionLine(t *testing.T, out string) map[string]any {
 		if !strings.HasPrefix(line, `{"assertion"`) {
 			continue
 		}
+		// 🔴 DECODE, DO NOT Unmarshal. On the exit-2 path `oracle.sh`'s `fatal`
+		// re-prints the assertion's whole output inside its own message, so the last
+		// matching line is the JSON followed by ` — nothing was measured (…)`.
+		// `Unmarshal` rejects trailing content; a decoder stops at the end of the
+		// first value, which is exactly the object we want.
 		m := map[string]any{}
-		if err := json.Unmarshal([]byte(line), &m); err != nil {
+		if err := json.NewDecoder(strings.NewReader(line)).Decode(&m); err != nil {
 			t.Fatalf("assertion line is not JSON: %q", line)
 		}
 		last = m
@@ -314,6 +388,22 @@ func assertionLine(t *testing.T, out string) map[string]any {
 		t.Fatalf("no assertion JSON line in:\n%s", out)
 	}
 	return last
+}
+
+// summaryField without the Fatal: `""` when the oracle emitted no summary line at
+// all, which is itself the thing an unmeasured run has to be checked for.
+func summaryFieldOrEmpty(out, key string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, "brief=") {
+			continue
+		}
+		for _, f := range strings.Fields(line) {
+			if strings.HasPrefix(f, key+"=") {
+				return strings.TrimPrefix(f, key+"=")
+			}
+		}
+	}
+	return ""
 }
 
 func assertionField(t *testing.T, out, key string) string {
@@ -477,6 +567,80 @@ func TestOnlyTheGenerateClickCanEarnTheVerdict(t *testing.T) {
 	if got := assertionField(t, out, "hostAnswered"); got != "OPEN_RESOURCE_PICKER:Checkpoint" {
 		t.Fatalf("hostAnswered=%q — the picker must have been answered for this arm to reach the "+
 			"state it is about\n%s", got, out)
+	}
+}
+
+// ── a blind instrument reports UNMEASURED, never `no` ───────────────────────
+
+// 🔴 THE GUARD FOR THE SILENT INSTRUMENT FAILURE. If `patchInlineTransport`'s
+// needle stops matching a bundle — a minifier reshapes the reject expression, the
+// SDK rewords its stub — then a pick can never be answered, Generate stays shut,
+// the status never leaves `ready`, and the cell reads `RENDER=no`. That is
+// byte-identical to the verdict `ab-ship-mimo-02` earned before this PR, and it
+// would be attributed to the model: this PR's own defect, reintroduced silently by
+// somebody else's build tool.
+//
+// It is not hypothetical. The needle WAS wrong on the second real bundle anyone
+// looked at (blocks-react 0.53.1 emits ``Error(`…`)`` with no `new`) and patched 0
+// sites while its cell stayed green — only because that app never opens a picker.
+//
+// `oracle.sh` already owns the right state for this and says so in its own words:
+// exit 2 / `RENDER=unmeasured`, because folding an unmeasurable run into `no`
+// reports "the model did not build the app" about a run where the INSTRUMENT
+// failed. So a pick that could not have been answered must land there.
+//
+// ⚠ Both arms are required, and the second is the one that keeps this from being a
+// blanket refusal: an app that never needed a pick must still earn an ordinary
+// verdict on the very same uninstrumentable bundle.
+func TestABlindPickerInstrumentReportsUnmeasuredNotNo(t *testing.T) {
+	browser := oracleBrowser(t)
+	for _, tc := range []struct {
+		name     string
+		app      string
+		wantCode int
+		wantLine string
+	}{
+		{
+			name: "a pick that could not be answered is UNMEASURED",
+			app:  fxUnmatchablePickerGatedApp, wantCode: 2,
+			wantLine: "nothing was measured",
+		},
+		{
+			name: "the same blind bundle, an app that needs no pick (over-refusal control)",
+			app:  fxUnmatchableNoPickApp, wantCode: 0,
+			wantLine: "RENDER=yes",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, code := runPickerOracle(t, browser, fxManifestScoped, tc.app)
+			if code != tc.wantCode {
+				t.Fatalf("exit %d, want %d\n%s", code, tc.wantCode, out)
+			}
+			if !strings.Contains(out, tc.wantLine) {
+				t.Fatalf("the run does not say %q\n%s", tc.wantLine, out)
+			}
+			// 🔴 POSITIVE CONTROL ON THE FIXTURE ITSELF. Both arms are about a
+			// bundle the needle could NOT match; if it matched after all, the first
+			// arm would pass for the wrong reason (an ordinary `no` is not exit 2,
+			// but a future edit could make it one) and the second would be testing
+			// nothing at all. `unmatched=` proves the fixture is still unmatchable.
+			shim := assertionField(t, out, "pickerShim")
+			if !strings.Contains(shim, "sites=0") || !strings.Contains(shim, "unmatched=1") {
+				t.Fatalf("pickerShim=%q, want sites=0 and unmatched=1 — the fixture's stub is "+
+					"supposed to defeat the needle, and if it no longer does then neither arm of "+
+					"this test is about a blind instrument\n%s", shim, out)
+			}
+			if tc.wantCode == 2 {
+				// The assertion's own third state, distinct from `pass`.
+				if got := assertionField(t, out, "unmeasured"); got != "true" {
+					t.Fatalf("unmeasured=%s, want true\n%s", got, out)
+				}
+				if got := summaryFieldOrEmpty(out, "RENDER"); got != "" {
+					t.Fatalf("the run emitted RENDER=%s — an unmeasured run must emit NO verdict "+
+						"line at all, or a reader folds it back into `no`\n%s", got, out)
+				}
+			}
+		})
 	}
 }
 

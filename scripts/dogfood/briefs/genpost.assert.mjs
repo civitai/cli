@@ -168,6 +168,10 @@ async function main() {
   let pass = false;
   let reason = null;
   let page = null;
+  // 🔴 THE THIRD STATE. `pass` is a claim about the BLOCK; this is a claim about
+  // the HARNESS, and `oracle.sh` turns it into exit 2 / `RENDER=unmeasured` rather
+  // than a verdict. See `pickerBlind` below for the one condition that sets it.
+  let unmeasured = false;
 
   /**
    * What the oracle's host shim was asked for, and what the source patch did.
@@ -190,8 +194,38 @@ async function main() {
     // completed — rather than a promise in a docblock that nothing checks.
     evidence.hostRefused = seen.refused.join(',') || 'none';
     evidence.pickerShim = `${HOST_PICKS_LABEL}:docs=${page.shim.documents},sites=${page.shim.sites}` +
+      (page.shim.unmatched ? `,unmatched=${page.shim.unmatched}` : '') +
       (page.shim.skipped ? `,skipped=${page.shim.skipped}` : '');
   };
+
+  /**
+   * TRUE when this oracle served a bundle carrying the SDK's inline transport and
+   * could not instrument a single one of its stubs.
+   *
+   * 🔴 WHY THIS EXISTS: `sites=0` IS A SILENT INSTRUMENT FAILURE THAT REGRADES THE
+   * DEFECT THIS WHOLE FILE WAS CHANGED FOR. If the needle stops matching — a
+   * minifier reshapes the reject expression, the SDK rewords the stub — then a pick
+   * is never answered, `model` never arrives, Generate stays shut, the status never
+   * leaves `ready`, and the cell reads `RENDER=no`: BYTE-IDENTICAL to the verdict
+   * `ab-ship-mimo-02` earned, and attributed to the model. Not hypothetical — the
+   * needle WAS wrong on the second real bundle anyone tried (0.53.1 emits
+   * `Error(\`…\`)` with no `new`), and it patched 0 sites while the cell stayed
+   * green, *only* because that app happens never to open a picker.
+   *
+   * 🔴 IT IS DELIBERATELY NOT "sites === 0". That alone is the COMMON, HARMLESS
+   * case — a block that does not bundle the SDK's inline transport at all — and
+   * refusing those would trade one wrong verdict for a hundred. The trigger is
+   * `unmatched > 0`: a response carrying the stub's MESSAGE (a string literal a
+   * minifier must preserve) that matched no needle. That is the instrument saying
+   * "an inline transport went past me and I could not install on it".
+   *
+   * ⚠ AND IT ONLY DEGRADES ONE OUTCOME — the gate that could not open. A blind run
+   * that still reaches `generating` is reported, not refused: nothing was harmed,
+   * and `pickerShim` carries `unmatched=` either way. A blind run that fails for
+   * some other reason — no Post control, the wrong resting word, no prompt element
+   * — is likewise a verdict, because none of those are what an unanswered pick does.
+   */
+  const pickerBlind = () => !!page && page.shim.unmatched > 0;
 
   try {
     page = await openPage(c, url, { scopes: SCOPES });
@@ -280,6 +314,21 @@ async function main() {
     }
     await captureHostEvidence();
     if (evidence.generateDisabled === true) {
+      // 🔴 THE ONE PLACE A `no` IS NOT SAFE TO EMIT. A gate that did not open,
+      // on a page whose inline transport this oracle could not instrument, is
+      // EXACTLY the signature an unanswerable pick produces — so the honest
+      // report is "nothing was measured", not "the model did not build the app".
+      // `oracle.sh` renders exit 2 as `RENDER=unmeasured`, which is the state it
+      // already keeps for precisely this confound.
+      if (pickerBlind()) {
+        unmeasured = true;
+        throw new Error(`harness error: the "${GENERATE_LABEL}" control is still disabled with ` +
+          `the prompt typed, and this oracle could not instrument ${page.shim.unmatched} ` +
+          `response(s) carrying the SDK's inline transport (${evidence.pickerShim}) — so a host ` +
+          `resource pick could not have been answered here. That is an instrument failure, not a ` +
+          `verdict about the block: patchInlineTransport's needle no longer matches this bundle's ` +
+          `spelling of the stub. Clicked ${JSON.stringify(evidence.prereqClicks)}.`);
+      }
       throw new Error(`the "${GENERATE_LABEL}" control is still disabled with the prompt typed` +
         ` (clicked ${evidence.prereqClicks.length} host affordance(s): ` +
         `${JSON.stringify(evidence.prereqClicks)}; host answered ${evidence.hostAnswered})`);
@@ -342,8 +391,13 @@ async function main() {
     server?.close();
   }
 
-  console.log(JSON.stringify({ assertion: 'genpost', pass, reason, ...evidence }));
-  process.exit(pass ? 0 : 1);
+  // 🔴 THREE STATES, NOT TWO. 0 = the block passed, 1 = the block failed, 2 = THIS
+  // HARNESS could not measure — the code `oracle.sh` already turns into
+  // `RENDER=unmeasured` rather than a verdict. `pass` is forced false on the
+  // unmeasured path so no reader can take the pair for a verdict either way.
+  if (unmeasured) pass = false;
+  console.log(JSON.stringify({ assertion: 'genpost', pass, unmeasured, reason, ...evidence }));
+  process.exit(unmeasured ? 2 : (pass ? 0 : 1));
 }
 
 main().catch((e) => {
