@@ -40,6 +40,17 @@ Env knobs:
                       here-document (or anything else spanning lines) as ONE
                       command.
   FAKE_TOOL_OUTPUT    what the stub Docker returns as that command's output
+  FAKE_TOOL_RESULTS_JSON  a JSON object mapping a command string to the result
+                      the stub Docker returns for it:
+                      {"<command>": {"rc": 1, "out": "…", "err": "…"}} — every
+                      key optional, rc defaults to 0. This is the ONLY way to
+                      give a command a NON-ZERO exit code or output on STDERR,
+                      and both are load-bearing for the submission-cap refund:
+                      the refund fires on "exited non-zero AND said the CLI's
+                      pre-flight refusal", and the real CLI writes that refusal
+                      to stderr unless the trial redirected it. A repeated
+                      command gets the same result every time — the map is keyed
+                      by text, not by occurrence.
   FAKE_TRIAL_ID       the trial id (default `faketrial`)
   FAKE_FINISH_REASON  finish_reason on the FINAL turn (default `stop`; the
                       literal `__absent__` omits the field entirely, which is
@@ -104,6 +115,8 @@ if _commands_json:
 else:
     TOOL_COMMANDS = [c for c in os.environ.get("FAKE_TOOL_COMMAND", "").split("\n") if c]
 TOOL_OUTPUT = os.environ.get("FAKE_TOOL_OUTPUT", "")
+# Per-command exit code / stdout / stderr, keyed by the command text.
+TOOL_RESULTS = json.loads(os.environ.get("FAKE_TOOL_RESULTS_JSON") or "{}")
 
 # 🔴 THE DEFAULT IS A WELL-BEHAVED PROVIDER, AND IT IS STATED RATHER THAN
 # IMPLIED. Every test written before finish_reason existed runs through this
@@ -155,14 +168,26 @@ def fake_run(cmd, *a, **kw):
     cmd = list(cmd)
     captured.setdefault("subprocess", []).append(cmd)
     out = "fake\n"
+    err = ""
+    rc = 0
     # `docker exec … bash -lc <command>` is how sh() runs the model's command;
     # hand back the planted output so the redactor has something to catch.
     if TOOL_OUTPUT and "exec" in cmd and "bash" in cmd and "-lc" in cmd:
         out = TOOL_OUTPUT + "\n"
+    # A per-command result, matched on the command TEXT — which is the last argv
+    # element of `sh()`'s `docker exec … -i <container> bash -lc <command>`. The
+    # `-i` is what distinguishes a MODEL command from the runner's own
+    # housekeeping execs (workspace_slugs, the credential install), which pass no
+    # `-i` and must never be given a non-zero exit code by accident.
+    if "exec" in cmd and "-i" in cmd and "-lc" in cmd and cmd[-1] in TOOL_RESULTS:
+        r = TOOL_RESULTS[cmd[-1]]
+        rc = int(r.get("rc", 0))
+        out = r.get("out", "")
+        err = r.get("err", "")
     # runner.py reads bytes from sh() and str everywhere it passes text=True.
     if kw.get("text"):
-        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
-    return subprocess.CompletedProcess(cmd, 0, stdout=out.encode(), stderr=b"")
+        return subprocess.CompletedProcess(cmd, rc, stdout=out, stderr=err)
+    return subprocess.CompletedProcess(cmd, rc, stdout=out.encode(), stderr=err.encode())
 
 
 class _Resp:

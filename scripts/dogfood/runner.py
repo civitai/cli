@@ -535,6 +535,82 @@ GATED_FLAGS = {
     "color": "bool",
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# THE SUBMISSION CAP'S TWO FACTS ABOUT THE CLI — both live in Go, in
+# internal/cmd/app_submit.go, with no import between there and here.
+#
+# 🔴 WHY THE CAP CHARGES THE ATTEMPT AND REFUNDS AFTERWARDS, RATHER THAN DECIDING
+# UP FRONT. Trial `ab-ship-mimo-01` (2026-09-25) measured the defect that made
+# this necessary: the cap incremented on `civitai app submit` — an invocation the
+# CLI REFUSED pre-flight for lack of `--yes`, which contacted nothing — and then
+# refused the `--yes` retry that would have worked, plus a `--package-only` that
+# contacts nothing by construction. The account afterwards held 0 pending
+# requests: the trial's SHIP=no was an artifact of this accounting.
+#
+# The obvious repair is to decide before running: "only charge a submit that
+# carries --yes". That direction FAILS OPEN. It makes the harness depend on the
+# CLI continuing to refuse a non-interactive submit without `--yes`, so the day
+# that refusal stops — a config that auto-confirms, a TTY appearing, the flag
+# renamed — the harness silently stops charging and permits UNLIMITED real
+# submissions against a live account.
+#
+# So the charge stays unconditional and the budget is REFUNDED only when the
+# invocation's own result PROVES nothing was contacted. If the CLI's message or
+# behaviour changes, the refund simply stops happening and the harness
+# over-refuses. That is the safe direction, and it is the whole reason for the
+# shape of `Caps.settle`.
+#
+# Both facts are pinned against the Go source by the seam guards in
+# dogfood_submission_cap_seam_test.go, which run the REAL CLI and feed its actual
+# bytes back through this module — a hardcoded string on both sides would be two
+# copies of one assumption.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Verbatim from `confirmSubmit` in internal/cmd/app_submit.go: the error a
+# non-interactive submit without `--yes` returns, BEFORE any packaging and before
+# any network read. A submit whose output carries this, and which exited
+# non-zero, reached no API.
+SUBMIT_PREFLIGHT_REFUSAL = "refusing to submit without --yes in a non-interactive shell"
+# The one `submit` spelling that contacts nothing BY CONSTRUCTION: in
+# app_submit.go `canUpload := !packageOnly && cfg.Token() != ""`, and every
+# network call sits under `canUpload`. Capping it is pure over-refusal with no
+# safety value, so it is exempt from the cap and is never charged.
+SUBMIT_NO_CONTACT_FLAG = "package-only"
+# `sh()` prefixes every result with this line, so the exit code is recoverable
+# from the same string the model is handed.
+_EXIT_CODE = re.compile(r"\Aexit code:\s*(-?\d+)")
+
+
+def submit_contacted_nothing(result: str) -> bool:
+    """True when a `civitai app submit` result PROVES no API was reached.
+
+    🔴 EVERY BRANCH THAT IS NOT A PROOF RETURNS False, including the ones that
+    look like bookkeeping. A result shape this cannot parse is not evidence; an
+    exit code of 0 means the command did something and returned happy, so the
+    refusal text appearing in it (an `|| true`, a `--help` dump, an `echo`) is
+    not the CLI refusing. Only non-zero AND the CLI's own pre-flight sentence
+    earns the refund.
+    """
+    m = _EXIT_CODE.match(result or "")
+    if m is None:
+        return False
+    if int(m.group(1)) == 0:
+        return False
+    return SUBMIT_PREFLIGHT_REFUSAL in result
+
+
+def _bool_flag_is_true(value: str) -> bool:
+    """Whether cobra would read `--flag=<value>` on a Bool flag as true.
+
+    cobra hands the attached value to `strconv.ParseBool`, which accepts
+    1/t/T/TRUE/true/True and 0/f/F/FALSE/false/False and ERRORS on anything
+    else. An error makes the command fail, so treating an unparseable value as
+    false is the fail-closed reading for the one caller — an exemption from the
+    submission cap must never be granted by a token the CLI would not accept.
+    """
+    return value.strip() in ("1", "t", "T", "TRUE", "true", "True")
+
+
 _SEG = re.compile(r"\|\||&&|[;|&\n]")
 _ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # A here-document opener: `<<WORD`, `<< 'WORD'`, `<<-"WORD"`.
@@ -671,34 +747,62 @@ def slug_candidates(argv, skip: int):
     Everything after a bare `--` is a positional, as it is to cobra.
     """
     out = []
+    for kind, origin, value in walk_argv(argv, skip):
+        if kind == "arg":
+            out.append((value, origin))
+        elif value and GATED_FLAGS.get(origin.lstrip("-"), "bool") == "slug":
+            out.append((value, origin))
+    return out
+
+
+def walk_argv(argv, skip: int):
+    """ONE pass over a civitai invocation's argv, saying what each token IS.
+
+    Yields `("flag", origin, value)` — `origin` is the spelling as written
+    (`"--slug"`, `"-t"`) and `value` is the token the flag consumed, or None when
+    it consumed nothing — and `("arg", ARG_ORIGIN, token)` for a positional.
+
+    🔴 ONE WALK, NOT TWO, AND THAT IS THE POINT. Two callers need to know which
+    tokens a flag swallowed: `slug_candidates` (the app-prefix cap) and
+    `flag_present` (the `--package-only` exemption on the submission cap). A
+    second copy of this parse would be a second place for `GATED_FLAGS` to be
+    applied differently — and the two callers sit on OPPOSITE sides of a safety
+    boundary, one over-refusing when it is wrong and the other under-charging, so
+    a divergence would be visible in one and silent in the other.
+
+    Cobra's spellings, all of which this has to agree with: `--flag value`,
+    `--flag=value`, a shorthand cluster `-ty`, `-t static`, `-tstatic`,
+    `-t=static`, and a bare `--` after which everything is a positional.
+    """
     i, n = skip, len(argv)
     while i < n:
         tok = argv[i]
         i += 1
         if tok == "--":
-            out.extend((rest, ARG_ORIGIN) for rest in argv[i:])
-            return out
+            for rest in argv[i:]:
+                yield "arg", ARG_ORIGIN, rest
+            return
         if tok.startswith("--") and len(tok) > 2:
             name, eq, attached = tok[2:].partition("=")
             role = GATED_FLAGS.get(name, "bool")
             if eq:
-                if role == "slug" and attached:
-                    out.append((attached, "--" + name))
+                yield "flag", "--" + name, attached
                 continue
+            value = None
             if role in ("slug", "value") and i < n:
                 value = argv[i]
                 i += 1
-                if role == "slug":
-                    out.append((value, "--" + name))
+            yield "flag", "--" + name, value
             continue
         if tok.startswith("-") and len(tok) > 1:
-            # A shorthand cluster, as cobra parses it: `-y`, `-ty`, `-t static`,
-            # `-tstatic`, `-t=static`. The first value-taking shorthand in the
-            # cluster takes the remainder (or the next token) and ends it.
+            # A shorthand cluster, as cobra parses it. The first value-taking
+            # shorthand in the cluster takes the remainder (or the next token)
+            # and ends it; the bool shorthands before it consume nothing.
             shorts = tok[1:]
             for k, ch in enumerate(shorts):
                 role = GATED_FLAGS.get(ch, "bool")
                 if role == "bool":
+                    yield "flag", "-" + ch, None
                     continue
                 rest = shorts[k + 1:]
                 if rest.startswith("="):
@@ -706,12 +810,27 @@ def slug_candidates(argv, skip: int):
                 if not rest and i < n:
                     rest = argv[i]
                     i += 1
-                if role == "slug" and rest:
-                    out.append((rest, "-" + ch))
+                yield "flag", "-" + ch, rest or None
                 break
             continue
-        out.append((tok, ARG_ORIGIN))
-    return out
+        yield "arg", ARG_ORIGIN, tok
+
+
+def flag_present(argv, skip: int, name: str) -> bool:
+    """Whether cobra would see `--<name>` SET on this invocation.
+
+    🔴 IT WALKS THE ARGV RATHER THAN GREPPING IT, AND THE DIRECTION IS WHY. Its
+    one caller grants an exemption from the submission cap, so a false positive
+    is a hole in a cap on real, moderator-facing submissions. `--caption
+    --package-only` writes a caption; the token is another flag's VALUE and cobra
+    never reads it as this flag, so neither does this. A token after a bare `--`
+    is a positional, likewise. `--<name>=false` is not set either — see
+    `_bool_flag_is_true`, which refuses anything cobra would not parse as true.
+    """
+    for kind, origin, value in walk_argv(argv, skip):
+        if kind == "flag" and origin == "--" + name:
+            return value is None or _bool_flag_is_true(value)
+    return False
 
 
 def origin_phrase(origin: str) -> str:
@@ -736,6 +855,10 @@ class Caps:
         self.manifest_slugs = manifest_slugs
         self.generations = 0
         self.submissions = 0
+        # How many `submit` charges the LAST judged command incurred. `settle()`
+        # can then give back exactly what that command took and nothing else —
+        # never a charge some earlier command made.
+        self._charged = 0
 
     def _prefix_ok(self, argv, skip):
         """Refusal string if this command targets a slug outside the prefix."""
@@ -785,6 +908,10 @@ class Caps:
         return None
 
     def judge(self, command: str):
+        # Reset before anything else: `settle()` refunds only what THIS command
+        # was charged, so a command that charges nothing must not be able to
+        # hand back a previous command's submission.
+        self._charged = 0
         # A here-document body is stdin for the opener's command, never something
         # the shell executes — see strip_heredoc_bodies for the measured false
         # refusal this removes.
@@ -838,7 +965,14 @@ class Caps:
                         "this trial. It applies IN PLACE on a listing of any status — no "
                         "revision, no moderator review, public the moment it returns — and "
                         "this CLI has no command that restores the previous value." % argv[2])
-            if sub == "submit":
+            # 🔴 `--package-only` IS NOT A SUBMISSION. It writes the .zip and
+            # returns; `canUpload := !packageOnly && …` in app_submit.go puts
+            # every network call out of its reach. Capping it refuses a command
+            # that cannot cost anything, which is what happened at step 51 of
+            # `ab-ship-mimo-01`. It is exempt from the cap and never charged —
+            # NOT exempt from the prefix gate below, which is cheap and stays.
+            no_contact = sub == "submit" and flag_present(argv, 2, SUBMIT_NO_CONTACT_FLAG)
+            if sub == "submit" and not no_contact:
                 if self.max_submissions is not None and self.submissions >= self.max_submissions:
                     return ("refused by the run harness: the submission cap for this trial is %d "
                             "and it has been reached. Do not retry; report this and stop "
@@ -848,9 +982,34 @@ class Caps:
             refusal = self._prefix_ok(argv, 3 if sub == "listing" else 2)
             if refusal:
                 return refusal
-            if sub == "submit":
+            if sub == "submit" and not no_contact:
+                # 🔴 THE ATTEMPT IS CHARGED, NOT THE SUBMISSION — and `settle()`
+                # gives it back only on PROOF that nothing was contacted. See the
+                # SUBMIT_PREFLIGHT_REFUSAL block for why this direction and not
+                # the pre-flight one.
                 self.submissions += 1
+                self._charged += 1
         return None
+
+    def settle(self, result: str):
+        """Give back a submission charge when the command's result proves the
+        attempt reached no API. Returns a note for the log, or None.
+
+        🔴 IT CAN ONLY EVER GIVE BACK WHAT THE COMMAND JUST TOOK. A command that
+        charged nothing refunds nothing, and one that charged TWICE refunds
+        nothing either: a single pre-flight refusal in the output of `civitai app
+        submit --yes && civitai app submit` cannot say WHICH of the two it came
+        from, so there is no attribution and the conservative reading is the only
+        one available.
+        """
+        if self._charged != 1:
+            return None
+        if not submit_contacted_nothing(result):
+            return None
+        self.submissions -= 1
+        self._charged = 0
+        return ("the submission was refunded: the CLI refused it pre-flight for lack of "
+                "`--yes`, so nothing was contacted and the budget is unspent")
 
 
 def key() -> str:
@@ -975,7 +1134,12 @@ def main() -> int:
     ap.add_argument("--max-generations", type=int, default=None,
                     help="refuse `civitai generate` past this many invocations.")
     ap.add_argument("--max-submissions", type=int, default=None,
-                    help="refuse `civitai app submit` past this many invocations.")
+                    help="refuse `civitai app submit` past this many invocations "
+                         "that could reach the API. An attempt is charged up "
+                         "front and REFUNDED when its own result proves nothing "
+                         "was contacted (the CLI's pre-flight refusal for lack "
+                         "of --yes); `--package-only` contacts nothing by "
+                         "construction and is never charged.")
     ap.add_argument("--allow-withdraw", action="store_true",
                     help="permit `civitai app withdraw`, which is refused by "
                          "default: it destroys a listing's captioned screenshots "
@@ -1329,8 +1493,21 @@ def main() -> int:
                 result = sh(container, a.user, cmd)
             except subprocess.TimeoutExpired:
                 result = "exit code: -1\n[command timed out after 300s]"
+            # 🔴 SETTLED AFTER THE RUN, BECAUSE THE PROOF IS THE RESULT. The
+            # charge was taken before the command ran (Caps.judge); this is the
+            # only place the evidence that it cost nothing can exist. The model is
+            # handed `result` UNCHANGED — the refund is bookkeeping in this
+            # process, and appending a note to the tool output would alter the
+            # artifact under measurement.
+            refund = caps.settle(result) if armed else None
+            extra = {"refund": refund} if refund else {}
             rec("tool", step=steps, command=cmd, result=result,
-                secs=round(time.time() - t0, 1))
+                secs=round(time.time() - t0, 1), **extra)
+            if refund:
+                # Logged as its own line so `sub=` on it shows the RESTORED
+                # counter — the "run" line above was written before the command
+                # ran and necessarily shows the charged one.
+                logcmd("refund", steps, cmd, caps)
             messages.append({"role": "tool", "tool_call_id": c["id"],
                              "content": result})
 
