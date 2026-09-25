@@ -49,8 +49,20 @@ func TestREADMEListingMediaPathsExistInEveryScaffoldedProject(t *testing.T) {
 	// Positive control. A zero-match run is what a regex typo, a renamed
 	// command or a wrong working directory all look like, and it would report a
 	// serene pass over nothing.
-	if len(matches) < 4 {
-		t.Fatalf("found only %d `civitai app listing set-*` invocations in README.md, want >= 4 — "+
+	//
+	// ⚠ LOWERED 4 → 3 when the README's `app listing` walkthrough moved out to
+	// the hosted store-listing guide (the README links it; the URL is deliberately
+	// not repeated here — see docsURLSpellingLedger). This is a control on the
+	// EXTRACTOR, not a claim that the README owes four invocations: the six
+	// matches inside that walkthrough went with it, leaving the quickstart's
+	// `set-icon ./assets/icon.png` + `set-cover ./assets/cover.png` and the
+	// `set-icon <file>` placeholder in the exit-code-1 prose. The guard's
+	// SUBSTANCE is untouched — the walkthrough's paths were all `assets/` too, so
+	// the directory set it checks against every template is the same one. Do not
+	// lower it again without re-deriving the real count: at 2 it would still see
+	// `assets/`, at 1 it would be one edit away from checking nothing.
+	if len(matches) < 3 {
+		t.Fatalf("found only %d `civitai app listing set-*` invocations in README.md, want >= 3 — "+
 			"the extractor is reading the wrong text (pattern: %s)", len(matches), listingMediaCmdRe)
 	}
 

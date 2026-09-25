@@ -279,6 +279,11 @@ var docsURLSpellingLedger = map[string]string{
 		"retiring the index moved the spelling into the template rather than removing it",
 	"internal/scaffold/readme_claims_test.go": "the guard that the scaffolded README names the hosted hooks " +
 		"reference within the first 3 KB pins the URL as a const, so it is a third place the spelling can rot",
+	"README.md": "the published user contract now LINKS OUT to individual pages under the block's Guide URL " +
+		"(`/apps/guide/local-dev`, `/apps/guide/review-and-deploy`, `/apps/guide/store-listing`) in place of " +
+		"the prose those pages carry, so what matches here is the `/apps/guide/` PREFIX rather than a whole " +
+		"URL. It rots the same way and costs more: a reader sent to a moved page does not get a stale " +
+		"paragraph, they get nothing, because the paragraph was deleted on the grounds that the page carries it",
 }
 
 // docsURLLedgerExemptPrefix is the ONE exemption, and it is not a convenience.
