@@ -70,6 +70,85 @@ re-encode mechanism, so the server's byte count acquires visible units
 annotation comes from the author's file; the platform's sentence is still
 relayed verbatim ahead of it.
 
+## 2026-09-25 — AMENDED: the LETTER was broader than the ARGUMENT, and the prose has left the README
+
+**Operator decision, 2026-09-25.** The body below opens *"…live in the README as
+prose"*, and every line of reasoning under it is about one thing: not turning
+**guidance** into a **gate** — *"stale guidance costs one round-trip, while a
+stale gate refuses valid images and the author cannot override it."* Relocating
+prose does not do that. So the item's letter named a LOCATION where its argument
+only ever constrained a MECHANISM, and the location half is retired.
+
+**What is unchanged, and it is the whole load-bearing half.** No local dimension
+or aspect check. No `LISTING_ICON_ASPECT_MIN` in `internal/cmd`. No promotion of
+the table into `internal/validate`. The CLI still decodes width/height
+(`appapi.DecodeImageInfo`) and still declines to gate on it; the omission is
+still a decision, not a missing feature. Nothing in this amendment weakens that,
+and the trigger in AGENTS.md was widened rather than narrowed — it now also
+routes a reader who is about to MOVE the documentation, so this decision is
+reachable from that situation too.
+
+**What changed.** `README.md`'s `### Listing media requirements` section (4,180
+bytes) is deleted. It was a duplicate:
+`https://developer.civitai.com/apps/guide/store-listing` carries both tables,
+the four behaviours, the megapixel ceiling and the same
+guidance-not-a-gate note. This continues #707's phase 2, which had already moved
+the rest of the `app listing` walkthrough to that page and left this section
+behind.
+
+**The page was verified by CONTENT before anything was deleted, not by URL.**
+Fetched (HTTP 200, 120,341 B), tag-stripped to 23,196 B of text, then grepped
+for every number the section carried: the three aspect ranges (`0.9`/`1.1`,
+`1.3`/`2.4`, `0.4`/`2.6`), the three minimum dimensions (`128`, `640`, `320`),
+the byte caps (`2 MiB` ×3, `4 MiB`), the re-encode ceiling (`1024`), and
+`megapixel`. All present, and present as the same two tables rather than as
+scattered digits — the stripped text was read, not only counted. Negative
+control on the same corpus: `zzzznotpresent`, `9999 px` and `7.7 MiB` each
+returned 0, so a non-zero above is a match and not a grep that matches anything.
+
+**Five user-visible strings were repointed**, all of which named the deleted
+section by title: the `Long` bodies of `set-icon`, `set-cover` and
+`add-screenshot` (which is `--help` text a user reads), and the two
+`attachRejectionAdvice` error strings. They now read `Platform bounds:
+https://developer.civitai.com/apps/guide/store-listing`. That spelling is 71
+bytes against the old 72, which is load-bearing:
+`TestListingHelpStaysWithinTheBudget` caps `add-screenshot`'s `Long` at 1,400
+characters and it stood at 1,396. The first, longer wording overran it by 31 and
+the test caught it. `internal/cmd/app_listing.go` is now in
+`docsURLSpellingLedger` — it is the most expensive row there, because these five
+strings are compiled into released binaries and no docs edit reaches a version
+already on somebody's PATH.
+
+**The drift guards were re-pointed, not deleted.** Four test functions read the
+deleted section, three of them code↔prose drift assertions. A hosted page cannot
+be an oracle for a hermetic test, so they now read the copy of the same prose
+that is still in this repository: the `assets/README.md` every template
+scaffolds, which the body below already names as the second documented home.
+That subject is wider than the README section was — it is a SHIPPED artefact
+written into somebody else's project, and there are three copies — and the cap
+assertions got stronger: `internal/scaffold/assets_dir_test.go` pinned the caps
+as literals (`"2 MiB"`, `"4 MiB"`), so the two files agreed with each other and
+neither was tied to the constant. The re-pointed guard derives the expected
+string from `maxIconBytes` / `maxCoverBytes` / `maxScreenshotBytes`.
+`TestREADMEIconAspectDoesNotForbidASquareIcon` moved with them; its own CONTROL
+failure is what detected the relocation.
+
+**Two residuals, stated rather than glossed.**
+
+1. The quotation ban in `TestListingRequirementsDocDoesNotPinAServerSentence`
+   was a REGRESSION guard against the README (red on the tree that shipped the
+   stale *"That icon couldn't be read"* paragraph). On its new subject it is an
+   INVARIANT guard: the scaffolded docs never carried that defect. The rule is
+   the same and worth pinning where the prose now lives, but the historical
+   redness belongs to a file that no longer exists.
+2. The pixel-ceiling bullet (roughly 16 megapixels, ~4096 × 4096, refused
+   regardless of file size) was in the README and not in the scaffolded docs, so
+   re-pointing the invariant half required ADDING it to the three
+   `assets/README.md.tmpl` copies. That is a content change made to preserve a
+   guard, and it is also the right place for it — it is the one rejection the
+   byte-cap table cannot explain, and the author reading that file is the one
+   who hits it.
+
 ---
 
 25. **The listing-media DIMENSION and ASPECT bounds live in the README as prose,

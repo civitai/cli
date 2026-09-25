@@ -77,42 +77,16 @@ Run the binary you built with `./bin/civitai <cmd>`; per-package coverage is
 
 ## Shell & CI gotchas
 
-These produce **clean exits and reassuring output while doing nothing** — the
-expensive class. Read the tool's *output*, not just its exit code. Host-generic
-shell traps were removed from here (they belong in your global rules); what
-follows is specific to this repo's toolchain.
-
-- **`gofmt -s -l .` checking zero files** prints nothing and exits 0 — same as
-  "all clean". If a path is misquoted or the working tree is wrong, the clean
-  verdict says nothing about the code. Verify the directory, and that the tool
-  found files.
-- **Build/test/tool not on PATH exits `127`; OOM exits `134`** — both non-zero,
-  but a script reading `rc != 0` as "N errors found" reports a plausible wrong
-  count. Prefer `make ci` (which handles this) over hand-rolled invocations, and
-  assert a **minimum expected count** (≥1 package tested, ≥1 file checked) as a
-  positive control.
-- **`go test ./...` with a broken import in `_test.go`** can compile to 0 tests
-  and pass. If a package you expect tests for is silent, check explicitly:
-  `go test -v -count=1 ./path/to/pkg | head`.
-- **`gh pr checks` / `gh pr view --json statusCheckRollup` pitfalls.** Kept
-  because with eight jobs of which only some gate, "have the checks settled?" is
-  a live question here, and each trap answers it wrongly in the REASSURING
-  direction:
-  - `.conclusion` is `null` for commit statuses (only check-runs populate it) —
-    poll `.state` instead.
-  - Checks go through `QUEUED` → `IN_PROGRESS` → conclusion. A poll matching
-    only `PENDING` declares "settled" while checks are still running.
-  - A freshly-created check has an **empty** conclusion — matches no busy keyword,
-    so a grep-for-busy loop prints "ALL SETTLED" before anything started.
-  - Fix: require every check to hold a **terminal** conclusion
-    (`SUCCESS|FAILURE|CANCELLED|TIMED_OUT|NEUTRAL|SKIPPED`) and assert a
-    minimum expected check count.
-- 🔴 **`./scripts/ci-shallow.sh` reads COMMITTED state only** — it clones the
-  branch at its tip, so running it on a dirty tree measures the **previous**
-  commit and reports green about code you did not write. Its result is a claim
-  about `HEAD`, never about the working tree: commit first, and confirm the SHA
-  it cloned is the one you meant. This bit three separate agents in one session,
-  each time in the reassuring direction.
+🔴 **About to read a verdict out of `gofmt`, `go test`, `gh pr checks` or
+`./scripts/ci-shallow.sh`?** Every trap this repo has met with those four
+produces a **clean exit and reassuring output while doing nothing** — a zero
+that means "measured nothing", not "found nothing" — so read the tool's
+*output*, never just its exit code. They are enumerated, with the control that
+separates each from a real pass, in
+[`CONTRIBUTING.md`](CONTRIBUTING.md#shell--ci-gotchas). The one that has bitten
+most often, because it reads as a green about YOUR change: `ci-shallow.sh`
+clones the branch **at its tip**, so on a dirty tree it measures the PREVIOUS
+commit.
 
 ## Git rules
 
@@ -216,8 +190,8 @@ item 7 owns why an untagged return unpins a published exit code.
 
 **Index.** Items 1–4, 10 and 11 are deliberate mirrors of the platform;
 items 8 and 25 are deliberate *non*-mirrors (25 = the store-listing image
-dimension/aspect bounds, which stay prose in the README rather than becoming a
-local check). Items 5–9 cover `civitai app metrics`, the CLI's only analytics
+dimension/aspect bounds, which stay GUIDANCE — wherever they are documented —
+rather than becoming a local check). Items 5–9 cover `civitai app metrics`, the CLI's only analytics
 read path. Items 12–17, 19, 21 and 22 cover `civitai generate`, the CLI's only
 path that **spends the user's money irreversibly** — 19 is img2img, 21 model
 substitution, 22 the one gate there guarding CONTENT rather than money.
@@ -395,7 +369,8 @@ item must carry a trigger that is a routing question rather than a label
     → evidence: claudedocs/decisions/24-errno-is-a-net-error.md
 
 25. **Adding a dimension or aspect check to `app listing`, reconciling the two
-    icon byte caps, or scaffolding a placeholder image?**
+    icon byte caps, scaffolding a placeholder image, or moving where those
+    bounds are documented?**
     → evidence: claudedocs/decisions/25-listing-media-bounds.md
 
 26. **Adding a command that takes a user-named project directory, gating a path

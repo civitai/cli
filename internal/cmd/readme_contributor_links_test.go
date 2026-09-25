@@ -232,26 +232,33 @@ func TestContributorOnlyDocsAreReallyNotShipped(t *testing.T) {
 // meant "it need not be exactly square" and read as a prohibition.
 //
 // This is a contradiction check, not a style one: the two claims cannot both be
-// followed, and a reader who believes the table will avoid the size the README
+// followed, and a reader who believes the table will avoid the size the doc
 // tells them to start from.
+//
+// 🔴 RE-POINTED WITH ITS SUBJECT, NOT DELETED. Both halves of the contradiction
+// lived in README.md's `### Listing media requirements`, and that section was
+// relocated to the published store-listing guide. The in-repo copy of the same
+// aspect table and the same "start from 512 × 512" line is the `assets/README.md`
+// every template scaffolds, so that is what this now reads — and it reads all
+// THREE of them, where it used to read one file. Its CONTROL failure above is the
+// thing that caught the relocation, which is the guard working.
 func TestREADMEIconAspectDoesNotForbidASquareIcon(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join(repoRootDir(t), "README.md"))
-	if err != nil {
-		t.Fatalf("read README.md: %v", err)
-	}
-	body := string(raw)
-
-	// CONTROL: the recommendation this would contradict must actually be there.
-	if !strings.Contains(body, "**512 × 512**") {
-		t.Fatal("CONTROL failure: the README no longer recommends a 512 × 512 icon, so there is no " +
-			"contradiction to guard against — re-check whether this test still means anything")
-	}
-	if !strings.Contains(body, "0.9 – 1.1") {
-		t.Fatal("CONTROL failure: the icon aspect bound (0.9 – 1.1) is not in the README, so the row " +
-			"this test is about has moved or gone")
-	}
-	if strings.Contains(body, "not exactly square") {
-		t.Error("the icon aspect row says \"not exactly square\", which reads as a prohibition on 1:1 — " +
-			"but 1:1 is the centre of the 0.9–1.1 range, and the README itself recommends a 512 × 512 icon")
+	for tmpl, body := range listingRequirementsDocs(t) {
+		t.Run(tmpl, func(t *testing.T) {
+			// CONTROL: the recommendation this would contradict must actually be there.
+			if !strings.Contains(body, "**512 × 512**") {
+				t.Fatalf("CONTROL failure: template %q's assets/README.md no longer recommends a 512 × 512 icon, "+
+					"so there is no contradiction to guard against — re-check whether this test still means anything", tmpl)
+			}
+			if !strings.Contains(body, "0.9 – 1.1") {
+				t.Fatalf("CONTROL failure: the icon aspect bound (0.9 – 1.1) is not in template %q's "+
+					"assets/README.md, so the row this test is about has moved or gone", tmpl)
+			}
+			if strings.Contains(body, "not exactly square") {
+				t.Errorf("template %q's icon aspect row says \"not exactly square\", which reads as a prohibition "+
+					"on 1:1 — but 1:1 is the centre of the 0.9–1.1 range, and the same file recommends a "+
+					"512 × 512 icon", tmpl)
+			}
+		})
 	}
 }

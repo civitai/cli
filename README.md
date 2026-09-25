@@ -84,7 +84,6 @@ contract, and **packages/submits** it for review.
   - [The `--json` result shape](#the---json-result-shape)
 - [Submit & auth](#submit--auth)
   - [After you submit: review → approve → deploy](#after-you-submit-review--approve--deploy)
-  - [Listing media requirements](#listing-media-requirements)
   - [Link your source code (`app listing set-source-repo`)](#link-your-source-code-app-listing-set-source-repo) — **material: stages a revision**
 - [Submission status](#submission-status)
 - [Listing doctor (`app doctor`)](#listing-doctor-app-doctor) — **gates a release on exit code**
@@ -275,7 +274,8 @@ civitai app status
 #    images — save your own icon.png and cover.png in there first:
 #      icon   png/jpeg/webp, <= 2 MiB, square-ish  — start from 512 x 512
 #      cover  png/jpeg/webp, <= 4 MiB, landscape   — start from 1600 x 900
-#    Full bounds (and who checks what) in "Listing media requirements" below.
+#    Full bounds (and who checks what) are in that assets/README.md, and in the
+#    Store listing guide linked right after this block.
 civitai app listing set-icon ./assets/icon.png
 civitai app listing set-cover ./assets/cover.png
 civitai app listing status
@@ -285,7 +285,7 @@ civitai app listing status
 > directory with a README of the requirements, and deliberately **no placeholder
 > images** — a placeholder passes every check and uploads cleanly, which is how a
 > stub icon reaches a public listing. Sizes, formats and aspect ratios are in
-> [Listing media requirements](#listing-media-requirements).
+> [Store listing](https://developer.civitai.com/apps/guide/store-listing).
 
 > Want to drive the **real** backend (real Buzz/compute) before submitting? Mint
 > a dev token with `civitai app dev-token` and run `npm run dev:live` — see
@@ -633,7 +633,7 @@ bytes from the blockId *and* write them into `block.manifest.json`).
 Every template also scaffolds an **`assets/`** directory holding a README of the
 store-listing media requirements — and no images, so the `set-icon` / `set-cover`
 step fails loudly until you supply real artwork. See
-[Listing media requirements](#listing-media-requirements).
+[Store listing](https://developer.civitai.com/apps/guide/store-listing).
 
 ## The host handshake (`BLOCK_READY`)
 
@@ -1561,7 +1561,12 @@ every `app listing` subcommand: attaching media, `--slug`/`--dir` when you are
 not in the app directory, how a **material** change to a LIVE listing is **staged
 on a revision** and is not live until `submit-revision` is approved — 🔴 with
 `set-text` the exception, applying **in place, immediately and publicly** — and
-what `--json` reports (`parentId`, `shadowId`, `floor`).
+what `--json` reports (`parentId`, `shadowId`, `floor`). It is also where the
+**media requirements** live: the formats and byte caps the CLI checks locally,
+and the per-kind aspect range, minimum dimension and server-side icon re-encode
+the platform applies at attach. Those bounds are the platform's and this CLI
+deliberately does not vendor them — a rejection names the bound it applied and
+the value it measured, which is always current where a local copy would not be.
 
 One rule a script will otherwise walk straight into:
 
@@ -1584,78 +1589,6 @@ One rule a script will otherwise walk straight into:
   an edge case. #422 retired the "cannot be addressed" refusal, and #389
   retired nothing about the write — the shadow is a property of
   `getMyListingForEdit`, not of how the listing id was obtained.
-
-### Listing media requirements
-
-Two different things check your listing images, and it is worth knowing which is
-which before you open an image editor.
-
-**What the CLI checks, locally, before anything is uploaded:** the file's
-**format** and its **byte size**. That is all — and for an **icon** that is
-deliberately not the whole story, because the platform measures an image the CLI
-never sees (the re-encode note below). What the CLI *does* do is show you the
-quantity every server-side bound is a function of, on the line it uploads:
-
-```text
-Uploading icon (37.3 KiB, 1024×1024)…
-```
-
-| kind | how many | format | byte cap (the file you pass) |
-| --- | --- | --- | --- |
-| **icon** | 1, required | png / jpeg / webp | ≤ 2 MiB |
-| **cover** | 1, required | png / jpeg / webp | ≤ 4 MiB |
-| **screenshot** | up to 8, optional | png / jpeg / webp | ≤ 2 MiB |
-
-**What the platform checks, server-side, when the image is attached:** the
-dimensions and the aspect ratio. The CLI does not reproduce these, so this table
-is *guidance* — the server is the authority and its rejection names the bound and
-your value (`icon must be square-ish (aspect 2.00 outside 0.9–1.1)`).
-
-| kind | aspect (width ÷ height) | minimum size |
-| --- | --- | --- |
-| **icon** | 0.9 – 1.1 — square or near-square (1:1 is fine) | 128 px on the shorter side |
-| **cover** | 1.3 – 2.4 — landscape, ~4:3 to ~21:9 | 640 px wide |
-| **screenshot** | 0.4 – 2.6 — either orientation | 320 px on the shorter side |
-
-Easy starting points: a **512 × 512** icon and a **1600 × 900** cover.
-
-Four behaviours that are not obvious from the numbers:
-
-- **Icons are re-encoded server-side, and that re-encode is what gets capped.**
-  Whatever you upload is downscaled to at most **1024 px** on its longer side and
-  re-encoded to PNG — aspect preserved, and **never enlarged**, so an undersized
-  icon is not rescued: the 128 px floor still bites. The platform then caps that
-  **re-encoded** image at 1 MiB, a different measurement from the 2 MiB the CLI
-  applies to the file you pass — **and it is not a corner case.** Measured on
-  2026-08-10: a **1024 × 1024** photographic JPEG of **37.3 KiB** — under 2% of
-  the local cap — was refused at attach, because the PNG the platform made from it
-  was about **1.15 MiB**. A second source at the same 1024 px ceiling re-encoded
-  to about **2.1 MiB**; a **512 × 512** icon in the same run went through. So the
-  bytes in that rejection are the platform's, not your file's, and the lever is
-  **pixel dimensions, not heavier compression**. The CLI cannot predict the
-  number — the re-encoded size depends on how compressible your artwork is, and
-  flat, simple artwork re-encodes far smaller — so it prints the dimensions it
-  decoded and repeats this mechanism in the error rather than guessing a bound.
-- **An icon's upper bound is a PIXEL count, not a file size.** The decoder that
-  re-encodes it refuses a source above roughly **16 megapixels** — about
-  4096 × 4096 — and it refuses it *regardless of how small the file is*. A flat
-  5000 × 5000 PNG compresses to a few hundred KB, so it clears every byte cap in
-  the first table and is still rejected. Downscale before you upload:
-  **1024 × 1024** is plenty, because that is what the server re-encodes to
-  anyway.
-- **Covers and screenshots are not rescaled.** What you upload is what the store
-  renders, so ship them at the size you want shown.
-- **A wrong image is rejected, not quietly accepted, and it comes back fast.**
-  The CLI attaches *before* it waits on the content scan, so the platform's
-  verdict on shape arrives in a couple of seconds rather than after a scan that
-  can take two minutes — and always before a moderator sees it. The message names
-  the bound it applied and the value it measured — read it rather than guessing
-  which limit you crossed.
-
-> **The second table is guidance, not a local gate.** These are platform
-> constants that can move, so the CLI does not check them: a stale number here
-> costs you one rejection that carries the current bound, where a stale local
-> check would refuse valid images with no way to argue.
 
 ### Link your source code (`app listing set-source-repo`)
 
@@ -3328,7 +3261,7 @@ context rather than instructions.
 | --- | --- | --- |
 | `no token configured` | Nothing is logged in. Run `civitai login` or set `CIVITAI_TOKEN` — the App **store** (`app list` / `app view`) is not an anonymous read either. | [Submit & auth](#submit--auth), [Browse the App store](#browse-the-app-store) |
 | `forbidden (403)` | Usually the invite-only Apps beta rather than a broken token — the same account reads the public API fine. | [Submit & auth](#submit--auth) |
-| `not permitted for your account (403)` | The **catch-all** listing `403`: managing a store listing needs Apps-author access, a narrower grant than submitting. The two rows below are the listing `403`s that are *not* about your grant. | [Listing media requirements](#listing-media-requirements) |
+| `not permitted for your account (403)` | The **catch-all** listing `403`: managing a store listing needs Apps-author access, a narrower grant than submitting. The two rows below are the listing `403`s that are *not* about your grant. | [Store listing](https://developer.civitai.com/apps/guide/store-listing) |
 | `under a moderator takedown (403)` | A moderator removed this **store listing**; **your account's access is not the problem** and no login, grant or command reverses it — ask a moderator to relist it. Exit `3`, with the server's own sentence after the code naming the state. Unpublishing it yourself is a different refusal: a *material* change, `400`, exit `2`. | [Exit code 3](#exit-code-3) |
 | `belongs to another account (403)` | The listing is real and readable, but this account is **neither its owner nor an accepted collaborator** — **your access is not the problem**. There is no moderator bypass, and submitting the app's publish request is not ownership either: sign in as the owner (`civitai whoami` says who you are), accept a pending invite, or ask the owner. Exit `3`. | [Exit code 3](#exit-code-3) |
 | `Submit Apps:` | The `civitai whoami` capability row, and it is **tri-state**: **`unknown` is not `no`**, it is the CLI declining to answer. Re-run `civitai login` for a token whose scope the server reports. | [Submit & auth](#submit--auth) |
@@ -3356,8 +3289,8 @@ context rather than instructions.
 | `… not found at project root …` | **`civitai app validate`** found no `block.manifest.json` in the directory you named — the finding reads `block.manifest.json not found at project root <dir>`, which the terminal wraps onto a second line for a long path (`--json` carries it as one `message` string). `app submit` prints it too, because it validates first. `app submit --skip-validate` never prints it, because it waives the validation that produces it — that run fails on the row below instead. The path itself was fine, which is why this exits `1` and not `2`. | [Exit code 1](#exit-code-1) |
 | `is this an App project?` | The same cause, reported by a command that did not validate first: `civitai app listing …`, which has to work out *which* app you mean from the working directory, and `app submit --skip-validate`, which waived the check that produces the row above. `app validate` and a plain `app submit` never print it, because validation reports the row above first. Run `app listing` from the app directory, or name the app with `--slug` / `--dir`. | [After you submit](#after-you-submit-review--approve--deploy) |
 | `the server rejected this store-listing lookup (400)` | A **read** was refused and nothing was changed — a listing resolve, a read-for-edit or an asset scan poll, each carrying a value the CLI derived, or `app doctor`'s enumeration, which carries no input at all and so blames no value you named. `civitai app doctor` lists every app you can work on. Exit `2`. | [Listing doctor](#listing-doctor-app-doctor) |
-| `the server rejected the image-upload request (400)` | The **image** was refused while being ingested — the presigned upload mint, the inline icon upload, or the row that records the file. **No listing was changed** by any of the three: nothing is attached until `set-icon` / `set-cover` / `add-screenshot` runs. Read the server's own reason after the code for the bound it applied, rather than guessing. Exit `2`. | [Listing media requirements](#listing-media-requirements) |
-| `image upload PUT failed` | Storage refused the **bytes themselves** (e.g. `EntityTooLarge`), between minting the presigned URL and recording the row. No listing was changed, and it exits **`1`, not `2`** unlike the ingest steps above — a known inconsistency ([#388](https://github.com/civitai/cli/issues/388)). | [Listing media requirements](#listing-media-requirements) |
+| `the server rejected the image-upload request (400)` | The **image** was refused while being ingested — the presigned upload mint, the inline icon upload, or the row that records the file. **No listing was changed** by any of the three: nothing is attached until `set-icon` / `set-cover` / `add-screenshot` runs. Read the server's own reason after the code for the bound it applied, rather than guessing. Exit `2`. | [Store listing](https://developer.civitai.com/apps/guide/store-listing) |
+| `image upload PUT failed` | Storage refused the **bytes themselves** (e.g. `EntityTooLarge`), between minting the presigned URL and recording the row. No listing was changed, and it exits **`1`, not `2`** unlike the ingest steps above — a known inconsistency ([#388](https://github.com/civitai/cli/issues/388)). | [Store listing](https://developer.civitai.com/apps/guide/store-listing) |
 | `the server rejected this store-listing change (400)` | The **listing** was refused and may have **partially applied** — check `civitai app listing status`. It covers an attach, a removal, a reorder, opening a revision and submitting one, and names no value to fix because those seven routes do not all carry one: the three attaches report the **file** you sent (never the `--caption`) on the lines below, while the other four print this line alone — *opening* a revision in particular sends nothing but a listing id the CLI derived. Exit `2`, except for a staged change refused only by the publish floor, which reports `staged on an open revision` and exits `0`. | [After you submit](#after-you-submit-review--approve--deploy) |
 | `there is no open revision to submit` | Exit `1`. | [After you submit](#after-you-submit-review--approve--deploy) |
 | `this listing is not live` | Exit `1`. | [After you submit](#after-you-submit-review--approve--deploy) |
