@@ -416,7 +416,14 @@ type stubEnv struct {
 	manifest  string
 	// outputDir: when non-empty the HTML is written there, mimicking a built app.
 	outputDir string
-	noNode    bool
+	// Extra files written ALONGSIDE index.html in the served directory, keyed by
+	// relative path. 🔴 It exists because an inline `<script>` and an external
+	// `.js` are two different resources to a browser, and the oracle's picker
+	// patch reads a RESPONSE: a fixture that only ever inlines its script would
+	// leave the Script path — which is the one every real built bundle takes —
+	// untested. See fxPickerGatedApp in dogfood_oracle_picker_test.go.
+	appFiles map[string]string
+	noNode   bool
 	// The trial's transcript, written to <runs>/ctl/transcript.jsonl. Empty =>
 	// no transcript at all, which is its own case: the oracle then has nothing
 	// to derive the brief from.
@@ -500,6 +507,9 @@ func stubOracleEnv(t *testing.T, s stubEnv) []string {
 				out = filepath.Join(app, s.outputDir)
 			}
 			write(filepath.Join(out, "index.html"), s.appHTML, 0o644)
+			for rel, body := range s.appFiles {
+				write(filepath.Join(out, rel), body, 0o644)
+			}
 		}
 	}
 	// 🔴 The stub dir goes FIRST on PATH but the rest of PATH is kept: the stub
@@ -967,7 +977,11 @@ func TestOracleGradesTheGenpostBrief(t *testing.T) {
 		{"a generate-then-post app", fxGenpost, "yes", ""},
 		{"generate only, no Post control", fxGenpostNoPost, "no", `labelled "post"`},
 		{"Post open before anything exists to post", fxGenpostPostEnabled, "no", "is enabled before any generation"},
-		{"Generate does nothing", fxGenpostInertGenerate, "no", "waiting for the status to leave"},
+		// ⚠ The wording moved with the picker change: the wait used to be "the
+		// status to leave \"ready\"" and is now "the status to move after clicking
+		// generate", because the predicate is now scoped to what follows the
+		// Generate click (see genpost.assert.mjs step 7). The VERDICT is unchanged.
+		{"Generate does nothing", fxGenpostInertGenerate, "no", "waiting for the status to move after clicking"},
 		{"the machine moves but never says generating", fxGenpostWrongWord, "no", `never read "generating"`},
 		{"the resting word is wrong", fxGenpostWrongIdle, "no", "at rest, expected"},
 	} {

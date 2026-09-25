@@ -442,6 +442,12 @@ The oracle's host emulation is the SDK's `InlineTransport`, a v1 stub whose
 waited for an image or a post id would time out against a perfect app. It grades
 the block's own state machine on the near side of the request. Read a green cell
 as *"the flow is wired and gated correctly"*, never as *"the money path works"*.
+⚠ **One exception since 2026-09-25, and it spends nothing:** the oracle answers a
+host *resource pick* (`OPEN_RESOURCE_PICKER` / `OPEN_CHECKPOINT_PICKER`) with a
+stubbed resource, so an app that gates Generate behind the host's picker can reach
+`generating`. Every other request type still rejects with the SDK's own error, and
+each cell carries `hostRefused=` naming the ones that did. `briefs/genpost.md`,
+**The host answers a resource pick**.
 
 `briefs/` holds each brief and the behavioural assertion that grades it;
 `_cdp.mjs` is the browser plumbing they share. 🔴 **An assertion is

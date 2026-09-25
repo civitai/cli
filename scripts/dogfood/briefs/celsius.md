@@ -136,10 +136,12 @@ handshake the block is failing on its own merits, without it the oracle was
 grading its own timeout. A model-authored app that keeps the template's host gate
 would have graded `no` either way before this, and can now grade `yes`.
 
-⚠ **It is a v1 stub on the SDK side.** `InlineTransport.sendRequest` rejects and
-host pushes never arrive, so a block that AWAITS a host reply still hangs. This
-brief needs no host round-trip; do not read a pass as evidence that the money
-path works.
+⚠ **It is a v1 stub on the SDK side.** `InlineTransport.sendRequest` rejects
+every request but a host resource pick and host pushes never arrive, so a block
+that AWAITS any other host reply still hangs. This brief needs no host round-trip;
+do not read a pass as evidence that the money path works. (The picker exception
+landed 2026-09-25 for `genpost`/`ship`; `briefs/genpost.md`, **The host answers a
+resource pick**.)
 
 ⚠ **The bootstrap's viewer changed on 2026-09-21 and the table above predates
 it.** It now carries a SIGNED-IN viewer (`{ id, username, signedIn: true }`,

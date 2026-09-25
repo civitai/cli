@@ -461,6 +461,66 @@ the three-arm check under *How to verify* is the cheaper successor.
 - **Next probe:** none for the fixes. Closing the `c=civitai` gap is a separate decision — the
   module's own threat model says these caps stop the ordinary accident, not an adversary.
 
+### ✅ FIXED 2026-09-25 — the oracle answered no host resource pick; third instance of one class
+
+- as-of: 2026-09-25
+
+🔴 **`ab-ship-mimo-02` graded `RENDER=no observed=ready generateDisabled=true` because of the
+ORACLE, not the app.** `src/App.jsx:36` calls `await openPicker({ resourceType: 'Checkpoint' })`
+and `:154` gates Generate on `!model`. `InlineTransport.sendRequest` rejected the
+`OPEN_RESOURCE_PICKER` request, so `model` stayed null, Generate stayed disabled, and the status
+could never leave `ready`. The app is a *reasonable* one — arguably better than the hardcoded
+checkpoint the passing cells shipped — and the brief never forbade a picker. `via: measurement`
+
+- 🔴 **THE CLASS, now three deep: `#686` seeded no signed-in viewer; `#690` seeded
+  `token.scopes: []`; this one answered no pick.** Each time an app that correctly gated on
+  something the PLATFORM supplies was graded as broken. **If a fourth cell grades `no` with
+  `observed=ready`, look for the host input the harness is not supplying BEFORE reading the
+  app.** `via: inference`
+- **The fix, two halves** (`_cdp.mjs`): `patchInlineTransport` rewrites the SDK's one v1 stub
+  expression — located by the SDK's own error string — to consult a page shim that resolves the
+  two picker request types with the SDK's own `DEFAULT_CHECKPOINT_PICK` / `DEFAULT_LORA_PICK`;
+  and `genpost.assert.mjs` clicks up to four enabled non-Generate/non-Post affordances once the
+  prompt is typed and Generate is still shut.
+- **Four control arms, measured at `origin/main` and at the fix, same containers:**
+
+  | arm | before | after |
+  |---|---|---|
+  | `ab-ship-mimo-02` (the defect) | `RENDER=no observed=ready` | **`RENDER=yes observed=ready>generating>ready`** |
+  | `ab-genpost-glm-01` (neg control) | `RENDER=no observed=''` | `RENDER=no observed=''` |
+  | `ab-genpost-mimo-01` (pos control) | `RENDER=yes ready>generating>ready` | unchanged |
+  | `ab-genpost-dsv4-01` (pos control) | `RENDER=yes ready>generating>ready` | unchanged |
+
+  Re-measured a third time after the `unmeasured` path landed: all four hold, and **none
+  went unmeasured** — `glm-01` carries no `unmatched=`, so the blind branch cannot reach the
+  negative control. `via: measurement`
+- ⚠ **The negative control is WEAKER than it reads.** `glm-01` stays `no` because it never
+  renders `[data-testid="prompt"]` at all (it was never built), so it fails at step 1 and does
+  **not** exercise the picker path. The arm that actually tests "a pick buys nothing" is
+  `TestAPickDoesNotBuyAScaffoldAPass` — a picker-gated app with no Post control, still `no`.
+  `via: measurement`
+- 🔴 **What the invariant now says, precisely.** `token.raw` is still empty and nothing can
+  complete — but the SDK's stub no longer rejects *unconditionally* in a patched page: it rejects
+  everything except `OPEN_RESOURCE_PICKER` and `OPEN_CHECKPOINT_PICKER`. `ab-ship-mimo-02`'s own
+  cell is the evidence — `hostRefused: ESTIMATE_WORKFLOW`, i.e. it reached `generating`, asked
+  the host to price a workflow, and was refused. `via: measurement`
+- 🔴 **The needle was WRONG on the second real bundle anyone tried, and the failure was
+  SILENT.** `ab-genpost-mimo-01` (blocks-react 0.53.1) minifies the same stub to
+  `` Promise.reject(Error(`…`)) `` — no `new`, template literal — so it patched **0 sites**
+  while its cell stayed green, *only* because that app never opens a picker. `new` is now
+  optional. **One bundle is not a general claim; two are not either.** `via: measurement`
+- 🔴 **Which is why `sites=0` now has a THIRD state.** The mirror case — 0 sites on an app
+  that DOES request a pick — produces `RENDER=no observed=ready`, byte-identical to the
+  defect above and attributed to the model. So when a served response carries the stub's
+  MESSAGE in a spelling no needle matched (`pickerShim: …,unmatched=N`) **and** the Generate
+  gate did not open, the assertion exits **2** and the cell reads `RENDER=unmeasured`.
+  Deliberately not keyed on `sites === 0` alone, which is the common harmless case (a block
+  that does not bundle the SDK's inline transport); and only the gate-that-did-not-open
+  outcome is degraded. **If a fourth cell reads `unmeasured` with `unmatched=`, fix the
+  needle — do not read it as a statement about the app.** `via: measurement`
+- **Next probe:** none. If a future SDK ships a real inline transport, delete the patch — the
+  shim already falls back to the SDK's original rejection when no page shim is installed.
+
 ## Next steps (ranked)
 
 🔴 **Numbering frozen.** Ranks 1–5, 8 and 10 are settled; 4 deleted by measurement.
