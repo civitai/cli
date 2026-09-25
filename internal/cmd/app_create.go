@@ -36,7 +36,7 @@ both share the estimate -> consent -> submit -> poll driver, switched by an
 on-screen mode toggle, and both work end-to-end in "npm run dev:harness".
 
 customComfy has TWO arms. Besides the recipe arm above, an app may also ship
-its own ComfyUI graph inline (mode: 'inline', app developers only). src/comfy.ts
+its own ComfyUI graph inline (mode: 'inline', page tokens only). src/comfy.ts
 includes a complete, unit-tested buildInlineComfyBody for it: the graph, the
 declared AIR resource manifest, and the maxBuzz ceiling (which is ALSO the step
 timeout in seconds). See the generated README's "Comfy on Civitai samples" section.

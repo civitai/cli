@@ -248,11 +248,23 @@ export function buildInlineComfyGraph(
  * The graph is also bounded server-side: at least 1 node, at most 300, at most
  * 256 KB serialized, at most 128 levels of nesting. This sample is 7 nodes.
  *
- * NOTE ON WHO CAN RUN IT: the inline arm is APP-DEVELOPER-ONLY and PAGE-TOKEN-
- * only on live civitai.com — the host runs a developer check on every
- * customComfy estimate and submit. It runs end-to-end against the mock host in
- * `npm run dev:harness`. Treat inline as a build-and-iterate primitive; to serve
- * a graph to every viewer, get it registered as a recipe.
+ * NOTE ON WHO CAN RUN IT: the inline arm is PAGE-TOKEN-ONLY on live
+ * civitai.com. 🔴 It is NOT app-developer-only — this note said it was, and that
+ * the host runs a developer check on every customComfy estimate and submit.
+ * Neither is true: no customComfy arm runs an app-developer check, on either
+ * path. Do not ship an inline graph you would not ship to every viewer of your
+ * published block.
+ *
+ * The refusals that DO run, before either arm's body is inspected: page tokens
+ * only, the `ai:write:budgeted` consent scope, a signed-in viewer whose token
+ * subject resolves, the per-user Apps kill-switch (closed beta), and — on submit
+ * only — a positive per-call Buzz budget, which is minted from YOUR manifest's
+ * `page.buzzBudgetPerGen` rather than from the viewer. See the generated
+ * README's "Comfy on Civitai samples" section.
+ *
+ * It runs end-to-end against the mock host in `npm run dev:harness`. A
+ * registered recipe gets you a reviewed graph you do not have to ship in the
+ * body — not a wider audience.
  */
 export function buildInlineComfyBody(
   prompt: string,

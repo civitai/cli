@@ -246,11 +246,28 @@ folded in, and a resource the site would silently swap for a sibling version is
 it), and a moderation sweep that reads every string leaf in the graph, not just
 your declared `prompt`.
 
-**Who can run it.** App developers only, on page tokens only — the host runs a
-developer check on every `customComfy` estimate *and* submit, so a non-developer
-viewing your published block cannot submit one. Treat inline as a build-and-
-iterate primitive; to serve a graph to every viewer, get it registered as a
-recipe.
+**Who can run it.** 🔴 **Not app developers only.** This paragraph used to say it
+was — that the host runs a developer check on every `customComfy` estimate *and*
+submit, so a non-developer viewing your published block could not submit one.
+That is false: neither `customComfy` arm runs any app-developer check, on either
+path. Do not ship an inline graph you would not ship to every viewer of your
+published block.
+
+What the host does refuse, before either arm's body is inspected — handle every
+one of these:
+
+- **Page tokens only** — a model-bound token is rejected.
+- The token must carry the **`ai:write:budgeted`** consent scope.
+- The viewer must be **signed in** (a token whose subject does not resolve is
+  refused).
+- The viewer must be **enabled for Apps** — this is a closed beta, and the
+  kill-switch is evaluated on the token's subject.
+- On **submit** only: the token must carry a **positive per-call Buzz budget**.
+  That budget comes from *your own* manifest (`page.buzzBudgetPerGen`), not from
+  the viewer.
+
+A registered recipe gets you a reviewed graph you do not have to ship in the
+body. It is not a way onto a surface the inline arm cannot reach.
 
 **An inline body has no account picker.** Its schema is `.strict()` with no
 `accountType` field, so the host funds it as Auto. The picker is hidden in that
