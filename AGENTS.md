@@ -7,7 +7,7 @@ intentional. For the contributor checklist see
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 🔴 **[`README.md`](README.md) IS THE PUBLISHED USER CONTRACT, AND IT IS NOT ONE
-PLACE.** This file holds the decisions and rationale; the README states the
+PLACE.** This file holds the decisions and rationale; the README states/LINKS the
 contract — exit codes, `--json` shapes, the command reference (don't re-derive
 it here) — so **any** behaviour change is incomplete until it moves too, not
 only the ones an item below cites. Its command section, exit-code table and

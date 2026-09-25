@@ -62,16 +62,6 @@ var notAPage = map[string]string{
 	// is load-bearing: 405 falls through to the >= 400 arm and would fail.
 	"https://mcp.civitai.com/mcp": "MCP transport endpoint; measured 405 to a GET",
 
-	// The SIBLING of the row above, and it was simply missed: `### The two MCP
-	// servers` documents TWO transports and only one was excluded, so this guard
-	// has been red on every live run since that section landed — a red it reports
-	// as "the page did not serve", which reads like drift rather than like a hole
-	// in this table. MEASURED 2026-09-25: 405 to a plain GET, byte-identical
-	// treatment to mcp.civitai.com/mcp above. README.md's own row for it says it
-	// "returns 401 until an Authorization header is present", which is the same
-	// statement that a GET is not the protocol.
-	"https://orchestration.civitai.com/mcp": "MCP transport endpoint; measured 405 to a GET",
-
 	// MEASURED RED on the guard's first live run.
 	"https://github.com/me/my-app": "placeholder repo URL in a command example",
 }
