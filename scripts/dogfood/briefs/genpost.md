@@ -38,10 +38,29 @@ delivers a host push. An assertion that waited for a rendered image or a post id
 would time out against a perfect app, every time, and the cell would read as a
 statement about the model.
 
+⚠ **ONE CLASS OF REQUEST IS NOW ANSWERED, AND IT IS NOT A SPENDING ONE.** Since
+2026-09-25 the oracle answers a **host resource pick** —
+`OPEN_RESOURCE_PICKER` and `OPEN_CHECKPOINT_PICKER` — with the stubbed resource
+the SDK's own mock host resolves with, because an app that gates Generate behind
+`openPicker` could otherwise never reach `generating` (measured on
+`ab-ship-mimo-02`; see **The host answers a resource pick** below). Every OTHER
+request type still rejects with the SDK's own
+`InlineTransport.sendRequest is not implemented in v1`, and the cell carries
+`hostRefused=` naming the ones that did, so the sentence above is checked per
+cell rather than asserted here. A pick is a host **discovery** call: it hands the
+block an id the author could have hardcoded, and the platform re-validates every
+id server-side at estimate/submit regardless.
+
 What is deterministic on the near side of that request is the block's **own
 state machine**: the prompt input, the `ready` resting state, the Post gate being
 CLOSED before anything has been generated, and the Generate click driving the
 machine into `generating`. That is what this grades.
+
+⚠ **The verdict is scoped to what follows the Generate click.** The assertion may
+now click a host affordance before Generate (see below), with the status recorder
+already live, so `pass` is `seq.slice(<index at the click>).includes('generating')`
+rather than `seq.includes('generating')` — otherwise an app whose *picker* button
+drove the machine would grade green. `observed` is still the whole sequence.
 
 ## 🔴 It grades the SIGNED-IN branch, and that is a decision, not an oversight
 
@@ -87,7 +106,8 @@ Three reasons the signed-in branch is the right one to grade, in order of weight
 platform every privileged path re-derives identity from the JWT `sub` rather than
 from anything the block was handed — so a populated `viewer` cannot make a
 generation or a post appear to succeed. `InlineTransport.sendRequest` rejects
-unconditionally regardless. `TestOracleSeedsTheProductionViewerAndNoCredential`
+every request but a resource pick regardless (see **The host answers a resource
+pick** below). `TestOracleSeedsTheProductionViewerAndNoCredential`
 asserts the seeded object from inside the page rather than by reading the source.
 The scope list is *not* empty — see **Scopes are seeded, and decide no verdict**
 below — and that changes which branch a block takes, never what it can complete.
@@ -105,8 +125,9 @@ a block's signed-out branch on purpose. Measured both ways on
 `ready>generating` while the oracle seeded an empty scope list. With `mimo`'s
 declared scopes presented, consent is already granted, so the app reaches the
 submit, the stub transport rejects it, and the machine settles back on `ready`.
-The verdict is `seq.includes('generating')`, so it is unaffected. Re-measured
-2026-09-21 on `ab-genpost-mimo-01`.
+The verdict is `generating` appearing in the sequence after the Generate click, so
+it is unaffected. Re-measured 2026-09-21 on `ab-genpost-mimo-01`, and again
+2026-09-25 with the picker fix: still `ready>generating>ready`.
 
 ⚠ The brief says nothing about anonymity, so a `no` under the control arm is not
 a finding about the model — it is the branch the harness selected. The cell
@@ -172,7 +193,7 @@ trusting the table: a control nobody has watched is a claim about itself.
 | `pos` — prompt + Generate + disabled Post + `ready`→`generating` | **yes** | `true` | `observed: "ready>generating"`, `postDisabled: true` |
 | `neg-nopost` — same app, Post button removed | **no** | `false` | `reason: no clickable element labelled "post" — nothing posts`, `buttonLabels: ["Generate"]` |
 | `neg-postenabled` — Post present but enabled at rest | **no** | `false` | `reason: the "post" control is enabled before any generation has succeeded`, `postDisabled: false` |
-| `neg-inertbutton` — everything present, Generate does nothing | **no** | `false` | `reason: timed out … waiting for the status to leave "ready" after clicking generate`, `observed: "ready"` |
+| `neg-inertbutton` — everything present, Generate does nothing | **no** | `false` | `reason: timed out … waiting for the status to move after clicking generate`, `observed: "ready"` |
 | 🔴 **`civitai app init` scaffold, untouched** | **no** | `false` | all three templates, below |
 
 🔴 **`neg-nopost` is the control that matters most**, and it is not the scaffold
@@ -248,13 +269,64 @@ baked into the harness), and a generate-only app plus an untouched scaffold stil
 graded `no` with both scopes seeded.
 
 🔴 **`raw` stays empty, and that is the load-bearing half.** Scopes buy the block
-a *branch*, never a *capability*: `InlineTransport.sendRequest` rejects
-unconditionally whatever the scope list says, so this brief's "no generation and
-no post can complete here" premise is untouched.
+a *branch*, never a *capability*: `InlineTransport.sendRequest` rejects every
+request but a resource pick (see the next section) whatever the scope list says,
+so this brief's "no generation and no post can complete here" premise is
+untouched.
 `TestOracleSeedsTheProductionViewerAndNoCredential` asserts both halves from
 inside the page — the scopes match the manifest, and `token.raw` is `''` — and
 `oracle.sh` refuses (exit 2) if its own `scopes=` field and the list the
 assertion reports having seeded ever disagree.
+
+## The host answers a resource pick, and decides no verdict
+
+🔴 **Third instance of one class.** `#686` seeded no signed-in viewer, so
+auth-gated apps rendered a branch production never exhibits. `#690` seeded
+`token.scopes: []`, so consent-gated apps could never reach `generating`. This is
+the same shape: an app that asks the **host** to open its resource picker and
+gates Generate on the pick could never reach `generating` either, because
+`InlineTransport.sendRequest` rejected the request and no `model` ever came back.
+
+Measured on `ab-ship-mimo-02` (2026-09-25). `src/App.jsx` line 36 calls
+`await openPicker({ resourceType: 'Checkpoint' })` and line 154 reads
+`disabled={isGenerating || !prompt.trim() || !model}`. The cell read
+**`RENDER=no observed=ready generateDisabled=true`** — and the app is a
+*reasonable* one, arguably better than the hardcoded checkpoint the passing cells
+shipped. The brief never forbade a picker.
+
+Two halves make it gradeable, and both are needed:
+
+1. **The oracle answers the pick.** `patchInlineTransport` in `_cdp.mjs` rewrites
+   the SDK's one v1 stub expression — found by the SDK's own error string — to
+   consult a page shim, which resolves `OPEN_RESOURCE_PICKER` /
+   `OPEN_CHECKPOINT_PICKER` with the SDK's `DEFAULT_CHECKPOINT_PICK` /
+   `DEFAULT_LORA_PICK` (the objects `createMockHost` resolves with, field for
+   field) and **rejects everything else with the SDK's own error**.
+2. **The assertion clicks the affordance.** With the prompt typed, a still-disabled
+   Generate makes it click up to four other ENABLED controls — never Generate,
+   never Post — until Generate opens, recording what it clicked in `prereqClicks`.
+
+| arm | `RENDER` | `observed` | evidence |
+|---|---|---|---|
+| `ab-ship-mimo-02`, picker answered | **yes** | `ready>generating>ready` | `prereqClicks: ["Select Model"]`, `hostAnswered: OPEN_RESOURCE_PICKER:Checkpoint`, `hostRefused: ESTIMATE_WORKFLOW` |
+| `ab-ship-mimo-02` at `origin/main` (before) | no | `ready` | `generateDisabled: true` |
+| `CIVITAI_ASSERT_NO_HOST_PICKS=1` (control) | no | `ready` | `reason: the "generate" control is still disabled with the prompt typed` |
+| `ab-genpost-glm-01` — unmodified `page-money` scaffold (negative control) | **no** | `''` | unchanged: it never renders `[data-testid="prompt"]` at all |
+
+🔴 **`hostRefused` is the invariant, measured per cell.** `ab-ship-mimo-02`'s own
+generation attempt appears there — the app reached `generating`, asked the host to
+estimate a workflow, and was refused. A pick buys a **branch**, never a
+capability. ⚠ Stated precisely: the SDK's stub no longer rejects *unconditionally*
+in a patched page; it rejects everything except the two picker types. What is
+unchanged is the property that matters — nothing here can complete a generation, a
+post or a purchase — and it is held by
+`TestOracleRefusesEveryRequestThatIsNotAPick` plus
+`TestOracleInlineHostAnswersOnlyThePickerLedger`, which walks the SDK's whole
+47-entry `BLOCK_TO_PARENT_MESSAGE_TYPES` and fails if the answered set grows *or*
+shrinks.
+
+**The control arm is `CIVITAI_ASSERT_NO_HOST_PICKS=1`**, which is also how to
+grade a block's dismissed-picker branch on purpose.
 
 ## Run it
 

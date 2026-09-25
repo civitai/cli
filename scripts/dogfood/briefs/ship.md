@@ -70,8 +70,9 @@ exit contract `oracle.sh` reads all pass through untouched.
 **Why delegation rather than a new assertion:**
 
 1. **A browser assertion cannot see a submit, and never will here.** The oracle's
-   host emulation is the SDK's `InlineTransport` stub: `sendRequest` rejects
-   unconditionally, host pushes never arrive, and `token.raw` stays `''`. A
+   host emulation is the SDK's `InlineTransport` stub: `sendRequest` rejects every
+   request but a host resource pick (`genpost.md`, **The host answers a resource
+   pick**), host pushes never arrive, and `token.raw` stays `''`. A
    submission is server state and leaves nothing in the DOM. So "something new"
    for the render half would either measure the submit (impossible) or
    re-implement `genpost` (below).
