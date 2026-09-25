@@ -174,8 +174,32 @@ func validateDir(dir string, projectState bool) (Result, error) {
 	return res, nil
 }
 
+// ServerOwnedFields names every manifest field the PLATFORM assigns, in
+// dotted-path form. It is THE list; `serverOwnedFieldChecks` below rejects
+// exactly these, and `TestServerOwnedFieldChecksCoverTheList` fails if the two
+// ever disagree in either direction.
+//
+// 🔴 IT IS EXPORTED BECAUSE A SECOND READER NEEDS IT, AND A SECOND CURATED COPY
+// WOULD BE WRONG AT ONE OF THEM. `app submit`'s manifest-drift comparison must
+// IGNORE these fields when diffing the developer's manifest against the stored
+// one: the platform stamps `iframe.src` and forces `trustTier` into the copy it
+// commits (civitai `blocks.router.ts`, `updateManifest`), so every comparison
+// would otherwise report two differences on every app, forever — a warning that
+// always fires is a warning nobody reads.
+//
+// Add a field here and to the checks below together; the ledger test is what
+// makes "together" enforceable rather than remembered.
+var ServerOwnedFields = []string{
+	"trustTier",
+	"iframe.src",
+}
+
 // serverOwnedFieldChecks rejects manifest fields the platform assigns. Devs
 // must not set them; doing so is a hard error with a clear, actionable message.
+//
+// The messages are written per field rather than generated, because each one
+// names a different remedy and a generated sentence would lose that. The FIELD
+// SET is still single-sourced — see ServerOwnedFields and its ledger test.
 func serverOwnedFieldChecks(generic any) []Finding {
 	var errs []Finding
 	m, ok := generic.(map[string]any)

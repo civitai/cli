@@ -523,6 +523,33 @@ Defaults to the current directory.`,
 				if err := checkVersionNotRegression(ctx, client.ListSubmissions, cmd.ErrOrStderr(), m.BlockID, m.Version, allowDowngrade); err != nil {
 					return err
 				}
+
+				// 2c. MANIFEST-DRIFT WARNING — name the fields this bundle is
+				// about to overwrite.
+				//
+				// The website can edit the manifest too (its form commits through
+				// `blocks.updateManifest`), and the bundle IS the submission, so a
+				// checkout that predates a web edit silently reverts it. See
+				// app_submit_manifest_drift.go for why this compares CONTENT
+				// rather than git history.
+				//
+				// 🔴 IT RUNS HERE, AFTER THE VERSION GUARD, AND THAT PLACEMENT
+				// COSTS NOTHING TO REASON ABOUT — which is the point. It reads
+				// and prints; it mutates no file, moves no ref and changes no
+				// later step's input, so unlike a sync it imposes no ordering
+				// constraint on the prompt, the dirty guard or the packager. It
+				// sits after the version guard only to reuse the submissions read
+				// that guard has already paid for: `resolveAppBlockID` needs the
+				// same rows, and the appBlockId is null until a version is
+				// approved, so a first submit resolves to "" and the whole thing
+				// no-ops.
+				//
+				// It is deliberately NOT gated on a flag. There is nothing to opt
+				// out of: it cannot refuse, cannot slow a submit meaningfully, and
+				// prints only when something really will be overwritten.
+				if blockID, rerr := resolveAppBlockID(ctx, client.ListSubmissions, m.BlockID); rerr == nil {
+					warnOnManifestDrift(ctx, client.GetMyAppManifest, cmd.ErrOrStderr(), dir, blockID)
+				}
 			}
 
 			// 3. Package the canonical source tree.

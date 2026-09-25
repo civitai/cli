@@ -1640,6 +1640,108 @@ func (c *Client) GetForgejoCloneInfo(ctx context.Context, app string) (*ForgejoC
 	return env.Result.Data.JSON, nil
 }
 
+// MyAppManifestPath is the tRPC query returning the FULL stored manifest for
+// one of the caller's OWN apps — the copy the platform holds, which the website
+// can edit (the manifest web form commits through `blocks.updateManifest`).
+//
+// Owner-or-accepted-collaborator gated and App-Blocks-flag gated, exactly like
+// the clone-info query beside it. Distinct from the public `getAppDetail`, which
+// returns only an allowlist and no manifest.
+const MyAppManifestPath = "/api/trpc/blocks.getMyAppManifest"
+
+// StoredAppManifest is the platform's copy of an app's manifest, plus the row
+// fields that say which app and version it belongs to.
+//
+// 🔴 `Manifest` IS DELIBERATELY UNTYPED. This value is compared FIELD BY FIELD
+// against the developer's own file, so decoding it into a struct would silently
+// drop every key the CLI's Manifest type does not know about — and a key the CLI
+// does not know about is exactly the kind the website might have edited. A
+// typed decode here would make the comparison blind in the direction that
+// matters.
+type StoredAppManifest struct {
+	ID       string         `json:"id"`
+	BlockID  string         `json:"blockId"`
+	Status   string         `json:"status"`
+	Version  string         `json:"version"`
+	Manifest map[string]any `json:"manifest"`
+}
+
+// GetMyAppManifest fetches the stored manifest for one of the caller's own apps.
+//
+// The key is an appBlockId, NOT the slug — resolve it with the same
+// submissions read `app metrics` uses. (The clone-info query beside this one
+// takes either; this one does not, because the server looks the row up by
+// primary key.)
+func (c *Client) GetMyAppManifest(ctx context.Context, appBlockID string) (*StoredAppManifest, error) {
+	tok, err := c.Tokens.Token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if tok == "" {
+		return nil, civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` first"))
+	}
+
+	inputJSON, err := json.Marshal(map[string]any{"json": map[string]string{"appBlockId": appBlockID}})
+	if err != nil {
+		return nil, err
+	}
+	q := url.Values{}
+	q.Set("input", string(inputJSON))
+	reqURL := c.BaseURL + MyAppManifestPath + "?" + q.Encode()
+
+	build := func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	}
+	status, raw, err := c.authedDo(ctx, build)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, myAppManifestError(status, raw)
+	}
+	var env struct {
+		Result struct {
+			Data struct {
+				JSON *StoredAppManifest `json:"json"`
+			} `json:"data"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || env.Result.Data.JSON == nil {
+		return nil, fmt.Errorf("unexpected getMyAppManifest response: %s", string(raw))
+	}
+	return env.Result.Data.JSON, nil
+}
+
+// myAppManifestError maps a non-200 from the stored-manifest query. Same tRPC
+// error envelope as cloneInfoError; separate function so the messages can name
+// the right command — this one is reachable by a COLLABORATOR, for whom "are
+// you the app owner" would be the wrong question.
+func myAppManifestError(status int, raw []byte) (err error) {
+	defer func() { err = civitai.TagStatus(status, err) }()
+	var env struct {
+		Error struct {
+			JSON struct {
+				Message string `json:"message"`
+				Code    int    `json:"code"`
+			} `json:"json"`
+		} `json:"error"`
+	}
+	msg := strings.TrimSpace(string(raw))
+	if json.Unmarshal(raw, &env) == nil && env.Error.JSON.Message != "" {
+		msg = env.Error.JSON.Message
+	}
+	switch status {
+	case http.StatusUnauthorized:
+		return unauthorizedError(msg)
+	case http.StatusForbidden:
+		return fmt.Errorf("not permitted to read this app's stored manifest (is Apps enabled for your account?): %s", msg)
+	case http.StatusNotFound:
+		return fmt.Errorf("no such app block: %s", msg)
+	default:
+		return fmt.Errorf("getMyAppManifest failed (HTTP %d): %s", status, msg)
+	}
+}
+
 // cloneInfoError maps a non-200 from the clone-info tRPC query to an actionable
 // message. tRPC error bodies are {error:{json:{message,code,...}}}.
 func cloneInfoError(status int, raw []byte) (err error) {

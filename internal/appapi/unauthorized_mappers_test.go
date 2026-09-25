@@ -54,14 +54,15 @@ import (
 // signature so it can be driven uniformly. The two adapters supply arguments
 // that do not affect the 401 arm.
 var every401Mapper = map[string]func(int, []byte) error{
-	"analyticsError":   analyticsError,
-	"cloneInfoError":   cloneInfoError,
-	"devTokenError":    devTokenError,
-	"devTunnelError":   devTunnelError,
-	"serverError":      serverError,
-	"withdrawError":    withdrawError,
-	"listingError":     func(s int, raw []byte) error { return listingError(s, raw, listingRoute{}) },
-	"submissionsError": func(s int, raw []byte) error { return submissionsError(s, raw, "", "") },
+	"analyticsError":     analyticsError,
+	"cloneInfoError":     cloneInfoError,
+	"devTokenError":      devTokenError,
+	"devTunnelError":     devTunnelError,
+	"myAppManifestError": myAppManifestError,
+	"serverError":        serverError,
+	"withdrawError":      withdrawError,
+	"listingError":       func(s int, raw []byte) error { return listingError(s, raw, listingRoute{}) },
+	"submissionsError":   func(s int, raw []byte) error { return submissionsError(s, raw, "", "") },
 }
 
 // TestEveryMapperAnswers401WithTheHelperText is the seam guard, behavioural.
