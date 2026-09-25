@@ -38,6 +38,20 @@ type submissionLister func(ctx context.Context, blockID string) ([]appapi.Submis
 // gitRunner runs a git subcommand in `dir` (empty = current dir). It's a package
 // var so tests can stub the exec without a real git/repo. Output is forwarded to
 // the user's terminal so clone/pull progress is visible.
+//
+// 🔴 IT SCRUBS gitEnvOverrides, AND THAT IS NOT COSMETIC SYMMETRY WITH THE DIRTY
+// GUARD. Every variable in that list BEATS both `-C` and `c.Dir`, and git
+// EXPORTS GIT_DIR and GIT_INDEX_FILE to its hooks — so a `civitai app pull` run
+// from a `pre-push`/`post-commit` hook, or under `git rebase -x`, inherits a
+// GIT_DIR aimed at the repo that invoked the hook. On the read-only dirty guard
+// that misdirection yields a wrong ANSWER; here every call is a WRITE (`clone`,
+// `fetch`, `merge --ff-only`), so it would merge the app's canonical repo into
+// whatever repository the environment happened to point at.
+//
+// The scrub lives in gitScrubbedEnv and is shared with the dirty guard on
+// purpose: a second copy of this rule is how the two runners start to disagree
+// about which repository they are talking to. It deliberately leaves the user's
+// git CONFIG alone — only the variables that RELOCATE the repo are dropped.
 var gitRunner = func(dir string, args ...string) error {
 	if _, err := exec.LookPath("git"); err != nil {
 		return fmt.Errorf("git is required for `civitai app pull` but was not found on PATH")
@@ -46,6 +60,7 @@ var gitRunner = func(dir string, args ...string) error {
 	if dir != "" {
 		c.Dir = dir
 	}
+	c.Env = gitScrubbedEnv(os.Environ())
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	return c.Run()

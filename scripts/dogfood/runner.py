@@ -528,6 +528,9 @@ GATED_FLAGS = {
     "allow-downgrade": "bool",
     "allow-dirty": "bool",
     "allow-oversize": "bool",
+    # `app submit --no-pull`: skip the fast-forward onto the app's canonical
+    # repository. Consumes nothing.
+    "no-pull": "bool",
     "json": "bool",
     # root's persistent flags, which every gated command also accepts.
     "no-update-check": "bool",

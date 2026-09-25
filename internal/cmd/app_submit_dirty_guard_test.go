@@ -1242,6 +1242,29 @@ func dirtySubmitServer(t *testing.T) (*httptest.Server, *bool) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"submissions": []appapi.Submission{}})
 			return
 		}
+		// The remote-commit sync asks for clone info before the dirty guard
+		// runs. `notYetAvailable` is the "this app has no canonical repo yet"
+		// answer, which makes the sync a silent no-op — these fixtures are
+		// about the DIRTY GUARD, so the sync must not participate.
+		if strings.HasPrefix(r.URL.Path, appapi.CloneInfoPath) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"result": map[string]any{"data": map[string]any{
+					"json": map[string]any{"notYetAvailable": true, "slug": dirtySlug, "message": "not approved yet"},
+				}},
+			})
+			return
+		}
+		// 🔴 MATCH THE SUBMIT ROUTE EXACTLY, NEVER "anything that is not the
+		// submissions list". This used to be a catch-all, and the moment a new
+		// legitimate pre-submit request was added ahead of the guard, every one
+		// of these tests reported "the submit route was hit" for a request that
+		// was not a submit. A detector that counts unknown traffic as the thing
+		// it is watching for cannot tell a regression from a new feature.
+		if !strings.HasPrefix(r.URL.Path, appapi.DefaultSubmitPath) {
+			http.Error(w, "unexpected route in this fixture: "+r.URL.Path, http.StatusNotFound)
+			return
+		}
 		submitted = true
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{

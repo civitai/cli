@@ -295,6 +295,7 @@ func newAppSubmitCmd() *cobra.Command {
 	var assumeYes bool
 	var allowDowngrade bool
 	var allowDirty bool
+	var noPull bool
 	var allowOversize bool
 
 	cmd := &cobra.Command{
@@ -398,35 +399,8 @@ Defaults to the current directory.`,
 			}
 
 			// 1. Validate first — never submit a known-bad manifest.
-			if !skipValidate {
-				res, err := validate.Dir(dir)
-				if err != nil {
-					return err
-				}
-				if !res.OK() {
-					errw := cmd.ErrOrStderr()
-					fmt.Fprintln(errw, ui.For(errw).ErrorMsg(fmt.Sprintf("validation failed (%d error(s)) — fix before submitting, or pass --skip-validate:", len(res.Errors))))
-					for _, e := range res.Errors {
-						// printFinding, not a raw Fprintf: `printWarnings` below
-						// wraps, so a bare one here printed a 400-char unwrapped
-						// error and a wrapped warning in the SAME run — two
-						// layouts on the highest-traffic path. It was the fourth
-						// print site and the one that made "one place fixes
-						// every long message" false.
-						printFinding(errw, e.Message)
-					}
-					// Warnings are useful context on a failure too, and this is
-					// the last moment before the app would have gone to review.
-					printWarnings(errw, res)
-					return fmt.Errorf("validation failed")
-				}
-				// Non-fatal advisories still have to be SEEN. `submit` is the
-				// highest-traffic path and the last point before an app reaches
-				// review, so printing them only in `app validate` means the
-				// ready-ack advisory — which predicts a blank failure card in the
-				// real host — reaches nobody who does not run validate by hand.
-				// They do NOT block the submit; that stays the --strict contract.
-				printWarnings(cmd.ErrOrStderr(), res)
+			if err := validateBeforeSubmit(cmd, dir, skipValidate); err != nil {
+				return err
 			}
 
 			m, err := manifest.Load(dir)
@@ -463,6 +437,11 @@ Defaults to the current directory.`,
 				// comment and claudedocs/decisions/31.
 				client.AllowOversizeBody = allowOversize
 
+				ctx0 := cmd.Context()
+				if ctx0 == nil {
+					ctx0 = context.Background()
+				}
+
 				// 2a. DIRTY-WORK-TREE GUARD (issue #411), BEFORE the
 				// confirmation prompt.
 				//
@@ -493,6 +472,70 @@ Defaults to the current directory.`,
 					return err
 				}
 
+				// 2a·ii. REMOTE-COMMIT SYNC — fast-forward onto the app's
+				// canonical repository before anything is packaged.
+				//
+				// The website can commit to that repository too (the manifest web
+				// form does exactly that), so the tree on disk may predate changes
+				// the author made in the browser, and packaging it as-is silently
+				// reverts them. See app_submit_sync.go for the full matrix; the
+				// only refusal is divergence.
+				//
+				// 🔴 AFTER THE DIRTY GUARD, BEFORE THE PROMPT. Each half is a
+				// contract someone already wrote a test for:
+				//   · AFTER the dirty guard, because a refused dirty submit must
+				//     contact NOTHING — TestDirtyWorkTreeExitsGeneric
+				//     (cmd/civitai) fails the test from inside the HTTP handler on
+				//     any request at all. Running the sync first put a clone-info
+				//     read ahead of that refusal and broke it.
+				//   · BEFORE the prompt, so "About to submit <id>@<version>" names
+				//     the version that will ACTUALLY be sent, and before the
+				//     version guard, whose whole job is to compare that number
+				//     against the highest approved one. A sync afterwards would
+				//     confirm one bundle and upload a different one.
+				//
+				// 🔴 GATED ON (assumeYes || stdinIsTTY), WHICH IS NOT A
+				// CONVENIENCE. This is a NETWORK call sitting ahead of
+				// confirmSubmit — the gate that refuses a bare non-TTY submit for
+				// lack of --yes. Without this condition that invocation would
+				// acquire an API read it does not have today, and
+				// TestAppSubmit_NonTTYRefusesWithoutYes_NoNetworkCall pins it as
+				// touching nothing. The predicate is confirmSubmit's own refusal
+				// condition, negated; keep the two in step.
+				if !noPull && (assumeYes || stdinIsTTY()) {
+					sync, serr := syncRemoteCommits(ctx0, client.GetForgejoCloneInfo, gitOutput, gitWriteRunner,
+						cmd.ErrOrStderr(), dir, m.BlockID)
+					if serr != nil {
+						return serr
+					}
+					if sync.Advanced {
+						// The tree CHANGED, so every fact already read off it is
+						// about bytes that are no longer there.
+						if err := validateBeforeSubmit(cmd, dir, skipValidate); err != nil {
+							return err
+						}
+						if m, err = manifest.Load(dir); err != nil {
+							return err
+						}
+						// 🔴 RE-RUN THE DIRTY GUARD, FOR THE PROVENANCE AND NOT
+						// FOR THE VERDICT. `prov` above names the commit the
+						// bundle was built from; the fast-forward just moved that
+						// commit, so keeping the first answer would stamp the
+						// submission with a sha the bundle did not come from —
+						// the exact untraceability #411 exists to prevent,
+						// reintroduced by the fix for a different bug.
+						//
+						// This is the SAME function asked again about a DIFFERENT
+						// tree state, which is not the "two functions disagreeing"
+						// hazard its docblock warns about — the second answer is
+						// simply the authoritative one.
+						prov, err = checkWorkTreeClean(gitOutput, cmd.ErrOrStderr(), dir, m.BlockID, m.Version, allowDirty)
+						if err != nil {
+							return err
+						}
+					}
+				}
+
 				if err := confirmSubmit(cmd, m, cfg.BaseURL(), assumeYes); err != nil {
 					return err
 				}
@@ -516,11 +559,7 @@ Defaults to the current directory.`,
 				// no-token fallback never reach the server, so nothing there can
 				// regress a live deployment. See app_submit_version_guard.go for
 				// every branch of the guard itself.
-				ctx := cmd.Context()
-				if ctx == nil {
-					ctx = context.Background()
-				}
-				if err := checkVersionNotRegression(ctx, client.ListSubmissions, cmd.ErrOrStderr(), m.BlockID, m.Version, allowDowngrade); err != nil {
+				if err := checkVersionNotRegression(ctx0, client.ListSubmissions, cmd.ErrOrStderr(), m.BlockID, m.Version, allowDowngrade); err != nil {
 					return err
 				}
 			}
@@ -598,6 +637,7 @@ Defaults to the current directory.`,
 	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "skip the confirmation prompt and submit (for scripts/CI)")
 	cmd.Flags().BoolVar(&allowDowngrade, "allow-downgrade", false, "submit even when the version is not above the highest approved one (deliberate rollback)")
 	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "submit even when the packaged directory has uncommitted git changes")
+	cmd.Flags().BoolVar(&noPull, "no-pull", false, "do not fast-forward the packaged directory onto the app's canonical repository before packaging")
 	cmd.Flags().BoolVar(&allowOversize, "allow-oversize", false, "submit even when the body exceeds the size the server is expected to accept")
 	return cmd
 }
@@ -611,6 +651,52 @@ Defaults to the current directory.`,
 //     exit) rather than hang waiting on input or submit silently.
 //   - interactive TTY → print what will happen, prompt "Submit for review?
 //     [y/N]", and proceed only on an explicit yes.
+//
+// validateBeforeSubmit is step 1 of the submit flow, extracted because the
+// remote-commit sync can change the tree UNDERNEATH it and it then has to run
+// again.
+//
+// 🔴 IT IS A FUNCTION SO THERE IS ONE COPY, NOT TWO. When syncRemoteCommits
+// fast-forwards, every fact this step established is about a tree that no longer
+// exists — a manifest that validated may now be a manifest that does not, and
+// the advisories printed were about the old bytes. Re-running it is the only
+// honest option, and re-running an INLINE block means maintaining two copies of
+// the error rendering that the printFinding comment below says must stay single.
+func validateBeforeSubmit(cmd *cobra.Command, dir string, skipValidate bool) error {
+	if skipValidate {
+		return nil
+	}
+	res, err := validate.Dir(dir)
+	if err != nil {
+		return err
+	}
+	if !res.OK() {
+		errw := cmd.ErrOrStderr()
+		fmt.Fprintln(errw, ui.For(errw).ErrorMsg(fmt.Sprintf("validation failed (%d error(s)) — fix before submitting, or pass --skip-validate:", len(res.Errors))))
+		for _, e := range res.Errors {
+			// printFinding, not a raw Fprintf: `printWarnings` below
+			// wraps, so a bare one here printed a 400-char unwrapped
+			// error and a wrapped warning in the SAME run — two
+			// layouts on the highest-traffic path. It was the fourth
+			// print site and the one that made "one place fixes
+			// every long message" false.
+			printFinding(errw, e.Message)
+		}
+		// Warnings are useful context on a failure too, and this is
+		// the last moment before the app would have gone to review.
+		printWarnings(errw, res)
+		return fmt.Errorf("validation failed")
+	}
+	// Non-fatal advisories still have to be SEEN. `submit` is the
+	// highest-traffic path and the last point before an app reaches
+	// review, so printing them only in `app validate` means the
+	// ready-ack advisory — which predicts a blank failure card in the
+	// real host — reaches nobody who does not run validate by hand.
+	// They do NOT block the submit; that stays the --strict contract.
+	printWarnings(cmd.ErrOrStderr(), res)
+	return nil
+}
+
 func confirmSubmit(cmd *cobra.Command, m *manifest.Manifest, baseURL string, assumeYes bool) error {
 	if assumeYes {
 		return nil
