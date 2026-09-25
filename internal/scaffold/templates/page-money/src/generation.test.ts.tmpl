@@ -157,7 +157,10 @@ describe('isFeatureGated', () => {
     // (a) app-blocks flag gate — assertAppBlocksEnabledForTokenUser.
     expect(isFeatureGated('Apps are not enabled')).toBe(true);
     expect(isFeatureGated('UNAUTHORIZED: Apps are not enabled')).toBe(true);
-    // (b) author gate — assertViewerIsAppDeveloper.
+    // (b) author gate — assertViewerIsAppDeveloper. 🔴 NOT reachable on a
+    //     customComfy submit or estimate: neither arm runs that gate, which lives
+    //     on the app-AUTHORING procs. This fixture pins the string match only, and
+    //     is NOT evidence that the platform gates Comfy by developer status.
     expect(isFeatureGated('Apps authoring is not enabled for this account')).toBe(true);
     // (c) unknown-recipe Zod enum rejection — the server's registry holds no such
     //     id. `starter-comfy-txt2img` IS registered, so this is the "you pointed
