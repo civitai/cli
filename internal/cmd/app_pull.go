@@ -38,6 +38,30 @@ type submissionLister func(ctx context.Context, blockID string) ([]appapi.Submis
 // gitRunner runs a git subcommand in `dir` (empty = current dir). It's a package
 // var so tests can stub the exec without a real git/repo. Output is forwarded to
 // the user's terminal so clone/pull progress is visible.
+//
+// 🔴 IT SCRUBS gitEnvOverrides, AND ON THIS RUNNER THAT IS NOT DEFENCE IN DEPTH.
+// Every variable in that list BEATS both `-C` and `c.Dir`, and git EXPORTS
+// GIT_DIR and GIT_INDEX_FILE to its hooks — so a `civitai app pull` invoked from
+// a `pre-push` / `post-commit` hook, or under `git rebase -x`, inherits a GIT_DIR
+// aimed at the repository that invoked the hook. The dirty-tree guard already
+// scrubs for this reason (app_submit_dirty_guard.go), but there the misdirection
+// only produces a wrong ANSWER: every call through it is a read.
+//
+// Here every call is a WRITE — `clone`, `fetch`, `merge --ff-only` — so the same
+// misdirection merges the app's canonical repository into whatever repository
+// the environment happens to name. That is a different severity, and it is why
+// this is worth its own change rather than a tidy-up.
+//
+// The scrub lives in gitScrubbedEnv and is SHARED with that guard on purpose: a
+// second copy of this rule is how the two runners start to disagree about which
+// repository they are talking to. It deliberately leaves the user's git CONFIG
+// alone — only the variables that RELOCATE the repository are dropped, never
+// `status.renames`, `core.excludesFile` and friends, which are the user's own
+// answer to what their tree looks like.
+//
+// It cannot affect the `clone` call site, which passes no `-C` and no `dir`: a
+// GIT_DIR set there would previously have MISdirected the clone, so removing it
+// can only make that path more correct, never less.
 var gitRunner = func(dir string, args ...string) error {
 	if _, err := exec.LookPath("git"); err != nil {
 		return fmt.Errorf("git is required for `civitai app pull` but was not found on PATH")
@@ -46,6 +70,7 @@ var gitRunner = func(dir string, args ...string) error {
 	if dir != "" {
 		c.Dir = dir
 	}
+	c.Env = gitScrubbedEnv(os.Environ())
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	return c.Run()
