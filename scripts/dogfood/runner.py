@@ -115,6 +115,46 @@ MAX_OUT = 12000  # bytes of combined output handed back per command
 # find out whether the model chose to stop.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# 🔴 THE SAME RULE, ONE AXIS OVER: MONEY. `usage.cost` gets exactly the
+# treatment `finish_reason` gets above, and for the identical reason. The loop
+# used to read `usage_total["cost"] += u.get("cost", 0.0) or 0.0` — the ONLY
+# cost-accumulation site in this file, with no price table and no
+# `/api/v1/models` fallback behind it — so a model or a route whose usage
+# payload omits `cost`, or returns it null, accumulated $0 FOREVER. `--max-cost`
+# then never tripped, `--max-steps` was the only remaining bound, and the
+# docstring beside that flag says in its own words that a step cap is NOT a
+# spend cap. That is an unbounded-spend path, and the `end` record's
+# `cost: 0.0` is the money-shaped version of `stop: "finished"` on a truncation:
+# an absent value rendered as a successful measurement.
+#
+# `unpriced-turn (…)` is the stop value for it. It is a POSITIVE statement that
+# the harness cannot price this run, and it is deliberately NOT a variant of
+# `max-cost` — the cap did not trip, the cap became inoperable.
+UNPRICED_STOP = "unpriced-turn"
+
+
+def turn_cost(usage):
+    """The USD cost of one turn, or None when the provider did not price it.
+
+    🔴 None MEANS "UNKNOWN", AND THE CALLER MUST NOT TREAT IT AS ZERO. Four
+    shapes reach here and three of them are the defect: no `usage` object at
+    all, a `usage` with no `cost` key, `cost: null`, and a `cost` that is not a
+    number. A provider that SAYS a turn cost $0 (a free route) is making a
+    claim and is honoured — `0.0` is a price, absence is not. That distinction
+    is the whole point: it keeps a genuinely free model runnable while refusing
+    to invent a figure for a model whose bill we cannot see.
+
+    `bool` is excluded explicitly because `isinstance(True, int)` is True in
+    Python, and `cost: true` is not a price.
+    """
+    if not isinstance(usage, dict) or "cost" not in usage:
+        return None
+    value = usage["cost"]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
 # A provider saying "the model chose to stop". OpenRouter normalises to `stop`;
 # the others are spellings that reach us when a provider's own value is passed
 # through. Anything OUTSIDE this set — an absent value included — is not
@@ -353,8 +393,30 @@ def install_credential(container: str, user: str, path: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # `app` subcommands that change something on the account or in the moderation
-# queue. Everything else (`list`, `view`, `status`, `validate`, `metrics`,
-# `doctor`, `pull`, `dev-token`, `dev-tunnel`) is read-only and ungated.
+# queue. Everything else (`list`, `view`, `validate`, `metrics`, `doctor`,
+# `pull`, `dev-token`, `dev-tunnel`) is read-only and ungated.
+#
+# 🔴 `status` USED TO BE LISTED ON THAT UNGATED LINE AND IT MADE TWO CLAIMS,
+# ONE OF WHICH IS FALSE. `civitai app status` is indeed a read. `civitai app
+# listing status` is NOT — and it is not ungated either: `listing` is in the
+# tuple below, so the whole group including `status` goes through _prefix_ok.
+# The comment said otherwise and was read as the authority: a report derived
+# from it concluded `app listing status` was "classified as a read by the
+# runner's APP_MUTATING list", which is the opposite of what this code does.
+#
+# 🔴 WHY `app listing status` IS NOT A READ, MEASURED ON A REAL ACCOUNT. On a
+# LIVE listing it calls `getMyListingForEdit`, which idempotently OPENS a
+# SHADOW REVISION DRAFT server-side (the CLI's own `--help` says so, and
+# `internal/appapi/listing.go` contrasts it with the side-effect-free
+# `revisionOfId` read). It submits nothing and destroys nothing, so the draft
+# is an annoyance rather than a loss — but there is NO `discard-revision`
+# command in this CLI, so nothing the trial or the operator can run afterwards
+# closes it. It happened to the operator's `panorama-360` listing on
+# 2026-09-25. That is why it stays inside the prefix gate rather than being
+# moved to the ungated list, and why it is NOT promoted to the refused-by-
+# default sets below: refusing it would take away the trial's only way to
+# observe its own listing, which changes what the harness measures, for a side
+# effect that costs nothing irreversible.
 APP_MUTATING = ("init", "create", "submit", "listing")
 # Refused outright unless --allow-withdraw. `app withdraw` permanently destroys
 # a listing's captioned screenshots (measured, claudedocs/handoff-dogfood-3.md),
@@ -362,6 +424,29 @@ APP_MUTATING = ("init", "create", "submit", "listing")
 # see what it targets, and the account running a credentialed trial owns real
 # published listings. There is no accident-shaped reason a trial needs it.
 APP_DESTRUCTIVE = ("withdraw",)
+# Refused outright unless --allow-listing-text. These are `app listing`
+# SUB-subcommands, so they are matched at argv[2] rather than argv[1].
+#
+# 🔴 `set-text` IS THE ONE LISTING VERB WITH NO REVISION AND NO UNDO. Every
+# media verb (`set-icon`, `set-cover`, `add-screenshot`, `rm-screenshot`,
+# `reorder`) on a LIVE listing stages onto a shadow revision that a moderator
+# has to approve — the live listing is untouched meanwhile, so a mistake is
+# recoverable by not submitting. `set-text` is different by design and says so
+# in its own `--help`: tagline/description/category are not "material" changes,
+# so the patch applies IN PLACE on every listing status. It is public the
+# moment it returns, it is one proc with no transaction to roll back, and this
+# CLI has no command that restores the previous value.
+#
+# 🔴 AND THE PREFIX GATE IS NOT A SUBSTITUTE FOR THIS, BECAUSE IT IS OPTIONAL.
+# `armed` is true on a credential ALONE; `_prefix_ok` returns None immediately
+# when `--app-prefix` is empty. So a credentialed run without a prefix — which
+# driver.sh refuses but a direct `runner.py` invocation does not — gates
+# nothing, and `set-text` would reach any listing on the account. `withdraw`'s
+# refusal is unconditional under `armed` for the same reason, and this one
+# matches it. A brief that genuinely needs to write listing copy turns it on
+# with one flag; nothing else does. Deliberately NOT threaded through
+# driver.sh, exactly like --allow-withdraw.
+APP_LISTING_DESTRUCTIVE = ("set-text",)
 # Verbs that make a bare mention of the CLI worth refusing when this classifier
 # cannot parse an invocation out of the segment.
 DANGEROUS_VERBS = ("generate", "submit", "withdraw", "listing")
@@ -404,16 +489,40 @@ def invocation(segment: str):
 
 
 def positional(argv, skip: int):
-    """The first non-flag token after `skip` leading subcommand words.
+    """Every token after `skip` leading subcommand words that could be a slug.
 
-    ⚠ It does not know which flags take a value, so a slug can be missed (the
-    token after `--dir ./x` is `./x`, not a slug). Missing one is safe here: the
-    caller falls back to reading every manifest in the container, which is the
-    stricter check.
+    🔴 `--slug=NAME` IS A TOKEN THAT STARTS WITH `-` AND CARRIES THE TARGET.
+    This used to `continue` on any token beginning with `-`, which dropped the
+    attached form of every flag — so `civitai app listing status
+    --slug=some-other-app` yielded NO candidate at all, fell through to
+    _prefix_ok's "read every block.manifest.json under /work" branch, and was
+    ACCEPTED: the workspace manifests all carry the prefix while `--slug`
+    pointed somewhere else entirely. The separated form
+    (`--slug some-other-app`) was caught, because its value is a bare token;
+    the two spellings are interchangeable to cobra and were not to this. That
+    is a bypass of the app-prefix cap for EVERY gated verb — `app init`,
+    `app create`, `app submit` and the whole `app listing` group — not just
+    the one it was found on.
+
+    So an `--opt=value` token contributes its VALUE. The flag name itself never
+    does: the caller matches a strict slug shape, and `--slug` would not match
+    it anyway, but splitting keeps the two halves from being confused.
+
+    ⚠ IT STILL DOES NOT KNOW WHICH FLAGS TAKE A VALUE, and that is deliberate:
+    every non-flag token is offered as a candidate, so `--tagline x` offers
+    `x`. That over-collects and therefore over-refuses, which is the safe
+    direction here and is the behaviour the separated form already had — this
+    change makes the attached form agree with it rather than introducing a new
+    strictness. Where nothing is collected at all the caller falls back to
+    reading every manifest in the container, which is the stricter check.
     """
     out = []
     for tok in argv[skip:]:
         if tok.startswith("-"):
+            if "=" in tok:
+                value = tok.split("=", 1)[1]
+                if value:
+                    out.append(value)
             continue
         out.append(tok)
     return out
@@ -424,11 +533,13 @@ class Caps:
     string that is handed to the model INSTEAD of running the command."""
 
     def __init__(self, app_prefix="", max_generations=None, max_submissions=None,
-                 allow_withdraw=False, manifest_slugs=lambda: []):
+                 allow_withdraw=False, allow_listing_text=False,
+                 manifest_slugs=lambda: []):
         self.app_prefix = app_prefix or ""
         self.max_generations = max_generations
         self.max_submissions = max_submissions
         self.allow_withdraw = allow_withdraw
+        self.allow_listing_text = allow_listing_text
         self.manifest_slugs = manifest_slugs
         self.generations = 0
         self.submissions = 0
@@ -492,6 +603,15 @@ class Caps:
                         "cannot tell which listing it would hit." % sub)
             if sub not in APP_MUTATING:
                 continue
+            # Checked BEFORE the prefix gate, because the prefix gate is
+            # optional and this refusal is not — see APP_LISTING_DESTRUCTIVE.
+            if (sub == "listing" and len(argv) >= 3
+                    and argv[2] in APP_LISTING_DESTRUCTIVE
+                    and not self.allow_listing_text):
+                return ("refused by the run harness: `civitai app listing %s` is disabled for "
+                        "this trial. It applies IN PLACE on a listing of any status — no "
+                        "revision, no moderator review, public the moment it returns — and "
+                        "this CLI has no command that restores the previous value." % argv[2])
             if sub == "submit":
                 if self.max_submissions is not None and self.submissions >= self.max_submissions:
                     return ("refused by the run harness: the submission cap for this trial is %d "
@@ -635,6 +755,12 @@ def main() -> int:
                          "default: it destroys a listing's captioned screenshots "
                          "and names a publication-request id no prefix check can "
                          "resolve to an app.")
+    ap.add_argument("--allow-listing-text", action="store_true",
+                    help="permit `civitai app listing set-text`, which is refused "
+                         "by default: it rewrites a listing's public "
+                         "tagline/description/category IN PLACE on every listing "
+                         "status — no revision, no moderator review, and this CLI "
+                         "has no command that restores the previous value.")
     ap.add_argument("--max-steps", type=int, default=40)
     # 🔴 A STEP CAP IS NOT A SPEND CAP. Every turn resends the whole history plus
     # up to MAX_OUT of tool output, so cumulative prompt tokens grow O(n^2) in
@@ -642,8 +768,19 @@ def main() -> int:
     # that is roughly 25x, and a model that loops on a failing install — exactly
     # the failure being measured — is the case that reaches it. This is the only
     # bound on money.
+    #
+    # 🔴 AND IT ONLY BOUNDS MONEY WHILE THE PROVIDER PRICES THE TURNS. There is
+    # no price table here and no `/api/v1/models` fallback: the cap is a
+    # comparison against a running total that comes entirely from
+    # `usage.cost`. A route that stops sending that field does not make the cap
+    # fire late, it makes it never fire — so an unpriced turn ends the run
+    # outright (`stop: "unpriced-turn (…)"`, see turn_cost above) rather than
+    # being counted as $0.
     ap.add_argument("--max-cost", type=float, default=1.0,
-                    help="stop the trial once this much USD has been spent (default 1.0)")
+                    help="stop the trial once this much USD has been spent "
+                         "(default 1.0). A turn the provider does not price "
+                         "ends the trial instead of counting as $0 — this cap "
+                         "cannot bound a run whose spend is unreported.")
     # 🔴 8000 LEFT THE MODEL 8 TOKENS AFTER ITS REASONING. Measured on
     # `ab-genpost-glm-01`: the final turn spent 7,992 of an 8,000-token budget
     # reasoning and returned `content: null`, which the old loop recorded as
@@ -836,10 +973,12 @@ def main() -> int:
                 max_generations=a.max_generations,
                 max_submissions=a.max_submissions,
                 allow_withdraw=a.allow_withdraw,
+                allow_listing_text=a.allow_listing_text,
                 manifest_slugs=lambda: workspace_slugs(container, a.user))
     if armed:
         rec("caps", app_prefix=a.app_prefix, max_generations=a.max_generations,
-            max_submissions=a.max_submissions, allow_withdraw=a.allow_withdraw)
+            max_submissions=a.max_submissions, allow_withdraw=a.allow_withdraw,
+            allow_listing_text=a.allow_listing_text)
 
     api_key = key()
     # One source for the task: the `user` record and the message actually sent
@@ -869,7 +1008,12 @@ def main() -> int:
         u = resp.get("usage") or {}
         usage_total["prompt_tokens"] += u.get("prompt_tokens", 0)
         usage_total["completion_tokens"] += u.get("completion_tokens", 0)
-        usage_total["cost"] += u.get("cost", 0.0) or 0.0
+        # 🔴 NOT `+= u.get("cost", 0.0) or 0.0`. See turn_cost: an absent or
+        # unreadable figure is UNKNOWN, and adding zero for it is what made
+        # --max-cost silently inoperable. The run is stopped below instead.
+        this_cost = turn_cost(resp.get("usage"))
+        if this_cost is not None:
+            usage_total["cost"] += this_cost
         choice = resp["choices"][0]
         # The field the harness used to drop on the floor. Read off the CHOICE,
         # not the message — that is where every OpenAI-shaped API puts it.
@@ -905,6 +1049,31 @@ def main() -> int:
         })
         if not calls:
             final = msg.get("content") or ""
+        # 🔴 THE HARD STOP, AND IT OUTRANKS THE TERMINAL STATE. A turn the
+        # provider did not price means every later turn is unbounded, so the
+        # loop ends HERE — before the tool calls of this turn are executed and
+        # before the next `call()` is issued. Nothing is lost by putting it
+        # above classify_stop: `finish_reason` and `final` are recorded either
+        # way and ride out on the `end` record and the summary, so the terminal
+        # state is still readable; what changes is that `stop` stops making the
+        # success-shaped claim. A terminal unpriced turn is stopped too — no
+        # further money can be spent on it, but `end.usage.cost` would
+        # otherwise report a fabricated `0.0` for a call that was really
+        # billed, which is the same coercion one axis over.
+        #
+        # 🔴 ONE CALL IS ALLOWED TO COMPLETE, AND EXACTLY ONE. You cannot know a
+        # provider omits `cost` until a response arrives, so the first request
+        # is unavoidable and is the floor on what this can bound. It is NOT a
+        # grace period: there is no "allow N unpriced turns" knob, because N
+        # turns of unknown cost is still unbounded — it is bounded only by a
+        # number nobody can convert into money.
+        if this_cost is None:
+            stop = ("%s (turn %d returned no usable usage.cost, so --max-cost "
+                    "cannot bound this run; recorded spend is a LOWER BOUND)"
+                    % (UNPRICED_STOP, len(turns)))
+            rec("unpriced", turn=len(turns), usage=u, finish_reason=finish_reason)
+            break
+        if not calls:
             # 🔴 NOT `stop = "finished"`. See classify_stop — a turn with no
             # tool calls is four different outcomes, and three of them are the
             # harness's fault rather than the model's.

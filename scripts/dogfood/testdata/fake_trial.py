@@ -44,6 +44,14 @@ Env knobs:
   FAKE_REASONING      a `reasoning` string returned on every turn
   FAKE_REASONING_DETAILS  a JSON array returned as `reasoning_details`
   FAKE_REASONING_TOKENS   per-turn usage.completion_tokens_details.reasoning_tokens
+  FAKE_USAGE_COST     what `usage.cost` is on EVERY turn (default 0.0001).
+                      `__absent__` omits the key; `__null__` sets it to JSON
+                      null; `__nousage__` omits the whole `usage` object; any
+                      other value is used verbatim, as a float when it parses
+                      as one and as a STRING when it does not — which is how a
+                      provider sending `"cost": "0.004"` is reproduced. These
+                      are the shapes that made --max-cost inoperable: a turn
+                      the harness cannot price was counted as $0.
   FAKE_FINAL_RESPONSE path to a JSON file holding a COMPLETE response body to
                       return verbatim as the final turn. Overrides every knob
                       above for that turn.
@@ -89,6 +97,34 @@ REASONING = os.environ.get("FAKE_REASONING", "")
 REASONING_DETAILS = os.environ.get("FAKE_REASONING_DETAILS", "")
 REASONING_TOKENS = int(os.environ.get("FAKE_REASONING_TOKENS", "0") or 0)
 FINAL_RESPONSE = os.environ.get("FAKE_FINAL_RESPONSE", "")
+USAGE_COST = os.environ.get("FAKE_USAGE_COST", "")
+
+
+def _usage() -> dict:
+    """The `usage` block for one turn, or None for a response carrying none.
+
+    🔴 THE DEFAULT IS A PROVIDER THAT PRICES ITS TURNS, STATED RATHER THAN
+    IMPLIED — every test written before --max-cost could be defeated runs
+    through this path, so the default has to stay the well-behaved shape.
+    """
+    usage = {"prompt_tokens": 11, "completion_tokens": 3, "cost": 0.0001}
+    if REASONING_TOKENS:
+        usage["completion_tokens_details"] = {"reasoning_tokens": REASONING_TOKENS}
+    if not USAGE_COST:
+        return usage
+    if USAGE_COST == "__nousage__":
+        return None
+    if USAGE_COST == "__absent__":
+        usage.pop("cost")
+        return usage
+    if USAGE_COST == "__null__":
+        usage["cost"] = None
+        return usage
+    try:
+        usage["cost"] = float(USAGE_COST)
+    except ValueError:
+        usage["cost"] = USAGE_COST
+    return usage
 
 
 def fake_run(cmd, *a, **kw):
@@ -140,9 +176,17 @@ def fake_urlopen(req, *a, **kw):
     captured["url"] = req.full_url
     captured.setdefault("payloads", []).append(json.loads(req.data.decode()))
     captured["payload"] = captured["payloads"][0]
-    usage = {"prompt_tokens": 11, "completion_tokens": 3, "cost": 0.0001}
-    if REASONING_TOKENS:
-        usage["completion_tokens_details"] = {"reasoning_tokens": REASONING_TOKENS}
+    usage = _usage()
+
+    def body(choice):
+        # `usage` is OMITTED, not sent as null, when there is none — a provider
+        # that returns no usage object at all is a different wire shape from
+        # one that returns `"usage": null`, and the runner must refuse both.
+        out = {"choices": [choice]}
+        if usage is not None:
+            out["usage"] = usage
+        return _Resp(json.dumps(out).encode())
+
     if _served["n"] < len(TOOL_COMMANDS):
         cmd = TOOL_COMMANDS[_served["n"]]
         _served["n"] += 1
@@ -152,7 +196,7 @@ def fake_urlopen(req, *a, **kw):
                          "arguments": json.dumps({"command": cmd})},
         }], **_reasoning_fields()}
         choice = {"message": msg, "finish_reason": "tool_calls"}
-        return _Resp(json.dumps({"choices": [choice], "usage": usage}).encode())
+        return body(choice)
     # The terminal turn. A recorded body wins outright: replaying real bytes is
     # the only version of this that cannot quietly disagree with the artifact.
     if FINAL_RESPONSE:
@@ -165,7 +209,7 @@ def fake_urlopen(req, *a, **kw):
     choice = {"message": msg}
     if FINISH_REASON != "__absent__":
         choice["finish_reason"] = FINISH_REASON
-    return _Resp(json.dumps({"choices": [choice], "usage": usage}).encode())
+    return body(choice)
 
 
 runner.subprocess = types.SimpleNamespace(
