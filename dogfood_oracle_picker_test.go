@@ -583,6 +583,13 @@ func writePickerUnitDriver(t *testing.T, dir string) string {
 	// the minifier. Measured verbatim out of `ab-ship-mimo-02`'s
 	// dist/assets/index-CkrWgKXb.js on 2026-09-25.
 	minified := `sendMessage(r){}sendRequest(r,d,s){return Promise.reject(new Error("InlineTransport.sendRequest is not implemented in v1"))}onMessage(r,d){return()=>{}}`
+	// 🔴 A SECOND REAL BUNDLE, AND IT SPELLS THE SAME STUB DIFFERENTLY: no `new`,
+	// and a TEMPLATE LITERAL for the message. Measured verbatim out of
+	// `ab-genpost-mimo-01`'s dist/assets/index-BoKmFcvM.js (blocks-react 0.53.1) on
+	// 2026-09-25 — the needle's first version required `new Error('…')` and patched
+	// 0 sites here while reporting a perfectly ordinary green, because that app
+	// never opens a picker. One bundle is not a general claim.
+	minifiedNoNew := "sendMessage(e){}sendRequest(e,t,n){return Promise.reject(Error(`InlineTransport.sendRequest is not implemented in v1`))}onMessage(e,t){return()=>{}}"
 	body := `import { patchInlineTransport, inlineHostSource, INLINE_STUB_MESSAGE,
   INLINE_HOST_GLOBAL, HOST_PICKER_REQUESTS } from ` + jsQuote(abs) + `;
 import { writeFile } from 'node:fs/promises';
@@ -593,12 +600,16 @@ const check = (name, ok, detail) => out.push({ name, ok: !!ok, detail: String(de
 
 // ── patchInlineTransport finds the SDK's stub, and only it ───────────────────
 const MIN = ` + jsQuote(minified) + `;
+const MIN_NO_NEW = ` + jsQuote(minifiedNoNew) + `;
 const SRC = "    sendRequest(_request, _responseType, _opts) {\n" +
   "        return Promise.reject(new Error('" + INLINE_STUB_MESSAGE + "'));\n    }";
 check('minified-stub-patched', patchInlineTransport(MIN).hits === 1, patchInlineTransport(MIN).hits);
+check('minified-no-new-stub-patched', patchInlineTransport(MIN_NO_NEW).hits === 1,
+  patchInlineTransport(MIN_NO_NEW).hits);
 check('source-stub-patched', patchInlineTransport(SRC).hits === 1, patchInlineTransport(SRC).hits);
 for (const near of [
   MIN.replace('in v1', 'in v2'),
+  MIN_NO_NEW.replace('in v1', 'in v2'),
   MIN.replace(INLINE_STUB_MESSAGE, 'something else entirely'),
   'Promise.resolve(new Error("' + INLINE_STUB_MESSAGE + '"))',
 ]) {
@@ -734,9 +745,9 @@ func TestOracleInlineHostAnswersOnlyThePickerLedger(t *testing.T) {
 		}
 	}
 	// 🔴 A MINIMUM COUNT, because a driver that died halfway prints only the checks
-	// it reached and every one of them can be green. 12 checks: 2 stub forms, 3
-	// near misses, 1 module patch, 2 delegation arms, and 5 on the shim.
-	if seen < 12 {
-		t.Fatalf("only %d checks reported, want at least 12 — the driver stopped early\n%s", seen, out)
+	// it reached and every one of them can be green. 14 checks: 3 stub spellings, 4
+	// near misses, 1 module patch, 2 delegation arms, and 4 on the shim.
+	if seen < 14 {
+		t.Fatalf("only %d checks reported, want at least 14 — the driver stopped early\n%s", seen, out)
 	}
 }

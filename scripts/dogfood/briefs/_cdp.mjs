@@ -422,8 +422,20 @@ export function patchInlineTransport(code) {
   const src = String(code);
   // Built fresh per call: a module-level /g regex carries `lastIndex` between
   // callers, which is how a second file silently starts matching from an offset.
+  // 🔴 `new` IS OPTIONAL AND THE QUOTE CAN BE A BACKTICK, BOTH MEASURED RATHER
+  // THAN IMAGINED. The first version of this needle required `new Error('…')`,
+  // which is what the SDK's SOURCE says and what `ab-ship-mimo-02`'s bundle
+  // happened to preserve. Then a SECOND real bundle was read —
+  // `ab-genpost-mimo-01`, blocks-react 0.53.1 — and its minifier had emitted
+  // `Promise.reject(Error(\`InlineTransport.sendRequest is not implemented in v1\`))`:
+  // no `new`, and a template literal for the message. `Error(x)` and `new Error(x)`
+  // are equivalent in JS, so dropping the keyword is an ordinary minifier
+  // transform, and a needle pinned to one spelling patches NOTHING on the other
+  // while reporting a perfectly ordinary green. One bundle was not a general
+  // claim; two are not either, which is why `pickerShim` puts the site count on
+  // every cell.
   const needle = new RegExp(
-    String.raw`Promise\.reject\(\s*new Error\(\s*(['"\x60])`
+    String.raw`Promise\.reject\(\s*(?:new\s+)?Error\(\s*(['"\x60])`
     + INLINE_STUB_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     + String.raw`\1\s*\)\s*\)`,
     'g');
