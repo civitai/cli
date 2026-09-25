@@ -257,6 +257,41 @@ document.getElementById('pick').onclick = async function () {
 genEl.onclick = function () { statusEl.textContent = 'generating'; };
 `
 
+// 🔴 THE SCOPING FIXTURE. Its PICKER button drives the status machine to
+// `generating` and its Generate button does nothing — the shape that a verdict
+// keyed on `seq.includes('generating')` would grade GREEN now that the assertion
+// clicks a picker affordance with the recorder already live. It must grade `no`,
+// and the reason must be about Generate.
+//
+// ⚠ It cannot be made red on pre-change code: at `origin/main` nothing ever clicks
+// the picker, so the status never moves and the verdict is `no` for a different
+// reason. It is an INVARIANT GUARD on the new predicate's scoping, and it is here
+// because that scoping is otherwise unguarded — mutating `slice(beforeClick)` back
+// to `includes` survives every other test in this file.
+const fxPickerDrivesStatusApp = fxSdkInlineStub + fxSdkPickers + `
+const root = document.getElementById('root');
+root.innerHTML = '<input data-testid="prompt" type="text">' +
+  '<button id="pick">Select Model</button>' +
+  '<button id="gen" disabled>Generate</button>' +
+  '<button id="post" disabled>Post</button>' +
+  '<div data-testid="status">ready</div>';
+const promptEl = document.querySelector('[data-testid="prompt"]');
+const statusEl = document.querySelector('[data-testid="status"]');
+const genEl = document.getElementById('gen');
+document.getElementById('pick').onclick = async function () {
+  const picked = await openPicker({ resourceType: 'Checkpoint' });
+  if (!picked) return;
+  statusEl.textContent = 'generating';   // WRONG: the pick is not a generation
+  genEl.disabled = false;
+};
+// 🔴 IT MOVES THE MACHINE, TO A WORD THAT IS NOT 'generating'. An INERT Generate
+// makes the post-click wait time out, and a throw from that wait means the
+// predicate is never evaluated — so the mutation this fixture exists to catch
+// (scoping the predicate back to the whole sequence) SURVIVED a fully green sweep
+// until this line existed. Measured: M5, 2026-09-25.
+genEl.onclick = function () { statusEl.textContent = 'failed'; };
+`
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 // The assertion's one JSON line, parsed. The oracle's summary line carries the
@@ -405,6 +440,43 @@ func TestAPickDoesNotBuyAScaffoldAPass(t *testing.T) {
 	if r, _ := assertionLine(t, out)["reason"].(string); !strings.Contains(r, `labelled "post"`) {
 		t.Fatalf("reason = %q, want the missing Post control — a `no` for any other reason means "+
 			"this arm stopped measuring the gate\n%s", r, out)
+	}
+}
+
+// 🔴 AND A PICKER CLICK IS NOT A GENERATION. The assertion now clicks a host
+// affordance with the status recorder already running, so the verdict has to be
+// scoped to what follows the GENERATE click; otherwise an app whose picker sets
+// `generating` and whose Generate does nothing grades green. See
+// fxPickerDrivesStatusApp for why this is an invariant guard rather than a
+// regression test, and the PR's mutation matrix for it being watched to fail.
+func TestOnlyTheGenerateClickCanEarnTheVerdict(t *testing.T) {
+	browser := oracleBrowser(t)
+	out, code := runPickerOracle(t, browser, fxManifestScoped, fxPickerDrivesStatusApp)
+	if code != 0 {
+		t.Fatalf("exit %d, want 0\n%s", code, out)
+	}
+	if got := summaryField(t, out, "RENDER"); got != "no" {
+		t.Fatalf("RENDER=%s, want no — this app's PICKER set `generating` and its Generate does "+
+			"nothing, so a green here means the verdict is no longer a claim about Generate\n%s",
+			got, out)
+	}
+	// 🔴 THE STATE, NOT A WORD IN THE REASON. What makes this arm a measurement is
+	// that the machine was ALREADY in `generating` when Generate was clicked — the
+	// exact condition an unscoped `seq.includes('generating')` would have accepted —
+	// and the verdict is still `no`. Asserting the reason's wording instead would be
+	// a guard a reword walks past, and there are two legitimate reasons here (the
+	// post-click wait times out before the predicate is ever evaluated).
+	if got := assertionField(t, out, "statusBeforeClick"); got != "generating" {
+		t.Fatalf("statusBeforeClick=%q, want \"generating\" — the fixture's picker is supposed to "+
+			"have moved the machine BEFORE the Generate click, and if it did not then this arm "+
+			"cannot see the scoping at all\n%s", got, out)
+	}
+	if got := assertionField(t, out, "observed"); !strings.Contains(got, "generating") {
+		t.Fatalf("observed=%q, want it to contain `generating`\n%s", got, out)
+	}
+	if got := assertionField(t, out, "hostAnswered"); got != "OPEN_RESOURCE_PICKER:Checkpoint" {
+		t.Fatalf("hostAnswered=%q — the picker must have been answered for this arm to reach the "+
+			"state it is about\n%s", got, out)
 	}
 }
 
