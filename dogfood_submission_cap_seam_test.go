@@ -119,6 +119,11 @@ func runSeamCLI(t *testing.T, base string, args ...string) (result string, code 
 		"CIVITAI_TOKEN=seam-token-not-a-real-credential",
 		"CIVITAI_BASE_URL="+base,
 		"CIVITAI_SUBMIT_PATH=/api/blocks/submit-version",
+		// 🔴 THE ONLY HOST THIS TEST MAY TALK TO IS THE RECORDER. The release check
+		// is the one other outbound call the CLI makes on its own, and leaving it on
+		// would make an offline CI runner's timings — not the refusal — decide what
+		// this measures.
+		"CIVITAI_NO_UPDATE_CHECK=1",
 		// Stdin is inherited as /dev/null here, which is not a terminal — the same
 		// condition `docker exec -i` creates in a real trial.
 		"NO_COLOR=1",
@@ -172,6 +177,14 @@ print(json.dumps(bool(m.submit_contacted_nothing(sys.stdin.read()))))
 // the harness does — shelled out, non-TTY stdin, a token configured — and hands
 // its actual output to runner.py's predicate. Every control is in the same test:
 // the endpoint counts its hits, and the `--yes` arm proves that counter can move.
+//
+// ⚠ NOT COUNTED AS REGRESSION COVERAGE. It is RED at origin/main, but for a
+// DIFFERENT reason than it tests: `submit_contacted_nothing` does not exist there,
+// so it dies reporting the predicate is unreadable ("asking runner.py about a
+// result: exit status 1"). It was validated by MUTATION instead — see the PR
+// body: changing SUBMIT_PREFLIGHT_REFUSAL to text the CLI does not emit turns it
+// red naming the mismatch, and dropping the exit-code test turns the `--yes`
+// negative control red.
 func TestDogfoodRefundIsTheRefusalTheCLIActuallyEmits(t *testing.T) {
 	var mu sync.Mutex
 	hits := 0
@@ -257,6 +270,13 @@ func TestDogfoodRefundIsTheRefusalTheCLIActuallyEmits(t *testing.T) {
 // submission cap because it cannot reach the API. That is a fact about
 // app_submit.go (`canUpload := !packageOnly && …`), and if it ever stops being
 // true the exemption becomes an uncapped hole through which a trial can submit.
+//
+// ⚠ NOT COUNTED AS REGRESSION COVERAGE. Red at origin/main for a DIFFERENT reason
+// than it tests: `SUBMIT_NO_CONTACT_FLAG` does not exist there, so it dies on the
+// constant lookup ("reading SUBMIT_NO_CONTACT_FLAG out of runner.py: exit status
+// 1"). Its measuring half — `--package-only` contacts nothing — genuinely passes
+// at base, because that has always been true; what is new is that the exemption
+// now DEPENDS on it. Validated by mutation (see the PR body).
 func TestDogfoodPackageOnlyStillContactsNothing(t *testing.T) {
 	var mu sync.Mutex
 	hits := 0
@@ -312,8 +332,8 @@ func TestDogfoodPackageOnlyStillContactsNothing(t *testing.T) {
 	decl := regexp.MustCompile(`BoolVarP?\(\s*&packageOnly\s*,\s*"([^"]*)"`)
 	m := decl.FindSubmatch(src)
 	if m == nil {
-		t.Fatalf("CONTROL failure, not a finding: no `BoolVar(&packageOnly, \"…\")` declaration found "+
-			"in internal/cmd/app_submit.go, so the comparison below would be against nothing. The "+
+		t.Fatalf("CONTROL failure, not a finding: no `BoolVar(&packageOnly, \"…\")` declaration found " +
+			"in internal/cmd/app_submit.go, so the comparison below would be against nothing. The " +
 			"binding was renamed — re-derive this guard.")
 	}
 	if got := string(m[1]); got != name {
@@ -360,6 +380,12 @@ print(json.dumps(getattr(m, sys.argv[2])))
 //
 // Measured off the argv the runner actually issued, not off a grep of its source:
 // the offline fixture records every `subprocess.run` argv.
+//
+// ⚠ PURE INVARIANT GUARD — it PASSES at origin/main, where `sh()` already used
+// `docker exec -i`. It is not regression coverage and is not counted as such; it
+// exists because the refund's dependency on a non-terminal stdin was previously
+// nothing but a comment. Validated by mutation: removing `-i` from `sh()` turns it
+// red naming the argv.
 func TestDogfoodRunnerRunsEveryCommandOnANonTTYStdin(t *testing.T) {
 	const cmd = "civitai app submit --package-only"
 	tr := runFakeTrial(t, []string{cmd}, "")

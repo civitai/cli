@@ -168,7 +168,7 @@ one that finds nothing because there is nothing there.
 |---|---|---|
 | app-name prefix on anything the trial creates or mutates | `--app-prefix` | **yes** — a mismatched `app init` / `create` / `submit` / `listing` is refused and never executed. It reads the positional app-name argument plus the value of any flag `GATED_FLAGS` (runner.py) marks slug-bearing — `--slug`, `--from`, `--name`, `--dir` — in both the `--slug x` and `--slug=x` spelling. With no slug on the command line it reads every `block.manifest.json` under `/work` and requires all of them to carry the prefix. **Other flags' values are not app names:** `--template static` used to be refused as if `static` were a slug, and the agent that believed it measured the wrong scaffold |
 | generation cap | `--max-generations N` | **yes** — the N+1th `civitai generate` is refused before the `docker exec` |
-| submission cap | `--max-submissions N` | **yes** — same, for `civitai app submit` |
+| submission cap | `--max-submissions N` | **yes** — same, for `civitai app submit`, and it counts SUBMISSIONS rather than attempts. Each attempt is charged before it runs and **refunded** when its own result proves nothing was contacted: it exited non-zero *and* carried the CLI's pre-flight refusal for lack of `--yes`. `--package-only` contacts nothing by construction and is never charged. 🔴 **The refund direction is deliberate and it is the fail-CLOSED one.** Deciding up front — "only charge a submit carrying `--yes`" — makes the harness depend on the CLI continuing to refuse, so the day that stops it silently under-counts and permits unlimited real submissions; a refund that stops firing merely over-refuses. Both facts live in Go and are pinned by the seam guards in `dogfood_submission_cap_seam_test.go`, which run the real CLI against a recording server. Measured defect: trial `ab-ship-mimo-01` charged a refused submit, then blocked the `--yes` retry the model reached for on its very next step, and graded `SHIP=no` for an app that was never submitted |
 | `app withdraw` | `--allow-withdraw` to permit | **yes** — refused by default. It permanently destroys a listing's captioned screenshots and names a publication-request id no prefix check can resolve to an app |
 | `app listing set-text` | `--allow-listing-text` to permit | **yes** — refused by default. It rewrites the listing's public tagline/description/category **in place on every listing status** — not a "material" change, so no revision and no moderator review — and this CLI has no command that restores the previous value. Neither flag is threaded through `driver.sh`, so a matrix run cannot reach either |
 | command log | always on | **yes** — `runs/<trial>/commands.log`, one line per command with its verdict and the counters |
@@ -425,7 +425,14 @@ credentialed trials ran with `--max-submissions 1` and all four submitted nothin
 — verified from the account, not from the transcript: Buzz unchanged,
 `civitai app list` byte-identical, `gen=0 sub=0`. Nothing refused them. The
 `genpost` brief simply never mentions submitting, so the agents were correct not
-to. `ship` is that brief with one trailing clause, and its render half is graded
+to. ⚠ **The FIRST `ship` trial then failed for the opposite reason, and it was
+ours:** `ab-ship-mimo-01` (2026-09-25) tried to submit, the CLI refused the bare
+invocation pre-flight for lack of `--yes`, the cap charged that attempt anyway,
+and the `--yes` retry the model reached for one step later was refused by the
+harness. 0 pending requests on the account afterwards — the cell's `SHIP=no` was
+an accounting artifact, not a measurement. Fixed by the refund in the caps table
+above; do not read that cell as a result.
+`ship` is that brief with one trailing clause, and its render half is graded
 by the **same** assertion (`briefs/ship.assert.mjs` delegates to
 `briefs/genpost.assert.mjs`) so `genpost.md`'s controls still apply to it.
 
