@@ -359,6 +359,180 @@ reaches `generating`, or that fails for a reason an unanswered pick cannot produ
 `TestABlindPickerInstrumentReportsUnmeasuredNotNo` carries both arms — the refusal
 *and* the non-refusal.
 
+## 🔴 The UNCONSENTED arm — the state every new user is in
+
+`CIVITAI_ASSERT_UNCONSENTED=1` seeds `token.scopes` **empty** and replaces the
+predicate: instead of *"did the Generate click drive the machine to
+`generating`"*, the question is *"did the block **ask the host for consent**"*.
+Both arms are real verdicts about the same trial, and the cell's `arm=` field is
+what says which one you are reading.
+
+### Why it exists: this oracle graded a LIVE, BROKEN app `RENDER=yes`
+
+`ab-ship-mimo-02` was graded `yes` above, submitted, approved, and deployed to
+`https://ab-img-poster.civit.ai/`. It then **failed for a real user** on the first
+click: Generate produced `Generation failed. Please try again.`, and the operator
+had to find "review permissions" by hand. Measured in `dogfood-ab-ship-mimo-02` at
+`/work/ab-img-poster/src/App.jsx`:
+
+- `handleGenerate` calls `estimate` then `submit` and **never requests consent**;
+- its catch branches on `err?.signInRequired` and `err?.declined` only, so a
+  consent-required / missing-scope refusal falls through to the generic
+  `setError('Generation failed. Please try again.')`;
+- `requestConsent` appears once in the file, inside `handlePost`, for
+  `posts:write:self` — unreachable until a generation has succeeded.
+
+**Three things compounded to make the oracle blind to it:**
+
+1. `InlineTransport` rejects every request, so *"generation fails for everyone"*
+   and *"generation works"* produce the identical trace `ready>generating>ready`.
+   The default predicate grades the status word, and both apps produce it.
+2. `#690` seeds `token.scopes` and `#708` answers resource picks. Both fixed real
+   false negatives — and **together they mean an app that never asks for consent
+   is indistinguishable from one that asks correctly**, because the harness has
+   already granted what the ask was for.
+3. **Every new user starts unconsented.** That is the DEFAULT state, and the
+   oracle exclusively graded the already-consented path.
+
+This is the **fourth instance of one class with the sign flipped**: `#686`, `#690`
+and `#708` were false NEGATIVES (the harness presented *less* than a host does);
+this is a false POSITIVE, and the fix is the mirror image — present the state a
+host presents *first*, before anything is granted.
+
+### What a consent ask looks like from inside the page, and why nothing answers it
+
+Read off the SDK rather than assumed. `useRequestConsent`
+(blocks-react `src/hooks/useRequestConsent.ts`) does exactly two things:
+
+```
+armConsentRefusalLatch(transport);
+transport.sendMessage({ type: 'REQUEST_CONSENT', ...(payload ? { payload } : {}) });
+```
+
+🔴 **It is a `sendMessage`, not a `sendRequest` — which is why `#708`'s shim could
+never have seen it.** And `InlineTransport.sendMessage` is an *intentional no-op*
+in v1 (an empty body with a `// v2 will invoke platform APIs directly` comment in
+it), so a consent ask has historically produced **nothing at all**: no request, no
+rejection, no DOM change, no console line.
+
+So the oracle **watches** that method and answers nothing. That is not a
+compromise — it is what the host does. The SDK is explicit: *"Fire-and-forget: the
+host doesn't reply. On grant the host re-mints the block token and pushes a
+TOKEN_REFRESH"* — and `InlineTransport.onMessage` returns a no-op unsubscribe, so
+inline mode receives **no pushes at all** and a `TOKEN_REFRESH` could not be
+delivered even if this oracle invented one. **Granting is unreachable here, and
+observing is both necessary and sufficient**: the question is whether the app
+asked, and the answer it would have got changes nothing it can complete.
+
+Mechanically: `patchInlineTransport` gained a second needle that **inserts** a
+recorder call at the start of a `sendMessage` whose body is whitespace-and-`//`-
+comments and whose class carries the stub message within 400 characters. It
+refuses a non-empty body, so a future v2 implementation is reported
+(`messageShim: …,unmatched=N`) rather than silently instrumented. Measured
+2026-09-25 across **7 real spellings** — five trial bundles (blocks-react 0.53.1
+and 0.57.x, two minifiers), the published `dist`, and the TypeScript source — 1
+hit each; and 0 on a real-bodied `sendMessage`, on a class with no stub nearby, on
+one 500 characters away, and on a v2-style implementation.
+
+### 🔴 It removes capability and adds none
+
+`[]` is the list `_cdp.mjs` seeded *unconditionally* before `#690`, `token.raw` is
+still `''`, the viewer is still **signed in** (unconsented is not anonymous — the
+SDK's consent path is for a logged-in viewer whose token lacks a scope), and the
+arm answers no new request type. So the invariant `#690` and `#708` were careful
+about is not merely preserved, it is **strictly stronger**: this arm cannot make
+anything succeed that the default arm could not.
+`TestTheUnconsentedArmGrantsTheBlockNothing` asserts the bootstrap from inside the
+page against literals; `TestAConsentAskBuysNoSpendOnTheUnconsentedArm` shows a
+`SUBMIT_WORKFLOW` still refused with the SDK's own error *after* an ask; and
+`TestTheMessageLedgerAnswersNothingAtAll` walks the SDK's whole 47-entry
+`BLOCK_TO_PARENT_MESSAGE_TYPES` and fails if the message path ever returns a value,
+throws, or stops recording.
+
+### The seven-fixture re-grade — measured 2026-09-25
+
+Every fixture, run three times: `origin/main`, this change's default arm, and the
+unconsented arm. **No default verdict moved** — every `RENDER` and every `observed`
+string is byte-identical between the first two columns.
+
+| fixture | model | base (default) | new (default) | new (**unconsented**) | evidence on the unconsented arm |
+|---|---|---|---|---|---|
+| `ab-curve-01` | glm | yes | yes | **n/a** | `celsius` brief — no SDK in the bundle, so the arm has no consent predicate to apply. Its transcript was destroyed by a worktree cleanup, so it grades only with the brief passed by hand (`brief_source=argument-unverified`). |
+| `ab-genpost-glm-01` | glm (unmodified scaffold) | no | no | **no** (same reason) | Never built: `outputDir 'dist'` absent, the source tree served, `timed out … waiting for [data-testid="prompt"]`. `messageShim: sites=0` — **not** a consent verdict. Negative control holds on both arms. |
+| `ab-genpost-mimo-01` | mimo-v2.5 | yes | yes | **yes** | `hostMessages: RESIZE_IFRAME,REQUEST_CONSENT` · `hostRefused: REQUEST_TOKEN` (no workflow request attempted) |
+| `ab-genpost-dsv4-01` | deepseek-v4 | yes | yes | **yes** | `hostMessages: RESIZE_IFRAME,REQUEST_CONSENT:ai:write:budgeted` · `hostRefused: REQUEST_TOKEN` |
+| `ab-genpost-dsv4-02` | deepseek-v4 | yes | yes | **no** | `consentRequested: false` · `hostRefused: ESTIMATE_WORKFLOW,SUBMIT_WORKFLOW` — it spent without asking |
+| `ab-ship-mimo-01` | mimo-v2.5 | yes | yes | **no** | `consentRequested: false` · `hostRefused: ESTIMATE_WORKFLOW` |
+| `ab-ship-mimo-02` | mimo-v2.5 | yes | yes | **no** ← the live defect | `consentRequested: false` · `hostAnswered: OPEN_RESOURCE_PICKER:Checkpoint` · `hostRefused: ESTIMATE_WORKFLOW` |
+
+🔴 **IT IS NOT A PER-VENDOR STORY, and the expectation that it would be was
+refuted.** The prior reading was "mimo's apps fail and deepseek's passes". Both
+halves are wrong: **mimo's `ab-genpost-mimo-01` passes** and **deepseek's
+`ab-genpost-dsv4-02` fails**. The split is 2 of 3 mimo apps failing and 1 of 2
+deepseek apps failing — the discriminator is the app, not who wrote it.
+
+⚠ **Three lesser findings the ledger makes visible, none of them verdicts:**
+
+- `ab-genpost-mimo-01` asks with **no scopes hint** (`REQUEST_CONSENT` with no
+  `:hint`). Per the SDK that still opens the dialog, but
+  `resolveUngrantableConsentNotice` returns "no notice" unless the hint holds at
+  least one non-empty string — so that app can never receive a
+  `CONSENT_UNAVAILABLE` and would show silence on an un-grantable surface. The
+  ledger records the hint for exactly this reason.
+- `ab-ship-mimo-02` calls `await requestConsent('posts:write:self')` — a string
+  where the SDK takes `{ scopes: [...] }`, and `await` on a function that returns
+  `void`. Not reachable on this arm (it is inside `handlePost`), so it is reported
+  here and graded nowhere.
+- The three failing apps all fired a **workflow request** with no consent behind
+  it. `hostRefused` is the per-cell evidence that the money path still refused.
+
+### 🔴 An ask that could not be OBSERVED is `unmeasured`, never `no`
+
+The same hazard as the picker's, one axis over. If the `sendMessage` needle stops
+matching, a consent ask is never recorded, and the unconsented arm reads `no` —
+byte-identical to the verdict the defect earns, attributed to the model. So an
+unconsented run that saw no ask on a bundle carrying the stub message in a
+spelling no needle matched (`messageShim: …,unmatched=N`) exits **2**, which
+`oracle.sh` renders as `RENDER=unmeasured` with no verdict line.
+
+⚠ **Deliberately not "`messageSites === 0`"** — a block that bundles no SDK at all
+is the common, harmless case and must keep its ordinary verdict.
+`TestABlindMessageInstrumentReportsUnmeasuredNotNo` carries **three** rows: the
+refusal, an app on the same unwatchable bundle failing for a reason an unobserved
+message cannot produce, and a no-SDK block that never asks. The third row exists
+because a mutation widening the predicate to `messageSites === 0` **SURVIVED a
+fully green sweep without it** (M5, 2026-09-25): no other fixture separates the
+two predicates.
+
+### The brief text was deliberately NOT reworded
+
+The requirement arguably belongs in `genpost.brief.txt`. It is not there, and the
+reason is mechanical: **rewording either brief file makes every already-run
+fixture ungradeable.** Measured 2026-09-25 by running the real `oracle.sh` over a
+copy of this directory with both brief files reworded:
+
+| fixture | `brief_source` | what rewording does |
+|---|---|---|
+| `ab-genpost-glm-01` | `transcript-text` | `the brief recorded in … matches none of …/briefs/*.brief.txt` → exit 2 |
+| `ab-genpost-mimo-01` | `transcript-text` | same → exit 2 |
+| `ab-genpost-dsv4-01` | `transcript-name` | `is self-inconsistent: it records brief_name='genpost' but its brief TEXT is not the contents of …` → exit 2 |
+| `ab-genpost-dsv4-02` | `transcript-name` | same → exit 2 |
+| `ab-ship-mimo-01` | `transcript-name` | same, for `ship` → exit 2 |
+| `ab-ship-mimo-02` | `transcript-name` | same, for `ship` → exit 2 |
+
+⚠ **Both resolution paths break, not just the text one.** A `brief_name` fixture
+is not safe: `oracle.sh`'s self-consistency check compares the transcript's
+recorded PROSE against the named file and refuses on a mismatch. So 6 of 6
+transcript-bearing fixtures die, and a re-grade — the deliverable — becomes
+impossible.
+
+The alternatives and why they were rejected: a **new brief name** (`genpost2`)
+would leave the existing fixtures ungraded against it, which adds nothing to a
+re-grade; **rewording plus re-running the trials** costs seven real OpenRouter
+trials to restate a requirement the assertion can carry on its own. So the
+requirement lives in the assertion, and the arm is labelled on every cell
+(`arm=`) so no reader mistakes it for the brief's own verdict.
+
 ## Run it
 
 ```bash
@@ -367,7 +541,17 @@ node briefs/genpost.assert.mjs http://host:port   # grades something already ser
 node briefs/genpost.assert.mjs <dir> a:b,c:d      # …presenting the scopes a:b and c:d
 bash oracle.sh <trial-id> <container-user>        # brief DERIVED from the trial
 bash grade.sh  <trial-id> <container-user> genpost
+
+# the UNCONSENTED arm — token.scopes seeded EMPTY, verdict = "did the block ask"
+CIVITAI_ASSERT_UNCONSENTED=1 bash oracle.sh <trial-id> <container-user>
 ```
+
+⚠ **`CIVITAI_ASSERT_UNCONSENTED` is ambient, so check `arm=` on the cell before
+reading a verdict.** A stale export turns a whole matrix into consent verdicts
+that otherwise look like ordinary render verdicts. `oracle.sh` prints a loud
+`⚠ UNCONSENTED ARM:` line and puts `arm=consented|unconsented` on its summary
+line; `grade.sh` carries it onto the cell. The Go suite clears the variable in
+`stubOracleEnv` for the same reason.
 
 ⚠ **A hand-run assertion presents NO scopes unless you pass them.** Only
 `oracle.sh` knows the block's manifest; run by hand against a directory, the

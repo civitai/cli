@@ -357,6 +357,26 @@ bind a debugging port, instead of that surfacing eighty lines into a Go test.
   control — an untouched `page-money` scaffold still grades `no` with both scopes
   seeded — in `briefs/genpost.md`; pinned by
   `TestOracleSeedsTheBlocksDeclaredScopes`.
+- 🔴 **…and the ALREADY-CONSENTED state was the only one ever graded, which let a
+  broken app ship.** `ab-ship-mimo-02` graded `RENDER=yes`, was submitted,
+  approved, deployed to `ab-img-poster.civit.ai`, and then **failed for a real
+  user** on the first click (`Generation failed. Please try again.`): its generate
+  path never requests consent, and its catch handles only `signInRequired` and
+  `declined`. The oracle could not see it because `InlineTransport` rejects every
+  request — so *"generation fails for everyone"* and *"generation works"* leave the
+  same trace `ready>generating>ready` — and because seeding the manifest's scopes
+  makes an app that never asks indistinguishable from one that asks correctly.
+  **Every new user starts unconsented.** `CIVITAI_ASSERT_UNCONSENTED=1` is the arm
+  for that state: `token.scopes` seeded EMPTY, viewer still signed in, and the
+  verdict becomes *"did the block ask the host for consent"*. It answers nothing —
+  a consent ask is a `sendMessage`, which the SDK documents as fire-and-forget and
+  `InlineTransport` implements as a no-op, so the oracle WATCHES it and a grant is
+  structurally unreachable. The arm removes capability and adds none. Reported as
+  `arm=` on the summary line and the cell, because the knob is ambient. Seven-
+  fixture re-grade, the refuted per-vendor reading, and why the brief text was NOT
+  reworded: `briefs/genpost.md`; pinned by
+  `TestTheSameAppPassesConsentedAndFailsUnconsented` and friends in
+  `dogfood_oracle_consent_test.go`.
 
 ## The ship verdict — the account arm, and the one thing the browser cannot see
 

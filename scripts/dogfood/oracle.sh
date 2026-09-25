@@ -279,6 +279,11 @@ SCOPES=
 # `scopes=` field and the block's `token.scopes` disagree silently.
 SCOPES_CSV=
 AVIEWER=
+# Which arm the assertion graded, and the two scope readings the seam guards use.
+# Declared here so the summary line renders `unmeasured` rather than tripping
+# `set -u` when nothing was served.
+AARM=
+ADECL=
 
 if [ -z "$APP_DIR" ]; then
   REASON="no block.manifest.json under /work — no app was created"
@@ -363,6 +368,12 @@ if [ -n "$SERVED" ]; then
   [ "$REACHED" = "yes" ] || fatal "served $SERVED in $C but could not reach $URL from the host"
 
   printf -- '--- assertion: %s (scopes=%s)\n' "$BRIEF" "$SCOPES"
+  # 🔴 SAY IT OUT LOUD WHEN THE ARM IS NOT THE DEFAULT. The arm is selected by an
+  # ambient environment variable, so a stale export in an operator's shell would
+  # otherwise silently turn every cell of a matrix into a consent verdict wearing
+  # an ordinary cell's clothes. `arm=` on the summary line is the machine-readable
+  # half; this is the half a human scrolling the run sees.
+  [ "${CIVITAI_ASSERT_UNCONSENTED:-}" = "1" ] && printf '⚠ UNCONSENTED ARM: token.scopes is seeded EMPTY and the verdict is "did the block ASK the host for consent", NOT "did it reach generating". This is a different question from the default arm; see briefs/genpost.md.\n'
   # 🔴 THE SCOPE LIST IS AN ARGUMENT, NOT AN ENVIRONMENT VARIABLE. It is data
   # about THIS block, derived from THIS container's manifest, so it belongs on
   # the call that grades that block — an env var would be ambient state a
@@ -382,18 +393,40 @@ if [ -n "$SERVED" ]; then
   # harness was anonymous" — the reading that cost `ab-genpost-mimo-01` a
   # verdict on 2026-09-21.
   AVIEWER=$(printf '%s' "$JSON" | jq -r '.hostViewer // empty' 2>/dev/null)
-  # 🔴 SEAM GUARD. `scopes=` on the cell is what the MANIFEST declares; the
-  # assertion's `hostScopes` is what the BLOCK WAS SHOWN. They are one fact
-  # reported from two sides of a process boundary, and nothing else here would
-  # notice them drifting apart — an assertion that quietly ignored its scope
-  # argument would still print a confident cell whose `scopes=` field described a
-  # list the block never received. Both render an empty list as `none`, so they
-  # compare directly. A disagreement is a defect in this harness, so it exits 2
-  # (nothing was measured) rather than emitting a verdict.
+  # Which ARM the assertion graded, read back rather than re-derived from this
+  # script's own environment: the env var is read in `_cdp.mjs`, so a cell that
+  # trusted `$CIVITAI_ASSERT_UNCONSENTED` here would be reporting what the
+  # OPERATOR asked for rather than what the block was shown.
+  AARM=$(printf '%s' "$JSON" | jq -r '.hostArm // empty' 2>/dev/null)
+  # 🔴 SEAM GUARD, NOW IN TWO HALVES BECAUSE THE ARM MADE THEM TWO FACTS.
+  # `scopes=` on the cell is what the MANIFEST declares. `hostScopesDeclared` is
+  # the list that crossed the process boundary as argv[3] — it must always equal
+  # the manifest, whatever arm is running, and that is what catches an assertion
+  # which quietly ignored its argument (the original hazard: a confident cell
+  # whose `scopes=` field describes a list the block never received).
+  # `hostScopes` is what the BLOCK WAS SHOWN, which the unconsented arm empties on
+  # purpose. Both render an empty list as `none`, so they compare directly. A
+  # disagreement is a defect in this harness, so it exits 2 (nothing was measured)
+  # rather than emitting a verdict.
+  ADECL=$(printf '%s' "$JSON" | jq -r '.hostScopesDeclared // empty' 2>/dev/null)
   ASCOPES=$(printf '%s' "$JSON" | jq -r '.hostScopes // empty' 2>/dev/null)
-  if [ -n "$ASCOPES" ] && [ "$ASCOPES" != "$SCOPES" ]; then
-    fatal "scope seam mismatch: the manifest declares '$SCOPES' but the assertion presented '$ASCOPES' to the block"
+  if [ -n "$ADECL" ] && [ "$ADECL" != "$SCOPES" ]; then
+    fatal "scope seam mismatch: the manifest declares '$SCOPES' but the assertion received '$ADECL'"
   fi
+  # 🔴 AND THE ARM'S OWN SEAM, WHICH IS THE ONE THAT WOULD MAKE A NEW ARM GREEN
+  # VACUOUSLY. An `unconsented` run whose block was shown the manifest's scopes is
+  # the DEFAULT arm wearing the unconsented arm's label: its consent verdict would
+  # be earned on an already-consented token, i.e. a measurement of nothing. The
+  # mirror case is a `consented` run that was shown less than the manifest
+  # declares, which is #690 silently undone.
+  case "$AARM" in
+    unconsented)
+      [ "$ASCOPES" = "none" ] || fatal "arm seam mismatch: the assertion reports arm=unconsented but the block was shown scopes '$ASCOPES' — an unconsented arm that granted the block its scopes measures nothing" ;;
+    consented)
+      [ "$ASCOPES" = "$SCOPES" ] || fatal "arm seam mismatch: the assertion reports arm=consented but presented '$ASCOPES' where the manifest declares '$SCOPES'" ;;
+    '') : ;;
+    *) fatal "the assertion reported an unknown arm '$AARM'" ;;
+  esac
   AREASON=$(printf '%s' "$JSON" | jq -r '.reason // empty' 2>/dev/null)
   APASS=$(printf '%s' "$JSON" | jq -r 'if has("pass") then (.pass|tostring) else "absent" end' 2>/dev/null)
   [ "$APASS" = "true" ] && RENDER_PASS=yes
@@ -411,7 +444,14 @@ printf -- '--- render verdict\n'
 # strict (`212 °F` fails where `212` passes) and a bare `no` cannot tell a
 # near-miss from a block that rendered nothing.
 printf 'render_reason=%s\n' "${REASON:-none}"
-printf 'brief=%s brief_source=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s scopes=%s viewer=%s served=%s observed=%s RENDER=%s\n' \
+# 🔴 `arm=` IS ON THE SUMMARY LINE, NOT ONLY IN THE ASSERTION'S JSON, BECAUSE THE
+# ARM IS SET BY AN ENVIRONMENT VARIABLE AND A CELL IS READ OUT OF CONTEXT. Two
+# runs of the same trial now legitimately disagree — `yes` on the consented arm
+# and `no` on the unconsented one is the CORRECT reading of `ab-ship-mimo-02` —
+# so a verdict without this field does not say which question it answers. It is
+# read back from the assertion rather than from this script's own environment,
+# so it describes the run that happened.
+printf 'brief=%s brief_source=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s scopes=%s viewer=%s arm=%s served=%s observed=%s RENDER=%s\n' \
   "$BRIEF" "$BRIEF_SOURCE" "$APP_COUNT" "${APP_DIR:-none}" "$GATE" "${GATE_RC:-none}" "${SCOPES:-none}" \
-  "${AVIEWER:-unmeasured}" "${SERVED:-none}" "$(printf '%q' "${OBSERVED:-}")" "$RENDER_PASS"
+  "${AVIEWER:-unmeasured}" "${AARM:-unmeasured}" "${SERVED:-none}" "$(printf '%q' "${OBSERVED:-}")" "$RENDER_PASS"
 exit 0

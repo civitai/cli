@@ -167,7 +167,14 @@ if [ -n "$BRIEF" ]; then
     # Which viewer the block was shown. A `no` graded against an anonymous
     # viewer is a different finding from a `no` graded against a signed-in one.
     R_VIEWER=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^viewer=//p' | head -1)
-    RENDER_FIELDS=" render_brief=${R_BRIEF:-$BRIEF} brief_source=${R_SRC:-unknown} validate_gate=${R_GATE:-unknown} scopes=${R_SCOPES:-unknown} viewer=${R_VIEWER:-unknown} observed=${R_OBS:-} RENDER=${R_PASS:-unreadable}"
+    # 🔴 WHICH ARM, AND IT IS CARRIED FOR A DIFFERENT REASON FROM THE FIELDS
+    # ABOVE. The arm is chosen by an AMBIENT environment variable, so without this
+    # a stale `CIVITAI_ASSERT_UNCONSENTED=1` in an operator's shell turns a whole
+    # matrix into consent verdicts that read as ordinary render verdicts. A cell
+    # saying `arm=unconsented` cannot be mistaken for one; a cell with no arm field
+    # at all can.
+    R_ARM=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^arm=//p' | head -1)
+    RENDER_FIELDS=" render_brief=${R_BRIEF:-$BRIEF} brief_source=${R_SRC:-unknown} validate_gate=${R_GATE:-unknown} scopes=${R_SCOPES:-unknown} viewer=${R_VIEWER:-unknown} arm=${R_ARM:-unknown} observed=${R_OBS:-} RENDER=${R_PASS:-unreadable}"
   fi
 fi
 
