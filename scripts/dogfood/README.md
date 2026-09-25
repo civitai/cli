@@ -28,7 +28,7 @@ model an unsandboxed root shell in half of these images.
 | Civitai account / Buzz | **yes, unless `--credential-file`** | no Civitai credential exists in a default trial; with one, see the caps below |
 | processes | yes | `--pids-limit 512` |
 | memory / CPU | yes | `--memory 2g --cpus 2` |
-| money | yes | `--max-cost` (default $1/trial) — a step cap is not a spend cap |
+| money | yes | `--max-cost` (default $1/trial) — a step cap is not a spend cap, and a turn the provider does not price ends the trial (`unpriced-turn`) rather than counting as $0 |
 | **network** | **NO** | egress is open and must be: the trial has to fetch `prompt.md` and reach npm |
 | **disk** | **NO** | see below |
 
@@ -170,6 +170,7 @@ one that finds nothing because there is nothing there.
 | generation cap | `--max-generations N` | **yes** — the N+1th `civitai generate` is refused before the `docker exec` |
 | submission cap | `--max-submissions N` | **yes** — same, for `civitai app submit` |
 | `app withdraw` | `--allow-withdraw` to permit | **yes** — refused by default. It permanently destroys a listing's captioned screenshots and names a publication-request id no prefix check can resolve to an app |
+| `app listing set-text` | `--allow-listing-text` to permit | **yes** — refused by default. It rewrites the listing's public tagline/description/category **in place on every listing status** — not a "material" change, so no revision and no moderator review — and this CLI has no command that restores the previous value. Neither flag is threaded through `driver.sh`, so a matrix run cannot reach either |
 | command log | always on | **yes** — `runs/<trial>/commands.log`, one line per command with its verdict and the counters |
 
 🔴 **They classify COMMAND TEXT, and that is the boundary.** A model that writes
@@ -182,6 +183,35 @@ and it does not close it. The threat model is the one
 the ordinary accident, not an adversary. The bound people want for an adversary
 needs a second uid, a container with no credential in it, or a platform-capped
 token; a better classifier is not that.
+
+🔴 **`--slug=NAME` used to walk straight past the prefix cap, and `--slug NAME`
+did not.** The classifier dropped every token starting with `-`, so the attached
+form of a flag offered no slug candidate at all; `_prefix_ok` then fell through
+to its "read every `block.manifest.json` under `/work`" branch, which PASSES —
+the workspace manifests were all created by the trial and all carry the prefix,
+while `--slug` pointed at a real listing on the account. cobra treats the two
+spellings as identical and this did not. It defeated the cap for **every** gated
+verb (`app init`, `app create`, `app submit`, the whole `app listing` group), not
+only the one it was found on. An `--opt=value` token now contributes its VALUE;
+`TestDogfoodAttachedSlugFlagDoesNotBypassThePrefixCap` is red at `4d4a45e` on
+seven commands and green here, with
+`TestDogfoodAttachedSlugOnTheTrialsOwnAppStillRuns` as the over-refusal control.
+
+🔴 **`civitai app listing status` is NOT a read, and the comment in `runner.py`
+used to say it was.** On a LIVE listing it calls `getMyListingForEdit`, which
+idempotently **opens a shadow revision draft** server-side — the CLI's own
+`--help` says so — and there is no `discard-revision` command anywhere in this
+CLI to close it. It happened to the operator's `panorama-360` listing on
+2026-09-25. It submits nothing and destroys nothing, so it stays inside the
+prefix gate rather than being promoted to a refused-by-default verb: refusing it
+would take away the trial's only way to observe its own listing, which changes
+what the harness measures, for a side effect that costs nothing irreversible.
+⚠ The old comment listed `status` among the ungated reads. That is true of
+`civitai app status` and false of `civitai app listing status` — `listing` is in
+`APP_MUTATING`, so the whole group including `status` goes through the prefix
+gate. A report written off that comment asserted the opposite of what the code
+does; `TestDogfoodAppStatusAndAppListingStatusAreGatedDifferently` pins the two
+behaviours so the next reader does not have to trust the prose.
 
 **The caps arm themselves when a credential is present**, so an operator does not
 have to remember three flags for the bound to exist. With no credential and no
@@ -393,6 +423,7 @@ record, and the terminal state is split:
 | `empty-reply` | the model stopped on its own and said nothing | a natural stop, content empty/null/whitespace |
 | `stopped-unknown:<value>` | the harness has **no evidence** the reply completed | anything else, `none` when the field was absent |
 | `max-steps` / `max-cost (…)` | the harness stopped the loop | unchanged |
+| `unpriced-turn (…)` | **the money cap became inoperable** — the provider did not price a turn | `usage.cost` absent, null, or not a number |
 
 🔴 **An absent or unrecognised `finish_reason` does NOT become `finished`.**
 `finished` is a positive claim that the provider said the model chose to stop,
@@ -417,6 +448,47 @@ human reads**: a `truncated` cell must not be counted as a model failure.
   exhausted and ~7.5× the largest burst we have seen complete. It is a
   **ceiling, not a spend cap** — tokens are billed as generated and `--max-cost`
   (still $1) is the only bound on money.
+
+### 🔴 The money cap could silently never fire
+
+`--max-cost` is a comparison against a running total that comes **entirely** from
+the provider's `usage.cost`. There is no price table in `runner.py` and no
+`/api/v1/models` fallback — `grep -c 'api/v1/models\|price\|pricing'` over the
+file returns 0 — and the accumulation was a single line:
+
+```
+usage_total["cost"] += u.get("cost", 0.0) or 0.0
+```
+
+So a model, or a route, whose usage payload **omits** `cost` (or returns it
+null) accumulated **$0 forever**: the cap never tripped, and `--max-steps` was
+the only remaining bound — which the flag's own comment says in so many words is
+*not* a spend cap. The `end` record's `cost: 0.0` was the money-shaped twin of
+the `stop: "finished"` defect above: an absent value rendered as a successful
+measurement.
+
+**An unpriced turn now ends the trial.** `stop` becomes
+`unpriced-turn (turn N returned no usable usage.cost, …)`, a `kind: "unpriced"`
+record carries the usage block the provider actually sent, and `finish_reason`
+is still on the `end` record and the summary so the terminal state is not lost.
+
+- **A stated `$0` is a price; an absent figure is not.** A free route keeps
+  running. Only absence, null, and a non-numeric value stop the trial.
+- **Exactly one call is allowed to complete, and that is the floor.** You cannot
+  know a provider omits `cost` until a response arrives, so the first request is
+  spent no matter what. There is deliberately **no grace period** past it: N
+  turns of unknown cost is still unbounded spend, bounded only by a number
+  nobody can convert into money. The stop happens before the unpriced turn's
+  tool calls run and before the next `call()`.
+- **`end.usage.cost` is a LOWER BOUND on such a run**, not a measurement — the
+  unpriced turn was billed and is not in the total. The refusal string says so.
+
+Red at `4d4a45e` / green here: `TestDogfoodUnpricedTurnIsAHardStop` (three of
+its four arms — the fourth, a string `cost`, crashes the base runner with a
+`TypeError` instead, which is a different defect) and
+`TestDogfoodUnpricedTurnStopsBeforeTheNextBilledCall` (base issues 3 requests,
+this issues 1). `TestDogfoodAPricedZeroCostTurnStillRuns` is the discriminating
+control: without it, "always stop" would satisfy every assertion above.
 - The runner now sends the provider's **`reasoning_details`** (verbatim, so
   signatures survive) and `reasoning` back in the assistant history. Previously
   it appended only `content` + `tool_calls`; for a model whose `content` was
