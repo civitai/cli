@@ -12,10 +12,10 @@ Non-blocking: if it exits non-zero, print the stderr line and carry on.
 
 ## Goal
 
-Cut `README.md` (**273,928 B / 3,984 lines** at `ebc08f4`) toward a front door, by
-RELOCATING rather than deleting: command-scoped prose into cobra `Long` (a two-surface
-home — offline in the binary AND auto-generated onto `developer.civitai.com/apps/reference/cli`
-via the help snapshot), page-shaped narrative onto new docs-site pages.
+Cut `README.md` toward a front door by RELOCATING rather than deleting: command-scoped
+prose into cobra `Long` (offline in the binary AND auto-generated onto
+`developer.civitai.com/apps/reference/cli` via the help snapshot), page-shaped narrative
+onto docs-site pages.
 
 🔴 **This is the THIRD arc on this file and the first two are closed.** Read
 `handoff-readme-slimming.md` before proposing any cut — it closed 2026-09-18 concluding
@@ -24,89 +24,51 @@ re-litigation of that: that arc asked *"what does the site already cover?"* (ans
 nothing). This one AUTHORS the coverage first, then cuts. The operator retired the
 *"user-contract content never moves out"* policy on 2026-09-17.
 
-- **closing-condition:** `check` — ALL of:
-  1. `docs#86` AND `docs#87` are MERGED (`gh pr view` / `gh issue view --json state`),
-  2. `git -C <cli> cat-file -s origin/main:README.md` ≤ **95,000**,
-  3. from a **clean checkout of `origin/main`**:
+- **closing-condition:** `check` — AMENDED 2026-09-25 on operator authority; the original
+  byte target was **unsatisfiable by the declared plan** and the measurement that proves it
+  is under Gotchas ("the fourth byte threshold"). Do NOT restore a byte target. ALL of:
+  1. `docs#86` AND `docs#87` are CLOSED (`gh issue view <n> --repo civitai/civitai-developer-docs --json state`). ✅ **MET** — both closed 2026-09-25.
+  2. **Every README section whose substance is published elsewhere links out instead of
+     restating it.** Mechanical: for each `##`/`###` remaining in `README.md`, either no
+     developer.civitai.com page covers it, or the section is a pointer rather than a
+     restatement. The audit is `git -C <cli> show origin/main:README.md` against the pages
+     listed under *How to verify*; a section that duplicates a page is an open item.
+  3. From a **clean checkout of `origin/main`**:
      `nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) go test ./... -count=1'`
-     green AND `make lint` 0 issues,
-  4. `./bin/civitai generate --help | wc -c` ≤ **25,000** (it is 16,668 today; the
-     naive Long-only plan projected **52,729**).
-  Frozen as the condition this arc was opened on. 95,000 is derived from the measured
-  83,535 B structural floor (see below), not estimated — the two predecessor arcs each set
-  a byte threshold by estimate, missed, and deleted it.
+     green AND `make lint` 0 issues.
+  4. `./bin/civitai generate --help | wc -c` ≤ **25,000** (16,668 today). This clause
+     SURVIVES the amendment: it bounds the relocation's cost to the most-used help surface,
+     and the naive Long-only plan projected **52,729 B / 959 lines** against a repo that
+     caps a help *section* at 24 lines (`TestHelpExitCodeSectionStaysSkimmable`).
 
 ## State now
 
-- `civitai/cli` `main` = **`ebc08f4`**, clean, `↑0↓0`. `civitai-developer-docs` `main` =
-  `3f8341f`, clean (`opencode.json` untracked, pre-existing, not mine).
-- **Claim held: `readme-front-door`** (`claim-work --release readme-front-door` when done).
-- **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` → **rc=5**, 0 tasks. It
-  printed a POSITIVE CONTROL (the same endpoint answered 2 links for a different session,
-  so the board is reachable and the token accepted) — but a wrong session id ALSO answers
-  200 with an empty array, so this zero is **not** a clean bill of health. No field written,
-  none invented.
-- 🔴 **IN FLIGHT — a subagent is building TWO PRs in `civitai-developer-docs`** (docs#86
-  snapshot re-capture at v0.1.108; docs#87 platform-aware parity + example-id guard). It had
-  not yet created its worktree when this doc was written. **Check for its PRs before starting
-  anything in that repo.**
-- **Nothing in `civitai/cli` has been modified this session.** No branch, no commit, no PR.
-- **`cli#696` MERGED** at `ebc08f4` (15:32:57Z) — this closes
-  `handoff-dev-tunnel-declared-auth.md`'s closing condition. That doc still frames the PR as
-  open; retire or refresh it (rank 4).
+- `civitai/cli` `main` carries phases 1–2. **README.md 273,928 → 237,568 B (−36,360, −13%)**,
+  re-measured with `git cat-file -s` after each merge, never from a report.
+- **AGENTS.md 30,499 → 28,873 B**; headroom against `agentsMaxBytes = 30_500` went **1 → 1,627**.
+  Both size constants unchanged.
+- **Claim `readme-front-door` still HELD.** `claim-work --release readme-front-door` when this closes.
+- **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` → rc=5, 0 tasks, with a positive
+  control proving the board answered. A wrong session id also returns an empty array, so that
+  zero is **not** a clean bill of health.
 
-### Operator decisions this session (2026-09-25)
+### Merged this session — nine PRs across two repos
 
-| question | answer |
-|---|---|
-| Destination for relocated prose | **Cobra `Long` + new docs pages**, split by content type — revised from "Long only" after measurement refuted it |
-| Target README size | Asked for **50–70 KB**; measurement says the structural floor is **83,535 B**, so **~85–95 KB** is the honest target |
-| Order of work | **Fix docs#86 + docs#87 FIRST**, then cut |
-| How | **Measure first**, scope from real numbers |
-| Repo-settings write | **Authorized** the `gh api` call on the docs repo — it was BLOCKED at org level (below) |
+| PR | what | verified by |
+|---|---|---|
+| docs#99 | snapshot re-captured at v0.1.108 | content on `main`; closed docs#86 |
+| docs#100 | Homebrew-platform + download-id guards | merged-tree control pair |
+| docs#104 | CI wiring + corrected refresh advice | control pair on the wired check |
+| docs#105 | snapshot → v0.1.109 | content; `--admin`, branch protection bypassed |
+| docs#102 | snapshot verdict is CONTENT, not a version string | closed docs#101 |
+| docs#103 | three guide pages (relocation phase 1) | gate counts |
+| docs#107 | refresh captures the RELEASE ASSET, closing the version seam | security-boundary mutation matrix, run by me |
+| cli#707 | README phase 2 — four sections relocated | round 0 + round 1, both clean after rework |
+| cli#716 | AGENTS.md eviction + item 25 amended + listing-media relocated | round 0 (2 findings) + round 1 (5 findings), all fixed |
+| cli#719 | `notAPage` row for the second MCP transport | red-at-base / green-at-HEAD |
 
-### The measurement that justifies the whole plan — do not re-derive it
-
-Read-only recon agent, re-measured at `ebc08f4` after the base clone moved mid-run.
-
-🔴 **Only ~44,450 B of 273,928 (16.2%) is actually `Long`-shaped.** The rest:
-README-pinned ~26,350 · page-shaped narrative 16,066 · generated 16,578 · symptom-indexed
-20,586 · outside the four target sections 149,352.
-
-**Projected `--help` sizes under the naive Long-only plan** (baselines reproduced exactly:
-`generate` 16,668 / `app submit` 6,067 / `app dev-tunnel` 3,587):
-
-| command | now | projected | growth | lines @80 cols |
-|---|---:|---:|---:|---:|
-| `generate` | 16,668 B | **52,729 B** | 3.2× | **959** |
-| `app submit` | 6,067 B | 28,740 B | 4.7× | 534 |
-| `whoami` | 1,596 B | 6,031 B | 3.8× | 153 |
-
-🔴 **This repo already made and TESTED the opposite decision:**
-`TestHelpExitCodeSectionStaysSkimmable` pins a `--help` section at `maxLines = 24`, cut down
-from `wasLines = 62`. The naive plan proposes 959 lines with no pager. The docs snapshot also
-grows +48%.
-
-**README arithmetic, three scenarios:**
-
-| scenario | resulting bytes |
-|---|---:|
-| (i) all four big sections cut entirely | **140,036** — 2× the asked ceiling |
-| (ii) (i) + every non-pinned section (21 of 32) | **83,535** — the floor, still 13.5 KB over 70 KB |
-| (iii) maximum *legal* shrink | **≈66,700**, of which **62% is guard-pinned islands** |
-
-**The guards are mostly NOT the obstacle.** Only **1 of 12** numeric floors fires
-(`readmeTOCMinSubsections` 30 → 18, legitimately lowerable). The retracted *"the suite
-punishes this file for shrinking"* claim **stays retracted**. The real obstacles are 13
-content/frozen/generated pins — chief among them `## Exit codes`: **15,807 of 16,564 B
-byte-identical** to what `internal/cmd/exitcodes_doc.go` renders, generator pinned by
-`TestEveryPreSplitClauseSurvives`, and the same slice feeds `--help` under a 24-line cap.
-
-**Four items from the briefing REFUTED by measurement** (do not re-assume them):
-Troubleshooting freezes the **cause** cell (col 2), not symptom cells · `## Browse the public
-API` has **4** inbound links, not 6 · `download_example_id_test.go`'s floor is irrelevant (all
-5 examples sit outside the four sections) · the agent-setup / `## Install` / `## Global flags`
-floors all read sections outside the cut set.
+**`civitai/civitai-developer-docs` `main` is GREEN under the content gate:**
+`✓ CONTENT MATCHES — 163281 bytes / 116 ===CMD blocks, byte-identical to a fresh capture`.
 
 ## Open investigations — live diagnosis state
 
@@ -170,37 +132,24 @@ floors all read sections outside the cut set.
 
 ## Next steps (ranked)
 
-1. **Land docs#86 + docs#87.** IN FLIGHT: a subagent is building both now in
-   `civitai/civitai-developer-docs`. docs#86 = re-capture `appblocks-snapshots/civitai-cli-help.txt`
-   at **v0.1.108** (main is at v0.1.104; the bot branch `d1d7d2a` is v0.1.106 and two releases
-   stale — do NOT just open its PR). docs#87 = make `scripts/check-cli-install-parity.mjs`
-   platform-aware and add an example-id guard. 🔴 **Each new check must be WATCHED to go red**
-   on a deliberately reintroduced defect, with **that check's own error text** — issue #87's
-   own closing condition. Verify before starting: `gh pr list --repo civitai/civitai-developer-docs --state open`.
-   forcing: regression — the published CLI reference trails the shipped binary by 4 releases today, measured (`--allow-oversize` 0 in the snapshot vs 2 in the binary; positive control `civitai app submit` → 14)
+1. **Phase 3 — relocate command-scoped prose into cobra `Long`.** The remaining bulk is
+   `## Submit & auth` (~40 KB after phase 2) and `## Generate` (~43 KB). 🔴 **Size every move
+   against clause 4**: the naive plan takes `generate --help` to 959 lines in a repo that caps
+   a help section at 24. Files: `README.md`, `internal/cmd/*.go` `Long:` strings, `## Contents`.
+   Budget the Contents edits as part of the cut — `readme_nav_test.go` needs a TOC line per
+   heading and `readme_outline_order_test.go` needs TOC order to match the document.
+   forcing: user — operator asked for an aggressive trim on 2026-09-25 and chose the Long+pages split after the Long-only refutation
 
-2. **Settle the org-policy question** per the first Open-investigations block: org-wide
-   Actions policy change, or amend `cli-snapshot-refresh.yml` to file an issue instead of a
-   PR. Both need operator consent; neither is an agent's call. Until one lands, the weekly
-   refresh stays dead and docs#86 must be re-done by hand every time.
-   forcing: regression — 8 consecutive daily workflow failures, 2026-09-18 → 09-25
+2. **Audit the remaining README against clause 2.** Walk every `##`/`###` and classify:
+   covered-by-a-page-and-still-restating (an open item), covered-and-pointing (done), or
+   not covered (stays). That list IS the rest of the arc, and it replaces the byte target.
+   forcing: gate — clause 2 of the closing condition cannot be evaluated without it
 
-3. **Phase the README cut** — only AFTER rank 1 merges. Files: `README.md`, the cobra `Long`
-   strings in `internal/cmd/*.go`, `## Contents`, and new pages in
-   `civitai-developer-docs/apps/guide/`. Budget the `## Contents` edits as part of every cut
-   (`readme_nav_test.go` requires a TOC line per `##`/`###` and every anchor to resolve;
-   `readme_outline_order_test.go` requires TOC ORDER to match the document).
-   🔴 **Size each `Long` move against the projection table above** — the naive plan takes
-   `generate --help` to 959 lines against a repo that already caps a help section at 24.
-   forcing: user — operator asked for an aggressive trim on 2026-09-25 and chose the Long+pages split after seeing the refutation
-
-4. **Retire or refresh `claudedocs/handoff-dev-tunnel-declared-auth.md`.** Its
-   closing-condition (`cli#696` MERGED) is now MET at `ebc08f4`, but the doc still frames the
-   PR as open/in-flight. Its two Open-investigation blocks (the `app dev-token` auth gap; no
-   scaffold template declaring `auth`) may still be live — re-check before carrying them
-   forward. ⚠ Note docs PR **#98** (*"the OAuth mint is live and @civitai/sdk 0.5.0 relaxed
-   the guard"*) appears to SUPERSEDE the recall finding that `auth: "oauth"` was unusable
-   because `APP_BLOCK_OAUTH_TOKENS_ENABLED` defaults false — verify before acting on either.
+3. **`/simplify` the three byte-identical `assets/README.md.tmpl` files** into one embedded
+   authority, the way item 11 does for `ready-ack.js`. Measured: all three share md5
+   `51ebc5538e3bccbd14b2fbd93a928228` and **nothing pins that identity**. Four test functions
+   loop over them. cli#716's guard comments now state that collapsing costs no coverage, so
+   the job is correctly priced.
    forcing: none
 
 ## Defects (batched)
@@ -277,44 +226,165 @@ and keep an invalid command as a negative control so the failure is recognisable
   `site/guide/cli.md`, the snapshot, or `check-cli-install-parity.mjs`. Re-confirm before
   pushing; they may move.
 
+### 🔴 THE OPERATOR DECISIONS (2026-09-25) — IN THIS APPEND BUCKET ON PURPOSE. DO NOT MOVE THEM BACK.
+
+🔴 **These lived under `## State now` and the write gate flagged them as durable lines about
+to be dropped — because `State now` is a REPLACE bucket and a decision is not status.**
+`handoff-readme-slimming.md` records the predecessor arc learning exactly this and writing
+"do not move it back"; this arc repeated the mistake anyway. They govern phase 3.
+
+| question | answer |
+|---|---|
+| Destination for relocated prose | **Cobra `Long` + new docs pages**, split by content type — REVISED from "Long only" after measurement refuted it. 🔴 Do not re-propose Long-only. |
+| Target size | Asked for **50–70 KB**; the structural floor is 83,535 B, so the byte target was retired entirely (see the next block) |
+| Order of work | **Fix the docs guards FIRST, then cut.** Both closed before phase 2 shipped. |
+| Method | **Measure first**, scope from real numbers — after the first plan was refuted by measurement |
+| AGENTS.md item 25 | **Amend it** — its letter ("live in the README as prose") was broader than its argument (don't turn guidance into a GATE). Done in cli#716; the no-local-check rule is untouched. |
+| AGENTS.md ceiling | **Run the eviction wave** rather than living at 1 byte. Done: headroom 1 → 1,627. |
+| Version seam | **Make the refresh capture the RELEASE ASSET** — one source of truth — rather than normalising in the gate or changing ldflags |
+| Org Actions policy | **Flipped, org-wide**, on explicit authority. ⚠ Both levels needed setting: org → `true` left the repo at `false`; it does NOT inherit. |
+| Merge authority | Granted per-PR, never standing. docs#105 and docs#107 needed `--admin`, bypassing branch protection. |
+
+⚠ **Not carried forward:** nothing here authorises phase 3's specific cuts. The "aggressive
+trim" ask is standing; which sections move is still a judgement to put to the operator.
+
+### 🔴 THE FOURTH BYTE THRESHOLD ON THIS FILE, AND THE FIRST ONE THAT WAS MEASURED — it was still wrong
+
+The closing condition originally capped `README.md` at **95,000 B**. Amended 2026-09-25 on
+operator authority to a CONTENT condition. The arithmetic, re-derived twice independently:
+
+| | bytes |
+|---|---:|
+| README after phase 2 | 237,568 |
+| minus `## Submit & auth` (~40,654) and `## Generate` (~43,194) — phase 3 in full | **~153,700** |
+| the old clause 2 | 95,000 |
+| **shortfall** | **~58,700 — 62% over** |
+
+🔴 **The failure was not the number, it was the population it came from.** 95,000 was derived
+from a real measurement — the 83,535 B structural floor — but that floor is **scenario (ii),
+"cut every non-pinned section, 21 of 32"**, and no phase of this plan implements it. The plan
+implements scenario (i). A measured number applied to a different plan is *worse* than an
+estimate, because it looks sound. The two predecessor arcs each set a threshold by estimate,
+missed, and deleted it; this one was measured, missed, and had to be amended.
+
+⚠ Related, from the same round-0: the decomposition this doc keeps citing — 44,450 B
+`Long`-shaped, 16,066 B page-shaped — was computed over FOUR sections, and **three of the four
+cut in phase 2 sit in the unmeasured 149,352 B "outside" bucket**. Only 12,575 of phase 2's
+32,664 B was inside the measured scope. The cuts were sound (verified independently); the
+measurement cited as their justification does not cover them.
+
+### 🔴 THE SHARED BASE CLONE AND THE LOCAL WORKING TREE BOTH LIE, AND BOTH COST A WRONG DIAGNOSIS
+
+Twice in one session a check measured my environment and I read it as a fact about the repo:
+
+- **A shallow clone's remote-tracking refs do not advance on a plain `git fetch origin`.**
+  `origin/bot/cli-snapshot-refresh` sat 17 days / 2 releases stale in the docs repo and
+  produced a confident measurement that **inverted a conclusion** — I reported a branch as
+  older than `main` when it was newer, correcting a subagent who was right. Force-fetch the
+  exact refspec and assert `git ls-remote origin <ref>` equals `git rev-parse <ref>`.
+- **`npm run check:cli-snapshot` reads the WORKING TREE, not `origin/main`.** After merging
+  the fix I re-ran it, got the same red, and started diagnosing a structural defect that had
+  already been fixed. `git merge --ff-only origin/main` first.
+
+🔴 **Generalise: a green or red from a local run is a claim about the bytes on your disk.**
+
+### 🔴 A RED THAT IS CAUSED BY A SEAM NEITHER HALF OWNS
+
+`check:cli-snapshot` (docs#102) compares the committed snapshot byte-for-byte against a
+capture from the **published release asset**; `cli-snapshot-refresh.yml` produced that
+snapshot by **building from source**. Source builds stamp `git describe` (`v0.1.109`);
+release assets stamp bare ldflags (`0.1.109`). **One character.** 163,282 vs 163,281 bytes,
+116 blocks both sides — and the gate was structurally unable to go green. Each half was
+correct alone. Closed by docs#107 making the refresh capture the release asset.
+
+⚠ **And the red I dispatched against was already gone**: another session's docs#106 had fixed
+it 40 minutes into the run. See the next block.
+
+### 🔴 I CAUSED DUPLICATE WORK BY TRUSTING AN HOUR-OLD SWEEP
+
+I dispatched an agent at the docs repo having written *"no other agent is in this repo right
+now"* into the brief — on the strength of a `gh pr list` I had run an hour earlier and never
+repeated. docs#106 was open with a different fix for the same defect and merged mid-run. The
+agent recovered it correctly (merged #106 in, **dropped its own duplicate normaliser**), but
+the cost was a full agent run.
+
+🔴 **The claim lock only ever sees work somebody CLAIMED. `gh pr list` is the only thing that
+sees an unclaimed duplicate — and it is a fact about the moment you ran it.** Sweep before
+dispatching AND immediately before `gh pr create`.
+
+### 🔴 THE GUARD THAT PASSED WITH ITS SUBJECT GUTTED
+
+cli#716's prose-preservation guard asserts four tool names plus a 1,500-byte floor over a
+2,594 B section. Round 1 replaced the **entire section** with one sentence naming the four
+tools plus filler to 1,739 B — **both guards stayed green**. Every control, every mechanism,
+all four traps' content gone, "preservation" proven. The floor permits deleting **42.2%**.
+
+Kept (it is the only thing between the routing line and an empty destination) with its doc
+comment rewritten to claim only what the body checks. 🔴 **A guard on WORDS is walkable by
+REWORDING; ask what it can pass while the hazard exists in a different shape.**
+
+A second instance in the same file: the anchor check was not section-scoped though its doc
+comment and its failure message both said "section" — demonstrated by stripping the link from
+the routing paragraph and spelling the anchor in an HTML comment elsewhere. **Green.**
+
+### ⚠ CONSISTENCY THAT EXISTS ONLY WHERE IT IS ENFORCED
+
+cli#716 rewrote five strings. The three inside cobra `Long:` bodies came out at 71 columns;
+the two in `fmt.Errorf` came out at **111 and 107**. `TestListingHelpStaysWithinTheBudget`
+enforces ≤80 on `Long` bodies and **nothing guards the error surface**. The discipline was
+applied exactly where a test forced it.
+
+🔴 **When you find an inconsistency, ask which side is guarded before concluding the other
+was carelessness.** And the fix was one line break — **not** a second guard; nobody could name
+the incident that would justify one.
+
+### The `--help` measurement trap, characterised
+
+An unknown command prints the **PARENT's** help and **exits 0**. `civitai zzbogus --help` =
+**4,636 B** = root help byte-for-byte — which is exactly the figure zsh's lack of
+word-splitting produced for three different commands in the predecessor arc. Measure `--help`
+with explicit separate argv words and keep an invalid command as a negative control.
+
+### ⚠ EVERY AGENT THAT CORRECTED ME THIS SESSION WAS RIGHT
+
+Six briefs of mine carried measured errors: a wrong section→page mapping (would have pointed
+five contracts at a page that does not carry them); a mis-cited guard line; a line-count awk
+that anchored `//` at column 0; a `--limit 8` quoted as a failure count when the real figure
+was 11 consecutive; a section size off by 23 bytes; and 🔴 **a security instruction that
+produced a critical CodeQL finding** — I described sha256 verification as closing a
+path-traversal risk, and it does not, because the same endpoint serves the tag and the
+checksums.
+
+🔴 **The transferable half: I was specifying IMPLEMENTATIONS where I should have specified
+CONSTRAINTS AND CONTROLS.** Every error above is a mechanism I named; none is a property I
+required. Name the property and the control that proves it, and let the agent pick the
+mechanism.
+
 ## How to verify
 
 ```bash
 CLI=/home/zach/workspace/civit/cli
 DOCS=/home/zach/workspace/civit/civitai-developer-docs
 
-# --- the arc's own numbers, re-derivable ------------------------------------
-git -C "$CLI" cat-file -s origin/main:README.md          # 273,928 at ebc08f4
-./bin/civitai generate --help | wc -c                    # 16,668  (explicit argv!)
-./bin/civitai app submit --help | wc -c                  # 6,067
-./bin/civitai zzbogus   --help | wc -c                   # 4,636 = ROOT help, exit 0 — the trap
+# --- the arc's own numbers -------------------------------------------------
+git -C "$CLI" cat-file -s origin/main:README.md      # 237,568 after phase 2
+git -C "$CLI" cat-file -s origin/main:AGENTS.md      # 28,873 (ceiling 30,500)
+./bin/civitai generate --help | wc -c                # 16,668 — clause 4 caps at 25,000
+./bin/civitai zzbogus   --help | wc -c               # 4,636 = ROOT help, exit 0 — the trap
 
-# --- the shallow-clone trap: ALWAYS do this before reading a docs ref -------
-git -C "$DOCS" fetch origin 'refs/heads/bot/cli-snapshot-refresh:refs/remotes/origin/bot/cli-snapshot-refresh' --force --depth=1
-[ "$(git -C "$DOCS" ls-remote origin refs/heads/bot/cli-snapshot-refresh | cut -f1)" \
-  = "$(git -C "$DOCS" rev-parse origin/bot/cli-snapshot-refresh)" ] && echo REF-FRESH || echo REF-STALE
-
-# snapshot content, with BOTH controls (never quote a bare count)
-P=appblocks-snapshots/civitai-cli-help.txt
-for r in origin/main origin/bot/cli-snapshot-refresh; do
-  printf '%-40s ver=%-9s allow-oversize=%-3s POS=%-4s NEG=%s\n' "$r" \
-    "$(git -C "$DOCS" show "$r:$P" | sed -n 's/^Binary version: civitai //p')" \
-    "$(git -C "$DOCS" show "$r:$P" | grep -c -- '--allow-oversize'; true)" \
-    "$(git -C "$DOCS" show "$r:$P" | grep -c 'civitai app submit'; true)" \
-    "$(git -C "$DOCS" show "$r:$P" | grep -c 'ZZNOSUCHZZ'; true)"
+# --- clause 2's destinations (fetch and grep; NEVER diff against a summary) --
+for p in local-dev review-and-deploy store-listing; do
+  printf '%-22s %s\n' "$p" "$(curl -s -o /dev/null -w '%{http_code}' -L https://developer.civitai.com/apps/guide/$p)"
 done
-# main v0.1.104 / 0 / 14 / 0   ·   bot v0.1.106 / 2 / 15 / 0
+curl -s -o /dev/null -w '404-control %{http_code}\n' -L https://developer.civitai.com/apps/guide/zzznotapage
 
-# --- the org block, re-confirmable ------------------------------------------
-gh api repos/civitai/civitai-developer-docs/actions/permissions/workflow
-# {"default_workflow_permissions":"write","can_approve_pull_request_reviews":false}
-gh run list --repo civitai/civitai-developer-docs --workflow cli-snapshot-refresh.yml --limit 8 \
-  --json conclusion,createdAt                        # 8 × failure
-
-# --- the full suite (Chromium is REQUIRED or 4 render-oracle tests fail) -----
+# --- the full suite (Chromium REQUIRED) -------------------------------------
 nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) go test ./... -count=1'
 make lint    # golangci-lint; `make ci` does NOT run it
-```
+# WITHOUT CIVITAI_CHROME exactly three dogfood_oracle_test.go functions fail and SAY SO:
+#   "no Chromium on PATH … nothing was measured (this is NOT a failing trial)"
 
-Full recon report (not committed; regenerate rather than trust after `main` moves):
-`/tmp/claude-1000/-home-zach-workspace-civit-cli/e3c234d2-c6d5-461c-9d2a-3d7e6b483eac/scratchpad/readme-front-door-recon.md`
+# --- the docs-repo content gate ---------------------------------------------
+git -C "$DOCS" merge --ff-only origin/main    # 🔴 the check reads the WORKING TREE
+(cd "$DOCS" && npm run --silent check:cli-snapshot)   # ✓ CONTENT MATCHES
+```
