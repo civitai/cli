@@ -31,7 +31,10 @@ FIXTURES="ctl-scaffold-untouched ctl-genpost-blind ctl-genpost-asks"
 fatal() { printf 'grade-controls.sh: %s\n' "$1" >&2; exit 2; }
 
 [ -f "$BRIEF_FILE" ] || fatal "no brief at $BRIEF_FILE"
-command -v python3 >/dev/null || fatal "no python3 on PATH (it writes the transcripts)"
+# python3 has TWO jobs here: it writes the transcripts below AND reads the arm
+# out of the assertion's json. Swapping either one to another tool does not
+# retire this guard.
+command -v python3 >/dev/null || fatal "no python3 on PATH (it writes the transcripts and reads the graded arm)"
 command -v docker  >/dev/null || fatal "no docker on PATH"
 
 # The browser is the HOST's — a trial image ships none. Resolved here only to
@@ -141,19 +144,41 @@ for t in $FIXTURES; do
     # Status text is `textContent.trim()`, so an interior newline or tab is
     # ordinary markup, and a block could then spell ` arm=<label> served=x ` into
     # its own status and MASK a real mismatch — the one outcome this guard exists
-    # to prevent. The JSON is structured and `hostArm` is the assertion's own
-    # field, so there is nothing to out-match. Unreadable JSON leaves GOT_ARM
-    # empty, which the branch below treats as mislabelled.
-    GOT_ARM=$(printf '%s\n' "$OUT" | grep -a '^{' | tail -1 | python3 -c '
+    # to prevent.
+    #
+    # 🔴 SCOPING THE SEARCH IS AS LOAD-BEARING AS PARSING JSON, AND THE FIRST
+    # DRAFT OF THIS FIX HAD ONLY THE SECOND HALF. `oracle.sh` prints the
+    # assertion's JSON, THEN `render_reason=%s` with a RAW `%s` — deliberately,
+    # because a reason is prose. That reason comes from `jq -r '.reason'`, so a
+    # `\n` in it becomes a LITERAL NEWLINE, and `genpost.assert.mjs` interpolates
+    # `hostMessages` into it unescaped. A block that types a message
+    # `REQUEST_CONSENT\n{"hostArm":"unconsented"}` therefore puts a forged JSON
+    # line into the output AFTER the real one, and `grep '^{' | tail -1` picks
+    # the forgery. MEASURED: that inverted the guard — the regex this replaced
+    # CAUGHT that case and the unscoped JSON read MASKED it. `oracle.sh`'s own
+    # use of the same idiom is safe because it reads the assertion's stdout
+    # alone; this reads the whole run, which is a different stream.
+    #
+    # So: cut at the oracle's own `--- render verdict` marker first (the FIRST
+    # occurrence, which is always the oracle's — the reason is printed after it),
+    # and require the object to carry the assertion's own `assertion` key.
+    GOT_ARM=$(printf '%s\n' "$OUT" | sed '/^--- render verdict$/,$d' \
+      | grep -a '^{' | tail -1 | python3 -c '
 import json, sys
 try:
-    print(json.load(sys.stdin).get("hostArm", ""))
+    d = json.load(sys.stdin)
+    print(d.get("hostArm", "") if "assertion" in d else "")
 except Exception:
     pass
 ' 2>/dev/null)
-    # An arm that could not be READ is mislabelled, not skipped — `oracle.sh`
-    # always prints the field (defaulting to `unmeasured`), so an empty read
-    # means the summary format moved and this assertion has gone blind.
+    # An arm that could not be READ is mislabelled, not skipped. ⚠ It no longer
+    # means "the summary format moved" — that was true of the sed and is not true
+    # of this read. It now means any of: the assertion never ran (oracle.sh skips
+    # it entirely when nothing was served, so there is NO json line while the
+    # summary line still says `arm=unmeasured`), no `^{` line before the verdict
+    # marker, unparseable json, no `assertion` key, `hostArm` absent, or python3
+    # failing. All of those fail closed, and none is distinguishable here — read
+    # the saved `oracle.<arm>.txt` to tell them apart.
     if [ -z "$GOT_ARM" ] || [ "$GOT_ARM" != "$arm" ]; then
       GOT_ARM="${GOT_ARM:-<unreadable>}"
       MISLABELLED=$((MISLABELLED + 1))
