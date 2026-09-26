@@ -315,7 +315,7 @@ and closed out"*.
 
 ⚠ **On `forcing:` — ranks 13–16 trace to the operator's 2026-09-25 feedback and
 asks; 17–20 trace to the 2026-09-26 close-check the operator requested.** Every
-one cites an EXTERNAL signal, and none is `forcing: none`.
+one cites an EXTERNAL signal, and every item carries a real forcing kind.
 
 1–11. ✅ **DONE** — the arc through build-and-ship. forcing: user/gate — satisfied
 12. ⚠ **RE-SCOPE OR RETIRE, do not work as written.** Its premise is measured
