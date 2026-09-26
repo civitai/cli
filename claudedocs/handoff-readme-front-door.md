@@ -43,32 +43,45 @@ nothing). This one AUTHORS the coverage first, then cuts. The operator retired t
 
 ## State now
 
-- `civitai/cli` `main` carries phases 1–2. **README.md 273,928 → 237,568 B (−36,360, −13%)**,
-  re-measured with `git cat-file -s` after each merge, never from a report.
-- **AGENTS.md 30,499 → 28,873 B**; headroom against `agentsMaxBytes = 30_500` went **1 → 1,627**.
-  Both size constants unchanged.
+🔴 **README.md: 273,928 → 127,616 B. −146,312, −53.4%.** Every figure in this doc is
+`git cat-file -s <sha>:README.md` — never a reconstruction. (My own fence-aware python
+census reads ~0.8% low and I used it twice after flagging it; do not trust it.)
+
+- `civitai/cli` `main` = `823fa4f`, clean. `civitai-developer-docs` `main` = `6d63997`, clean
+  (untracked `opencode.json` predates this session).
 - **Claim `readme-front-door` still HELD.** `claim-work --release readme-front-door` when this closes.
-- **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` → rc=5, 0 tasks, with a positive
-  control proving the board answered. A wrong session id also returns an empty array, so that
-  zero is **not** a clean bill of health.
+- **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` → **rc=5**, 0 tasks, with a
+  positive control proving the board answered. A wrong session id also returns an empty
+  array, so that zero is **not** a clean bill of health. ⚠ Read that rc without a pipe —
+  `| head` ate it once here and printed a false `rc=0`.
 
-### Merged this session — nine PRs across two repos
+### The arc, in three phases
 
-| PR | what | verified by |
-|---|---|---|
-| docs#99 | snapshot re-captured at v0.1.108 | content on `main`; closed docs#86 |
-| docs#100 | Homebrew-platform + download-id guards | merged-tree control pair |
-| docs#104 | CI wiring + corrected refresh advice | control pair on the wired check |
-| docs#105 | snapshot → v0.1.109 | content; `--admin`, branch protection bypassed |
-| docs#102 | snapshot verdict is CONTENT, not a version string | closed docs#101 |
-| docs#103 | three guide pages (relocation phase 1) | gate counts |
-| docs#107 | refresh captures the RELEASE ASSET, closing the version seam | security-boundary mutation matrix, run by me |
-| cli#707 | README phase 2 — four sections relocated | round 0 + round 1, both clean after rework |
-| cli#716 | AGENTS.md eviction + item 25 amended + listing-media relocated | round 0 (2 findings) + round 1 (5 findings), all fixed |
-| cli#719 | `notAPage` row for the second MCP transport | red-at-base / green-at-HEAD |
+| phase | README after | what moved |
+|---|---:|---|
+| start | 273,928 | — |
+| 1–2 | 237,568 | four sections → three guide pages; AGENTS.md eviction; item 25 amended |
+| **3** | **127,616** | Generate, Submit & auth, Validate fidelity, `--json` → eight pages; 14 sections → cobra `Long`; three published keeps → pointers |
 
-**`civitai/civitai-developer-docs` `main` is GREEN under the content gate:**
-`✓ CONTENT MATCHES — 163281 bytes / 116 ===CMD blocks, byte-identical to a fresh capture`.
+**Fourteen PRs merged** across two repos. `cli`: #701 #707 #716 #719 #720 #721 #722.
+`docs`: #99 #100 #102 #103 #104 #105 #107 #114.
+
+### What is left between 127,616 and the 50–70 KB target
+
+🔴 **The target is LIVE.** A prior revision of this doc records it retired; the operator
+**re-instated it verbally on 2026-09-25** after saying they were not satisfied with 13%.
+An auditor read the retirement and concluded it was dead — it is not.
+
+| block | bytes | why it is still here |
+|---|---:|---|
+| `## Troubleshooting` | 19,315 | **measured no-destination.** Cause cells are the substance. |
+| `## Exit codes` | 16,658 | destination page was stripped from docs#114; ships in the guard PR |
+| `## Command reference` | 10,111 | col 1 is a guarded contract — `TestREADMECommandSynopsesNameRealFlags` drives the live Cobra tree, floors at 85 flag checks |
+| `## Global flags` | 8,287 | **measured no-destination** — 0 hits for `Off always beats on`, `no-color.org`, `Default_Ignorable`, controls clean |
+| three residuals | 6,197 | each pinned by a guard reading the README against live command output or `isExcludedFile` |
+
+**Commissioning two pages (Troubleshooting + Global flags) is worth ~25 KB and is the only
+route to 70 KB that does not retire a guard's coverage.**
 
 ## Open investigations — live diagnosis state
 
@@ -132,24 +145,38 @@ nothing). This one AUTHORS the coverage first, then cuts. The operator retired t
 
 ## Next steps (ranked)
 
-1. **Phase 3 — relocate command-scoped prose into cobra `Long`.** The remaining bulk is
-   `## Submit & auth` (~40 KB after phase 2) and `## Generate` (~43 KB). 🔴 **Size every move
-   against clause 4**: the naive plan takes `generate --help` to 959 lines in a repo that caps
-   a help section at 24. Files: `README.md`, `internal/cmd/*.go` `Long:` strings, `## Contents`.
-   Budget the Contents edits as part of the cut — `readme_nav_test.go` needs a TOC line per
-   heading and `readme_outline_order_test.go` needs TOC order to match the document.
-   forcing: user — operator asked for an aggressive trim on 2026-09-25 and chose the Long+pages split after the Long-only refutation
+1. **Commission the two destination pages** in `civitai/civitai-developer-docs`: a
+   Troubleshooting symptom→cause→remedy page and a colour/output-sanitisation reference for
+   `## Global flags`. Both are **measured** no-destination cases, not guesses. Then delete
+   from `README.md`. Worth ~25 KB and takes the file to ~102 KB.
+   forcing: user — operator re-instated the 50–70 KB target on 2026-09-25 after rejecting the 13% two prior phases delivered
 
-2. **Audit the remaining README against clause 2.** Walk every `##`/`###` and classify:
-   covered-by-a-page-and-still-restating (an open item), covered-and-pointing (done), or
-   not covered (stays). That list IS the rest of the arc, and it replaces the byte target.
-   forcing: gate — clause 2 of the closing condition cannot be evaluated without it
+2. **The exit-code guard + page PR** in `civitai-developer-docs`. 🔴 Direction is settled, do
+   not re-derive: **generate** the per-code blockquotes from `appblocks-snapshots/civitai-cli-help.txt`
+   into a committed md-region (`gen-appblocks-md.mjs` → `check:md-regions`, a required context)
+   rather than parity-checking hand-written ones. That kills layers 1 and 2 of the refuted
+   guard outright. Keep layer 3, wire it into `typecheck-snippets`, strike the false `:36`
+   claim. Only then may `## Exit codes` (16,658 B) leave the README.
+   forcing: gate — `## Exit codes` cannot be cut until its destination exists, and it is the second-largest remaining block
 
-3. **`/simplify` the three byte-identical `assets/README.md.tmpl` files** into one embedded
-   authority, the way item 11 does for `ready-ack.js`. Measured: all three share md5
-   `51ebc5538e3bccbd14b2fbd93a928228` and **nothing pins that identity**. Four test functions
-   loop over them. cli#716's guard comments now state that collapsing costs no coverage, so
-   the job is correctly priced.
+3. **Fix the one real content loss from the relocation.** `site/guide/cli-workflows.md:105-113`
+   kept *"…holds a filename the server chose"* and dropped *"so an `--out` path containing an
+   invisible character is reported without it while the file is written to the path you gave."*
+   Zero hits for that clause anywhere. The surviving half reads as though the CLI sanitises the
+   path **before writing** — inverted. One-line fix, `civitai-developer-docs`.
+   forcing: regression — a published page now states the opposite of the behaviour
+
+4. **`cli#602` needs FOUR README edits, and only TWO conflict.** Both `README:321` and
+   `README:729` say "larger than the server can receive"; #602 flips the ceiling to `>=`, so
+   both become false, and **neither produces a conflict marker** — a marker-driven resolution
+   misses both. 🔴 And #602's 14-line *"Why 'at or above' and not 'above'"* block exists
+   **only in #602** (`at or above` → 0 files in the docs repo); an earlier resolution note said
+   to delete it as "belongs on packaging.md". It does not. Keep it or land it there first.
+   forcing: regression — merging #602 as-is publishes two false statements and deletes reasoning that exists nowhere else
+
+5. **`/simplify` the three byte-identical `assets/README.md.tmpl` files** into one embedded
+   authority, the way item 11 does for `ready-ack.js`. All three share md5
+   `51ebc5538e3bccbd14b2fbd93a928228` and **nothing pins that identity**.
    forcing: none
 
 ## Defects (batched)
@@ -360,31 +387,148 @@ CONSTRAINTS AND CONTROLS.** Every error above is a mechanism I named; none is a 
 required. Name the property and the control that proves it, and let the agent pick the
 mechanism.
 
+### 🔴 THE OPERATOR DECISIONS (2026-09-25/26) — APPEND BUCKET ON PURPOSE. DO NOT MOVE THEM BACK.
+
+| question | answer |
+|---|---|
+| Target | **50–70 KB, re-instated verbally 2026-09-25** after rejecting the 13% phases 1–2 delivered. A prior revision of this doc says "retired"; that is superseded. |
+| Depth | **"All of it"** — exit-code detail and Troubleshooting causes may leave the shipped README |
+| Exit-code detail's new home | **A docs page**, not a new `civitai exit-codes` command. ⚠ The offline-preservation constraint that blocked this was **mine, not the operator's** — they never asked for it. |
+| Destination discipline | Nothing is deleted until its destination exists and is verified |
+| Item 25 | **Amended** — its letter was broader than its argument |
+| AGENTS.md | **Eviction wave run** — headroom 1 → 1,627 B |
+| Version seam | **Refresh captures the release asset** — one source of truth |
+| Org Actions policy | **Flipped org-wide.** ⚠ Both levels needed setting; the repo does NOT inherit from the org |
+
+### 🔴 THE ONE THAT COST THE MOST: A MEASUREMENT OF FOUR SECTIONS BECAME A CEILING ON THE WHOLE FILE
+
+Phases 1–2 delivered 13% because every plan was scoped against a decomposition covering
+`Submit & auth`, `Generate`, `Troubleshooting` and `Exit codes` — **133,892 B**. The other
+**149,352 B across 26 sections was never analysed at all.** Three of the four sections phase 2
+cut sat in that unmeasured bucket. The moment the remaining 26 were measured, phase 3 cut 46%
+in one PR.
+
+🔴 **Ask what your measurement did NOT cover before letting it bound the plan.** The figure was
+correct; its scope was a quarter of the file, and nobody said so out loud.
+
+### 🔴 "IT EXISTS NOWHERE ELSE" WAS FALSE FOR ALL THREE KEEPS — AND THE README LINKED TO TWO OF THE PAGES
+
+PR #721 stopped at 139 KB citing three blocks that "appear on no page and in no `Long`".
+Measured against `civitai-developer-docs@origin/main` with a negative control (`frobnicate-zzz` = 0):
+dotenv → `apps/guide/packaging.md:148-272`; source-repo **including the three-way refusal table**
+→ `store-listing.md:317-411`; whoami transcripts → `cli-auth.md:76-194`.
+
+🔴 **Self-refuting twice: `README.md:739` already pointed at `cli-auth`, and `README.md:749` —
+INSIDE the kept block — pointed at `store-listing#link-your-source-code`.** The PR wrote those
+pointers and kept the content they point away from. Worth ~11 KB, recovered.
+
+⚠ The "31.6 KB of deliberate keeps" figure **double-counted**: `10,353 + 4,670 + 16,579` is
+dotenv + link-source + **Exit codes**, which the next clause added again. Three keeps = 17,183 B.
+
+### 🔴 PROSE IN A COBRA `Long` IS NOT PUBLISHED ONLINE TODAY
+
+Track D moved 14 sections into `Long` partly because `apps/reference/cli.md` is generated from a
+committed `--help` snapshot — "so it publishes twice". **False today.** Five strings moved into a
+`Long` return **0** in both `apps/reference/cli.md` and `appblocks-snapshots/civitai-cli-help.txt`,
+against positive controls at 17/19 and 6/9. The snapshot refreshes from the **published release
+asset**, and that path is **permanently red**: 11 consecutive failed runs because an org Actions
+policy refuses `gh pr create`. The docs-repo half of that policy was fixed this session; **the
+`cli` half is still broken.** So `Long` content reaches the binary and not the website.
+
+### 🔴 A GUARD PASSED WITH ITS ENTIRE SUBJECT REPLACED BY FILLER
+
+cli#716's prose-preservation guard asserts four tool names plus a 1,500-byte floor over a
+2,594 B section. An auditor replaced the **whole section** with one sentence naming the four
+tools plus filler to 1,739 B — **both guards stayed green**. The floor permits deleting 42.2%.
+A second instance in the same file: the anchor check was not section-scoped though its doc
+comment and failure message both said "section" — proven by spelling the anchor in an HTML
+comment elsewhere. **Ask what a guard can pass while the hazard exists in a different shape.**
+
+### 🔴 A COMPARISON AGAINST AN ABSENT OPERAND REPORTS SAME, NOT MISSING — THREE SHAPES IN ONE SESSION
+
+1. **A shallow clone's remote-tracking refs do not advance on a plain `git fetch origin`** —
+   a branch sat 17 days / 2 releases stale and **inverted a conclusion**: I reported it older
+   than `main` when it was newer, correcting an agent who was right. Force-fetch the exact
+   refspec; assert `git ls-remote origin <ref>` equals `git rev-parse <ref>`.
+2. **A shallow graft made `HEAD~1` look parentless**, so `git show --name-only` listed ~250
+   files and produced a bogus 6-file PR overlap.
+3. **A local `npm run check:…` reads the WORKING TREE, not `origin/main`** — after merging a
+   fix I re-ran it, got the same red, and started diagnosing a defect that was already fixed.
+   `git merge --ff-only origin/main` first.
+
+### 🔴 `audit-dispatch.py` DEFAULTS TO THE CWD's REPO — AND PR NUMBERS COLLIDE ACROSS REPOS
+
+I asked for round 0 on "PR 114" from inside the `cli` checkout. It resolved `civitai/cli#114`
+— **a merged npm CI pin from months ago** — and returned a fully-formed, internally consistent
+brief about entirely the wrong work. Caught only by reading the brief's own header. **Pass
+`--repo owner/name` whenever the PR is not in the cwd's repo**; the script has the flag and
+prints a cross-repo `refs/pull/` recipe when told.
+
+### ⚠ A CHECK THAT LOOKS STALE MAY BE TELLING THE TRUTH
+
+`pins-vs-published` went red on every open PR when npm published `@civitai/blocks-react@0.58.0`
+against a `^0.57.0` template pin — a **live-registry** check, so it reddens on time passing, not
+on a push. After merging the bump (#722) I called #721's red "stale", re-ran the job, and it
+failed again: **#721's branch genuinely still pinned `^0.57.0`.** The check reads the BRANCH.
+Fixed by merging `main` into the branch. 🔴 **Compare the two refs before calling a result stale.**
+
+### ⚠ SEVEN OF MY BRIEFED FACTS WERE WRONG, AND EVERY AGENT THAT CAUGHT ONE WAS RIGHT
+
+A wrong section→page mapping (would have pointed five contracts at a page not carrying them);
+a mis-cited guard line; a line-count awk anchoring `//` at column 0; a `--limit 8` quoted as a
+failure count when the truth was 11 consecutive; a README byte figure from a reconstruction I
+had **already flagged as wrong** and reused anyway; an invented repo-wide 80-column `Long`
+budget (`helpBodyBudget` is a **1,400-rune whole-body ceiling** with 6 refs, and `generate`
+ships a **219-column** line with CI green); and 🔴 **a security instruction that produced a
+critical CodeQL finding** — I described sha256 verification as closing a path-traversal risk,
+and it does not, because the same endpoint serves the tag and the checksums.
+
+🔴 **The transferable half: specify PROPERTIES AND CONTROLS, not MECHANISMS.** Every one of
+those is a mechanism I named; none is a property I required. The briefs that worked said
+*"no published contract lost from any surface a reader can reach — prove it with your own
+sweep and both controls"* and let the agent pick the method.
+
+⚠ **And twice I relayed another agent's arithmetic without re-deriving it** (the 3.8 KB
+column-1 figure was 2,202 B total; the "4–6 KB of free Troubleshooting wins" was 776 B).
+A number that arrives in a report is a claim, exactly like one in a comment.
+
+### ⚠ REFUSALS THAT WERE RIGHT, AND ONE CONSTRAINT THAT WAS MINE
+
+- An agent **refused to cut Troubleshooting to a symptom index** because the cause cells have no
+  published destination — an index would delete contract, not relocate it. It preserved all 60
+  rows byte-identically instead. **My instruction was wrong; my own property 1 beat it.**
+- An agent **refused to move exit-code detail** because it would leave no offline copy —
+  correct against the constraint I gave, and the constraint was **mine, never the operator's**.
+  The operator's question *"new page in civitai dev docs site?"* is what surfaced it.
+- 🔴 **If a track stalls on a constraint, check whose it is.**
+
 ## How to verify
 
 ```bash
 CLI=/home/zach/workspace/civit/cli
 DOCS=/home/zach/workspace/civit/civitai-developer-docs
 
-# --- the arc's own numbers -------------------------------------------------
-git -C "$CLI" cat-file -s origin/main:README.md      # 237,568 after phase 2
+# --- the arc's numbers. git cat-file ONLY; a python census reads ~0.8% low ----
+git -C "$CLI" cat-file -s origin/main:README.md      # 127,616
 git -C "$CLI" cat-file -s origin/main:AGENTS.md      # 28,873 (ceiling 30,500)
-./bin/civitai generate --help | wc -c                # 16,668 — clause 4 caps at 25,000
-./bin/civitai zzbogus   --help | wc -c               # 4,636 = ROOT help, exit 0 — the trap
 
-# --- clause 2's destinations (fetch and grep; NEVER diff against a summary) --
-for p in local-dev review-and-deploy store-listing; do
-  printf '%-22s %s\n' "$p" "$(curl -s -o /dev/null -w '%{http_code}' -L https://developer.civitai.com/apps/guide/$p)"
-done
-curl -s -o /dev/null -w '404-control %{http_code}\n' -L https://developer.civitai.com/apps/guide/zzznotapage
+# --- the no-destination claims, with controls --------------------------------
+for t in 'Off always beats on' 'no-color.org' 'Default_Ignorable'; do
+  printf '%-24s docs-hits=%s\n' "$t" \
+    "$(find "$DOCS" -name '*.md' -not -path '*/node_modules/*' -not -path '*/.vitepress/dist/*' -print0 \
+       | xargs -0 grep -l "$t" 2>/dev/null | wc -l)"
+done   # all 0 — that is why ## Global flags stays
+find "$DOCS" -name '*.md' -not -path '*/node_modules/*' -print0 | xargs -0 grep -l 'dev-tunnel' | wc -l  # POS control, non-zero
 
-# --- the full suite (Chromium REQUIRED) -------------------------------------
+# --- is Long content online yet? (expect NO until the cli refresh is fixed) ---
+git -C "$DOCS" show origin/main:appblocks-snapshots/civitai-cli-help.txt | grep -c 'comfyui_controlnet_aux'  # 0
+git -C "$DOCS" show origin/main:appblocks-snapshots/civitai-cli-help.txt | grep -c 'civitai download'        # POS control, 19
+
+# --- the full suite. Chromium REQUIRED -----------------------------------------
 nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) go test ./... -count=1'
 make lint    # golangci-lint; `make ci` does NOT run it
-# WITHOUT CIVITAI_CHROME exactly three dogfood_oracle_test.go functions fail and SAY SO:
-#   "no Chromium on PATH … nothing was measured (this is NOT a failing trial)"
+# Without CIVITAI_CHROME exactly three dogfood_oracle_test.go functions fail and SAY SO.
 
-# --- the docs-repo content gate ---------------------------------------------
-git -C "$DOCS" merge --ff-only origin/main    # 🔴 the check reads the WORKING TREE
-(cd "$DOCS" && npm run --silent check:cli-snapshot)   # ✓ CONTENT MATCHES
+# --- #602 before merging it ---------------------------------------------------
+git -C "$CLI" show origin/main:README.md | grep -n 'larger than the server can receive'  # 2 hits, both go false
 ```
