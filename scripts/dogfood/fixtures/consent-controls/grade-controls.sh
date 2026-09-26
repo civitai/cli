@@ -82,8 +82,18 @@ printf '=== consent controls, both arms (runs under %s)\n\n' "$RUNS"
 # is the first tool in this tree that prints its own arm COLUMN, so it is the one
 # that has to defend it. The rule is not new — `dogfood_oracle_test.go` clears the
 # same five by name, and says why in a comment; `oracle.sh` names the same hazard.
+#
+# ⚠ THE TIMING KNOBS RIDE ALONG, and they are a quieter version of the same
+# class: `_cdp.mjs` also reads CIVITAI_ASSERT_WAIT_MS / _LAUNCH_MS /
+# _LAUNCH_ATTEMPTS, all three documented as operator-settable in
+# `../../README.md`. A stale `CIVITAI_ASSERT_WAIT_MS=1` yields a uniformly
+# `RENDER=no` matrix. Less dangerous than the arm knobs — `render_reason=` shows
+# a timeout, so it is visible rather than silent — but there is no reason to
+# inherit it either.
 ARM_ENV="env -u CIVITAI_ASSERT_UNCONSENTED -u CIVITAI_ASSERT_ANON_VIEWER \
-         -u CIVITAI_ASSERT_NO_HOST -u CIVITAI_ASSERT_NO_HOST_PICKS -u DOGFOOD_ASSERT"
+         -u CIVITAI_ASSERT_NO_HOST -u CIVITAI_ASSERT_NO_HOST_PICKS -u DOGFOOD_ASSERT \
+         -u CIVITAI_ASSERT_WAIT_MS -u CIVITAI_ASSERT_LAUNCH_MS \
+         -u CIVITAI_ASSERT_LAUNCH_ATTEMPTS"
 
 UNMEASURED=0
 MISLABELLED=0
@@ -116,8 +126,20 @@ for t in $FIXTURES; do
     # 🔴 ASSERT THE ARM THE ORACLE REPORTS EQUALS THE ONE THIS COLUMN CLAIMS.
     # The `env -u` above removes the known route to a mislabelled row; this
     # catches every other one, including a future arm knob nobody added here.
-    GOT_ARM=$(printf '%s\n' "$VERDICT" | sed -n 's/.*[[:space:]]arm=\([^ ]*\).*/\1/p')
-    if [ -n "$GOT_ARM" ] && [ "$GOT_ARM" != "$arm" ]; then
+    # 🔴 ANCHOR BOTH ENDS. A greedy `.*arm=` takes the LAST match on the line,
+    # and `observed=` — which `oracle.sh` renders with `printf %q`, so a space
+    # becomes `\ ` — comes AFTER `arm=`. A fixture whose status text contained
+    # ` arm=<label>` could then either false-fire this or, spelling the expected
+    # label, MASK a genuine mismatch: the guard would be reading a field the
+    # subject under test controls. Anchoring on `^brief=` … ` served=` pins it to
+    # the oracle's own field.
+    GOT_ARM=$(printf '%s\n' "$VERDICT" \
+      | sed -n 's/^brief=.*[[:space:]]arm=\([^ ]*\)[[:space:]]served=.*/\1/p')
+    # An arm that could not be READ is mislabelled, not skipped — `oracle.sh`
+    # always prints the field (defaulting to `unmeasured`), so an empty read
+    # means the summary format moved and this assertion has gone blind.
+    if [ -z "$GOT_ARM" ] || [ "$GOT_ARM" != "$arm" ]; then
+      GOT_ARM="${GOT_ARM:-<unreadable>}"
       MISLABELLED=$((MISLABELLED + 1))
       printf '%-24s %-12s 🔴 ARM MISMATCH — this row is an "%s" measurement\n' "$t" "$arm" "$GOT_ARM"
     fi

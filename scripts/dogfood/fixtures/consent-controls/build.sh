@@ -67,12 +67,16 @@ NPM_PIN="${DOGFOOD_NPM_PIN:-11.19.0}"
 KEEP=no
 # Reject an unrecognised argument rather than ignoring it: the full path
 # `docker rm -f`s all three containers and spends ~5 min, so `--kep` silently
-# doing the expensive thing is the worst available behaviour.
-case "${1:-}" in
-  '')       ;;
-  --keep)   KEEP=yes ;;
-  *)        printf 'build.sh: unknown argument %s (expected --keep or nothing)\n' "$1" >&2; exit 2 ;;
-esac
+# doing the expensive thing is the worst available behaviour. Checked in EVERY
+# position, not just $1 — `build.sh --keep --kep` would otherwise set KEEP and
+# ignore the typo, which is the same class one argument over.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --keep) KEEP=yes ;;
+    *)      printf 'build.sh: unknown argument %s (expected --keep or nothing)\n' "$1" >&2; exit 2 ;;
+  esac
+  shift
+done
 
 fatal() { printf 'build.sh: %s\n' "$1" >&2; exit 2; }
 
@@ -121,13 +125,32 @@ start() {
 # in `.github/workflows/ci.yml` exists for exactly that. So the FIRST twin resolves
 # the tree and the SECOND installs from its lockfile with `npm ci`.
 #
-# ⚠ `--keep` skips the install but still PULLS the lockfile (below), so a run
-# where one twin is reused and the other is rebuilt cannot silently diverge —
-# that is the widest version of this hazard, since the gap becomes days.
+# 🔴 `--keep` CANNOT RE-RESOLVE A REUSED TWIN, SO IT CHECKS ONE INSTEAD.
+# An earlier draft of this comment claimed `--keep` "still PULLS the lockfile, so
+# a run where one twin is reused and the other is rebuilt cannot silently
+# diverge". That was FALSE in one of the two directions: the reuse fast path
+# returns before any lockfile handling, so `blind rebuilt / asks reused` left the
+# reused twin on a lockfile days old, and the run then died at the drift guard
+# with "differ in more than src/App.tsx" — the misleading message this file works
+# hard to avoid, with no hint that the cure is dropping `--keep`. A reused twin is
+# now CHECKED against the lockfile in play and told exactly that.
 prepare() {
   local name="$1" dir="$2" lock="${3:-}"
   if [ "$KEEP" = "yes" ] \
      && docker exec "dogfood-$name" test -d "/work/$dir/node_modules" >/dev/null 2>&1; then
+    if [ -n "$lock" ] && [ -s "$lock" ]; then
+      # Hash INSIDE the container and compare hex to hex. Reading the file into a
+      # shell variable would not work: `$(cat …)` strips trailing newlines, so a
+      # byte-identical lockfile would hash differently and this guard would fire
+      # on every run — a false alarm is how a check like this gets deleted.
+      local have want
+      have=$(docker exec "dogfood-$name" sh -c \
+        "sha256sum '/work/$dir/package-lock.json' 2>/dev/null" | cut -d' ' -f1)
+      want=$(sha256sum "$lock" | cut -d' ' -f1)
+      if [ -z "$have" ] || [ "$have" != "$want" ]; then
+        fatal "dogfood-$name is being REUSED (--keep) but its lockfile ${have:+differs from}${have:-is missing while} the twin's — the pair would differ in package-lock.json and the drift guard would report that as attribution drift. Re-run WITHOUT --keep."
+      fi
+    fi
     printf '  reusing the scaffold in dogfood-%s:/work/%s\n' "$name" "$dir"
     return 0
   fi
@@ -203,25 +226,46 @@ done
 # file that does not exist, while the real state is the opposite — there is no
 # control at all. Same split `oracle.sh` keeps between a verdict and "nothing was
 # measured".
+# 🔴 `-print0`/`-0` IS THE LOAD-BEARING PART, AND A `sed` ON THE OTHER SIDE DOES
+# NOT SUBSTITUTE FOR IT. Bare `xargs` word-splits on whitespace, so a file whose
+# name contains a space never reaches the comparison at all: `xargs` re-hashes the
+# leading token (collapsed by `sort -u`) and errors on the tail to STDERR, which
+# the command substitution below does not capture. MEASURED — with an
+# uncontrolled second difference named `./src/App.tsx old.bak` present in one twin
+# only, the bare form yielded `DIFFER = ./src/App.tsx` and the guard PASSED.
+# An earlier round fixed only the PARSING half and left a comment claiming the
+# case was closed; it was not. Both halves are needed and both are here.
 sums() { docker exec "dogfood-$1" bash -lc \
-  'cd /work/ab-ctl-genpost && find . -type f -not -path "./node_modules/*" -not -path "./dist/*" | sort | xargs sha256sum'; }
+  'cd /work/ab-ctl-genpost && find . -type f -not -path "./node_modules/*" -not -path "./dist/*" -print0 | sort -z | xargs -0 sha256sum'; }
 BLIND_SUMS=$(sums ctl-genpost-blind)
 ASKS_SUMS=$(sums ctl-genpost-asks)
 
 # POSITIVE CONTROL, before any comparison: a read that returned nothing compares
-# equal to another read that returned nothing, and that is not agreement. The
-# floor is 2 because a real page-money scaffold yields 27 hashed lines (measured)
-# — anything under 2 is a truncated or failed read, never a legitimate tree, and
-# failing closed on a suspiciously short read is the safe direction.
+# equal to another read that returned nothing, and that is not agreement.
+#
+# 🔴 THE FLOOR IS 2 BECAUSE 1 IS A REACHABLE FAILURE VALUE, NOT BECAUSE THE TREE
+# IS LARGE. When `find` matches nothing, `xargs sha256sum` falls back to hashing
+# STDIN and emits exactly ONE conforming line — `e3b0c442…  -` — at rc 0. A floor
+# of 1 passes that; a floor of 2 catches it. (A real scaffold yields ~27, so the
+# floor is nowhere near the legitimate range either way — but that is a comfort
+# margin, not the reason, and an earlier draft gave it as the reason. Do not
+# "simplify" this to -ge 1.)
 BLIND_N=$(printf '%s\n' "$BLIND_SUMS" | grep -c '^[0-9a-f]\{64\}  ' || true)
 ASKS_N=$(printf '%s\n' "$ASKS_SUMS"  | grep -c '^[0-9a-f]\{64\}  ' || true)
 [ "$BLIND_N" -ge 2 ] && [ "$ASKS_N" -ge 2 ] \
   || fatal "could not read the twins' file lists (blind=$BLIND_N asks=$ASKS_N hashed line(s)) — NOTHING was compared. This is an instrument failure, not a verdict about the fixtures."
 
+# 🔴 A SECOND, INDEPENDENT CHECK ON THE SAME HAZARD: the twins must hold the SAME
+# NUMBER of files. It is cheap, and it catches an extra or missing file even when
+# the path comparison is somehow defeated — which is exactly what happened when
+# the producer word-split (blind=2 asks=3 while `DIFFER` read clean).
+[ "$BLIND_N" -eq "$ASKS_N" ] \
+  || fatal "the twins hold DIFFERENT NUMBERS of files (blind=$BLIND_N asks=$ASKS_N) — one has a file the other does not, so attribution is void."
+
 # Strip the `< ` / `> ` marker and the 64-hex digest + two spaces, leaving the
 # path VERBATIM — `awk '{print $3}'` would read only the first whitespace token
-# of the name, so a second differing file whose name merely STARTS with
-# `./src/App.tsx` would vanish and the guard would pass over a real difference.
+# of the name. This is the PARSING half; `sums()`'s `-print0` above is the half
+# that decides whether such a path is in the stream at all.
 DIFFER=$(diff <(printf '%s\n' "$BLIND_SUMS") <(printf '%s\n' "$ASKS_SUMS") \
   | grep -E '^[<>] ' | sed -E 's/^[<>] [0-9a-f]{64}  //' | sort -u)
 if [ -z "$DIFFER" ]; then
