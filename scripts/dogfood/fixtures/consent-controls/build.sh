@@ -19,8 +19,8 @@
 # was false when written. It had been watched, on a real bundle, before any of
 # this existed: `ab-ship-mimo-02` (the live `ab-img-poster v0.1.0`) graded
 # `RENDER=no observed=ready>generating>ready` — "spent without asking" — and its
-# `v0.1.1` fix graded `RENDER=yes observed=ready`. Three more of the seven
-# fixtures grade `no` on the arm, and the handoff's own "How to verify" section
+# `v0.1.1` fix graded `RENDER=yes observed=ready`. Two more of the seven
+# fixtures grade `no` on the arm FOR THE ARM'S OWN REASON, and the handoff's own "How to verify" section
 # runs exactly that cell. The claim reached four sites because nobody re-read the
 # table it contradicts. You are at least the second person to write a reason here:
 # if the one above stops holding, WRITE THAT IT HAS NONE rather than reaching for
@@ -65,9 +65,23 @@ IMAGE="${DOGFOOD_IMAGE:-df-node-root}"
 # claim in one place.
 NPM_PIN="${DOGFOOD_NPM_PIN:-11.19.0}"
 KEEP=no
-[ "${1:-}" = "--keep" ] && KEEP=yes
+# Reject an unrecognised argument rather than ignoring it: the full path
+# `docker rm -f`s all three containers and spends ~5 min, so `--kep` silently
+# doing the expensive thing is the worst available behaviour.
+case "${1:-}" in
+  '')       ;;
+  --keep)   KEEP=yes ;;
+  *)        printf 'build.sh: unknown argument %s (expected --keep or nothing)\n' "$1" >&2; exit 2 ;;
+esac
 
 fatal() { printf 'build.sh: %s\n' "$1" >&2; exit 2; }
+
+# The twins' lockfile, pulled from whichever twin resolves it first. See
+# prepare(): both twins must install from ONE lockfile or ordinary registry
+# drift makes them differ in a second file and aborts the run.
+LOCK=
+cleanup() { [ -n "$LOCK" ] && rm -f "$LOCK"; }
+trap cleanup EXIT
 
 command -v docker >/dev/null || fatal "no docker on PATH"
 docker image inspect "$IMAGE" >/dev/null 2>&1 \
@@ -96,8 +110,22 @@ start() {
 # skip the App.tsx copy or the build, which is the half you iterate on. A `--keep`
 # that re-ran `civitai app init` over a populated directory would do nothing
 # useful and take just as long, so the flag would be lying about what it saves.
+#
+# 🔴 THE TWINS INSTALL FROM ONE LOCKFILE, AND THAT IS LOAD-BEARING, NOT TIDINESS.
+# The scaffold ships no lockfile and its deps are caret ranges (`vite ^8`,
+# `vitest ^4.1`, `@civitai/app-sdk ^0.51`, …), so two independent `npm install`s
+# minutes apart resolve differently the moment anything upstream publishes — and
+# `package-lock.json` is one of the files the twin-drift guard compares. The run
+# would then abort blaming drift, for a reason that has nothing to do with the
+# fixtures. This repo already knows those publishes are frequent: `pins-vs-published`
+# in `.github/workflows/ci.yml` exists for exactly that. So the FIRST twin resolves
+# the tree and the SECOND installs from its lockfile with `npm ci`.
+#
+# ⚠ `--keep` skips the install but still PULLS the lockfile (below), so a run
+# where one twin is reused and the other is rebuilt cannot silently diverge —
+# that is the widest version of this hazard, since the gap becomes days.
 prepare() {
-  local name="$1" dir="$2"
+  local name="$1" dir="$2" lock="${3:-}"
   if [ "$KEEP" = "yes" ] \
      && docker exec "dogfood-$name" test -d "/work/$dir/node_modules" >/dev/null 2>&1; then
     printf '  reusing the scaffold in dogfood-%s:/work/%s\n' "$name" "$dir"
@@ -105,10 +133,31 @@ prepare() {
   fi
   docker exec "dogfood-$name" bash -lc "
     npm install -g @civitai/cli >/dev/null 2>&1 || exit 1
-    npm install -g npm@$NPM_PIN >/dev/null 2>&1 || exit 1
+    npm install -g 'npm@$NPM_PIN' >/dev/null 2>&1 || exit 1
     cd /work && rm -rf '$dir' && civitai app init '$dir' --template page-money >/dev/null 2>&1
-    cd '/work/$dir' && npm install --no-audit --no-fund >/tmp/install.log 2>&1
-  " || fatal "prepare failed for dogfood-$name — read /tmp/install.log in the container"
+  " || fatal "scaffolding failed for dogfood-$name"
+  if [ -n "$lock" ] && [ -s "$lock" ]; then
+    docker cp "$lock" "dogfood-$name:/work/$dir/package-lock.json" >/dev/null \
+      || fatal "could not seed the lockfile into dogfood-$name"
+    docker exec "dogfood-$name" bash -lc \
+      "cd '/work/$dir' && npm ci --no-audit --no-fund >/tmp/install.log 2>&1" \
+      || fatal "npm ci failed for dogfood-$name — read /tmp/install.log in the container"
+  else
+    docker exec "dogfood-$name" bash -lc \
+      "cd '/work/$dir' && npm install --no-audit --no-fund >/tmp/install.log 2>&1" \
+      || fatal "npm install failed for dogfood-$name — read /tmp/install.log in the container"
+  fi
+}
+
+# Pull a twin's resolved lockfile to the host so the other twin can `npm ci` from
+# it. Runs even under --keep, which is the point.
+pull_lock() {
+  local name="$1"
+  [ -n "$LOCK" ] && return 0
+  LOCK="$(mktemp)" || fatal "could not make a temp file for the lockfile"
+  docker cp "dogfood-$name:/work/ab-ctl-genpost/package-lock.json" "$LOCK" >/dev/null 2>&1 \
+    || fatal "could not read the lockfile out of dogfood-$name"
+  [ -s "$LOCK" ] || fatal "the lockfile pulled from dogfood-$name is empty"
 }
 
 build_app() {
@@ -133,7 +182,8 @@ for pair in "ctl-genpost-blind:App.blind.tsx" "ctl-genpost-asks:App.asks.tsx"; d
   src="${pair#*:}"
   printf '=== %s — %s\n' "$name" "$src"
   start "$name"
-  prepare "$name" ab-ctl-genpost
+  prepare "$name" ab-ctl-genpost "$LOCK"
+  pull_lock "$name"
   docker cp "$HERE/$src" "dogfood-$name:/work/ab-ctl-genpost/src/App.tsx" >/dev/null \
     || fatal "could not install $src into dogfood-$name"
   build_app "$name" ab-ctl-genpost
@@ -143,14 +193,45 @@ done
 # The whole attribution rests on it: if a second file drifted — a lockfile, a
 # manifest, a scaffold revision — the arm's verdict moving between them would no
 # longer be evidence about the consent branch.
+#
+# 🔴 AN EMPTY DIFFERENCE IS THREE DIFFERENT FINDINGS AND ONLY ONE OF THEM IS
+# "they differ in more than App.tsx" — so it gets its own branch. Measured: the
+# twins being BYTE-IDENTICAL (both containers handed the same App source), both
+# `docker exec`s failing, and `find` matching nothing (`xargs sha256sum` then
+# hashes stdin and exits 0) all produce an EMPTY diff. Reported through the
+# more-than-one-file message, each would send the operator hunting a drifting
+# file that does not exist, while the real state is the opposite — there is no
+# control at all. Same split `oracle.sh` keeps between a verdict and "nothing was
+# measured".
 sums() { docker exec "dogfood-$1" bash -lc \
   'cd /work/ab-ctl-genpost && find . -type f -not -path "./node_modules/*" -not -path "./dist/*" | sort | xargs sha256sum'; }
-DIFFER=$(diff <(sums ctl-genpost-blind) <(sums ctl-genpost-asks) \
-  | grep -E '^[<>]' | awk '{print $3}' | sort -u)
-if [ "$DIFFER" != "./src/App.tsx" ]; then
-  fatal "the twins differ in more than src/App.tsx — attribution is void. Differing: ${DIFFER:-<none>}"
+BLIND_SUMS=$(sums ctl-genpost-blind)
+ASKS_SUMS=$(sums ctl-genpost-asks)
+
+# POSITIVE CONTROL, before any comparison: a read that returned nothing compares
+# equal to another read that returned nothing, and that is not agreement. The
+# floor is 2 because a real page-money scaffold yields 27 hashed lines (measured)
+# — anything under 2 is a truncated or failed read, never a legitimate tree, and
+# failing closed on a suspiciously short read is the safe direction.
+BLIND_N=$(printf '%s\n' "$BLIND_SUMS" | grep -c '^[0-9a-f]\{64\}  ' || true)
+ASKS_N=$(printf '%s\n' "$ASKS_SUMS"  | grep -c '^[0-9a-f]\{64\}  ' || true)
+[ "$BLIND_N" -ge 2 ] && [ "$ASKS_N" -ge 2 ] \
+  || fatal "could not read the twins' file lists (blind=$BLIND_N asks=$ASKS_N hashed line(s)) — NOTHING was compared. This is an instrument failure, not a verdict about the fixtures."
+
+# Strip the `< ` / `> ` marker and the 64-hex digest + two spaces, leaving the
+# path VERBATIM — `awk '{print $3}'` would read only the first whitespace token
+# of the name, so a second differing file whose name merely STARTS with
+# `./src/App.tsx` would vanish and the guard would pass over a real difference.
+DIFFER=$(diff <(printf '%s\n' "$BLIND_SUMS") <(printf '%s\n' "$ASKS_SUMS") \
+  | grep -E '^[<>] ' | sed -E 's/^[<>] [0-9a-f]{64}  //' | sort -u)
+if [ -z "$DIFFER" ]; then
+  fatal "the twins are IDENTICAL — they differ in NO file, so there is no controlled delta and the pair measures nothing. Expected exactly ./src/App.tsx to differ; check that each container got its OWN App source."
 fi
-printf '=== twins verified: the only differing file is ./src/App.tsx\n'
+if [ "$DIFFER" != "./src/App.tsx" ]; then
+  fatal "the twins differ in more than src/App.tsx — attribution is void. Differing: $(printf '%s' "$DIFFER" | tr '\n' ' ')"
+fi
+printf '=== twins verified: %s/%s files compared, the only differing file is ./src/App.tsx\n' \
+  "$BLIND_N" "$ASKS_N"
 
 printf '\nNow write a synthetic trial transcript per fixture (the oracle derives the\n'
 printf 'brief from one) and grade each on both arms. The recipe is in this\n'

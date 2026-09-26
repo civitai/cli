@@ -5,11 +5,14 @@
 // defect class `ab-img-poster v0.1.0` shipped with, and the one the unconsented
 // arm was built to catch.
 //
-// Its twin, App.asks.tsx, is BYTE-IDENTICAL except that it keeps the
-// `if (!granted) { ... requestConsent(...) }` branch. The pair is the point: any
-// difference in the unconsented arm's verdict is attributable to that branch and
-// to nothing else.
-import { useCallback, useRef, useState } from 'react';
+// Its twin, App.asks.tsx, is identical but for the `if (!granted) { ... }`
+// branch it keeps and the `void` bindings below, which exist so the SDK surface
+// is matched across the two bundles. The pair is the point: any difference in
+// the unconsented arm's verdict is attributable to that branch and nothing else.
+//
+// ⚠ NOT "byte-identical" — an earlier header claimed that, and a reader who
+// diffed the pair found five hunks with no way to tell which were load-bearing.
+import { useCallback, useState } from 'react';
 
 import {
   useBlockContext,
@@ -36,8 +39,6 @@ export function App() {
   const [prompt, setPrompt] = useState('');
   const [status, setStatus] = useState<'ready' | 'generating'>('ready');
   const [generated, setGenerated] = useState(false);
-  const consentPendingRef = useRef(false);
-  void consentPendingRef;
 
   const granted = hasBudgetedScope(token.scopes);
   void granted;

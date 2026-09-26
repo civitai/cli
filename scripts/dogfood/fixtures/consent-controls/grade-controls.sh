@@ -52,13 +52,18 @@ fi
 # whose `brief_name` and brief prose disagree.
 for t in $FIXTURES; do
   mkdir -p "$RUNS/$t"
-  BRIEF_FILE="$BRIEF_FILE" TRIAL="$t" OUT="$RUNS/$t/transcript.jsonl" python3 -c '
+  # BRIEF_NAME crosses into python as an env var rather than being retyped as a
+  # literal: the oracle REFUSES a transcript whose `brief_name` and brief prose
+  # disagree, so two copies of this constant would make changing the shell
+  # variable alone produce a transcript that is rejected as self-inconsistent.
+  BRIEF_FILE="$BRIEF_FILE" BRIEF_NAME="$BRIEF_NAME" TRIAL="$t" \
+  OUT="$RUNS/$t/transcript.jsonl" python3 -c '
 import json, os, pathlib
 brief = pathlib.Path(os.environ["BRIEF_FILE"]).read_text()
 trial = os.environ["TRIAL"]
 start = {"t": 1790400000.0, "kind": "start", "trial": trial, "model": "operator-control",
          "image": "df-node-root", "user": "root", "agent_env": "",
-         "brief_name": "genpost", "brief": brief,
+         "brief_name": os.environ["BRIEF_NAME"], "brief": brief,
          "container": "dogfood-" + trial, "credentialed": False}
 end = {"t": 1790400600.0, "kind": "end", "stop": "finished", "finish_reason": "stop",
        "steps": 0, "usage": {"prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0}}
@@ -68,26 +73,69 @@ done
 
 printf '=== consent controls, both arms (runs under %s)\n\n' "$RUNS"
 
+# 🔴 CLEAR EVERY ARM KNOB ON BOTH BRANCHES — SELECTING AN ARM IS NOT ENOUGH.
+# The arms are chosen by AMBIENT environment variables, so the `consented` branch
+# is not "the default arm": it is "whatever the operator's shell exports". A stale
+# `export CIVITAI_ASSERT_UNCONSENTED=1` makes the row this script prints under the
+# literal word `consented` an UNCONSENTED measurement, and the reader has no way
+# to see it except by noticing `arm=` inside the pasted summary line. This script
+# is the first tool in this tree that prints its own arm COLUMN, so it is the one
+# that has to defend it. The rule is not new — `dogfood_oracle_test.go` clears the
+# same five by name, and says why in a comment; `oracle.sh` names the same hazard.
+ARM_ENV="env -u CIVITAI_ASSERT_UNCONSENTED -u CIVITAI_ASSERT_ANON_VIEWER \
+         -u CIVITAI_ASSERT_NO_HOST -u CIVITAI_ASSERT_NO_HOST_PICKS -u DOGFOOD_ASSERT"
+
+UNMEASURED=0
+MISLABELLED=0
+
 for t in $FIXTURES; do
   for arm in consented unconsented; do
-    OUT=$(
-      cd "$DOGFOOD" || exit 2
-      if [ "$arm" = unconsented ]; then
-        CIVITAI_CHROME="$BROWSER" DOGFOOD_RUNS="$RUNS" CIVITAI_ASSERT_UNCONSENTED=1 \
-          bash oracle.sh "$t" root 2>&1
-      else
-        CIVITAI_CHROME="$BROWSER" DOGFOOD_RUNS="$RUNS" \
-          bash oracle.sh "$t" root 2>&1
-      fi
-    )
+    if [ "$arm" = unconsented ]; then
+      OUT=$( cd "$DOGFOOD" && $ARM_ENV CIVITAI_CHROME="$BROWSER" DOGFOOD_RUNS="$RUNS" \
+               CIVITAI_ASSERT_UNCONSENTED=1 bash oracle.sh "$t" root 2>&1 )
+    else
+      OUT=$( cd "$DOGFOOD" && $ARM_ENV CIVITAI_CHROME="$BROWSER" DOGFOOD_RUNS="$RUNS" \
+               bash oracle.sh "$t" root 2>&1 )
+    fi
+    RC=$?
     mkdir -p "$RUNS/$t"
     printf '%s\n' "$OUT" > "$RUNS/$t/oracle.$arm.txt"
     VERDICT=$(printf '%s\n' "$OUT" | grep -a '^brief=' | tail -1)
     REASON=$(printf '%s\n' "$OUT" | grep -a '^render_reason=' | tail -1)
-    printf '%-24s %-12s %s\n' "$t" "$arm" "${VERDICT:-<no verdict line — the oracle exited 2, nothing was measured>}"
+    if [ -z "$VERDICT" ]; then
+      UNMEASURED=$((UNMEASURED + 1))
+      # Report the oracle's ACTUAL exit code and its own last stderr line rather
+      # than asserting `exited 2` — which was never captured, and would be a
+      # claim about a number this script had not read.
+      printf '%-24s %-12s %s\n' "$t" "$arm" \
+        "<NOTHING MEASURED — oracle.sh exited $RC with no verdict line>"
+      printf '%-24s %-12s   %s\n' '' '' \
+        "$(printf '%s\n' "$OUT" | grep -a '^oracle: ' | tail -1)"
+      continue
+    fi
+    # 🔴 ASSERT THE ARM THE ORACLE REPORTS EQUALS THE ONE THIS COLUMN CLAIMS.
+    # The `env -u` above removes the known route to a mislabelled row; this
+    # catches every other one, including a future arm knob nobody added here.
+    GOT_ARM=$(printf '%s\n' "$VERDICT" | sed -n 's/.*[[:space:]]arm=\([^ ]*\).*/\1/p')
+    if [ -n "$GOT_ARM" ] && [ "$GOT_ARM" != "$arm" ]; then
+      MISLABELLED=$((MISLABELLED + 1))
+      printf '%-24s %-12s 🔴 ARM MISMATCH — this row is an "%s" measurement\n' "$t" "$arm" "$GOT_ARM"
+    fi
+    printf '%-24s %-12s %s\n' "$t" "$arm" "$VERDICT"
     printf '%-24s %-12s   %s\n' '' '' "${REASON:-render_reason=<none>}"
   done
   printf '\n'
 done
 
 printf 'Full oracle output per cell: %s/<fixture>/oracle.<arm>.txt\n' "$RUNS"
+
+# 🔴 A RUN IN WHICH NOTHING WAS MEASURED MUST NOT EXIT 0. Two of the three
+# fixtures legitimately grade `no`, so the VERDICTS are not this script's
+# business — but "the oracle could not run" is an instrument failure, and the
+# handoff invokes this script as the reproduction step, so anything wrapping it
+# would read six unmeasured cells as success.
+if [ "$UNMEASURED" -gt 0 ] || [ "$MISLABELLED" -gt 0 ]; then
+  printf '\nINSTRUMENT FAILURE: %s cell(s) measured nothing, %s row(s) mislabelled.\n' \
+    "$UNMEASURED" "$MISLABELLED" >&2
+  exit 2
+fi

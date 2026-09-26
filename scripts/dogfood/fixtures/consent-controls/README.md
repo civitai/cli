@@ -13,7 +13,7 @@ nix-shell -p chromium --run 'bash grade-controls.sh'
 1. **Attribution** — a pair differing in **one controlled variable** rather than a version bump.
 2. **Reproducibility** — the existing real-bundle controls are containers in the handoff's *"SEVEN FIXTURES — DO NOT DESTROY"* set; these rebuild from git in ~5 min.
 
-🔴 **RETRACTED — do not re-derive it.** The first version of this README, of `build.sh`'s header, of the block in `../../README.md` and of the PR body all led with: *"an arm whose `no` has never been watched arrive for the arm's OWN reason is a claim about the instrument, not a measurement."* **That sentence is false, and was false when written.** The arm's own `no` had already been observed on a real bundle: `ab-ship-mimo-02` (the live `ab-img-poster v0.1.0`) graded `RENDER=no observed=ready>generating>ready` — *"spent without asking"* — against its `v0.1.1` fix at `RENDER=yes observed=ready`. Three more of the seven fixtures grade `no` on the arm, and the handoff's own *How to verify* section runs exactly that cell. The claim reached four sites because nobody re-read the table it contradicts.
+🔴 **RETRACTED — do not re-derive it.** The first version of this README, of `build.sh`'s header, of the block in `../../README.md` and of the PR body all led with: *"an arm whose `no` has never been watched arrive for the arm's OWN reason is a claim about the instrument, not a measurement."* **That sentence is false, and was false when written.** The arm's own `no` had already been observed on a real bundle: `ab-ship-mimo-02` (the live `ab-img-poster v0.1.0`) graded `RENDER=no observed=ready>generating>ready` — *"spent without asking"* — against its `v0.1.1` fix at `RENDER=yes observed=ready`. Two more of the seven fixtures (`ab-genpost-dsv4-02`, `ab-ship-mimo-01`) grade `no` on the arm for the arm's own reason, and the handoff's own *How to verify* section runs exactly that cell. The claim reached four sites because nobody re-read the table it contradicts.
 
 ## The pair
 
@@ -21,8 +21,7 @@ nix-shell -p chromium --run 'bash grade-controls.sh'
 
 ```tsx
 if (!granted) {                                   // present in `asks`,
-  consentPendingRef.current = true;               // absent in `blind`
-  requestConsent({ scopes: [BUDGETED_SCOPE] });
+  requestConsent({ scopes: [BUDGETED_SCOPE] });    // absent in `blind`
   return;
 }
 void runGeneration();
