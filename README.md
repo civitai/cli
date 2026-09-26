@@ -1227,7 +1227,7 @@ about **70 bytes larger**. The printed number accounts for it: it is computed
 from the body *this run* will send, not from a fixed envelope — and the
 `--package-only` and no-token paths stamp nothing, so they run no `git` at all.
 
-🔴 **The ceiling is 10485760 bytes of body, and `app submit` refuses above it.**
+🔴 **The ceiling is 10485760 bytes of body, and `app submit` refuses at or above it.**
 The refusal costs no upload — it is checked against the marshalled document
 itself, before the request is built. The number is not this CLI's: it is
 Next.js's `proxyClientMaxBodySize` default, which applies because civitai's
@@ -1237,6 +1237,20 @@ proxy matches `/api/v1/:path*` and sets no override.
 are generous (2000 files, 10 MiB per file, 50 MiB compressed, 200 MiB
 decompressed) and clearing them is **not** a prediction that the submit will be
 accepted.
+
+**Why "at or above" and not "above".** A body of *exactly* 10485760 is reachable in practice —
+the JSON envelope for a `--allow-dirty` submit is 96 bytes, base64 output is always a multiple
+of 4, so a 7,864,246-byte zip lands on the ceiling to the byte. Which side of it the platform
+sits on is genuinely unresolved: Next.js's source reads `bytesRead > bodySizeLimit`, which would
+accept that body, while an end-to-end measurement of the real endpoint answered `413` at exactly
+10485760 (and `401` — i.e. the body got through to auth — one byte below). One of those is wrong
+and this CLI cannot settle it without spending a real submission.
+
+It does not need to. The two mistakes are not equally priced: refusing one byte early costs an
+author a flag they are already told about, and accepting one byte too many costs the whole
+upload and returns an error naming nothing about size. So the guard takes the cheap side, and
+this paragraph records that it is a choice under uncertainty rather than a fact about the
+server.
 
 ⚠ **The ceiling is vendored, so `--allow-oversize` is the way out.** Nothing in
 this CLI notices the day civitai raises that default, and on that day a shipped
@@ -3201,7 +3215,7 @@ fi
 - A resource that **exists but is not ready** lands here too, and deliberately not on `4`: `civitai app metrics <slug>` for an app whose submitted version is still in review exits `1`, because the slug is right and the app does exist — only its analytics do not exist yet, and the error names `civitai app status <slug>` as the next command. `4` stays reserved for a slug with no submissions at all, so the two remain separately actionable: fix the slug, versus wait for approval.
 - A **version regression** lands here for the same reason: `civitai app submit` refuses when the manifest version is not strictly **above the highest approved version** of that app, because approving an older (or identical) version replaces the newer live deployment. Nothing about the invocation is wrong, so it is a verdict about the project, not a `2`. `--allow-downgrade` is the deliberate-rollback escape hatch, and the guard is skipped entirely by `--package-only` or a run with no token — neither reaches the server.
 - A **dirty git work tree** lands here too: `civitai app submit` refuses while files that go into the bundle are uncommitted, because the bundle is packaged from what is on disk and approving one deploys code that exists in no commit. `--allow-dirty` submits the tree as it is. It **degrades rather than enforcing** — a directory that is not in a git repo, or a machine with no `git` on `PATH`, submits exactly as before (scaffolded apps have no repo, and that path must keep working), and a clean tree whose `HEAD` is on no remote **warns** instead of refusing. Like the version guard it is skipped by `--package-only` and by a run with no token.
-- **A bundle the server cannot receive** lands here for the same reason, since [#585](https://github.com/civitai/cli/issues/585): `civitai app submit` refuses BEFORE uploading when the base64 JSON body would exceed what the platform accepts, so the transfer costs nothing. Nothing about the invocation is wrong — the project is too big — which is why it is `1` and not `2`, matching the version and dirty-tree refusals above. It previously reached `2` by way of the server answering `400: Invalid JSON`. `--allow-oversize` is the escape hatch, because the ceiling is a vendored number the CLI cannot re-measure; see AGENTS.md item 31.
+- **A bundle the server cannot receive** lands here for the same reason, since [#585](https://github.com/civitai/cli/issues/585): `civitai app submit` refuses BEFORE uploading when the base64 JSON body reaches or exceeds what the platform accepts, so the transfer costs nothing. Nothing about the invocation is wrong — the project is too big — which is why it is `1` and not `2`, matching the version and dirty-tree refusals above. It previously reached `2` by way of the server answering `400: Invalid JSON`. `--allow-oversize` is the escape hatch, because the ceiling is a vendored number the CLI cannot re-measure; see AGENTS.md item 31.
 - The **build-provenance stamp** those two guards now also collect (issue #411 — the commit `civitai app submit` reports and `civitai app status` shows) changes no exit code at all, in either direction. It is sent only when the CLI can establish a value in exactly the shape the server accepts (`^[0-9a-f]{40}$`); every branch that cannot — no repo, no `git` on `PATH`, a repo with no commits, or an answer it does not recognise — sends nothing and submits exactly as it did before. A submit that would have succeeded cannot fail because of it, and a missing stamp is never an error.
 - **"Wait for approval" is the *pending* case only.** The same `1` covers an app whose latest submission was **rejected** or **withdrawn** — nothing is in review there, so `civitai app metrics <slug>` says so and names a new `civitai app submit` as the next step instead of a review to wait for. What separates `1` from `4` is unchanged: the slug is right and the app exists.
 
@@ -3268,7 +3282,7 @@ context rather than instructions.
 | `(token scope not reported by the server — Buzz capabilities unknown)` | The server reported no `tokenScope`, so the two **Buzz** rows are omitted rather than printed as `no`. **Submit Apps** above it is unaffected. | [Submit & auth](#submit--auth) |
 | `not permitted to read this app's analytics (403)` | `app metrics` needs the **Apps submit scope**. Re-run `civitai login` if your token predates it; a full-scope personal API key also works. | [App metrics](#app-metrics) |
 | `block lacks ai:write:budgeted scope` | Printed by your app at runtime under `dev:live`: the dev token was minted **without** `--spend`, and that scope is never requested implicitly, manifest or not. | [Local dev loop](#local-dev-loop-harness-mock-vs-live) |
-| `the server can receive` | The submit body exceeds **10485760 bytes** and `app submit` refused **before uploading**, so it cost you nothing. Shrink the bundle, or pass `--allow-oversize` — the ceiling is vendored, not measured. | [Submit & auth](#submit--auth) — *How big can a bundle be?* |
+| `the server can receive` | The submit body reached or exceeded **10485760 bytes** and `app submit` refused **before uploading**, so it cost you nothing. Shrink the bundle, or pass `--allow-oversize` — the ceiling is vendored, not measured. | [Submit & auth](#submit--auth) — *How big can a bundle be?* |
 | `insufficient Buzz` / `generation disabled` | Not credential problems, which is why they exit `1` rather than `3` — a script must not loop on `civitai login` for either. | [Exit codes specific to `generate`](#exit-codes-specific-to-generate) |
 | `rate limited (429)` | 🔴 **One message, TWO exit codes — branch on the code, never the text.** `2` for the deep-paging cap, which is structurally doomed (`--cursor`, not `--page`); `6` for a genuine throttle, which you retry. | [Exit codes](#exit-codes) |
 | `Civitai returned HTTP` | **A retriable status that survived every read retry** — `502`/`503`/`504`, or a `429` carrying `Retry-After` — exiting **`5`** in every case. Read the number in the message to know which you hit. | [Exit codes](#exit-codes) |

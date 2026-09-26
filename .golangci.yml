@@ -21,12 +21,32 @@ linters:
     staticcheck:
       # Keep the correctness (SA*), simplification (S1*) and the meaningful style
       # conventions (ST1005 error strings, ST1006, ST1015, ST1017, ST1018, …).
-      # Two families are turned off for this first pragmatic gate:
-      #   * ST1000/ST1003/ST1016/ST1020-ST1022 — these are staticcheck's OWN
-      #     default-off doc-comment/naming conventions (package-comment form,
-      #     initialism casing, receiver-name consistency, exported-symbol comment
-      #     wording). We replicate that default here because setting `checks`
-      #     explicitly otherwise re-enables them.
+      # ST1020/ST1021/ST1022 ARE ENABLED, and deliberately so — they are the
+      # "an exported symbol's doc comment must begin with its own name" family.
+      # 🔴 THAT PREDICATE IS NOT COSMETIC HERE. A doc block that runs into the
+      # next one without a blank line compiles, gofmt-passes and vets clean, and
+      # godoc silently hands the WHOLE block to whichever declaration comes
+      # first — so one symbol ships undocumented while another wears its
+      # evidence. That shipped in #585 (MaxSubmitBodyBytes / ErrBundleTooLarge in
+      # internal/appapi) and needed #598 to repair. Enabling these three was
+      # measured before it was committed: 1 finding repo-wide, and ST1022 was
+      # watched going red on a re-introduction of the #585 defect itself.
+      # 🔴 BUT THEY CATCH ONE HALF OF THAT MECHANISM, NOT BOTH, so the sentence
+      # above describes more than this gate delivers. They fire only on a doc
+      # comment that EXISTS and opens with the wrong identifier — i.e. on the
+      # block that MOVED. The declaration it left BARE is not a finding for any
+      # of the three: measured on this tree, deleting MaxSubmitBodyBytes's whole
+      # doc block (the exact #585 symptom, `go doc` printing the const line and
+      # nothing else) lints rc=0, 0 issues. That half is owned by
+      # internal/appapi/submit_ceiling_doc_nonempty_test.go, which asserts
+      # non-emptiness and deliberately does no name checking. Enabling these
+      # three retired the name-leading assertion of a hand-rolled AST test over
+      # three symbols in one package, and only that assertion.
+      # Two families are still turned off for this pragmatic gate:
+      #   * ST1000/ST1003/ST1016 — staticcheck's OWN default-off package-comment
+      #     form, initialism casing and receiver-name consistency. We replicate
+      #     that default here because setting `checks` explicitly otherwise
+      #     re-enables them.
       #   * QF* "quickfix" family — opinionated auto-refactor suggestions (De
       #     Morgan's law, tagged switches, Fprintf-vs-WriteString) rather than
       #     correctness/convention issues. Churning unrelated logic to satisfy
@@ -36,9 +56,6 @@ linters:
         - -ST1000
         - -ST1003
         - -ST1016
-        - -ST1020
-        - -ST1021
-        - -ST1022
         - -QF1001
         - -QF1002
         - -QF1003

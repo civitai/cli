@@ -29,6 +29,83 @@ import (
 // list would bury the size line above it, which is the more important fact.
 const submitDiagnosisEntries = 5
 
+// submitInvocation is what THIS run of `app submit` was handed: the directory it
+// was pointed at, and the waivers it was passed. It exists so a message that
+// tells the author to run the command again can reproduce the run they made.
+//
+// 🔴 A SUGGESTED COMMAND THAT DROPS A WAIVER IS REFUSED AGAIN, FOR A DIFFERENT
+// REASON. The size refusal used to print a bare `civitai app submit
+// --allow-oversize`, and the only way to reach that refusal in a real project is
+// a run that already passed a waiver: the dirty-tree guard runs BEFORE the size
+// guard, so an author on a dirty tree who copies the suggested line hits the
+// dirty refusal instead of the upload the line promised. --skip-validate, --yes
+// (a non-TTY shell refuses without it) and --allow-downgrade sit in front of the
+// size guard the same way, and the DIRECTORY matters just as much: a suggestion
+// that drops `./my-block` packages the current directory instead.
+//
+// Only gates are reproduced. Nothing that changes WHAT is packaged or where the
+// output lands (-o) is carried over — those are the author's choice to repeat,
+// and guessing them would put a path in the suggestion the author did not ask
+// for.
+type submitInvocation struct {
+	// dir is the path as the user typed it, so the suggestion is pasteable from
+	// the same shell. "" and "." both render as no argument at all.
+	dir            string
+	allowOversize  bool
+	skipValidate   bool
+	allowDirty     bool
+	assumeYes      bool
+	allowDowngrade bool
+}
+
+// retryCommand renders the invocation as `civitai app submit …`, carrying every
+// gate-waiving flag this run used plus the extra flags given, in that order.
+//
+// The extras come last because they are the point of the suggestion — the reader
+// is looking for the flag the message just told them about, and burying it among
+// the flags they already typed is how a suggestion gets skimmed.
+func (inv submitInvocation) retryCommand(extra ...string) string {
+	parts := []string{"civitai app submit"}
+	if inv.dir != "" && inv.dir != "." {
+		parts = append(parts, inv.dir)
+	}
+	// Order is fixed (not the order the user typed) so two runs of the same
+	// shape produce the same line.
+	for _, f := range []struct {
+		on   bool
+		flag string
+	}{
+		{inv.skipValidate, "--skip-validate"},
+		{inv.allowDirty, "--allow-dirty"},
+		{inv.allowDowngrade, "--allow-downgrade"},
+		{inv.assumeYes, "--yes"},
+	} {
+		if f.on {
+			parts = append(parts, f.flag)
+		}
+	}
+	parts = append(parts, extra...)
+	return strings.Join(parts, " ")
+}
+
+// packageOnlyCommand renders the `--package-only` suggestion.
+//
+// It carries the DIRECTORY and --skip-validate and deliberately nothing else:
+// --package-only never reaches the dirty-tree guard, the confirmation prompt or
+// the version guard (all three run on the upload path only), so repeating those
+// waivers would print flags that change nothing. Validation is not skipped by
+// --package-only, so that one still matters.
+func (inv submitInvocation) packageOnlyCommand() string {
+	parts := []string{"civitai app submit"}
+	if inv.dir != "" && inv.dir != "." {
+		parts = append(parts, inv.dir)
+	}
+	if inv.skipValidate {
+		parts = append(parts, "--skip-validate")
+	}
+	return strings.Join(append(parts, "--package-only"), " ")
+}
+
 // printSubmitSizeDiagnosis writes what the CLI knows about the bundle whose
 // upload just failed: the size of the request it put on the connection, and the
 // largest entries those bytes were made of.
@@ -38,7 +115,13 @@ const submitDiagnosisEntries = 5
 // does not know this failure is about size, and it must not imply it does —
 // this same block prints under a 500 that has nothing to do with the bundle.
 // See issue #423 for the failure that made the distinction matter, and pkgzip's
-// cap comment for why the honest move is to report rather than refuse.
+// cap comment for why no ceiling on the compressed archive is guessed there.
+// (That comment used to be summarised here as "the honest move is to report
+// rather than refuse", which stopped describing the CLI at #585: the request
+// BODY does have a vendored ceiling and is refused on it. Reaching this block
+// means that ceiling did not fire — either because the body was under it, or
+// because --allow-oversize made it inert, and the two are opposite facts about
+// the body. See the conditional paragraph below.)
 //
 // 🔴 "up to", AND THAT WORD IS THE WHOLE OF A SECOND MEASURED DEFECT. This block
 // used to print only when httptrace reported the request written CLEANLY, so the
@@ -57,7 +140,7 @@ const submitDiagnosisEntries = 5
 // and the size already appears on the `Packaged …` line for anyone who wants
 // it — printing an entry table after every submit would train people to skip
 // the block, which is precisely when it is worth reading.
-func printSubmitSizeDiagnosis(w io.Writer, zipBytes []byte, prov appapi.Provenance) {
+func printSubmitSizeDiagnosis(w io.Writer, zipBytes []byte, prov appapi.Provenance, inv submitInvocation) {
 	fmt.Fprintf(w, "\nWhat this CLI sent (it cannot tell whether that is why the submit failed):\n")
 	fmt.Fprintf(w, "  up to %d bytes on the wire — a %d-byte zip, base64-encoded into a JSON body.\n",
 		appapi.SubmitBodySize(len(zipBytes), prov), len(zipBytes))
@@ -70,14 +153,49 @@ func printSubmitSizeDiagnosis(w io.Writer, zipBytes []byte, prov appapi.Provenan
 		}
 	}
 
-	for _, line := range wrapRunes("The size the server applies any request-body limit to is the first number, "+
-		"not the zip. This CLI's own size caps are not the server's and are much higher, so clearing them is "+
-		"not a prediction that a submit will be accepted (issue #423). If the bundle carries files the platform "+
-		"build does not need, drop them and retry:", 78) {
+	// 🔴 THIS BLOCK RUNS ONLY WHEN THE VENDORED CEILING DID NOT FIRE, WHICH IS
+	// PRECISELY WHEN THE CEILING MAY BE WRONG. The paragraph below used to say
+	// only that the CLI's packaging caps are not the platform's and are much
+	// higher — true, and since #585 badly incomplete, because there is now a
+	// vendored request-body ceiling too and a body that got here cleared it.
+	//
+	// If the platform ever LOWERS proxyClientMaxBodySize below the number this
+	// CLI vendors, that is exactly the shape #423 had: the body clears the local
+	// guard, is truncated in transit, and comes back `400: Invalid JSON` — an
+	// error about the parse, naming nothing about size. An author told at that
+	// moment that the CLI has no idea what the platform accepts has been pointed
+	// away from the one number that could explain it. So the ceiling is named,
+	// with the direction it can be wrong in.
+	//
+	// 🔴 AND THE SENTENCE IS CONDITIONAL, BECAUSE "THE GUARD DID NOT FIRE" DOES
+	// NOT MEAN "THE BODY WAS UNDER THE CEILING". --allow-oversize makes the guard
+	// inert, so on that path the body can be far OVER it — and the unconditional
+	// wording put the claim two lines under a size line contradicting it, in the
+	// same stream. Measured: --allow-oversize against a server answering `400:
+	// Invalid JSON` printed "up to 11888521 bytes on the wire" and then "so this
+	// body was under" 10485760. That is #423's own scenario, and this block was
+	// telling the one author who is certainly over the ceiling to look elsewhere.
+	// Under the override the claim inverts: over the ceiling is now the LIKELY
+	// cause, which is the whole reason the refusal exists.
+	ceiling := fmt.Sprintf("It does refuse a body of %d bytes or more before uploading, so this body was "+
+		"under that — but that ceiling is a vendored default, not something the platform told us, and if "+
+		"the real limit has been lowered since it is now too high.", appapi.MaxSubmitBodyBytes)
+	if inv.allowOversize {
+		ceiling = fmt.Sprintf("It normally refuses a body of %d bytes or more before uploading, and "+
+			"--allow-oversize waived that refusal for this run — so this body may well be OVER the "+
+			"ceiling, which is a likely cause of the failure above: a body the platform will not accept "+
+			"is cut short in transit and comes back as an error about the parse, naming nothing about "+
+			"size. Re-run without --allow-oversize to see the size the guard would have refused.",
+			appapi.MaxSubmitBodyBytes)
+	}
+	for _, line := range wrapRunes("The size a request-body limit applies to is the first number, "+
+		"not the zip. This CLI's packaging caps are its own and are much higher, so clearing them is not a "+
+		"prediction that a submit will be accepted (issue #423). "+ceiling+
+		" If the bundle carries files the platform build does not need, drop them and retry:", 78) {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
 	fmt.Fprintf(w, "    %s   # writes the exact .zip, so you can list it before retrying\n",
-		ui.Code("civitai app submit --package-only"))
+		ui.Code(inv.packageOnlyCommand()))
 }
 
 // printSubmitSizeRefusal writes what the CLI WOULD have sent, for a bundle it
@@ -94,7 +212,7 @@ func printSubmitSizeDiagnosis(w io.Writer, zipBytes []byte, prov appapi.Provenan
 // It keeps the entry list, because the refusal's own message tells the author
 // that `civitai app submit` lists the largest entries; dropping it would make
 // that sentence false in the other direction.
-func printSubmitSizeRefusal(w io.Writer, zipBytes []byte, prov appapi.Provenance) {
+func printSubmitSizeRefusal(w io.Writer, zipBytes []byte, prov appapi.Provenance, inv submitInvocation) {
 	fmt.Fprintf(w, "\nWhat this CLI would have sent (nothing was uploaded — it stopped before contacting the server):\n")
 	fmt.Fprintf(w, "  %d bytes on the wire — a %d-byte zip, base64-encoded into a JSON body.\n",
 		appapi.SubmitBodySize(len(zipBytes), prov), len(zipBytes))
@@ -107,13 +225,29 @@ func printSubmitSizeRefusal(w io.Writer, zipBytes []byte, prov appapi.Provenance
 		}
 	}
 
+	// 🔴 EACH SENTENCE'S COLON INTRODUCES THE COMMAND THAT DOES WHAT IT SAID. The
+	// wording this replaced ended "--allow-oversize submits anyway:" and then
+	// printed `civitai app submit --package-only`, which never submits — the one
+	// command an author reaching for the escape hatch must not copy. Two claims
+	// were being made and only one command was offered, so the trailing colon
+	// attached the wrong one.
+	//
+	// 🔴 AND BOTH COMMANDS CARRY THIS RUN'S OWN FLAGS, because a suggestion that
+	// drops one is refused again for a different reason. See submitInvocation:
+	// the dirty-tree guard runs BEFORE the size guard, so the bare
+	// `civitai app submit --allow-oversize` this used to print was, for the one
+	// invocation that can actually reach this block on a real project, a command
+	// that fails on the dirty tree instead of uploading.
 	for _, line := range wrapRunes("The first number is what the limit applies to, not the zip. Drop what the "+
-		"platform build does not need and retry. If you believe the server now accepts more than this CLI "+
-		"expects, --allow-oversize submits anyway:", 78) {
+		"platform build does not need and retry — this writes the exact .zip, so you can list it first:", 78) {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
-	fmt.Fprintf(w, "    %s   # writes the exact .zip, so you can list it before retrying\n",
-		ui.Code("civitai app submit --package-only"))
+	fmt.Fprintf(w, "    %s\n", ui.Code(inv.packageOnlyCommand()))
+	for _, line := range wrapRunes("If you believe the platform now accepts more than this CLI expects, "+
+		"submit anyway:", 78) {
+		fmt.Fprintf(w, "  %s\n", line)
+	}
+	fmt.Fprintf(w, "    %s\n", ui.Code(inv.retryCommand("--allow-oversize")))
 }
 
 // skippedListCap is how many skipped paths the `Skipped …` line names before it
@@ -384,6 +518,20 @@ Defaults to the current directory.`,
 			}
 			out := cmd.OutOrStdout()
 
+			// Captured once, here, where the flags and the positional are in
+			// scope. Everything downstream that suggests re-running the command
+			// renders it from this rather than re-typing a command line, so a
+			// suggestion cannot silently drop a waiver the run needed — see
+			// submitInvocation.
+			inv := submitInvocation{
+				dir:            dir,
+				allowOversize:  allowOversize,
+				skipValidate:   skipValidate,
+				allowDirty:     allowDirty,
+				assumeYes:      assumeYes,
+				allowDowngrade: allowDowngrade,
+			}
+
 			// 0. Classify the path the USER named. Same gate `app validate`
 			// uses — one rule, one place (resolveProjectDir, project_dir.go):
 			// a nonexistent path or a file exits 2, a real directory with no
@@ -570,7 +718,7 @@ Defaults to the current directory.`,
 			// 3a. Programmatic submit if we have a token (OAuth or personal key).
 			// The gate above already confirmed (or --yes bypassed) it.
 			if canUpload {
-				return doUpload(cmd, client, pkg.Zip, m, cfg.BaseURL(), prov)
+				return doUpload(cmd, client, pkg.Zip, m, cfg.BaseURL(), prov, inv)
 			}
 
 			// 3b. Fallback: write the canonical .zip + print next steps.
@@ -636,23 +784,46 @@ func confirmSubmit(cmd *cobra.Command, m *manifest.Manifest, baseURL string, ass
 	}
 }
 
-func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *manifest.Manifest, baseURL string, prov appapi.Provenance) error {
+func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *manifest.Manifest, baseURL string, prov appapi.Provenance, inv submitInvocation) error {
 	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
+	var r *appapi.SubmitResult
+	submit := func(ctx context.Context) error {
+		var e error
+		r, e = client.SubmitVersion(ctx, zipBytes, m.BlockID, m.Version, prov)
+		return e
+	}
+
+	// 🔴 DO NOT ANNOUNCE AN UPLOAD THAT WILL NOT HAPPEN. `Submitting …` goes to
+	// STDOUT and the refusal goes to STDERR, so an author over the ceiling read
+	// "Submitting demo@1.0.0" and then, from the other stream, that nothing was
+	// uploaded. The two are interleaved on a terminal and separated in a pipe;
+	// either way the first line is a claim the second contradicts.
+	//
+	// 🔴 THIS PREDICTS, IT DOES NOT DECIDE. appapi.SubmitVersion remains the only
+	// place the refusal is made — one rule, one place. SubmitBodySize is exact
+	// (pinned by TestSubmitBodySizeMatchesRealMarshal against json.Marshal
+	// itself), so the two agree; but if they ever did not, the whole consequence
+	// is a spinner shown or withheld. Nothing here can refuse a submit the
+	// library would have sent, or send one it would have refused.
+	//
+	// allowOversize short-circuits because that flag makes the guard inert, and
+	// an upload really is about to start.
+	spin := inv.allowOversize || appapi.SubmitBodySize(len(zipBytes), prov) < appapi.MaxSubmitBodyBytes
+
 	// Spin (on a TTY) while the bundle uploads — a real network wait. On a non-TTY
 	// (pipe/CI/tests) WithSpinner prints one plain "Submitting …" line and runs the
 	// upload inline, so scripted/captured output stays deterministic.
-	var r *appapi.SubmitResult
-	err := ui.WithSpinner(ctx, out, fmt.Sprintf("Submitting %s@%s", m.BlockID, m.Version),
-		func(ctx context.Context) error {
-			var e error
-			r, e = client.SubmitVersion(ctx, zipBytes, m.BlockID, m.Version, prov)
-			return e
-		})
+	var err error
+	if spin {
+		err = ui.WithSpinner(ctx, out, fmt.Sprintf("Submitting %s@%s", m.BlockID, m.Version), submit)
+	} else {
+		err = submit(ctx)
+	}
 	if err != nil {
 		// 🔴 THE SERVER'S MESSAGE IS ALREADY VERBATIM, AND FOR #423 IT NAMES
 		// NOTHING. appapi.serverError prints the response body as it arrived, so
@@ -702,13 +873,13 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 		// vocabulary borrowed from a status code that never existed.
 		switch {
 		case errors.Is(err, appapi.ErrBundleTooLarge):
-			printSubmitSizeRefusal(cmd.ErrOrStderr(), zipBytes, prov)
+			printSubmitSizeRefusal(cmd.ErrOrStderr(), zipBytes, prov, inv)
 		case errors.Is(err, appapi.ErrNothingSent):
 			// Nothing left the machine, so there is no account to give: the
 			// error already names the cause, and a byte count here would be the
 			// false claim this case exists to stop.
 		case !errors.Is(err, civitai.ErrUnauthorized) && !errors.Is(err, civitai.ErrRateLimited):
-			printSubmitSizeDiagnosis(cmd.ErrOrStderr(), zipBytes, prov)
+			printSubmitSizeDiagnosis(cmd.ErrOrStderr(), zipBytes, prov, inv)
 		}
 		return err
 	}
