@@ -2,7 +2,6 @@ package cli_test
 
 import (
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -29,13 +28,55 @@ import (
 // either file on its own, because each is perfectly coherent alone while the
 // pair is broken.
 //
-// 🔴 WHAT IT DOES NOT DO. It does not prove the move was VERBATIM. It has no
-// base commit to digest against the way splitItems does, and inventing one for
-// prose would pin a section that is legitimately edited far more often than an
-// item body. What it proves is that the four subjects the routing line NAMES are
-// still discussed where it says they are. A summarised trap passes. That is a
-// weaker claim than the item ledger makes, and it is stated here so nobody reads
-// this file as the same kind of proof.
+// # 🔴 WHAT THE BODY BELOW ACTUALLY CHECKS — READ THIS BEFORE COUNTING IT AS
+// # COVERAGE
+//
+// Four things, and no more:
+//
+//  1. AGENTS.md still has a `## Shell & CI gotchas` section (else there is no
+//     promise to hold anyone to, and this guard reports a CONTROL failure rather
+//     than a pass).
+//  2. That section still spells the literal anchor `CONTRIBUTING.md#shell--ci-gotchas`.
+//  3. CONTRIBUTING.md still has a `## Shell & CI gotchas` heading, and the
+//     section under it is at least minSectionBytes long.
+//  4. FOUR WORDS appear somewhere in that section: `gofmt`, `go test`,
+//     `gh pr checks`, `ci-shallow.sh`.
+//
+// That set catches the realistic RELOCATION failures — the destination heading
+// deleted or renamed, the anchor mistyped, a whole trap dropped — and it catches
+// nothing else.
+//
+// 🔴 IT DOES NOT PRESERVE THE TRAPS' CONTENT, AND THE GAP IS MEASURED, NOT
+// ESTIMATED. An audit replaced the ENTIRE section with one sentence naming the
+// four tools plus filler to ~1,739 bytes — every control, every mechanism, all
+// four traps' actual text gone — and this guard stayed GREEN. Re-measured here
+// rather than inherited from that report, which said 2,617 and 43%: the section
+// is 2,594 bytes as the slicer below cuts it, so the 1,500-byte floor permits
+// deleting 42.2% of it outright. So: four words and a length floor. Not a
+// preservation proof, and not comparable to
+// agents_split_preserved_test.go, which digests an item body against the commit
+// it was moved from. There is no base digest for prose, and inventing one would
+// pin a section that is legitimately edited far more often than an item body.
+//
+// If that residual ever needs closing, close it by digesting the section against
+// a recorded base the way splitItems does — not by adding more words to
+// shellGotchaSubjects, which only moves the summarisable boundary.
+//
+// # 🔴 A GENERIC ANCHOR WALKER LIVED HERE AND WAS DELETED. DO NOT RE-ADD IT.
+//
+// It scanned AGENTS.md for every `](CONTRIBUTING.md#…)` link and re-implemented
+// GitHub's heading-slug rules to check each resolved, on the argument that a
+// FUTURE prose eviction would need it. Measured at the commit that removed it:
+// AGENTS.md makes exactly ONE such link, and the anchor-typo mutant that walker
+// existed to catch is already killed by rule 2 above — a DOUBLE kill, confirmed
+// by applying the mutant in an isolated copy. So it was ~75 lines, including a
+// second implementation of somebody else's slug algorithm that can itself be
+// wrong, whose only live instance was already covered.
+//
+// When a second prose eviction happens, give it its own seam assertion here —
+// naming its own destination and its own subjects — the way this one does.
+// That is cheaper than a generic walker and it fails with a message about the
+// eviction rather than about a slug.
 
 // shellGotchasHeading is the destination heading. It is spelled once, here,
 // because both halves of the assertion below need it and a second spelling is a
@@ -138,86 +179,4 @@ func TestShellGotchasRoutingLineResolves(t *testing.T) {
 			"this repo's Makefile, and it reads as a GREEN about the change you just made. Everything else " +
 			"about it is at the destination; this sentence is not.")
 	}
-}
-
-// agentsProseRoutingRe finds every `](CONTRIBUTING.md#…)` anchor link AGENTS.md
-// makes, so a SECOND prose eviction cannot quietly ship without a resolving
-// destination.
-//
-// It is deliberately wider than the one section above: the guard that only knows
-// about today's eviction is the guard that is silent about tomorrow's, which is
-// the shape agents_evidence_test.go's bidirectional ledger exists to avoid.
-var agentsProseRoutingRe = regexp.MustCompile(`\(CONTRIBUTING\.md#([a-z0-9-]+)\)`)
-
-// TestEveryAgentsContributingAnchorResolves walks those links and checks each
-// names a heading CONTRIBUTING.md actually has, under GitHub's slug rules.
-func TestEveryAgentsContributingAnchorResolves(t *testing.T) {
-	ab, err := os.ReadFile("AGENTS.md")
-	if err != nil {
-		t.Fatalf("CONTROL failure, not a finding: cannot read AGENTS.md: %v", err)
-	}
-	cb, err := os.ReadFile("CONTRIBUTING.md")
-	if err != nil {
-		t.Fatalf("CONTROL failure, not a finding: cannot read CONTRIBUTING.md: %v", err)
-	}
-
-	have := map[string]bool{}
-	headings := 0
-	for _, line := range strings.Split(string(cb), "\n") {
-		if !strings.HasPrefix(line, "#") {
-			continue
-		}
-		headings++
-		have[githubAnchor(strings.TrimLeft(line, "# "))] = true
-	}
-	// POSITIVE CONTROL on the slugger AND on the walk: a CONTRIBUTING.md with no
-	// parsed headings makes every link below report dangling, and a slugger that
-	// produced garbage would do the same. Requiring a known heading to round-trip
-	// proves both.
-	if headings < 5 {
-		t.Fatalf("CONTROL failure, not a finding: parsed %d heading(s) out of CONTRIBUTING.md, want >= 5 — "+
-			"the heading scan is broken, not the links", headings)
-	}
-	if !have["shell--ci-gotchas"] {
-		t.Fatalf("CONTROL failure, not a finding: githubAnchor did not produce %q from any CONTRIBUTING.md "+
-			"heading. Either the section is gone (which TestShellGotchasRoutingLineResolves reports properly) "+
-			"or the slugger mangles `&`, in which case every verdict below is about the slugger.",
-			"shell--ci-gotchas")
-	}
-
-	links := agentsProseRoutingRe.FindAllStringSubmatch(string(ab), -1)
-	// POSITIVE CONTROL for the link scan. Zero links is what a reworded pointer,
-	// a changed path or a regex typo all look like, and it would pass over
-	// nothing.
-	if len(links) == 0 {
-		t.Fatal("CONTROL failure, not a finding: AGENTS.md makes no `](CONTRIBUTING.md#…)` anchor link at all. " +
-			"Prose evicted to CONTRIBUTING.md is reached ONLY by such a link, so either an eviction lost its " +
-			"pointer or this scan is broken (pattern: " + agentsProseRoutingRe.String() + ")")
-	}
-	for _, m := range links {
-		if !have[m[1]] {
-			t.Errorf("AGENTS.md links CONTRIBUTING.md#%s, which is not a heading in CONTRIBUTING.md.\n"+
-				"A prose eviction is only as good as its pointer: an anchor that does not resolve silently "+
-				"drops the reader at the top of the file, which looks like arriving.", m[1])
-		}
-	}
-	t.Logf("%d CONTRIBUTING.md anchor link(s) in AGENTS.md, all resolving against %d heading(s)", len(links), headings)
-}
-
-// githubAnchor slugs a Markdown heading the way GitHub does: lower-cased,
-// punctuation dropped, spaces to hyphens. The `&` case is the one that matters
-// here — it is DROPPED rather than replaced, so `Shell & CI gotchas` becomes
-// `shell--ci-gotchas` with two hyphens, which is exactly the spelling a human
-// writing the link by eye gets wrong.
-func githubAnchor(heading string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(strings.TrimSpace(heading)) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
-			b.WriteRune(r)
-		case r == ' ':
-			b.WriteRune('-')
-		}
-	}
-	return b.String()
 }

@@ -259,13 +259,24 @@ import (
 // so that restoration now lands at 28,873 + 5,381 = 34,254 — clearing the bound
 // by 3,654 where wave 4 cleared it by 39. It got stricter without being touched.
 //
-// 🔴 SAY THE THIN PART OUT LOUD. 1,627 bytes is the largest budget this file has
-// ever carried, and the CHEAPEST single re-inline of those three — the
-// 1,809-byte body behind item 8, against a 167-byte trigger, so 1,642 net —
-// exceeds it by FIFTEEN bytes.
+// 🔴 WHERE 1,627 SITS, MEASURED — AND A RETRACTION. A first draft of this
+// paragraph called it "the largest budget this file has ever carried", which the
+// SAME FILE refutes 209 lines up: the note on this constant records wave 4
+// leaving 3,500. The full series of achieved headrooms is 3,500 (wave 4, #317),
+// 950 (#495), 210, 183, 673 (2026-09-08) and 1 (main before this change). So
+// 1,627 is the largest SINCE WAVE 4, and it is under half the 3,500 that this
+// constant's own derivation picked in order to "buy the worst prose rewrite this
+// file has ever had". Against that derivation's measured non-item churn — median
+// 103, p90 1,127, max 3,399 — it clears p90 by ~500 and is under half the max.
+// That is the position; there is no superlative to reach for, and composing one
+// is how the retracted sentence got written.
+//
+// 🔴 SAY THE THIN PART OUT LOUD. The CHEAPEST single re-inline of those three —
+// the 1,809-byte body behind item 8, against a 167-byte trigger, so 1,642 net —
+// exceeds 1,627 by FIFTEEN bytes.
 // One more ordinary prose edit and a re-inlined body would fit inside the
 // budget. That is not a reason to lower the budget — the anti-re-inlining
-// property moved out of this constant years of waves ago and lives in
+// property moved out of this constant several waves ago and lives in
 // TestEvidencePointersAndFilesAreTheSameSet and
 // TestInlineAgentsItemsStayUnderTheBreakEven, which are structural and
 // byte-free — but it IS the reason not to read a size failure here as "someone

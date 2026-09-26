@@ -133,7 +133,28 @@ string from `maxIconBytes` / `maxCoverBytes` / `maxScreenshotBytes`.
 `TestREADMEIconAspectDoesNotForbidASquareIcon` moved with them; its own CONTROL
 failure is what detected the relocation.
 
-**Two residuals, stated rather than glossed.**
+**The rule text below was corrected in place, through the digest mechanism.**
+The body under the `---` is digested verbatim against `agentsSplitBaseWave3`, so
+it normally cannot be edited at all. It said the bounds are *"documented in
+README → Listing media requirements"*, and this change deleted that section — so
+the canonical rule pointed at nothing, and nothing checked it. Same class as item
+3's false reason, resolved the same documented way: a **recorded line-for-line
+delta**, reversed before digesting (`item25OldLineA` / `item25OldLineB` in
+`agents_split_preserved_test.go`), with both directions asserted live. Restoring
+the dead pointer, rewording the corrected line, or neutering the reversal are all
+RED by name — mutation-tested, three ways.
+
+🔴 **One residual of that repair, named rather than glossed.** The rule's own
+HEADING still reads *"…live in the README as prose"* — the same stale letter this
+amendment retires. It is not corrected in place because that needs the paragraph
+**re-wrapped**, and a re-wrap is a multi-line *sequence* match rather than a
+line-for-line swap: the step from "reverse two known lines" to "diff two texts",
+which is exactly the loosening the digest mechanism must not acquire. So it is
+corrected HERE, above the rule, where a reader meets it first: **the bounds are
+guidance wherever they are documented, and the README is no longer where they
+are.**
+
+**Two further residuals, stated rather than glossed.**
 
 1. The quotation ban in `TestListingRequirementsDocDoesNotPinAServerSentence`
    was a REGRESSION guard against the README (red on the tree that shipped the
@@ -159,8 +180,8 @@ failure is what detected the relocation.
     per-kind aspect range and a minimum dimension at ATTACH time
     (`civitai/civitai → src/server/schema/blocks/app-listing.schema.ts`,
     `validateListingImage`), returning a `BAD_REQUEST` that names the bound and
-    the measured value. Those numbers are documented in README →
-    *Listing media requirements* and in the scaffolded `assets/README.md`, and
+    the measured value. Those numbers are documented in the platform's Store
+    listing guide and in the scaffolded `assets/README.md`, and
     that is deliberately as far as they go.
     - **Why prose and not a check.** This is item 4's argument, applied to a
       different constant set: stale *guidance* costs one round-trip carrying the
