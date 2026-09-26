@@ -377,6 +377,19 @@ bind a debugging port, instead of that surfacing eighty lines into a Go test.
   reworded: `briefs/genpost.md`; pinned by
   `TestTheSameAppPassesConsentedAndFailsUnconsented` and friends in
   `dogfood_oracle_consent_test.go`.
+- 🔴 **That arm's own negative control is `fixtures/consent-controls/`, and the
+  untouched scaffold is NOT it.** Every fixture that failed the arm was an app
+  some model wrote, and the fixture set's negative control — `ab-genpost-glm-01`
+  — fails it for a *render* reason, so the arm's `no` had never been watched
+  arrive for the arm's own reason. Measured 2026-09-26: a page-money scaffold
+  **installed and built** still fails BOTH arms with the identical
+  `[data-testid="prompt"]` timeout, so building it changes nothing — and the
+  scaffold's `App.tsx` in fact requests consent *correctly*, which makes
+  "an untouched scaffold fails the consent arm" true but vacuous. The control is
+  a scaffold-derived pair that both reach the Generate click and differ in
+  exactly one file: `ctl-genpost-blind` grades `yes`/**`no`** across the arms
+  with the consent reason, `ctl-genpost-asks` grades `yes`/`yes`. See that
+  directory's README for the matrix and the JSON evidence.
 
 ## The ship verdict — the account arm, and the one thing the browser cannot see
 
