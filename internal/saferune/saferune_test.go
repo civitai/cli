@@ -9,7 +9,6 @@ import (
 	"sync"
 	"testing"
 	"unicode"
-	"unicode/utf8"
 
 	"golang.org/x/text/unicode/runenames"
 )
@@ -477,10 +476,19 @@ func TestStripRemovesTheBidiControlAndKeepsTheScript(t *testing.T) {
 // IT CANNOT CHANGE SILENTLY IN EITHER DIRECTION.
 //
 // The class contains the join controls, so every script that uses them to make
-// an orthographic distinction loses that distinction. The first version of this
-// sheet listed two cases (emoji, Persian) and the audit measured eight more.
-// Each expectation is written as the surviving SEQUENCE, spelled out — never as
-// `Strip(in)` — so it cannot be derived from the implementation it tests.
+// an orthographic distinction loses that distinction. Each expectation is written
+// as the surviving SEQUENCE, spelled out — never as `Strip(in)` — so it cannot be
+// derived from the implementation it tests.
+//
+// 🔴 THIS COMMENT SAID "listed two cases (emoji, Persian) and the audit measured
+// eight more". BOTH NUMBERS WERE WRONG, and it was wrong on the day it was
+// committed: 2+8=10 while the sheet it sat beside already had 13 rows. Measured
+// against git — 41d41bf covered THREE cases as t.Run blocks (emoji ZWJ,
+// subdivision flag, Persian), and 512e90d replaced them with the 13-row table, so
+// the audit added TEN. It is corrected here rather than deleted because a later
+// reader used it to reconstruct the package doc's retracted "nine", and got a
+// ten-row sheet that never existed. Do not derive a count from prose; derive it
+// from the rows.
 //
 // Malayalam is the sharpest: the chillu is a different LETTER, not a different
 // shape of the same one.
@@ -610,35 +618,27 @@ func degradationScriptSet(t *testing.T) map[string]bool {
 	return set
 }
 
-// numberWords is the spelling the package doc uses for the count. Only the range
-// the sheet could plausibly occupy is listed; a count outside it must be spelled
-// deliberately rather than guessed.
-var numberWords = map[int]string{
-	5: "FIVE", 6: "SIX", 7: "SEVEN", 8: "EIGHT", 9: "NINE",
-	10: "TEN", 11: "ELEVEN", 12: "TWELVE", 13: "THIRTEEN", 14: "FOURTEEN", 15: "FIFTEEN",
-}
-
 // TestDegradationScriptsMatchThePackageDoc is the guard the "at least nine
 // scripts" defect needed and did not have: the package doc published a COUNT of
 // scripts, the measured sheet enumerated a different number, and nothing in the
 // tree compared the two.
 //
-// 🔴 IT PINS THE RELATIONSHIP, NOT A WORD. Three legs, because a check on any one
-// of them passes while the published sentence is false:
+// 🔴 IT PINS ONLY WHAT IS DERIVED FROM THE SHEET, AND IT USED TO PIN MORE. Two
+// further legs were deleted after being MEASURED useless: a keyword ban on
+// retracted and exhaustiveness wording, and a pair of presence checks for the
+// "rows are not scripts" sentences. Both were SPELLED guards — satisfiable by a
+// document that contains the words and states the opposite — which is green while
+// false, the worse failure direction. The sibling measurement that settled it: in
+// internal/cmd, 1,031 bytes of the README's repaired echo paragraph were replaced
+// with keyword-stuffed filler ending "every path is printed raw", and the
+// equivalent legs there returned ok. Do not re-add a leg here that asserts the
+// doc CONTAINS a phrase.
 //
-//  1. NAMING, both directions — every script the sheet measures must be named in
-//     the package doc, and the doc's count must equal the number of distinct
-//     scripts the sheet measures. A doc that names seven of eight, or says eight
-//     and names eight while the sheet measures nine, reddens.
-//  2. RETRACTION — the doc must not restate the retracted "nine scripts" /
-//     "at least nine", in any spelling, and must not put an exhaustiveness word
-//     on the set. The sheet is a FLOOR on the damage: every script that uses the
-//     join controls orthographically loses the same distinctions whether or not a
-//     row here names it, so "all"/"only"/"exhaustive"/"complete" would be a
-//     sharper claim than anything measured.
-//  3. ROWS ≠ SCRIPTS — the doc must say so, because that conflation IS the defect:
-//     Devanagari and Mongolian each contribute two rows and one script, and three
-//     rows contribute no script at all.
+// What survives is a relationship no rewording satisfies: both numbers in the doc
+// are COMPUTED from the sheet — len(distinct scripts) and len(rows) — and the doc
+// must carry them in one derived sentence, plus name every script measured. A row
+// added to the sheet moves a number and reddens this; a reworded doc that keeps
+// the numbers right is correctly allowed to pass.
 //
 // The doc comment is read out of saferune.go rather than restated here; restating
 // it would make this test pass against its own copy of the prose.
@@ -680,115 +680,23 @@ func TestDegradationScriptsMatchThePackageDoc(t *testing.T) {
 				s, sortedKeys(scripts))
 		}
 	}
-	word, ok := numberWords[len(scripts)]
-	if !ok {
-		t.Fatalf("the sheet now measures %d distinct scripts (%v), which numberWords does not spell. Add "+
-			"the spelling AND update the package doc — do not drop the count", len(scripts), sortedKeys(scripts))
-	}
-	if !strings.Contains(flat, word+" scripts") {
-		t.Errorf("the package doc does not state %q. The sheet measures %d distinct script(s) (%v), and the "+
-			"doc publishes a count — they have to be the same number. That they were not is civitai/cli's "+
-			"'at least nine scripts' defect: the doc said nine and enumerated eight.",
-			word+" scripts", len(scripts), sortedKeys(scripts))
-	}
-
-	// --- Leg 2: the retraction, and no exhaustiveness word. ---
-	//
-	// 🔴 THE BAN IS SCOPED TO AN ASSERTION, because a comment that RETRACTS a
-	// claim has to be able to quote it. This is the "too STRICT" half of the bug
-	// internal/cmd's readmeAssertsFlagWinsRule documents: a bare substring ban on
-	// the retracted sentence also forbids the sentence retracting it, and the
-	// retraction is the most useful prose in the comment. Same structural rule as
-	// there: an occurrence bracketed by quotation delimiters is the doc talking
-	// ABOUT the claim; anything else is the doc making it.
-	for _, banned := range []string{"at least nine scripts", "nine scripts lose"} {
-		if assertsRetractedCount(flat, banned) {
-			t.Errorf("the package doc ASSERTS the retracted claim %q (unquoted). Nine was never a count of "+
-				"scripts — it is the non-emoji ROW count of a ten-row sheet. Say what the enumeration "+
-				"supports; quote the old claim only to retract it.", banned)
-		}
-	}
-	// `\b` on both ends, so the RETRACTION's own word "exhaustiveness" — which is
-	// the doc telling an editor not to add one — does not trip the ban on
-	// "exhaustive".
-	for _, claim := range []string{
-		`all scripts`, `only scripts`, `exhaustive`, `the complete set`, `a complete list`,
-	} {
-		re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(claim) + `\b`)
-		if re.MatchString(flat) {
-			t.Errorf("the package doc claims %q about the degradation set. The sheet is a FLOOR: any script "+
-				"using the join controls orthographically loses the same distinctions whether or not a row "+
-				"names it, so no closed-set word is supported.", claim)
-		}
+	// 🔴 BOTH NUMBERS, IN ONE DERIVED SENTENCE. The published defect was a SCRIPT
+	// count that did not match the sheet, and the reconstruction that replaced it
+	// confused scripts with ROWS — so the doc has to carry both figures, and both
+	// are computed here rather than spelled. No word-spelling table: the sentence
+	// is built from the data, so a sheet of any size produces the string the doc
+	// must contain.
+	want := fmt.Sprintf("%d distinct scripts across %d rows", len(scripts), len(documentedDegradations))
+	if !strings.Contains(flat, want) {
+		t.Errorf("the package doc does not state %q.\n"+
+			"  measured: %d distinct script(s) %v across %d row(s)\n\n"+
+			"The doc publishes both figures and they have to be THE sheet's. Two defects came from this "+
+			"pair: \"at least nine scripts\" beside an eight-script enumeration, and a replacement that "+
+			"read nine as a ROW count of a ten-row sheet that never existed. Re-derive the sentence from "+
+			"the numbers above; do not adjust this test.",
+			want, len(scripts), sortedKeys(scripts), len(documentedDegradations))
 	}
 
-	// --- Leg 3: rows are not scripts, and the doc must say so. ---
-	if len(documentedDegradations) == len(scripts) {
-		t.Fatalf("CONTROL failure, not a finding: the sheet has %d rows and %d scripts. Leg 3 exists because "+
-			"those numbers DIFFER; equal, the conflation it guards against cannot happen and the assertion "+
-			"below is vacuous", len(documentedDegradations), len(scripts))
-	}
-	for _, want := range []string{"NOT THE ROW COUNT", "NOT A CEILING"} {
-		if !strings.Contains(flat, want) {
-			t.Errorf("the package doc does not state %q. It publishes a script count over a sheet with %d "+
-				"rows and %d distinct scripts; a reader who reads the count as the row count, or as a "+
-				"ceiling on the damage, is wrong in a way the doc has to pre-empt.",
-				want, len(documentedDegradations), len(scripts))
-		}
-	}
-}
-
-// retractedCountDelims are the characters that, bracketing an occurrence, mark it
-// as a MENTION of the claim rather than an ASSERTION of it.
-var retractedCountDelims = map[rune]bool{
-	'"': true, '“': true, '”': true, '\'': true, '`': true, '‘': true, '’': true,
-}
-
-// assertsRetractedCount reports whether `flat` STATES the retracted count rather
-// than quoting it in order to retract it.
-func assertsRetractedCount(flat, claim string) bool {
-	re := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(claim))
-	for _, loc := range re.FindAllStringIndex(flat, -1) {
-		before, _ := utf8.DecodeLastRuneInString(flat[:loc[0]])
-		after, _ := utf8.DecodeRuneInString(flat[loc[1]:])
-		if retractedCountDelims[before] && retractedCountDelims[after] {
-			continue // quoted: the doc is retracting the claim, not making it
-		}
-		return true
-	}
-	return false
-}
-
-// TestAssertsRetractedCountPredicate validates the INSTRUMENT before its verdict
-// is read in TestDegradationScriptsMatchThePackageDoc. Both directions, because
-// the predicate it replaces was wrong in both: a bare substring ban forbids the
-// retraction (false positive), and no ban at all lets the claim back in (false
-// negative).
-func TestAssertsRetractedCountPredicate(t *testing.T) {
-	const claim = "at least nine scripts"
-	for _, tc := range []struct {
-		name  string
-		in    string
-		asrts bool
-	}{
-		// NEGATIVE CONTROLS: the predicate must be able to say "no".
-		{"quoted retraction", `used to say "at least nine scripts" and enumerated eight`, false},
-		{"backticked retraction", "the `at least nine scripts` wording was never a script count", false},
-		{"absent", "EIGHT scripts are MEASURED to lose orthographic distinctions", false},
-		// POSITIVE CONTROLS: it must be able to say "yes" — including the exact
-		// shape the defect shipped in, and a re-WRAPPED restatement, which is what
-		// a comment reflow produces.
-		{"bare assertion", "emoji sequences break, and at least nine scripts lose distinctions", true},
-		{"capitalised", "At least nine scripts lose orthographic distinctions", true},
-		{"half-quoted", `we said "at least nine scripts and more`, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			flat := strings.Join(strings.Fields(tc.in), " ")
-			if got := assertsRetractedCount(flat, claim); got != tc.asrts {
-				t.Errorf("assertsRetractedCount(%q) = %v, want %v", tc.in, got, tc.asrts)
-			}
-		})
-	}
 }
 
 func sortedKeys(m map[string]bool) []string {

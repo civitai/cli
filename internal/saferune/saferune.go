@@ -1,18 +1,32 @@
 // Package saferune owns the ONE rule this CLI has about which runes a
 // SERVER-SUPPLIED string may put in front of a user, and nothing else.
 //
-// 🔴 SERVER-SUPPLIED. NOT "EVERY STRING THE CLI PRINTS". The CLI does not
-// sanitise what the USER typed on the command line — a prompt, a flag value, a
-// path, a workflow id is echoed back byte-for-byte, because the screen that
-// precedes an irreversible spend has to show what will actually be sent.
+// 🔴 SERVER-SUPPLIED. NOT "EVERY STRING THE CLI PRINTS". The CLI does not apply
+// this rule to what the USER typed on the command line. But that promise is
+// NARROWER THAN "everything the user typed", and it SPLITS BY VALUE, NOT BY
+// SCREEN — do not re-attribute it to the pre-spend approval screen, which is the
+// over-claim four drafts of the published wording died on. The prompt, the
+// negative prompt and `--ecosystem` never reach this package. PATHS are the ones
+// that differ: exact where the approval screen shows what will be sent, and
+// filtered in several of the lines that report a path elsewhere.
 //
-// Two documented exceptions, both away from that screen, both stated here
-// because "server text only" is the tempting over-claim: a value read out of an
-// `--input` FILE is filtered (a graph file can be downloaded or generated, so
-// it is not "what the user typed"), and `download`'s target path is filtered
-// because the same variable holds `--out` verbatim in one branch and a
-// SERVER-chosen file name in the others — see targetPath's comment for the
-// trade and the papercut it accepts. The first cut of civitai/cli#393 got this wrong: `safeTerm` was applied
+// Two cases are DOCUMENTED, and the set is NOT CLOSED AT TWO. Documented: a
+// value read out of an `--input` FILE is filtered (a graph file can be downloaded
+// or generated, so it is not "what the user typed"), and `download`'s target
+// path is filtered because the same variable holds `--out` verbatim in one branch
+// and a SERVER-chosen file name in the others — see targetPath's comment for the
+// trade and the papercut it accepts.
+//
+// 🔴 MEASURED BEYOND THOSE TWO, AND THEY ARE FLAG VALUES: `download --root`
+// reaches routeDir's routing note and `download --for-base` reaches
+// baseModelWarning, both printed through safeTermSingle, so the user's own bytes
+// ARE rewritten there. internal/cmd's TestDownloadFiltersRootAndForBase exercises
+// both; the origin of every call site is ledgered in
+// internal/cmd/safeterm_userinput_test.go, whose rows for those two sites were
+// themselves first written as SERVER and corrected. Nothing enumerates the set,
+// so treat the documented two as examples and NEVER as its boundary: a reader who
+// took them for the whole set would see `--root` filtering as a bug and remove a
+// gate the README positively promises. The first cut of civitai/cli#393 got this wrong: `safeTerm` was applied
 // to `o.prompt`, so a typed Persian prompt (`می‌روم`, held apart by a ZWNJ)
 // rendered joined on the approval screen while the graph on the wire carried
 // the original. The screen stopped showing the job. Call sites are audited in
@@ -132,18 +146,25 @@
 // sheet is TestStripDocumentedDegradations, and the count is pinned to it in
 // both directions by TestDegradationScriptsMatchThePackageDoc.
 //
-// 🔴 EIGHT IS WHAT IS MEASURED, NOT A CEILING, AND IT IS NOT THE ROW COUNT.
-// Every script that uses the join controls orthographically loses the same
-// distinctions whether or not a row names it, so the sheet is a floor on the
-// damage and cannot be read as its boundary; what eight IS, exactly, is the
-// number of distinct scripts the sheet covers. The sheet has more ROWS than
-// that — Devanagari and Mongolian each appear twice, and three rows (the
-// subdivision flag, VS15, Mongolian FVS1) are not script degradations at all.
-// This sentence used to say "at least nine scripts" and then enumerate eight.
-// Nine was never a script count: by that test's own history — two rows, then
-// eight more from the audit — it is the non-emoji ROW count of a ten-row sheet,
-// published as if it were scripts. Do not restore a number this comment's own
-// list does not support, and do not put an exhaustiveness word on it either.
+// 🔴 EIGHT IS WHAT IS MEASURED, NOT A CEILING, AND IT IS NOT THE ROW COUNT. The
+// sheet measures 8 distinct scripts across 13 rows: Devanagari and Mongolian each
+// contribute two rows, and three rows (the subdivision flag, VS15, Mongolian
+// FVS1) are not script degradations at all. Both numbers are derived from that
+// sheet and pinned to it by TestDegradationScriptsMatchThePackageDoc. Eight is a
+// FLOOR on the damage rather than its boundary, because any script that uses the
+// join controls orthographically loses the same distinctions whether or not a row
+// names it — so do not put an exhaustiveness word on it.
+//
+// 🔴 THIS SENTENCE SAID "at least nine scripts" AND THEN ENUMERATED EIGHT, AND
+// WHERE NINE CAME FROM IS UNKNOWN. Do not reconstruct it; a reconstruction is how
+// the replacement for this paragraph was itself wrong once. Measured against git:
+// 41d41bf (the original #393) stated NO count and covered three cases; 512e90d
+// introduced "at least nine scripts" ALREADY BESIDE A 13-ROW SHEET; 600984d kept
+// both. Nine therefore never matched a row count, a script count, or any sheet
+// that was ever committed — including the ten-row sheet a later guess invented for
+// it. A claim whose justification cannot be found is recorded as having none,
+// which is cheaper than the next plausible story.
+//
 // The maintainer chose STRIP over escaping for #393; this is what that costs,
 // and it is written down rather than discovered.
 package saferune

@@ -139,17 +139,16 @@ These go beyond the global defaults because this repo's release pipeline
 - `internal/saferune` — the ONE rule about which runes SERVER-supplied text may
   put in front of a user: `Cc` plus Unicode's `Default_Ignorable_Code_Point`,
   less U+FE0F, plus two blank-but-graphic runes. It is NOT applied to what the
-  USER typed on the command line — two exceptions are DOCUMENTED (`--input` file
-  content, `download`'s mixed-origin target path) and the set is not closed
-  there: `--root` and `--for-base` are measured too.
+  USER typed on the command line — the exceptions are DOCUMENTED there and are
+  not a closed set.
   `cmd`'s `safeTerm`, `genapi`'s `hasPrintableContent` and `pkg/civitai`'s
   `snippet` all call it — three questions, one table, ledgered both ways by
   `TestSaferuneCallersAreLedgered`; #393 was two tables that disagreed, and its
   first fix drew the class on a category instead of the property and was wrong
   in both directions. Read its
   doc comment before changing the class: it states the derivation, the one
-  exception, what is deliberately KEPT and the eight scripts the strip is
-  MEASURED to cost — a floor on the damage, not a ceiling.
+  exception, what is deliberately KEPT and the scripts the strip is measured to
+  cost.
 - **Module root** (`package cli`, `main.go` + `schema.go`) exists *only* to
   `go:embed` the vendored `schema/` and `examples/`. It is not the executable.
 - `npm/` — the `@civitai/cli` wrapper (postinstall downloads the matching raw
