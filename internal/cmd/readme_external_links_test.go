@@ -62,6 +62,24 @@ var notAPage = map[string]string{
 	// is load-bearing: 405 falls through to the >= 400 arm and would fail.
 	"https://mcp.civitai.com/mcp": "MCP transport endpoint; measured 405 to a GET",
 
+	// MEASURED 405 to a plain GET from a developer host — the same transport
+	// class as the sibling above, and documented beside it in the README's
+	// `### The two MCP servers`. Ledgered only now because nobody had run the
+	// guard locally: one of the two transports that section names was excluded
+	// and the other was not.
+	//
+	// 🔴 THIS ENTRY IS NOT A MEASURED CI RED, AND THE DISTINCTION IS THE POINT
+	// OF THE ⚠ ABOVE. The status is CALLER-DEPENDENT: GitHub's runner is
+	// answered 401, which lands in the skip arm, so BOTH of this guard's live
+	// runs passed with `SKIP … 401` — the 2026-09-18 dispatch and the
+	// 2026-09-21 schedule, the only scheduled run there has been. A developer
+	// host is answered 405, which falls through to the >= 400 arm and fails.
+	// So this entry protects the LOCAL run; the scheduled gate never needed it.
+	// An earlier attempt to add it justified itself with "red on every live
+	// run" — false, refuted by reading both run logs — and that wrong claim is
+	// why it was reverted rather than reworded.
+	"https://orchestration.civitai.com/mcp": "MCP transport endpoint; measured 405 to a GET from a developer host (CI is answered 401 and skips it)",
+
 	// MEASURED RED on the guard's first live run.
 	"https://github.com/me/my-app": "placeholder repo URL in a command example",
 }
