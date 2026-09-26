@@ -123,6 +123,26 @@ func contributingSection(t *testing.T, heading string) string {
 	return body
 }
 
+// minRoutingSectionBytes is the anti-vacuity floor on the AGENTS.md side. A
+// slicer that returns "" makes the anchor check fail for the wrong reason and
+// blames the prose for a broken extractor.
+const minRoutingSectionBytes = 300
+
+// agentsSection slices one `## ` section out of AGENTS.md. It is the mirror of
+// contributingSection and exists for the same reason: an assertion about "this
+// section" must be made against that section, not against the whole file.
+func agentsSection(doc, heading string) string {
+	i := strings.Index(doc, heading+"\n")
+	if i < 0 {
+		return ""
+	}
+	body := doc[i+len(heading)+1:]
+	if j := strings.Index(body, "\n## "); j >= 0 {
+		body = body[:j]
+	}
+	return body
+}
+
 // TestShellGotchasRoutingLineResolves is the seam described above.
 func TestShellGotchasRoutingLineResolves(t *testing.T) {
 	b, err := os.ReadFile("AGENTS.md")
@@ -139,10 +159,24 @@ func TestShellGotchasRoutingLineResolves(t *testing.T) {
 			"to hold CONTRIBUTING.md to. If the section was deliberately retired, retire this guard in the "+
 			"same commit rather than leaving it green over nothing.", shellGotchasHeading)
 	}
-	if !strings.Contains(agents, shellGotchasAnchor) {
+	// 🔴 SCOPED TO THE SECTION, BECAUSE A WHOLE-FILE CONTAINS WAS WALKABLE AND WAS
+	// WALKED. This read `strings.Contains(agents, shellGotchasAnchor)` over the
+	// entire file while its own failure message said "section". An audit removed
+	// the link from the routing paragraph, leaving a bare `CONTRIBUTING.md`, and
+	// spelled the anchor in an HTML comment under a different heading — the guard
+	// reported ok, which is precisely the failure the message describes. The
+	// anchor has to be in the paragraph that does the routing, or it routes nobody.
+	routing := agentsSection(agents, shellGotchasHeading)
+	if len(routing) < minRoutingSectionBytes {
+		t.Fatalf("CONTROL failure, not a finding: AGENTS.md's %q section slices to %d bytes, under the %d-byte "+
+			"floor. The section slicer is reading the wrong block — check that before reading the anchor verdict below.",
+			shellGotchasHeading, len(routing), minRoutingSectionBytes)
+	}
+	if !strings.Contains(routing, shellGotchasAnchor) {
 		t.Errorf("AGENTS.md's %q section no longer links %q.\n"+
 			"The section is a routing line and nothing else — the traps themselves were moved to CONTRIBUTING.md. "+
-			"Without the link the reader is told a hazard exists and not where to read it.",
+			"Without the link IN THAT SECTION the reader is told a hazard exists and not where to read it; the "+
+			"anchor appearing somewhere else in the file does not route them.",
 			shellGotchasHeading, shellGotchasAnchor)
 	}
 
@@ -173,7 +207,11 @@ func TestShellGotchasRoutingLineResolves(t *testing.T) {
 	// this repo's own Makefile and a reader who never opens CONTRIBUTING.md still
 	// has to know it. Pin that it is still inline: dropping it is a silent
 	// widening of what the eviction cost.
-	if !strings.Contains(agents, "dirty tree") {
+	//
+	// Scoped to the section for the same reason the anchor check above is: over the
+	// whole file this passes on the phrase appearing anywhere, and "dirty tree" is
+	// exactly the sort of phrase another section can grow.
+	if !strings.Contains(routing, "dirty tree") {
 		t.Errorf("AGENTS.md's routing line no longer carries the ci-shallow dirty-tree warning inline.\n" +
 			"That one is kept in AGENTS.md on purpose — it fires on `./scripts/ci-shallow.sh`, a command in " +
 			"this repo's Makefile, and it reads as a GREEN about the change you just made. Everything else " +

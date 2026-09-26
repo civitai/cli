@@ -742,8 +742,10 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 	// pick the MIME type, and threw them away on the icon path. They assert no
 	// threshold and vendor no constant (AGENTS.md item 25 forbids that); they make
 	// the ONE quantity every server-side listing-media bound is a function of
-	// legible, so an author can compare it against the README's documented bounds
-	// instead of reading a rejection that names a number their file does not have.
+	// legible, so an author can compare it against the documented bounds — which
+	// live in the platform's Store listing guide, not in this repo's README, since
+	// that section was relocated — instead of reading a rejection that names a
+	// number their file does not have.
 	fmt.Fprintf(out, "Uploading %s (%s, %d×%d)…\n", kind, humanBytes(int64(len(data))), info.Width, info.Height)
 	var imageID int
 	if kind == kindIcon {
@@ -1667,14 +1669,15 @@ func attachRejectionAdvice(err error, kind mediaKind, file string, srcBytes int,
 		// Cover and screenshot ride the full-res path, where the CLI sends
 		// sizeBytes: len(data) — the server measures the same bytes the CLI does, so
 		// the re-encode paragraph would be false here.
-		return fmt.Errorf("%w\n  %s\n  see the Store listing guide for the platform's bounds: https://developer.civitai.com/apps/guide/store-listing", err, sent)
+		return fmt.Errorf("%w\n  %s\n  see the Store listing guide for the platform's bounds:\n  https://developer.civitai.com/apps/guide/store-listing", err, sent)
 	}
 	return fmt.Errorf("%w\n  %s\n%s", err, sent, strings.Join([]string{
 		"  an icon is re-encoded server-side to PNG (downscaled to at most 1024px on",
 		"  the longer side) and the platform validates THAT image, so a byte count",
 		"  above is the size of the server's PNG and not of your file",
 		"  the lever is smaller PIXEL dimensions, not heavier compression — see",
-		"  the Store listing guide for the platform's bounds: https://developer.civitai.com/apps/guide/store-listing",
+		"  the Store listing guide for the platform's bounds:",
+		"  https://developer.civitai.com/apps/guide/store-listing",
 	}, "\n"))
 }
 

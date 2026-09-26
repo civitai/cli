@@ -239,9 +239,16 @@ func TestContributorOnlyDocsAreReallyNotShipped(t *testing.T) {
 // lived in README.md's `### Listing media requirements`, and that section was
 // relocated to the published store-listing guide. The in-repo copy of the same
 // aspect table and the same "start from 512 × 512" line is the `assets/README.md`
-// every template scaffolds, so that is what this now reads — and it reads all
-// THREE of them, where it used to read one file. Its CONTROL failure above is the
-// thing that caught the relocation, which is the guard working.
+// every template scaffolds, so that is what this now reads. Its CONTROL failure
+// above is the thing that caught the relocation, which is the guard working.
+//
+// 🔴 IT LOOPS OVER THREE TEMPLATES AND THAT IS NOT THREE SURFACES. An earlier
+// version of this comment said it "reads all THREE of them, where it used to read
+// one file". The three scaffolded docs are byte-identical (md5
+// 51ebc5538e3bccbd14b2fbd93a928228), and nothing pins them so, so the three
+// subtests are ONE real comparison run three times. Do not price a collapse of
+// those templates as a loss of coverage here — see the same retraction in
+// listing_media_docs_test.go, which is where the loop helper lives.
 func TestREADMEIconAspectDoesNotForbidASquareIcon(t *testing.T) {
 	for tmpl, body := range listingRequirementsDocs(t) {
 		t.Run(tmpl, func(t *testing.T) {

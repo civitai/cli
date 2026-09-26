@@ -230,10 +230,22 @@ func readmeSectionSlice(t *testing.T, md, heading string) string {
 // this repository: the `assets/README.md` every template scaffolds into the
 // author's project. Item 25 already named it as the second documented home.
 //
-// It is a stronger subject than the README section was, in three ways: it is the
-// file an author reads standing next to their artwork; it is a SHIPPED artefact,
-// written into somebody else's project and not recallable; and there are THREE
-// copies, so each guard below now covers three surfaces where it covered one.
+// It is a stronger subject than the README section was in two ways: it is the
+// file an author reads standing next to their artwork, and it is a SHIPPED
+// artefact — written into somebody else's project and not recallable, which the
+// README section was not.
+//
+// 🔴 IT IS *NOT* STRONGER FOR BEING THREE FILES, AND AN EARLIER VERSION OF THIS
+// COMMENT CLAIMED IT WAS. "There are THREE copies, so each guard now covers three
+// surfaces where it covered one" is a count of DECLARATIONS, not instances: the
+// three `assets/README.md.tmpl` files are byte-identical (md5
+// 51ebc5538e3bccbd14b2fbd93a928228, templates and rendered output alike), so the
+// nine subtests below are THREE real comparisons run three times. Nothing pins
+// that identity, so the claim could not even be checked.
+//
+// It matters because a simplification is queued: collapsing the three identical
+// templates into one authority. A reader who believed the retracted sentence
+// would price that at 3x coverage and decline it. It costs none.
 //
 // ⚠ ONE PROPERTY WAS DOWNGRADED AND IS LABELLED RATHER THAN GLOSSED.
 // The quotation ban in TestListingRequirementsDocDoesNotPinAServerSentence was a

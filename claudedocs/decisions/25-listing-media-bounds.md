@@ -1,4 +1,4 @@
-# AGENTS.md item 25 — the listing-media dimension and aspect bounds stay prose in the README
+# AGENTS.md item 25 — the listing-media dimension and aspect bounds are guidance, never a local check
 
 Evidence for item 25 of the *Intentional decisions that look wrong* list in
 [`AGENTS.md`](../../AGENTS.md). AGENTS.md carries only this item's TRIGGER —
@@ -124,9 +124,16 @@ deleted section, three of them code↔prose drift assertions. A hosted page cann
 be an oracle for a hermetic test, so they now read the copy of the same prose
 that is still in this repository: the `assets/README.md` every template
 scaffolds, which the body below already names as the second documented home.
-That subject is wider than the README section was — it is a SHIPPED artefact
-written into somebody else's project, and there are three copies — and the cap
-assertions got stronger: `internal/scaffold/assets_dir_test.go` pinned the caps
+That subject is wider than the README section was in one respect only — it is a
+SHIPPED artefact, written into somebody else's project and not recallable.
+🔴 **It is NOT wider for being three files**, and an earlier version of this
+paragraph said "there are three copies" as though that multiplied coverage. The
+three `assets/README.md.tmpl` are byte-identical (md5
+`51ebc5538e3bccbd14b2fbd93a928228`, templates and rendered output alike) and
+nothing pins them so: the nine subtests are THREE real comparisons run three
+times. That is a count of declarations, not instances, and it is withdrawn —
+collapsing those templates costs no coverage. What the move DID make stronger is
+the cap assertions: `internal/scaffold/assets_dir_test.go` pinned the caps
 as literals (`"2 MiB"`, `"4 MiB"`), so the two files agreed with each other and
 neither was tied to the constant. The re-pointed guard derives the expected
 string from `maxIconBytes` / `maxCoverBytes` / `maxScreenshotBytes`.
@@ -135,24 +142,33 @@ failure is what detected the relocation.
 
 **The rule text below was corrected in place, through the digest mechanism.**
 The body under the `---` is digested verbatim against `agentsSplitBaseWave3`, so
-it normally cannot be edited at all. It said the bounds are *"documented in
-README → Listing media requirements"*, and this change deleted that section — so
-the canonical rule pointed at nothing, and nothing checked it. Same class as item
-3's false reason, resolved the same documented way: a **recorded line-for-line
-delta**, reversed before digesting (`item25OldLineA` / `item25OldLineB` in
-`agents_split_preserved_test.go`), with both directions asserted live. Restoring
-the dead pointer, rewording the corrected line, or neutering the reversal are all
-RED by name — mutation-tested, three ways.
+it normally cannot be edited at all. Two things in it had become false: the
+HEADING said the bounds *"live in the README as prose"*, and the paragraph under
+it pointed at *"README → Listing media requirements"* — a section this change
+deleted. The canonical rule stated a location that no longer existed, and nothing
+checked it.
 
-🔴 **One residual of that repair, named rather than glossed.** The rule's own
-HEADING still reads *"…live in the README as prose"* — the same stale letter this
-amendment retires. It is not corrected in place because that needs the paragraph
-**re-wrapped**, and a re-wrap is a multi-line *sequence* match rather than a
-line-for-line swap: the step from "reverse two known lines" to "diff two texts",
-which is exactly the loosening the digest mechanism must not acquire. So it is
-corrected HERE, above the rule, where a reader meets it first: **the bounds are
-guidance wherever they are documented, and the README is no longer where they
-are.**
+Same class as item 3's false reason, resolved the same documented way: a
+**recorded line-for-line delta** reversed before digesting (`item25OldLineA` /
+`B` / `C` in `agents_split_preserved_test.go`), with both directions asserted
+live. Restoring either dead line, rewording a corrected one, or neutering the
+reversal are all RED by name — mutation-tested. The heading now reads *"…are
+GUIDANCE wherever documented, and must NOT become a local check"*, which is the
+amended rule stated where the rule is.
+
+⚠ **A round-1 version of this section said the heading could NOT be corrected,
+because doing so needed the paragraph re-wrapped.** That was a reason composed to
+justify a residual rather than derived from the mechanism, and an audit
+falsified it: the delta already replaces a 78-column line with a 59-column one,
+so raggedness is plainly tolerated, and a single replacement line that still
+flows into the next one is a line-for-line swap like any other. It is, at 85
+columns. The re-wrap rule itself is unchanged and still true — a multi-line
+re-flow is a *sequence* match and that is the loosening — it just never applied
+here.
+
+The historical STUB quotation near the top of this file still carries the old
+sentence, deliberately: it is a record of what waves 1–3 left behind, and it sits
+above the `---` where the digest never reaches.
 
 **Two further residuals, stated rather than glossed.**
 
@@ -172,7 +188,7 @@ are.**
 
 ---
 
-25. **The listing-media DIMENSION and ASPECT bounds live in the README as prose,
+25. **The listing-media DIMENSION and ASPECT bounds are GUIDANCE wherever documented,
     and must NOT become a local check.** `civitai app listing set-icon` /
     `set-cover` / `add-screenshot` validate the **format** and the **byte size**
     of the source file (`maxIconBytes` / `maxCoverBytes` /
