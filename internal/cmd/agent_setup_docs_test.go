@@ -266,6 +266,12 @@ func sortedKindNames(set map[projectKind]bool) []string {
 // file that spells the URL twice. A sentence cannot notice a fourth; the walk
 // below can.
 var docsURLSpellingLedger = map[string]string{
+	"internal/cmd/exitcodes_doc.go": "the GENERATED exit-code contract. The front-door reduction " +
+		"moved `## Generate` and `## Validate fidelity` to developer.civitai.com, so exit code 1's and " +
+		"exit code 3's Detail bullets now cross-reference the hosted guides instead of two `###` " +
+		"anchors that no longer exist. This file is the ONLY writable copy: the same sentences are " +
+		"rendered byte-for-byte into README.md and asserted by TestREADMEExitCodeSectionsAreGenerated, " +
+		"so a URL that rots here rots on the published contract too and cannot be repaired in the README",
 	"internal/cmd/templates/agents-app.md": "the literal that SHIPS — this is the one that is written into somebody " +
 		"else's project and cannot be recalled",
 	"internal/cmd/agent_setup_docs_test.go": "wantDocsSection, the golden the template is compared against, plus " +
@@ -293,6 +299,12 @@ var docsURLSpellingLedger = map[string]string{
 		"the prose those pages carry, so what matches here is the `/apps/guide/` PREFIX rather than a whole " +
 		"URL. It rots the same way and costs more: a reader sent to a moved page does not get a stale " +
 		"paragraph, they get nothing, because the paragraph was deleted on the grounds that the page carries it",
+	"internal/pkgzip/testdata/readme_dotenv_section.golden.txt": "the whitespace-collapsed COPY of README.md's " +
+		"dotenv section that TestREADMEDotenvSectionIsTheReviewedCopy pins. That section now ends in a pointer " +
+		"to `/apps/guide/packaging#which-dotenv-files-end-up-in-the-bundle`, so the URL is spelled here as well " +
+		"as in the README. It is a MECHANICAL MIRROR — repair it by editing README.md and re-running that test " +
+		"with `-update`, never by hand-editing this file — but it is still a second place the spelling rots, " +
+		"and a stale copy reddens that guard for a reason whose message says nothing about the URL",
 }
 
 // docsURLLedgerExemptPrefix is the ONE exemption, and it is not a convenience.

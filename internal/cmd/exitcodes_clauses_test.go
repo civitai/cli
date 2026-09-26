@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -135,12 +136,35 @@ func readPreSplitFixture(t *testing.T) map[int]string {
 //
 // For every code, every sentence the pre-split contract published must still be
 // published BY THAT CODE — in its Summary or in one of its Detail bullets. The
-// comparison is on flattened whitespace only: no lowercasing, no punctuation
-// normalisation, no fuzzy match. A paraphrase fails, a compression fails, a
-// dropped clause fails.
+// comparison is on flattened whitespace and markdown link TARGETS only: no
+// lowercasing, no punctuation normalisation, no fuzzy match. A paraphrase
+// fails, a compression fails, a dropped clause fails.
 //
-// Mutation-measured: deleting the two-residuals bullet from code 2's Detail
-// reddens it by name with the missing sentence quoted.
+// 🔴 WHY LINK TARGETS ARE NORMALISED AWAY, added by the front-door reduction.
+// Two clauses here end in a cross-reference into README.md — `See
+// [Generate](#exit-codes-specific-to-generate).` and one naming `The --json
+// result shape`. Both anchors were `###` headings inside sections whose bodies
+// moved to developer.civitai.com, so the targets had to be re-pointed at the
+// published pages. Compared byte-for-byte, a re-point reads as a dropped
+// clause and this guard demands the old anchor back — which
+// TestREADMEAnchorLinksResolve then correctly reddens, because the heading is
+// gone. The two guards would deadlock, and the only way out would be to weaken
+// one of them wholesale.
+//
+// So the normalisation is deliberately NARROW: it rewrites the `(...)` of a
+// markdown link to a placeholder on BOTH sides and touches nothing else. Every
+// WORD of every clause — including the link's visible TEXT — is still compared
+// verbatim, which is what "no clause is dropped or paraphrased" actually
+// means. Where a link POINTS is a different property with its own guard:
+// TestREADMEAnchorLinksResolve proves every in-document target resolves, and
+// .github/workflows/readme-links.yml checks the external ones are live. This
+// guard was never the thing keeping those honest.
+//
+// Mutation-measured when it landed: deleting the two-residuals bullet from
+// code 2's Detail reddens it by name with the missing sentence quoted.
+// Re-measured after this change — see TestPreSplitClauseGuardStillCatchesADrop
+// below, which is the standing control that the normalisation did not make the
+// comparison vacuous.
 func TestEveryPreSplitClauseSurvives(t *testing.T) {
 	cells := readPreSplitFixture(t)
 
@@ -156,10 +180,11 @@ func TestEveryPreSplitClauseSurvives(t *testing.T) {
 			t.Errorf("the pre-split contract documented exit code %d, which exitCodeDocs no longer does", code)
 			continue
 		}
-		published := flattenWS(doc.published())
+		published := normaliseLinkTargets(flattenWS(doc.published()))
 		sentences := splitSentences(cell)
 		total += len(sentences)
 		for _, s := range sentences {
+			s = normaliseLinkTargets(s)
 			if !strings.Contains(published, s) {
 				t.Errorf("exit code %d no longer publishes a clause the pre-split contract did.\n\n"+
 					"MISSING:\n  %s\n\nThe restructure is a CONTAINER change: every clause moves, none is\n"+
@@ -264,5 +289,69 @@ func TestPreSplitFixtureMatchesGit(t *testing.T) {
 		t.Errorf("%s is not byte-identical to the exit-code table at %s.\n"+
 			"The fixture is the PROVENANCE of every clause-preservation assertion — regenerate it from git, "+
 			"do not hand-edit it to match.\n\nwant:\n%s\n\ngot:\n%s", preSplitFixture, preSplitBaseCommit, wantTable, got)
+	}
+}
+
+// markdownLinkTargetRe matches the `(...)` half of a markdown link — the part
+// that says WHERE a link points, never what it says.
+var markdownLinkTargetRe = regexp.MustCompile(`\]\([^)]*\)`)
+
+// normaliseLinkTargets replaces every markdown link target with a fixed
+// placeholder, leaving the link's visible text and every other character
+// untouched. See TestEveryPreSplitClauseSurvives' doc comment for why the
+// clause guard compares link text but not link target.
+func normaliseLinkTargets(s string) string {
+	return markdownLinkTargetRe.ReplaceAllString(s, "](LINK)")
+}
+
+// TestPreSplitClauseGuardStillCatchesADrop is the anti-vacuity control for the
+// normalisation above: it feeds the comparison a published body with one
+// pre-split clause REMOVED and asserts the comparison rejects it. Without this,
+// a normalisation that over-matched (say, one that ate a whole sentence) would
+// make TestEveryPreSplitClauseSurvives pass over anything at all.
+//
+// It deliberately exercises the SAME predicate the real guard uses rather than
+// re-deriving one, and it drops a clause that contains no link, so a green here
+// cannot be explained by the link rewriting.
+func TestPreSplitClauseGuardStillCatchesADrop(t *testing.T) {
+	cells := readPreSplitFixture(t)
+
+	var victim string
+	var code int
+	for c, cell := range cells {
+		for _, s := range splitSentences(cell) {
+			if !strings.Contains(s, "](") && len(s) > 40 {
+				victim, code = s, c
+				break
+			}
+		}
+		if victim != "" {
+			break
+		}
+	}
+	if victim == "" {
+		t.Fatal("CONTROL failure: the fixture holds no link-free clause over 40 bytes, " +
+			"so this control cannot distinguish the normalisation from a real drop")
+	}
+
+	var doc ExitCodeDoc
+	for _, d := range exitCodeDocs {
+		if d.Code == code {
+			doc = d
+		}
+	}
+	published := normaliseLinkTargets(flattenWS(doc.published()))
+
+	// Positive control: the clause is there to begin with.
+	if !strings.Contains(published, normaliseLinkTargets(victim)) {
+		t.Fatalf("CONTROL failure: exit code %d does not publish the clause this control "+
+			"intends to delete, so the negative control below proves nothing:\n  %s", code, victim)
+	}
+	// Negative control: with it deleted, the comparison must reject.
+	mutated := strings.Replace(published, normaliseLinkTargets(victim), "", 1)
+	if strings.Contains(mutated, normaliseLinkTargets(victim)) {
+		t.Errorf("the clause comparison accepts a body with exit code %d's clause REMOVED — "+
+			"normaliseLinkTargets has made TestEveryPreSplitClauseSurvives vacuous.\n  dropped: %s",
+			code, victim)
 	}
 }

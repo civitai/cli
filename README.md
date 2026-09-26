@@ -52,6 +52,14 @@ contract, and **packages/submits** it for review.
 
 ## Contents
 
+> **This README is the front door, not the manual.** It carries what you need to
+> get moving and the contracts a script branches on — exit codes, `--json`
+> shapes, the command table. The depth lives in two places that cannot go stale
+> the way a second copy would: **`civitai <command> --help`**, which ships inside
+> the binary you already have, and the guides on
+> **[developer.civitai.com](https://developer.civitai.com)**, which are versioned
+> with the platform. Sections below marked 📖 point at one or both.
+
 **Get started**
 
 - [Using an AI coding agent? Paste this](#using-an-ai-coding-agent-paste-this)
@@ -70,9 +78,6 @@ contract, and **packages/submits** it for review.
 
 - [Set up your coding agent (`agent-setup`)](#set-up-your-coding-agent-agent-setup) — **run this first**
   - [The two MCP servers](#the-two-mcp-servers)
-  - [Config files and credentials](#config-files-and-credentials)
-  - [Verify a setup (`--check`)](#verify-a-setup---check)
-  - [Exit codes and `--dry-run`](#exit-codes-and---dry-run)
 - [SDK packages](#sdk-packages)
 - [The blockId](#the-blockid)
 - [Templates](#templates)
@@ -81,9 +86,8 @@ contract, and **packages/submits** it for review.
 - [Preview in the real host (`app dev-tunnel`)](#preview-in-the-real-host-app-dev-tunnel)
 - [Examples](#examples)
 - [Validate fidelity](#validate-fidelity)
-  - [The `--json` result shape](#the---json-result-shape)
 - [Submit & auth](#submit--auth)
-  - [After you submit: review → approve → deploy](#after-you-submit-review--approve--deploy)
+  - [What `civitai whoami` reports](#what-civitai-whoami-reports)
   - [Link your source code (`app listing set-source-repo`)](#link-your-source-code-app-listing-set-source-repo) — **material: stages a revision**
 - [Submission status](#submission-status)
 - [Listing doctor (`app doctor`)](#listing-doctor-app-doctor) — **gates a release on exit code**
@@ -96,20 +100,7 @@ contract, and **packages/submits** it for review.
 - [Browse the public API](#browse-the-public-api)
 - [Download model files](#download-model-files)
 - [Generate](#generate) — **spends real Buzz**
-  - [`--max-cost` is an estimate check, not a spending cap](#---max-cost-is-an-estimate-check-not-a-spending-cap)
-  - [A checkpoint does not carry its ecosystem](#-a-checkpoint-does-not-carry-its-ecosystem)
-  - [Silent model substitution](#-silent-model-substitution)
-  - [Confirmation](#confirmation)
-  - [Image-to-image: `--image` and `--ecosystem`](#image-to-image---image-and---ecosystem)
-  - [The content flags, and why there aren't twelve](#the-content-flags-and-why-there-arent-twelve)
-  - [Raw graphs: `--print-input` and `--input`](#raw-graphs---print-input-and---input)
-  - [Waiting, downloading, and re-attaching](#waiting-downloading-and-re-attaching)
-  - [Listing and cancelling workflows](#listing-and-cancelling-workflows)
-  - [What the server says went wrong](#what-the-server-says-went-wrong)
-  - [Reading a workflow's Buzz transactions](#reading-a-workflows-buzz-transactions)
-  - [Exit codes specific to `generate`](#exit-codes-specific-to-generate)
 - [Scripting with `--json`](#scripting-with---json)
-  - [Generation `--json`](#generation---json)
 
 **Reference**
 
@@ -121,7 +112,6 @@ contract, and **packages/submits** it for review.
 - [Troubleshooting](#troubleshooting) — **look the error message up here**
 - [Development](#development)
 - [License](#license)
-
 ## Install
 
 Pick whichever fits — **npm** is the most convenient if you already have Node
@@ -317,28 +307,28 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 
 | Command | What it does |
 | --- | --- |
-| `civitai agent-setup [--track app\|api] [--agent <name>] [--dir <path>] [--check] [--json] [--dry-run]` | **Set up the coding agent you are using to build Civitai Apps** — an `AGENTS.md` block, a `CLAUDE.md` shim, and the two Civitai MCP servers in that agent's own config file. 🔴 **It never writes a credential into any of those files**, and it never authenticates. `--check` verifies a setup; `--dry-run` plans one. See [Set up your coding agent](#set-up-your-coding-agent-agent-setup). |
-| `civitai login [--scopes <set>] [--token [<t>]] [--no-browser]` | Browser OAuth device login by default; `--scopes generate` additively grants generation + Buzz **spend**, which the default set withholds. `--token <t>` stores a personal API key instead. Config at `~/.config/civitai/config.yaml`, 0600; also reads `CIVITAI_TOKEN`. |
-| `civitai whoami [--scopes] [--json]` | Verify the stored token — user, credential type, and a **`Capabilities:`** section decoded from its scope, so a money-path dead end is visible before `dev:live`. **Submit Apps is tri-state**: `unknown` is never `no`. See [What `civitai whoami` reports](#submit--auth). |
+| `civitai agent-setup [--track app\|api] [--agent <name>] [--dir <path>] [--check] [--json] [--dry-run]` | **Set up the coding agent you are using to build Civitai Apps** — an `AGENTS.md` block, a `CLAUDE.md` shim, and the two Civitai MCP servers in that agent's own config file. 🔴 **It never writes a credential into any of those files**, and it never authenticates. See [Set up your coding agent](#set-up-your-coding-agent-agent-setup). |
+| `civitai login [--scopes <set>] [--token [<t>]] [--no-browser]` | Browser OAuth device login by default; `--scopes generate` additively grants generation + Buzz **spend**, which the default set withholds. `--token <t>` stores a personal API key instead. See [Submit & auth](#submit--auth). |
+| `civitai whoami [--scopes] [--json]` | Verify the stored token — user, credential type, and a **`Capabilities:`** section decoded from its scope, so a money-path dead end is visible before `dev:live`. **Submit Apps is tri-state**: `unknown` is never `no`. See [What `civitai whoami` reports](#what-civitai-whoami-reports). |
 | `civitai buzz [--json]` | Show your spendable Buzz balance (**blue / green / yellow**, plus a **total**); needs the BuzzRead scope, which a **default** OAuth login token lacks (`civitai login --scopes generate`, or a full-scope personal API key). `--json` emits `{blue,green,yellow,total}`. |
-| `civitai app list [--kind <k>] [--category <c>] [--sort <s>] [--limit <n>] [--cursor <c>] [--json]` | **Discover published Apps in the store** (`GET /api/v1/apps`) — filter-based, cursor-paged, and **not anonymous**: the visible catalog is keyed off your identity, so it needs a credential. See [Browse the App store](#browse-the-app-store). |
+| `civitai app list [--kind <k>] [--category <c>] [--sort <s>] [--limit <n>] [--cursor <c>] [--json]` | **Discover published Apps in the store** (`GET /api/v1/apps`) — filter-based, cursor-paged, and **not anonymous**: it needs a credential. See [Browse the App store](#browse-the-app-store). |
 | `civitai app view <slug> [--json]` | **Show one published App's store detail** (`GET /api/v1/apps/{slug}`) — the public store catalog, not your own deploy. Needs a credential, same as `app list`. See [Browse the App store](#browse-the-app-store). |
-| `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>] [--slug <slug>] [--yes]` | **The friendly happy path** — scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). `--slug` sets the **blockId** explicitly; `-y`/`--yes` never prompts. See [The blockId](#the-blockid). |
+| `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>] [--slug <slug>] [--yes]` | **The friendly happy path** — scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). `--slug` sets the **blockId** explicitly. See [Templates](#templates) and [The blockId](#the-blockid). |
 | `civitai app init [name] [dir] [--yes] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias); same `--yes`. |
 | `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`**; `--spend` must be asked for explicitly to request real-Buzz spend, and `--env` prints a paste-ready `VITE_LIVE_BLOCK_TOKEN=<token>`. See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
 | `civitai app dev-tunnel [blockId] [--block <id>] [--port <n>] [--local-host <host>] [--tunnel-endpoint <h:p>] [--idle-timeout <d>] [--ready-timeout <d>] [--no-wait]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>`. See [Preview in the real host](#preview-in-the-real-host-app-dev-tunnel). |
-| `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json` — warnings are non-fatal unless `--strict`, `--json` emits the structured result, and a `[dir]` that is missing or not a directory is a **usage error** (exit `2`, no JSON). See [Validate fidelity](#validate-fidelity). |
-| `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate] [--allow-downgrade] [--allow-dirty] [--allow-oversize]` | Validate + package the source tree + upload it with your stored token (with no token it writes the bundle and prints next steps). A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`. It also refuses a version that is not strictly above the highest APPROVED version of that app, a dirty git work tree, and a body larger than the server can receive — each waived by the matching flag above, and **all three skipped on the routes that never reach the server** (`--package-only`, or a run with no token). See [Submit & auth](#submit--auth) and [Exit code 1](#exit-code-1), which maps each refusal to its flag. |
+| `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json` — warnings are non-fatal unless `--strict`, and a `[dir]` that is missing or not a directory is a **usage error** (exit `2`, no JSON). See [Validate fidelity](#validate-fidelity). |
+| `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate] [--allow-downgrade] [--allow-dirty] [--allow-oversize]` | Validate + package the source tree + upload it with your stored token (with no token it writes the bundle and prints next steps). A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`. It also refuses a version that is not strictly above the highest APPROVED version, a dirty git work tree, and a body larger than the server can receive — each waived by the matching flag above, and **all three skipped on the routes that never reach the server**. See [Submit & auth](#submit--auth) and [Exit code 1](#exit-code-1), which maps each refusal to its flag. |
 | `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps.** ⚠ The clone URL embeds your access token and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
-| `civitai app listing status [--json]\|set-text [--tagline <t>] [--description <d>] [--category <c>] [--clear <fields>] [--yes]\|set-source-repo <url>\|--clear\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots optional, up to 8), and `listing status` prints what the publish floor still requires. 🔴 **`listing status` is not a pure read — `--json` or not — so do not poll it**: on a live listing it opens a revision draft. On a LIVE listing a **material** change — the media commands, and `set-source-repo` — is **staged on a revision** and is not live until `submit-revision` is approved. 🔴 **`set-text` is the exception: it applies IN PLACE, immediately and publicly**, with no revision to review or abandon. Blanking a field that way needs `--yes` (the SET path only — `--clear` is already explicit), and `--tagline ""` sets an empty string where `--clear tagline` sets null. **ON-SITE apps are refused** by `set-text` and `set-source-repo`. See [After you submit](#after-you-submit-review--approve--deploy) and [Link your source code](#link-your-source-code-app-listing-set-source-repo). |
+| `civitai app listing status [--json]\|set-text [--tagline <t>] [--description <d>] [--category <c>] [--clear <fields>] [--yes]\|set-source-repo <url>\|--clear\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots optional, up to 8), and `listing status` prints what the publish floor still requires. 🔴 **`listing status` is not a pure read — `--json` or not — so do not poll it**: on a live listing it opens a revision draft. On a LIVE listing a **material** change — the media commands, and `set-source-repo` — is **staged on a revision** and is not live until `submit-revision` is approved. 🔴 **`set-text` is the exception: it applies IN PLACE, immediately and publicly**, with no revision to review or abandon. **ON-SITE apps are refused** by `set-text` and `set-source-repo`. See [Store listing](https://developer.civitai.com/apps/guide/store-listing) and [Link your source code](#link-your-source-code-app-listing-set-source-repo). |
 | `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions — all of them, or one in detail by `blockId` or `--id`, with a **SOURCE** column carrying the commit the submitting client claimed. Run from inside an app checkout it also warns on **stderr** when your `block.manifest.json` is **BEHIND** your highest approved version. See [Submission status](#submission-status). |
 | `civitai app doctor [slug] [--json]` | **Diagnose what is incomplete or blocked on your App store listings, and how to fix it**, across every listing you own or hold an **accepted** collaborator seat on. 🔴 **Exits `1` when a blocking problem sits on a listing that can still publish, `0` otherwise**, so it gates a release script. A pure read. See [Listing doctor](#listing-doctor-app-doctor). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, API engagement — always printing the window the **server** served. Needs the **Apps submit scope**. See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>] [--yes]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`), freeing the slug. **It also deletes a first-version app's store listing**, so it asks first and needs `--yes` in a script. See [Submission status](#submission-status). |
 | `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--out-name <template>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job, shows the cost + your balance, asks, submits, then **waits and downloads**. `--dry-run` prices it without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes; a **default** OAuth login is refused. See [Generate](#generate). |
-| `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost and `deliverable/total` outputs. Cursor-paged; reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
-| `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps, outputs and the Buzz transactions recorded for it. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C; output URLs are presigned and expire. See [Generate](#waiting-downloading-and-re-attaching). |
-| `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **You are billed for what it already delivered**, and this CLI cannot report the figure. Asks for confirmation (default **no**); a non-TTY without `--yes` refuses. See [Generate](#listing-and-cancelling-workflows). |
+| `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost and `deliverable/total` outputs. Cursor-paged; reading spends nothing. See [Tracking generations](https://developer.civitai.com/site/guide/cli-workflows#listing). |
+| `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps, outputs and the Buzz transactions recorded for it. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C; output URLs are presigned and expire. See [Waiting and re-attaching](https://developer.civitai.com/site/guide/cli-generate#waiting-downloading-and-re-attaching). |
+| `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **You are billed for what it already delivered**, and this CLI cannot report the figure. Asks for confirmation (default **no**); a non-TTY without `--yes` refuses. See [Cancelling a workflow](https://developer.civitai.com/site/guide/cli-workflows#cancelling-a-workflow). |
 | `civitai upgrade [--force]` | **Self-update this binary in place**, verifying the release's SHA-256 against `checksums.txt`. The asset follows the platform the release publishes — a `.zip` on Windows, a `.tar.gz` elsewhere. A **macOS** Homebrew install delegates to `brew upgrade`; `--force` reinstalls anyway. See [Upgrading](#upgrading). |
 | `civitai version` | Print version / commit / build date. |
 | `civitai completion [shell]` | Generate a shell-completion script. |
@@ -361,16 +351,17 @@ It does three things, and **it never authenticates**:
    the gotchas an agent cannot infer by reading your code (Buzz is the *viewer's*,
    a newly declared scope is consent-gated, a hung hook is usually a missing HOST
    handler, `useSharedStorage()` has no REST route). Its "Local development"
-   section is **read from the directory**, not fixed: in an npm project it names
-   only the scripts that are in **that** project's `package.json` and carries the
-   lockfile rule; in a project whose template ships no `package.json` (`static`,
-   the **default** for `civitai app init`) it says so and points at `index.html`;
-   and where nothing has been scaffolded yet it says that rather than guessing.
-   **Re-run `civitai agent-setup` after changing your scripts.**
+   section is **read from the directory**, not fixed, so
+   **re-run `civitai agent-setup` after changing your scripts.**
 2. Writes a one-line `CLAUDE.md` containing `@AGENTS.md`, **only when there is
    no `CLAUDE.md` already**. Claude Code does not read `AGENTS.md` on its own.
 3. Registers the **two Civitai MCP servers** in the detected agent's own config
    file.
+
+🔴 **It never writes a credential into any file it touches, and it never
+authenticates.** Where a vendor's config supports an env-var reference it writes
+that reference; where it does not, the row is reported as `manual` and names no
+file for this CLI to write.
 
 **No `@civitai/*` version is pinned anywhere in what this writes.** Pins live in
 `civitai app init`, which CI holds against npm; a version literal in an
@@ -391,163 +382,30 @@ no file for this CLI to write and carries an empty `path`.
 
 🔴 **That difference decides whether a header-less setup is finished.** It is not
 a read/write split: the orchestration server refuses the **handshake** itself, so
-nothing on it is reachable until you add a header.
-
-### Config files and credentials
-
-The file *and* the key name differ per agent, and every way of getting it wrong
-produces a file that parses cleanly and registers nothing — which is why this is
-a command rather than a paragraph telling you to hand-write JSON. Run the
-command and it reports the exact file it wrote.
-
-🔴 **No credential is ever written into a config file — and never a placeholder
-that looks like one.** Four of the target files are **project-scoped**
-(`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `opencode.json`): they sit
-in the repo root and get committed, so an `Authorization` header holding your
-actual token is a secret headed for version control. The header **references**
-`CIVITAI_TOKEN` in each vendor's own spelling instead, and where a vendor
-documents no interpolation at all — Zed today, and `--agent other`, whose target
-agent is by definition unknown — **no header is written**.
-
-🔴 **Mint the key at [civitai.com/user/account](https://civitai.com/user/account)
-(API Keys), then export it** — `export CIVITAI_TOKEN=<a personal API key>`, in
-your shell profile so the agent inherits it. It is **not** the token `civitai
-login` stored, and no command prints that one: `civitai login` writes this CLI's
-own config, which your coding agent does not read. So logging in alone is not
-enough — your agent resolves `CIVITAI_TOKEN` from the **environment**, where an
-unset variable becomes the empty string.
-
-**A header-less config is not empty, but it is not complete either**: it browses
-models, images and articles through the `civitai` server, and
+nothing on it is reachable until you add a header. A header-less setup still
+reaches models, images and articles through the `civitai` server, and
 `civitai-orchestration` answers it `401`.
+
+**`--check` contacts nothing** and reports six rows — `cli-version`,
+`agents-md`, `claude-md`, `mcp-site`, `mcp-orch`, `authenticated`. **Every row
+reports PRESENCE, never acceptance.**
+
+🔴 **`ok` is the AND of every check except `authenticated`, — for any agent
+other than `claude` — `claude-md`, and — for an agent this CLI has no config
+target for — `mcp-site` and `mcp-orch`.** An unauthenticated setup is a
+success, not a failure, and every other agent reads `AGENTS.md` directly so the
+`CLAUDE.md` shim is inert for it. So on a `claude` project the exempt row is
+`authenticated` alone, because `claude-md` counts there. That last exemption is
+conditional and narrow: for a **known** agent a missing entry still fails, and
+the rows stay in the report and stay `false`.
 
 `civitai agent-setup --help` carries the per-vendor header spellings, the merge
 rules and the JSONC re-encoding caveat in full.
 
 `civitai agent-setup --help` also names the top-level key each agent uses
 (`mcpServers`, VS Code's `servers`, opencode's `mcp`, Zed's `context_servers`,
-Windsurf's `serverUrl`-not-`url`, and Codex's `[mcp_servers.<name>]` TOML table),
-which you need if you are hand-adding an `Authorization` header.
-
-The per-agent file paths, the Windsurf legacy-Cascade vs Devin-CLI
-split, symlink handling and the full merge semantics are derived and evidenced in
-[decision 34](https://github.com/civitai/cli/blob/main/claudedocs/decisions/34-agent-setup-writes-no-credential.md)
-and
-[decision 35](https://github.com/civitai/cli/blob/main/claudedocs/decisions/35-agent-setup-merges-a-users-file.md).
-
-### Verify a setup (`--check`)
-
-This writes nothing, and contacts nothing — every step is a file read:
-
-```bash
-civitai agent-setup --check --json
-```
-
-```json
-{
-  "track": "app",
-  "agent": "claude",
-  "ok": true,
-  "checks": [
-    {"name": "cli-version",   "ok": true,  "detail": "v0.1.103"},
-    {"name": "agents-md",     "ok": true,  "detail": "/home/u/proj/AGENTS.md"},
-    {"name": "claude-md",     "ok": true,  "detail": "/home/u/proj/CLAUDE.md"},
-    {"name": "mcp-site",      "ok": true,  "detail": "registered in /home/u/proj/.mcp.json — this row read that file; it does not contact https://mcp.civitai.com/mcp"},
-    {"name": "mcp-orch",      "ok": true,  "detail": "registered in /home/u/proj/.mcp.json — this row read that file; it does not contact https://orchestration.civitai.com/mcp, which returns 401 until an Authorization header is present"},
-    {"name": "authenticated", "ok": false, "detail": "no token in this CLI's config and no CIVITAI_TOKEN in this environment — run `civitai login` for this CLI, and `export CIVITAI_TOKEN` for claude"}
-  ]
-}
-```
-
-🔴 **Every row reports PRESENCE, never acceptance.** An `ok: true` `mcp-*` row
-means an entry is **in that file** — never that the server answered — so the row
-names the file it inspected. The `authenticated` row reports that a value is
-present, and names **which store** it looked in, because there are two and your
-agent reads only one: `CIVITAI_TOKEN` exported (the setup an agent can use); a
-token configured for **this CLI** but not exported (this CLI works, your agent
-gets `401` from `orchestration.civitai.com`); or neither. Its `ok` is `true` for
-both of the first two.
-
-🔴 **`ok` is the AND of every check except `authenticated`, — for any agent
-other than `claude` — `claude-md`, and — for an agent this CLI has no config
-target for — `mcp-site` and `mcp-orch`.** Setup deliberately stops before auth,
-so the payload above, a complete setup with no token, is `"ok": true` and
-**exits 0**. Every other agent reads `AGENTS.md` directly, so the `CLAUDE.md`
-shim is inert for it and its row stays without counting. Read the exempt rows
-yourself if you need them; do not fold them into your own pass/fail — and note
-that on a `claude` project the exempt row is `authenticated` alone, because
-`claude-md` counts there.
-
-🔴 **The `mcp-*` exemption is conditional, and narrow.** For any agent the table
-does know, a missing MCP entry fails the verdict exactly as before; the rows
-**stay, and stay `false`** either way, because you do still have to register
-those servers by hand. `ok` means "this CLI did everything it can do for you" —
-already what it means for a user who has not logged in — never "MCP is
-registered".
-
-An absent `Authorization` header gets **no row of its own**, and nothing fails
-because of one — that is the correct state for Zed and for `--agent other`. If
-you need to know whether a header is there, read the config file; `--check` will
-not tell you.
-
-A config file `--check` cannot **read** is reported as `mcp-site`/`mcp-orch` rows
-carrying the parse failure in their `detail`, `ok: false`, exit `1` — never as an
-empty stdout. "Could not look" is not "not registered", and the detail says
-which. An `AGENTS.md` or `CLAUDE.md` that cannot be read is the same.
-
-🔴 **`--json` has three shapes.** A `--check` run emits `checks`; a write or
-`--dry-run` run emits `changes`; and a failure that happened before either could
-be built — no resolvable config root, for instance — emits **neither array and an
-`error` string** beside `ok: false`. Discriminate on which of the three is
-present. A payload is emitted for **every** failure except a usage error — the
-property is about what the command *writes*, so if stdout itself cannot be
-written to, nothing lands there and no command can fix that.
-
-### Exit codes and `--dry-run`
-
-`--check` exits `1` when a check failed and `0` otherwise. A write run exits `0`
-when **every** step happened, and **`1`** when one did not — a config that does
-not parse, a destination it will not write (a broken symlink, for **any** of the
-three files), a file it could not write (an unwritable directory), an `AGENTS.md`
-that cannot be read or that carries two managed blocks. Each of those is a
-`blocked` row in `changes` with `ok: false`, in `--json` and on the terminal
-alike.
-
-🔴 **There is exactly one outcome where a step does not happen and the command
-still exits `0`: `action: manual`** — `--agent other`, or a user-scoped agent
-whose home directory cannot be resolved. There is no file for this CLI to write
-in either case, so the servers are printed for you to paste and the run is a
-success with a manual step left in it; that is a `changes` row you have to read,
-not an `ok: false`. A step this CLI *could* have taken and did not is always
-`blocked`, never `manual`.
-
-Exit `2` covers the invocation: an unknown `--agent`, a `--dir` that does not
-exist or is not a directory, and `--track api`. 🔴 **Not every bad `--dir` is an
-exit `2`** — a directory this command cannot `stat` at all (a parent it may not
-search, a path that walks through a regular file) is a fact about the machine
-rather than a mistyped command line, so it exits `1` with the `error` envelope
-under `--json`. `--track api` is a **recognised** value, not an unknown flag: the
-API track is not built yet, so it refuses with a pointer to the two MCP servers
-(which work today) and to
-[developer.civitai.com/site](https://developer.civitai.com/site/) and
-[developer.civitai.com/orchestration](https://developer.civitai.com/orchestration/),
-rather than letting a reading agent conclude the API is unsupported. It never
-silently falls back to `--track app`.
-
-`--dry-run` prints every path that would be written, with the reason, and writes
-nothing. It reports the outcomes the **plan** can classify — for **all three**
-files — with the same rows, the same `ok` and the same **exit code** the real run
-gives for those: a destination the real run would refuse (a broken symlink), a
-config that does not parse, an `AGENTS.md` it cannot read or that carries two
-managed blocks.
-
-🔴 **It cannot report a failure only the act of writing can produce.**
-**Measured:** a project directory the process may not write into — the dry run
-reports the intended action, `ok: true` and exit `0`; the real run reports
-`blocked`, `ok: false` and exit `1`. A full disk and a read-only mount are the
-same shape by construction and were *not* measured. So treat a green dry run as
-"the plan is sound", never as "the write will succeed".
-
+Codex's `mcp_servers`), where that file lives, and what `--check` and
+`--dry-run` report — including the exit codes they use.
 ## SDK packages
 
 This CLI scaffolds, validates, and submits — but the code your app actually
@@ -580,42 +438,26 @@ By default it is derived from the name: `"My Cool Block"` → `my-cool-block`.
 Pass **`--slug <slug>`** to choose it yourself — it bypasses derivation entirely,
 so name, blockId and directory are three fully independent axes.
 
-> **Breaking change.** Derivation used to lowercase the name and replace every
-> run of non-`[a-z0-9]` with a hyphen, which silently **dropped characters**:
-> `civitai app create "Café App"` minted the blockId **`caf-app`**, and
-> `"ÜberApp"` minted **`berapp`** — a different permanent public id than the
-> author typed, with no warning and exit 0. Derivation now **refuses** and names
-> the offending characters, exiting **2** and asking for `--slug`. **If you have
-> a script passing a non-ASCII name, it must now pass `--slug <slug>`.** The old
-> output was wrong, so the break is the point — but it is a break.
+> **Breaking change.** Derivation used to silently **drop characters** it could
+> not carry (`"Café App"` → `caf-app`) and to silently **truncate** past the
+> **40-character** cap, both at exit 0 — minting a different permanent public id
+> than the author typed. It now **refuses** both, exiting **2** and naming the
+> offending characters or the length. **A script passing a non-ASCII or long
+> name must now pass `--slug <slug>`.** A name deriving **exactly 40**
+> characters is *at* the cap, not over it, and still derives byte-identically.
 
-> **Breaking change.** Derivation also used to **truncate**. A name whose blockId
-> ran past the **40-character** cap was silently cut to fit, at exit 0 — so
-> `civitai app create "aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee"`
-> and the same 54-character name ending `ZZZZZZZZZZ` **both** minted
-> `aaaaaaaaaa-bbbbbbbbbb-cccccccccc-ddddddd`: two apps competing for one id that
-> cannot be renamed, with nothing local to tell the author it happened. An
-> **explicit** `--slug` of that length was already refused (`must be 3-40
-> chars`), so the derived path — the one a first-time author walks — was the
-> inconsistent one. It now refuses too, exiting **2** and naming the length.
-> **If you have a script passing a long name, it must now pass `--slug
-> <slug>`.** A name deriving **exactly 40** characters is *at* the cap, not over
-> it, and still derives byte-identically.
+Three things still derive rather than refuse, and they are deliberate: symbols,
+emoji and non-ASCII punctuation are **separators** (`"Rocket 🚀 App"` →
+`rocket-app`, which is what makes `"Widget — Pro"` → `widget-pro` right); the two
+runes that lowercase **into** ASCII transliterate for free (`"İstanbul App"` →
+`istanbul-app`); and ASCII is exempt by construction, so every derivation that
+worked before still produces the byte-identical blockId. A name that is **not
+valid UTF-8** is refused outright.
 
-Derivation refuses two things: **letters, digits and marks** above ASCII that the
-slug alphabet cannot carry, and a name whose blockId would **exceed 40
-characters**. Both refusals exit `2` and both are settled the same way — pass
-`--slug`. Three things still derive rather than refuse, and they are deliberate:
-
-| input | blockId | why |
-| --- | --- | --- |
-| `"Rocket 🚀 App"` | `rocket-app` | Symbols, emoji and non-ASCII punctuation are **separators** — that is what makes `"Widget — Pro"` → `widget-pro` right. An emoji has no lossless ASCII form either, so refusing would only trade a silent drop for a dead end. Tracked as [#272](https://github.com/civitai/cli/issues/272). |
-| `"İstanbul App"` | `istanbul-app` | Exactly two runes above ASCII lowercase **into** ASCII — `İ` (U+0130) and `K` (U+212A). Lowercasing is what decides whether a character survives, so these transliterate for free. |
-| `"My  Cool___Block"` | `my-cool-block` | ASCII is exempt by construction — every derivation that worked before still produces the byte-identical blockId. |
-
-A name that is **not valid UTF-8** is refused outright (it used to lose the bad
-bytes from the blockId *and* write them into `block.manifest.json`).
-
+📖 Full derivation table, the exemption rationale and the residuals it knowingly
+ships with: [`AGENTS.md` item
+27](https://github.com/civitai/cli/blob/main/claudedocs/decisions/27-blockid-derivation-refuses.md).
+Offline: `civitai app create --help`.
 ## Templates
 
 - **`static`** — a no-build page app (`index.html` + a tiny `app.js`,
@@ -635,6 +477,8 @@ store-listing media requirements — and no images, so the `set-icon` / `set-cov
 step fails loudly until you supply real artwork. See
 [Store listing](https://developer.civitai.com/apps/guide/store-listing).
 
+📖 What each template contains and when to pick which:
+[Quickstart](https://developer.civitai.com/apps/guide/quickstart).
 ## The host handshake (`BLOCK_READY`)
 
 Every template declares a `page` surface, and the host **will not reveal a page
@@ -644,55 +488,35 @@ failure card once the host's bounded retries run out, even though the app itself
 renders perfectly. Nothing you can run locally reproduces that.
 
 `page-money` gets the handshake for free: `@civitai/blocks-react`'s iframe
-transport acks internally, which is why the SDK templates never touch raw
-`postMessage`. The two **SDK-free** templates (`static`, `page-vite`) therefore
-ship a small vendored emitter, **`civitai-host.js`**, loaded from the entry
-point. Leave it in place — and if you are retrofitting it into an older app,
-note that the file has to be *referenced* as well as copied: `static` loads it
-with `<script src="./civitai-host.js"></script>` in `index.html`, `page-vite`
-with `import './civitai-host.js';` as the first line of `src/main.jsx`.
-`civitai app validate` checks that reference where it can resolve your entry
-point, and tells you when it can't.
+transport acks internally. The two **SDK-free** templates (`static`,
+`page-vite`) ship a small vendored emitter, **`civitai-host.js`**, loaded from
+the entry point. Leave it in place — and if you are retrofitting it into an
+older app, the file has to be *referenced* as well as copied
+(`<script src="./civitai-host.js">`, or `import './civitai-host.js';` as the
+first line of the entry module). `civitai app validate` checks that reference
+where it can resolve your entry point, and tells you when it can't.
 
 > ⚠️ **If you adopt `@civitai/blocks-react`, delete `civitai-host.js` in the
-> same change.** This is the one situation where removing it is correct, and
-> running both is worse than running neither: whichever handshake answers the
-> host's *first* `BLOCK_INIT` cancels the host's retry loop **and** its
-> readiness timeout. If the vendored emitter wins that race, the SDK transport
-> can be left never having seen an init — its `waitForInit` rejects after 10s
-> and the host sits "ready", showing an app that never started, with no retry
-> and no error card.
+> same change.** Running both is worse than running neither: whichever handshake
+> answers the host's *first* `BLOCK_INIT` cancels the host's retry loop **and**
+> its readiness timeout, so if the vendored emitter wins that race the SDK
+> transport can be left never having seen an init — the host sits "ready",
+> showing an app that never started, with no retry and no error card.
 
-Two rules it encodes, which apply to every message you add afterwards:
+> 🔒 **The emitter checks the sender *window*, not the sender's *identity*.**
+> That is sound for this one message, because the ack carries no data. It is
+> **not** sufficient for anything you add next: the moment you handle an inbound
+> message carrying a token, a viewer, storage or a result, check `event.origin`
+> against an allowlist — or any page that frames your app can feed it whatever
+> it likes. Adopt the SDK before you handle data; it maintains that list from
+> `VITE_BLOCK_ALLOWED_PARENT_ORIGINS`.
 
-- **The envelope is `{ type, payload }`.** The host dispatches
-  `event.data.payload` to its subscribers, so fields put at the top level
-  (`{ type: 'X', height: 0 }`) arrive as `payload: undefined`.
-- **Answer, don't announce.** The ack goes out in *response* to the host's
-  `BLOCK_INIT`, addressed at the origin that init arrived from rather than
-  broadcast to `'*'`. It is also why nothing is posted when you preview locally:
-  there is no host to send `BLOCK_INIT`, so the emitter stays silent by design.
-
-> 🔒 **The emitter checks the sender *window*, not the sender's *identity*.** It
-> answers `window.parent` — whoever framed you — which is sound for this one
-> message because the ack carries no data. It is **not** sufficient for anything
-> you add next. The moment you handle an inbound message carrying a token, a
-> viewer, storage or a result, check `event.origin` against an allowlist of
-> origins you trust, or any page that frames your app can feed it whatever it
-> likes. The emitter deliberately does not vendor that allowlist — the real list
-> (production, preview subdomains, dev tunnels) is platform state that moves
-> without notice, and `@civitai/blocks-react` already maintains it from
-> `VITE_BLOCK_ALLOWED_PARENT_ORIGINS`. Adopt the SDK before you handle data.
-
-`RESIZE_IFRAME` is **not** part of a page app's protocol: the host renders a
-page block full-viewport, so it does not size to content and ignores the
-message. (`useBlockResize` is surface-agnostic and page-money still calls it —
-on a page surface it is simply a no-op, which is why the SDK templates can share
-component code across surfaces.) Older templates demoed a **raw** `postMessage`
-of `RESIZE_IFRAME`, so a project scaffolded from one still carries dead code you
-can delete — nothing scans for it, because `civitai app validate` checks the
-manifest and the handshake, not this.
-
+📖 The bridge, the `{ type, payload }` envelope, answer-don't-announce, and why
+`RESIZE_IFRAME` is not part of a page app's protocol:
+[Concepts — the host ↔ block
+bridge](https://developer.civitai.com/apps/guide/concepts#the-host-block-bridge)
+and the [Message bridge
+reference](https://developer.civitai.com/apps/reference/messages).
 ## Local dev loop (harness: mock vs live)
 
 A scaffolded App is a sandboxed iframe, and locally there is no host to send
@@ -733,7 +557,7 @@ proxy that makes it work from `localhost`, and the scenario knobs.
 
 ## Preview in the real host (`app dev-tunnel`)
 
-> **(Pre-GA / invite-gated.)** Access is gated behind an Apps-author invite
+> **(Pre-GA / invite-gated.)** Access is gated behind an Apps-author **invite**
 > **and** a server kill-switch flag, so if you are not enrolled the mint reports
 > **"not available"** — ask to be added to the cohort.
 
@@ -747,22 +571,24 @@ npm run dev:tunnel                 # start your dev server first
 civitai app dev-tunnel my-block    # then open the tunnel
 ```
 
-It mints an **ephemeral in-memory ssh keypair**, opens a reverse tunnel from your
-dev port to the Civitai tunnel endpoint (`sish.civitai.com:2224`, live), prints
-the URL to open, and tears everything down on Ctrl-C or an idle timeout.
-Publishing the tunnel host through external-dns + Cloudflare usually takes 1–3
-min (occasionally longer); the command waits for it and prints the elapsed time.
+It mints an **ephemeral in-memory ssh keypair** (never written to disk), opens a
+reverse tunnel from your dev port to the Civitai tunnel endpoint
+(`sish.civitai.com:2224`, live), prints the URL to open, and tears everything
+down on Ctrl-C or an idle timeout.
+
+> **Publishing DNS takes 1–3 minutes, sometimes longer.** That wait is normal
+> and the command reports elapsed time while it happens — it is not a hang. If
+> you Ctrl-C out of it you also lose the embeddability warnings, which is why
+> they are printed once *before* the wait as well as again after it.
 
 **Embeddability preflight.** Before minting, the command checks whether the host
-can actually *embed* your dev server. The host iframes it sandboxed, at an opaque
-`null` origin, so a dev server that is missing `Access-Control-Allow-Origin: *`,
-missing the `.civit.ai` entry in `allowedHosts`, or sending a framing header that
-excludes `civitai.com` loads as a **blank iframe with no error anywhere** — the
-worst kind of failure to debug. Those are printed as **warnings, never fatal**,
-and deliberately **twice**: once the moment the checks run, so you still get them
-if you Ctrl-C the DNS wait, and again just above the URL, with the
-`vite.config.ts` fix. Apps scaffolded by `civitai app create` (the `page-money`
-template) already satisfy all of it.
+can actually *embed* your dev server. The host iframes it sandboxed, at an
+opaque `null` origin, so a dev server that is missing
+`Access-Control-Allow-Origin: *`, missing the `.civit.ai` entry in
+`allowedHosts`, or sending a framing header that excludes `civitai.com` loads as
+a **blank iframe with no error anywhere**. The findings are **warnings, never
+fatal** — the check reads your config statically and can be wrong — and apps
+scaffolded by `civitai app create` already satisfy all of it.
 
 **What the tunnel declares.** The command reads `scopes` and `auth` from the
 `block.manifest.json` it is standing in and sends them with the mint, printing
@@ -776,40 +602,20 @@ a `blockId` — from that manifest or from the argument). An `auth` that is neit
 warning** rather than sent, because the tunnel does not run the validator that
 would otherwise report it; `civitai app validate` names the finding.
 
-**Flags.** The defaults match what the scaffold's `npm run dev:tunnel` binds, so
-most authors pass none of these:
-
-| Flag | Default | What it is for |
-| --- | --- | --- |
-| `--block <id>` | the `blockId` in `block.manifest.json` in the CWD | The app to tunnel, if you are not standing in its project (it is also the positional argument). |
-| `--port <n>` | `5186` | The local dev-server port. Matches the scaffold's `dev:tunnel` script. |
-| `--local-host <host>` | `localhost` | **The host your dev server is bound to.** Change this when the dev server is *not* on the CLI's own loopback — inside a **container or pod** (`--local-host 10.42.0.100`), a **VM**, or bound to one specific interface. A dev server that is reachable in your browser but not from the CLI's `localhost` is exactly what this flag is for. |
-| `--no-wait` | off | Print the public URL immediately instead of waiting for it to start serving. It may `404`/`NXDOMAIN` for a few minutes while DNS and routing propagate. |
-| `--ready-timeout <d>` | `0` (wait indefinitely) | Cap the readiness wait. On expiry the command warns and prints the URL anyway rather than failing. |
-| `--idle-timeout <d>` | `30m` | Tear the tunnel down after this much inactivity. |
-| `--tunnel-endpoint <host:port>` | `sish.civitai.com:2224` | The sish SSH endpoint to dial. Also settable with **`CIVITAI_DEV_TUNNEL_ENDPOINT`**; the flag wins. |
-
-> **Publishing DNS takes 1–3 minutes, sometimes longer.** That wait is normal
-> and the command reports elapsed time while it happens — it is not a hang. If
-> you Ctrl-C out of it you also lose the embeddability warnings, which is why
-> they are printed once *before* the wait as well as again after it.
-
 **`CIVITAI_DEVTUNNEL_DEBUG` — a debug-only escape hatch.** ⚠️ Not supported
 surface: it is a diagnostic for *this* CLI's tunnel plumbing, and its output
 format, its trigger and its existence may change or be removed in any release.
 Don't build anything on it.
 
-Set it to **any non-empty value** before running `civitai app dev-tunnel` and
-the tunnel writes one extra `[debug]` line to **stderr for each inbound
-connection** the sish endpoint forwards — naming the address/port and *origin*
-address/port sish stamped on that SSH channel, the subdomain label the CLI
-bound, and whether Go's `x/crypto/ssh` built-in listener would have **rejected**
-the channel. That last field is the point: the built-in listener parses the
-origin as an IP address and sish sends a hostname, which is why this CLI accepts
-every forwarded channel itself rather than using `client.Listen`. Reach for it
-when the tunnel reports ready and the public URL still `502`s — it tells you
-whether requests are arriving at the CLI at all, and what they look like when
-they do.
+Set it to **any non-empty value** and the tunnel writes one extra `[debug]` line
+to **stderr for each inbound connection** the sish endpoint forwards — naming
+the address/port and *origin* address/port sish stamped on that SSH channel, the
+subdomain label the CLI bound, and whether Go's `x/crypto/ssh` built-in listener
+would have **rejected** the channel. That last field is the point: the built-in
+listener parses the origin as an IP address and sish sends a hostname, which is
+why this CLI accepts every forwarded channel itself rather than using
+`client.Listen`. Reach for it when the tunnel reports ready and the public URL
+still `502`s.
 
 ```bash
 CIVITAI_DEVTUNNEL_DEBUG=1 civitai app dev-tunnel
@@ -818,9 +624,14 @@ CIVITAI_DEVTUNNEL_DEBUG=1 civitai app dev-tunnel
 It is **output only** — nothing about how the tunnel behaves changes. The value
 is never parsed, so `CIVITAI_DEVTUNNEL_DEBUG=0` and `=false` switch it *on* just
 like `=1`; leaving it **unset** is the only way to switch it off. It is read once
-as the tunnel is established, and prints nothing until traffic actually arrives,
-so a tunnel nobody has loaded stays as quiet as it was before.
+as the tunnel is established, and prints nothing until traffic actually arrives.
 
+📖 Every flag and its default (`--block`, `--port`, `--local-host`, `--no-wait`,
+`--ready-timeout`, `--idle-timeout`, `--tunnel-endpoint` and
+`CIVITAI_DEV_TUNNEL_ENDPOINT`): `civitai app dev-tunnel --help`. Running
+embedded, the allowed-parent-origin config and graceful degradation of a direct
+visit: [Running embedded & handling direct
+traffic](https://developer.civitai.com/apps/guide/embedding).
 ## Examples
 
 Two real example manifests live under [`examples/`](examples/) (copied from the
@@ -845,259 +656,104 @@ a value is well-sized.
 `civitai app validate` is a **best-effort LOCAL mirror** of the platform's
 approve-time validator (`BlockManifestValidator`). **The server is the source of
 truth** at review time — passing `validate` locally is a strong pre-check, not a
-guarantee of approval.
+guarantee of approval, and a `[dir]` that is missing or not a directory is a
+usage error (exit `2`, no JSON).
 
 It checks `block.manifest.json` against a **vendored JSON Schema**
-([`schema/app-block.manifest.schema.json`](schema/app-block.manifest.schema.json),
-syntactic shape) **plus the ported semantic rules** the server runs (sandbox
-trust-tier allowlist, `page` ⇒ `iframe`, required iframe sub-fields, the
-`renderMode` tier gate, `targets[].slotId` registry membership) and structural
-project checks. A few checks are necessarily approximate locally (the slot
-registry is vendored; per-app origin-binding/scope checks the CLI can't see are
-not reproduced).
+([`schema/app-block.manifest.schema.json`](schema/app-block.manifest.schema.json))
+plus the ported semantic rules, one **build-time** lockfile rule, and one
+**advisory** about the [host handshake](#the-host-handshake-block_ready) — a
+warning, never an error, because it infers runtime behaviour from static text.
 
-It also mirrors one **build-time** rule, because the failure it prevents is
-otherwise an opaque server-side "build failed": your committed **lockfile must
-match the package manager the platform derives from `buildCommand`**. The
-platform build installs *strictly* from the lockfile — no registry re-resolve
-fallback — so `"buildCommand": "pnpm run build"` needs `pnpm-lock.yaml`,
-`"yarn run build"` needs `yarn.lock`, and `npm run …` / `vite build` /
-`npx vite build` / an omitted `buildCommand` all need `package-lock.json`. A
-mismatch or a missing lockfile is a hard `validate` error; an *extra* unused
-lockfile is a warning. Apps with no `package.json` are static — the platform
-never installs for them and they are never flagged.
+📖 **What each of those checks actually proves, the lockfile rule in full, the
+two tiers of the `BLOCK_READY` advisory, and the `--json` result shape:
+[What `civitai app validate` proves](https://developer.civitai.com/apps/guide/validate).**
+Flags and exit codes: `civitai app validate --help`.
 
-The lockfile also has to **be** one, not merely exist. A `package-lock.json`
-must parse as JSON and declare a numeric `"lockfileVersion"` of 1 or more; a
-`pnpm-lock.yaml` or `yarn.lock` must be non-empty. That version rule is
-deliberately **stricter than `npm ci` measures** — npm states it as a
-precondition but will happily install from an otherwise-intact lockfile whose
-version key is `0`, a string, `null` or absent — and `validate` keeps it because
-npm never *writes* those shapes, so a file carrying one was made by hand.
-An **empty** lockfile fails the platform build exactly like a missing one, so
-`touch package-lock.json` is not a fix — run the package manager and commit what
-it writes. If the lockfile cannot be read, or is implausibly large, `validate`
-says nothing rather than guessing: it never blocks a submit on a file it could
-not inspect.
-
-Finally it emits one **advisory** about the
-[host handshake](#the-host-handshake-block_ready): if your manifest declares a
-`page` surface and **nothing your app loads posts `BLOCK_READY`**, `validate`
-says so. That is the shape of an app scaffolded before the templates were fixed
-(#206) — it renders perfectly everywhere you can look locally and is replaced by
-a failure card in the real host. It is a **warning, never an error**: unlike the
-lockfile rule (where the platform build provably dies), this one infers
-*runtime* behaviour from *static text* and can be wrong, so it must not fail a
-correct project.
-
-> ⚠️ **Copying `civitai-host.js` in is only half the fix.** A browser never
-> fetches a file nothing references, so the emitter has to be *loaded* too — a
-> `<script src="./civitai-host.js"></script>` in `index.html`, or an
-> `import './civitai-host.js';` at the top of the entry module `index.html`
-> loads. Earlier releases of this check looked only for the *text*
-> `BLOCK_READY` anywhere in your tree, so an unreferenced copy silenced it and a
-> still-broken app validated clean. It now resolves what your `index.html`
-> actually loads.
-
-Four things follow:
-
-- **It checks REACHABILITY where it can, and says when it can't.** Starting at
-  `index.html` it follows every `<script src>`, inline module and `import` it can
-  resolve, and asks whether any of *those* files posts the message. When that
-  resolution is complete you get a precise finding — including "you have an
-  emitter, but nothing loads it". When it *isn't* — no `index.html` at your
-  project root, a bundler alias (`import '@/…'`), a reference to a file that
-  isn't there, an import chain deeper than it follows — it falls back to
-  scanning your whole tree for the text, and the
-  warning **says so in as many words**: *"it did NOT check that the file is
-  loaded"*. Read that sentence as it is written; in that mode, adding the emitter
-  without referencing it will silence the warning and leave the app broken.
-- **A dependency that acks ends the check** — today that is
-  `@civitai/blocks-react`, and nothing else. Its iframe transport acks internally
-  and the literal never appears in your `src/`, so a `page-money` app is never
-  flagged. This is an *exact* list, not the `@civitai/` scope:
-  `@civitai/app-sdk` is the server-side SDK and no runtime code in it posts
-  `BLOCK_READY`, and `@civitai/theme` / `@civitai/components` are CSS. Depending
-  on those does not give you the handshake, so it does not silence the check
-  either.
-- **It reads source only** — never `node_modules`, never the conventional build
-  directories (`dist`, `build`, `out`, …), and never a `.md` file: a README
-  *describing* the handshake is not an implementation of it. Comments are
-  stripped too, so a comment naming `BLOCK_READY` does not satisfy it. A `src`
-  that is a **symlink** into a shared package *is* followed.
-- **It stays quiet when it cannot see the whole project.** An unreadable file, a
-  file over 2 MiB, a very large tree, or a directory holding only a manifest all
-  mean "we could not look" — reported as nothing, never as a finding. Likewise a
-  project whose entry graph can't be resolved *and* which contains the literal
-  somewhere: quiet, deliberately, because warning at a correct project is the
-  more expensive mistake.
-
-If it fires on a project you know is correct — your ack arrives from a bundled
-dependency, or from a file type this scan doesn't open — it is a false alarm, and
-it never blocks (exit 0) unless you pass `--strict`. What it proves stays narrow
-even at its strongest: that a file your `index.html` really loads *mentions* the
-message. It cannot prove the ack ever **fires**; only the real host can.
-
-`civitai app submit` prints the same warnings before it uploads, and likewise
-does not block on them.
-
-> ⚠️ **If you already run `civitai app validate --strict` in CI**, this advisory
-> is new and can turn a previously-green project red — which is what `--strict`
-> asks for. If it is a false alarm for your project, drop `--strict` or add the
-> ack, and please open an issue: a warning at a correct project is a bug in the
-> check, not something you should have to work around.
-
-The **durable fix** is a server-side `civitai app validate` endpoint that calls
-the real `BlockManifestValidator` (the faithful contract), with this schema
-published as the syntactic half. See [`AGENTS.md`](https://github.com/civitai/cli/blob/main/AGENTS.md) for the full
+The **durable fix** for the mirroring is a server-side validate endpoint calling
+the real `BlockManifestValidator`. See
+[`AGENTS.md`](https://github.com/civitai/cli/blob/main/AGENTS.md) for the full
 caveat and how the vendored schema + Go checks are kept in sync.
-
-### The `--json` result shape
-
-```jsonc
-{
-  "ok": false,
-  "dir": "./my-block",
-  "errors":   [ { "field": "iframe.sandbox", "message": "…" } ],
-  "warnings": [ { "field": "page.buzzBudgetPerGen", "message": "…" } ]
-}
-```
-
-Two guarantees, both of which the previous release broke:
-
-- **`field` is present on every finding, and is never `null` or empty.** It used
-  to be recovered by parsing the message text, which worked only for the JSON
-  Schema errors — so every *semantic* finding (the sandbox rules, the
-  justification rules, the money-path warnings: the ones a local pre-check exists
-  for) arrived as `"field": null`, and grouping by field in CI silently dropped
-  them. Findings now carry their field from where they are produced.
-- **One notation: dotted paths.** `blockId`, `iframe.sandbox`, `scopes[1]`,
-  `targets[0].slotId`, `scopeJustifications.<scope>` — the same way the
-  human-readable messages, this README and the schema all name fields. Earlier
-  releases mixed JSON Pointer (`/blockId`, `/scopes/1`) into `--json` while the
-  text output used dotted; **if you were matching on `/`-prefixed fields, update
-  your scripts.**
-
-Two findings have no single manifest field, and say so explicitly rather than
-omitting the key:
-
-| `field` | meaning |
-| --- | --- |
-| `(root)` | the manifest **document** — it is missing, unparseable, or the schema reports a violation at the top level (e.g. `missing property 'contentRating'`). |
-| `(project)` | **repository state outside the manifest** — the committed lockfile, or the source tree the `BLOCK_READY` advisory reads. No manifest edit alone resolves these. |
-
-`ok` already accounts for `--strict`: it is `false` when there are hard errors,
-and also when `--strict` is passed and there are warnings. The process exit code
-matches, and the JSON goes to **stdout** while the failure is reported on
-**stderr** — so `civitai app validate --json | jq` works on a project that fails
-*validation*.
-
-🔴 **BREAKING — a refused path now emits no object at all.** This object is
-written only when validation actually produced a result. A path that does **not
-exist**, or that is not a directory, is a mistake about the invocation: it writes
-**nothing** to stdout and exits `2`. It used to print
-`{"ok": false, "dir": "/nope", "errors": [ … ]}` and exit `1` — a fabricated
-validation result, complete with a finding about a manifest nobody could have
-written. A failure that produces **no validation result at all** likewise emits
-no object and exits `1` — a project directory the CLI cannot **stat** (it is
-unreadable, or a component of the path below it is not a directory), and in
-principle an internal schema failure, which is a directory the CLI *can* read
-that still yields nothing to print.
-
-> **An unreadable `block.manifest.json` is not one of those cases** — it is a
-> validation *verdict*, and the object is printed in full with a single
-> `(root)` finding carrying the `permission denied` message. The distinction is
-> how far the CLI got before it stopped: it could not read your *manifest*,
-> which is something to report about the project; it could not read the
-> *directory*, which is nothing at all.
-
-**So branch on the exit code before parsing:**
-
-| exit | stdout |
-| --- | --- |
-| `0` | the object, `"ok": true` |
-| `1` | the object with `"ok": false` for a validation **verdict** — including an unreadable manifest — but **nothing** when validation produced no result at all (an unreadable project *directory*, or an `ENOTDIR` partway down the path; also an internal schema failure, which a released binary should never hit) |
-| `2` | **nothing** — the path does not exist, or is not a directory |
-
-🔴 **`jq -e` is the wrong tool for reading `ok`.** It exits `1` on a JSON
-`false`, which is indistinguishable from its exit code for a missing key — so
-the obvious one-liner reports a *failing but perfectly well-formed* result as
-"no result", which is the one distinction this whole section exists to draw.
-Test for an empty string instead, and read `ok` as a value:
-
-```bash
-out=$(civitai app validate ./my-block --json); rc=$?
-case $rc in
-  2) echo "bad path — check the argument"; exit 2 ;;
-  0|1)
-    if [ -z "$out" ]; then
-      echo "no result to parse (rc=$rc)"; exit "$rc"
-    fi
-    echo "ok=$(jq -r .ok <<<"$out")"          # true | false — the verdict
-    jq -r '.errors[]   | "ERROR   \(.field): \(.message)"' <<<"$out"
-    jq -r '.warnings[] | "WARNING \(.field): \(.message)"' <<<"$out"
-    ;;
-esac
-```
-
 ## Submit & auth
 
 `civitai login` (no flags) runs the **OAuth device-authorization grant**: it
 prints a URL + a short code, you approve in your browser, and the CLI stores a
-short-lived access token (1h) plus a refresh token (30d) that it rotates
-automatically before requests and once on a `401`. By **default** it requests
-`UserRead | AppBlocksSubmit | AppBlocksDevTunnel` (== `100663297`) — identity,
-Apps submit (which gates both `app submit` and the dev-token mint), and the
-on-site dev tunnel. That default deliberately omits `AIServicesWrite`, so a plain
-login **cannot spend Buzz**: it drives the **read/identity** `dev:live` paths
-(viewer, catalog, app storage) but, for a generation app, has its
-`ai:write:budgeted` scope stripped at mint time and **cannot estimate, submit, or
-spend real Buzz**.
-
-Opt into generation explicitly with a **named scope set**:
+short-lived access token (1h) plus a refresh token (30d) it rotates
+automatically. By **default** it requests `UserRead | AppBlocksSubmit |
+AppBlocksDevTunnel` (== `100663297`). That default deliberately omits
+`AIServicesWrite`, so a plain login **cannot spend Buzz**.
 
 ```bash
-civitai login --scopes generate   # additive: keeps submit + dev-tunnel, ADDS generation
+civitai login                     # browser device login, default scopes
+civitai login --scopes generate   # additive: keeps submit + dev-tunnel, ADDS
+                                  # generation (requests 100777985)
+civitai login --token <key>       # store a full-scope personal API key instead
+civitai whoami                    # who you are, and what the token can do
 ```
 
-which requests `100777985` (the default **plus** `AIServicesRead |
-AIServicesWrite | BuzzRead`) — one credential that can both submit apps and run
-[`civitai generate`](#generate). `--scopes` takes a **named set**, never a raw
-bitmask, and an unknown name is rejected with the valid list. It applies only to
-the browser device login and is refused alongside `--token`.
+`--scopes` takes a **named set**, never a raw bitmask, and an unknown name is
+rejected with the valid list. It applies only to the browser device login and is
+refused alongside `--token`. `CIVITAI_TOKEN` overrides the stored credential
+(treated as a personal key); config lives at `~/.config/civitai/config.yaml`,
+mode 0600.
 
 > 🔴 **The device-flow scope check is all-or-nothing**: requesting any bit the
 > `civitai-cli` OAuth client's `allowedScopes` does not permit rejects the
-> **whole** login with `invalid_scope`. On `civitai.com` that client's
-> `allowedScopes` **is** `100777985`, so `--scopes generate` works. Against a
-> **self-hosted or older** auth server (a non-default `CIVITAI_BASE_URL`) that
-> predates the widening it is rejected, and the CLI maps the rejection to a
-> message telling you plain `civitai login` still works there.
+> **whole** login with `invalid_scope`. On `civitai.com` that client allows
+> `100777985`, so `--scopes generate` works; against a **self-hosted or older**
+> auth server (a non-default `CIVITAI_BASE_URL`) it is rejected, and the CLI
+> says plain `civitai login` still works there.
 
-A full-scope **personal API key** remains the other way to get spend authority
-(see [Local dev loop](#local-dev-loop-harness-mock-vs-live) above), and is still
-the only credential carrying the rest of the Full scope mask.
-`civitai login --token <key>` stores a personal API key instead (no refresh).
-`CIVITAI_TOKEN` overrides the stored credential (treated as a personal key).
+`civitai app submit` always **validates + packages** the canonical source ZIP,
+then **uploads it with your stored token**. With **no token configured** (and
+not `--package-only`) it instead writes the `.zip` and prints the next steps.
+When an upload fails, `app submit` prints what it sent — the compressed and
+decompressed sizes, the base64 JSON body size, and the largest entries the
+bundle was made of.
 
-`civitai app submit`:
+Entries are ranked by **compressed** size, because that is what the upload is
+made of — a large text file that deflates to nothing is not what to delete. The
+usual culprit is a directory of screenshots or sample assets that `app submit`
+packages along with everything else. That block prints under **any error the
+upload call reports once the request has gone out**, except a `401`/`403` (a
+credential problem, unrelated) or a `429`. A failure that never reached the
+connection never prints the past tense — no usable credential, an unwritable
+config, a connection that never opened — so `sent` means a request that really
+went out, not one the CLI only built. A refusal that stops the
+submit **before** the upload step prints nothing at all: no `--yes`, a dirty work
+tree, the version guard, a validation failure. The ceiling refusal above is the
+one refusal with an entry list of its own, under `What this CLI would have sent`.
 
-- always **validates + packages** the canonical source ZIP, then
-- **uploads it with your stored token** to the token-authenticated route
-  `POST /api/v1/blocks/submit-version` (`Authorization: Bearer`). OAuth tokens
-  refresh transparently. Set `CIVITAI_SUBMIT_PATH` to override the route.
-- With **no token configured** (and not `--package-only`), it instead writes the
-  `.zip` and prints the next steps (`civitai login`, or web upload at
-  `/apps/submit`).
+`--package-only` always just writes the `.zip` and stops. It refuses a version
+that is not strictly above the highest **approved** version, a **dirty** git
+work tree, and a body **larger than the server can receive** — each waived by
+the matching flag, and all three skipped on the routes that never reach the
+server. [Exit code 1](#exit-code-1) maps each refusal to its flag.
 
-`--package-only` always just writes the `.zip` and stops.
+⚠️ **A resubmit's store-listing media — icon, cover, screenshots — carry
+forward on APPROVAL only — withdrawing the submission, or a moderator rejecting
+it, deletes the listing and everything on it.** `civitai app withdraw` on a
+**first-version** submission is therefore destructive, which is why it asks
+first and needs `--yes` in a script.
 
-#### What `civitai whoami` reports
+📖 **The two kinds of credential, what `civitai whoami` reports (including the
+tri-state capability rows) and `whoami --json`:
+[CLI credentials and scopes](https://developer.civitai.com/site/guide/cli-auth).**
+**What goes in the bundle — how big a bundle can be, what the packager left out,
+which dotenv files ship, what looks like a credential, and the dirty-work-tree
+guard: [What goes in the bundle](https://developer.civitai.com/apps/guide/packaging).**
+**After you submit — the lifecycle, tracking a submission, build provenance, and
+why deployed is not the same as listed:
+[Review, approval and deploy](https://developer.civitai.com/apps/guide/review-and-deploy).**
+Linking your source repository, and every other listing command:
+[Your store listing](https://developer.civitai.com/apps/guide/store-listing#link-your-source-code).
+Offline: `civitai login --help`, `civitai app submit --help`.
 
-`civitai whoami` prints the authenticated user, then **two** sections — a
-**Credential** section carrying the one identity *attribute* (the credential
-type), and a **Capabilities** section of **three** *verdicts*: **Read Buzz
-balance**, **Spend Buzz (AI Services)** and **Submit Apps**:
+### What `civitai whoami` reports
+
+`civitai whoami` prints the authenticated user, then a **Credential** section
+(the credential type) and a **Capabilities** section of three verdicts. That is
+the WHOLE of stdout for a full-scope personal key:
 
 ```
 Logged in as zach (id 1) at https://civitai.com
@@ -1111,27 +767,10 @@ Capabilities:
   Submit Apps:              yes
 ```
 
-(That is the WHOLE of stdout for a full-scope personal key. A credential whose
-**Spend Buzz** row says `no` gets one more block appended below, naming the fix
-for *that* credential — `civitai login --scopes generate` for an OAuth login, a
-full-scope personal key otherwise.)
-
-**Submit Apps is a tri-state — `yes` / `no` / `unknown` — and `unknown` is not
-`no`.** The server scope-gates submit **only** on OAuth tokens (the opt-in
-`AppBlocksSubmit` bit, which `ScopeFull` deliberately excludes); a personal API
-key is not scope-gated for submit at all. So:
-
-| Credential | `tokenScope` reported | Submit Apps |
-| --- | --- | --- |
-| Personal API key | either | **`yes`** — never scope-gated, so the mask is irrelevant |
-| OAuth login | present | `yes` / `no` from the `AppBlocksSubmit` bit |
-| OAuth login | **absent** | **`unknown`** — the bit *is* the answer, and the server did not report it |
-| No `subject` in the response | either | **`unknown`** — we cannot tell which gate applies |
-
-When the server reports no scope mask, the two **Buzz** rows are omitted rather
-than printed as `no`, and the output says *"(token scope not reported by the
-server — **Buzz** capabilities unknown)"*. It is scoped to Buzz because the
-Submit Apps row above it may well be a known answer:
+🔴 **Submit Apps is a tri-state — `yes` / `no` / `unknown` — and `unknown` is
+not `no`.** When the server reports no scope mask the two **Buzz** rows are
+omitted rather than printed as `no`, because the Submit Apps row above them may
+still be a known answer:
 
 ```
 Logged in as zach (id 1) at https://civitai.com
@@ -1144,17 +783,10 @@ Capabilities:
   (token scope not reported by the server — Buzz capabilities unknown)
 ```
 
-A `yes` means the credential's **scope** permits submit — not that the account
-is in the author cohort. The remaining author-cohort and not-banned gates are
-server-side and are not visible to the CLI.
-
-##### `whoami --json`
-
-🔴 **`--json` is a stable, *curated* identity object — it is not the server's
+🔴 **`whoami --json` is a stable, *curated* identity object — not the server's
 raw `/api/v1/me` body.** It is a hand-built projection of fourteen keys, and the
-two the server sends that never appear are **`email` and `emailVerified`**.
-Those are PII this command does not print, so passing the body through would be
-a privacy regression, not a fix
+two the server sends that never appear are **`email` and `emailVerified`**:
+withholding them is the privacy property, not an omission
 ([#377](https://github.com/civitai/cli/issues/377)).
 
 ```json
@@ -1176,466 +808,72 @@ a privacy regression, not a fix
 }
 ```
 
-**The account profile — `tier`, `status`, `isMember`, `subscriptions` — is
-`null` when the server did not report it, never `""` / `false` / `[]`.** The
-CLI will not fabricate a value the server did not send, so a script must test
-for `null` before reading any of the four. `subscriptions` is a list of strings
-(`[]` means reported and empty, `null` means not reported).
-
-🔴 **The four degrade together.** They come from one strict parse, so if *any*
-of them arrives in an unexpected shape, **all four** become `null` rather than
-some of them being dropped silently — `whoami` still prints your identity and
-capabilities normally. `isMember` is the one worth branching on: a member and a
-free account do not see the same usable generation ecosystems, so it predicts
-whether `civitai generate`'s defaults are even available to this credential.
-
-Two more fields carry a **third state a script must branch on**, exactly as
-`app metrics` requires for `views.unavailable`:
-
-- **`canSubmitApps` is `true` / `false` / `null`.** `null` means *unknowable*
-  (the two rows above), and a consumer must not read it as `false`: a script
-  doing `if (!j.canSubmitApps)` treats `null` the same as `false` and will
-  report a dead end that may not exist. Test `j.canSubmitApps === null` first.
-- **`scopes` is a list, `[]`, or `null`.** `null` means the scope mask was not
-  reported (`scopesKnown: false`); `[]` means the mask **was** reported and had
-  no bits set.
-
-`scopesKnown` disambiguates `canReadBalance` and `canSpend`, which stay plain
-booleans: when it is `false`, both are `false` because nothing is known, not
-because the capability was denied.
-
-#### How big can a bundle be?
-
-**`app submit` refuses a body the server cannot receive, and names the number.**
-
-It reports three sizes:
-
-```
-Packaged 68 file(s) (8201270 bytes compressed, 8866319 decompressed; 10935065 bytes as the base64 JSON submit body)
-```
-
-🔴 **The third one is the one a request-body limit applies to.** The `.zip` is
-not what goes on the wire: it is base64-encoded into a JSON document
-(`{"bundleBase64":"…"}`) before it is sent, so the server receives about **4/3**
-of the compressed size. That number is exact, not an estimate, and it is printed
-on every path — including `--package-only`, which is how you inspect a bundle
-you cannot submit.
-
-A submit that carries [build provenance](#submission-status)
-sends `sourceCommit` and `sourceDirty` in that same document, so its body is
-about **70 bytes larger**. The printed number accounts for it: it is computed
-from the body *this run* will send, not from a fixed envelope — and the
-`--package-only` and no-token paths stamp nothing, so they run no `git` at all.
-
-🔴 **The ceiling is 10485760 bytes of body, and `app submit` refuses above it.**
-The refusal costs no upload — it is checked against the marshalled document
-itself, before the request is built. The number is not this CLI's: it is
-Next.js's `proxyClientMaxBodySize` default, which applies because civitai's
-proxy matches `/api/v1/:path*` and sets no override.
-
-**The other size caps this CLI enforces *are* its own, not the server's.** They
-are generous (2000 files, 10 MiB per file, 50 MiB compressed, 200 MiB
-decompressed) and clearing them is **not** a prediction that the submit will be
-accepted.
-
-⚠ **The ceiling is vendored, so `--allow-oversize` is the way out.** Nothing in
-this CLI notices the day civitai raises that default, and on that day a shipped
-CLI would refuse bundles the server would now take:
-
-```
-civitai app submit --allow-oversize     # submit anyway; the ceiling may be stale
-```
-
-**What a rejected upload looks like.** The CLI's own refusal never reaches the
-server: it names the body size and the ceiling and stops. The `400` below is
-what you see only when you pass `--allow-oversize` (or when the server's real
-limit turns out to be lower than the vendored one). The server answers
-`400: Invalid JSON` — an error about the *parse*, downstream of the cause,
-naming nothing size-shaped. The CLI adds what it knows on top:
-
-```
-Error: server returned 400: Invalid JSON
-
-What this CLI sent (it cannot tell whether that is why the submit failed):
-  up to 10935065 bytes on the wire — a 8201270-byte zip, base64-encoded into a JSON body.
-  largest entries in the bundle (compressed / original):
-       2411008 / 2418844     docs/screenshots/flow-01.png
-       1904772 / 1911233     docs/screenshots/flow-02.png
-       …
-```
-
-Entries are ranked by **compressed** size, because that is what the upload is
-made of — a large text file that deflates to nothing is not what to delete. The
-usual culprit is a directory of screenshots or sample assets that `app submit`
-packages along with everything else. That block prints under **any error the
-upload call reports once the request has gone out**, except a `401`/`403` (a
-credential problem, unrelated) or a `429`. A failure that never reached the
-connection never prints the past tense — no usable credential, an unwritable
-config, a connection that never opened — so `sent` means a request that really
-went out, not one the CLI only built. A refusal that stops the
-submit **before** the upload step prints nothing at all: no `--yes`, a dirty work
-tree, the version guard, a validation failure. The ceiling refusal above is the
-one refusal with an entry list of its own, under `What this CLI would have sent`.
-
-#### What the packager left out
-
-Under the `Packaged …` line, `app submit` prints one more line naming every path
-it skipped — on every path including `--package-only`, and not at all when it
-skipped nothing:
-
-```
-Skipped 4 path(s): public/environment.env (*.env), .git/, dist/, node_modules/
-```
-
-- The count is of **skip decisions, not files**. An excluded directory is one
-  entry, printed with a trailing `/`: the walk stops there and never learns how
-  many files are underneath, so no number for that is printed rather than a
-  number that was guessed.
-- A **pattern** rule is tagged with the pattern that matched — `(*.env)`,
-  `(.env*)`, `(*.zip)`, `(.env or .env.*)` for a dotenv-shaped directory, and
-  `(not a regular file)` for a symlink or other non-regular entry. That tag is
-  the actionable part: it says which rule reached the file, so it says that
-  renaming recovers it. Tagged entries are listed first for that reason.
-- A **fixed** name from the excluded-directory list (`node_modules`, `dist`,
-  `.git`, …) carries no tag — `civitai app submit --help` prints that list
-  verbatim.
-- Past 12 entries the list is elided with `… and K more`; the count before the
-  colon still counts every one.
-
-**The same list decides what the dirty-work-tree guard counts** (the refusal is
-in [exit code 1](#exit-code-1)). Paths the packager never ships — `dist/`,
-`node_modules/`, a stray `.zip`, a `.env.local`, anything `.gitignore`d, and any
-symlink (it bundles regular files only) — are **not** counted: they are not in
-the bundle.
-
-##### What the dirty-work-tree guard counts as a change
-
-- 🔴 **A repository with no commits yet refuses *everything*,
-  `block.manifest.json` included.** A `git init` you have not committed into
-  puts nothing in the bundle in a commit, which is what the guard checks. That
-  is the row between "no repo" and "repo, dirty": make the first commit, or pass
-  `--allow-dirty`. Scaffolding never puts you here — `civitai app create` /
-  `app init` run no `git init`.
-- **A `git mv` counts as two changes**, because the bundle gains the destination
-  and loses the original. Both are named, even when the destination is a path
-  the packager drops (`git mv src/App.tsx dist/App.tsx` is refused, naming
-  `src/App.tsx`).
+📖 **Which credential produces which verdict, what each of those keys means,
+`scopesKnown`, and the four profile fields that are `null` — never `""` /
+`false` / `[]` — when the server did not report them: [CLI credentials and
+scopes](https://developer.civitai.com/site/guide/cli-auth).**
 
 #### Which dotenv files end up in the bundle
 
-"The CLI excludes dotenv files" is the natural reading of the `.env.development*`
-sentence above, and it is **not** what the packager does. The rule is a
-**three-name allow-list with a catch-all**, not a blanket exclusion and not the
-enumeration the table below might otherwise read as:
+"The CLI excludes dotenv files" is the natural reading, and it is **not** what
+the packager does. The rule is a **three-name allow-list with a catch-all**:
 
 > **Every file whose base name starts with `.env` is excluded — except
 > `.env.example`, `.env.sample` and `.env.production` sitting at the project
-> root, which are included.**
+> root, which are included.** A file whose name *ends* in `.env` — `db.env`,
+> `prod.env` — is dropped too, at any depth.
 
-The **at the project root** half is load-bearing, not a detail: the allow-list
-exists for the file the server build reads (`vite build` takes env files from
-`envDir`, which defaults to the directory the build runs in — the project root,
-for a project built from its own root) and the template a human reviewer
-reads, and a copy in a subdirectory can be neither. `.env-backup/.env.production`
-and `old/.env.production` are backups, and a backup of a dotenv file is the
-shape most likely to hold a real credential — so they go to the catch-all with
-everything else.
+So `.env`, `.env.local`, `.env.*.local`, `.env.development` and `.env.test` are
+excluded, and so is **every other `.env*` name the allow-list does not name**,
+dotted or not: `.env.staging`, `.env.ci`, `.env.example.bak`, `.env-local`, and
+`.envrc` (the direnv convention, which routinely holds exported credentials).
+`.env.production.local` goes with them — `.local` is the dev-local override
+convention and falls to the catch-all — so learning that `.env.production`
+ships tells you nothing about its `.local` override.
 
-| file | in the bundle? | why |
-| --- | --- | --- |
-| `.env`, `.env.local`, `.env.*.local`, `.env.development`, `.env.test` — **and every other `.env*` name**, dotted or not: `.env.staging`, `.env-local`, and `.envrc` | **excluded** | the catch-all: any `.env*` the allow-list does not name is assumed dev-local and secret-bearing. The money template points a real `VITE_LIVE_BLOCK_TOKEN` at the git-ignored `.env.development.local`; `.envrc` is the direnv convention and routinely holds exported credentials. |
-| `.env.example`, `.env.sample` **at the project root** | **included** | meant to be placeholder templates the reviewer reads — **but see below: the allow-list is by NAME and nothing reads the contents**, and the money template's own `.env.example` carries an empty `VITE_LIVE_BLOCK_TOKEN=` line whose comment sends the real token to `.env.development.local` **because this file is uploaded**. A test pins the *scaffolded* line empty; nothing checks the copy in **your** project, so the packager will upload whatever you put there |
-| `.env.production` **at the project root** | **included** | the platform build runs `vite build` in production mode, which reads it |
-| the same three names **in any subdirectory** — `app/.env.production`, `.env-backup/.env.example`, `backups/.env.sample` | **excluded** | the allow-list is scoped to the root, because both of its reasons are: `vite build` reads env files from `envDir`, which defaults to the directory the build runs in (the project root, unless you moved it — see the ⚠️ below), and a template a reviewer reads is the one at the root. A copy at depth is a backup, and a backup of a dotenv file is exactly the shape that carries a live credential |
+**Directories are a separate, narrower rule.** A *directory* named `.env` or
+beginning with `.env.` — `.env.d/`, `.env.local/` — is excluded whole at any
+depth, and so is one whose name ends in `.zip`. The rule deliberately stops at
+the dot, because dropping a subtree is a silent loss: `.envrc/`, `.env-backup/`,
+`.envs/`, `.environment/` and `.envoy/` all **ship** as directories. The *file*
+rules still reach inside them, so a `.env.production` or a `db.env` living there
+is still dropped.
 
-**Directories count too, and by a narrower rule.** A *directory* named `.env` or
-beginning with `.env.` — `.env.d/`, `.env.local/`, `.env.secrets/` — is excluded
-whole, at any depth, and so is one whose name ends in `.zip`. The three-name
-allow-list does **not** apply to directories: `vite build` reads a dotenv *file*,
-so a directory called `.env.production/` is dropped like any other.
-
-The directory rule deliberately stops at the dot, which the file rule does not,
-because matching too much here removes a whole subtree from your submission with
-nothing to tell you: `.environment/` and `.envoy/` still ship.
-
-**A file is also dropped when its name *ends* in `.env`** — `db.env`,
-`prod.env`, `local.env`, `config.env`, at any depth and in any directory. That
-is the shape tooling writes, and until this rule existed no rule saw it: every
-dotenv rule was a *prefix* rule, so a name not starting with `.env` was
-invisible to all of them. This one is **files only** — a directory called
-`config.env/` still ships, because dropping a whole subtree on a suffix match is
-the silent loss the directory rule is aimed away from.
-
-Matching is **case-insensitive** for every dotenv and `*.zip` rule, on
-directories and on files alike: `.ENV.LOCAL/`, `.ENV.LOCAL`, `X.ZIP/` and
-`Bundle.ZIP` all go. (The *fixed-name* directory list is the exception — see the
-table below.) The three kept names are still matched
-**exactly** — `.ENV.PRODUCTION` is not the file `vite build` reads, so it is
-dropped rather than uploaded.
-
-🔴 **This still closes shapes, not the class.** The packager matches *names*,
-never contents. Measured, these are **packaged** today:
-
-| still uploaded | why it slips through |
-| --- | --- |
-| `NODE_MODULES/`, `Dist/` | the *fixed-name* directory list is matched case-sensitively, on purpose — `Build/` and `Dist/` are plausible content directory names, and dropping one is a silent subtree loss. The two *pattern* rules (`.env…`, `*.zip`) **are** case-insensitive |
-| a secret in a name that is not dotenv-shaped at all | `secrets.json`, `credentials.yaml`, a key pasted into `src/config.ts` — the packager matches **names, never contents**, so no name rule can ever reach these. They are still packaged; since [#464](https://github.com/civitai/cli/issues/464) `app submit` **warns** about the ones it recognises — advisory, never a drop. See *What looks like a credential* below |
-
-⚠️ **The `*.env` rule costs something, and the packager now says so.** `.env` is
-also **Babylon.js's environment-texture format** — a 3D block shipping
-`public/environment.env` will have it dropped. `sample.env` and `template.env` go
-the same way, and the three-name allow-list has no suffix-shaped counterpart:
-`.env.sample` is kept, `sample.env` is not. Rename the file
-(`environment.envmap`) and it travels.
-
-This used to be invisible until runtime in the deployed app, because the submit
-output printed a file *count* and named nothing. It now prints a second line
-listing what it left out, with the rule that matched:
-
-```
-Packaged 38 file(s) (49213 bytes compressed, 118442 decompressed; 65637 bytes as the base64 JSON submit body)
-Skipped 4 path(s): public/environment.env (*.env), .git/, dist/, node_modules/
-```
-
-Read the tag: it names the rule, so it also names the fix. The line is printed on
-every path including `--package-only`, and not at all when nothing was skipped.
-
-A kept name does **not** rescue its directory either. `.env.d/.env.production`
-is dropped along with `.env.d/`, and so is `node_modules/pkg/.env.production` —
-the walk skips an excluded directory before it ever looks at a file name, at any
-depth beneath it. That is a second, independent reason those paths go: they
-would be dropped by the root scope even if their directory shipped.
-
-⚠️ **The root scope costs something too, and the affected set is wider than one
-`vite.config` key.** If your build reads its dotenv from anywhere other than the
-project root, the `.env.production` it actually reads lives there — and this
-rule drops it.
-
-Vite's `envDir` defaults to `config.root`, which defaults to `process.cwd()` —
-the directory the build is *invoked* in, not "the project root" in the bundle
-sense. So this is not only about a `vite.config` that sets `root:` or `envDir:`.
-It also reaches a `package.json` `build` script that relocates the root
-(`vite build --root app`) or runs the build from another directory at all
-(`pnpm --filter web build`, `npm --prefix web run build`, `cd web && vite
-build`), and a non-Vite toolchain (Next, Astro, webpack + `dotenv`) whose
-`.env.production` resolution is cwd-anchored the same way. In every one of those cases the manifest's `buildCommand` is still
-`npm run build`: the CLI reads the script's **name**, never its body, so it
-cannot tell you which of these you are. And a nested `outputDir` such as
-`packages/web/dist` is a valid manifest, so building from a subdirectory is a
-shape the platform permits rather than an exotic one.
-
-Neither scaffolded template sets `root:` or `envDir:`, and both build from the
-project root — so a project `civitai app create` produced and you have not
-restructured is unaffected. If yours is different you will see it on the
-`Skipped` line of the very next `submit` or `--package-only` run, tagged
-`(.env*)`; move the file to the project root, or point the build's env directory
-at the root, and it travels again.
-
-Keep secrets in a `.env`-dotted name — `.env.local`, `.env.d/` — and both rules
-drop them. Anything else is on you to check before you submit; `--package-only`
-writes the exact `.zip` that would be uploaded, so unzip it and look.
-
-🔴 **The allow-list is by FILE NAME, and nothing stops one of these three files
-carrying a secret to the platform.** `app submit` now *warns* when a packaged
-file looks like it holds a credential (*What looks like a credential*, below) —
-but that is a heuristic printed after the fact, it never drops a file, and a
-silent run is not a statement that the file is clean. Whatever
+🔴 **The allow-list is by FILE NAME, and nothing reads the contents.** Whatever
 you put in `.env.example`, `.env.sample` or `.env.production` is packaged and
-uploaded verbatim. **Do not put a token in any of them** — not a `VITE_`-prefixed
-one (Vite inlines those into the client bundle, so they are public the moment
-your app loads) and not a plain unprefixed one either (Vite leaves that out of
-the bundle, but the CLI still ships the file). Put nothing in the three kept
-files you would not paste into a public page.
+uploaded verbatim — a `VITE_`-prefixed value (Vite inlines those into the client
+bundle, so they are public the moment your app loads) and a plain unprefixed one
+alike. Put nothing in those three files you would not paste into a public page.
+`app submit` *warns* when a packaged file looks like it holds a credential, but
+that is a heuristic printed after the fact: it never drops a file, and a silent
+run is not a statement that the file is clean.
 
-⚠️ **If your project was scaffolded before this was documented, check it by
-hand.** The money template's `.env.example` used to say *"Paste it here"* next to
-`VITE_LIVE_BLOCK_TOKEN`. Templates apply at `civitai app create` only — an
-existing project keeps whatever text (and whatever value) it already has;
-`validate` inspects no dotenv file's contents, and `submit`'s credential warning
-is a heuristic that may not fire on yours. Open
-`.env.example`, make sure that line is bare, and if a real token was ever there,
-treat it as disclosed and mint a new one (`civitai app dev-token <slug> --env >>
-.env.development.local`).
-
-`.env.production` being **shipped** is the one worth knowing about, because it is
-the least expected: the server-side build needs it, and the scaffolded file holds
-one public value, `VITE_BLOCK_ALLOWED_PARENT_ORIGINS`. That is what the
-*scaffolded* file holds — it is not a guarantee about yours.
-`.env.production.local` is *not* kept: `.local` is the dev-local override
-convention and falls to the catch-all with everything else.
-
-#### What looks like a credential
-
-The `Skipped …` line above says what did **not** ship. This one is its opposite:
-what **did** ship and probably should not have. Under the `Packaged …` line, on
-every path including `--package-only`, `app submit` warns when a file it is about
-to upload looks like it holds a credential:
-
-```
-Packaged 5 file(s) (858 bytes compressed, 110 decompressed; 1163 bytes as the base64 JSON submit body)
-⚠ 3 packaged file(s) look like they hold credentials:
-    config.toml:2           token
-    secrets.json:2          API_SECRET
-    src/credentials.yaml:1  password
-  These are uploaded to the platform and read by a reviewer, and cannot be
-  recalled. On a real submit this prints as the bundle goes up: it reports,
-  it does not stop the upload — `civitai app submit --package-only` is the
-  path that lets you look first. The matched values are not printed here.
-```
-
-- **It warns. It never drops a file, never refuses, and never changes the exit
-  code** — a `--yes`/CI submit that warned still exits `0`.
-- ⚠️ **On a real `submit` it reports a leak; it cannot prevent one.** The line is
-  printed between the confirmation prompt and the upload, so by the time you read
-  it the bundle is on its way. `--package-only` writes the `.zip` and sends
-  nothing, which is the path where the warning is actionable.
-- **It prints `path:line` and the key name, never the value.** This output lands
-  in CI logs and terminal scrollback: printing the secret would move it into a
-  second durable place. Open the file to see what matched. A key that *itself*
-  looks like a credential — the credential word can sit inside a token — is
-  replaced by the bare word (`SECRET`), so the printed label never carries
-  secret-shaped material.
-- **It reads exactly what the packager kept.** A warning can never name a file
-  that was dropped — including `.env.local` and anything under `node_modules/` —
-  and `.env.production` **is** in scope, because it is allow-listed by name and
-  uploaded.
-- **What it matches:** an assignment whose key holds a credential word
-  (`SECRET`, `TOKEN`, `PASSWORD`, `API_KEY`, `PRIVATE_KEY`, `ACCESS_KEY`,
-  `CREDENTIALS`) and whose value survives a placeholder-and-entropy gate — so
-  `process.env.VITE_API_KEY`, `"your-api-key-here"`, `"${TOKEN}"` and
-  `PASSWORD_MIN = 8` are silent — plus nine self-identifying formats (PEM private
-  key, JWT, AWS, GitHub, Slack, OpenAI, Stripe, npm, and a URL carrying a
-  password such as `postgres://admin:…@host`).
-- 🔴 **What it does NOT see, so a silent run is not a clean bill of health:**
-  binary files (a NUL byte in the first 8 KiB); a line over 1 MiB, e.g. a
-  minified bundle — that *line* is skipped, the rest of the file is still
-  scanned; a credential passed some way other than an assignment or one of the
-  nine formats; and, deliberately, **Google API keys** (a Firebase *web* key has
-  the same shape and Google documents it as public, so warning on it would fire
-  on every submit of a Firebase-based block — the cost is that a Google *server*
-  key is not reported either) and a headerless PKCS#8 body (that shape is an
-  X.509 certificate just as often as a private key); and a connection string
-  against a **reserved host** — `example.com`/`.net`/`.org` and anything under
-  them, any host whose TLD is `.test`, `.invalid`, `.localhost`, `.example` or
-  `.local`, and the loopback/unspecified addresses — which is documentation, not
-  a leak. That last set is compared as **whole DNS labels**, so a real host that
-  merely spells one of those words (`fastest.civitai.com`, `db.dev.civitai.com`,
-  `cache.samplerate.io`) **is** reported. If the scan hits its
-  8 MiB budget it stops **and says so** rather than reporting a quiet zero.
-- 🔴 **The rate you can measure is the false-positive one.** Over 244 real
-  project directories and 3,917 packaged files this fires on **one** project. The
-  *true*-positive rate is unmeasured and cannot be measured from that corpus,
-  because it holds no real credential: detection is evidenced only against
-  planted fixtures. It is aimed at accidental inclusion by an honest author.
-  There is deliberately **no** carve-out for `*.test.*` files, because a
-  credential in a test file is uploaded and reviewed like any other.
-
-### After you submit: review → approve → deploy
-
-A successful `submit` does **not** publish your app — it queues it for moderator
-review. **submit** → your submission lands at `/apps/my-submissions` with status
-`pending`; **review** → a moderator approves it, or rejects it with a reason you
-can read inline, fix and resubmit; **deploy** → on **approval** the platform
-builds and deploys your app and programs the `<blockId>.civit.ai` DNS record, and
-a few minutes later it serves at **`https://<blockId>.civit.ai/`**. Before
-approval that URL **404s** — submitting does not make the subdomain serve (but
-`dev:live` works against a pending app — see
-[Local dev loop](#local-dev-loop-harness-mock-vs-live)).
-
-**Budget time for artwork.** Review and deploy are not the only gate: a store
-listing **cannot go live without an icon AND a cover**. `civitai app submit`
-mints your listing as a **draft** and prints this reminder inline — which is the
-moment to act on it, because the media is settable **while the app is in review**
-and will carry forward on APPROVAL only — withdrawing the submission, or a
-moderator rejecting it, deletes the listing and everything on it. `assets/` is
-scaffolded by every template, with a README of the requirements and **no
-placeholder images** — the files you attach are ones you supply.
-
-📖 Two guides carry the rest.
-**[Review & deploy](https://developer.civitai.com/apps/guide/review-and-deploy)**
-walks the lifecycle and `civitai app withdraw` — which frees the slug and
-**deletes a first-version app's store listing**, so it asks first on a terminal
-and refuses in a script without `--yes`.
-**[Store listing](https://developer.civitai.com/apps/guide/store-listing)** is
-every `app listing` subcommand: attaching media, `--slug`/`--dir` when you are
-not in the app directory, how a **material** change to a LIVE listing is **staged
-on a revision** and is not live until `submit-revision` is approved — 🔴 with
-`set-text` the exception, applying **in place, immediately and publicly** — and
-what `--json` reports (`parentId`, `shadowId`, `floor`). It is also where the
-**media requirements** live: the formats and byte caps the CLI checks locally,
-and the per-kind aspect range, minimum dimension and server-side icon re-encode
-the platform applies at attach. Those bounds are the platform's and this CLI
-deliberately does not vendor them — a rejection names the bound it applied and
-the value it measured, which is always current where a local copy would not be.
-
-One rule a script will otherwise walk straight into:
-
-- 🔴 **`listing status` is NOT a pure read — `--json` or not — so do not poll it
-  in a loop.** On a LIVE (approved) listing the read behind it
-  (`getMyListingForEdit`) opens the revision draft server-side, idempotently —
-  the same one each time — so a script calling it repeatedly keeps a revision
-  open on your listing. [#389](https://github.com/civitai/cli/issues/389) asked
-  the narrower question of whether a call that FAILS could leave a revision
-  behind; it cannot, because every refusal the server can return here is raised
-  before the revision is opened. **That settles the error path only — the write
-  on success is unchanged.** Reading it once per change is fine; a watch loop is
-  a writer.
-  ⚠ **This now applies to OFFSITE apps too.** Before
-  [#422](https://github.com/civitai/cli/issues/422) every `app listing`
-  subcommand refused for an offsite app and therefore could not write anything;
-  now that they resolve by slug, `app listing status` against an **approved**
-  offsite listing mints that shadow revision like any other. Every offsite app
-  measured on civitai.com is approved, so this is the *normal* state there, not
-  an edge case. #422 retired the "cannot be addressed" refusal, and #389
-  retired nothing about the write — the shadow is a property of
-  `getMyListingForEdit`, not of how the listing id was obtained.
+📖 **The rest of the rule — the per-file table, the separate (narrower)
+directory rule, the deliberate case-sensitivity split, what still slips through,
+what the `*.env` rule costs a Babylon.js `.env` texture, and what the root scope
+costs a build that does not run from the project root: [What goes in the
+bundle](https://developer.civitai.com/apps/guide/packaging#which-dotenv-files-end-up-in-the-bundle).**
 
 ### Link your source code (`app listing set-source-repo`)
 
-If your app is open source, its store **detail** page can carry a `Source` row
-linking to the code. It never appears on a store grid card, and it is omitted
-entirely when unset.
-
-**Where you set it depends on your app's kind, and the two are not
-interchangeable.**
-
-| kind | where the link lives | how it gets there |
-|---|---|---|
-| **on-site** | the `repository` key in `block.manifest.json` | flows to the listing when a moderator approves a version, and is **re-synced from the manifest on every approved version after that** — remove the key and the link is cleared |
-| **off-site** | the listing itself | `civitai app listing set-source-repo <url>` |
-
-`set-source-repo` **refuses an on-site app** (exit `1`) and names the manifest
-key instead, because a write here would be re-synced away at your next approved
-version.
+An app's store **detail** page can carry a `Source` row linking to the code.
+**Where you set it depends on the app's kind, and the two are not
+interchangeable.** An **on-site** app takes it from the `repository` key in
+`block.manifest.json`, re-synced from the manifest on every approved version —
+so `set-source-repo` **refuses an on-site app** (exit `1`) and names that key
+instead, because a write here would be re-synced away. An **off-site** app takes
+it from the listing:
 
 ```bash
 civitai app listing set-source-repo https://github.com/me/my-app
 civitai app listing set-source-repo --clear          # remove the link
-civitai app listing set-source-repo https://github.com/me/my-app --json
 ```
 
-The URL must be a repository **root** on `github.com`, `gitlab.com` or
-`codeberg.org` — `https://<host>/<owner>/<repo>`, with no deeper path. A
-trailing `/` or `.git`, a query string and a fragment are accepted and
-normalised away. A deep link such as `/owner/repo/tree/main` is rejected.
-
-> 🔴 **This is a *material* change, unlike `set-text`.** On an **approved**
-> listing a change to this link is not applied in place: the server stages it on
-> a revision and the listing re-enters moderator review, because this is an
-> outbound link on a public page. **The live listing is unchanged until that
-> revision is approved** — run `civitai app listing submit-revision` to send it.
-> The command tells you which branch the server took, and `--json` carries it as
-> `requiresReview` and `shadowId`. On a draft or pending listing it applies
-> directly. This is also why it is a separate command rather than a flag on
-> `set-text`: bundling them would make a `--tagline` edit stage instead of apply,
-> depending on whether an unrelated flag happened to be passed.
-
-**What counts as a "change".** The server compares **canonical** forms, so
-several things that look like edits are not: re-setting the link you already
-have, setting a `/` or `.git` spelling of it, or `--clear` on a listing that has
-no link. Those apply in place and stage nothing, and the command reports
-`requiresReview: false` — it never guesses which branch happened, it reports the
-one the server took.
+🔴 **On an approved listing this is a *material* change, unlike `set-text`.**
+The server stages it on a revision and the listing re-enters moderator review,
+so **the live listing is unchanged until `civitai app listing submit-revision`
+is approved**. `--json` carries the branch the server took as `requiresReview`
+and `shadowId`.
 
 **Some states are refused outright rather than staged, and they do NOT share an
 exit code.** Read the code, not the word "refused":
@@ -1646,32 +884,10 @@ exit code.** Read the code, not the word "refused":
 | a moderator removed the listing | `3` |
 | the platform has not yet applied the migration that adds the listing's source-repo column | `1` |
 
-The first is `2` because the server answers `MATERIAL_CHANGE_BLOCKED` as an HTTP
-`400`, which this CLI classifies as a malformed request — see
-[Exit code 2](#exit-code-2). In each case the server's own sentence is what names
-the state, and the CLI echoes it verbatim. On the **moderator takedown** the CLI
-adds what that sentence leaves out — that your account's access is not the
-problem, and that asking a moderator to relist the listing is the only step that
-helps.
-
-**If a revision was already open** — because you staged an `rm-screenshot`, or
-one of the attach commands minted one — then *when this edit is material* it
-joins **that** revision rather than getting its own, and approving it publishes
-*everything* staged there and copies its text back over the live listing. The
-command says so and points you at `civitai app listing status` first.
-
-When the edit is **not** material (the canonical no-op above) it applies in place
-and does not join the revision — but that revision can still carry a *different*
-source link that replaces yours when it is approved, so the command warns about
-it on that path too. `--json` reports it as `openRevision` either way.
-
-**The CLI does not pre-validate the URL**, on purpose. The platform's
-`validateRepositoryUrl` is the authority, and it constrains things the shipped
-manifest `pattern` does not (each path segment's characters, a stripped trailing
-`.git`). A second local copy of that rule would be a second thing to be wrong —
-so an unacceptable URL comes back as the server's own message. For the
-**on-site** manifest key, `civitai app validate` checks only the coarse shape:
-passing it is necessary, not sufficient.
+📖 **What URLs the server accepts and why the CLI does not pre-validate them,
+what counts as a "change", and what happens when a revision was already open:
+[Your store
+listing](https://developer.civitai.com/apps/guide/store-listing#link-your-source-code).**
 
 ## Submission status
 
@@ -1685,38 +901,21 @@ deployed. Run from inside an app checkout it also warns on **stderr** when your
 local `block.manifest.json` is **BEHIND** your highest **approved** version of
 that app, because approving an older version replaces newer code on deploy.
 
+When `civitai app submit` refuses because the manifest version is not strictly
+above the highest **approved** version, its second line names which of four
+cases you are in — lower-vs-live, lower-vs-approved-not-live, same-vs-live, or
+same-vs-approved-not-live — and each says only what is actually known.
+`--allow-downgrade` submits anyway. **"Live" is the server's own answer, not the
+deploy state:** the check reads the `liveUrl` the submissions route returns and
+consults `deployState` only as a fallback, because a **legacy approval** that
+predates deploy-state tracking is serving but has no `deployState`.
+
 📖 **[Review & deploy guide](https://developer.civitai.com/apps/guide/review-and-deploy)**
 — the listing and detail layouts, the server's 100-row cap and why `--limit` is a
 display limit rather than a page size, build provenance (`sourceCommit` /
 `sourceDirty`, and why it is a CLAIM the server stores unverified rather than a
 proof), the repo-behind warning in full, and why `civitai app status` can say
 `approved / live` while `civitai app view` truthfully answers **not found**.
-
-**When `civitai app submit` refuses because the manifest version is not strictly
-above the highest APPROVED version, its second line tells you which of four cases
-you are in, and each says only what is actually known:**
-
-- a **lower** version against a version that is **live** replaces that
-  deployment on approval, so your repo may be behind what was last released —
-  bump the manifest, or `civitai app pull` first;
-- a **lower** version against an approved row that is **not** live deploys code
-  older than the highest approved version, and no deployment of that version is
-  being replaced, because none is running;
-- the **same** version against a deployment that is really live is almost always
-  an accident;
-- the **same** version against an approved row that is **not** live is a
-  resubmit of a deploy that has not landed — still building, still deploying, or
-  failed — which is a plausible deliberate act, and `--allow-downgrade` submits
-  that version again.
-
-**"Live" is the server's own answer, not the deploy state.** The check reads the
-`liveUrl` the submissions route returns — the same field `civitai app status`
-prints `Live at:` from — and consults `deployState` only as a fallback when
-`liveUrl` is absent. That order is load-bearing: the server computes `liveUrl`
-from its own serving predicate, which is true for a **legacy approval** that
-predates deploy-state tracking, so reading `deployState` alone would call a row
-that is serving "not live".
-
 ## Listing doctor (`app doctor`)
 
 `civitai app doctor` answers one question — **is this listing ready to
@@ -1755,52 +954,23 @@ civitai app pull ./my-block --app my-block     # clone/sync into ./my-block
 civitai app pull . --app my-block              # sync the current directory
 ```
 
-`--app` is required (the slug or `appBlockId`; find it with `civitai app
-status`). Authentication uses your stored credential (`civitai login` or a
-personal API key) — the command calls an owner-only endpoint that **lazily
-provisions a scoped, read-only Forgejo identity** for you and returns a clone URL
-with a pull token embedded.
+⚠ **The clone URL embeds your access token, and a fresh clone persists it into
+`.git/config`.** The endpoint lazily provisions a scoped, read-only Forgejo
+identity and returns a URL with a pull token in it.
 
 The repo only exists once your **first version has been submitted as a ZIP and
-approved**; before then the command tells you so rather than failing obscurely —
-`app <slug> has no approved version yet …`, naming the latest submission's state
-and the next step for it (where it is in review, or — for a **rejected** or
-**withdrawn** submission — that nothing is in review and a new `civitai app
-submit` is what moves it).
+approved**; before then the command says so — `app <slug> has no approved
+version yet …` — naming the latest submission's state and the next step for it:
+where it is in review, or, for a **rejected** or **withdrawn** submission, that
+nothing is in review and a new `civitai app submit` is what moves it. Exit `4`.
 
-That better message needs a submission the CLI can *see*, so it is not the
-answer in every case. **`no such app for your account` is what you get whenever
-the CLI cannot prove otherwise** — the slug matches none of your submissions,
-**or** the submissions lookup itself failed, **or** a version *is* approved (so
-the repo is missing for some other reason), **or** you passed `--app
-<appBlockId>` instead of the slug (the check reads your submissions by slug; an
-`appBlockId` only exists once a version is approved, so it is never the
-not-approved case). Either way `civitai app status` is the command that settles
-it.
+That better message needs a submission the CLI can *see*, so **`no such app for
+your account` is what you get whenever the CLI cannot prove otherwise** — no
+submission matches the slug, **or** the lookup itself failed, **or** a version
+*is* approved, **or** you passed an `appBlockId`. `civitai app status` settles
+it. `git` must be on `PATH`; that check runs only after the server has answered.
 
-`--app` is also where the app goes, and the positional is the **directory**:
-`civitai app pull my-block` (slug typed positionally) is refused with a message
-saying so, not a bare framework error — as is a bare `civitai app pull`.
-
-> ⚠️ **SECURITY — TOKEN-IN-URL LEAKAGE.** The clone URL embeds your access token
-> as HTTP-Basic credentials (`https://<user>:<token>@…`).
->
-> - On a fresh **CLONE**, git writes the remote URL into `.git/config`, so **the
->   token lands on disk** in the checkout. Treat the directory as sensitive: do
->   **not** commit `.git/config` or share the directory. To drop the token, point
->   the remote at the credential-less HTTPS URL —
->   `git -C <dir> remote set-url origin <httpUrl>` — which is exactly the command
->   the CLI prints for you after a clone.
-> - On a **SYNC** (pull into an existing checkout) the URL is passed explicitly
->   and is **not** persisted to `.git/config`. The token still appears
->   transiently in the git child process's arguments, so it is briefly visible to
->   other local processes via `ps` / `/proc/<pid>/cmdline`.
->
-> The CLI prints the applicable half of this warning to stderr after every run.
-
-A sync is `git fetch` + `git merge --ff-only`, so it never creates a merge commit
-and refuses rather than clobbering diverged history or a conflicting dirty tree.
-
+📖 Flags and the full failure matrix: `civitai app pull --help`.
 ## Browse the App store
 
 `civitai app list` and `civitai app view <slug>` read the **public App store
@@ -1841,125 +1011,70 @@ civitai app view my-cool-app --json
 ## App metrics
 
 `civitai app metrics <slug>` shows the owner-only analytics for one of **your**
-App Blocks. The slug is resolved to its `appBlockId` through your own
-submissions, so analytics exist only once a version has been **approved** — an
-app still in review reports that instead of an empty dashboard. Like `app pull`,
-the message names the next step **for** the latest submission's own state: where
-it is in review, or — for a **rejected** or **withdrawn** submission — that
-nothing is in review and a new `civitai app submit` is what moves it. (Unlike
-`app pull`, it does not print the `(latest submission: <version> <status>)` pair
-— a **pending** app is told where to look, without its version being named.)
+App Blocks: installs, runs + Buzz spent, Buzz purchased, App loads and API
+engagement. It needs the **Apps submit scope** — the same bit `app submit` and
+`app status` require, so one `civitai login` serves all three; an OAuth token
+minted **before** that scope existed still gets a `403`, and a full-scope
+personal API key also works.
 
-```text
-$ civitai app metrics gen-matrix --from 2026-05-01 --to 2026-08-03
-App:          gen-matrix
-Window:       2026-05-01 00:00 UTC → 2026-08-03 00:00 UTC
-Granularity:  week
-
-Installs
-  Total   12
-  Active  9
-
-Runs
-  Count       20
-  Buzz spent  65
-
-Buzz purchased
-  Purchases  3
-  Buzz       15000
-  Gross      $14.97
-
-App loads
-  Impressions       124
-  Unique viewers    12
-  Signed-out loads  40
-
-Engagement
-  API calls     26
-  Active users  2
-  Error rate    3.8%
-
-  Top scopes:
-    ai:write:budgeted  20
-
-  Top endpoints:
-    /api/v1/blocks/me  4
+```bash
+civitai app metrics gen-matrix --from 2026-05-01 --to 2026-08-03
+civitai app metrics gen-matrix --json
 ```
 
-Three things are worth knowing, because each one otherwise produces a
-believable-but-wrong reading:
+The slug is resolved to its `appBlockId` through your own submissions, so
+analytics exist only once a version has been **approved** — an app still in
+review reports that instead of an empty dashboard, and the message names the
+next step **for** the latest submission's own state: where it is in review, or
+— for a **rejected** or **withdrawn** submission — that nothing is in review and
+a new `civitai app submit` is what moves it. Exit `1`, not `4`: the slug is
+right and the app exists, only its analytics do not yet.
 
-- **The window is always printed, and it comes from the server.** The API
-  defaults to the last **30 days** and clamps any request to **366 days**, so a
-  real app with 20 runs in mid-June reads `0` under the default window. The
-  window shown is the one the server actually served — if it clamped your
-  `--from`, the printed range says so. Widen it with `--from` / `--to`, which
-  accept a plain `YYYY-MM-DD` (midnight UTC) or a full RFC3339 timestamp; a
-  malformed value or an inverted window is a usage error (exit `2`) caught
-  before any request.
-- **"Not entitled" is not "zero".** When the caller doesn't own the app (or
-  lacks Apps-author access) the API answers **HTTP 200 with every counter
-  zeroed**, flagged only by a `notOwned` field. The CLI refuses to render a
-  dashboard in that case and tells you to check `civitai whoami` /
-  `civitai app status <slug>` instead — a silently-empty dashboard that looks
-  like real data is the failure mode this command is built to avoid.
-- **An OAuth login works, and a personal API key works.** The query needs the
-  **Apps submit scope** — the same bit `civitai app submit` and
-  `civitai app status` require — so one `civitai login` serves all three. An
-  OAuth token minted **before** that scope existed does not carry it and still gets a
-  403 — re-run `civitai login`. Both refusals, the 403 and the no-token-at-all
-  case, name both working routes rather than the generic "run `civitai login`".
+**The window is always printed, and it comes from the server.** The API defaults
+to the last **30 days** and clamps any request to **366 days**, so a real app
+with 20 runs in mid-June reads `0` under the default window. `--from` / `--to`
+take a plain `YYYY-MM-DD` (midnight UTC) or a full RFC3339 timestamp; a
+malformed value or an inverted window is a usage error (exit `2`) caught before
+any request.
 
-Two data caveats.
+🔴 **Three flags mean "this number was never measured", and none of them is a
+zero. A script must branch on each rather than trusting the counts** — all three
+pass through `--json` at exit `0`:
 
-**Engagement counts only authenticated, scope-gated API
-calls.** An app that ships no scoped API surface shows real installs and revenue
-with a flat engagement section — that is expected, not a bug. **Installs** is a
-different case again: it shows **`n/a`** for an app that cannot be installed at
-all (a page app has no install slot, so an install record cannot exist), which
-is deliberately distinct from a real `0` on an installable app nobody has
-installed yet. **App loads is the exception**: it is measured on every load, so it counts signed-out visitors and
-static blocks that engagement structurally cannot see. `Unique viewers` counts
-signed-in people once each and approximates signed-out ones by network address,
-so read it as reach rather than an identity count, and `Signed-out loads` is a
-count of LOADS (one anonymous visitor reloading ten times is 10 there and 1
-unique viewer), so it can legitimately exceed `Unique viewers`. Note also that
-these are mount ATTEMPTS: a load that FAILED still counts, because a failed
-mount's only beacon is the same event and it carries no status. `Error rate` is the
-share of those calls that failed, and the human view renders it as a percentage
-(the server sends it as a `0`–`1` ratio, which `--json` passes through unchanged).
-Only a genuine zero prints `0.0%`: a real but tiny rate — a high-traffic app with
-a handful of failures — reads `<0.1%` rather than rounding away to look
-error-free.
+- **`notOwned`** — the caller does not own the app (or lacks Apps-author
+  access). The API answers **HTTP 200 with every counter zeroed**, flagged only
+  by this field. The **human view refuses to render a dashboard** and names
+  `civitai whoami` / `civitai app status <slug>` instead; **`--json` does not
+  refuse**, so `… --json | jq .runs.count` returns `0` for an app you cannot see.
+- **`installs.notApplicable`** — the app cannot be installed at all (a page app
+  has no install slot), so an install record cannot exist. **Not an outage
+  flag**: render it "not applicable" rather than retrying. Distinct from a real
+  `0` on an installable app nobody has installed yet.
+- **`views.unavailable`** — section-local and independent of `notOwned`. App
+  loads is the one section read from a different store, which can be unreadable
+  or merely too slow (the read is time-bounded server-side) while every other
+  counter in the same response is genuinely measured. The human view prints
+  `unavailable`. **A server old enough to predate the section omits the `views`
+  key entirely** — treat a missing `.views` the same way.
 
-`--json` emits the raw analytics payload (the server's own object, including
-`notOwned` and the per-bucket `series` arrays the human view omits) for
-scripting. Note that **`--json` does not refuse a not-entitled read the way the
-human view does**: a `notOwned: true` payload is passed through with every
-counter zeroed and the command still exits `0`, so
-`civitai app metrics <slug> --json | jq .runs.count` returns `0` for an app you
-can't see. A script must branch on the `notOwned` field rather than trusting the
-counts.
+**Engagement counts only authenticated, scope-gated API calls**, so an app that
+ships no scoped API surface shows real installs and revenue beside a flat
+engagement section. **App loads is the exception** — measured on every load, so
+it sees signed-out visitors and static blocks engagement structurally cannot.
+`Unique viewers` counts signed-in people once each and approximates signed-out
+ones by network address, so read it as **reach, not an identity count**;
+`Signed-out loads` counts LOADS, so one anonymous visitor reloading ten times is
+`10` there and `1` unique viewer, and it can legitimately exceed `Unique
+viewers`. These are mount **ATTEMPTS**: a load that FAILED still counts, because
+a failed mount's only beacon is the same event and it carries no status.
+`Error rate` is the share of API calls that failed; the server sends a `0`–`1`
+ratio (which `--json` passes through unchanged) and the human view renders a
+percentage. Only a genuine zero prints `0.0%` — a real but tiny rate reads
+`<0.1%` rather than rounding away to look error-free.
 
-**Installs carries `installs.notApplicable`** for the case above. It is NOT an
-outage flag — it means the question does not apply to this app type, so a script
-should render it as "not applicable" rather than retrying or warning about
-infrastructure. `--json` passes it through and still exits `0`, so branch on it
-rather than trusting the counts.
-
-**App loads has a SECOND, section-local unavailability flag** — `views.unavailable`,
-independent of `notOwned`. It is the one section the server reads from a
-different store, which can be unreadable — or merely too slow, the read is
-time-bounded server-side — while every other counter in the same response is
-genuinely measured. When that happens the human view prints `unavailable` and
-says so explicitly rather than printing a `0` you would read as "nobody opened
-my app". `--json` passes the flag through and still exits `0`, so a script must
-branch on `views.unavailable` too — `jq .views.count` alone cannot tell an
-outage from a real zero. A server old enough to predate this section omits the
-`views` key entirely; the human view reports that as unavailable as well
-(naming the different cause), and a script should treat a missing `.views` the
-same way.
-
+📖 The raw endpoint/scope tokens the CLI deliberately does **not** humanise, and
+the full `--json` payload including the per-bucket `series` arrays the human
+view omits: `civitai app metrics --help`.
 ## Browse the public API
 
 Beyond authoring Apps, the CLI is a thin client for Civitai's **public read REST
@@ -2001,44 +1116,21 @@ civitai articles get 32680 --content   # render the article body (the guide) as 
 civitai images search --model-id 4384 --sort "Most Reactions" --json   # raw JSON for scripting
 ```
 
-**Filtering by base model.** `--base-model` is repeatable and maps to the REST
-`baseModels` filter (an OR across the values) on both `models search` and
-`images search`. The
-[CLI guide](https://developer.civitai.com/site/guide/cli) works through it with
-`models search` examples — it does not list the flag for `images search`, which
-the table above does; the rest of this section is CLI **output** behaviour.
+A few output behaviours worth knowing, all of them documented per command by
+`--help`: `--base-model` is repeatable (an OR across the values) on both
+`models search` and `images search`; `--meta` adds each image's generation
+metadata as an indented detail block (`meta: (hidden by uploader)` where the
+uploader hid it); `--sort` is **ignored** with `--model-id`, and the CLI prints
+a one-line note on stderr saying so; and `models get` / `model-versions get`
+tag a version whose primary file is **not** model weights with its actual type
+(`[Archive]`, `[Training Data]`, `[Other]`). `--json` is an unchanged raw
+passthrough in every case.
 
-**Generation metadata (`--meta`).** By default the image list is a compact table
-without generation data (matching the API, which omits `meta` unless asked). Add
-`--meta` to include each image's prompt, sampler, cfg, steps, seed, and model —
-rendered as an indented detail block per image (the table can't hold a prompt).
-Images whose uploader chose to hide their generation data show
-`meta: (hidden by uploader)`. With `--json`, `--meta` adds the raw `meta` object
-to each item.
-
-```bash
-civitai images search --nsfw --sort "Most Reactions" --period Month --meta
-civitai images search --model-version-id 128713 --meta --json | jq '.items[].meta'
-```
-
-The human table includes a `BASE MODEL` column (the base model each image was
-generated with, when the API reports one; `-` when it doesn't), so you can see
-the ecosystem at a glance without dropping to `--json`.
-
-**`--sort` is ignored with `--model-id`.** The REST API returns images for a
-given `modelId` in its own default order regardless of `sort`, so
-`images search --model-id <id> --sort …` prints a one-line note on stderr and the
-results are NOT re-sorted. (`--model-version-id` is unaffected — it honours
-`--sort`.)
-
-**Non-weights file marker.** In the human (non-`--json`) output of
-`models get` and `model-versions get`, a version whose **primary file is not
-model weights** (`type != "Model"`) is tagged with its actual file type — e.g.
-`[Archive]` (a "Workflows" model's downloadable deliverable), `[Training Data]`,
-or `[Other]` — so you can see at a glance that the version's file isn't weights.
-It's purely informational: any file type still downloads. `--json` output is an
-unchanged raw passthrough.
-
+📖 Field-by-field REST reference:
+[site/reference](https://developer.civitai.com/site/reference/). Paging in
+depth: [Pagination](https://developer.civitai.com/site/guide/pagination).
+Worked read recipes: [the CLI
+guide](https://developer.civitai.com/site/guide/cli#read-commands).
 ## Download model files
 
 `civitai download` fetches the file(s) of a model **version**. Identify the
@@ -2054,48 +1146,30 @@ civitai download 290640 --all --layout comfyui --root ~/ComfyUI   # route each f
 civitai download 691639 --layout a1111 --for-base "SDXL 1.0"      # A1111 layout + base-model compat warning
 ```
 
-The [CLI guide](https://developer.civitai.com/site/guide/cli) introduces file
-selection, folder routing, the compatibility check and integrity verification a
-paragraph at a time. What follows is the full behaviour.
-
 > **Downloads require authentication.** Every model-file download needs a token —
 > even a small public embedding 401s anonymously. Run `civitai login` first. The
 > read/search commands work anonymously; downloads do not. `--anon` is meaningful
 > for the read commands, not for `download`.
 
-Behavior:
+The essentials:
 
-- **Identifier** — exactly one of the positional id or `--model <model-id>` is required. The positional is normally a model-**version** id, but because `models search` / `models get` print **model** ids, handing one over just works: the CLI notices it is a model id and downloads that model's default version, printing a `note: <id> is a model id — downloading its default version <v>` line. When a number is **both** a valid model id and a valid version id (common for low/mid numbers), the CLI **stops** rather than guess, naming both interpretations — re-run with `--model <id>` (that model's default version), `--version <id>` (that version as-is), or `--yes` to take the version interpretation and have it echoed back. `--version` names a version id explicitly and skips the stop entirely.
-- **`--model` resolves the default version** — the model's default (first published) version; its primary file is downloaded regardless of file type. Any model type works, including a `type: Workflows` model whose deliverable is a downloadable `Archive`.
-- **`--dry-run`** — resolve the version + selected file(s) and print the plan (each file's name, size, SHA256, resolved target path, and whether authentication will be required) then exit `0`, transferring nothing and creating no file (not even a `.part`). Works with `--file`, `--all`, `--model`, `--out`, `--out-dir`, and `--layout`/`--root` (the plan shows the routed target paths).
-- **File selection** — defaults to the version's **primary** file. `--file` selects one file by **numeric file id** (the version's `files[].id`) or by **name** (exact, else a unique case-insensitive substring; ambiguous/none errors and lists the candidate files with their ids). `--all` downloads every file.
-- **Same-named files (no silent overwrite)** — a version can ship two files that share a name (e.g. Flux Dev's fp16 **and** fp8, both `flux_dev.safetensors`). Selecting that shared name with `--file` is **ambiguous** and errors, listing both files with their ids — pass the **numeric id** to pick exactly one (`--file 1234567`; the id is shown by `--dry-run` and in the error). `--all` **refuses** to run when two selected files would resolve to the **same on-disk path** (which would silently clobber one) — it fails *before* transferring anything, lists the colliding files with their ids/sizes, and tells you to pick one with `--file <id>` (or write them to separate paths). No download ever silently overwrites another.
-- **Output** — `--out <path>` sets an exact target path (single file only). `--out-dir <dir>` writes server-named files into a directory (works with `--all`). Parent directories are created as needed. Default is the server-provided filename in the current directory.
-- **Type-aware folder routing (`--layout`)** — `--layout <a1111|comfyui>` writes each file into the correct subfolder for that app, keyed by the file/model **type**, under `--root <dir>` (default `.`). This fixes the footgun where `--all --out-dir X` dumps a **bundled VAE into the checkpoint folder** and pollutes the model dropdown: with `--layout`, the checkpoint lands in the checkpoints folder and the VAE in the VAE folder. `--layout` is mutually exclusive with `--out`/`--out-dir`; `--root` only applies with `--layout`. An unmapped type (Poses, Wildcards, Archive, …) is written to `--root` with a stderr note rather than silently misplaced. The routed folder maps:
+- **`--file` matches by substring**, so an ambiguous value is refused (exit `2`)
+  naming what it matched; an exact same-name collision is a different message.
+- **Integrity is verified by default.** A SHA256 mismatch deletes the partial
+  file and fails — that is the check working. `--no-verify` opts out.
+- 🔴 **The file name is the *uploader's* string.** Invisible,
+  terminal-controlling, newline and tab characters are removed before it is
+  printed, and the **progress line** is additionally cut at 120 characters,
+  because a name long enough to **wrap** could otherwise strand a forged
+  `Saved … (SHA256 verified)` at column zero. The `Saved …` line and the
+  download plan print the full (sanitised) name.
+- **`--layout comfyui|a1111` + `--root`** route each file into the right folder
+  for that runtime; `--for-base` adds a compatibility warning, never a refusal.
 
-  | Civitai type | A1111 / Forge | ComfyUI |
-  |---|---|---|
-  | Checkpoint | `models/Stable-diffusion` | `models/checkpoints` |
-  | VAE (standalone **or** bundled) | `models/VAE` | `models/vae` |
-  | LORA / LoCon / DoRA | `models/Lora` | `models/loras` |
-  | TextualInversion (embedding) | `embeddings` | `models/embeddings` |
-  | Hypernetwork | `models/hypernetworks` | `models/hypernetworks` |
-  | Controlnet | `models/ControlNet` | `models/controlnet` |
-  | Upscaler | `models/ESRGAN` | `models/upscale_models` |
-
-  (Sources: the [AUTOMATIC1111 wiki](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/Command-Line-Arguments-and-Settings) + the sd-webui-controlnet `models/ControlNet` default; the [ComfyUI models docs](https://docs.comfy.org/development/core-concepts/models).)
-- **Mis-file warning (without `--layout`)** — when `--all` would place files of **differing types** into one directory (the mis-file footgun), the CLI prints a one-line stderr warning naming the off-type file(s) and suggesting `--layout`. It's a warning, not an error; a single-type download stays quiet.
-- **Base model + compatibility (`--for-base`)** — the version's **base model** is always shown in the plan/output. `--for-base "<baseModel>"` warns on stderr when the version's base model is in a **confidently different family** than your target (e.g. an `SD 1.5` embedding like EasyNegative downloaded for an `SDXL 1.0` model → won't work; the wrong VAE → black images). The check is conservative — it groups the common bases into architecture families (SD1.x, SD2.x, the SDXL family [SDXL/Pony/Illustrious/NoobAI, treated loosely], SD3, Flux, video, …) and only warns on an architecture-level mismatch, never on near-neighbours (Pony vs Illustrious) or unclassifiable bases.
-- **Streaming + atomicity** — the body streams to `<target>.part` and is renamed into place only on success, so an interrupted run never leaves a truncated final file. Large files (10+ GB) are never buffered in memory. TTY-aware progress is printed to **stderr**. The Civitai download URL 302-redirects to signed storage; the CLI follows it.
-- **Auth** — your stored login token (`civitai login`) or `CIVITAI_TOKEN` is used automatically; **Civitai requires a token to download any model file, even public ones**, so an anonymous download gets an actionable 401 (`401` → run `civitai login`; `403` → the file is gated for your account). `--anon` forces no token.
-- **Transient-failure retry (reads)** — the read endpoints (search / model / version / images / tags / creators / users / articles / collections) retry a transient `502`/`503`/`504` or network error a few times with exponential backoff (with jitter), noting each retry on stderr. A `429` is retried **only** when it carries a `Retry-After` header (a genuine throttle, honored up to a cap); a `429` **without** `Retry-After` is treated as terminal rather than retried, because Civitai's deterministic deep-paging limit arrives that way, and is surfaced immediately with the hint to use `--cursor` instead of `--page`. ⚠ The absent header decides whether to RETRY; it does **not** identify the cap — the exit-code split is drawn from the server's message, so a header-less generic throttle is still a throttle and exits `6`; a 429 can also exit `2` or `5`, so branch on the code, not the text. The download **stream** is not retried mid-transfer.
-- **Integrity (default on)** — the streamed bytes are verified against the file's `SHA256`; a mismatch deletes the `.part` and fails. `--no-verify` skips it; a file with no published SHA256 downloads with a warning (not a hard failure). Note that **SHA256 verifies integrity (the bytes match what the API advertised), not authenticity** — it proves the download wasn't corrupted or truncated in transit, but a compromised source that advertises a matching hash for malicious bytes cannot be detected by the hash alone. Only download models from creators you trust.
-- **Pickle/archive safety note** — when a downloaded file has a pickle/executable extension (`.ckpt`, `.pt`, `.pth`, `.bin`, `.pickle`, `.pkl`) or an archive extension (`.zip`, `.tar`, `.tar.gz`, `.tgz`, `.rar`, `.7z`), the CLI prints a one-line stderr note: these formats **can execute arbitrary code when loaded** by ComfyUI/A1111/`torch.load`, and they land in folders those apps auto-scan. `safetensors` and image files are inert and get no note. The note is informational — it never blocks the download.
-- **ControlNet preprocessor note** — when the parent model is a **ControlNet**, the CLI prints a one-line stderr note: a ControlNet model needs a matching **preprocessor/annotator** (e.g. the ComfyUI `comfyui_controlnet_aux` custom node — OpenPose/Canny/Depth) to derive the control image from your input, and that preprocessor is a **separate install, not hosted on Civitai**. The note is informational — it never blocks the download.
-- **Server-supplied text is sanitised on every message here** — the file name in a `SHA256 mismatch` line is the *uploader's*, and so is most of what these messages carry, so invisible and terminal-controlling characters are removed first. The list is notable rather than exhaustive: the download progress line, the same-target overwrite refusal, the `401`/`403`/`404` download errors, the `server returned an unusable filename` refusal (which reaches both stderr and, as the download plan's `target: (unresolved)` note, stdout), the `download …`, `install …`, `create …`, `streaming …` and `finalize …` errors, and the `Saved …` line. **Newlines and tabs are removed too**, on every one of them: each is a single-line surface, so a newline in a file name would let the uploader write a whole line of their own — a forged `Saved … (SHA256 verified)` above a transfer that never finished, say. A newline or tab becomes a space, exactly as it does in a table cell (see [What a table cell can contain](#what-a-table-cell-can-contain)). **On the progress line the name is also shortened** — cut at 120 characters and marked with a `…` — because removing newlines does not stop a name long enough to **wrap**: the terminal, not the CLI, puts the overflow at column zero, and a wrap has no character in it to remove. That shortening is the progress line **only**; the `Saved …` line, the `SHA256 mismatch` line and the download plan still print the name in full. **Two deliberate exceptions, and they do NOT share a reason** — an earlier version of this claim said they did, which was true of only the first. (1) The `server returned an unusable filename` refusal renders through `%q`, which **escapes** the newline to a visible `\n`; it is already harmless there, and collapsing it would hide what the server actually sent. (2) Multi-line server text outside this path — a `prompt`, a generation failure reason — is printed **raw** and **indented**, not escaped: its newlines are real, and the indentation is what stops a continuation line reaching column zero. Do not read reason (1) as covering case (2); acting on that would remove the indentation guard, which is the forgery it exists to prevent.
-- **Idempotency** — an already-present target (that verifies, or with `--no-verify`) is skipped with a note; `--force` re-downloads.
-- **Any file type downloads** — the selected/primary file is downloaded whatever its `type` (`Model` weights, a `type: Workflows` model's `Archive`, training data, or other artifacts). The human `models get` / `model-versions get` output tags a non-weights primary file with its type (e.g. `[Archive]`) purely for information; it never blocks a download.
-
+📖 File selection, folder routing, the compatibility check and integrity
+verification, a paragraph at a time:
+[the CLI guide](https://developer.civitai.com/site/guide/cli#download).
+Every flag, offline: `civitai download --help`.
 ## Generate
 
 `civitai generate "<prompt>"` runs a text-to-image generation on Civitai's
@@ -2104,153 +1178,50 @@ generator.
 > 🔴 **This spends real Buzz and cannot be undone.** A submitted generation is
 > charged the moment the orchestrator accepts it, and nothing local calls that
 > back — not `--timeout`, not Ctrl-C, not `civitai workflows cancel`. Price it
-> with `--dry-run` first — that calls the cost estimator and spends nothing.
+> with `--dry-run` first; that calls the cost estimator and spends nothing.
 
-> 🔴 **The CLI states no RULE about what becomes of a charge, in either
-> direction — but it does report the transactions the server hands it.** Two
-> different things, and the difference is the whole point:
->
-> - **Your account Buzz ledger** is not readable from here. `civitai buzz`
->   reports a balance, not a history, so a balance alone cannot settle "did
->   *this* run come back" unless you noted it beforehand. Where no per-workflow
->   record is available the CLI says exactly that and points you at your
->   [transaction history](https://civitai.com/user/transactions).
-> - **One workflow's own transactions** often *are* in the payload. When they
->   are, `civitai workflows get <id>` — and `civitai generate` on a failed run —
->   print them: each `debit` and `credit` the server recorded for that workflow,
->   and the net. See [Reading a workflow's Buzz
->   transactions](#reading-a-workflows-buzz-transactions).
->
-> The CLI does **not** tell you the charge stands, and does **not** tell you it
-> was refunded. The server RE-PRICES a failed or cancelled run by the share of
-> its outputs that never landed; the CLI still promises no *amount*, because the
-> amount depends on how far the run got.
+> 🔴 **`--max-cost` is an estimate check, not a spending cap.** It compares the
+> server's estimate against your number and refuses **locally**, before
+> submitting. It never reaches the server, the realized charge can exceed the
+> estimate, and no server-side spending ceiling is reachable from an API key.
+> Do not run an unattended loop believing it caps spend.
+
+> 🔴 **The CLI states no rule about what becomes of a charge, in either
+> direction.** Your account Buzz ledger is not readable from here (`civitai
+> buzz` reports a balance, not a history) — see your
+> [transaction history](https://civitai.com/user/transactions). What the CLI
+> *does* report is one workflow's **own** transactions when the server hands
+> them over: `civitai workflows get <id>` prints each `debit` and `credit`
+> recorded for that workflow, and the net.
+
+> 🔴 **A checkpoint does not carry its ecosystem, and a bad pairing is refused
+> by nothing** — not this CLI, not the estimator, not the generator. If you name
+> `--checkpoint`, name the `--ecosystem` it belongs to as well. A mismatch has
+> been measured to charge, run, and finish with zero deliverable outputs.
+
+> 🔴 **The server may silently substitute a different checkpoint** and bill for
+> what actually ran. Warned by default; `--fail-on-substitution` refuses on the
+> estimate, before any spend.
 
 ```bash
 # Price it. Spends nothing.
 civitai generate "a cat wearing sunglasses" --dry-run
 
-# The same estimate as raw JSON, for scripts
-civitai generate "a cat wearing sunglasses" --dry-run --json
-
-# Generate, refusing if the estimate exceeds 50 Buzz
-civitai generate "a cat wearing sunglasses" --quantity 4 --max-cost 50
-
-# Your own checkpoint (a VERSION id) plus a LoRA — name the ecosystem that
-# checkpoint belongs to; it does NOT bring one with it. See below.
-civitai generate "a cat" --ecosystem <key> --checkpoint <version-id> \
-  --lora <version-id>:0.8 --dry-run
-
-# Wait for the result and write the images into ./out
-civitai generate "a cat" --yes --out-dir ./out
-
-# …naming the files yourself — {n} keeps a batch from colliding
-civitai generate "a cat" --yes --quantity 4 --out-dir ./out --out-name 'cat-{n}{ext}'
+# Generate, refusing if the estimate exceeds 50 Buzz, and wait for the images
+civitai generate "a cat" --quantity 4 --max-cost 50 --yes --out-dir ./out
 
 # Fire and forget; collect the results later
 civitai generate "a cat" --yes --no-wait
-civitai workflows list
 civitai workflows get <workflow-id>
-
-# Non-interactive (CI) — --yes is required, or the run is refused
-civitai generate "a cat" --yes --max-cost 20
-
-# Image-to-image from a local file — --ecosystem is REQUIRED with --image
-civitai generate "make it winter" --ecosystem Flux1Kontext --image ./cat.png --dry-run
-
-# …or from a public https URL, with two reference images
-civitai generate "combine these" --ecosystem Seedream \
-  --image https://example.com/a.jpg --image ./b.png --yes
-
-# Graduate from flags to a raw graph: print, edit, send back
-civitai generate "a cat" --quantity 2 --print-input > graph.json
-civitai generate --input graph.json --dry-run
 ```
 
-**Credential.** Generation needs the AI Services scopes. Either a full-scope
+**Credential.** Generation needs the AI Services scopes: a full-scope
 **personal API key** ([create one](https://civitai.com/user/account), then
-`civitai login --token <key>`), or a browser login that opted in:
-`civitai login --scopes generate`. A **default** OAuth browser login
-(`civitai login`, no `--scopes`) does **not** carry them and is refused.
-`civitai whoami` shows the capability as **Spend Buzz (AI Services)**.
+`civitai login --token <key>`), or `civitai login --scopes generate`. A
+**default** OAuth browser login does **not** carry them and is refused.
 
-The one exception is `--print-input`: it assembles the graph and exits before the
-estimator, the submit and the balance read, so it needs no credential — useful
-for building a graph to edit before you have logged in. Two caveats, and they are
-**not** the same caveat:
-
-- `--print-input` **with `--image`** does need a credential, because it uploads
-  each local file first and that upload is authenticated.
-- `--print-input` **with `--checkpoint` or `--lora`** needs none — the
-  model-version lookup is a public read — but it is **not offline**: that lookup
-  is a real request, and with no network it fails (exit `5`) rather than printing
-  a graph. Measured against a dead endpoint: bare `--print-input` exits `0`;
-  `--print-input --checkpoint <id>` exits `5` after the read's retries.
-
-So only a **bare** `--print-input` needs neither a credential nor a network.
-
-### 🔴 `--max-cost` is an estimate check, not a spending cap
-
-The cost this command shows is an **estimate, not a quote**: the server's
-estimator returns no quote id, no signed price and no expiry, so there is
-nothing to hand back at submit time — and **no server-side spending ceiling is
-reachable from an API key at all**. The realized charge can exceed the estimate,
-and `--max-cost` cannot claw the difference back — it never reaches the server.
-What the ledger then does with that charge is not something this CLI reports —
-see **What the LEDGER does with a charge** under [Generate](#generate).
-
-`--max-cost` compares that estimate against your number and refuses **locally**
-before submitting. It catches a `--quantity` typo. That is all it can do. Do not
-run an unattended loop believing it caps spend. (The per-API-key `buzzLimit` on
-your account does not bind this path either — the generator meters a separate
-server-minted subject, not your key.)
-
-### 🔴 A checkpoint does not carry its ecosystem
-
-`--checkpoint` selects a model **version** and nothing else. The settings the
-server generates with — engine, steps, cfg scale, sampler — follow the
-**ecosystem** (`--ecosystem`, or the server's default when you pass none), *not*
-the checkpoint you named. There is no `--steps` / `--cfg-scale` here to correct
-them either, deliberately — see
-[Raw graphs](#raw-graphs---print-input-and---input) for the route that does reach
-them, and [the content flags](#the-content-flags-and-why-there-arent-twelve) for
-why they are not flags.
-
-Pairing a checkpoint with an ecosystem it does not belong to is refused by
-**nothing** — not by this CLI, not by the estimator, not by the generator.
-Measured once, on a live token (2026-08-10): `--checkpoint 128713` with no
-`--ecosystem` submitted `diffuserModel: urn:air:sd1:checkpoint:civitai:4384@128713`
-(SD 1.5) beside `ecosystem: zImage`, `engine: sdcpp`, `steps: 9`, `cfgScale: 1`.
-It was charged 8 Buzz, queued 15 minutes, ran 4.5 minutes, and finished
-`Status: failed` with **0 deliverable outputs**. `--dry-run` had reported
-`Resources ready: true` beforehand. One paid observation, not independently
-reproduced — reproducing it costs Buzz.
-
-The two things that look like they should catch it do not:
-
-- the model-version lookup proves the id **exists**, not that it **fits**;
-- `Resources ready` reports resource availability, not coherence — it is
-  [not a promise of output](#generation---json), and this is now a second
-  measured case of `ready: true` preceding zero outputs.
-
-**Which ecosystem a given checkpoint belongs to is server knowledge this CLI does
-not hold and will not guess.** It is not vendored here for the reason
-[`AGENTS.md`](https://github.com/civitai/cli/blob/main/AGENTS.md) item 13 gives for the whole generation path: a local copy
-of server state goes stale and starts refusing valid *new* inputs, which is worse
-than the gap it closes. So if you name a checkpoint, name the `--ecosystem` it
-belongs to as well.
-
-### 🔴 Silent model substitution
-
-If you pass a `--checkpoint` version id that is not valid for the model family
-being generated, the server does **not** reject it. It substitutes that family's
-default checkpoint, runs the job, and bills you for **what actually ran**. Until
-recently the reply was indistinguishable from success — a nonexistent version id
-came back `200 OK` at the default price.
-
-The server now reports each swap, and `civitai generate` surfaces it. A version
-id that is perfectly real but belongs to a *different* model family is the
-easiest way to see it — here an SD 1.5 checkpoint sent to a Flux ecosystem:
+The `--dry-run` transcript is the easiest way to see a substitution — here an
+SD 1.5 checkpoint sent to a Flux ecosystem:
 
 ```console
 $ civitai generate "a cat" --ecosystem Flux1Kontext --checkpoint 128713 --dry-run
@@ -2260,295 +1231,8 @@ $ civitai generate "a cat" --ecosystem Flux1Kontext --checkpoint 128713 --dry-ru
 To refuse a run like this instead of being told about it, pass --fail-on-substitution.
 ```
 
-The checkpoint line in the summary you approve is annotated too, so the model
-that will *not* run is never the last one you read before saying yes:
+Two flags decide what happens after the job is accepted:
 
-```console
-Checkpoint:       DreamShaper — 8 (Checkpoint, id 128713)  [SUPERSEDED — the server will run version 1892509 instead; see the warning above]
-```
-
-Your own id stays on the line: the CLI marks it, it never quietly substitutes
-the applied one.
-
-Two things about that transcript, so you can tell a *reproduction* from a
-*mismatch*:
-
-- **The applied id is the server's current answer, not a constant.** `1892509`
-  is whatever that family's default was when this was run; yours will differ,
-  and so will the price. What reproduces is the *shape* — a warning naming both
-  ids and a `reason`, and a `[SUPERSEDED …]` note on the checkpoint line.
-- **A version id that does not exist at all will NOT get you here.** `generate`
-  resolves every `--checkpoint` against the public model-version API before it
-  prices anything, so `--checkpoint 999999999` fails locally with
-  `--checkpoint 999999999: not found (404): Model not found` and exit `4` — no
-  estimate, no submit, nothing charged. That is the [deliberate live
-  lookup](#-a-checkpoint-does-not-carry-its-ecosystem) doing its job: it is the
-  *nonexistent* id it closes off, and it cannot tell you whether an id that does
-  exist belongs to the family you are generating with.
-
-It is reported **on the estimate** (`--dry-run`, and before the confirmation
-prompt on a real run — while you can still back out), **again after the submit**
-(where it is the receipt for what was billed), and **on a later read** with
-`civitai workflows get <id>`, which is the only place a `--no-wait` run can still
-discover it. The report always goes to **stderr**, so `--json` stdout stays
-machine-clean — and `--json` carries the raw `modelSubstitutions` array itself.
-
-There are three `reason` values, and they want different fixes:
-
-| `reason` | What it means | What to do |
-| --- | --- | --- |
-| `wrong-workflow` | The version is real for this family but scoped to a **different** workflow (e.g. an edit-only version sent to text-to-image). | Pick a version offered for the workflow you are running, or change `--ecosystem` to match. |
-| `unrecognized` | The version is in no list for this family — a community checkpoint, or one **retired** since your script was written. | Check it with `civitai model-versions get <id>` and pin one that is still offered. |
-| `gated` | The version **is** offered here, but a gate rule hides it from your account. | An entitlement issue, not a command mistake: may need a membership, an early-access window, or an accepted licence. |
-
-**By default this is a warning and the run continues** — the substitution is a
-deliberate graceful degradation, so a script pinned to a version that was later
-retired keeps working rather than breaking on a CLI upgrade. Pass
-**`--fail-on-substitution`** to refuse instead; it is checked against the
-**estimate**, so nothing is submitted and nothing is charged when it refuses.
-
-🔴 **Silence is not an assurance.** The field is omitted when nothing was
-substituted, so "no warning" means *either* "no substitution" *or* "a server
-older than this feature" — the CLI cannot tell those apart and deliberately
-never claims the negative.
-
-🔴 **`--fail-on-substitution` is therefore NOT a spend guard.** It can only
-refuse what the server *reports*. Against a deployment that does not report
-substitutions the flag is **silently inert** — exit `0`, submitted, charged —
-and there is no signal distinguishing that from "nothing was substituted". Three
-further limits worth knowing before you build a pipeline on it:
-
-- It is evaluated on the **estimate**. A substitution appearing only on the
-  submit reply is **reported** (and is in `--json`) but exits `0`, because the
-  money is already gone and failing there would strand a result you paid for and
-  still need to collect.
-- It refuses on the *first* reported substitution; the message names that one and
-  counts the rest.
-- **With `--input` it stays live, but its coverage is unknown to this CLI.** It
-  still fires on the estimate's record, so it still refuses before any spend — a
-  raw graph does not disarm it. What the CLI cannot do is relate that record to
-  your file: the graph is not interpreted, so nothing local knows which model
-  references it contains. Measured once: a checkpoint named under `resources` was
-  charged 28 Buzz and ran a different model version with **no record at all**, so
-  the flag did not fire. Read a silent run as *"nothing was reported"*, never as
-  *"nothing was substituted"*.
-
-### Confirmation
-
-An interactive run prints the estimate, your balance and the resolved model
-names, then asks. A **non-interactive shell (pipe/CI) without `--yes` is
-refused** rather than charged silently. Everything the confirmation prints goes
-to **stderr**, so `--json` keeps stdout machine-clean.
-
-### Image-to-image: `--image` and `--ecosystem`
-
-`--image <path-or-url>` (repeatable) attaches a reference image and turns the
-job into an edit. A **local `.png`/`.jpg`** is uploaded to Civitai first and the
-stored blob is referenced; an **`https` URL** is passed through as-is, but must
-be publicly reachable — the generator downloads it server-side too, and an
-unfetchable URL is a `400` after you have already been priced. Either way the
-CLI reads the image's width and height from its **header only** (never decoding
-the pixels) and sends them, because the server requires both and rejects an entry
-without them. `http://`, `file://` and `data:` are refused, local files are
-capped at **64 MiB** (checked by `stat`, before a byte is read), and only png and
-jpeg are supported — webp would need a new third-party decoder dependency.
-
-> 🔴 **`--image` requires `--ecosystem`, and the reason is money.** The server
-> promotes a text-to-image job to image-to-image only when the request *names an
-> ecosystem*. Without one it **ignores the images, generates from the prompt
-> alone, and charges you the full amount** — HTTP 200, no error, no warning.
-> Measured: the same graph with and without `images[]` priced byte-identically.
-
-**The workflow on screen still says `txt2img`, and that is correct.** Image
-editing is *requested* as `txt2img` plus your images — the server does the
-promotion itself, from the request body. So the `--dry-run` quote and the spend
-confirmation both name `txt2img` and, when `--image` is set, say why on the same
-line. The CLI does not rename the field, because the value it sends really is
-`txt2img`; and it does not claim the promotion *happened*, because it cannot see
-that (the note below is the honest half of it).
-
-Two more things the CLI genuinely cannot check for you, so it says them instead
-of pretending:
-
-- **Only some ecosystems accept reference images at all.** `Qwen`,
-  `Flux1Kontext`, `NanoBanana`, `Seedream`, `OpenAI`, `Grok`, `Reve`, `MAI`,
-  `Boogu` and a few more do; the Stable Diffusion family and the *default*
-  ecosystem do **not** — and for those the images are dropped silently and
-  billed. **The cost estimate cannot tell you which case you are in**: several
-  edit-capable ecosystems price identically with and without images (measured on
-  `Flux1Kontext`, `NanoBanana` and `Seedream`), so a price comparison is not a
-  detector. Name an ecosystem you know supports editing.
-- **Too many reference images are silently truncated.** Per-ecosystem limits run
-  from 1 to 7, live only inside the server's per-engine graphs, and the extras
-  are dropped *before* any limit check can fire — so the server never reports it
-  and the truncated job is billed. Measured on `Qwen` (limit 3): 4, 5, 6 and 12
-  images all priced identically to 3. The CLI refuses **more than 7** (no
-  ecosystem accepts more, so that refusal can never block a valid request) and
-  **warns** for anything above 1. It deliberately does not vendor the
-  per-ecosystem table — see [`AGENTS.md`](https://github.com/civitai/cli/blob/main/AGENTS.md) items 13 and 19(c).
-
-`--ecosystem` is sent to the server **verbatim and is not checked locally**;
-an unknown value comes back as the server's own `unknown ecosystem` error.
-
-`--dry-run` **does** upload local `--image` files, because an estimate built on a
-graph with no `images[]` prices a plain text-to-image job. Uploading spends no
-Buzz, and `--dry-run` still never submits.
-
-### The content flags, and why there aren't twelve
-
-`--negative-prompt`, `--quantity`, `--aspect-ratio`, `--checkpoint
-<version-id>`, `--lora <version-id>[:strength]` (repeatable), plus `--image` /
-`--ecosystem` above.
-
-The generator is **permissive, not a validator** — it returns HTTP 200 for
-things it silently changes:
-
-- An out-of-range `--quantity` is **clamped** with no error (asking for 40
-  charges you for the server's limit). The CLI warns when you cross it.
-- `--steps 0` / `--cfg-scale 0` are *accepted* and price a degenerate, cheaper,
-  wrong job — which is exactly why those flags are **not** exposed yet.
-- A checkpoint id that does not exist is accepted, the ecosystem default is
-  **silently substituted**, and you are billed for it.
-
-So `--checkpoint` and every `--lora` is resolved against the public
-model-version API **before** anything is submitted: a bad id becomes a hard
-local *not found* (exit 4) instead of a wrong charge, and the confirmation
-echoes the resolved **model name** so you approve a name rather than an integer.
-`--model` is deliberately absent: `civitai download --model` takes a *model* id,
-while this takes a *version* id.
-
-**`seed`, `steps`, `cfgScale` and `sampler` have no flags at all**, and the
-`steps 0` measurement above is why: a flag whose unset value could reach the
-request would buy a broken run at a discount. They are still reachable — through
-the graph, not a flag — and that is the only route to a **reproducible** run,
-because the seed lives there. See
-[Raw graphs](#raw-graphs---print-input-and---input) below.
-
-### Raw graphs: `--print-input` and `--input`
-
-The five flags cover the common job. Everything else the generator understands
-lives in the **generation graph** — the JSON document the flags assemble. That
-includes **`seed`, `steps`, `cfgScale` and `sampler`**, none of which has a flag:
-a seed set in the graph is the only way to reproduce a run, and the graph is the
-only way to raise cfg or move steps. You can write that document yourself:
-
-```bash
-# 1. Assemble it from flags, print it, and exit. No submit, no cost estimate,
-#    no balance read — with no --checkpoint/--lora, no request at all.
-civitai generate "a cat" --quantity 2 --aspect-ratio 1:1 --print-input > graph.json
-
-# 2. Edit graph.json however you like.
-
-# 3. Send it as-is. Price it first; --dry-run still spends nothing.
-civitai generate --input graph.json --dry-run
-civitai generate --input graph.json --yes
-
-# …or pipe it, with `-`
-jq '.prompt = "a dog"' graph.json | civitai generate --input - --dry-run
-
-# The same route is how you set a seed — there is no --seed flag.
-jq '.seed = 12345' graph.json | civitai generate --input - --yes
-```
-
-`--print-input` reaches **no money seam**: not the submit, not the cost
-estimator, not the balance read. With `--checkpoint`/`--lora` it does still make
-the public model-version *read* those flags always make — that lookup supplies
-`model.type`, which graph `resources[]` require, so skipping it would print a
-document `--input` could not submit.
-
-`--print-input`'s output is a valid `--input` document by construction — that
-round-trip is the point of the pair, and it is what replaces a `--set
-some.path=value` expression language the CLI deliberately does not have (a wrong
-type in such an expression is accepted by the server silently, and billed; an
-edited file is inspectable before it is sent).
-
-Five things to know, all of them consequences of it being a **passthrough**:
-
-- **txt2img only.** A graph declaring any other workflow is refused. The
-  server's content audit reads the top-level `prompt` node, and it rebuilds what
-  it inspects from *declared* graph nodes — so a graph carrying its prompt
-  somewhere else (a comfy node, a nested step input) is exactly the shape that
-  could reach the generator unaudited. That question is open upstream, and this
-  CLI will not be the path that answers it the wrong way.
-- **Envelope keys are refused, not ignored.** `civitaiTip`, `creatorTip`,
-  `buzzType`, `tags`, `externalId`, `sourceMetadata`, `sourceMetadataMap`,
-  `remixOfId` and a top-level `input` belong to the request *envelope* around the
-  graph, not to the graph. A file setting `civitaiTip` would charge a tip that
-  **`--dry-run` structurally cannot show you** — the estimator prices a strictly
-  smaller request and is never sent tips at all — so the file is rejected with an
-  error rather than quietly cleaned up.
-- **Keys the CLI does not model are passed through exactly as written, with a
-  warning — and the warning claims nothing about the server.** It says the key is
-  not modelled *here* and was not checked *here*; it is **not** a claim that the
-  key is invalid, and **not** a claim that the server ignores it. The CLI does not
-  carry a copy of the server's node registry, so it cannot tell those apart. What
-  the key does — **including what it costs** — is the server's answer. `--dry-run`
-  prices the graph with your key included, so the estimate is where a price effect
-  would show; nothing local can predict one. Check the spelling.
-
-  🔴 This warning used to assert the opposite, and it was **wrong**: it said an
-  undeclared key "returns HTTP 200, prices the same, and simply has no effect".
-  A graph carrying `"priority": "high"` drew that sentence and then priced at
-  **28** with a `fixed → priority 20` component three lines below it, against
-  **8** for `normal`. The key was honoured, it tripled the price, and the warning
-  would have talked you out of the one change that clears a slow queue.
-- **No model-id safety net.** `--checkpoint` / `--lora` are resolved against the
-  public API before submitting; a raw graph is not interpreted, so a nonexistent
-  id in it is accepted, the ecosystem default is substituted, and you are billed.
-- **`--fail-on-substitution` works here, but its reach is not knowable from
-  here.** Every *execution* flag still applies, this one included — it fires on
-  the estimate's substitution record, so it refuses before any spend just as it
-  does on the flag path. The limit is that a raw graph is not interpreted, so the
-  CLI cannot tell you which model references your file contains or which of them
-  a record would name. One measured case (a checkpoint under `resources`) was
-  charged and ran a different version with **no record at all**. The command warns
-  about exactly this whenever the two flags appear together — unconditionally,
-  without reading your file, because deciding *which* graphs to warn about would
-  mean vendoring which keys the server reports on. Read a silent run as *"nothing
-  was reported"*, never as *"nothing was substituted"*.
-
-`--input` cannot be combined with a prompt argument or with
-`--negative-prompt` / `--quantity` / `--aspect-ratio` / `--checkpoint` /
-`--lora` — there is no predictable answer to "does `--lora` append to or replace
-the file's `resources`?", so the combination is a usage error. Every *execution*
-flag (`--dry-run`, `--yes`, `--max-cost`, `--json`, `--no-wait`, `--timeout`,
-`--out-dir`, `--out-name`, `--no-download`, `--force`, `--external-id`) still
-applies, `--fail-on-substitution` included — see the coverage caveat above.
-
-### Waiting, downloading, and re-attaching
-
-By default `generate` **waits** for the job to finish and writes every
-deliverable output into `--out-dir` (default `.`) as
-`<workflow-id>-<n>.<ext>`. `--force` overwrites existing files; without it a
-collision is refused *before any bytes move*.
-
-- `--out-name <template>` names the files instead of the default scheme. Three
-  placeholders expand and everything else is literal:
-
-  | Placeholder  | Expands to                                              |
-  |--------------|---------------------------------------------------------|
-  | `{workflow}` | the workflow id                                          |
-  | `{n}`        | the output number, **1-based**                           |
-  | `{ext}`      | the file extension **including its leading dot** (`.jpeg`) |
-
-  The default is `{workflow}-{n}{ext}`, so `--out-name 'cat-{n}{ext}'` writes
-  `cat-1.jpeg`, `cat-2.jpeg`, … into `--out-dir`.
-
-  > **The rendered name must be a plain file name inside `--out-dir`.** A path
-  > separator, a leading `/`, or a `..` is **refused, not stripped** — silently
-  > sanitising a traversal writes a file you did not ask for under a name you
-  > did not choose. An unknown placeholder (`{workflowid}`) and a template that
-  > renders to nothing are refused too. All of these are **usage errors
-  > (exit 2) raised before the job is priced or submitted**, so a bad template
-  > costs nothing.
-
-  A template that would give **two outputs the same name** — one with no `{n}`
-  on a multi-image run — is refused before any byte is downloaded, and `--force`
-  does *not* override it: there is no earlier file to replace, only the run's own
-  other output, and the presigned URLs spent getting it are not re-issued.
-  Include `{n}` for a batch. A single-output run with a fixed name is fine.
-
-- `--no-wait` submits, prints the workflow id and exits `0`.
 - `--no-download` waits and prints the output URLs instead of writing files. One
   row on **stdout** per output that came back **with a URL**, the CLI's own
   number and the URL separated by a tab, so `cut -f2` is the intended read. The
@@ -2557,422 +1241,53 @@ collision is refused *before any bytes move*.
   own, not a dropped row. The URL is the **server's**, so it is flattened to one
   line and one tab-separated field first: a presigned URL cannot add a numbered
   row of its own, or an extra field, to that listing.
-- `--timeout` bounds how long the CLI waits, and defaults to **30m**. That is
-  deliberately generous: the wait has to outlast the **queue**, not just the
-  execution. A healthy job has been measured sitting in `scheduled` for
-  **11m41s** before execution even began, so a shorter default walks away from a
-  run that has already been charged.
-- `civitai workflows get <workflow-id>` shows a workflow at any time. It is the
-  re-attach path for every case where the CLI stopped early, and it spends
-  nothing.
+- `--timeout` bounds how long the CLI waits, and defaults to **30m**. It stops
+  the WAIT, never the job: the run continues and stays charged, and
+  `civitai workflows get <id>` re-attaches to it.
 
-> 🔴 **`--timeout` stops *waiting*. It does not stop the *job*.** When the
-> deadline passes (or you press Ctrl-C) the generation keeps running
-> server-side, and finishes and bills exactly as if you had stayed — neither
-> case cancels anything. Both exit **non-zero**, print the workflow id, the
-> idempotency key and the exact `civitai workflows get …` command, and never
-> report success. `civitai workflows cancel` is the only thing that stops the
-> remaining work; see [cancel](#listing-and-cancelling-workflows) for what that
-> does to the charge.
-
-**Output URLs are presigned and expire.** Download promptly; re-read the
-workflow for fresh links. The blob fetch deliberately carries **no credential**
-— the URL is already authorized, and attaching your full-scope API key to it
-would hand 25 unrelated permissions to a request that needs none.
-
-**A finished workflow can contain fewer usable results than you paid for.** An
-output can be blocked by moderation, never land, or be one you hid on the
-website. Those are filtered out of the download — and **reported, with the
-reason**, plus an explicit note when the count differs from `--quantity`.
-Silently writing three files for a four-image job is the failure this exists to
-prevent. If *every* output is filtered out the command exits non-zero.
-
-**Crash safety.** The orchestrator's idempotency key is written to
-`~/.config/civitai/pending/<key>.json` **before** the request is sent, because
-the money moves server-side even if the process dies mid-POST. If a submit's
-reply never arrives, re-run with `--external-id <key>`: the orchestrator dedupes
-on it and returns the **pre-existing** workflow instead of charging again (it
-answers a duplicate with HTTP 200, not a 409, so re-attachment is inferred
-locally).
-
-**Polling cadence.** The status poll starts at 5s, backs off exponentially to a
-cap, and backs off harder on a `429`. That floor is not tunable downward: the
-workflow read proxies straight through to the orchestrator with no cache and no
-server-side rate limit, so the CLI's own restraint is the only thing between it
-and a 429 storm.
-
-### Listing and cancelling workflows
-
-```bash
-civitai workflows list                      # newest first
-civitai workflows list --limit 5
-civitai workflows list --limit 50 --cursor <next-cursor>
-civitai workflows list --json               # raw server payload, incl. nextCursor
-civitai workflows cancel <workflow-id>      # asks for confirmation
-civitai workflows cancel <workflow-id> -y   # skip the prompt (scripts/CI)
-```
-
-`list` is **cursor-paged**, not page-numbered: when more results exist it prints
-`Next cursor: <c>` on **stdout**, which you pass back as `--cursor`. `--tag`
-filters on orchestrator workflow tags (repeatable).
-
-The `OUTPUTS` column reads `deliverable/total`. The two differ when an output was
-blocked by moderation, never landed, or you hid it on the website — so
-`0/4` means four images were produced and paid for and none of them are usable,
-which is a very different fact from `0/0`. `civitai workflows get <id>` shows
-the per-output reason.
-
-**Where the server recorded an account of what happened to a workflow, the list
-prints it under that workflow's row**, indented, in full and in the server's own
-words:
-
-```console
-WORKFLOW ID                STATUS     CREATED                   COST  OUTPUTS
-8753561-20260810224136984  succeeded  2026-08-10T22:41:36.984Z  104   1/1
-8753561-20260810223715659  failed     2026-08-10T22:37:15.659Z  0     0/1
-    Google Gemini: Could not generate images with the given prompts and images.
-    Please try again with different inputs.
-```
-
-That gives up strictly-one-line-per-workflow, deliberately: `--json` is the
-scripting contract and the table is not. Not every workflow has an account
-recorded — nothing is printed for those, and the absence is the server's, not
-the CLI's. See [What the server says went
-wrong](#what-the-server-says-went-wrong).
-
-> 🔴 **`cancel` is not a clean refund — and it is not a total loss either.**
-> Buzz is charged **up front**, when the orchestrator schedules the run.
-> Cancelling stops the steps that have not finished; the orchestrator then
-> **re-prices the workflow against the work it actually did** and settles the
-> difference against what it took. What the run already delivered is billed: a
-> step that had already finished keeps its full cost, and a job a worker has
-> already started and cannot interrupt runs to completion and is billed for.
->
-> So cancel a job because you no longer want its *output*. How much of the
-> charge that leaves you paying depends on how far the run had got — the
-> settlement is server-side and happens once the workflow reaches its final
-> state, not when the command returns, and **this CLI never sees your account
-> Buzz ledger**, so `cancel` itself reports no figure. Once the workflow reaches
-> its final state, `civitai workflows get <id>` shows the transactions the
-> server recorded for it — see [Reading a workflow's Buzz
-> transactions](#reading-a-workflows-buzz-transactions). Otherwise settle it
-> against your [transaction history](https://civitai.com/user/transactions).
->
-> (This is also why `--timeout` and Ctrl-C deliberately do **not** cancel: they
-> stop the wait, not the job.)
-
-`cancel` **asks for confirmation**, matching `civitai generate` and
-`civitai app submit`. It is the one irreversible action here — it throws away
-whatever the run has not produced yet — so it is gated the same way every other
-destructive path in this feature is:
-
-- `--yes` / `-y` proceeds without prompting;
-- an interactive terminal prints what is lost and prompts — the default is
-  **no**, so a bare Enter aborts;
-- a **non-interactive** shell without `--yes` **refuses** rather than cancelling
-  silently. Scripts must pass `--yes` explicitly.
-
-Nothing is cancelled when the confirmation is refused — the gate runs before the
-request goes out.
-
-**An id the server does not know is refused, not reported as cancelled.** The
-cancel procedure answers the same empty success for a typo as for a real
-workflow, so `cancel` reads the workflow back first: an unknown id exits **`4`**
-— the same code `civitai workflows get` gives it — and **no cancel request is
-sent at all**. If that read fails for any *other* reason (a timeout, a 5xx, a
-rate limit, an auth failure) the cancel is still sent, because a flaky read must
-never be what stops you halting a job that is spending your Buzz. Between the
-read and the cancel a workflow can reach a final status on its own; that is
-harmless, since cancelling a finished workflow is a server-side no-op.
-
-### What the server says went wrong
-
-When a generation ends badly the orchestrator often records an account of what
-happened on the step. `civitai generate` puts it at the end of the error,
-`civitai workflows get <id>` prints it under **The server reported:**, and
-`civitai workflows list` prints it on indented lines under the workflow's row —
-
-```console
-Workflow ID:  wf_abc123
-Status:       failed
-
-The server reported:
-  - Could not generate images with the given prompts and images. Please try again with different inputs.
-```
-
-Five things it is not:
-
-- **It is not this CLI's opinion.** The text is the server's. Nothing here
-  classifies it, matches on its wording, or maps it to a list of known messages
-  — so a message the platform adds tomorrow arrives intact rather than being
-  swallowed by a stale table.
-- **It is not quite byte-for-byte, on the terminal.** Before printing any
-  server-supplied text, the CLI removes escape and control bytes plus every
-  character Unicode marks **default-ignorable** — the zero-width spaces and
-  joiners, the bidi overrides that reverse the order a line is *displayed* in,
-  the variation selectors (except the one that keeps an emoji looking like an
-  emoji) — plus two runes that paint nothing while Unicode files them as a
-  symbol and a mark, and four Hangul *fillers* that paint nothing while Unicode
-  files them as letters. Punctuation, accents, CJK, emoji, ordinary letters and
-  right-to-left *script* survive, as do the format characters Unicode says must
-  be drawn (Arabic end-of-ayah, the Syriac abbreviation mark, ruby annotation
-  marks).
-  🔴 **Every removed character is invisible on its own, but some of them change
-  how their NEIGHBOURS are drawn**, so this is not free: an emoji built from a
-  zero-width joiner renders as its components, a subdivision flag falls back to
-  🏴, and text that uses the join controls to make a distinction loses it —
-  Persian/Arabic (`می‌روم` renders joined), Malayalam (the chillu `ണ്‍` becomes
-  `ണ്`, a different letter), Devanagari, Bengali, Tamil, Kannada, Sinhala and
-  Mongolian. **`--json` is not filtered at all** — it is a raw passthrough, so a
-  script sees exactly what the server sent.
-- **It is not applied to the prompt you typed.** The filter is for text the
-  server sent. Your prompt, your negative prompt, `--aspect-ratio`,
-  `--ecosystem`, the paths you pass to `--image` / `--input`, and the ids you
-  give `workflows cancel` / `app withdraw` are all echoed back exactly as typed
-  — most importantly on the confirmation screen before a spend, which has to
-  show what will really be sent. **Two deliberate exceptions**, both outside
-  that screen: a value read out of an `--input` *file* is filtered like server
-  text (a graph file can come from anywhere), and `civitai download` filters the
-  path it reports even when you set it with `--out`, because the same variable
-  usually holds a filename the **server** chose — so an `--out` path containing
-  an invisible character is reported without it while the file is written to the
-  path you gave.
-- **It is not always there.** Some failures record nothing. In that case the
-  error says so instead: *"the orchestrator often supplies no failure reason, so
-  it may not say why"*. That is a measured case, not a gap in the CLI, and there
-  is no further detail to go and look for.
-- **It is not a statement about your Buzz.** Whether a charge stands, is
-  re-priced or comes back is decided server-side and reported separately — see
-  [Reading a workflow's Buzz
-  transactions](#reading-a-workflows-buzz-transactions).
-
-The heading is *"The server reported"* rather than *"Why it failed"* on purpose:
-the CLI prints the record whatever the workflow's status, and it has not
-established that the orchestrator populates it only on failure. `workflows list`
-prints its lines on the same footing, for the same reason.
-
-**The two commands can word the same failure differently, and neither is the
-CLI's doing.** `workflows list` reads the platform's *normalized* feed, which
-runs each message through a server-side sanitiser that names the provider —
-*"Google Gemini: Could not generate images…"*. `workflows get` reads the
-orchestrator's raw workflow, where the same message has no such prefix. So the
-list can be the more specific of the two.
-
-**It can also be the less specific one, and that is the half worth knowing when
-you are debugging.** The same server-side sanitiser *replaces* any message it
-cannot vouch for — one carrying a URL, a path, a stack frame, an infra name, or
-running past 300 characters or one line — with a generic *"… reported a system
-error"*. `workflows get` applies none of that, so where the two disagree the raw
-one can be the more informative. **When a failure is worth chasing, read both.**
-The CLI reproduces neither transform; it prints what each endpoint sent, less the
-invisible characters described above.
-
-### Reading a workflow's Buzz transactions
-
-`orchestrator.getWorkflow` often returns the orchestrator's own money record for
-that one workflow. When it does, `civitai workflows get <id>` prints it — and so
-does `civitai generate` when a run it waited on ends `failed`, `expired` or
-`canceled`:
-
-```
-Buzz transactions for this workflow (2 recorded)
-  debit   8
-  credit  8
-  net     0
-```
-
-**These are entries the server returned, not a rule the CLI is asserting.** The
-block reports what is recorded against *this* workflow id and nothing more —
-`net` is simply `debit` minus `credit` over the rows above it. It is **not**
-your account balance (`civitai buzz` reports that), it is **not** your account
-transaction history, and it does not tell you what a failure or a cancel does in
-general. Where the payload carries no record, the CLI says so and points you at
-your [transaction history](https://civitai.com/user/transactions) instead — an
-absent record is *"nothing to report"*, never *"no money moved"*.
-
-A transaction `type` this build does not recognise makes the net **unreportable**
-rather than dropping the entry out of the arithmetic:
-
-```
-Buzz transactions for this workflow (3 recorded)
-  debit  12  (2 entries)
-  hold   3
-  net    (not computed)
-```
-
-`--json` is unaffected: it has always passed the raw payload through, including
-the `transactions` object with every field this CLI does not model.
-
-### Exit codes specific to `generate`
-
-`generate` follows the [global exit-code table](#exit-codes), with one
-deliberate refinement. The API answers several very different failures with the
-same HTTP status, and the generic mapping would send a script down the wrong
-path — in particular a caller who is out of Buzz, muted, or hitting a
-server-side outage must **never** be told to re-run `civitai login`. Those cases
-therefore exit `1` (generic), not `3` (auth) or `2` (usage):
-
-🔴 **An exit code does not tell you whether you were charged.** Every failure
-above the divider happens *before* anything is submitted, so nothing was spent.
-Every failure below it happens *after* the submit, and **the Buzz is gone** —
-including a `--timeout`, a Ctrl-C, and a workflow that ends `failed`. Do not
-write a retry loop that branches on the exit code alone; re-attach with
-`civitai workflows get <workflow-id>` instead of re-submitting.
-
-| Failure | Exit |
-| --- | --- |
-| *— nothing submitted, nothing spent —* | |
-| Missing AI Services scope / no token / not authenticated | `3` |
-| Not enough Buzz (caught locally against your balance, or reported by the server) | `1` |
-| Account muted, or onboarding incomplete | `1` |
-| Generation disabled server-side | `1` |
-| Prompt refused by content moderation — 🔴 **never retry**, repeated blocked prompts get the account muted | `1` |
-| The server priced the job but reports `ready: false` (a selected resource is not currently available) | `2` |
-| Estimate above `--max-cost`, an unknown ecosystem, or a resource that resolved fine but is "not enabled for generation" (the ids exist; the *combination* is not runnable — distinct from exit `4`, which means "no such id") | `2` |
-| `--fail-on-substitution` and the **estimate** reported a substituted checkpoint — nothing submitted (see [Silent model substitution](#-silent-model-substitution)). 🔴 A substitution that appears **only on the submit reply** is reported but exits **`0`**: by then the charge has happened, and failing would strand a result you paid for. And against a server that does not report substitutions at all the flag is **inert** — exit `0`, submitted, charged | `1` |
-| `--input` that is malformed, declares a non-txt2img workflow, carries an envelope key (`civitaiTip`, …), or is combined with a content flag | `2` |
-| No such `--checkpoint` / `--lora` version id | `4` |
-| `civitai workflows get` / `workflows cancel` on an unknown workflow id (a read; spends nothing) | `4` |
-| *— 🔴 submitted: the Buzz is already spent —* | |
-| `--timeout` expired, or Ctrl-C while waiting — the job **keeps running** server-side and was **not** cancelled | `1` |
-| The workflow finished `failed` / `expired` / `canceled` | `1` |
-| The workflow succeeded but every output was filtered out (blocked / unavailable / hidden) | `1` |
-
+📖 **The full guide — the shape of a session, confirmation, the content flags,
+waiting/downloading/re-attaching and `generate`'s exit codes:
+[Generating images from the CLI](https://developer.civitai.com/site/guide/cli-generate).**
+Model selection, ecosystems, substitution and image-to-image:
+[Choosing a model](https://developer.civitai.com/site/guide/cli-generate-models).
+Raw graphs (`--print-input` / `--input`):
+[Raw generation graphs](https://developer.civitai.com/site/guide/cli-generation-graphs).
+Listing, cancelling, server failure reasons and a workflow's Buzz transactions:
+[Tracking and cancelling generations](https://developer.civitai.com/site/guide/cli-workflows).
+Every flag, offline: `civitai generate --help`.
 ## Scripting with `--json`
 
 Every read subcommand takes `--json`, which prints the `/api/v1/...` REST
-response as the API shaped it — not a CLI-invented shape. So the field schema
-is exactly the public Site API's; keep the
+response **as the API shaped it** — not a CLI-invented shape. So the field
+schema is exactly the public Site API's; keep the
 [REST field reference](https://developer.civitai.com/site/reference/) open
-(e.g. [models](https://developer.civitai.com/site/reference/models),
-[model-versions](https://developer.civitai.com/site/reference/model-versions))
 rather than reverse-engineering fields with `jq keys`.
-
-The **read-path recipes** — the `--cursor` deep-paging loop, silencing the update
-nag for clean pipeline output, the SHA256-case and embedded-`modelVersions`
-gotchas, and a worked search→download example — live in the
-[CLI guide](https://developer.civitai.com/site/guide/cli). What stays below is
-how `--json` treats the bytes, and the generation and `app` payloads, which are
-not Site API REST shapes.
-
-🔴 **It passes through the DOCUMENT, not the BYTES — do not diff or hash
-`--json` output against the wire.** Two things change the bytes without changing
-the document. The first is cosmetic: **the output is re-indented**, so a compact
-API body comes out longer than it went in. The second is not, and it has its own
-paragraph below: **a body that will not parse is repaired first.**
 
 Two properties make the output safe to pipe:
 
 - **`--json` stdout is pure JSON** — nothing else is written to stdout, so
   `... --json | jq -e .` always parses.
 - **Errors go to stderr with a non-zero exit** — a failed call writes the error
-  to **stderr**, exits non-zero, and prints **nothing to stdout**, so `jq` never
-  sees error prose. For example `civitai model-versions get 999999999 --json`
-  exits `4` with `Error: not found (404): Model not found` on stderr and an empty
-  stdout.
+  to stderr, exits non-zero, and prints **nothing** to stdout, so `jq` never
+  sees error prose.
 
-The repair, in full. The API intermittently
-emits a **raw control byte** — a carriage return, most often — inside a `prompt`
-or `description` string, which is not legal JSON and used to fail the whole page
-([#525](https://github.com/civitai/cli/issues/525)). When a page will not decode,
-the CLI rewrites those bytes as their JSON escapes (`\r`, `\u0001`) and decodes
-the repaired body, and that repaired body is what `--json` prints. The *document*
-is still the API's — the same strings, the same characters — but the bytes are
-not: this is the second of the two byte changes named above, and the reason the
-warning against diffing or hashing is not just about whitespace. A page that
-decodes as sent is passed through with no such rewrite.
+🔴 **It passes through the DOCUMENT, not the BYTES — do not diff or hash
+`--json` output against the wire.** The output is re-indented, and a body that
+will not parse is **repaired** first (a raw control byte is rewritten as its
+JSON escape). The same strings and characters come out; the bytes do not.
 
-A second shape used to fail the same way and is also fixed: a Civitai **username
-can be entirely digits**, and such a value was reported arriving as a bare JSON
-**number** (`"username": 2802169344506`, unquoted) rather than a string
-([#513](https://github.com/civitai/cli/issues/513)). One such uploader on a page
-failed the whole page, so `civitai images search` printed nothing at all; the CLI
-now accepts either shape and keeps the digits exactly as sent.
+One read is not a pure read, and it is the exception a script must know:
 
-When a body still will not decode you get `unexpected response from …`, and the
-text after the colon is the server's own body, **truncated**, with invisible and
-terminal-controlling characters removed — so a hostile body cannot rewrite what
-is already on your screen from inside the error line. Nothing else about it is
-rewritten, and the repair above is **not** applied to what you are shown.
+- 🔴 **`listing status` is NOT a pure read — `--json` or not — so do not poll it in a loop.** On a LIVE (approved) listing the read behind it (`getMyListingForEdit`) opens the revision draft server-side, idempotently — the same one each time — so a script calling it repeatedly keeps a revision open on your listing. [#389](https://github.com/civitai/cli/issues/389) asked the narrower question of whether a call that FAILS could leave a revision behind; it cannot, because every refusal the server can return here is raised before the revision is opened. **That settles the error path only — the write on success is unchanged.** Reading it once per change is fine; a watch loop is a writer. ⚠ **This now applies to OFFSITE apps too.** Before [#422](https://github.com/civitai/cli/issues/422) every `app listing` subcommand refused for an offsite app and therefore could not write anything; now that they resolve by slug, `app listing status` against an **approved** offsite listing mints that shadow revision like any other. Every offsite app measured on civitai.com is approved, so this is the *normal* state there, not an edge case. #422 retired the "cannot be addressed" refusal, and #389 retired nothing about the write — the shadow is a property of `getMyListingForEdit`, not of how the listing id was obtained.
 
-Both of the two piping properties above hold for `civitai generate` and
-`civitai workflows …` too, but their payloads are **not** Site API REST
-shapes — generation has no REST route, so those commands print the
-*orchestrator's* reply. **The two byte changes apply differently there, so take
-them one at a time:** the output is **re-indented** exactly as above, so it is no
-more diffable or hashable than the read group's; but the **repair never runs on
-a generation reply** — it is applied by the read SDK's own decode step, and the
-generation client decodes with plain `encoding/json`, so nothing rewrites a
-control byte there. Read
-[Generation `--json`](#generation---json) before scripting against them.
-
-Two `app` commands emit a shape this **CLI composes**, not a wire payload:
-`civitai app validate --json` (see
-[The `--json` result shape](#the---json-result-shape)) and
-`civitai app listing status --json`, which joins the two listing reads into one
-object naming `parentId` and `shadowId` (see
-[After you submit](#after-you-submit-review--approve--deploy)). Both keep the two
-properties above; only the *provenance* of the fields differs. 🔴 **And
-`app listing status --json` is a read with a server-side SIDE EFFECT** — on a
-live listing it opens a revision draft — so, unlike the reads above, it must not
-be polled.
-
-### Generation `--json`
-
-`civitai generate --dry-run --json`, `civitai workflows list --json` and
-`civitai workflows get <id> --json` emit the raw orchestrator payload. Two
-caveats have bitten people, and neither shows up as an error:
-
-- **Output URLs are presigned and EXPIRE.** The links in a workflow payload are
-  short-lived signatures, not durable addresses. A pipeline that stores them and
-  fetches later gets a 401/403 from the storage host that no credential can fix
-  — re-run `civitai workflows get <id>` for fresh links instead of caching the
-  old ones. (Fetch them with **no** `Authorization` header; they are already
-  authorized, and the CLI deliberately attaches nothing to them.)
-- **`--json` still exits `0` when the server reports the resources are
-  unavailable.** `--dry-run --json` prints the estimate and exits `0` even when
-  the payload says `"ready": false`. A human `--dry-run` prints a warning and
-  this CLI refuses to submit in that state, but a script reading only the exit
-  code sees success. **Branch on the field**, exactly as `app metrics` requires
-  branching on `notOwned` — and note the shape below, which **fails closed**:
-
-  ```bash
-  q=$(civitai generate "a cat" --dry-run --json) || exit $?
-  case "$(printf '%s' "$q" | jq -r 'if has("ready") then .ready else "absent" end')" in
-    false)   echo "resources unavailable" >&2; exit 1 ;;   # decisive: do not submit
-    true)    ;;                                            # NOT a green light — see below
-    *)       echo "no readable .ready field" >&2; exit 1 ;; # absent, null, or jq failed
-  esac
-  printf '%s' "$q" | jq -r .cost.total
-  ```
-
-  The `*` arm is the point. An earlier version of this snippet tested
-  `[ … = "false" ] && exit 1`, which exits **0** when the key is absent or `jq`
-  fails — it read "we could not ask" as "we asked and it was fine", the
-  fabricated-zero mistake `app metrics` documents for `views.unavailable`.
-
-  🔴 **`ready` is one-directional, and the human label says so.** It reports
-  only that the resources this job needs are currently available — the server
-  computes it as "every job's queue position reports `support: available`", and
-  a job carrying no queue position at all is skipped, leaving the flag `true`.
-  It is not a moderation verdict and not a prediction that the job produces an
-  image; `--dry-run` therefore prints it as **`Resources ready`**, not
-  "Generatable". A run reporting `ready: true` can still be charged and return
-  nothing — measured: 8 submits across 3 checkpoints that all quoted
-  `ready: true` produced 0 outputs. So gate on the FALSE direction, as above,
-  and never treat `true` as a success predicate. The only thing that settles
-  whether a job produced output is the finished workflow
-  (`civitai workflows get <id>`), and `civitai generate` exits non-zero when it
-  waited and got no deliverable output.
-
-  **What `ready: false` gets you is a LOCAL refusal.** `civitai generate` reads
-  the flag and refuses to submit; no server-side enforcement of it is known.
-  Treat it as this CLI's own pre-flight, not as a promise about what the server
-  would have done.
-
-  Cost keys (`cost.factors`, `cost.fixed`) are server-owned and passed through
-  **verbatim**, so treat them as an open map rather than a fixed set.
-
+📖 **The read-path recipes** — the `--cursor` deep-paging loop, silencing the
+update nag for clean pipeline output, the SHA256-case and embedded
+`modelVersions` gotchas, and a worked search→download example — are in the
+[CLI guide](https://developer.civitai.com/site/guide/cli#scripting-with-json).
+**The byte semantics in full, the two `app` commands that compose their own
+shape, and generation `--json` (whose payload is the orchestrator's, not a REST
+shape, and where the repair never runs):
+[Scripting the CLI with `--json`](https://developer.civitai.com/site/guide/cli-json).**
 ## Upgrading
 
 `civitai upgrade` replaces the running binary with the latest GitHub release:
@@ -3197,7 +1512,7 @@ fi
 
 - A **filesystem failure** lands here — a file that exists but cannot be read, an unwritable config directory, an I/O error. It is neither a mistake about the invocation (`2`) nor a transport failure (`5`), and there is no filesystem-specific code.
 - A **validation verdict** lands here, and deliberately not on `2`: `civitai app validate` exits `1` when the manifest is invalid, and likewise when the directory you named is a real directory with no `block.manifest.json` at its root — you pointed at a real place, so the invocation was right and the project is wrong. (A path that does **not exist**, or that is not a directory, is the invocation being wrong, and exits `2`.)
-- **When validation produces a result**, `civitai app validate --json` prints it in full and its `ok` field is the structured form of the same answer; a failure that produces no result at all — a project directory the CLI cannot **stat**, say, because it is unreadable or because a path component below it is not a directory — still exits `1` with **nothing on stdout**, so branch on the exit code before parsing. The full exit→stdout table is in [The `--json` result shape](#the---json-result-shape).
+- **When validation produces a result**, `civitai app validate --json` prints it in full and its `ok` field is the structured form of the same answer; a failure that produces no result at all — a project directory the CLI cannot **stat**, say, because it is unreadable or because a path component below it is not a directory — still exits `1` with **nothing on stdout**, so branch on the exit code before parsing. The full exit→stdout table is in [The `--json` result shape](https://developer.civitai.com/apps/guide/validate#the-json-result-shape).
 - A resource that **exists but is not ready** lands here too, and deliberately not on `4`: `civitai app metrics <slug>` for an app whose submitted version is still in review exits `1`, because the slug is right and the app does exist — only its analytics do not exist yet, and the error names `civitai app status <slug>` as the next command. `4` stays reserved for a slug with no submissions at all, so the two remain separately actionable: fix the slug, versus wait for approval.
 - A **version regression** lands here for the same reason: `civitai app submit` refuses when the manifest version is not strictly **above the highest approved version** of that app, because approving an older (or identical) version replaces the newer live deployment. Nothing about the invocation is wrong, so it is a verdict about the project, not a `2`. `--allow-downgrade` is the deliberate-rollback escape hatch, and the guard is skipped entirely by `--package-only` or a run with no token — neither reaches the server.
 - A **dirty git work tree** lands here too: `civitai app submit` refuses while files that go into the bundle are uncommitted, because the bundle is packaged from what is on disk and approving one deploys code that exists in no commit. `--allow-dirty` submits the tree as it is. It **degrades rather than enforcing** — a directory that is not in a git repo, or a machine with no `git` on `PATH`, submits exactly as before (scaffolded apps have no repo, and that path must keep working), and a clean tree whose `HEAD` is on no remote **warns** instead of refusing. Like the version guard it is skipped by `--package-only` and by a run with no token.
@@ -3221,7 +1536,7 @@ fi
 
 - Authentication/authorization — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403, or no token configured).
 - **Not every `403` here is about your credential.** `civitai app listing …` against a listing a **moderator removed** answers `403` and so exits `3`, and nothing about the account is wrong: no login, grant or scope changes it. The message says so rather than sending you to fix access that is already fine, and names asking a moderator to relist the listing as the next step. Look the message itself up under [Troubleshooting](#troubleshooting).
-- **`civitai generate` refines this**: several of its failures are *not* credential problems but would otherwise land here or on `2`, so they exit `1` instead and a script never loops on `civitai login`. A **muted account or incomplete onboarding** arrives as a bare `403` that is byte-identical to a missing scope; **out of Buzz** and **generation disabled** arrive as `400` (the upstream 403 is re-thrown server-side as a tRPC `BAD_REQUEST`), which would otherwise read as "bad flags". See [Generate](#exit-codes-specific-to-generate).
+- **`civitai generate` refines this**: several of its failures are *not* credential problems but would otherwise land here or on `2`, so they exit `1` instead and a script never loops on `civitai login`. A **muted account or incomplete onboarding** arrives as a bare `403` that is byte-identical to a missing scope; **out of Buzz** and **generation disabled** arrive as `400` (the upstream 403 is re-thrown server-side as a tRPC `BAD_REQUEST`), which would otherwise read as "bad flags". See [Generate](https://developer.civitai.com/site/guide/cli-generate#exit-codes).
 
 ### Exit code 4
 
@@ -3262,14 +1577,14 @@ context rather than instructions.
 | `no token configured` | Nothing is logged in. Run `civitai login` or set `CIVITAI_TOKEN` — the App **store** (`app list` / `app view`) is not an anonymous read either. | [Submit & auth](#submit--auth), [Browse the App store](#browse-the-app-store) |
 | `forbidden (403)` | Usually the invite-only Apps beta rather than a broken token — the same account reads the public API fine. | [Submit & auth](#submit--auth) |
 | `not permitted for your account (403)` | The **catch-all** listing `403`: managing a store listing needs Apps-author access, a narrower grant than submitting. The two rows below are the listing `403`s that are *not* about your grant. | [Store listing](https://developer.civitai.com/apps/guide/store-listing) |
-| `under a moderator takedown (403)` | A moderator removed this **store listing**; **your account's access is not the problem** and no login, grant or command reverses it — ask a moderator to relist it. Exit `3`, with the server's own sentence after the code naming the state. Unpublishing it yourself is a different refusal: a *material* change, `400`, exit `2`. | [Exit code 3](#exit-code-3) |
-| `belongs to another account (403)` | The listing is real and readable, but this account is **neither its owner nor an accepted collaborator** — **your access is not the problem**. There is no moderator bypass, and submitting the app's publish request is not ownership either: sign in as the owner (`civitai whoami` says who you are), accept a pending invite, or ask the owner. Exit `3`. | [Exit code 3](#exit-code-3) |
-| `Submit Apps:` | The `civitai whoami` capability row, and it is **tri-state**: **`unknown` is not `no`**, it is the CLI declining to answer. Re-run `civitai login` for a token whose scope the server reports. | [Submit & auth](#submit--auth) |
-| `(token scope not reported by the server — Buzz capabilities unknown)` | The server reported no `tokenScope`, so the two **Buzz** rows are omitted rather than printed as `no`. **Submit Apps** above it is unaffected. | [Submit & auth](#submit--auth) |
+| `under a moderator takedown (403)` | A moderator removed this **store listing**; **your account's access is not the problem** and no command reverses it — ask a moderator to relist it. Unpublishing it yourself is a different refusal: a *material* change, `400`, exit `2`. | [Exit code 3](#exit-code-3) |
+| `belongs to another account (403)` | The listing is real and readable, but this account is **neither its owner nor an accepted collaborator** — **your access is not the problem**. There is no moderator bypass. Sign in as the owner (`civitai whoami` says who you are), accept a pending invite, or ask the owner. | [Exit code 3](#exit-code-3) |
+| `Submit Apps:` | The `civitai whoami` capability row, and it is **tri-state**: **`unknown` is not `no`**, it is the CLI declining to answer. Re-run `civitai login` for a token whose scope the server reports. | [What `civitai whoami` reports](#what-civitai-whoami-reports) |
+| `(token scope not reported by the server — Buzz capabilities unknown)` | The server reported no `tokenScope`, so the two **Buzz** rows are omitted rather than printed as `no`. **Submit Apps** above it is unaffected. | [What `civitai whoami` reports](#what-civitai-whoami-reports) |
 | `not permitted to read this app's analytics (403)` | `app metrics` needs the **Apps submit scope**. Re-run `civitai login` if your token predates it; a full-scope personal API key also works. | [App metrics](#app-metrics) |
 | `block lacks ai:write:budgeted scope` | Printed by your app at runtime under `dev:live`: the dev token was minted **without** `--spend`, and that scope is never requested implicitly, manifest or not. | [Local dev loop](#local-dev-loop-harness-mock-vs-live) |
-| `the server can receive` | The submit body exceeds **10485760 bytes** and `app submit` refused **before uploading**, so it cost you nothing. Shrink the bundle, or pass `--allow-oversize` — the ceiling is vendored, not measured. | [Submit & auth](#submit--auth) — *How big can a bundle be?* |
-| `insufficient Buzz` / `generation disabled` | Not credential problems, which is why they exit `1` rather than `3` — a script must not loop on `civitai login` for either. | [Exit codes specific to `generate`](#exit-codes-specific-to-generate) |
+| `the server can receive` | The submit body exceeds **10485760 bytes** and `app submit` refused **before uploading**, so it cost you nothing. Shrink the bundle, or pass `--allow-oversize` — the ceiling is vendored, not measured. | [What goes in the bundle](https://developer.civitai.com/apps/guide/packaging#how-big-can-a-bundle-be) |
+| `insufficient Buzz` / `generation disabled` | Not credential problems, which is why they exit `1` rather than `3` — a script must not loop on `civitai login` for either. | [generate exit codes](https://developer.civitai.com/site/guide/cli-generate#exit-codes) |
 | `rate limited (429)` | 🔴 **One message, TWO exit codes — branch on the code, never the text.** `2` for the deep-paging cap, which is structurally doomed (`--cursor`, not `--page`); `6` for a genuine throttle, which you retry. | [Exit codes](#exit-codes) |
 | `Civitai returned HTTP` | **A retriable status that survived every read retry** — `502`/`503`/`504`, or a `429` carrying `Retry-After` — exiting **`5`** in every case. Read the number in the message to know which you hit. | [Exit codes](#exit-codes) |
 
@@ -3277,9 +1592,9 @@ context rather than instructions.
 
 | You saw | What it means | Where to read more |
 | --- | --- | --- |
-| `cannot derive a slug from` / `cannot appear in a blockId` | Exit `2`. | [The blockId](#the-blockid) |
+| `cannot derive a slug from` / `cannot appear in a blockId` | Exit `2`. Pass `--slug`. | [The blockId](#the-blockid) |
 | `is not valid UTF-8` | Exit `2`, and `--slug` does not rescue it: the refusal is about the **display name**, which is written into the manifest as you typed it. | [The blockId](#the-blockid) |
-| `… and the limit is …` | Exit `2`. | [The blockId](#the-blockid) |
+| `… and the limit is …` | Exit `2` — the derived blockId would exceed 40 characters. Pass `--slug`. | [The blockId](#the-blockid) |
 | `refusing to overwrite. Scaffold somewhere else` | From `app create` and `app init` alike. Exit `1` — a verdict about the directory, not about your invocation. | [Templates](#templates) |
 
 ### Validating and submitting
@@ -3287,13 +1602,13 @@ context rather than instructions.
 | You saw | What it means | Where to read more |
 | --- | --- | --- |
 | `… not found at project root …` | **`civitai app validate`** found no `block.manifest.json` in the directory you named — the finding reads `block.manifest.json not found at project root <dir>`, which the terminal wraps onto a second line for a long path (`--json` carries it as one `message` string). `app submit` prints it too, because it validates first. `app submit --skip-validate` never prints it, because it waives the validation that produces it — that run fails on the row below instead. The path itself was fine, which is why this exits `1` and not `2`. | [Exit code 1](#exit-code-1) |
-| `is this an App project?` | The same cause, reported by a command that did not validate first: `civitai app listing …`, which has to work out *which* app you mean from the working directory, and `app submit --skip-validate`, which waived the check that produces the row above. `app validate` and a plain `app submit` never print it, because validation reports the row above first. Run `app listing` from the app directory, or name the app with `--slug` / `--dir`. | [After you submit](#after-you-submit-review--approve--deploy) |
-| `the server rejected this store-listing lookup (400)` | A **read** was refused and nothing was changed — a listing resolve, a read-for-edit or an asset scan poll, each carrying a value the CLI derived, or `app doctor`'s enumeration, which carries no input at all and so blames no value you named. `civitai app doctor` lists every app you can work on. Exit `2`. | [Listing doctor](#listing-doctor-app-doctor) |
-| `the server rejected the image-upload request (400)` | The **image** was refused while being ingested — the presigned upload mint, the inline icon upload, or the row that records the file. **No listing was changed** by any of the three: nothing is attached until `set-icon` / `set-cover` / `add-screenshot` runs. Read the server's own reason after the code for the bound it applied, rather than guessing. Exit `2`. | [Store listing](https://developer.civitai.com/apps/guide/store-listing) |
-| `image upload PUT failed` | Storage refused the **bytes themselves** (e.g. `EntityTooLarge`), between minting the presigned URL and recording the row. No listing was changed, and it exits **`1`, not `2`** unlike the ingest steps above — a known inconsistency ([#388](https://github.com/civitai/cli/issues/388)). | [Store listing](https://developer.civitai.com/apps/guide/store-listing) |
-| `the server rejected this store-listing change (400)` | The **listing** was refused and may have **partially applied** — check `civitai app listing status`. It covers an attach, a removal, a reorder, opening a revision and submitting one, and names no value to fix because those seven routes do not all carry one: the three attaches report the **file** you sent (never the `--caption`) on the lines below, while the other four print this line alone — *opening* a revision in particular sends nothing but a listing id the CLI derived. Exit `2`, except for a staged change refused only by the publish floor, which reports `staged on an open revision` and exits `0`. | [After you submit](#after-you-submit-review--approve--deploy) |
-| `there is no open revision to submit` | Exit `1`. | [After you submit](#after-you-submit-review--approve--deploy) |
-| `this listing is not live` | Exit `1`. | [After you submit](#after-you-submit-review--approve--deploy) |
+| `is this an App project?` | The same cause, reported by a command that did not validate first: `civitai app listing …`, which has to work out *which* app you mean from the working directory, and `app submit --skip-validate`, which waived the check that produces the row above. `app validate` and a plain `app submit` never print it, because validation reports the row above first. Run `app listing` from the app directory, or name the app with `--slug` / `--dir`. | [Submit & auth](#submit--auth) |
+| `the server rejected this store-listing lookup (400)` | A **read** was refused and nothing was changed — a listing resolve, a read-for-edit, an asset-scan poll, or `app doctor`'s enumeration, which carries no input at all and so names no value to fix. Exit `2`. | [Listing doctor](#listing-doctor-app-doctor) |
+| `the server rejected the image-upload request (400)` | The **image** was refused while being ingested. **No listing was changed**: nothing is attached until `set-icon` / `set-cover` / `add-screenshot` runs. Read the server's own reason after the code. Exit `2`. | [Store listing](https://developer.civitai.com/apps/guide/store-listing#attaching-media) |
+| `image upload PUT failed` | Storage refused the **bytes themselves** (e.g. `EntityTooLarge`), between minting the presigned URL and recording the row. No listing was changed, and it exits **`1`, not `2`** unlike the ingest steps above — a known inconsistency ([#388](https://github.com/civitai/cli/issues/388)). | [Store listing](https://developer.civitai.com/apps/guide/store-listing#attaching-media) |
+| `the server rejected this store-listing change (400)` | The **listing** was refused and may have **partially applied** — check `civitai app listing status`. It names no value to fix because the seven routes it covers do not all carry one. Exit `2`, except for a staged change refused only by the publish floor, which reports `staged on an open revision` and exits `0`. | [Store listing](https://developer.civitai.com/apps/guide/store-listing#the-publish-floor) |
+| `there is no open revision to submit` | Exit `1`. | [Store listing](https://developer.civitai.com/apps/guide/store-listing#editing-a-listing-that-is-already-live) |
+| `this listing is not live` | Exit `1`. | [Store listing](https://developer.civitai.com/apps/guide/store-listing#editing-a-listing-that-is-already-live) |
 | `pass a URL or --clear, not both` | Exit `2`, and nothing is sent. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
 | `nothing to do — pass a repository URL to set the link, or --clear` | `set-source-repo` with neither a URL nor `--clear`. The server would reject the empty patch too, but as a `400` costing a round trip and one of your ~30/hour listing edits. Exit `2`. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
 | `the source-repository URL is blank` | Exit `2`, and nothing is sent — there is no "set it to empty" state to reach. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
@@ -3302,43 +1617,43 @@ context rather than instructions.
 | `is not a directory — pass the App project ROOT` | A **usage** error too: exit `2`, and `--json` prints nothing at all. | [Exit codes](#exit-codes) |
 | `it did NOT check that the file is loaded` | The `BLOCK_READY` advisory on its **weak** tier: it could not resolve what your `index.html` loads, so it checked only that *some* file mentions the message. The lines after it say what it could not follow. | [The host handshake](#the-host-handshake-block_ready) |
 | `nothing index.html loads reaches it` | The **strong** tier: the emitter is in your project but nothing the browser loads reaches it. Copying `civitai-host.js` in is only half the fix — it has to be referenced too. | [The host handshake](#the-host-handshake-block_ready) |
-| `no lockfile is committed` / `is not a lockfile` | The platform build installs **strictly** from the committed lockfile, so a missing one, or a zero-byte one from `touch`, fails the build server-side. Generate it with the package manager. | [Validate fidelity](#validate-fidelity) |
+| `no lockfile is committed` / `is not a lockfile` | The platform build installs **strictly** from the committed lockfile, so a missing one, or a zero-byte one from `touch`, fails the build server-side. Generate it with the package manager. | [Validate](https://developer.civitai.com/apps/guide/validate#the-lockfile-rule) |
 | `refusing to submit without --yes` | Exit `1`. `--package-only` and the no-token fallback never reach it. | [Command reference](#command-reference) |
-| `What this CLI sent` / `What this CLI would have sent` / `largest entries in the bundle` | Not an error of its own: the CLI's account of the bundle, and the largest entries it was made of. `What this CLI **sent**` prints under any error the upload call reports once the request has gone out — **it does not claim to know why** — and not on a `401`/`403`/`429`. A failure that never reached the connection never prints the past tense: no usable credential, an unwritable config and a connection that never opened print neither block. `What this CLI **would have** sent` is the ceiling refusal alone — it sends nothing either, and says so — and that one is exact too: nothing was uploaded. A refusal that stops the submit before the upload step (no `--yes`, a dirty tree, the version guard, a validation failure) prints neither. | [Submit & auth](#submit--auth) — *How big can a bundle be?* |
-| `Your repo may be behind what was last released` / `Resubmitting the version that is already live is almost always an accident` / `That version is approved but not live` | The **monotonic-version guard**: the manifest version is not strictly above the highest **approved** version, and approving an older or identical one supersedes the newer. Exit `1`; `--allow-downgrade` submits anyway. The second line names which of four cases you are in. | [Exit code 1](#exit-code-1), [Submission status](#submission-status) |
-| `from a dirty git work tree` / `that go into the bundle are not committed` | The **dirty-work-tree guard**: files that go into the bundle are uncommitted, so approving one deploys code that exists in no commit. It names the paths (`git status` spelling, relative to the packaged directory) — commit them, or pass `--allow-dirty`. Exit `1`. | [Exit code 1](#exit-code-1), [Submit & auth](#submit--auth) — *What the dirty-work-tree guard counts as a change* |
-| `look like they hold credentials` | A **warning**, not a refusal — the exit code is unchanged. A file the packager KEPT holds a line shaped like a credential, and a submitted bundle cannot be recalled. It prints `path:line` and the key name, never the value — open the file to see what matched. | [Submit & auth](#submit--auth) — *What looks like a credential* |
+| `What this CLI sent` / `What this CLI would have sent` / `largest entries in the bundle` | Not an error of its own: the CLI's account of the bundle, and the largest entries it was made of. `What this CLI **sent**` prints under any error the upload call reports once the request has gone out — **it does not claim to know why** — and not on a `401`/`403`/`429`. A failure that never reached the connection never prints the past tense: no usable credential, an unwritable config and a connection that never opened print neither block. `What this CLI **would have** sent` is the ceiling refusal alone — it sends nothing either, and says so — and that one is exact too: nothing was uploaded. A refusal that stops the submit before the upload step (no `--yes`, a dirty tree, the version guard, a validation failure) prints neither. | [What goes in the bundle](https://developer.civitai.com/apps/guide/packaging) |
+| `Your repo may be behind what was last released` / `Resubmitting the version that is already live is almost always an accident` / `That version is approved but not live` | The **monotonic-version guard**: the manifest version is not strictly above the highest **approved** version, and approving an older or identical one supersedes the newer. `--allow-downgrade` submits anyway; the second line names which of four cases you are in. | [Exit code 1](#exit-code-1), [Submission status](#submission-status) |
+| `from a dirty git work tree` / `that go into the bundle are not committed` | The **dirty-work-tree guard**: files that go into the bundle are uncommitted, so approving one deploys code that exists in no commit. It names the paths — commit them, or pass `--allow-dirty`. | [Exit code 1](#exit-code-1), [the dirty-work-tree guard](https://developer.civitai.com/apps/guide/packaging#the-dirty-work-tree-guard) |
+| `look like they hold credentials` | A **warning**, not a refusal — the exit code is unchanged. A file the packager KEPT holds a line shaped like a credential, and a submitted bundle cannot be recalled. It prints `path:line` and the key name, never the value. | [What looks like a credential](https://developer.civitai.com/apps/guide/packaging#what-looks-like-a-credential) |
 | `HEAD is on no remote` | A **warning**, not a refusal. The packaged tree is clean, but its commit exists only on this machine, so the deployed version traces back to nothing anyone can fetch. Push the branch. | [Command reference](#command-reference) |
-| `refusing to withdraw without --yes` | A withdraw asked for confirmation and found no TTY. It gates because withdrawing a **first-version** submission deletes that app's store listing — icon, cover and every screenshot. Pass `--yes`; nothing was withdrawn. 🔴 **BREAKING** for a scripted `civitai app withdraw <id>` that used to exit `0`. | [After you submit](#after-you-submit-review--approve--deploy) |
+| `refusing to withdraw without --yes` | A withdraw asked for confirmation and found no TTY; nothing was withdrawn. It gates because withdrawing a **first-version** submission deletes that app's store listing — icon, cover and every screenshot. 🔴 **BREAKING** for a scripted `civitai app withdraw <id>` that used to exit `0`. | [Review & deploy](https://developer.civitai.com/apps/guide/review-and-deploy) |
 
 ### Generating
 
 | You saw | What it means | Where to read more |
 | --- | --- | --- |
-| `could not read your Buzz balance` | A **warning**, not a refusal — the estimate and the confirmation went ahead without the balance check; `civitai buzz` shows the real balance. The reason after it is the **server's**, and it is cut at 120 characters with a `…`: this warning prints immediately above the `Cost: … Buzz` line and `Generate? [y/N]:`, so a message long enough to **wrap** could fill that screen with counterfeit `Cost:` lines using no invisible character at all. | [Confirmation](#confirmation) |
-| `refusing to spend Buzz without --yes` | The same gate on the money path. `--dry-run` prices the job without spending anything. | [Confirmation](#confirmation) |
-| `--image requires --ecosystem` | Without an ecosystem the server never promotes the job to image-to-image: your images are silently dropped and you pay for a plain text-to-image run. Hence a refusal, not a warning. | [Image-to-image](#image-to-image---image-and---ecosystem) |
-| `interrupted while waiting` | **The generation is still running and has already been charged.** Ctrl-C stopped the wait, not the job. Re-attach with `civitai workflows get <id>`. | [Waiting, downloading, and re-attaching](#waiting-downloading-and-re-attaching) |
-| `model substituted` | The server ran a **different checkpoint** than you asked for and billed for what ran. Warned by default; `--fail-on-substitution` refuses on the estimate, before any spend. | [Silent model substitution](#-silent-model-substitution) |
-| `The server reported: …` | The server's own words, which the CLI neither interprets nor calls retryable; only invisible and direction-reversing characters are removed first (`--json` is unfiltered). Printed on the `generate` error and by `civitai workflows get`. | [What the server says went wrong](#what-the-server-says-went-wrong) |
-| `An indented line under a row is what the server recorded` | The same record on `civitai workflows list`, wrapped but never abbreviated. The indent keeps server text out of the column a real row starts in, so a message cannot pose as a workflow of yours. | [What the server says went wrong](#what-the-server-says-went-wrong) |
+| `could not read your Buzz balance` | A **warning**, not a refusal — the estimate and the confirmation went ahead without the balance check; `civitai buzz` shows the real balance. The reason after it is the **server's**, cut at 120 characters ([What a table cell can contain](#what-a-table-cell-can-contain)). | [Confirmation](https://developer.civitai.com/site/guide/cli-generate#confirmation) |
+| `refusing to spend Buzz without --yes` | The same gate on the money path. `--dry-run` prices the job without spending anything. | [Confirmation](https://developer.civitai.com/site/guide/cli-generate#confirmation) |
+| `--image requires --ecosystem` | Without an ecosystem the server never promotes the job to image-to-image: your images are silently dropped and you pay for a plain text-to-image run. Hence a refusal, not a warning. | [Image-to-image](https://developer.civitai.com/site/guide/cli-generate-models#image-to-image-image-and-ecosystem) |
+| `interrupted while waiting` | **The generation is still running and has already been charged.** Ctrl-C stopped the wait, not the job. Re-attach with `civitai workflows get <id>`. | [Waiting and re-attaching](https://developer.civitai.com/site/guide/cli-generate#waiting-downloading-and-re-attaching) |
+| `model substituted` | The server ran a **different checkpoint** than you asked for and billed for what ran. Warned by default; `--fail-on-substitution` refuses on the estimate, before any spend. | [Silent model substitution](https://developer.civitai.com/site/guide/cli-generate-models#silent-model-substitution) |
+| `The server reported: …` | The server's own words, which the CLI neither interprets nor calls retryable; only invisible and direction-reversing characters are removed first (`--json` is unfiltered). Printed on the `generate` error and by `civitai workflows get`. | [What the server says went wrong](https://developer.civitai.com/site/guide/cli-workflows#what-the-server-says-went-wrong) |
+| `An indented line under a row is what the server recorded` | The same record on `civitai workflows list`, wrapped but never abbreviated. The indent keeps server text out of the column a real row starts in, so a message cannot pose as a workflow of yours. | [What the server says went wrong](https://developer.civitai.com/site/guide/cli-workflows#what-the-server-says-went-wrong) |
 | `prompt: …` / `negative: …` | Generation prompts in `civitai images search --meta` and `civitai images get`, indented so a server string cannot impersonate a CLI output header — and deliberately **not** soft-wrapped, because that would alter prompt weights and syntax. | [Command reference](#command-reference) |
-| `the orchestrator often supplies no failure reason, so it may not say why` | The same failure with **no** account recorded — a real, measured case, not a CLI limitation. Neither `civitai workflows get <id>` nor `workflows list` will say why either. | [What the server says went wrong](#what-the-server-says-went-wrong) |
+| `the orchestrator often supplies no failure reason, so it may not say why` | The same failure with **no** account recorded — a real, measured case, not a CLI limitation. Neither `civitai workflows get <id>` nor `workflows list` will say why either. | [What the server says went wrong](https://developer.civitai.com/site/guide/cli-workflows#what-the-server-says-went-wrong) |
 
 ### Everything else
 
 | You saw | What it means | Where to read more |
 | --- | --- | --- |
 | `has no approved App Block yet` | The slug is right and the app exists — its analytics do not, because no version is **approved** yet. The message names the next step for the latest submission's own state. Exit `1`, not `4`. | [App metrics](#app-metrics) |
-| `no such app for your account` | The server did not recognise the app for your account — exit `4`. From `civitai app pull` it means only that the CLI could not prove the app is yours-but-unapproved: no submission matches the slug, **or** the lookup itself failed, **or** a version *is* approved, **or** you passed an `appBlockId`. Settle it with `civitai app status`. | [Submission status](#submission-status) |
+| `no such app for your account` | The server did not recognise the app for your account. From `civitai app pull` it means only that the CLI could not prove the app is yours-but-unapproved. Settle it with `civitai app status`. | [Submission status](#submission-status) |
 | `has no approved version yet` | `civitai app pull` clones a repository that exists only once a version has been **approved**. The app is real; the message names the latest submission's state. Exit `4`. | [Pull your app's repository](#pull-your-apps-repository-app-pull) |
-| `no such submission` | Nothing has been submitted for that app yet — `civitai app submit` creates the submission **and** the draft store listing — or, with `--id`, no publish request carries that id. An **offsite** app should no longer reach this row from `civitai app listing`; from `civitai app status` it still can, and there the advice it carries cannot work — the row below is the confirmed version. | [Submit & auth](#submit--auth) |
-| `is an OFFSITE app` | The app exists and is **offsite** — a registered URL, not a block bundle — so it has no block submission to resolve through. Normal from `civitai app status`; from `civitai app listing` it means the by-slug fallback *also* answered not found. The message names `civitai app view <slug>` for what the CLI can still show and the **App-store listing UI on civitai.com** for where that media is managed — without promising you can edit it there — and never `civitai app submit`, which cannot exist here. Exit `4`. | [Exit code 4](#exit-code-4), [After you submit](#after-you-submit-review--approve--deploy) |
+| `no such submission` | Nothing has been submitted for that app yet — `civitai app submit` creates the submission **and** the draft store listing — or, with `--id`, no publish request carries that id. | [Submit & auth](#submit--auth) |
+| `is an OFFSITE app` | The app exists and is **offsite** — a registered URL, not a block bundle — so it has no block submission to resolve through, and never will. Normal from `civitai app status`; the message names `civitai app view <slug>` instead. | [Exit code 4](#exit-code-4) |
 | `is ambiguous — it matches` | Your `--file` value matched as a **substring**; an exact same-name collision is a different message. Exit `2`. | [Download model files](#download-model-files) |
-| `SHA256 mismatch for` | A download's hash did not match, and the partial file was deleted. Retry — this is integrity checking working, not a bug. The file name is the **uploader's**, so invisible, terminal-controlling, newline and tab characters are removed from it first: this line is the CLI asserting an integrity *failure*, and an escape sequence in a file name must not be able to rewrite it. 🔴 The **progress line** is also **shortened** — the name on it is cut at 120 characters with a `…` — because removing newlines does not stop a name long enough to **wrap** from stranding a forged `Saved … (SHA256 verified)` at column zero: a wrap has no character in it to remove. The `Saved …` line and the download plan still print the full name. | [Download model files](#download-model-files) |
+| `SHA256 mismatch for` | A download's hash did not match, and the partial file was deleted. Retry — this is integrity checking working, not a bug. The file name is the **uploader's**, so it is sanitised and the progress line cut at 120 characters ([What a table cell can contain](#what-a-table-cell-can-contain)). | [Download model files](#download-model-files) |
 | `checksum mismatch for` | The row above, during `civitai upgrade`. | [Upgrading](#upgrading) |
 | ``git is required for `civitai app pull` `` | Exit `1`, reached only after the server has already answered. | [Pull your app's repository](#pull-your-apps-repository-app-pull) |
-| `unexpected response from` | A public read endpoint answered **`200`** with a body this CLI could not decode — not your request, credential or network, which is why it exits `1`. Two causes are known and fixed ([#513](https://github.com/civitai/cli/issues/513), [#525](https://github.com/civitai/cli/issues/525)); hitting a third means the body is a shape the SDK does not model — **please open an issue with the snippet**. | [Scripting with `--json`](#scripting-with---json) |
+| `unexpected response from` | A public read endpoint answered **`200`** with a body this CLI could not decode — not your request, credential or network, which is why it exits `1`. Two causes are known and fixed ([#513](https://github.com/civitai/cli/issues/513), [#525](https://github.com/civitai/cli/issues/525)); a third means the body is a shape the SDK does not model — **please open an issue with the snippet**. | [Scripting with `--json`](#scripting-with---json) |
 
 Still stuck? Every command takes `--help`, `civitai --help` prints the exit-code
 contract, and failures are differentiated by [exit code](#exit-codes) — so a

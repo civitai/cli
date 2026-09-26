@@ -120,7 +120,12 @@ version id explicitly and skip that stop; --yes proceeds on the version
 interpretation and echoes exactly which version it is downloading.
 
 Use --dry-run to print the resolved plan (files, sizes, SHA256, target paths,
-and whether auth is required) without transferring anything.
+and whether auth is required) without transferring anything. It creates no
+file at all — not even a ".part".
+
+When a positional model id is resolved to a version, the note reads:
+
+  note: <id> is a model id — downloading its default version <v>
 
 By default the version's PRIMARY file is downloaded into the current directory
 under its server-provided name. Any file type downloads — model weights, but
@@ -147,11 +152,73 @@ Folder routing: pass --layout <a1111|comfyui> (with an optional --root <dir>,
 default ".") to write each file into the correct subfolder for that app, routed
 by the file/model type — so --all fans a bundled VAE into the VAE folder
 instead of polluting the checkpoint folder. --layout is mutually exclusive with
---out/--out-dir.
+--out/--out-dir; --root only applies with --layout. The routed folder map:
+
+  Civitai type                     A1111 / Forge           ComfyUI
+  ------------------------------   ---------------------   ---------------------
+  Checkpoint                       models/Stable-diffusion models/checkpoints
+  VAE (standalone OR bundled)      models/VAE              models/vae
+  LORA / LoCon / DoRA              models/Lora             models/loras
+  TextualInversion (embedding)     embeddings              models/embeddings
+  Hypernetwork                     models/hypernetworks    models/hypernetworks
+  Controlnet                       models/ControlNet       models/controlnet
+  Upscaler                         models/ESRGAN           models/upscale_models
+
+Sources: the AUTOMATIC1111 wiki plus the sd-webui-controlnet models/ControlNet
+default, and the ComfyUI models docs (docs.comfy.org). An UNMAPPED type (Poses,
+Wildcards, Archive, …) is written to --root with a stderr note rather than
+silently misplaced.
+
+Mis-file warning, WITHOUT --layout: when --all would place files of differing
+types into one directory, the CLI prints a one-line stderr warning naming the
+off-type file(s) and suggesting --layout. It is a warning, not an error, and a
+single-type download stays quiet.
 
 Compatibility: --for-base "<baseModel>" warns on stderr when the version's base
 model is in a confidently different family than your target (e.g. an SD 1.5
-embedding for an SDXL model). The version's base model is always shown.
+embedding for an SDXL model). The version's base model is always shown. The
+check is deliberately conservative: it groups the common bases into
+architecture families — SD1.x, SD2.x, the SDXL family (SDXL/Pony/Illustrious/
+NoobAI, treated loosely as one), SD3, Flux, video — and warns ONLY on an
+architecture-level mismatch. It never warns on near-neighbours (Pony vs
+Illustrious) or on a base it cannot classify.
+
+ControlNet preprocessor: when the parent model is a ControlNet, the CLI prints
+a one-line stderr note. A ControlNet model needs a matching preprocessor or
+annotator (e.g. the ComfyUI comfyui_controlnet_aux custom node — OpenPose,
+Canny, Depth) to derive the control image from your input, and that
+preprocessor is a SEPARATE install, not hosted on Civitai. Informational only;
+it never blocks the download.
+
+Transport: the Civitai download URL 302-redirects to signed storage and the CLI
+follows it. Large files (10+ GB) are never buffered in memory, and TTY-aware
+progress is printed to STDERR.
+
+Transient-failure retry applies to the READ endpoints (search / model / version
+/ images / tags / creators / users / articles / collections), which retry a
+transient 502/503/504 or network error a few times with exponential backoff and
+jitter, noting each retry on stderr. A 429 is retried ONLY when it carries a
+Retry-After header; a 429 without one is terminal, because Civitai's
+deterministic deep-paging limit arrives that way. The download STREAM is not
+retried mid-transfer.
+
+Server-supplied text is sanitised on every message here — a file name is the
+UPLOADER's string, so invisible and terminal-controlling characters are removed
+first, and newlines and tabs become spaces. Each of these is a single-line
+surface, so a newline in a file name would otherwise let an uploader write a
+whole line of their own — a forged "Saved … (SHA256 verified)" above a transfer
+that never finished, say. On the PROGRESS LINE the name is additionally cut at
+120 characters and marked with a "…", because removing newlines does not stop a
+name long enough to WRAP: the terminal, not the CLI, puts the overflow at
+column zero, and a wrap has no character in it to remove. That shortening is
+the progress line only — the "Saved …" line, the "SHA256 mismatch" line and the
+download plan all print the name in full. Two deliberate exceptions, which do
+NOT share a reason: (1) the "server returned an unusable filename" refusal
+renders through %q, which ESCAPES a newline to a visible \n, so collapsing it
+would hide what the server actually sent; (2) multi-line server text outside
+this path — a prompt, a generation failure reason — is printed RAW and
+INDENTED, not escaped, because its newlines are real and the indentation is
+what keeps a continuation line off column zero.
 
 Integrity: the streamed bytes are verified against the file's SHA256 by default
 (--no-verify to skip; a file with no published SHA256 is downloaded with a

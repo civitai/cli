@@ -158,13 +158,27 @@ func readmeRowPlusLinkedSections(t *testing.T, md, row string) string {
 //
 // The heading LEVEL is not an input: GitHub computes the slug from the heading
 // text alone, and so does readmeAnchorSlug — which takes the text and nothing
-// else. The corpus bears that out empirically rather than by assertion: seven of
-// the eight pairs below are `###` headings in this very README, and only
-// `Submit & auth` is a `##`. So the `###` entries the table of contents gained
-// are not a new anchor FORM, and each one's distinguishing character class is
-// already pinned by an observed anchor — a leading emoji dropping to a bare
-// hyphen by `🔴 Silent model substitution`, and an apostrophe vanishing without
-// a separator by `there aren't twelve` → `there-arent-twelve`.
+// else. So a `###` is not a new anchor FORM, and each distinguishing character
+// class here is pinned by an observed anchor — a leading emoji dropping to a
+// bare hyphen by `🔴 Silent model substitution`, and an apostrophe vanishing
+// without a separator by `there aren't twelve` → `there-arent-twelve`.
+//
+// 🔴 SIX OF THESE EIGHT HEADINGS NO LONGER EXIST IN README.md, and that is
+// CORRECT rather than rot. The front-door reduction moved `## Generate`,
+// `## Validate fidelity` and most of `## Submit & auth` to
+// developer.civitai.com, taking `The --json result shape`,
+// `🔴 Silent model substitution`, `After you submit: review → approve → deploy`,
+// `Exit codes specific to generate` and `The content flags, and why there
+// aren't twelve` with them; only `Submit & auth` and `The host handshake
+// (BLOCK_READY)` are still headings here.
+//
+// The corpus is deliberately NOT pruned to match. Its value is that every pair
+// is an anchor OBSERVED to work on github.com — a historical measurement, not a
+// statement about the current document — and this test never reads README.md,
+// so a heading's departure cannot make a pair wrong. Pruning it would shrink
+// the only real control on readmeAnchorSlug for no gain, and would silently
+// drop the four naive-implementation cases named above. Do not "tidy" it by
+// deleting rows whose heading has moved.
 func TestREADMEAnchorSlugMatchesKnownGitHubAnchors(t *testing.T) {
 	cases := map[string]string{
 		"Submit & auth":                                  "submit--auth",
@@ -195,9 +209,33 @@ func TestREADMEAnchorSlugMatchesKnownGitHubAnchors(t *testing.T) {
 // together and stays green while every anchor in the file silently changes. A
 // literal expected value is the only thing that notices.
 func TestREADMEWidenedTOCEntriesSlugAsExpected(t *testing.T) {
+	// 🔴 RE-POINTED by the front-door reduction. The original pair —
+	// "🔴 A checkpoint does not carry its ecosystem" and "Reading a workflow's
+	// Buzz transactions" — were `###` children of `## Generate`, whose body now
+	// lives at developer.civitai.com/site/guide/cli-generate*. Their slugs were
+	// derived from readmeAnchorSlug, never observed on github.com, so they were
+	// never part of the observed corpus above and nothing is lost from THAT
+	// control by their going.
+	//
+	// What this test is worth (see the block above) is that a literal expected
+	// value notices an algorithm change which would otherwise move heading and
+	// link together and stay green. That requires headings the README really
+	// carries, so the pair is replaced by two that survive and that exercise the
+	// same character classes the old pair did:
+	//
+	//   apostrophe-vanishing-without-a-separator: "app's" -> "apps"
+	//     (was "workflow's" -> "workflows")
+	//   a backticked token with an underscore that must SURVIVE, plus parens
+	//     that must vanish
+	//
+	// The leading-emoji class the old first entry covered is NOT orphaned: it is
+	// pinned by "🔴 Silent model substitution" in
+	// TestREADMEAnchorSlugMatchesKnownGitHubAnchors, which is a pure-function
+	// test over an OBSERVED anchor and reads no heading, so it keeps working
+	// with that heading gone from the file.
 	cases := map[string]string{
-		"🔴 A checkpoint does not carry its ecosystem": "-a-checkpoint-does-not-carry-its-ecosystem",
-		"Reading a workflow's Buzz transactions":      "reading-a-workflows-buzz-transactions",
+		"Pull your app's repository (`app pull`)": "pull-your-apps-repository-app-pull",
+		"The host handshake (`BLOCK_READY`)":      "the-host-handshake-block_ready",
 	}
 	for heading, want := range cases {
 		if got := readmeAnchorSlug(heading); got != want {
@@ -394,7 +432,27 @@ var readmeTOCExemptSections = map[string]string{
 // the next time a section is reorganised — which is exactly what happened here,
 // twice, the second time in the very PR that reorganised them. If you want the
 // number, run it.
-const readmeTOCMinSubsections = 25
+// 🔴 LOWERED 25 -> 7 by the front-door reduction (README 237,568 -> ~134,000 B),
+// and this is the ANTI-VACUITY control being re-based, NOT a content floor being
+// waived. The `###` population did not shrink because a section was EXEMPTED —
+// it shrank because `## Generate` (12 `###`), `## Validate fidelity` (1),
+// `## Scripting with --json` (1) and two of `## Submit & auth`'s subsections
+// became pointers into developer.civitai.com, so the headings are gone from the
+// document the walk reads. A floor of 25 over a population of 9 is not a
+// vacuity check, it is an unconditional red.
+//
+// The purpose is preserved at the new number rather than merely satisfied:
+// the control exists to catch an over-broad PARENT-KEYED exemption, and the
+// largest exemptable section is now `## Install` with 5 children. Exempting it
+// leaves 4, which is below 7 and still a RED run — the same property the 25
+// bought against `## Generate` when the population was 26.
+//
+// Measured at the head of this change: 9 in-scope `###` — `## Install` 5,
+// `## Set up your coding agent` 1, `## Submit & auth` 2, `## Global flags` 1.
+// Recorded as a measurement with its date-of-measure, not as a standing claim;
+// the comment above this constant already warns that a census in a comment goes
+// stale silently, so re-run it rather than trusting this line.
+const readmeTOCMinSubsections = 7
 
 // TestREADMETableOfContentsCoversEverySection requires each top-level (`##`)
 // section AND each in-scope second-level (`###`) subsection to be reachable from
