@@ -1,50 +1,23 @@
-# `consent-controls` — the unconsented arm's own negative control
-
-`CIVITAI_ASSERT_UNCONSENTED=1` grades **"did the block ASK the host for
-consent"** rather than **"did it reach generating"**. These three fixtures are
-that arm's controls.
+# `consent-controls` — an attributable, reproducible control for the unconsented arm
 
 ```bash
-bash build.sh                 # create + build the three fixture containers
+bash build.sh                 # create + build the three fixture containers (~5 min)
 bash build.sh --keep          # ...reusing an existing container + scaffold
 nix-shell -p chromium --run 'bash grade-controls.sh'
 ```
 
-## Why the arm needed them
+## What these add — and what they do NOT
 
-The arm shipped in `cli#712` after a real user found that `ab-img-poster v0.1.0`
-spent without ever asking — broken for every first-time viewer, and green on the
-oracle. The arm catches that. But **every fixture that failed it did so on an app
-some model wrote**, and the one cell serving as the fixture set's negative
-control, `ab-genpost-glm-01`, fails for a *render* reason: it never renders
-`[data-testid="prompt"]`, so the assertion throws long before the consent step
-runs. A `no` that has never been watched arrive **for the arm's own reason** is a
-claim about the instrument, not a measurement.
+`CIVITAI_ASSERT_UNCONSENTED=1` grades **"did the block ASK the host for consent"**. These fixtures add exactly two things to it:
 
-## 🔴 The untouched scaffold cannot be that control — measured, not assumed
+1. **Attribution** — a pair differing in **one controlled variable** rather than a version bump.
+2. **Reproducibility** — the existing real-bundle controls are containers in the handoff's *"SEVEN FIXTURES — DO NOT DESTROY"* set; these rebuild from git in ~5 min.
 
-`ctl-scaffold-untouched` is a `civitai app init --template page-money` scaffold
-that is installed **and built** — strictly further along than `glm-01`'s, which
-was never built. It still fails **both** arms with the byte-identical reason
-`timed out after 15000ms waiting for [data-testid="prompt"] to appear` and
-`observed=''`. Building it changes nothing, because the page-money scaffold ships
-`pm-*` testids and its own UI and can never reach the genpost assertion's consent
-step.
+🔴 **RETRACTED — do not re-derive it.** The first version of this README, of `build.sh`'s header, of the block in `../../README.md` and of the PR body all led with: *"an arm whose `no` has never been watched arrive for the arm's OWN reason is a claim about the instrument, not a measurement."* **That sentence is false, and was false when written.** The arm's own `no` had already been observed on a real bundle: `ab-ship-mimo-02` (the live `ab-img-poster v0.1.0`) graded `RENDER=no observed=ready>generating>ready` — *"spent without asking"* — against its `v0.1.1` fix at `RENDER=yes observed=ready`. Three more of the seven fixtures grade `no` on the arm, and the handoff's own *How to verify* section runs exactly that cell. The claim reached four sites because nobody re-read the table it contradicts.
 
-⚠ **And the intuition behind the original phrasing is backwards.** "An untouched
-scaffold fails the consent arm" is true but vacuous — it fails for a reason that
-has nothing to do with consent. The scaffold's `App.tsx` in fact **requests
-consent correctly**: `proceed()` gates on `hasBudgetedScope(token.scopes)` and
-calls `requestConsent({ scopes: ['ai:write:budgeted'] })`, which is the very
-pattern `ab-img-poster v0.1.1` was fixed *to*. The apps that fail this arm failed
-by **replacing** the scaffold's generation path, not by keeping it.
+## The pair
 
-## The pair that does control the arm
-
-`ctl-genpost-blind` and `ctl-genpost-asks` are both scaffold-derived, both reach
-the Generate click, and **differ in exactly one file** — `build.sh` asserts that
-and exits 2 if a second file drifts, because the whole attribution rests on it.
-The delta is one branch:
+`ctl-genpost-blind` and `ctl-genpost-asks` are both scaffold-derived, both reach the Generate click, and **differ in exactly one file** — `build.sh` asserts that and exits 2 if a second file drifts, because the attribution rests on it. The delta is one branch:
 
 ```tsx
 if (!granted) {                                   // present in `asks`,
@@ -55,9 +28,11 @@ if (!granted) {                                   // present in `asks`,
 void runGeneration();
 ```
 
-`blind` imports and binds `useRequestConsent` exactly as `asks` does (discarded
-with `void`), so the SDK surface in both bundles is the same and only the **call**
-differs.
+`blind` imports and binds `useRequestConsent` exactly as `asks` does (discarded with `void`), so the SDK surface in both bundles is the same and only the **call** differs.
+
+⚠ **`ctl-scaffold-untouched` is not the arm's negative control and never could be.** It is one measurement, kept as a live row rather than as prose only because the template can change under it: a `page-money` scaffold **installed and built** still fails **both** arms with the identical render reason, because it ships `pm-*` testids and the genpost assertion throws before the consent step. Its row is *expected* to stay `no`/`no` — a row that **moves** means the template gained the genpost shape, which is the thing worth being told about.
+
+⚠ **And the intuition behind rank 15's phrasing was backwards.** The scaffold's `App.tsx` **requests consent correctly**: `proceed()` gates on `hasBudgetedScope(token.scopes)` and calls `requestConsent({ scopes: ['ai:write:budgeted'] })`, the very pattern `ab-img-poster v0.1.1` was fixed *to*. The apps that fail this arm failed by **replacing** the scaffold's generation path, not by keeping it.
 
 ## The matrix — measured 2026-09-26, CLI `0.1.109`
 
@@ -67,7 +42,7 @@ differs.
 | `ctl-genpost-blind` | `yes` | **`no`** | *"the block never asked the host for consent on an UNCONSENTED token … Generate was clicked and sent none"* |
 | `ctl-genpost-asks` | `yes` | `yes` | — |
 
-Evidence from the assertion's own JSON, both fixtures on the unconsented arm:
+From the assertion's own JSON, both twins on the unconsented arm:
 
 | field | `blind` | `asks` |
 |---|---|---|
@@ -80,37 +55,16 @@ Evidence from the assertion's own JSON, both fixtures on the unconsented arm:
 | `messageShim` | `sites=1` | `sites=1` |
 | `unmeasured` | `false` | `false` |
 
-Three things in that table are the point, and none of them is the verdict:
+Three rows matter, and none is the verdict:
 
-- **Both reached the discriminating input.** `generateClicked=true`,
-  `initialStatus=ready`, `postDisabled=true` on both — every render precondition
-  the assertion checks passed on both sides, so the verdicts can only differ on
-  the consent axis.
-- **`blind` attempted to SPEND.** `hostRefused` carries `ESTIMATE_WORKFLOW`:
-  it did not merely fail to ask, it went for the money path on a token with no
-  budgeted scope. `asks` refused only the token read.
-- 🔴 **`asks` is the positive control for `blind`'s `no`.** `messageShim=sites=1`
-  on both means the instrument was wired into each bundle, and `asks` proves an
-  ask **is observable on this exact SDK build**. Without that half, `blind`'s
-  `no` is indistinguishable from an oracle that could never have seen an ask —
-  which is the `consentBlind()` case the assertion reports as `unmeasured`.
+- **Both reached the discriminating input** — `generateClicked=true`, `initialStatus=ready`, `postDisabled=true` on both, so every render precondition passed on both sides and the verdicts can differ only on the consent axis.
+- **`blind` attempted to SPEND** — `hostRefused` carries `ESTIMATE_WORKFLOW`: it did not merely fail to ask, it went for the money path on a token with no budgeted scope.
+- 🔴 **`asks` is the positive control for `blind`'s `no`.** `messageShim=sites=1` on both means the instrument was wired into each bundle, and `asks` proves an ask **is observable on this exact vite-built bundle of the published SDK** — the property the Go fixtures in `dogfood_oracle_consent_test.go` structurally cannot reach, since their app is a hand-written inline-transport stub. Without that half, `blind`'s `no` is indistinguishable from the `consentBlind()` case the assertion reports as `unmeasured`.
 
-`observed` inverts across the arms, and the inversion is correct: on the
-unconsented arm a status machine that **moves** is the defect and one that stays
-`ready` is right.
+`observed` inverts across the arms, and the inversion is correct: on the unconsented arm a status machine that **moves** is the defect and one that stays `ready` is right.
 
-## ⚠ npm 10.x cannot install the page-money scaffold today
+## ⚠ The npm pin is the house remedy, not a deviation
 
-`build.sh` pins npm to 12.1.0 inside the container because `npm install` on the
-page-money scaffold dies in arborist under the npm that
-`node:22-bookworm-slim` ships:
+`build.sh` pins npm inside the container because npm 10.x cannot install the page-money scaffold — arborist dies with `Cannot read properties of null (reading 'edgesOut')`. **That is a known, diagnosed, already-remedied defect here:** the comment above `actions/setup-node` in `.github/workflows/ci.yml` carries the same crash, the same `vitest → jsdom → canvas` chain and the remedy (*"node 24 (npm 11), NOT 22 (npm 10) … Do not drop back to 22"*), repeated at four sites.
 
-```
-TypeError: Cannot read properties of null (reading 'edgesOut')
-  at #loadPeerSet (.../arborist/lib/arborist/build-ideal-tree.js:1289:38)
-```
-
-That is a **deviation from what a real trial gets**, taken deliberately: these
-are fixtures for grading the oracle, not trials. It is also a live defect in its
-own right — see the handoff doc. Do not copy the pin into `runner.py` or the env
-Dockerfiles without deciding that question on its own terms.
+🔴 **The genuine residual is one line, three times:** `../../envs/node-root.Dockerfile`, `../../envs/node-user.Dockerfile` and `../../envs/stale-cli.Dockerfile` are all still `FROM node:22-bookworm-slim`, so the **trial** images never got that fix. Whether they should — a trial arguably *ought* to measure a stock developer environment — is an open question for the operator, not an undiagnosed crash.

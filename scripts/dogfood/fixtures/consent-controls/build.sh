@@ -5,42 +5,65 @@
 #   bash build.sh              # build all three fixture containers
 #   bash build.sh --keep       # ...reusing containers that already exist
 #
-# 🔴 WHY THIS EXISTS. `CIVITAI_ASSERT_UNCONSENTED=1` grades "did the block ASK the
-# host for consent". Before these fixtures the arm had no negative control of its
-# own: the only cell that failed it for a *reachable* reason was
-# `ab-genpost-glm-01`, and that one fails for a RENDER reason — it never renders
-# `[data-testid="prompt"]`, so the assertion throws before the consent step runs
-# and the arm learns nothing. An arm whose `no` has never been watched arrive for
-# the arm's OWN reason is a claim about the instrument, not a measurement.
+# 🔴 WHAT THESE ADD — AND READ THE RETRACTION BELOW BEFORE WRITING A BIGGER REASON.
+# `CIVITAI_ASSERT_UNCONSENTED=1` grades "did the block ASK the host for consent".
+# These fixtures add exactly two things to it: ATTRIBUTION — a pair differing in
+# ONE controlled variable rather than a version bump — and REPRODUCIBILITY, since
+# the existing real-bundle controls are containers in the "DO NOT DESTROY" set
+# while these rebuild from git in ~5 min. Nothing more.
 #
-# 🔴 AND THE UNTOUCHED SCAFFOLD CANNOT BE THAT CONTROL — MEASURED, NOT ASSUMED.
-# `ctl-scaffold-untouched` is a `civitai app init --template page-money` scaffold
-# that is INSTALLED AND BUILT, i.e. strictly further along than glm-01's, and it
-# still fails both arms with the identical render reason. Building it changes
-# nothing; the page-money scaffold ships `pm-*` testids and its own UI, so it can
-# never reach the genpost assertion's consent step. See the matrix in
-# `claudedocs/refs/unconsented-arm-controls-2026-09-26.md`.
+# 🔴 RETRACTED, AND DO NOT RE-DERIVE IT. The first version of this header, of this
+# directory's README, of the block in `../../README.md` and of the PR body all led
+# with: "an arm whose `no` has never been watched arrive for the arm's OWN reason
+# is a claim about the instrument, not a measurement." THAT SENTENCE IS FALSE, and
+# was false when written. It had been watched, on a real bundle, before any of
+# this existed: `ab-ship-mimo-02` (the live `ab-img-poster v0.1.0`) graded
+# `RENDER=no observed=ready>generating>ready` — "spent without asking" — and its
+# `v0.1.1` fix graded `RENDER=yes observed=ready`. Three more of the seven
+# fixtures grade `no` on the arm, and the handoff's own "How to verify" section
+# runs exactly that cell. The claim reached four sites because nobody re-read the
+# table it contradicts. You are at least the second person to write a reason here:
+# if the one above stops holding, WRITE THAT IT HAS NONE rather than reaching for
+# a better one.
 #
-# The pair that DOES control the arm is `ctl-genpost-blind` / `ctl-genpost-asks`.
-# Both reach the Generate click; they differ by the consent branch alone, so the
-# arm's verdict moving between them is attributable to that branch and nothing
-# else. `asks` is the positive control for `blind`: it proves an ask IS
-# observable on this exact bundle, which is what separates "the app never asked"
-# from "this oracle could not have seen an ask".
+# ⚠ `ctl-scaffold-untouched` is NOT the arm's negative control and never could be.
+# It is ONE measurement, kept as a live row rather than as prose only because the
+# template can change under it. A `page-money` scaffold INSTALLED AND BUILT still
+# fails BOTH arms with the identical render reason — it ships `pm-*` testids, so
+# the genpost assertion throws before the consent step is reached. Its row is
+# EXPECTED to stay `no`/`no`; a row that MOVES means the template gained the
+# genpost shape, which is the thing worth being told about.
 #
-# ⚠ npm 10.x CANNOT INSTALL THE page-money SCAFFOLD TODAY. `npm install` dies in
-# arborist with `TypeError: Cannot read properties of null (reading 'edgesOut')`
-# under both 10.9.8 and 10.9.9 — the versions `node:22-bookworm-slim` ships — and
-# succeeds under 12.1.0. That is why this script pins npm inside the container.
-# It is a DEVIATION from what a real trial gets, and it is deliberate: these are
-# fixtures for grading the oracle, not trials. See the same refs doc.
+# The pair that does the work is `ctl-genpost-blind` / `ctl-genpost-asks`. Both
+# reach the Generate click; they differ by the consent branch alone, so the arm's
+# verdict moving between them is attributable to that branch and nothing else.
+# `asks` is the positive control for `blind`: it proves an ask IS observable on
+# this exact vite-built bundle of the PUBLISHED SDK — the one property the Go
+# fixtures in `dogfood_oracle_consent_test.go` structurally cannot reach, since
+# their app is a hand-written inline-transport stub.
+#
+# ⚠ npm 10.x cannot install the page-money scaffold — arborist dies with
+# `Cannot read properties of null (reading 'edgesOut')`. THIS IS A KNOWN,
+# DIAGNOSED, ALREADY-REMEDIED DEFECT IN THIS REPO: see the comment above
+# `actions/setup-node` in `.github/workflows/ci.yml`, which carries the same
+# crash, the same `vitest -> jsdom -> canvas` chain, and the house remedy
+# ("node 24 (npm 11), NOT 22 (npm 10) … Do not drop back to 22") at four sites.
+# Pinning npm here is therefore the repo's CONVENTION, not a deviation from it,
+# and the default below is the version that comment measured good. 🔴 The genuine
+# residual: `../../envs/node-root.Dockerfile`, `../../envs/node-user.Dockerfile`
+# and `../../envs/stale-cli.Dockerfile` are all still `FROM node:22-bookworm-slim`,
+# so the TRIAL images never got that fix — an open question about what a trial
+# should measure, not an undiagnosed crash.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 [ -n "$HERE" ] && [ -d "$HERE" ] || { echo "cannot resolve script dir" >&2; exit 2; }
 
 IMAGE="${DOGFOOD_IMAGE:-df-node-root}"
-NPM_PIN="${DOGFOOD_NPM_PIN:-12.1.0}"
+# The version `.github/workflows/ci.yml` records as measured-good against this
+# crash. 12.1.0 also works (measured), but matching the house number keeps one
+# claim in one place.
+NPM_PIN="${DOGFOOD_NPM_PIN:-11.19.0}"
 KEEP=no
 [ "${1:-}" = "--keep" ] && KEEP=yes
 

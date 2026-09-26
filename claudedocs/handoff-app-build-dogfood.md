@@ -466,12 +466,25 @@ the three-arm check under *How to verify* is the cheaper successor.
 - **Next probe:** none for the instrument. The open item is whether an untouched scaffold
   fails this arm — see the limits below.
 
-### ✅ MEASURED 2026-09-26 — the unconsented arm now has its own negative control, and the premise behind rank 15 was backwards
+### ✅ MEASURED 2026-09-26 — rank 15's premise was backwards, and so was my first account of why
 - as-of: 2026-09-26
 
-🔴 **THIS CLOSES RANK 15, AND IT CORRECTS THE SENTENCE RANK 15 WAS WRITTEN AROUND.**
+🔴 **THIS CLOSES RANK 15, AND IT RETRACTS A CLAIM I SHIPPED IN FOUR PLACES WHILE CLOSING IT.**
 "An untouched scaffold fails the consent arm" is **true but vacuous**, and the reason is
 not the one the rank assumed.
+
+🔴 **RETRACTED — "the arm's `no` had never been watched arrive for the arm's OWN reason."**
+`cli#718` led with that sentence in `build.sh`, the fixture README, the `scripts/dogfood/README.md`
+block and the PR body. **It is false, and it was false when written — this document contradicts
+it two screens up.** `ab-ship-mimo-02` (the live `ab-img-poster v0.1.0`) already graded
+`RENDER=no observed=ready>generating>ready` — *"spent without asking"* — against `v0.1.1`'s
+`RENDER=yes observed=ready`; `ab-genpost-dsv4-02` and `ab-ship-mimo-01` also grade `no` on the
+arm; and the **How to verify** section below runs precisely that cell, calling the pair "the
+point". Caught by round 0 of `/audit-pr 718`, which read the table I did not re-read.
+**What was actually missing is narrower:** not *observation* of the arm's own `no`, but
+**attribution** — a pair differing in ONE controlled variable rather than a version bump — and
+**reproducibility**, since the seven fixtures are preserved containers and these rebuild from
+git. That is the whole increment. Do not re-inflate it.
 
 - **Ruled out — that `glm-01` failed for a render reason only because it was never
   built.** `ctl-scaffold-untouched` is a `civitai app init --template page-money`
@@ -515,38 +528,34 @@ not the one the rank assumed.
 - **Next probe:** none. `fixtures/consent-controls/` is the durable artifact; the
   containers are evidence and the runs are at `~/.cache/dogfood-consent-controls/`.
 
-### 🔴 OPEN 2026-09-26 — `npm install` on the page-money scaffold is BROKEN on the trial image, today
+### ⚠ NOT NEW 2026-09-26 — the page-money `npm install` crash is already diagnosed and remedied in this repo
 - as-of: 2026-09-26
 
-🔴 **NO APP-BUILD TRIAL CAN CURRENTLY GET PAST STEP ONE OF THE MONEY TEMPLATE**, and a
-model that hits this emits the same `CLOSING_CONDITION=no` as a model that cannot drive
-the task — the capability confound, live.
+🔴 **I WROTE THIS UP AS A DISCOVERY AND IT IS NOT ONE. Round 0 of `/audit-pr 718` found the
+prior art; I verified it myself.** `.github/workflows/ci.yml` carries a comment above its
+`actions/setup-node` — repeated at **four** sites — naming the same crash
+(`Cannot read properties of null (reading 'edgesOut')`), the same `vitest → jsdom → canvas`
+chain, the same measurement class (*"npm 10.9.9 fails on the unmodified template, npm 11.19.0
+succeeds; overriding jsdom or pinning vitest does NOT fix it"*) and the decided remedy:
+**node 24 (npm 11), "Do not drop back to 22."** `gh issue #530` (closed 2026-09-09) is the
+same crash again. **"Remedy undecided" was wrong.**
 
-- **Symptom + exact repro:** `civitai app init --template page-money && npm install` on
-  `df-node-root` (`node:22-bookworm-slim`) dies with
-  `TypeError: Cannot read properties of null (reading 'edgesOut')` at
-  `#loadPeerSet (.../arborist/lib/arborist/build-ideal-tree.js:1289:38)`. **3 of 3
-  attempts**, including after `npm cache clean --force`. `via: measurement`
-- **Scoped by measurement, not guessed:** `static` has no `package.json`; **`page-vite`
-  installs cleanly** on the same npm. Only `page-money` is affected — it is the only
-  template carrying `vitest`, and **removing `vitest` from `devDependencies` makes it
-  install**. The crash walks `vitest → @vitest/browser-playwright → jsdom → canvas`.
-  `via: measurement`
-- **It is REGISTRY DRIFT, not an npm upgrade.** `glm-01`'s container installed this same
-  template successfully on 2026-09-21 under npm **10.9.8** — and 10.9.8 fails today.
-  10.9.9 fails; **12.1.0 succeeds**. `via: measurement`
-- 🔴 **Ruled out — that `@vitest/browser-playwright@5.0.2` (published 2026-09-25, the only
-  publish in that chain inside the window) is the trigger. I predicted it and the control
-  REFUTED IT ON BOTH HALVES:** an override pinning **5.0.1 still crashes**, and pinning
-  **5.0.2 installs cleanly**. 5.0.2 is a *fix*, not the cause; the override works by
-  constraining a peer set arborist otherwise fails to walk. `via: measurement`
-- **Next probe:** decide the remedy on its own terms — pin/override in the page-money
-  template's `package.json`, drop `vitest` from the scaffold's default devDependencies,
-  or bump npm in `envs/*.Dockerfile`. Each changes what a trial measures. `build.sh` pins
-  npm **12.1.0 inside the fixture containers only**, and says so; do not copy that pin
-  into `runner.py` or the env images as a side effect.
-- ⚠ **Blast radius is not just the harness.** This is the published CLI's money-path
-  template on a stock node 22 image — the same command a real developer runs.
+- **The one genuine residual, and it is a single line in three files:**
+  `scripts/dogfood/envs/node-root.Dockerfile`, `node-user.Dockerfile` and
+  `stale-cli.Dockerfile` are all still `FROM node:22-bookworm-slim`, so the **trial images
+  never got the fix CI got**. Whether they should is a real fork — a trial arguably *ought*
+  to measure a stock developer environment — but it is a question with documented prior art,
+  and it belongs in an issue in #530's lineage, not here. `via: measurement`
+- **What my run adds, and it is small:** an override pinning `@vitest/browser-playwright`
+  to **5.0.1 still crashes** while **5.0.2 installs** — so 5.0.2 is a *fix*, not the trigger
+  I predicted. Consistent with ci.yml's *"pinning vitest does not fix it"* (pinning a
+  different package, at a different level). **`page-vite` installs cleanly** on the same npm;
+  only `page-money` is affected. `via: measurement`
+- **`build.sh` pins npm 11.19.0 in the FIXTURE containers** — the version ci.yml measured
+  good. That pin is the **house convention**, not the deviation an earlier draft of this
+  block called it.
+- **Next probe:** none here. The open question is the env Dockerfiles' node major, and it is
+  the operator's call.
 
 ## Next steps (ranked)
 
@@ -567,12 +576,13 @@ the task — the capability confound, live.
     cover; the trial container has **no `python3`, `convert`, `magick` or `pip3`**. Adding
     image tooling or letting a brief spend Buzz on a cover **changes what "blind" means**.
     forcing: user — asked about "complete working apps" on 2026-09-25
-15. ✅ **DONE 2026-09-26** — the arm has its own negative control, in
-    `scripts/dogfood/fixtures/consent-controls/`. A BUILT untouched scaffold still fails
-    both arms for the same *render* reason, so it can never be that control; the pair
-    `ctl-genpost-blind` / `ctl-genpost-asks` (one-file delta, both reaching the Generate
-    click) is. **The rank's premise was backwards — the scaffold requests consent
-    correctly.** See the 2026-09-26 investigation block.
+15. ✅ **DONE 2026-09-26** — `scripts/dogfood/fixtures/consent-controls/` adds an
+    **attributable, reproducible** control: `ctl-genpost-blind` / `ctl-genpost-asks`, a
+    one-file delta, both reaching the Generate click. ⚠ **The rank's premise was backwards
+    on BOTH halves.** A BUILT untouched scaffold still fails both arms for the same
+    *render* reason, so it can never be that control — and the scaffold **requests consent
+    correctly**. 🔴 The arm was also NOT without a `no` of its own: `ab-ship-mimo-02`
+    already was one. See the retraction in the 2026-09-26 investigation block.
     forcing: gate — satisfied
 16. **Re-read every "the model built a working app" claim in this doc against the
     unconsented arm.** 4 of 7 fixtures fail it, including cells cited as successes. The
@@ -935,11 +945,11 @@ civitai buzz                # 4,074,196 on 2026-09-25 — RE-READ, it drifts
 ```
 ## Defects (batched)
 
-- 🔴 **`civitai app init --template page-money` + `npm install` FAILS on npm 10.x today**
-  (arborist `edgesOut`, 3/3, `page-vite` unaffected, npm 12.1.0 fine). Blocks every
-  app-build trial on the money template, and hits real developers on a stock node 22
-  image. Remedy undecided — see the 2026-09-26 investigation block for the four
-  measurements and the refuted `@vitest/browser-playwright@5.0.2` theory.
+- **`scripts/dogfood/envs/*.Dockerfile` are all still `FROM node:22-bookworm-slim`**, so the
+  trial images never got the node-24 fix CI took for the page-money `npm install` crash
+  (`.github/workflows/ci.yml`, four sites; `gh issue #530`). Operator call: a trial arguably
+  *should* measure a stock developer environment. **Not an undiagnosed crash** — an earlier
+  draft of this doc wrote it up as one.
 - `ab-img-poster v0.1.0` is **live and broken for first-time viewers** until `v0.1.1` is
   approved.
 - `pickerBlind` and `consentBlind` have never been tested together on one doubly-blind bundle.
