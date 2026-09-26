@@ -132,23 +132,26 @@ start() {
 # returns before any lockfile handling, so `blind rebuilt / asks reused` left the
 # reused twin on a lockfile days old, and the run then died at the drift guard
 # with "differ in more than src/App.tsx" — the misleading message this file works
-# hard to avoid, with no hint that the cure is dropping `--keep`. A reused twin is
-# now CHECKED against the lockfile in play and told exactly that.
+# hard to avoid, with no hint that the cure is dropping `--keep`. The SECOND twin
+# is now checked against the lockfile in play and told exactly that. (The first
+# has nothing to compare against: it DEFINES the reference, reused or not.)
 prepare() {
   local name="$1" dir="$2" lock="${3:-}"
   if [ "$KEEP" = "yes" ] \
      && docker exec "dogfood-$name" test -d "/work/$dir/node_modules" >/dev/null 2>&1; then
     if [ -n "$lock" ] && [ -s "$lock" ]; then
-      # Hash INSIDE the container and compare hex to hex. Reading the file into a
-      # shell variable would not work: `$(cat …)` strips trailing newlines, so a
-      # byte-identical lockfile would hash differently and this guard would fire
-      # on every run — a false alarm is how a check like this gets deleted.
-      local have want
+      # Hash INSIDE the container and compare hex to hex, so nothing depends on
+      # how a shell carries the bytes.
+      local have want why
       have=$(docker exec "dogfood-$name" sh -c \
         "sha256sum '/work/$dir/package-lock.json' 2>/dev/null" | cut -d' ' -f1)
       want=$(sha256sum "$lock" | cut -d' ' -f1)
       if [ -z "$have" ] || [ "$have" != "$want" ]; then
-        fatal "dogfood-$name is being REUSED (--keep) but its lockfile ${have:+differs from}${have:-is missing while} the twin's — the pair would differ in package-lock.json and the drift guard would report that as attribution drift. Re-run WITHOUT --keep."
+        # An explicit variable, not `${have:+a}${have:-b}` — `:-` yields the
+        # VALUE when the variable is set, so that idiom spliced the raw digest
+        # into the sentence on the branch it is most often read on.
+        if [ -z "$have" ]; then why="is missing while the twin has one"; else why="differs from the twin's"; fi
+        fatal "dogfood-$name is being REUSED (--keep) but its lockfile $why — the pair would differ in package-lock.json and the drift guard would report that as attribution drift. Re-run WITHOUT --keep."
       fi
     fi
     printf '  reusing the scaffold in dogfood-%s:/work/%s\n' "$name" "$dir"
@@ -255,19 +258,22 @@ ASKS_N=$(printf '%s\n' "$ASKS_SUMS"  | grep -c '^[0-9a-f]\{64\}  ' || true)
 [ "$BLIND_N" -ge 2 ] && [ "$ASKS_N" -ge 2 ] \
   || fatal "could not read the twins' file lists (blind=$BLIND_N asks=$ASKS_N hashed line(s)) — NOTHING was compared. This is an instrument failure, not a verdict about the fixtures."
 
-# 🔴 A SECOND, INDEPENDENT CHECK ON THE SAME HAZARD: the twins must hold the SAME
-# NUMBER of files. It is cheap, and it catches an extra or missing file even when
-# the path comparison is somehow defeated — which is exactly what happened when
-# the producer word-split (blind=2 asks=3 while `DIFFER` read clean).
-[ "$BLIND_N" -eq "$ASKS_N" ] \
-  || fatal "the twins hold DIFFERENT NUMBERS of files (blind=$BLIND_N asks=$ASKS_N) — one has a file the other does not, so attribution is void."
-
 # Strip the `< ` / `> ` marker and the 64-hex digest + two spaces, leaving the
 # path VERBATIM — `awk '{print $3}'` would read only the first whitespace token
 # of the name. This is the PARSING half; `sums()`'s `-print0` above is the half
 # that decides whether such a path is in the stream at all.
 DIFFER=$(diff <(printf '%s\n' "$BLIND_SUMS") <(printf '%s\n' "$ASKS_SUMS") \
   | grep -E '^[<>] ' | sed -E 's/^[<>] [0-9a-f]{64}  //' | sort -u)
+
+# 🔴 A SECOND, INDEPENDENT CHECK ON THE SAME HAZARD: the twins must hold the SAME
+# NUMBER of files. Its unique value is the case where the path comparison reads
+# CLEAN while the trees genuinely differ — what the word-splitting producer did
+# (blind=2 asks=3 with `DIFFER` naming only `./src/App.tsx`). Runs AFTER `DIFFER`
+# so it can quote it: placed before, it preempted the check below and replaced a
+# message naming the file with one that did not.
+[ "$BLIND_N" -eq "$ASKS_N" ] \
+  || fatal "the twins hold DIFFERENT NUMBERS of files (blind=$BLIND_N asks=$ASKS_N) — one has a file the other does not, so attribution is void. The path comparison reported: ${DIFFER:-<no difference, which means it is not seeing the extra file>}"
+
 if [ -z "$DIFFER" ]; then
   fatal "the twins are IDENTICAL — they differ in NO file, so there is no controlled delta and the pair measures nothing. Expected exactly ./src/App.tsx to differ; check that each container got its OWN App source."
 fi

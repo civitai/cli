@@ -84,7 +84,7 @@ printf '=== consent controls, both arms (runs under %s)\n\n' "$RUNS"
 # same five by name, and says why in a comment; `oracle.sh` names the same hazard.
 #
 # ⚠ THE TIMING KNOBS RIDE ALONG, and they are a quieter version of the same
-# class: `_cdp.mjs` also reads CIVITAI_ASSERT_WAIT_MS / _LAUNCH_MS /
+# class: `../../briefs/_cdp.mjs` also reads CIVITAI_ASSERT_WAIT_MS / _LAUNCH_MS /
 # _LAUNCH_ATTEMPTS, all three documented as operator-settable in
 # `../../README.md`. A stale `CIVITAI_ASSERT_WAIT_MS=1` yields a uniformly
 # `RENDER=no` matrix. Less dangerous than the arm knobs — `render_reason=` shows
@@ -126,15 +126,15 @@ for t in $FIXTURES; do
     # 🔴 ASSERT THE ARM THE ORACLE REPORTS EQUALS THE ONE THIS COLUMN CLAIMS.
     # The `env -u` above removes the known route to a mislabelled row; this
     # catches every other one, including a future arm knob nobody added here.
-    # 🔴 ANCHOR BOTH ENDS. A greedy `.*arm=` takes the LAST match on the line,
-    # and `observed=` — which `oracle.sh` renders with `printf %q`, so a space
-    # becomes `\ ` — comes AFTER `arm=`. A fixture whose status text contained
-    # ` arm=<label>` could then either false-fire this or, spelling the expected
-    # label, MASK a genuine mismatch: the guard would be reading a field the
-    # subject under test controls. Anchoring on `^brief=` … ` served=` pins it to
-    # the oracle's own field.
+    # 🔴 EXCLUDING `\` FROM THE CAPTURE IS WHAT MAKES THIS FAIL CLOSED — the
+    # anchors alone do NOT pin it to the oracle's own field. `.*` stays greedy and
+    # `observed=` sits after `served=`, so a status text containing ` arm=x served=y `
+    # still wins the match. But `oracle.sh` renders `observed` with `printf %q`,
+    # which puts a backslash before every literal space, so any token captured out
+    # of it ends in `\` and can never equal `consented`/`unconsented`. Worst case
+    # is a spurious mismatch and exit 2; masking a real one is unreachable.
     GOT_ARM=$(printf '%s\n' "$VERDICT" \
-      | sed -n 's/^brief=.*[[:space:]]arm=\([^ ]*\)[[:space:]]served=.*/\1/p')
+      | sed -n 's/^brief=.*[[:space:]]arm=\([^ \\]*\)[[:space:]]served=.*/\1/p')
     # An arm that could not be READ is mislabelled, not skipped — `oracle.sh`
     # always prints the field (defaulting to `unmeasured`), so an empty read
     # means the summary format moved and this assertion has gone blind.
