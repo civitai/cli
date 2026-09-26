@@ -124,13 +124,28 @@
 //
 // 🔴 THE ACCEPTED COST, WHICH IS REAL. The class contains U+200D ZERO WIDTH
 // JOINER and U+200C ZERO WIDTH NON-JOINER, so text that depends on them renders
-// differently: emoji ZWJ sequences break into their components, and at least
-// nine scripts lose orthographic distinctions — Malayalam chillu (`ണ്‍` becomes
-// `ണ്`, a DIFFERENT letter), Devanagari half-forms and conjuncts, Bengali,
-// Tamil, Kannada, Sinhala repaya, Persian/Arabic ZWNJ, and Mongolian (both the
-// vowel separator and the free variation selectors). The measured sheet is
-// TestStripDocumentedDegradations. The maintainer chose STRIP over escaping for
-// #393; this is what that costs, and it is written down rather than discovered.
+// differently: emoji ZWJ sequences break into their components, and EIGHT
+// scripts are MEASURED to lose orthographic distinctions — Malayalam chillu
+// (`ണ്‍` becomes `ണ്`, a DIFFERENT letter), Devanagari half-forms and conjuncts,
+// Bengali, Tamil, Kannada, Sinhala repaya, Persian/Arabic ZWNJ, and Mongolian
+// (both the vowel separator and the free variation selectors). The measured
+// sheet is TestStripDocumentedDegradations, and the count is pinned to it in
+// both directions by TestDegradationScriptsMatchThePackageDoc.
+//
+// 🔴 EIGHT IS WHAT IS MEASURED, NOT A CEILING, AND IT IS NOT THE ROW COUNT.
+// Every script that uses the join controls orthographically loses the same
+// distinctions whether or not a row names it, so the sheet is a floor on the
+// damage and cannot be read as its boundary; what eight IS, exactly, is the
+// number of distinct scripts the sheet covers. The sheet has more ROWS than
+// that — Devanagari and Mongolian each appear twice, and three rows (the
+// subdivision flag, VS15, Mongolian FVS1) are not script degradations at all.
+// This sentence used to say "at least nine scripts" and then enumerate eight.
+// Nine was never a script count: by that test's own history — two rows, then
+// eight more from the audit — it is the non-emoji ROW count of a ten-row sheet,
+// published as if it were scripts. Do not restore a number this comment's own
+// list does not support, and do not put an exhaustiveness word on it either.
+// The maintainer chose STRIP over escaping for #393; this is what that costs,
+// and it is written down rather than discovered.
 package saferune
 
 import (
