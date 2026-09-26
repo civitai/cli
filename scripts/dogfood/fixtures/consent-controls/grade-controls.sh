@@ -126,15 +126,31 @@ for t in $FIXTURES; do
     # 🔴 ASSERT THE ARM THE ORACLE REPORTS EQUALS THE ONE THIS COLUMN CLAIMS.
     # The `env -u` above removes the known route to a mislabelled row; this
     # catches every other one, including a future arm knob nobody added here.
-    # 🔴 EXCLUDING `\` FROM THE CAPTURE IS WHAT MAKES THIS FAIL CLOSED — the
-    # anchors alone do NOT pin it to the oracle's own field. `.*` stays greedy and
-    # `observed=` sits after `served=`, so a status text containing ` arm=x served=y `
-    # still wins the match. But `oracle.sh` renders `observed` with `printf %q`,
-    # which puts a backslash before every literal space, so any token captured out
-    # of it ends in `\` and can never equal `consented`/`unconsented`. Worst case
-    # is a spurious mismatch and exit 2; masking a real one is unreachable.
-    GOT_ARM=$(printf '%s\n' "$VERDICT" \
-      | sed -n 's/^brief=.*[[:space:]]arm=\([^ \\]*\)[[:space:]]served=.*/\1/p')
+    # 🔴 READ IT OUT OF THE ASSERTION'S JSON, NOT OUT OF THE SUMMARY LINE.
+    # Two regexes over that line were tried and BOTH could be defeated, because
+    # the line interleaves oracle-owned fields with app-controlled ones
+    # (`observed`, and `scopes`/`app_dir`, which come from the block's own
+    # manifest and directory name) and every `.*` is greedy. The last attempt
+    # excluded `\` on the theory that `printf %q` backslashes every literal
+    # space — but `%q` switches to ANSI-C `$'…'` form as soon as the string holds
+    # a control character, and in THAT form spaces are not escaped at all:
+    #
+    #   printf '%q' 'a b'            -> a\ b
+    #   printf '%q' "$(printf 'x\ty b')" -> $'x\ty b'      <- space survives
+    #
+    # Status text is `textContent.trim()`, so an interior newline or tab is
+    # ordinary markup, and a block could then spell ` arm=<label> served=x ` into
+    # its own status and MASK a real mismatch — the one outcome this guard exists
+    # to prevent. The JSON is structured and `hostArm` is the assertion's own
+    # field, so there is nothing to out-match. Unreadable JSON leaves GOT_ARM
+    # empty, which the branch below treats as mislabelled.
+    GOT_ARM=$(printf '%s\n' "$OUT" | grep -a '^{' | tail -1 | python3 -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("hostArm", ""))
+except Exception:
+    pass
+' 2>/dev/null)
     # An arm that could not be READ is mislabelled, not skipped — `oracle.sh`
     # always prints the field (defaulting to `unmeasured`), so an empty read
     # means the summary format moved and this assertion has gone blind.
