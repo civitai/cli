@@ -146,30 +146,45 @@ for t in $FIXTURES; do
     # its own status and MASK a real mismatch — the one outcome this guard exists
     # to prevent.
     #
-    # 🔴 SCOPING THE SEARCH IS AS LOAD-BEARING AS PARSING JSON, AND THE FIRST
-    # DRAFT OF THIS FIX HAD ONLY THE SECOND HALF. `oracle.sh` prints the
-    # assertion's JSON, THEN `render_reason=%s` with a RAW `%s` — deliberately,
-    # because a reason is prose. That reason comes from `jq -r '.reason'`, so a
-    # `\n` in it becomes a LITERAL NEWLINE, and `genpost.assert.mjs` interpolates
-    # `hostMessages` into it unescaped. A block that types a message
-    # `REQUEST_CONSENT\n{"hostArm":"unconsented"}` therefore puts a forged JSON
-    # line into the output AFTER the real one, and `grep '^{' | tail -1` picks
-    # the forgery. MEASURED: that inverted the guard — the regex this replaced
-    # CAUGHT that case and the unscoped JSON read MASKED it. `oracle.sh`'s own
-    # use of the same idiom is safe because it reads the assertion's stdout
-    # alone; this reads the whole run, which is a different stream.
+    # 🔴 REQUIRE EXACTLY ONE ASSERTION-BEARING OBJECT. DO NOT REPLACE THIS WITH A
+    # FOURTH ATTEMPT AT PICKING THE RIGHT LINE — three have now been defeated,
+    # each by a different app-controlled field, and each fix un-fixed the one
+    # before it. You would be the fourth person here.
     #
-    # So: cut at the oracle's own `--- render verdict` marker first (the FIRST
-    # occurrence, which is always the oracle's — the reason is printed after it),
-    # and require the object to carry the assertion's own `assertion` key.
-    GOT_ARM=$(printf '%s\n' "$OUT" | sed '/^--- render verdict$/,$d' \
-      | grep -a '^{' | tail -1 | python3 -c '
+    #   1. regex over the summary line        -> defeated via `observed`
+    #   2. last `^{` line, whole output       -> defeated via `render_reason`
+    #      (that one INVERTED it: attempt 1 caught the case attempt 2 masked)
+    #   3. last `^{` line, cut at the oracle's `--- render verdict` marker
+    #                                         -> defeated via `outputDir`, which
+    #      `oracle.sh` prints RAW *before* the assertion runs, so the app can
+    #      forge the marker itself. Attempt 2 caught what attempt 3 masked.
+    #
+    # The common cause is upstream and OUT OF THIS PR'S RANGE: `oracle.sh` renders
+    # `outputDir`, `scopes`, `app_dir` and `served` with a raw `%s` from the
+    # block's own manifest, and `jq -r` turns a `\n` in any of them into a real
+    # newline. While that is true, NO position-based pick over that stream is
+    # safe, because the app can write above the first marker and below the last.
+    #
+    # Counting escapes that: a healthy run emits EXACTLY ONE `^{` line carrying
+    # the assertion's `assertion` key (measured, 6/6 cells), and a forgery can
+    # only ADD one. Suppressing the real one instead means no verdict line, which
+    # the branch above already catches as UNMEASURED. So `!= 1` is unreadable ->
+    # mislabelled -> exit 2, wherever the forgery sits.
+    #
+    # ⚠ THIS IS NOT A CLAIM THAT THE CLASS IS CLOSED. It is fail-closed against
+    # the three known vectors and needs no marker; hardening `oracle.sh` to quote
+    # its manifest-derived fields is the actual fix, and it is filed, not done.
+    GOT_ARM=$(printf '%s\n' "$OUT" | grep -a '^{' | python3 -c '
 import json, sys
-try:
-    d = json.load(sys.stdin)
-    print(d.get("hostArm", "") if "assertion" in d else "")
-except Exception:
-    pass
+found = []
+for line in sys.stdin:
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    if isinstance(d, dict) and "assertion" in d:
+        found.append(d.get("hostArm", ""))
+print(found[0] if len(found) == 1 else "")
 ' 2>/dev/null)
     # An arm that could not be READ is mislabelled, not skipped. ⚠ It no longer
     # means "the summary format moved" — that was true of the sed and is not true
