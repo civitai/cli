@@ -352,9 +352,13 @@ func symptomAttributions() []symptomAttribution {
 		},
 		{
 			fragment: "is this an App project?",
-			// NOT #listing-media-requirements: that section is image formats,
-			// byte caps and aspect ratios, and says nothing about how `app
-			// listing` decides WHICH app you mean. "After you submit" is where
+			// NOT the listing-media requirements: those are image formats, byte
+			// caps and aspect ratios, and say nothing about how `app listing`
+			// decides WHICH app you mean. (They are no longer a README section at
+			// all — `### Listing media requirements` was relocated to the
+			// platform's Store listing guide — which only strengthens the original
+			// reasoning: there is now no such anchor to point at even if someone
+			// wanted to.) "After you submit" is where
 			// the `app listing` flow is walked through, and it states both the
 			// working-directory resolution and the --slug/--dir remedy this row
 			// sends the reader to use.

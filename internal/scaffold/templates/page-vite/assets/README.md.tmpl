@@ -51,7 +51,7 @@ icon must be square-ish (aspect 2.00 outside 0.9–1.1)
 cover must be at least 640px wide (got 512px)
 ```
 
-Two behaviours worth knowing:
+Three behaviours worth knowing:
 
 - **Icons are re-encoded server-side** to PNG and downscaled to at most 1024 px
   on the longer side (aspect preserved, never enlarged), and the platform caps
@@ -63,6 +63,12 @@ Two behaviours worth knowing:
   went through. The bytes in that rejection are the platform's, not your file's —
   the lever is **pixel dimensions, not heavier compression**. Flat artwork
   re-encodes far smaller.
+- **An icon's upper bound is a PIXEL count, not a file size.** The decoder that
+  re-encodes it refuses a source above roughly **16 megapixels** — about
+  4096 × 4096 — *regardless of how small the file is*. A flat 5000 × 5000 PNG
+  compresses to a few hundred KB, clears every byte cap in the table above, and
+  is still rejected. Downscale before you upload: **1024 × 1024** is plenty,
+  because that is what the platform re-encodes to anyway.
 - **Covers and screenshots are not rescaled.** What you upload is what the store
   shows, so ship them at the size you want rendered.
 

@@ -279,6 +279,15 @@ var docsURLSpellingLedger = map[string]string{
 		"retiring the index moved the spelling into the template rather than removing it",
 	"internal/scaffold/readme_claims_test.go": "the guard that the scaffolded README names the hosted hooks " +
 		"reference within the first 3 KB pins the URL as a const, so it is a third place the spelling can rot",
+	"claudedocs/decisions/25-listing-media-bounds.md": "AGENTS.md item 25's evidence file: its 2026-09-25 " +
+		"amendment names the page the README's `### Listing media requirements` section was relocated TO, and " +
+		"records the content verification that justified deleting the prose. Not exempt as a dated record — the " +
+		"URL there is a live pointer a reader follows, not just evidence of what was true",
+	"internal/cmd/app_listing.go": "the listing-media `--help` bodies (set-icon / set-cover / add-screenshot) and " +
+		"the two attach-rejection errors name `/apps/guide/store-listing` where they used to name a README section " +
+		"this repo deleted. It is the most expensive spelling in the ledger: these five strings are COMPILED INTO " +
+		"a released binary, so a moved page rots in every version already on somebody's PATH and no docs edit " +
+		"reaches them",
 	"README.md": "the published user contract now LINKS OUT to individual pages under the block's Guide URL " +
 		"(`/apps/guide/local-dev`, `/apps/guide/review-and-deploy`, `/apps/guide/store-listing`) in place of " +
 		"the prose those pages carry, so what matches here is the `/apps/guide/` PREFIX rather than a whole " +

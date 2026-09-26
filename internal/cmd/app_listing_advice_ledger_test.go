@@ -45,21 +45,24 @@ func TestListingChangeRouteAdviceLedger(t *testing.T) {
 		args func(t *testing.T, dir string) []string
 	}{
 		{
-			name: "set-icon", bad: "setIcon", wantLines: 7,
-			why: "the 400 + `what was sent:` + the 5-line icon re-encode paragraph",
+			name: "set-icon", bad: "setIcon", wantLines: 8,
+			why: "the 400 + `what was sent:` + the 6-line icon re-encode paragraph (the last two " +
+				"being the guide pointer's label and its URL, which sit on SEPARATE lines so an " +
+				"80-column terminal cannot hard-wrap the URL mid-token)",
 			args: func(t *testing.T, dir string) []string {
 				return []string{"app", "listing", "set-icon", img(t, dir, "icon.png")}
 			},
 		},
 		{
-			name: "set-cover", bad: "setCover", wantLines: 3,
-			why: "the 400 + `what was sent:` + the README pointer (no re-encode paragraph off the icon path)",
+			name: "set-cover", bad: "setCover", wantLines: 4,
+			why: "the 400 + `what was sent:` + the Store listing guide pointer on two lines, label " +
+				"then URL (no re-encode paragraph off the icon path)",
 			args: func(t *testing.T, dir string) []string {
 				return []string{"app", "listing", "set-cover", img(t, dir, "cover.png")}
 			},
 		},
 		{
-			name: "add-screenshot", bad: "addScreenshot", wantLines: 3,
+			name: "add-screenshot", bad: "addScreenshot", wantLines: 4,
 			why: "same as set-cover — and note the advice names the FILE, never the --caption",
 			args: func(t *testing.T, dir string) []string {
 				return []string{"app", "listing", "add-screenshot", img(t, dir, "shot.png"), "--caption", caption}

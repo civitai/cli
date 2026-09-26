@@ -202,7 +202,7 @@ func readmeSectionSlice(t *testing.T, md, heading string) string {
 	t.Helper()
 	i := strings.Index(md, heading)
 	if i < 0 {
-		t.Fatalf("README.md has no %q heading — the listing-media requirements have nowhere to live", strings.TrimSpace(heading))
+		t.Fatalf("README.md has no %q heading", strings.TrimSpace(heading))
 	}
 	body := md[i+len(heading):]
 	// Bound at the next heading of the same or a higher level.
@@ -214,22 +214,117 @@ func readmeSectionSlice(t *testing.T, md, heading string) string {
 	return body
 }
 
-// TestREADMEListingByteCapsMatchTheCLIConstants is a code↔prose drift guard.
+// --- the listing-media requirements prose, and where it now lives -------------
+
+// 🔴 THE SUBJECT MOVED; THE GUARDS DID NOT. Until this change the three
+// code↔prose drift assertions below read README.md's
+// `### Listing media requirements`. That section is gone: the published
+// store-listing guide carries the same two tables, the same behaviours and the
+// same guidance-not-a-gate framing (verified by CONTENT before the deletion, not
+// by heading), and AGENTS.md item 25 was amended to say so. What item 25 still
+// forbids is unchanged and is the half that matters — none of those bounds may
+// become a LOCAL CHECK. See claudedocs/decisions/25-listing-media-bounds.md.
 //
-// The dimension and aspect bounds in that section are PLATFORM constants the CLI
+// A hosted page cannot be an oracle for a hermetic test, so the assertions were
+// RE-POINTED rather than deleted, at the copy of that prose which is still in
+// this repository: the `assets/README.md` every template scaffolds into the
+// author's project. Item 25 already named it as the second documented home.
+//
+// It is a stronger subject than the README section was in two ways: it is the
+// file an author reads standing next to their artwork, and it is a SHIPPED
+// artefact — written into somebody else's project and not recallable, which the
+// README section was not.
+//
+// 🔴 IT IS *NOT* STRONGER FOR BEING THREE FILES, AND AN EARLIER VERSION OF THIS
+// COMMENT CLAIMED IT WAS. "There are THREE copies, so each guard now covers three
+// surfaces where it covered one" is a count of DECLARATIONS, not instances: the
+// three `assets/README.md.tmpl` files are byte-identical (md5
+// 51ebc5538e3bccbd14b2fbd93a928228, templates and rendered output alike), so the
+// nine subtests below are THREE real comparisons run three times. Nothing pins
+// that identity, so the claim could not even be checked.
+//
+// It matters because a simplification is queued: collapsing the three identical
+// templates into one authority. A reader who believed the retracted sentence
+// would price that at 3x coverage and decline it. It costs none.
+//
+// ⚠ ONE PROPERTY WAS DOWNGRADED AND IS LABELLED RATHER THAN GLOSSED.
+// The quotation ban in TestListingRequirementsDocDoesNotPinAServerSentence was a
+// REGRESSION guard — it was red on the tree that shipped the stale
+// `*"That icon couldn't be read"*` paragraph. On its new subject it is an
+// INVARIANT guard: the scaffolded READMEs never carried that defect. The rule it
+// pins is the same rule and is worth pinning on the artefact that now carries the
+// prose; the historical redness belongs to a file that no longer exists.
+
+// listingRequirementsDocMinBytes is the anti-vacuity floor, carried over from the
+// section extractor it replaces. A truncated or wrong file is comfortably under
+// any assertion below and would report every check satisfied having read nothing.
+const listingRequirementsDocMinBytes = 500
+
+// listingRequirementsDocs renders each template's scaffolded `assets/README.md`
+// — the surviving in-repo copy of the listing-media requirements — keyed by
+// template name. It renders rather than reading the `.tmpl` because what an
+// author is handed is the rendered file, and that is the artefact the claims are
+// about.
+func listingRequirementsDocs(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, tmpl := range scaffold.AllTemplates() {
+		dest := filepath.Join(t.TempDir(), "app")
+		if _, err := scaffold.Render(tmpl, dest, scaffold.Data{Slug: "app", Name: "App"}); err != nil {
+			t.Fatalf("scaffold %s: %v", tmpl, err)
+		}
+		b, err := os.ReadFile(filepath.Join(dest, "assets", "README.md"))
+		if err != nil {
+			t.Fatalf("CONTROL failure, not a finding: template %q scaffolds no assets/README.md (%v).\n"+
+				"That file is where the listing-media requirements live now that the README section was deleted; "+
+				"without it every assertion below would be checking nothing.", tmpl, err)
+		}
+		if len(b) < listingRequirementsDocMinBytes {
+			t.Fatalf("CONTROL failure, not a finding: template %q scaffolds an assets/README.md of only %d bytes "+
+				"— that is a truncated or wrong file, not a requirements doc:\n%s", tmpl, len(b), b)
+		}
+		out[string(tmpl)] = string(b)
+	}
+	// POSITIVE CONTROL. An empty template set makes every loop below iterate over
+	// nothing and report a serene pass.
+	if len(out) == 0 {
+		t.Fatal("CONTROL failure, not a finding: scaffold.AllTemplates() is empty, so no requirements doc was read")
+	}
+	return out
+}
+
+// listingDocCapRow returns the table row in a requirements doc that states one
+// kind's byte cap, or "" when there is none.
+//
+// It anchors on `| <kind> (` rather than on the file-name column, because the
+// file name is a suggestion (`icon.png`) while the KIND is the thing the cap
+// belongs to. `| icon (` also cannot be satisfied by the `icon.png` in the first
+// column, which is what makes the three kinds distinguishable.
+func listingDocCapRow(doc, kind string) string {
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "|") && strings.Contains(line, "| "+kind+" (") && strings.Contains(line, "iB") {
+			return line
+		}
+	}
+	return ""
+}
+
+// TestScaffoldedListingByteCapsMatchTheCLIConstants is the code↔prose drift
+// guard, re-pointed at the scaffolded requirements doc — see the note above.
+//
+// The dimension and aspect bounds in that doc are PLATFORM constants the CLI
 // deliberately does not vendor (AGENTS.md item 25), so nothing here can check
 // them — they are guidance, and the server's rejection message is the authority.
-// The BYTE CAPS are different: those are this CLI's own local gate, so the
-// README quoting a number the binary does not enforce is a plain lie a test can
-// catch. That is the half that is checkable, so it is the half that is checked.
-func TestREADMEListingByteCapsMatchTheCLIConstants(t *testing.T) {
-	section := readmeSectionSlice(t, readREADME(t), "\n### Listing media requirements\n")
-
-	// Positive control on the extractor before reading anything out of it.
-	if len(section) < 500 {
-		t.Fatalf("the `Listing media requirements` section is only %d bytes — the section extractor is reading the wrong block:\n%s", len(section), section)
-	}
-
+// The BYTE CAPS are different: those are this CLI's own local gate, so prose
+// quoting a number the binary does not enforce is a plain lie a test can catch.
+// That is the half that is checkable, so it is the half that is checked.
+//
+// 🔴 It is strictly wider than the README version: internal/scaffold's own
+// assets_dir_test.go already asserts the caps as LITERALS ("2 MiB", "4 MiB"), so
+// the two files agreed with each other and neither was tied to the constant. This
+// one derives the expected string from maxIconBytes / maxCoverBytes /
+// maxScreenshotBytes, which is the only direction that catches a cap change.
+func TestScaffoldedListingByteCapsMatchTheCLIConstants(t *testing.T) {
 	cases := []struct {
 		kind string
 		cap  int
@@ -238,39 +333,47 @@ func TestREADMEListingByteCapsMatchTheCLIConstants(t *testing.T) {
 		{"cover", maxCoverBytes},
 		{"screenshot", maxScreenshotBytes},
 	}
-	for _, tc := range cases {
-		row := ""
-		for _, line := range strings.Split(section, "\n") {
-			if strings.HasPrefix(line, "| **"+tc.kind+"**") && strings.Contains(line, "MiB") {
-				row = line
-				break
+	checked := 0
+	for tmpl, doc := range listingRequirementsDocs(t) {
+		t.Run(tmpl, func(t *testing.T) {
+			for _, tc := range cases {
+				row := listingDocCapRow(doc, tc.kind)
+				if row == "" {
+					t.Errorf("no `| %s (…) | … MiB …` row in template %q's assets/README.md — "+
+						"a reader cannot see the byte cap the CLI will reject their file with:\n%s", tc.kind, tmpl, doc)
+					continue
+				}
+				checked++
+				want := fmt.Sprintf("%d MiB", tc.cap/(1024*1024))
+				if !strings.Contains(row, want) {
+					t.Errorf("template %q says %q for %s, but the CLI enforces %s (%d bytes). "+
+						"The prose and the gate must agree — an author sizing to this file should never be refused locally.",
+						tmpl, strings.TrimSpace(row), tc.kind, want, tc.cap)
+				}
 			}
-		}
-		if row == "" {
-			t.Errorf("no `| **%s** | … MiB …` row in the Listing media requirements section — "+
-				"a reader cannot see the byte cap the CLI will reject their file with:\n%s", tc.kind, section)
-			continue
-		}
-		want := fmt.Sprintf("%d MiB", tc.cap/(1024*1024))
-		if !strings.Contains(row, want) {
-			t.Errorf("README says %q for %s, but the CLI enforces %s (%d bytes). "+
-				"The prose and the gate must agree — a reader sizing to the README should never be refused locally.",
-				strings.TrimSpace(row), tc.kind, want, tc.cap)
-		}
-	}
 
-	// The framing this section exists to establish: the dimension table is NOT a
-	// local check. Losing that sentence is how the next reader concludes the CLI
-	// is missing a validation and adds one.
-	for _, want := range []string{"server-side", "platform"} {
-		if !strings.Contains(section, want) {
-			t.Errorf("the Listing media requirements section never says %q — the dimension bounds then read as rules the CLI enforces", want)
-		}
+			// The framing this doc exists to establish: the dimension table is NOT
+			// a local check. Losing that is how the next reader concludes the CLI is
+			// missing a validation and adds one.
+			for _, want := range []string{"server-side", "platform"} {
+				if !strings.Contains(doc, want) {
+					t.Errorf("template %q's assets/README.md never says %q — the dimension bounds then read "+
+						"as rules the CLI enforces", tmpl, want)
+				}
+			}
+		})
 	}
+	// POSITIVE CONTROL on the whole sweep, not on one template: a run that
+	// compared zero rows is indistinguishable from one that found them all correct.
+	if checked == 0 {
+		t.Fatal("CONTROL failure, not a finding: zero byte-cap rows were compared across every template. " +
+			"The row matcher is broken, not the prose.")
+	}
+	t.Logf("compared %d byte-cap row(s) against the CLI's constants", checked)
 }
 
 // emphasisedQuotedSentenceRe matches a markdown-emphasised verbatim quotation —
-// *"…"* — which in this section is only ever used for one thing: reproducing the
+// *"…"* — which in this prose is only ever used for one thing: reproducing the
 // exact sentence the platform is expected to print back.
 //
 // It is a SHAPE, not a spelling. Banning the one message that rotted would be a
@@ -278,8 +381,8 @@ func TestREADMEListingByteCapsMatchTheCLIConstants(t *testing.T) {
 // next author who pins a different sentence the same way.
 var emphasisedQuotedSentenceRe = regexp.MustCompile(`\*"[^"]+"\*`)
 
-// TestREADMEDoesNotPinAServerSentenceForTheOversizedSource is the doc-rot guard
-// for the half of this section that nothing else can check.
+// TestListingRequirementsDocDoesNotPinAServerSentence is the doc-rot guard for
+// the half of this prose that nothing else can check.
 //
 // The byte caps are the CLI's own constants, so the sibling test above can
 // compare prose against code. The platform's REJECTION TEXT is not in this repo
@@ -293,42 +396,42 @@ var emphasisedQuotedSentenceRe = regexp.MustCompile(`\*"[^"]+"\*`)
 // So the rule this pins: state what the platform DOES (it names the bound), not
 // what it SAYS. A sentence is exactly the thing that moves.
 //
-// 🔴 The two halves are different kinds of guard and are labelled as such.
-// The quotation ban is a REGRESSION guard — it is red on the tree that shipped
-// the stale paragraph. The "advice survived" assertions are INVARIANT guards:
-// they were already true before this fix, and they are here because deleting the
-// paragraph is the other way to satisfy the ban.
-func TestREADMEDoesNotPinAServerSentenceForTheOversizedSource(t *testing.T) {
+// 🔴 BOTH HALVES ARE INVARIANT GUARDS ON THIS SUBJECT, AND THAT IS A DOWNGRADE
+// RECORDED RATHER THAN HIDDEN. Against the deleted README section the quotation
+// ban was a REGRESSION guard — red on the tree that shipped the stale paragraph.
+// The scaffolded docs never carried that defect, so here it can only hold a line
+// that was already true. It is kept because the rule is the rule wherever the
+// prose lives, and because deleting the advice is the other way to satisfy a ban.
+func TestListingRequirementsDocDoesNotPinAServerSentence(t *testing.T) {
 	// Validate the instrument before reading its verdict. A regex that cannot
 	// match the shape it exists to find reports "clean" over anything.
 	const probe = `it fails the icon decoder with *"That icon couldn't be read"* rather than`
 	if !emphasisedQuotedSentenceRe.MatchString(probe) {
 		t.Fatalf("the extractor does not match the shape it exists to find (%s) — "+
-			"a clean verdict below would be a fact about the regex, not about the README",
+			"a clean verdict below would be a fact about the regex, not about the prose",
 			emphasisedQuotedSentenceRe)
 	}
 
-	section := readmeSectionSlice(t, readREADME(t), "\n### Listing media requirements\n")
-	if len(section) < 500 {
-		t.Fatalf("the `Listing media requirements` section is only %d bytes — the section extractor is reading the wrong block:\n%s", len(section), section)
-	}
+	for tmpl, doc := range listingRequirementsDocs(t) {
+		t.Run(tmpl, func(t *testing.T) {
+			if hits := emphasisedQuotedSentenceRe.FindAllString(doc, -1); len(hits) > 0 {
+				t.Errorf("template %q's assets/README.md pins %d verbatim server sentence(s): %q.\n"+
+					"A quoted message is a claim about another repo's source that this one cannot check, and it "+
+					"goes stale silently — civitai/civitai#3737 rewrote exactly such a message. Say what the "+
+					"platform names in its rejection; do not reproduce the sentence.", tmpl, len(hits), hits)
+			}
 
-	if hits := emphasisedQuotedSentenceRe.FindAllString(section, -1); len(hits) > 0 {
-		t.Errorf("the Listing media requirements section pins %d verbatim server sentence(s): %q.\n"+
-			"A quoted message is a claim about another repo's source that this one cannot check, and it "+
-			"goes stale silently — civitai/civitai#3737 rewrote exactly such a message. Say what the "+
-			"platform names in its rejection; do not reproduce the sentence.", len(hits), hits)
-	}
-
-	// Invariant half: the de-pinning must not take the advice with it. An author
-	// whose 5000x5000 icon is refused while every byte cap says they are fine has
-	// no way to reach the answer from the tables alone.
-	for _, want := range []string{"megapixel", "ownscale"} {
-		if !strings.Contains(section, want) {
-			t.Errorf("the Listing media requirements section no longer mentions %q — the "+
-				"pixel-ceiling advice is the reason this paragraph exists; de-pinning the "+
-				"server's wording must not delete the guidance", want)
-		}
+			// Invariant half: the de-pinning must not take the advice with it. An
+			// author whose 5000×5000 icon is refused while every byte cap says they
+			// are fine has no way to reach the answer from the tables alone.
+			for _, want := range []string{"megapixel", "ownscale"} {
+				if !strings.Contains(doc, want) {
+					t.Errorf("template %q's assets/README.md no longer mentions %q — the pixel-ceiling "+
+						"advice is the reason that bullet exists; de-pinning the server's wording must not "+
+						"delete the guidance", tmpl, want)
+				}
+			}
+		})
 	}
 }
 
@@ -351,17 +454,17 @@ func readmeQuickstartAppBlock(t *testing.T) string {
 }
 
 // quickstartDimensionRe matches a `512 x 512`-style figure, in either the ASCII
-// `x` a code block prefers or the `×` the prose section uses.
+// `x` a code block prefers or the `×` the prose uses.
 var quickstartDimensionRe = regexp.MustCompile(`(\d{3,4})\s*[x×]\s*(\d{3,4})`)
 
-// TestQuickstartListingMinimumsAgreeWithTheirSources is the guard for the FOURTH
-// copy of the listing-media numbers.
+// TestQuickstartListingMinimumsAgreeWithTheirSources is the guard for the README
+// copy of the listing-media numbers that SURVIVED the relocation.
 //
-// Step 7 of the quickstart tells an author to attach an icon and a cover. The
-// requirements lived ~900 lines further down, so the step that creates the work
-// said nothing about what the work is, and an author sized artwork by guessing.
-// Inlining a summary fixes that and creates the hazard every inlined constant
-// creates: a copy that can drift from what it summarises.
+// Step 7 of the quickstart tells an author to attach an icon and a cover. It
+// inlines a summary of what the artwork has to be, which is the right call — the
+// step that creates the work should say what the work is — and it creates the
+// hazard every inlined constant creates: a copy that can drift from what it
+// summarises.
 //
 // So the summary is tied down from BOTH ends, and the two halves are different
 // kinds of claim:
@@ -372,16 +475,15 @@ var quickstartDimensionRe = regexp.MustCompile(`(\d{3,4})\s*[x×]\s*(\d{3,4})`)
 //   - The DIMENSIONS are PLATFORM constants the CLI deliberately does not vendor
 //     (AGENTS.md item 25), so nothing here can check them against a gate — there
 //     is none, and adding one is explicitly forbidden. What IS checkable is that
-//     the quickstart's copy agrees with the canonical section it summarises. That
-//     is the drift this inlining could actually introduce, so that is what is
-//     pinned: every dimension the quickstart names must also appear in
-//     `### Listing media requirements`, which stays the single authority.
+//     the quickstart's copy agrees with the in-repo requirements doc it
+//     summarises: the `assets/README.md` the same step tells the author to read.
+//     🔴 The canonical side moved when `### Listing media requirements` was
+//     deleted; the assertion did not. Every dimension the quickstart names must
+//     appear in EVERY template's scaffolded doc — "every" rather than "some",
+//     because an author picks one template and the quickstart does not say which.
 func TestQuickstartListingMinimumsAgreeWithTheirSources(t *testing.T) {
 	quick := readmeQuickstartAppBlock(t)
-	canonical := readmeSectionSlice(t, readREADME(t), "\n### Listing media requirements\n")
-	if len(canonical) < 500 {
-		t.Fatalf("the `Listing media requirements` section is only %d bytes — the extractor is reading the wrong block", len(canonical))
-	}
+	docs := listingRequirementsDocs(t)
 
 	// Half one: the byte caps, against the constants the CLI enforces.
 	caps := []struct {
@@ -407,7 +509,7 @@ func TestQuickstartListingMinimumsAgreeWithTheirSources(t *testing.T) {
 			"above — this guard can no longer tell them apart", maxIconBytes)
 	}
 
-	// Half two: the dimensions, against the canonical section.
+	// Half two: the dimensions, against the scaffolded requirements doc.
 	dims := quickstartDimensionRe.FindAllStringSubmatch(quick, -1)
 	// Positive control. Zero matches is what a reworded step 7, a changed
 	// separator or a regex typo all look like, and it would pass over nothing.
@@ -417,36 +519,33 @@ func TestQuickstartListingMinimumsAgreeWithTheirSources(t *testing.T) {
 			"telling authors to 'save your own icon.png' with no idea what shape — or the extractor "+
 			"is wrong (pattern: %s).\nquickstart:\n%s", len(dims), quickstartDimensionRe, quick)
 	}
-	canonicalNorm := strings.NewReplacer("×", "x", " ", "").Replace(canonical)
-	for _, d := range dims {
-		norm := d[1] + "x" + d[2]
-		if !strings.Contains(canonicalNorm, norm) {
-			t.Errorf("quickstart step 7 names the size %s×%s, which does NOT appear in "+
-				"`### Listing media requirements`. That section is the authority (the numbers are the "+
-				"platform's — AGENTS.md item 25 — so nothing can check them against code); a summary "+
-				"that has drifted from it is worse than no summary, because two places now disagree.",
-				d[1], d[2])
+	for tmpl, doc := range docs {
+		norm := strings.NewReplacer("×", "x", " ", "").Replace(doc)
+		for _, d := range dims {
+			want := d[1] + "x" + d[2]
+			if !strings.Contains(norm, want) {
+				t.Errorf("quickstart step 7 names the size %s×%s, which does NOT appear in template %q's "+
+					"scaffolded assets/README.md. That file is the in-repo authority for these numbers (they "+
+					"are the platform's — AGENTS.md item 25 — so nothing can check them against code); a "+
+					"summary that has drifted from it is worse than no summary, because two places an author "+
+					"reads in the same step now disagree.", d[1], d[2], tmpl)
+			}
 		}
 	}
 }
 
-// TestListingCapRenderingAgreesWithTheREADMEUnitSystem is the seam between the
-// two surfaces that quote a byte cap at an author: `--help`, which renders it
-// through humanBytes, and the README table, which spells it out in prose.
+// TestListingCapRenderingAgreesWithTheDocsUnitSystem is the seam between the two
+// surfaces that quote a byte cap at an author: `--help`, which renders it through
+// humanBytes, and the requirements doc, which spells it out in a table.
 //
 // Each was internally consistent and they disagreed with each other: the table
 // said "2 MiB" while `civitai app listing set-icon --help` said "at most 2.0 MiB"
-// for the same 2,097,152 bytes. Neither TestREADMEListingByteCapsMatchTheCLIConstants
+// for the same 2,097,152 bytes. Neither TestScaffoldedListingByteCapsMatchTheCLIConstants
 // (prose vs constant) nor TestListingHelpQuotesTheEnforcedCaps (help vs constant)
 // can see it, because both compare against the constant and never against each
 // other — the defect lives in the relationship, so the guard has to pin the
 // relationship.
-func TestListingCapRenderingAgreesWithTheREADMEUnitSystem(t *testing.T) {
-	section := readmeSectionSlice(t, readREADME(t), "\n### Listing media requirements\n")
-	if len(section) < 500 {
-		t.Fatalf("the `Listing media requirements` section is only %d bytes — the section extractor is reading the wrong block:\n%s", len(section), section)
-	}
-
+func TestListingCapRenderingAgreesWithTheDocsUnitSystem(t *testing.T) {
 	cases := []struct {
 		kind string
 		cap  int
@@ -455,37 +554,37 @@ func TestListingCapRenderingAgreesWithTheREADMEUnitSystem(t *testing.T) {
 		{"cover", maxCoverBytes},
 		{"screenshot", maxScreenshotBytes},
 	}
-	var checked int
-	for _, tc := range cases {
-		rendered := humanBytes(int64(tc.cap))
-		unit := rendered[strings.LastIndex(rendered, " ")+1:]
-		if unit == "" || unit == rendered {
-			t.Fatalf("could not split a unit out of humanBytes(%d) = %q — the rest of this "+
-				"test would compare against an empty string and pass", tc.cap, rendered)
-		}
-		row := ""
-		for _, line := range strings.Split(section, "\n") {
-			if strings.HasPrefix(line, "| **"+tc.kind+"**") && strings.Contains(line, "iB") {
-				row = line
-				break
+	checked := 0
+	for tmpl, doc := range listingRequirementsDocs(t) {
+		t.Run(tmpl, func(t *testing.T) {
+			for _, tc := range cases {
+				rendered := humanBytes(int64(tc.cap))
+				unit := rendered[strings.LastIndex(rendered, " ")+1:]
+				if unit == "" || unit == rendered {
+					t.Fatalf("could not split a unit out of humanBytes(%d) = %q — the rest of this "+
+						"test would compare against an empty string and pass", tc.cap, rendered)
+				}
+				row := listingDocCapRow(doc, tc.kind)
+				if row == "" {
+					// The sibling test owns "the row is missing"; here it means the
+					// comparison could not be made, which must not read as agreement.
+					t.Errorf("no byte-cap row for %s in template %q's assets/README.md — "+
+						"the unit check could not run", tc.kind, tmpl)
+					continue
+				}
+				checked++
+				if !strings.Contains(row, unit) {
+					t.Errorf("`civitai app listing` renders the %s cap as %q, but template %q's row never says %q — "+
+						"the help and the docs quote the same constant in different unit systems, so an "+
+						"author who sizes to one is surprised by the other.\nrow: %s",
+						tc.kind, rendered, tmpl, unit, strings.TrimSpace(row))
+				}
 			}
-		}
-		if row == "" {
-			// The sibling test owns "the row is missing"; here it means the
-			// comparison could not be made, which must not read as agreement.
-			t.Errorf("no byte-cap row for %s in the Listing media requirements section — "+
-				"the unit check could not run", tc.kind)
-			continue
-		}
-		checked++
-		if !strings.Contains(row, unit) {
-			t.Errorf("`civitai app listing` renders the %s cap as %q, but the README row never says %q — "+
-				"the help and the docs quote the same constant in different unit systems, so an "+
-				"author who sizes to one is surprised by the other.\nrow: %s",
-				tc.kind, rendered, unit, strings.TrimSpace(row))
-		}
+		})
 	}
-	if checked != len(cases) {
-		t.Fatalf("compared %d of %d caps — a guard that skipped rows is not a guard that passed", checked, len(cases))
+	if checked == 0 {
+		t.Fatal("CONTROL failure, not a finding: zero rows were compared — a guard that skipped every row " +
+			"is not a guard that passed")
 	}
+	t.Logf("compared %d cap row(s) against humanBytes' unit system", checked)
 }
