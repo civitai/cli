@@ -266,6 +266,12 @@ func sortedKindNames(set map[projectKind]bool) []string {
 // file that spells the URL twice. A sentence cannot notice a fourth; the walk
 // below can.
 var docsURLSpellingLedger = map[string]string{
+	"internal/cmd/exitcodes_doc.go": "the GENERATED exit-code contract. The front-door reduction " +
+		"moved `## Generate` and `## Validate fidelity` to developer.civitai.com, so exit code 1's and " +
+		"exit code 3's Detail bullets now cross-reference the hosted guides instead of two `###` " +
+		"anchors that no longer exist. This file is the ONLY writable copy: the same sentences are " +
+		"rendered byte-for-byte into README.md and asserted by TestREADMEExitCodeSectionsAreGenerated, " +
+		"so a URL that rots here rots on the published contract too and cannot be repaired in the README",
 	"internal/cmd/templates/agents-app.md": "the literal that SHIPS — this is the one that is written into somebody " +
 		"else's project and cannot be recalled",
 	"internal/cmd/agent_setup_docs_test.go": "wantDocsSection, the golden the template is compared against, plus " +

@@ -499,6 +499,22 @@ AUTHENTICATION IS YOURS TO RUN. The servers are registered before login on
 purpose, and 'civitai login' is a separate store from CIVITAI_TOKEN: it writes
 this CLI's own config, which your coding agent does not read.
 
+WHAT --check REPORTS. It contacts nothing — no network, no credential probe —
+and writes nothing. Six rows: cli-version, agents-md, claude-md, mcp-site,
+mcp-orch, authenticated. EVERY ROW REPORTS PRESENCE, NEVER ACCEPTANCE: an
+mcp-site row is 'ok' because the entry is in your config, not because any
+server accepted it. An ABSENT Authorization header gets no row of its own —
+that is by design, since a header-less setup still reaches the site server. A
+config file that will not parse maps to the mcp-site/mcp-orch rows, carrying
+the parse failure in 'detail'. 'authenticated' has three states and names which
+store it looked in; an unauthenticated setup is a success.
+
+The 'ok' verdict is the AND of every row EXCEPT authenticated, minus claude-md
+for a non-Claude agent, and minus mcp-site/mcp-orch for an agent with no
+resolvable config target. That last exemption is conditional and narrow: for a
+KNOWN agent a missing entry still fails, and the rows stay in the report and
+stay false.
+
 EXIT CODES: --check exits 1 when a check failed, 0 otherwise. A write run exits
 0 when every step happened and 1 when one did not -- a config that does not
 parse, a destination it will not write (for ANY of the three files), a file it

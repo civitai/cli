@@ -375,7 +375,16 @@ func symptomAttributions() []symptomAttribution {
 			// weaker reason than the one that was recorded — the section
 			// explained the remedy all along, and the row could have pointed
 			// here from the start.
-			anchor: "#after-you-submit-review--approve--deploy",
+			// 🔴 RE-POINTED by the front-door reduction. This row used to link
+			// `### After you submit: review → approve → deploy`, a `###` inside
+			// `## Submit & auth` whose body now lives on the hosted apps guide.
+			// readmeHasAnchor
+			// below requires the target to be a heading IN README.md, so an
+			// off-site URL cannot serve here — the surviving `## Submit & auth`
+			// is the nearest in-document section that explains this error, which
+			// is the property #361 made this assertion about. The README row moved
+			// with it in the same commit.
+			anchor: "#submit--auth",
 			emittedBy: []attributionRun{
 				{
 					// The slug resolve fails on the manifest before any request
