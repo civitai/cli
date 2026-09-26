@@ -377,6 +377,20 @@ bind a debugging port, instead of that surfacing eighty lines into a Go test.
   reworded: `briefs/genpost.md`; pinned by
   `TestTheSameAppPassesConsentedAndFailsUnconsented` and friends in
   `dogfood_oracle_consent_test.go`.
+- **An ATTRIBUTABLE, REPRODUCIBLE control for that arm is `fixtures/consent-controls/`.**
+  The arm's own `no` was already observed on a real bundle — `ab-ship-mimo-02`
+  above is exactly that — so what those fixtures add is narrower: a pair
+  differing in ONE controlled variable rather than a version bump, rebuildable
+  from git in ~5 min where the seven fixtures are preserved containers.
+  `ctl-genpost-blind` grades `yes`/**`no`** across the arms with the consent
+  reason; `ctl-genpost-asks`, identical but for the `requestConsent` branch,
+  grades `yes`/`yes` and is the positive control proving an ask is observable on
+  that vite-built bundle. ⚠ Measured 2026-09-26, and it inverts rank 15's
+  premise: a page-money scaffold **installed and built** still fails BOTH arms
+  with the identical `[data-testid="prompt"]` timeout, and the scaffold's
+  `App.tsx` requests consent *correctly* — the apps that fail this arm failed by
+  REPLACING the scaffold's generation path, not by keeping it. Matrix and JSON
+  evidence in that directory's README.
 
 ## The ship verdict — the account arm, and the one thing the browser cannot see
 
