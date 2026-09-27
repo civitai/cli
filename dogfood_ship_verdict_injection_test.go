@@ -393,6 +393,14 @@ func TestDogfoodGradersShareOneEscaper(t *testing.T) {
 		"esc":   regexp.MustCompile(`(?m)^esc\(\)\s*\{`),
 		"tok":   regexp.MustCompile(`(?m)^tok\(\)`),
 		"prose": regexp.MustCompile(`(?m)^prose\(\)`),
+		// 🔴 THE INPUT HALF OF THE SAME RULE, AND IT EARNED ITS PLACE HERE THE SAME
+		// WAY. `_esc.sh` was consolidated because the OUTPUT escaping was open-coded
+		// in two graders and wrong in one of them. The manifest-path READ was then
+		// found open-coded in both graders and wrong in BOTH — an `xargs dirname`
+		// that word-split a directory name with a space, and a `grep -c .` that
+		// counted a directory name with a newline as two apps. Same shape, same
+		// remedy, same ledger.
+		"pathdec": regexp.MustCompile(`(?m)^pathdec\(\)`),
 	}
 	for name, re := range defRE {
 		if !re.MatchString(src[escFile]) {
@@ -438,6 +446,142 @@ func TestDogfoodGradersShareOneEscaper(t *testing.T) {
 			"ADDED, check every value it prints that it did not author and then update this "+
 			"ledger. If one was REMOVED, its app-controlled values are now unescaped.",
 			escFile, got, ledger)
+	}
+
+	// ── the manifest discovery command is also ONE string in ONE place ────────
+	// A second copy would be the `grep -c .` defect regenerating: the count and the
+	// per-manifest loop only agree while both graders are fed the same one-line-per-
+	// path stream, and that is a property of the command, not of either script.
+	// 🔴 THE ASSIGNMENT LINE, NOT THE FILE. `_esc.sh`'s own commentary NAMES
+	// `-print0` in order to explain why plain NUL-delimited output cannot be used,
+	// so a whole-file `strings.Contains` for it is satisfied by the prose and passes
+	// over a `MANIFEST_FIND` that dropped it. Measured while mutation-testing this
+	// very check: the file-wide form survived the mutation that removed the
+	// delimiter swap.
+	var findLine string
+	for _, line := range strings.Split(src[escFile], "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "MANIFEST_FIND=") {
+			findLine = line
+			break
+		}
+	}
+	if findLine == "" {
+		t.Errorf("%s does not define `MANIFEST_FIND` — the app-discovery `find` is back to being "+
+			"open-coded per grader, which is how its line-counting defect came to exist in both",
+			escFile)
+	} else if !strings.Contains(findLine, "-print0") {
+		// The delimiter swap is the whole reason the count and the read loops can
+		// agree: without it `find` emits one LINE per path, and a path containing a
+		// newline is two.
+		t.Errorf("%s's `MANIFEST_FIND` does not use `-print0` — it is back to newline-delimited "+
+			"`find` output, in which a directory name containing a newline counts as two "+
+			"manifests and splits in two in every read loop:\n  %s", escFile, findLine)
+	}
+	var finders []string
+	for name, body := range src {
+		if name == escFile {
+			continue
+		}
+		if strings.Contains(body, "MANIFEST_FIND=") {
+			t.Errorf("%s assigns its own `MANIFEST_FIND`. There is one discovery command, in %s.",
+				name, escFile)
+		}
+		if strings.Contains(body, `"$MANIFEST_FIND"`) {
+			finders = append(finders, name)
+		}
+		// The three reads the consolidation replaced. Any of them coming back is the
+		// defect coming back, and the wording in `_esc.sh` records what each did.
+		for _, line := range strings.Split(body, "\n") {
+			code := strings.TrimSpace(line)
+			if strings.HasPrefix(code, "#") {
+				continue
+			}
+			if strings.Contains(code, "xargs dirname") {
+				t.Errorf("%s uses `xargs dirname` on a discovered path. It WORD-SPLITS: "+
+					"`/work/my app/block.manifest.json` comes back as two lines, `/work` and "+
+					"`app`, and a path containing a single quote makes xargs exit non-zero with "+
+					"an empty result:\n  %s", name, code)
+			}
+			if strings.Contains(code, "-name block.manifest.json") && !strings.Contains(code, "-print0") {
+				t.Errorf("%s runs its own manifest `find` without the newline-safe delimiter swap. "+
+					"Use `$MANIFEST_FIND` from %s:\n  %s", name, escFile, code)
+			}
+		}
+	}
+	sort.Strings(finders)
+	// The ledger fails when the set GROWS as well as when it shrinks: a third
+	// grader discovering the trial's apps is a change to look at, not absorb.
+	if got := strings.Join(finders, ","); got != ledger {
+		t.Errorf("the set of graders using %s's `MANIFEST_FIND` is now [%s], ledgered as [%s].",
+			escFile, got, ledger)
+	}
+
+	// ── no app-controlled value is spliced into an exec payload ───────────────
+	// 🔴 THIS IS THE LEDGER THAT STOPS SITE N+1 BEING ADDED UNPROTECTED, and that is
+	// how this whole class persists: `ship.verdict.sh` kept `x "cat '$m'"` for a
+	// month after the sibling rule was written next door. A DOUBLE-quoted `-lc`/`-c`
+	// payload is the shape that interpolates, so each grader may carry exactly one
+	// — the generic `"$1"` of its own exec helper — and anything else must either
+	// pass its values through `docker exec -e` (a SINGLE-quoted payload referencing
+	// `"$VAR"`, which the container's own shell expands from the environment) or be
+	// ledgered here with the argument for why its value cannot be app-controlled.
+	// THE PREDICATE IS `'$` INSIDE A DOUBLE-QUOTED STRING ON AN EXEC SITE — a
+	// shell interpolation wrapped in single quotes inside a command payload. That
+	// spelling is the whole defect class in one pattern: `"civitai app validate
+	// '$APP_DIR'"`, `"cat '$m'"`, `"test -f '$CAND/index.html'"`, `"node … '$SERVED'
+	// …"`. Every one of them is a value the TRIAL chose, closing the grader's own
+	// quote and running the remainder of its own name. There is no allowlist,
+	// because there is no legitimate use of it here: a value that has to reach the
+	// container goes through `docker exec -e` and is referenced from a
+	// SINGLE-quoted payload, which the container's own shell expands.
+	//
+	// An exec site is a line that runs `docker exec` OR calls one of the graders'
+	// own exec helpers. Both halves are needed: reverting `xe "DF_M=$m" 'cat
+	// "$DF_M"'` to `x "cat '$m'"` — the original defect, verbatim — puts no
+	// `docker exec` on the line at all.
+	quoted := regexp.MustCompile(`"([^"]*)"`)
+	helperCall := regexp.MustCompile(`(?:^|[^A-Za-z0-9_$])(?:x|xe|dex)\s+["']`)
+	for _, name := range []string{"oracle.sh", "ship.verdict.sh"} {
+		// POSITIVE CONTROL ON THE HELPER NAMES. They are hardcoded above, so a rename
+		// would silently narrow this scan to `docker exec` lines only.
+		//
+		// 🔴 ANCHORED, NOT `strings.Contains`. Measured: the substring form survived
+		// mutation E7 (`x()` renamed to `xx()`) because `xx() {` CONTAINS `x() {` — a
+		// control walkable by adding one character, which is the whole reason a guard
+		// has to pin the state rather than a spelling.
+		if !regexp.MustCompile(`(?m)^x\(\)\s*\{`).MatchString(src[name]) {
+			t.Errorf("%s defines no `x()` exec helper — the helper names this scan knows are stale, "+
+				"so it is no longer looking at the lines that build container commands", name)
+		}
+		sites := 0
+		// Backslash continuations are JOINED first: the detached serve exec spells its
+		// flags on one line and its payload on the next, so a per-line scan would be
+		// blind to exactly the site hardest to notice going wrong.
+		for i, code := range joinContinuations(strings.Split(src[name], "\n")) {
+			if strings.HasPrefix(code, "#") {
+				continue
+			}
+			if !strings.Contains(code, "docker exec") && !helperCall.MatchString(code) {
+				continue
+			}
+			sites++
+			for _, m := range quoted.FindAllStringSubmatch(code, -1) {
+				if !strings.Contains(m[1], `'$`) {
+					continue
+				}
+				t.Errorf("%s:%d splices a shell variable inside single quotes in a container command: "+
+					"%q. A value the TRIAL chose — a discovered app directory, a manifest path, a "+
+					"manifest's own `outputDir` — ends the quote there and runs the rest of its own "+
+					"name as a command inside the grader's exec. Pass it with `docker exec -e` and "+
+					"reference it from a SINGLE-quoted payload instead:\n  %s", name, i+1, m[1], code)
+			}
+		}
+		// POSITIVE CONTROL ON THE SCAN: it must have FOUND exec sites. A zero here is
+		// indistinguishable from a clean script, and both read as a pass.
+		if sites < 3 {
+			t.Errorf("%s: the exec-site scan found only %d site(s) — it is not reading this script's "+
+				"container commands, so its silence about them means nothing", name, sites)
+		}
 	}
 
 	// `printf '%q'` — rejected in #728 for a measured reason, and the obvious
@@ -522,6 +666,24 @@ func TestDogfoodGradersShareOneEscaper(t *testing.T) {
 				"reading the wrong statement", tc.file)
 		}
 	}
+}
+
+// joinContinuations returns one trimmed entry per LOGICAL shell line, folding
+// backslash-continued lines into the entry at the index of the line they start on.
+// Entries for the folded-away lines are left empty so every index still maps to its
+// own source line number.
+func joinContinuations(lines []string) []string {
+	out := make([]string, len(lines))
+	for i := 0; i < len(lines); i++ {
+		start := i
+		code := strings.TrimSpace(lines[i])
+		for strings.HasSuffix(code, `\`) && i+1 < len(lines) {
+			i++
+			code = strings.TrimSuffix(code, `\`) + " " + strings.TrimSpace(lines[i])
+		}
+		out[start] = code
+	}
+	return out
 }
 
 // summaryPrintfArgs returns the `"…"` arguments of the `printf` statement whose
