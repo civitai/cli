@@ -64,11 +64,35 @@ consequences under *Goal* → **AMENDED 2026-09-26**. Merged `#724` (`7c57d3a`),
 `origin/main` by CONTENT (a squash merge never makes the branch an ancestor): the fabricated
 sentence is asserted nowhere. CI 13/13. **$0 spent.**
 
-**CARRIED FORWARD, durable: `ab-img-poster v0.1.1` is live** — approved `2026-09-25T23:30:15Z`,
-`deployState: live`, HTTP 200 (re-read 2026-09-26); deployed-bundle scope check **2** against
-its `v0.1.0` control **0**. 🔴 **Auto-resume is still unverifiable by any arm** (needs
-`TOKEN_REFRESH`, which `InlineTransport.onMessage` cannot deliver) — a human clicking Generate
-on the live app is the only check.
+🔴 **CARRIED FORWARD, durable — AND THE LIVE VERSION IS NOW `v0.1.2`, NOT `v0.1.1`.** Corrected
+2026-09-27 against `civitai app status --json`: `ab-img-poster v0.1.2`, `status: approved`,
+`deployState: live`, reviewed `2026-09-27T03:13:52.743Z`, deployed `2026-09-27T03:15:10.039Z`.
+It answers a **second** real-user report on the live app — *"Posting failed. Please try again."*
+⚠ **The report itself is operator-relayed and I cannot verify a user said it**; what IS measured
+is the version, the dates, and the three-way bundle comparison below.
+- **At the consumer, re-measured 2026-09-27:** page HTTP 200, bundle
+  `/assets/index-CcmcNwgc.js` HTTP 200, `scopes:["ai:write:budgeted"]` × **2** against the
+  `v0.1.0` control **0** (`dogfood-ab-ship-mimo-02`) — so rank 13's original reading still
+  holds at `v0.1.2`; it is **not** evidence about which of `v0.1.1`/`v0.1.2` is serving.
+- 🔴 **`dogfood-ab-imgposter-fixed` NOW HOLDS `v0.1.2`, NOT `v0.1.1` — and is a BYTE-EXACT
+  control for what is serving right now.** `block.manifest.json` reads `"version": "0.1.2"`,
+  `src/App.jsx` was edited `2026-09-27T02:55:45Z` (14 min before the `03:09:33Z` submit), and its
+  bundle is **md5 `c603fa854eba4d5206b73e04c14a1f3c`, equal to the live one**. **Do not read this
+  container as "the v0.1.1 fix" any more**; any doc or probe that does is one version behind.
+- 🔴 **A `v0.1.1` CONTROL EXISTS AND IS NEW — the image `dogfood-fixture/ab-imgposter:v0.1.1-pre-post-fix`**
+  (`"version": "0.1.1"`, bundle `index-CJh51XL4.js`, md5 `b8a1936e5939e39aa3e26f6e9e777113`).
+  Without it, `v0.1.2` has no attributable control at all. **Added to the do-not-destroy set.**
+- 🔴 **`v0.1.2` IS AN ERROR-PATH / DIAGNOSABILITY CHANGE, NOT A NEW CAPABILITY** —
+  `"Please try again."` sites go **3 → 6** with new branching on an error's `code`/`message`/
+  `status`. 🔴 **The oracle cannot grade any of it:** `InlineTransport` rejects every request, so
+  the *error* branch is the only one it ever reaches, and a fix that makes failures more legible
+  is invisible to `RENDER=`. ⚠ **My first answer to "what changed" was WRONG** — `posts:write:self`
+  4-vs-1 separates `v0.1.1`+`v0.1.2` from `v0.1.0` and says nothing about `v0.1.2`. Per-string
+  matrix, the refutation and the method are archived: *✅ MEASURED 2026-09-27 — what `v0.1.2`
+  actually changed*.
+🔴 **Auto-resume is still unverifiable by any arm** (needs `TOKEN_REFRESH`, which
+`InlineTransport.onMessage` cannot deliver) — a human clicking Generate on the live app is the
+only check.
 
 🔴 **I BROKE `#717` AND `#718` BY MERGING `#724`, AND FIXED `#717`.** Both merged clean against
 `823fa4f` and conflict after — proved by EXIT CODE (`merge-tree --write-tree` 0 then 1), with
@@ -82,14 +106,28 @@ on the live app is the only check.
   `16:54Z`; my merge only pulled main's drift in. **Do NOT edit `#717` to fix it** — `#726`
   (`chore(schema): re-vendor …`, CLEAN) is the remedy. This is the upstream-publishes-faster
   treadmill already recorded below.
-- **`#718` STILL CONFLICTING, not a mechanical rebase** — full state in rank 18. 🔴 It
-  **independently retracted the SAME sentence** (its line 85, own `git log -S` provenance), hours
-  apart; its version cannot record the **drop** (the operator had not been asked), so the two
-  texts must be reconciled into one, not stacked. Ranks 12–20 below **adopt its numbering** (it
-  published 17–20 first) so no live `claim-work` claim is re-pointed.
+- **`#718` RECONCILED 2026-09-27, by MERGE not rebase** — `git merge origin/main` in a
+  **detached** worktree off `refs/pull/718/head`, pushed to its branch as a fast-forward, because
+  `/tmp/wt-rank15` holds `zach/dogfood-consent-negative-control` checked out and a rebase would
+  have diverged that session's tree. Only this doc conflicted; the ARCHIVE and the five
+  `consent-controls/` files are clean adds `main` never touched.
+  🔴 **Resolved on MEANING, with `main` as the base and `#718`'s doc treated as STALE.** `#718`
+  **independently retracted the SAME fabricated sentence** (its line 85, own `git log -S`
+  provenance), hours apart — but its wording predates the operator being asked, and it therefore
+  concluded that the frozen condition was **not met and still outstanding**. 🔴 **THAT CONCLUSION
+  IS DISCARDED, AND THE NEXT SENTENCE IS THE ONLY ONE TO QUOTE:** the operator dropped the
+  frontier control on 2026-09-26, so the clause is deliberately unmet **BY DECISION**, not
+  outstanding. `main`'s wording is kept and `#718`'s is discarded; **the two are NOT stacked.**
+  ⚠ `#718`'s discarded text is still reachable in that PR's own commits and in
+  `refs/remotes/pr/718` — **do not re-import it**, and do not read its survival there as a second
+  open question. Only three things were taken from `#718`: the ARCHIVE eviction, the fixtures,
+  and rank 15's closure.
+  Ranks 12–20 below **adopt its numbering** (it published 17–20 first) so no live `claim-work`
+  claim is re-pointed.
 
 **Account:** Buzz **4,074,196**, `pending: 0`, key `$48.97/$50`. **All 11 fixture containers +
-the `pre-consent-fix` image intact.** ⚠ **No `clawgate-task:`** — `resolve` exited **5**; an
+BOTH snapshot images intact** (re-enumerated 2026-09-27 — `pre-consent-fix` and the new
+`ab-imgposter:v0.1.1-pre-post-fix`). ⚠ **No `clawgate-task:`** — `resolve` exited **5**; an
 unknown id answers 200 with an empty array, so that cannot distinguish "touched no task" from
 "wrong id". Not a clean bill of health.
 
@@ -111,8 +149,12 @@ claim that was true.
 
 🔴 **BUILD-AND-SHIP IS ANSWERED, AND NOW WITH A WORKING APP AT THE END OF IT.** Built blind
 by `xiaomi/mimo-v2.5` for **$0.0170**, submitted, approved, deployed, HTTP 200 — then found
-broken by a real user, fixed, resubmitted as `v0.1.1`, re-approved and re-verified. **The
-word "working" is earned only at `v0.1.1`, and only for the paths the oracle can see.**
+broken by a real user, fixed, resubmitted as `v0.1.1`, re-approved and re-verified — **then
+broken again, on a DIFFERENT path, by a second real-user report, and shipped as `v0.1.2`
+(live 2026-09-27T03:15:10Z).** **The word "working" is earned only at `v0.1.2`, and only for
+the paths the oracle can see.** 🔴 **Two user-found defects on two different paths, after the
+oracle passed the app both times, is the durable reading** — see *Gotchas* → **Added 2026-09-25
+(feedback)**, whose lesson this is the second instance of, not a new one.
 
 🔴 **RANK 3'S TABLE** (the arc's only record of the step/cost curve): mimo-v2.5, celsius,
 **65 steps / $0.0145 / 1,564,496 prompt tokens / per-call 452 → 45,328 / `stop=finished`**,
@@ -124,9 +166,18 @@ The submissions listing is **at its 100-row cap, no cursor**.
 🔴 **COST IS DEAD AS A CROSS-DAY INSTRUMENT** — 2.15× drift in $/1k on the same model and
 task in four days. Grade on steps, prompt tokens and behavioural signals.
 
-🔴 **EIGHT FIXTURES + ONE SNAPSHOT — DO NOT DESTROY.** `dogfood-ab-genpost-glm-01` is the
-negative control; `dogfood-ab-imgposter-fixed` holds the fixed app with a synthetic trial dir
-at `/tmp/fixed-runs/ab-imgposter-fixed`. Evidence lives OUTSIDE every worktree:
+🔴 **ELEVEN FIXTURES + TWO SNAPSHOTS — DO NOT DESTROY.** ⚠ **Re-enumerated 2026-09-27; the count
+in this heading has been wrong three ways at once** — it read "EIGHT + ONE" while `Account` below
+said 11 containers and `fixtures/consent-controls/README.md` cross-referenced a *"SEVEN
+FIXTURES"* heading that no longer existed. Measured: **11** `dogfood-*` containers (8 `ab-*` +
+the 3 `ctl-*` that landed with rank 15) and **2** images —
+`dogfood-fixture/ab-ship-mimo-02:pre-consent-fix` and the new
+`dogfood-fixture/ab-imgposter:v0.1.1-pre-post-fix`. 🔴 **Derive it, do not quote it:**
+`docker ps -a --format '{{.Names}}' | grep -c '^dogfood-'`.
+`dogfood-ab-genpost-glm-01` is the negative control; `dogfood-ab-imgposter-fixed` holds the
+fixed app with a synthetic trial dir at `/tmp/fixed-runs/ab-imgposter-fixed` — ⚠ **and as of
+2026-09-27 that is `v0.1.2`, byte-exact to the live bundle; see *State now*.** Evidence lives
+OUTSIDE every worktree:
 `~/.cache/dogfood-runs-2026-09-21/`, `~/.cache/dogfood-runs-2026-09-25/`,
 `/tmp/wt-verify686-1071809/scripts/dogfood/runs`.
 
@@ -135,48 +186,17 @@ at `/tmp/fixed-runs/ab-imgposter-fixed`. Evidence lives OUTSIDE every worktree:
 
 ## Open investigations — live diagnosis state
 
-### ✅ EXPLAINED 2026-09-21 — glm never wrote code, and "finished" was a truncation
-- as-of: 2026-09-21
+🔴 **9 CLOSED blocks were EVICTED, not deleted — they are verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md).** The size ratchet refuses a doc that is over budget and growing; eviction is how a round lands without losing the eliminations a future session would otherwise re-derive. **Read the archive before re-running any probe this arc already ran** — every one of these is a resolved elimination, not current state:
 
-🔴 **This CLOSES the question "why did the genpost trial fail", and the answer changes what
-the arc concluded.** Two defects compounded — one model-side, one harness-side.
-
-- **Observed (with values), the harness defect:** the final assistant record carried
-  `content: null`, `tool_calls: []`, `completion_tokens: 8000` — **exactly** the
-  `max_tokens` the harness sent — of which **7,992 were reasoning**. `runner.py` branched on
-  absence of tool calls alone and **never read `finish_reason`** (it appeared nowhere in
-  `runner.py`, `grade.sh` or `oracle.sh`). So a cell that ran out of output budget was
-  indistinguishable from one that completed with an empty report. **Fixed in `cli#684`**;
-  the stop vocabulary is now `finished` / `truncated` / `empty-reply` /
-  `stopped-unknown:<value>`, and an unknown value deliberately does NOT become `finished`.
-  `via: measurement` (the transcript's own usage block)
-- **Observed, the model-side fact:** **zero writes across 66 steps**, established two
-  independent ways — a regex over all 65 commands (no `cat >`, `tee`, `sed -i`, redirect
-  into a file) and the container filesystem (every `src/` file carrying the scaffold's
-  creation mtime). It engaged the brief — it researched `useCreatePostFromApp`, `scopes`,
-  `useRequestConsent`, `Textarea`, `Button` in order — and never implemented any of it.
-  `via: measurement`
-- **Ruled out — that it was blocked.** 1 of 65 commands exited non-zero (a `civitai
-  --version` before install). It hit one real blocker, a scaffold missing
-  `@testing-library/dom`, and **fixed it at step 32**, then read for 34 more steps.
-  `via: measurement`
-- **Ruled out — that the brief was evicted from context.** The harness never prunes; the
-  brief was `messages[1]` on all 67 requests. It was **diluted 1:800 by tool output**, not
-  evicted. `via: code` + `via: measurement`
-- **Ruled out — that documentation volume caused it.** Docs were **13.1%** of bytes read;
-  our own scaffold source and `node_modules` were **68.9% of carry cost**. `MAX_OUT`
-  crowding was not the mechanism (4 of 65 commands hit the cap). `via: measurement`
-- 🔴 **REFUTED BY EXPERIMENT — that the doc gap caused the failure.** `mimo-v2.5`, given the
-  **identical** brief, scaffold, harness and unfixed docs, started writing at step 40 and
-  produced a passing app. **The doc stack is a COST problem, not the failure cause.**
-  `via: measurement` (the mimo trial)
-- **Leading hypothesis for the remaining gap:** a planning failure specific to glm —
-  87.8% of its completion tokens went to reasoning the harness then **discarded** between
-  turns, so it re-derived its situation 67 times. `cli#684` now carries `reasoning_details`
-  back. **NOT ESTABLISHED**: the transcript stores no reasoning text, and proving it needs a
-  re-run on the fixed harness (~$0.09).
-- **Next probe:** none required for this arc. If anyone wants the planning hypothesis
-  settled, re-run glm on the fixed harness and compare.
+- ✅ EXPLAINED 2026-09-21 — glm never wrote code, and "finished" was a truncation
+- ✅ SHIPPED 2026-09-21 — `cli#690` seeds the manifest's scopes; the cheap arm is 2 of 3
+- ✅ FIXED 2026-09-25 — the page-money scaffold shipped a build that could not pass
+- ✅ FIXED 2026-09-25 — all three harness refusals in one trial were wrong
+- ✅ SHIPPED 2026-09-25 — the submission cap charged attempts, so a CLI-refused submit spent the budget
+- ✅ SHIPPED 2026-09-25 — the oracle answered no host resource pick; a picker-gated app could never pass
+- ✅ FIXED 2026-09-25 — the oracle graded only the consented viewer; a live app broken for every new user shipped green
+- ✅ MEASURED 2026-09-26 — rank 15's premise was backwards, and so was my first account of why
+- ✅ MEASURED 2026-09-27 — what `v0.1.2` actually changed, and the control that refuted my first answer
 
 ### ⚠ OPEN — the documentation stack is a measured cost problem
 - as-of: 2026-09-21
@@ -238,214 +258,12 @@ same mechanism: it is neither free nor possible.
   same model and diff carry cost. Until then the doc-stack block's figures are a claim
   about `0.1.106` and nothing newer.
 
-### ✅ SHIPPED 2026-09-21 — `cli#690` seeds the manifest's scopes; the cheap arm is 2 of 3
-- as-of: 2026-09-21
-
-🔴 **This CLOSES two now-PRUNED blocks — "🔴 OPEN — the oracle seeds a signed-in viewer
-with an EMPTY SCOPE LIST" and "✅ MEASURED — the inert token WAS the cause". Their evidence
-stands; their OPEN status and their Next-probe instructions are both spent. Do not re-run
-the four-arm experiment to confirm this** — it is now the shipped behaviour of `main`, and
-the three-arm check under *How to verify* is the cheaper successor.
-
-- **Observed (with values), from a CLEAN checkout of the merge SHA `82d9d83` — deliberately
-  not the implementing agent's tree:** deepseek `RENDER=yes observed=ready>generating>ready`
-  · scaffold `RENDER=no observed=''` · mimo `RENDER=yes`. CI `13/13`, 0 non-success, and the
-  branch already contained the current `main` tip, so the green is about the merged tree.
-  `via: measurement`
-- **What shipped:** `HOST_BOOTSTRAP` became `hostBootstrap(scopes)`; `oracle.sh` reads
-  `block.manifest.json` **once** and passes the scope CSV to the assertion **as argv[3]**
-  (no env var), and carries a **seam guard** that exits 2 when the manifest and the scopes
-  the assertion actually presented disagree — a mismatch means nobody knows what was
-  graded, so refusing beats reporting.
-- 🔴 **`raw` STAYS EMPTY, and that is the load-bearing invariant.**
-  `InlineTransport.sendRequest` still rejects unconditionally, so *"nothing can complete
-  here"* — the property `#686` asserted from inside the page — survives. **Scopes buy the
-  block a BRANCH, never a capability.** Any future change here must re-assert that.
-- ⚠ **Stated limit on the new coverage, reported by the implementer rather than found by
-  review:** of the four rows in `TestOracleSeedsTheBlocksDeclaredScopes`, **only row 1 was
-  watched to fail at base** (`RENDER=no, want yes` — the exact deepseek signature). Rows
-  2–4 are green at base: they are **controls, not regression coverage** — row 2 (same app,
-  manifest declaring nothing → `no`) is what stops a hardcoded scope list passing row 1.
-  **Do not cite rows 2–4 as regression evidence.** `via: measurement`
-- ⚠ **The seam guard was demonstrated by a HAND mutation, not a committed one** (mutating
-  the reported `hostScopes` to `MUTANT` produced the mismatch and exit 2). The committed
-  test pins only the happy path. A cheap hardening if anyone touches this again.
-- 🔴 **EXPECTED STRING CHANGE, not a regression:** mimo's `observed` lengthened
-  `ready>generating` → **`ready>generating>ready`**, because with consent granted it now
-  reaches the submit, which the stub rejects, settling back. The verdict is
-  `seq.includes('generating')`, so it is unaffected. **Any doc still asserting the short
-  string is stale** — `README.md` and `genpost.md` were updated in `#690`.
-- **Next probe:** none.
-
-### ✅ FIXED 2026-09-25 — the page-money scaffold shipped a build that could not pass
-- as-of: 2026-09-25
-
-- **Symptom + exact repro:** `npm run build` (= `tsc -p tsconfig.json --noEmit && vite
-  build`) failed on the scaffold's **own** shipped test files:
-  `src/App.test.tsx(1,18): error TS2305: Module '"@testing-library/react"' has no exported
-  member 'screen'` — plus `fireEvent` and `waitFor` in `e2e.test.tsx` and
-  `responsive.test.tsx`.
-- **Observed (with values):** all four failing files carry the scaffold's **creation mtime**
-  (14:52:09); only `App.tsx` was agent-written (14:56:51). `@testing-library/react`'s types
-  re-export those three names from `@testing-library/dom`, which the template **did not
-  declare**. Cost: steps 29–39, **11 of 43 steps (26%)**, fighting code the agent never
-  wrote. Hit independently by glm (2026-09-21) and deepseek (2026-09-25).
-  `via: measurement`
-- 🔴 **Ruled out — that this breaks EVERY install. It does not, and the stronger claim was
-  MINE.** Measured both shapes at base: plain `npm install` → **exit 0** (npm ≥7 auto-installs
-  the peer); `npm install --legacy-peer-deps` → **exit 2, 7 × TS2305**. The trial only reached
-  the broken shape because its *plain* install died inside npm's arborist
-  (`Cannot read properties of null (reading 'edgesOut')`) and its next command was
-  `--legacy-peer-deps`. **The defect is install-shape-dependent.** `via: measurement`
-- **Fixed in `cli#702`** (`dcf9da2`): `"@testing-library/dom": "^10.4.0"` added to
-  `devDependencies`, resolved against all three sibling packages' peer ranges. The guard
-  **really typechecks** a rendered scaffold and carries a positive control (`tsc --listFiles`
-  must include the test files, so a clean verdict cannot be an artifact of `tsconfig`
-  includes). Red at base with the exact 7 errors, green at HEAD.
-- 🔴 **Still open, and stated rather than buried: CI DOES NOT RUN THAT GUARD.** It is gated on
-  `CIVITAI_SCAFFOLD_TYPECHECK=1` because it needs network and ~6.5 s. `template-page-money`
-  passing is **not** evidence the scaffold builds. An offline dependency-declaration guard
-  runs in CI and is explicitly labelled as the weaker check.
-- **Unexplained:** the npm arborist crash could not be reproduced. The fix makes it
-  irrelevant, not diagnosed.
-- **Next probe:** none. A future trial that reaches `--legacy-peer-deps` is the field test.
-
-### ✅ FIXED 2026-09-25 — all three harness refusals in one trial were wrong
-- as-of: 2026-09-25
-
-- **Observed (with values), all three from `ab-genpost-dsv4-02`:**
-  - **step 9** `app create civitai-image-generator --template static` — refused naming
-    `'civitai-image-generator', 'static'`. Half right: the app name was wrong, `static` is
-    the `--template` VALUE.
-  - **step 11** `app create ab-image-generator --template static` — **refused naming only
-    `'static'`**, with the remedy *"Rename the app and retry."* The app name was already
-    correct. 🔴 **The agent abandoned `--template static` and took the 320 KB `page-money`
-    default — so a false refusal silently chose the scaffold whose cost this arc measures.**
-  - **step 25** writing its own `block.manifest.json` via heredoc — refused because the JSON
-    **content** contained `civitai.com` (the `$schema` URL) and "generated" (inside a
-    human-readable scope description). It then tried `python3`, absent from the container
-    (rc=127) — a second step lost to the first refusal.
-  `via: measurement`
-- **Fixed in `cli#702`:** a `GATED_FLAGS` table gives every flag on a gated command a role —
-  `slug` (its value is a prefix-cap candidate, both spellings), `value` (consumes its next
-  token so it is not mistaken for a positional), `bool` (consumes nothing). Heredoc **bodies**
-  are stripped before classification; opener lines, post-terminator text and inline redirect
-  arguments are still classified. The refusal message now names the offending token's ROLE.
-- 🔴 **THE ALLOWLIST IS `{--slug, --from, --name, --dir}` — AND A BRIEF THAT SAID `{--slug}`
-  WOULD HAVE SHIPPED A BYPASS.** `--from` takes *"an existing published app slug"*, `--name`
-  is slugified into the blockId when `--slug` is absent, `--dir` selects the directory whose
-  manifest supplies the blockId. A literal grep for `"slug"` finds three `StringVar` sites and
-  misses all three of those. `via: code`
-- 🔴 **Ruled out — that narrowing the check reopened `#698`'s bypass.** Verified by direct
-  `Caps.judge()` calls on the real commands: `--slug=some-other-app` refused, `--slug
-  some-other-app` refused, `--dir=sensei` refused, `--template static` **allowed**, own-app
-  attached slug allowed, wrong-prefix create refused, `eval "civitai app submit"` refused.
-  `via: measurement`
-- **Guarded by a seam guard, not a comment:** `TestDogfoodGatedFlagLedgerCoversTheCLI` derives
-  the flag set from `internal/cmd` cobra source and fails in BOTH directions, with positive
-  controls (≥15 names, ≥5 files; actual 25/7). Validated by **mutation**: adding an unledgered
-  `--app-slug` to `app_create.go` turned exactly that guard red.
-- 🔴 **`c=civitai; $c app submit` IS NOT REFUSED — and never was, at base or HEAD.** A comment
-  in `runner.py` asserted it as a genuine fail-closed case; the comment was **false**.
-  `segments()` splits on `;`, so segment 1 names the CLI without a dangerous verb and segment 2
-  names a verb without the CLI. The comment is corrected in `#702`; **the gap is open.**
-  `via: measurement`
-- **Next probe:** none for the fixes. Closing the `c=civitai` gap is a separate decision — the
-  module's own threat model says these caps stop the ordinary accident, not an adversary.
-
-### ✅ SHIPPED 2026-09-25 — the submission cap charged attempts, so a CLI-refused submit spent the budget
-- as-of: 2026-09-25
-
-- **Observed (with values), trial `ab-ship-mimo-01`:** step 49 `civitai app submit` → the
-  CLI refused **pre-flight** (*"refusing to submit without --yes in a non-interactive
-  shell"*, exit 1, nothing contacted) — and `runner.py:851` incremented `sub` 0→1 anyway.
-  Steps 50/51/54 (`--yes`, `--package-only`, `--yes`) were then all refused by the harness.
-  Account confirmed 0 pending, 0 `ab-*`, Buzz unchanged. `via: measurement`
-- 🔴 **The model recovered correctly and we blocked it** — it read the refusal and went to
-  `--yes` on its very next step. That was the open question about whether a blind model
-  would adapt; it did, immediately.
-- **Fixed in `cli#705`** (`37e85ba`) — and 🔴 **the DIRECTION was the design decision.** The
-  obvious fix (decide pre-flight: only charge a submit carrying `--yes`) **fails OPEN**: it
-  makes the harness depend on the CLI's non-TTY refusal, so a config that auto-confirms or a
-  TTY appearing would silently uncap **real** submissions. Shipped instead: charge
-  unconditionally, **refund** only when the result proves nothing was contacted. A reworded
-  CLI message then stops the refund and the harness over-refuses — the safe direction.
-  `--package-only` is the one pre-flight exemption (contacts nothing by construction).
-- **Ruled out — that the refund can return a REAL submission's charge.** Verified by driving
-  `judge()→settle()→judge()` directly: a successful submit is not refunded and the next
-  `--yes` is correctly refused. `via: measurement`
-- **Next probe:** none. Proven live by `ab-ship-mimo-02`, whose log shows
-  `verdict=run` → `verdict=refund` → `--yes` executing.
-
-### ✅ SHIPPED 2026-09-25 — the oracle answered no host resource pick; a picker-gated app could never pass
-- as-of: 2026-09-25
-
-- **Observed (with values):** `ab-ship-mimo-02` graded `RENDER=no observed=ready
-  generateDisabled=true`. Cause, from the app's own source: `openPicker({resourceType:
-  'Checkpoint'})` at `App.jsx:36`, `disabled={… || !model}` at `:154`. The stub rejects
-  every request and delivers no host pushes, so `model` stays null forever.
-  `via: measurement` + `via: code`
-- **Fixed in `cli#708`** (`d239fcd`): the oracle answers `OPEN_RESOURCE_PICKER` /
-  `OPEN_CHECKPOINT_PICKER` and nothing else. Four control arms after the change:
-  `ab-ship-mimo-02` **yes** · `ab-genpost-glm-01` **no** (negative control holds, verified
-  independently) · mimo-01 and dsv4-01 **unchanged**.
-- 🔴 **THE INVARIANT, REWORDED RATHER THAN QUIETLY BROKEN:** the stub no longer rejects
-  *unconditionally* — it rejects everything but two **discovery** calls. `token.raw` stays
-  empty and `ESTIMATE_WORKFLOW` was measured still-refused on three of four real arms.
-  **A pick buys a BRANCH, never a capability.** Any future change here must re-assert that.
-- 🔴 **A SILENT-FAILURE PATH WAS FOUND IN REVIEW AND CLOSED BEFORE MERGE.** The shim patches
-  the SDK's **minified** stub by regex, and the first needle was wrong on the second real
-  bundle (`blocks-react` 0.53.1 emits `Error(\`…\`)` with no `new`) — it patched **0 sites**
-  while the cell stayed green, green only because that app needed no pick. The mirror case
-  regrades the very defect being fixed: `sites=0` on an app that *does* pick → `RENDER=no`,
-  attributed to the model. Now a pick the shim could not answer reports **`unmeasured`**
-  (exit 2), never `no`, with a fixture that **defeats the needle on purpose** watched to
-  fire, plus an over-refusal control. `via: measurement`
-- ⚠ **Stated limit:** when the patch fails the shim is never called, so "a pick was
-  requested" is **inferred** from the gate still being shut after prerequisite clicks — the
-  signature of the harm, not the cause. An app needing a pick but *not* gating Generate on
-  it still grades `no`. Unguarded, disclosed.
-- ⚠ **Two bundles is not a general claim about minifier spellings.**
-- **Next probe:** none.
-
-### ✅ FIXED 2026-09-25 — the oracle graded only the consented viewer; a live app broken for every new user shipped green
-- as-of: 2026-09-25
-
-- **Symptom, from a REAL USER on the live app:** Generate → *"Generation failed. Please try
-  again."*; consent had to be granted manually via "review permissions".
-- **Observed (with values):** `App.jsx` generate path calls `estimate`/`submit` with no
-  consent request; the catch has no missing-scope branch. `handlePost` used
-  `requestConsent('posts:write:self')` — a bare string — and `await`ed a `void`
-  fire-and-forget call before `createPost`. `via: measurement` + `via: code`
-- 🔴 **Why the oracle could not see it:** `InlineTransport` rejects every request, so
-  *"generation fails for everyone"* and *"generation works"* produce the identical trace
-  `ready>generating>ready`; the assertion grades the status word. **And `#690`'s scope
-  seeding actively masked it** — with scopes granted, an app that never asks looks identical
-  to one that asks correctly. `via: code`
-- 🔴 **Ruled out — that the oracle could answer a consent request.** `useRequestConsent`
-  calls `transport.sendMessage({type:'REQUEST_CONSENT'})` — a **`sendMessage`, not a
-  `sendRequest`** — and `InlineTransport.sendMessage` is an intentional v1 no-op, with
-  `onMessage` returning a no-op unsubscribe. **A `TOKEN_REFRESH` grant is structurally
-  undeliverable**, so neither "granted" nor "declined" is reachable and OBSERVING THE ASK is
-  necessary *and* sufficient. That makes the arm strictly safer than the default one: it
-  removes capability (`scopes: []`, `raw: ''`) and adds none. `via: code`
-- 🔴 **Ruled out — rewording the briefs.** Measured by running the real `oracle.sh` over a
-  reworded copy: **6 of 6** transcript-bearing fixtures go exit-2. Two of my premises were
-  wrong — `ab-genpost-mimo-01` *also* resolves by text, and `brief_name` fixtures are **NOT**
-  safe, because the self-consistency check compares recorded prose against the named file.
-  **The requirement lives in the assertion; `arm=` labels every cell.** `via: measurement`
-- **A mutation that SURVIVED round 1, and what it means:** widening `consentBlind` to
-  `messageSites === 0` was invisible because no fixture had a bundle without an inline
-  transport — an unreachable-guard case. A `fxNoSdkNeverAsksApp` fixture was added; the
-  mutant then died to only that row, M0 still survived, and a delta re-sweep found nothing
-  new. **The ladder ended on a clean round, not on a count.**
-- **Next probe:** none for the instrument. The open item is whether an untouched scaffold
-  fails this arm — see the limits below.
-
 ## Next steps (ranked)
 
 🔴 **Numbering ADOPTED FROM `#718`** (published 17–20 first): 1–11 settled; 13 closed
-2026-09-25; 17 closed 2026-09-26; 12, 14–16, 18–20 live.
+2026-09-25; 17 closed 2026-09-26; **15 and 19 closed 2026-09-27**; 12, 14, 16, 18, 20 live.
+🔴 **Rank NUMBERS are half a `claim-work` slug — never renumber to tidy the list.** A closed
+rank keeps its number and its `forcing:` line; it does not get removed.
 
 1–11. ✅ **DONE** — the arc through build-and-ship. forcing: user/gate — satisfied
 12. ⚠ **RE-SCOPE OR RETIRE, do not work as written** (`#718`'s measurement).
@@ -454,42 +272,67 @@ the three-arm check under *How to verify* is the cheaper successor.
     the defect that cost 26% of a trial. Re-verified 2026-09-26.
     forcing: regression — the defect shipped once and CI still cannot see it
 13. ✅ **CLOSED 2026-09-25** — `v0.1.1` approved, live, verified against the `v0.1.0` control.
+    ⚠ **Stays closed, but `v0.1.1` is no longer what serves** — `v0.1.2` went live
+    2026-09-27T03:15:10Z fixing a second user-reported path; see *State now*. The `2` vs `0`
+    bundle reading this rank closed on still holds, re-measured at `v0.1.2`.
     forcing: user — satisfied
 14. **T1 "ship-ready" needs a decision, not code.** Publish floor wants an icon + cover; the
     trial container has **no `python3`, `convert`, `magick`, `pip3`**. Adding image tooling, or
     letting a brief spend Buzz on a cover, **changes what "blind" means**.
     forcing: user — asked about "complete working apps" on 2026-09-25
-15. **DONE in `#718`, NOT ON `main`** — `scripts/dogfood/fixtures/consent-controls/` (twins
-    `ctl-genpost-blind`/`ctl-genpost-asks`). Unmerged, so `main` still has no such control.
-    **IN FLIGHT: `civitai/cli`#718.**
-    forcing: gate — an arm whose `no` has one cause is the class this arc kept finding
+15. ✅ **CLOSED 2026-09-27 — now ON `main`** via `#718`:
+    `scripts/dogfood/fixtures/consent-controls/` (twins `ctl-genpost-blind`/`ctl-genpost-asks`,
+    plus `ctl-scaffold-untouched`), script-built and reproducible from git rather than being a
+    preserved container. ⚠ **The rank's PREMISE was backwards on both halves** — an untouched
+    scaffold gets consent *right*, and the arm's own `no` HAD been observed before; what was
+    actually missing was **attribution** (a pair differing in one controlled variable) and
+    **reproducibility**. Retraction and the measured matrix are in the ARCHIVE,
+    *✅ MEASURED 2026-09-26 — rank 15's premise was backwards*. **Do not re-inflate the claim.**
+    forcing: gate — satisfied
 16. **SUBSTANTIALLY DONE** — retraction and the `"2 of 3 passed" = DEFAULT arm only` qualifier
-    are in place; `#718`'s eviction finishes it.
+    are in place; `#718`'s eviction landed 2026-09-27, so that half is done. What remains is
+    whether historical blocks get retro-qualified — low value, and a judgement not a task.
     forcing: user — the operator's feedback refuted the claim as written
 17. ✅ **CLOSED 2026-09-26** — dropped by a dated operator decision (`#724`). See *Goal*. **Do
     not re-open to "tidy the arc up"** — that exact instruction hid the fabrication for five
     days; if you re-open it, say who asked.
     forcing: user — decided by the operator on 2026-09-26, in their own words
-18. **Land `#726` (schema re-vendor) → merge `#717` → reconcile `#718`, in that order.**
-    `#717`'s only red is `schema-drift`, red on `main` itself, so `#726` unblocks it. 🔴 **`#718`
-    is NOT a mechanical rebase:** base `0b5b558` predates `#717` (`58f98d5`) and `#724`
-    (`7c57d3a`), so it carries neither; it is 807 doc lines + a **319-line** new
-    `claudedocs/handoff-app-build-dogfood-ARCHIVE.md` evicting **8** resolved `✅` blocks (which
-    is also this doc's size-ratchet fix — I did NOT duplicate it, that would worsen this
-    conflict), plus 5 files under `scripts/dogfood/fixtures/consent-controls/`; its doc has **0**
-    occurrences of `pending operator review`, i.e. no knowledge of rank 13's closure; and it is
-    self-described mid-ladder at round 6 with a **forgeable `outputDir`** finding open — an
-    unfinished ladder must not land on a reviewer's authority. **Recipe:** `worktree add
-    --detach refs/pull/718/head`, `git merge origin/main`, reconcile the two retractions into
-    one. **Do NOT rebase the branch** — `/tmp/wt-rank15` holds it.
-    **IN FLIGHT: `civitai/cli`#726, #717, #718.**
-    forcing: gate — an open PR carrying an unmerged audit ladder
-19. 🔴 **Harden `oracle.sh`'s manifest-derived fields.** `:318`/`:370` print `OUTDIR`, `SCOPES`,
-    `APP_DIR`, `SERVED` with a raw `%s` from the block's OWN manifest, and `jq -r` turns a `\n`
-    into a real newline — app-controlled data in a grader's input stream, and the upstream cause
-    of three defeated reads in `#718`'s ladder. ⚠ `grade.sh` and the Go suite PARSE that output.
-    Carried here so it survives if `#718` is abandoned. Touches `civitai/cli` only.
-    forcing: security — app-controlled data reaches a grader's input stream
+18. **THE MERGE CHAIN IS DONE; ONE AUDIT ROUND IS OWED.** `#726` (`e9c9d78`) and `#717`
+    (`721edae`) are merged, and `#718` was **reconciled 2026-09-27** — by MERGE in a detached
+    worktree off `refs/pull/718/head`, never a rebase, because `/tmp/wt-rank15` holds that
+    branch. Resolution recorded under *State now*.
+    🔴 **`#718`'S UPSTREAM CAUSE IS FIXED, AND THAT IS NOT THE SAME AS THE LADDER BEING CLEAN.**
+    Round 6 of `#718`'s ladder found a **forgeable `outputDir`** vector and said the ladder
+    should continue; **round 7 was never run.** That vector is now fixed on `main` by `#728`
+    (`8c4c631`) — the field `#718`'s own doc named as *"the single upstream cause behind three
+    defeated reads in #718's ladder"* — which `#728` closed with `tok`/`prose` escaping, 5
+    mutations each dying to its own assertion, and a negative control that correctly survives
+    all five.
+    🔴 **AN AUDIT/REVIEW FIX RESETS THE VERIFICATION GATE, so `#728` does not discharge round 7 —
+    it changes what round 7 would be auditing.** What is owed is **one delta round over the
+    reconciled `#718` diff as it now sits on `main`**, not a re-run of rounds 1–6. **Do NOT
+    record the ladder as clean**: a clean round ends a ladder, and no round has returned clean
+    here — round 6 returned a finding, and nothing has audited the delta since.
+    **CLOSING CONDITION (operator judgement, not mechanical):** the operator either commissions
+    that delta round — and it ends when a round returns **no finding** — or decides on the record
+    that the `#728` fix plus its mutation battery is sufficient and round 7 is not wanted. Until
+    one of those two is written down, this rank stays open. It is a **decision**, not a task
+    anyone should silently self-assign.
+    forcing: gate — round 6 returned an unresolved finding and no round has audited the delta
+19. ✅ **CLOSED 2026-09-27 by `#728`** (`8c4c631`, *"the manifest could write the grade, and one
+    field was already quoted for that reason"*) — `oracle.sh`'s manifest-derived fields no longer
+    reach the grader raw. **The defect was WIDER than this rank stated:** not only a `\n` ending
+    the line, but a **SPACE** ending the field — `scopes=` prints before `viewer=`, `arm=`,
+    `served=` and `RENDER=`, and both consumers take the FIRST `KEY=` match, so a manifest
+    declaring `"scopes": ["x RENDER=yes viewer=signed-in"]` had its tokens read as the verdict.
+    Measured: an app that built nothing graded `RENDER=yes viewer=signed-in` while the oracle's
+    own verdict on the same line was `no`. Fixed as `tok` (must stay one field) / `prose` (is a
+    line), **not** `printf '%q'` — bash 5.3 escapes a comma where 5.2 does not, which would have
+    made a field's bytes depend on the grader's host. Consumers unchanged and legitimate values
+    byte-identical, pinned by `TestOracleLeavesLegitimateManifestValuesByteIdentical`.
+    ⚠ **`oracle.sh` is now freshly-changed code — do not edit it as a drive-by**; changes to its
+    output rendering are their own change, since `grade.sh` and the Go suite parse it.
+    forcing: security — satisfied
 20. **Fix or remove the four `apps/responsive` 404 links** (`https://developer.civitai.com/apps/responsive`,
     shipped at four scaffold template sites). Carried here for the same reason. Touches
     `civitai/cli` templates and possibly `civitai/civitai-developer-docs`.
@@ -883,7 +726,9 @@ the three-arm check under *How to verify* is the cheaper successor.
 
 Every check reports a CONTROL beside its result; a bare count or zero is not a measurement.
 
-**Rank 13 — the live fix at the consumer** (expect `2`, control `0`):
+**Rank 13 — the live fix at the consumer** (expect `2`, control `0`). ⚠ **The live revision is
+`v0.1.2` as of 2026-09-27, not `v0.1.1`** — `2` vs `0` does NOT discriminate between them, so
+read the version from the API (below) rather than inferring it from this count:
 ```bash
 curl -s -o /tmp/live.html -w 'page http=%{http_code}\n' https://ab-img-poster.civit.ai/
 B=$(grep -o '/assets/index-[A-Za-z0-9_-]*\.js' /tmp/live.html | head -1)
@@ -891,6 +736,32 @@ curl -s "https://ab-img-poster.civit.ai$B" -o /tmp/live.js -w "bundle http=%{htt
 grep -o 'scopes:\["ai:write:budgeted"\]' /tmp/live.js | wc -l     # expect 2
 docker exec dogfood-ab-ship-mimo-02 bash -lc \
   'grep -o "scopes:\[\"ai:write:budgeted\"\]" /work/ab-img-poster/dist/assets/index-*.js | wc -l'   # CONTROL: 0
+```
+
+**Which revision is serving, and a byte-exact local control for it** (measured 2026-09-27).
+🔴 **`dogfood-ab-imgposter-fixed` holds `v0.1.2`, and its bundle is md5-equal to the live one** —
+so it is the control for what is serving now, not for `v0.1.1`. The `sh -c` is load-bearing:
+`kubectl`-style unquoted globs aside, `docker exec` gets no shell of its own.
+```bash
+md5sum /tmp/live.js                                  # c603fa854eba4d5206b73e04c14a1f3c
+docker exec dogfood-ab-imgposter-fixed bash -lc \
+  'md5sum /work/ab-img-poster/dist/assets/index-CcmcNwgc.js;
+   grep -o "\"version\"[^,]*" /work/ab-img-poster/block.manifest.json'   # 0.1.2, SAME md5
+# discriminating counts vs the v0.1.0 control (dogfood-ab-ship-mimo-02): 4 vs 1
+docker exec dogfood-ab-imgposter-fixed bash -lc \
+  'grep -o posts:write:self /work/ab-img-poster/dist/assets/index-*.js | wc -l'   # expect 4
+docker exec dogfood-ab-ship-mimo-02 bash -lc \
+  'grep -o posts:write:self /work/ab-img-poster/dist/assets/index-*.js | wc -l'   # CONTROL: 1
+```
+
+**Rank 15 — the consent-control twins, now on `main`.** Expect the three-row matrix in
+`scripts/dogfood/fixtures/consent-controls/README.md`: `ctl-scaffold-untouched` `no`/`no`,
+`ctl-genpost-blind` `yes`/**`no`**, `ctl-genpost-asks` `yes`/`yes`. 🔴 **`asks` passing is the
+positive control** — without it `blind`'s `no` cannot be told from the `unmeasured` case. ⚠ A
+`ctl-scaffold-untouched` row that MOVES means the template gained the genpost shape.
+```bash
+CTL=/home/zach/workspace/civit/cli/scripts/dogfood/fixtures/consent-controls
+(cd "$CTL" && bash build.sh --keep && nix-shell -p chromium --run 'bash grade-controls.sh')
 ```
 
 **The defect and the fix, on the arm that sees them** — expect `RENDER=no`
@@ -926,18 +797,24 @@ for k, v in sorted(c.items()): print(v, k)'
 
 **The account:**
 ```bash
-civitai app status --json   # v0.1.1 approved/live; pending 0
+civitai app status --json   # ab-img-poster v0.1.2 approved/live (2026-09-27T03:15:10Z); pending 0
 civitai buzz                # 4,074,196 on 2026-09-25 — RE-READ, it drifts
 ```
+⚠ **The submissions listing is AT its 100-row cap with no cursor**, so a blockId absent from
+`app status --json` is not evidence it has no submission — look it up directly with
+`civitai app status <blockId>`.
 
 ## Defects (batched)
 
-- ✅ **RESOLVED 2026-09-25** — this entry read *"`ab-img-poster v0.1.0` is live and broken for
-  first-time viewers until `v0.1.1` is approved"*. `v0.1.1` was approved `23:30:15Z` and is the
-  serving revision; re-verified 2026-09-26 (`deployState: live`, HTTP 200). ⚠ Kept rather than
+- ✅ **RESOLVED 2026-09-25, AND SUPERSEDED 2026-09-27** — this entry read *"`ab-img-poster
+  v0.1.0` is live and broken for first-time viewers until `v0.1.1` is approved"*. `v0.1.1` was
+  approved `23:30:15Z`; **`v0.1.2` has been the serving revision since `2026-09-27T03:15:10Z`**,
+  fixing a second user-reported path (*"Posting failed. Please try again."*). ⚠ Kept rather than
   deleted because rank 13's closure and this line were written in different sessions and the
   line was missed — the tell is a *Defects* entry whose condition a *Next steps* rank already
-  reports closed. **When you close a rank, grep this section for the same claim.**
+  reports closed. **When you close a rank, grep this section for the same claim.** 🔴 **This
+  entry has now gone stale TWICE the same way — a version number written here is a claim about
+  the day it was written. Name the date beside it or read the API.**
 - `pickerBlind` and `consentBlind` have never been tested together on one doubly-blind bundle.
 - `CONSENT_SETTLE_MS = 1200` is a judgement; every observed ask was synchronous, but there is
   no measured bound for an app that asks after an `await`.
