@@ -552,9 +552,19 @@ func TestDogfoodGradersShareOneEscaper(t *testing.T) {
 
 // assertEscapedAtAssignment enforces the property the `escapedAtAssignment`
 // allowlist is GRANTED ON: that `arg` — a `"$NAME"` summary-line argument — names
-// a variable whose every assignment in this script either holds no expansion at
-// all (a literal of this script's own vocabulary) or routes every expansion it
-// does hold through `tok`/`prose`.
+// a variable whose every `NAME=…` assignment in this script either holds no
+// expansion at all (a literal of this script's own vocabulary) or routes every
+// expansion it does hold through `tok`/`prose`.
+//
+// ⚠ THE SCOPE IS THE `NAME=…` FORM, AND THAT IS NARROWER THAN "EVERY WAY A VALUE
+// CAN BE SET" — this note is the claim, rather than a wider sentence the code does
+// not keep. A value arriving via `read NAME`, `eval`, `printf -v NAME` or inherited
+// from the environment is INVISIBLE here. Measured across both graders: `eval` and
+// `printf -v` appear in neither, and every `read` is a `while IFS= read -r <var>`
+// loop variable (`m`/`l`), never a summary field — so the form does cover every live
+// assignment to an allowlisted name. A grader that grew one of the other routes
+// would pass this check having had it read nothing, which is why the positive
+// control below asserts an assignment was FOUND rather than trusting a clean sweep.
 //
 // 🔴 THIS EXISTS BECAUSE THE GRANT USED TO BE A COMMENT, AND A COMMENT IS NOT A
 // CHECK. `summaryPrintfArgs` reads the printf statement and nothing else, so
