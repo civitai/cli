@@ -378,49 +378,39 @@ func TestREADMEEntryBlockClaimsArePinned(t *testing.T) {
 // that, and is the mutation matrix's M6.
 
 // troubleshootingEntryBlockCause returns the CAUSE cell — column two — of the
-// Troubleshooting row documenting the entry block.
+// troubleshooting row documenting the entry block.
 //
 // 🔴 COLUMN TWO, NOT THE WHOLE ROW, AND THAT IS THE POINT. Column one is the
 // symptom index and is pinned verbatim against non-test source by a sibling
 // guard, so any assertion made against the full line can be satisfied by text
 // that cannot change. The cause cell is the half that carries the claim.
+//
+// 🔴 RE-POINTED AT THE VENDORED MIRROR, NOT RETIRED, AND THE FILE HEADER IS WHY.
+// This row's cell used to be parsed out of README.md's `## Troubleshooting`
+// table, which is now a pointer to the published index. Retiring the `rowSays`
+// half would have left entryBlockSentinels covering ONE of the two surfaces it
+// exists to keep in sync — precisely the "narrower than its docstring" defect
+// this file's header says it was written to catch, committed inside the file
+// itself. So the cell is vendored in troubleshooting_published_test.go and read
+// from there. Its 80-byte anti-vacuity floor moved with it into
+// publishedCauseFor.
+//
+// ⚠ The `## Submit & auth` paragraph half is UNCHANGED: that section is still in
+// README.md, so readmeEntryBlockParagraph still reads live prose. One surface
+// live, one vendored.
 func troubleshootingEntryBlockCause(t *testing.T) string {
 	t.Helper()
-	section := readmeTroubleshootingSection(t)
-	for _, line := range strings.Split(section, "\n") {
-		if !strings.HasPrefix(line, "|") || !strings.Contains(line, "largest entries in the bundle") {
-			continue
-		}
-		cols := strings.Split(line, " | ")
-		if len(cols) < 3 {
-			t.Fatalf("CONTROL failure: the entry-block row does not split into >= 3 columns, so the "+
-				"cause cell cannot be isolated and every assertion on it is vacuous. Row:\n%s", line)
-		}
-		// Strip markdown emphasis before returning.
-		//
-		// 🔴 NOT COSMETIC — WITHOUT THIS THE ASSERTION IS WRONG, AND IT WAS.
-		// The cell writes the tense as `What this CLI **would have** sent`, so
-		// the literal substring "would have sent" does not occur: the bold
-		// markers sit INSIDE the phrase. The first reachable run of this guard
-		// failed on exactly that — which is also the cleanest evidence that
-		// making it reachable changed something. Stripping `**` makes the check
-		// about the WORDS the cell uses rather than which of them an author
-		// bolded, for the same reason prose here goes through collapseWS.
-		cause := strings.ReplaceAll(cols[1], "**", "")
-		// POSITIVE CONTROL: a cell this short is not a cause cell — it means the
-		// split landed on the wrong column, which is exactly the failure that
-		// made this guard vacuous the first time.
-		if len(cause) < 80 {
-			t.Fatalf("CONTROL failure: the extracted cause cell is %d bytes (want >= 80), so the "+
-				"column split is reading the wrong field. Extracted:\n%q", len(cause), cause)
-		}
-		return cause
-	}
-	t.Fatal("CONTROL failure: no Troubleshooting row quotes `largest entries in the bundle`, " +
-		"so every rowSays check in the ledger is asserting against an empty string. The row is on " +
-		"no floor, so it CAN be deleted — but deleting it silently un-documents the block, and this " +
-		"guard is what makes that visible.")
-	return ""
+	// Strip markdown emphasis before returning.
+	//
+	// 🔴 NOT COSMETIC — WITHOUT THIS THE ASSERTION IS WRONG, AND IT WAS.
+	// The cell writes the tense as `What this CLI **would have** sent`, so
+	// the literal substring "would have sent" does not occur: the bold
+	// markers sit INSIDE the phrase. The first reachable run of this guard
+	// failed on exactly that — which is also the cleanest evidence that
+	// making it reachable changed something. Stripping `**` makes the check
+	// about the WORDS the cell uses rather than which of them an author
+	// bolded, for the same reason prose here goes through collapseWS.
+	return strings.ReplaceAll(publishedCauseFor(t, "largest entries in the bundle"), "**", "")
 }
 
 // TestREADMEPreUploadRefusalPrintsNoEntryBlock is the BEHAVIOURAL half of R1.

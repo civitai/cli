@@ -299,6 +299,14 @@ var docsURLSpellingLedger = map[string]string{
 		"the prose those pages carry, so what matches here is the `/apps/guide/` PREFIX rather than a whole " +
 		"URL. It rots the same way and costs more: a reader sent to a moved page does not get a stale " +
 		"paragraph, they get nothing, because the paragraph was deleted on the grounds that the page carries it",
+	"internal/cmd/troubleshooting_published_test.go": "the VENDORED mirror of the published troubleshooting " +
+		"index, added when README.md's `## Troubleshooting` became a pointer to " +
+		"`/site/guide/cli-troubleshooting`. Two of its rows' `readMore` targets are `/apps/guide/` pages " +
+		"(store-listing, packaging), so the block's docs URLs are spelled here as well. It rots in a way " +
+		"worth naming: these are not links a reader follows out of this repo — they are a RECORD of where " +
+		"the published page sends them, so a rotted spelling here makes the ledger describe a page that " +
+		"does not exist while the live page is fine, and readmeAnchorTarget deliberately treats them as " +
+		"unresolvable so nothing else will notice",
 	"internal/pkgzip/testdata/readme_dotenv_section.golden.txt": "the whitespace-collapsed COPY of README.md's " +
 		"dotenv section that TestREADMEDotenvSectionIsTheReviewedCopy pins. That section now ends in a pointer " +
 		"to `/apps/guide/packaging#which-dotenv-files-end-up-in-the-bundle`, so the URL is spelled here as well " +

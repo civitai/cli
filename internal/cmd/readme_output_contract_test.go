@@ -10,10 +10,20 @@ import (
 	"github.com/civitai/cli/pkg/civitai"
 )
 
-// This file covers the user-typed echo promise in README's `## Global flags`,
-// which was published UNQUALIFIED ("echoed byte-for-byte and deliberately not
-// rewritten") while `internal/saferune` documents two exceptions and this
-// package's own ledger MEASURES two more (`--root`, `--for-base`).
+// This file covers the user-typed echo promise that used to live in README's
+// `## Global flags` and is now published at
+// developer.civitai.com/site/guide/cli-output. It was published UNQUALIFIED
+// ("echoed byte-for-byte and deliberately not rewritten") while
+// `internal/saferune` documents two exceptions and this package's own ledger
+// MEASURES two more (`--root`, `--for-base`).
+//
+// 🔴 NEITHER HALF OF THIS FILE MOVED WITH THE SECTION, AND THE REASON DIFFERS.
+// The BAN was always over the whole document, so it still guards README.md
+// against the retracted sentence reappearing anywhere — on this surface it is now
+// an INVARIANT guard rather than a regression one, since the prose it was red
+// against is gone; it is kept because restoring that sentence would be just as
+// wrong today. The BEHAVIOURAL test never read the README at all. What DID have
+// to be rebuilt is the ban's control — see the test's own comment.
 //
 // It holds exactly two things: a BAN on the retracted sentence, and a
 // BEHAVIOURAL test that the two extra measured cases really are filtered. Both
@@ -91,18 +101,50 @@ const retractedEchoClaim = "is echoed byte-for-byte and is deliberately *not* re
 // literals.
 func TestREADMEDoesNotAssertTheUnqualifiedEchoPromise(t *testing.T) {
 	md := readREADME(t)
-	section := readmeSectionByAnchor(t, md, "global-flags")
-	flat := flattenWS(section)
-	// CONTROL: the whole-README ban below must be able to see text, and the
-	// section must be the one carrying the gate's promises.
-	if !strings.Contains(flat, "what a table cell can contain") && !strings.Contains(flat, "Terminal escapes are removed") {
-		t.Fatalf("CONTROL failure: the extracted `## Global flags` section does not contain the terminal-gate "+
-			"promises, so this guard is reading the wrong block (%d bytes)", len(flat))
+
+	// 🔴 THE BAN SURVIVED THE CUT; ITS CONTROL DID NOT — AND THAT IS THE EXACT
+	// SHAPE OF A GREEN-VACUOUS GUARD. Leg 1 has always read the WHOLE document,
+	// so deleting `## Global flags` (now a pointer to
+	// developer.civitai.com/site/guide/cli-output) did not touch it. But the
+	// control that proved the ban was reading anything real was a lookup of THAT
+	// section, and it would have gone on passing only because it fatals — a
+	// maintainer who "fixed" it by deleting the lookup would have been left with
+	// a ban nothing proves can fire.
+	//
+	// So the control is replaced with a STRICTLY STRONGER pair, and neither half
+	// depends on any section existing:
+	//
+	//  1. POSITIVE CONTROL — the ban is shown to FIRE, on a synthetic document
+	//     carrying the retracted sentence. The old control only proxied this by
+	//     checking that some text was found; this measures the thing itself.
+	//  2. NEGATIVE CONTROL — the ban is shown NOT to fire on the sentence that
+	//     merely QUOTES the claim in order to retract it, which is prose the
+	//     document is allowed to contain.
+	//
+	// Both were previously covered only indirectly, via
+	// TestReadmeAssertsFlagWinsRulePredicate on the sibling predicate.
+	const bait = "and the value you typed " + retractedEchoClaim + " by the CLI"
+	if asserted, _ := assertsUnquotedClaim(flattenWS(bait), retractedEchoClaim); !asserted {
+		t.Fatalf("CONTROL failure: assertsUnquotedClaim did not fire on a document that plainly ASSERTS "+
+			"the retracted claim, so a green verdict below would be a fact about the checker rather "+
+			"than about README.md.\nbait: %s", bait)
+	}
+	const quoted = "the retracted sentence was `" + retractedEchoClaim + "` and it is wrong"
+	if asserted, ctx := assertsUnquotedClaim(flattenWS(quoted), retractedEchoClaim); asserted {
+		t.Fatalf("CONTROL failure: assertsUnquotedClaim fired on a MENTION of the claim (backticked, in a "+
+			"sentence retracting it). It would forbid the prose the document wants, and a guard that "+
+			"fails on correct input is one somebody deletes.\ncontext: %s", ctx)
+	}
+	// And the document under test must be big enough to be the README at all.
+	if len(md) < 50_000 {
+		t.Fatalf("CONTROL failure: README.md is only %d bytes — readREADME is reading the wrong file, and "+
+			"the ban below would be a verdict about nothing", len(md))
 	}
 
 	// --- Leg 1: the retraction, over the WHOLE document. ---
 	// Restoring the sentence anywhere else would be just as wrong, so the ban is
-	// not scoped to the section.
+	// not scoped to any section — which is what let it survive the deletion of the
+	// one it used to be controlled against.
 	if asserted, ctx := assertsUnquotedClaim(flattenWS(md), retractedEchoClaim); asserted {
 		t.Errorf("the README ASSERTS the retracted echo promise — %q — here:\n  …%s…\n\n"+
 			"internal/saferune documents two exceptions to it and internal/cmd's own ledger "+
@@ -183,9 +225,10 @@ func TestDownloadFiltersRootAndForBase(t *testing.T) {
 		if !strings.Contains(note, root) {
 			t.Fatalf("FINDING: routeDir emits a note but no longer interpolates the user's --root, so the "+
 				"line whose job is to say WHERE the file goes does not report it.\n  note: %q\n\n"+
-				"README's `## Global flags` states that `civitai download` filters the value given to "+
-				"--root in the very line reporting it. With --root absent from that line the claim is "+
-				"unfalsifiable and should be removed from the README — do not relax this assertion.", note)
+				"The published output contract (developer.civitai.com/site/guide/cli-output) states that "+
+				"`civitai download` filters the value given to --root in the very line reporting it. With "+
+				"--root absent from that line the claim is unfalsifiable and should be removed from that "+
+				"page — do not relax this assertion.", note)
 		}
 
 		var out bytes.Buffer
@@ -197,8 +240,9 @@ func TestDownloadFiltersRootAndForBase(t *testing.T) {
 			t.Fatalf("CONTROL failure, not a finding: the plan printed no note line:\n%s", plan)
 		}
 		if strings.Contains(plan, root) {
-			t.Errorf("the plan's note echoed --root byte-for-byte. The README now says download FILTERS "+
-				"--root; if that stopped being true, the README's sentence naming --root is wrong.\n%s", plan)
+			t.Errorf("the plan's note echoed --root byte-for-byte. The published output contract says "+
+				"download FILTERS --root; if that stopped being true, that page's sentence naming "+
+				"--root is wrong.\n%s", plan)
 		}
 		if !strings.Contains(plan, "my"+"models") {
 			t.Errorf("the plan's note did not render --root with the invisible rune removed, so it is neither "+
@@ -224,7 +268,8 @@ func TestDownloadFiltersRootAndForBase(t *testing.T) {
 		// longer names --for-base makes the README's claim unfalsifiable.
 		if !strings.Contains(w, forBase) {
 			t.Fatalf("FINDING: baseModelWarning no longer interpolates the user's --for-base, so no line "+
-				"reports it.\n  warning: %q\n\nThe README names --for-base as a value download filters; "+
+				"reports it.\n  warning: %q\n\nThe published output contract names --for-base as a value "+
+				"download filters; "+
 				"with it absent that claim should be removed rather than this assertion relaxed.", w)
 		}
 

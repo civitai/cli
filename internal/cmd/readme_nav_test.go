@@ -383,9 +383,19 @@ func readmeSections(t *testing.T, md string) []readmeSection {
 // per omission and reads as a to-do list, whereas naming the section states a
 // rule a future author can apply to a subsection that does not exist yet.
 //
-// Both entries are the same shape — a section whose `###` children are an
-// ENUMERATION of the index directly above them, not topics a reader navigates
-// to. Everything else in the README is in scope.
+// 🔴 IT HAS ONE ENTRY, NOT TWO, AND THE SECOND WAS DROPPED RATHER THAN KEPT AS
+// A RULE. `## Troubleshooting` was exempt because its five `###` children were
+// the bucket headers of ONE lookup table. That table is now published at
+// developer.civitai.com/site/guide/cli-troubleshooting and the README section is
+// a pointer with no `###` children at all — so the exemption exempts nothing,
+// which the loop in TestREADMETableOfContentsCoversEverySection reports as a
+// stale rule nobody can check ("drop it"). Leaving the key would have been a
+// RED run, not a silent one; it is named here because a reader of this map will
+// wonder where the second entry went.
+//
+// The remaining entry is a section whose `###` children are an ENUMERATION of
+// the index directly above them, not topics a reader navigates to. Everything
+// else in the README is in scope.
 var readmeTOCExemptSections = map[string]string{
 	"Exit codes": "its `### Exit code N` subsections are GENERATED from exitCodeDocs " +
 		"(internal/cmd/exitcodes_doc.go) and asserted byte-for-byte by " +
@@ -395,13 +405,6 @@ var readmeTOCExemptSections = map[string]string{
 		"Each is already reachable by name from the `[Detail](#exit-code-N)` link in the " +
 		"table the generator renders alongside them. Putting them in the TOC is a " +
 		"decision to generate the TOC too, not a line to add by hand.",
-	"Troubleshooting": "its `###` children are the column headers of ONE lookup table — " +
-		"the section's own first line is \"Look up the message you got\", and the TOC " +
-		"entry for it already says \"look the error message up here\". A reader arrives " +
-		"by searching for their error string, not by picking `Generating` over " +
-		"`Everything else`, so the buckets are an ordering of the index rather than " +
-		"destinations. Every row already carries its own cross-reference into the " +
-		"section that holds the detail, and those ARE in the TOC.",
 }
 
 // readmeTOCMinSubsections is the anti-vacuity floor for the widened gate: the
@@ -447,8 +450,22 @@ var readmeTOCExemptSections = map[string]string{
 // leaves 4, which is below 7 and still a RED run — the same property the 25
 // bought against `## Generate` when the population was 26.
 //
-// Measured at the head of this change: 9 in-scope `###` — `## Install` 5,
-// `## Set up your coding agent` 1, `## Submit & auth` 2, `## Global flags` 1.
+// 🔴 NOT LOWERED AGAIN BY THE `## Global flags` / `## Troubleshooting` CUT, AND
+// THE MEASUREMENT IS WHY. That change removed `### What a table cell can contain`
+// (the only in-scope `###` under `## Global flags`) and the five `###` buckets
+// under `## Troubleshooting` — but the buckets were EXEMPT, so they were never
+// counted here. The in-scope population therefore went 9 -> 8, and 8 is still
+// above 7: the constant needs no move, and moving it would be the ratchet the
+// comment above warns about.
+//
+// The purpose still holds at 8. The largest exemptable section is `## Install`
+// with 5 children; exempting it leaves 3, which is below 7 and a RED run — the
+// same property the 25 bought when the population was 26 and the 7 bought when
+// it was 9. (A one-child section can be exempted without tripping this at either
+// population — true before this change and after it, so nothing was lost.)
+//
+// Measured after this change: 8 in-scope `###` — `## Install` 5,
+// `## Set up your coding agent` 1, `## Submit & auth` 2.
 // Recorded as a measurement with its date-of-measure, not as a standing claim;
 // the comment above this constant already warns that a census in a comment goes
 // stale silently, so re-run it rather than trusting this line.

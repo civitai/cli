@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -152,12 +151,23 @@ func TestREADMENoDownloadListingClaimMatchesTheRenderer(t *testing.T) {
 // wantFlattenedFieldsSentence is the `label: value` bullet's FIRST sentence —
 // the one that enumerates what is flattened — normalised.
 //
-// The bullet continues for another eight lines of caveats that this test has no
-// claim on; pinning the whole bullet would make every edit to those caveats a
-// failure of a guard about something else.
-var flattenedFieldsSentenceRe = regexp.MustCompile(
-	`(?s)- \*\*` + "`" + `label: value` + "`" + ` lines are a narrower promise\.\*\*(.*?) — are flattened the same way\.`)
-
+// 🔴 IT IS NOW THE VENDORED RECORD OF A PUBLISHED SENTENCE, NOT AN EXPECTATION
+// COMPARED AGAINST README.md. That bullet lived in `### What a table cell can
+// contain`, under `## Global flags`, and both are now a pointer to
+// developer.civitai.com/site/guide/cli-output. The document-comparison half of
+// this guard therefore has no in-repo subject and is RETIRED; what survives is
+// the half that made the pin a statement about the CODE rather than about the
+// text — the behavioural assertions at the end of the test, which exercise the
+// one surface the sentence's narrowest clause is about.
+//
+// ⚠ DECLARED RESIDUAL: nothing now detects a WIDENING of the published sentence
+// that is not mirrored into this constant. The anti-widening property the regex
+// bought (the published enumeration must not grow to cover `generate`'s
+// deliberately multi-line error reason) is the part that was lost; the constant
+// is kept as the greppable record of exactly what was published, so a future
+// editor of that page has something to diff against. The multiLineClaim
+// contradiction check that paired with it is retired for the same reason and by
+// the same argument — its subject was the bullet three items down the same list.
 const wantFlattenedFieldsSentence = "The single-line metadata fields — `images … --meta`'s model / " +
 	"sampler / seed / resources, `app status --id`'s live URL and block id, `app listing status`'s " +
 	"screenshot ids and captions, the `--no-wait` re-attach hint, and `generate`'s wait-path lines (the " +
@@ -167,33 +177,17 @@ const wantFlattenedFieldsSentence = "The single-line metadata fields — `images
 // TestREADMEFlattenedWaitPathClaimIsNotWiderThanTheCode pins the enumeration of
 // what `generate` flattens while it waits, and the one surface that was raw.
 func TestREADMEFlattenedWaitPathClaimIsNotWiderThanTheCode(t *testing.T) {
-	readme := readmeText(t)
-	m := flattenedFieldsSentenceRe.FindStringSubmatch(readme)
-	if m == nil {
-		t.Fatalf("CONTROL failure, not a finding: README.md's `label: value` bullet no longer matches the "+
-			"extractor (pattern: %s), so every assertion below would be about nothing.", flattenedFieldsSentenceRe)
-	}
-	if got := normaliseProse(m[1]); got != wantFlattenedFieldsSentence {
-		t.Errorf("README.md's flattened-fields enumeration has changed.\n--- README.md says ---\n%s\n"+
-			"--- this test pins ---\n%s\n\nThe sentence this replaced said \"every line `generate` writes "+
-			"while it waits\", which was false at the commit that wrote it AND is wider than the code even "+
-			"now: the failure reason this command appends to its dead-end errors is deliberately "+
-			"MULTI-LINE (serverReasonSuffix, indentContinuation), and the bullet three items down says so. "+
-			"A universal quantifier here contradicts it.", got, wantFlattenedFieldsSentence)
+	// CONTROL, carried over from the deleted regex extractor: the vendored
+	// sentence must still be the enumeration it claims to be. A gutted constant
+	// would leave the behavioural assertions below reading as coverage for a claim
+	// nothing records.
+	if !strings.Contains(wantFlattenedFieldsSentence, "the status line the poll prints or redraws") {
+		t.Fatalf("CONTROL failure, not a finding: wantFlattenedFieldsSentence no longer names the poll's "+
+			"status line, which is the one surface the behavioural half below measures. The constant and "+
+			"the assertions have come apart:\n%s", wantFlattenedFieldsSentence)
 	}
 
-	// The contradiction guard. These two bullets make OPPOSITE claims about
-	// generate's error path, and the flattened one is the one that drifted wider.
-	// If the multi-line bullet ever stops naming it, the enumeration above may be
-	// widened — but that is a decision, not a silent consequence.
-	const multiLineClaim = "the same reason on `generate`'s **error** path"
-	if !strings.Contains(readme, multiLineClaim) {
-		t.Errorf("README.md's multi-line-surfaces bullet no longer names %q. The flattened-fields "+
-			"enumeration above is worded to stay OFF generate's error path precisely because that reason "+
-			"keeps its line breaks; if that stopped being true, both bullets move together.", multiLineClaim)
-	}
-
-	// The behavioural half, on the surface the sentence's new clause is about:
+	// The behavioural half, on the surface the sentence's narrowest clause is about:
 	// the poll's retry line, which renders the SERVER's own message.
 	var b bytes.Buffer
 	r := &quietPollReporter{w: &b, now: newFakeClock().Now, heartbeat: 0}
@@ -211,11 +205,12 @@ func TestREADMEFlattenedWaitPathClaimIsNotWiderThanTheCode(t *testing.T) {
 			"the poll's retry line:\n%q", line)
 	}
 	if n := strings.Count(strings.TrimSuffix(line, "\n"), "\n"); n != 0 {
-		t.Errorf("README.md says the status line the poll prints — the server's own message included — is "+
-			"flattened. It emitted %d extra line(s):\n%q", n, line)
+		t.Errorf("the published output contract (developer.civitai.com/site/guide/cli-output, mirrored in "+
+			"wantFlattenedFieldsSentence) says the status line the poll prints — the server's own message "+
+			"included — is flattened. It emitted %d extra line(s):\n%q", n, line)
 	}
 	if strings.Contains(line, "\t") {
-		t.Errorf("README.md says that line is flattened to one line AND one tab-separated field. A TAB "+
-			"survived:\n%q", line)
+		t.Errorf("the published output contract says that line is flattened to one line AND one "+
+			"tab-separated field. A TAB survived:\n%q", line)
 	}
 }

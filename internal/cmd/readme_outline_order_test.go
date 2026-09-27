@@ -153,6 +153,19 @@ func TestREADMEContentsListsSectionsInDocumentOrder(t *testing.T) {
 	// next `###` anyone retires — a false red about ordering, which is the one
 	// thing this test is not about. 30 keeps it a real control: the comparison
 	// still spans every `##` in the document.
+	//
+	// 🔴 NOT LOWERED AGAIN by the `## Global flags` / `## Troubleshooting` cut.
+	// Both `##` HEADINGS survive that change as pointers — which is what keeps
+	// `#global-flags` and `#troubleshooting` resolving for the links that still
+	// target them — so the `##` population is unchanged and exactly one `###`
+	// left (`### What a table cell can contain`). MEASURED 40 -> 39 in-scope
+	// headings against a floor of 30: no move needed, and moving it would be the
+	// ratchet the 40 -> 30 note above exists to warn about.
+	//
+	// (The five `###` buckets under `## Troubleshooting` went too, but they were
+	// EXEMPT and so were never in this walk — which is why one deletion of ~29 KB
+	// of README costs this count exactly one heading. Counted, not predicted: the
+	// first estimate of this number was 37.)
 	if len(doc) < 30 {
 		t.Fatalf("CONTROL failure: the document walk found only %d in-scope headings — the section "+
 			"walk or the exemption map is reading the wrong text, and an order verdict over that "+

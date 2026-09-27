@@ -379,6 +379,29 @@ var boolValueCandidates = []string{
 	"yes", "YES", "Yes", "no", "on", "off", "y", "n", "enabled", "2", "",
 }
 
+// publishedColourDocURL is where the CLI's output contract — the colour
+// precedence, the CIVITAI_* boolean parsing, and what a table cell can contain —
+// is published now that README.md's `## Global flags` is a pointer to it.
+const publishedColourDocURL = "https://developer.civitai.com/site/guide/cli-output"
+
+// publishedColourValueProse is the vendored record of the two sentences that
+// page uses to enumerate the CIVITAI_NO_COLOR / CIVITAI_COLOR value set,
+// transcribed verbatim from the live page.
+//
+// 🔴 IT IS A MIRROR, WITH THE SAME RESIDUAL EVERY VENDORED MIRROR IN THIS REPO
+// HAS (AGENTS.md items 2, 4, 11): nothing here can prove it still matches the
+// page. It is kept because the alternative was deleting leg 3 of
+// TestREADMEColorEnvValuesMatchTheBooleanParser outright, and a named, greppable
+// record of what the page must say is worth more than nothing — the twelve
+// spellings are derived from strconv.ParseBool at run time, so a change to Go's
+// boolean grammar still reddens something and names the page to fix.
+const publishedColourValueProse = "But `CIVITAI_NO_COLOR` and `CIVITAI_COLOR` are read as **booleans**. " +
+	"The twelve spellings are `1`, `t`, `T`, `TRUE`, `true`, `True` (on) and " +
+	"`0`, `f`, `F`, `FALSE`, `false`, `False` (off). Anything else — `yes`, `on`, `y`, `enabled`, `2`, " +
+	"an empty string — parses as **false** and does nothing at all, with no warning: " +
+	"`CIVITAI_NO_COLOR=yes` does **not** disable colour, `CIVITAI_NO_COLOR=1` does, and an explicit " +
+	"`CIVITAI_NO_COLOR=0` is a real *false* that leaves colour alone (unlike `NO_COLOR=0`)."
+
 // TestREADMEColorEnvValuesMatchTheBooleanParser pins the exact set of values
 // `CIVITAI_NO_COLOR` / `CIVITAI_COLOR` accept, because that set is NOT the one
 // `NO_COLOR` / `CLICOLOR_FORCE` accept and the README used to present the pairs
@@ -532,36 +555,54 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 	}
 
 	// --- Leg 3: the document. ---
-	md := readREADME(t)
-	body := readmeSectionByAnchor(t, md, "global-flags")
-	if len(strings.TrimSpace(body)) < 800 {
-		t.Fatalf("CONTROL failure: the README's `## Global flags` section is only %d byte(s) long — "+
-			"the extractor is reading the wrong block", len(strings.TrimSpace(body)))
+	//
+	// 🔴 RE-POINTED AT A VENDORED CONSTANT, AND ITS REMAINING POWER IS SMALLER
+	// THAN IT WAS — SAID PLAINLY RATHER THAN GLOSSED. This leg used to read
+	// README.md's `## Global flags` section, which is now a pointer to
+	// developer.civitai.com/site/guide/cli-output. There is no other in-repo copy
+	// of the twelve-spelling enumeration: `## Configuration`'s table says
+	// "boolean only: `1`/`true`/…" and root.go's flag usage says only "also via
+	// NO_COLOR or CIVITAI_NO_COLOR", so neither enumerates anything.
+	//
+	// What is left is exitcodes_doc.go's mechanism: a Go declaration is the
+	// authority, and publishedColourValueProse is the vendored record of what the
+	// page says. The assertion below is NOT tautological — `accepted` is derived
+	// at run time from strconv.ParseBool — but its discriminating power is narrow:
+	// it fires when Go's boolean grammar or boolValueCandidates changes and the
+	// published sentence has not been re-synced. Legs 1 and 2 are what pin the
+	// BEHAVIOUR and the MECHANISM, and they are untouched.
+	//
+	// ⚠ DECLARED RESIDUAL 1: nothing in this repository can prove the live page
+	// still carries this sentence. Same residual as the troubleshooting ledger.
+	// ⚠ DECLARED RESIDUAL 2: the old leg also required the words "not
+	// interchangeable". MEASURED ABSENT from the destination page, which makes
+	// the same point under the heading "The `CIVITAI_*` variables are parsed as
+	// BOOLEANS". Asserting it here would be asserting a phrasing the publisher
+	// did not choose, so it is dropped rather than re-pointed.
+	flat := flattenWS(publishedColourValueProse)
+	if len(strings.TrimSpace(flat)) < 200 {
+		t.Fatalf("CONTROL failure: publishedColourValueProse is only %d byte(s) long — it is a truncated "+
+			"or gutted record, and every assertion below would be about nothing",
+			len(strings.TrimSpace(flat)))
 	}
-	flat := flattenWS(body)
 	for _, v := range accepted {
 		if !strings.Contains(flat, "`"+v+"`") {
-			t.Errorf("the README's `## Global flags` section does not name the accepted value `%s` for "+
-				"CIVITAI_NO_COLOR / CIVITAI_COLOR. strconv.ParseBool accepts exactly %v and the section has to "+
-				"enumerate them, because every OTHER value parses as false and does nothing with no warning.",
-				v, accepted)
+			t.Errorf("the published colour-value prose does not name the accepted value `%s` for "+
+				"CIVITAI_NO_COLOR / CIVITAI_COLOR. strconv.ParseBool accepts exactly %v and the page has to "+
+				"enumerate them, because every OTHER value parses as false and does nothing with no warning.\n"+
+				"Fix the page at %s and re-sync publishedColourValueProse.", v, accepted, publishedColourDocURL)
 		}
 	}
 	// It must also say, by example, that an unlisted value is inert — an
 	// enumeration a reader does not know is EXHAUSTIVE is not one.
 	if !strings.Contains(flat, "`yes`") {
-		t.Errorf("the README's `## Global flags` section does not name `yes` as a value that does nothing. " +
+		t.Errorf("the published colour-value prose does not name `yes` as a value that does nothing. " +
 			"strconv.ParseBool rejects it, so CIVITAI_NO_COLOR=yes silently leaves colour on — the single " +
 			"symptom this documentation exists to prevent.")
 	}
-	for _, want := range []string{
-		"CIVITAI_NO_COLOR=yes",
-		"not interchangeable",
-	} {
-		if !strings.Contains(strings.ToLower(flat), strings.ToLower(want)) {
-			t.Errorf("the README's `## Global flags` section does not state %q. The two pairs of variables "+
-				"accept different value sets, and presenting them as equivalent is the defect being fixed.", want)
-		}
+	if !strings.Contains(flat, "CIVITAI_NO_COLOR=yes") {
+		t.Errorf("the published colour-value prose does not state %q — the worked example that tells a "+
+			"reader the enumeration is exhaustive rather than illustrative.", "CIVITAI_NO_COLOR=yes")
 	}
 }
 
