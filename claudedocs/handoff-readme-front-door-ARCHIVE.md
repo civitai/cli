@@ -245,3 +245,55 @@ paragraph above and by `## State now`:
 top-to-bottom meets the correction first — which is the only reason this is a note
 rather than a defect.
 
+
+
+## ⤴ Evicted 2026-09-27 — superseded duplicates (arc close, size ratchet)
+
+Eight blocks the append bucket accumulated in DUPLICATE. Each was superseded by a LATER,
+fuller generation that stays in the handoff; these are the earlier copies, MOVED not deleted.
+Read them only to check what an earlier round already tried.
+
+### 🔴 A GUARD CAN BE BREAKABLE WITHOUT BEING REACHABLE, AND A MUTATION MATRIX CANNOT SEE THE DIFFERENCE
+
+The session's most transferable finding, measured twice. Guard 6 leg 3 (above) was mutated, went red, and was recorded as a clean kill — but the mutant edited *the constant the guard read*, not the thing the guard claimed to watch, and every trigger its comment named dies at an earlier `t.Fatalf` in the same function. Independently, #727's own round-1 matrix found **M6 and M7 dying to their CONTROL rather than their assertion**, and had to isolate M6b/M7b to prove the real arms reachable.
+
+🔴 **So: after watching a mutant die, ask WHICH assertion killed it and whether a REAL change could reach that assertion at all.** "I broke it and a test failed" is necessary and not sufficient.
+
+### 🔴 I RELAYED SEVEN NUMBERS AND CITATIONS I HAD NOT DERIVED, AND EVERY AGENT THAT CAUGHT ONE WAS RIGHT
+
+Not a list of trivia — a single behaviour with one fix. In order: `safeterm_userinput_test.go:68,73` (real rows 107/108/112); "~90 bytes" for an AGENTS.md edit (+138); "12 recipe pages carry `## Troubleshooting`" (49, and my own earlier grep had shown ~50); "28 of 60 rows / 32 of 64 links" (32 of 60 / 33 of 69); `download.go:336` for `reportBaseModel` (:320/:399, inherited from the ledger's own stale text); "prints the raw `--root` twice" (once — the wrapped `%w` names the *blocker* path, so the doubling is fixture-dependent); and 19 distinct external URLs in Troubleshooting (25).
+
+🔴 **The fix is not "check numbers". It is: a citation in a subagent's report, an audit finding, or a code comment is a CLAIM, and relaying it makes it MINE.** Two of the seven I had already measured correctly myself and then overwrote with someone else's figure.
+
+### 🔴 THE BIGGEST SINGLE ERROR: I CALLED A README CUT A BEHAVIOUR CHANGE IN THE SHIPPED BINARY, TWICE
+
+I read `internal/cmd/exitcodes_doc.go:176`'s `[Troubleshooting](#troubleshooting)` as reaching `civitai --help`, and briefed two agents and the operator that cutting the section would dangle an anchor **in the CLI itself**. It is a `Detail` entry; `TestBothFieldsReachTheirSurfaces` asserts `Detail` must **not** reach `--help`. Measured on a built binary: **0** mentions, positive control `Full ledger` = 1. The cut is README-only.
+
+🔴 **A field's CONTENT does not tell you its SURFACE.** I never asked which struct field the line sat in.
+
+### 🔴 AN INSTRUMENT THAT OVER-FIRES IS AS USELESS AS ONE THAT UNDER-FIRES
+
+Sweeping for the surviving closed-set claim, my first pattern (`a cardinal near "exception"`) returned ~60 hits across the tree — every *correct* sentence that says "two are documented, and the set is not closed" matched, burying the signal. The defect is an **unqualified** closed-set assertion, so the pattern needs the *absence* of a not-closed qualifier. Narrowed, with base as the positive control: **4 assertions at base, 0 at head.** The one head hit was a false positive of my own pattern.
+
+🔴 **Validate an instrument in BOTH directions. A pattern with no negative case is not narrow enough to quote.**
+
+### ⚠ THREE MORE MEASUREMENT TRAPS, EACH COSTING A WRONG READING
+
+- **The `grep` wrapper choked on an ESC regex** (`ugrep: error at position 5 … mismatched [`) and a loop over four surfaces printed `plain` four times — a broken instrument reading as a measurement. Replaced with `tr -dc '\033' | wc -c`, validated at 2 on a string containing ESC and 0 on one that does not.
+- **A `custom-block` grep found ZERO** and nearly had me report a rendering break; the class order is `warning custom-block`, not the reverse. Positive control on a page known to carry containers: 5.
+- **A background runner reported `exit code 0` for a `make ci` control** because a trailing `tee` swallowed the status. Real rc 2, found by reading content. **Count the runner's own result lines; never read a wrapper's exit code.**
+
+### ⚠ TWO GUARDS NOBODY'S INVENTORY FOUND, AND HOW EACH WAS CAUGHT
+
+- **`TestREADMEDoesNotAssertTheUnqualifiedEchoPromise`** — a **whole-document ban that survives the cut, whose CONTROL read the section being deleted**. The assertion looks unaffected, so a filename sweep finds the file and only *reading* it finds the hazard. The shape recurs: two other guards had controls on the section while their assertions did not.
+- **`TestSubmitCeilingValueAndBoundary`** (`internal/appapi/submit_ceiling_value_test.go:77`) — a surface ledger requiring the README to quote `10485760`, which lived **only** in a deleted row. 🔴 **No `internal/cmd` run could ever see it** — caught by full `make ci`. My "run the whole `internal/cmd` package" instruction was structurally insufficient.
+
+### ⚠ A SUBAGENT'S SELF-CORRECTION REMAINS THE BEST SIGNAL IN THE SESSION
+
+Five instances, each volunteered rather than caught: the byte-identity checker that **passed a deleted row** until a count assertion was added; the "a Go map key cannot be ambiguous" comment written about a **slice**; a 47/22 uniqueness count wrong because `unicode_escape` mangled five em-dashed strings (corrected to 49/20); the round-0 deletion of the `--for-base` leg, diagnosed by its own author as *"'no unique kill ⇒ delete' is unsound when the sole co-killer's own remedy removes the coverage"*; and the disclosure that `schema-drift` flipped green for an external reason rather than letting it read as a fix.
+
+### 🔴 `/the-algorithm` ON THE SAFETERM LEDGER: DO NOT BUILD THE GUARD
+
+The requirement "the row classifications must be guarded" has **no maker** — an audit observation the coordinator amplified by writing "recorded as MEASURED in the ledger" into a brief. The ledger's own header refutes it: *"The ledger does not decide whether sanitising is right; it makes the decision impossible to skip."*
+
+**Decisive:** a guard verifying a classification would have to decide each argument's ORIGIN mechanically — and the ledger exists *because* that is not decidable. **Such a guard would make the ledger unnecessary.** The gap was a **citation problem**: three files cited the rows as verified; all three fixed. The ~10% added back is `#725`'s `TestDownloadFiltersRootAndForBase`, which converts one row's *past* measurement into a standing one. **Do not add a classification guard.**
