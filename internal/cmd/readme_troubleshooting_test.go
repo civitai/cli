@@ -125,16 +125,17 @@ func symptomSourceCorpus(t *testing.T) string {
 func TestPublishedTroubleshootingSymptomsExistInTheSource(t *testing.T) {
 	symptoms := publishedTroubleshootingSymptoms
 
-	// ANTI-GUTTING PIN, replacing the old `< 15` floor over a 69-string
-	// extraction. See publishedTroubleshootingSymptomCount for why an exact count
-	// is the right shape here and a floor was the all-or-nothing hazard.
-	if len(symptoms) != publishedTroubleshootingSymptomCount {
-		t.Fatalf("the vendored symptom ledger holds %d strings, want exactly %d.\n"+
-			"Adding or removing a row on %s is allowed; doing it without moving "+
-			"publishedTroubleshootingSymptomCount in the same commit is not — a floor here would let "+
-			"most of the ledger be deleted green and silent, which is exactly how a PARTIAL cut of the "+
-			"old README section would have passed.",
-			len(symptoms), publishedTroubleshootingSymptomCount, publishedTroubleshootingURL)
+	// ANTI-GUTTING FLOOR, replacing the old `< 15` over a 69-string extraction.
+	// See publishedTroubleshootingSymptomFloor for why it is a floor and not an
+	// exact count — readmeMinExternalURLs retired the exact shape in this same
+	// package, and rot here is one-directional anyway.
+	if len(symptoms) < publishedTroubleshootingSymptomFloor {
+		t.Fatalf("the vendored symptom ledger holds %d strings, want at least %d.\n"+
+			"Rows were REMOVED from it. If the published index at %s genuinely dropped them, drop them "+
+			"here too and lower the floor in the same commit with the reason — but the likely cause is "+
+			"the opposite: this guard went red on a reworded message and the entry was deleted instead "+
+			"of the page being updated. That is the rot the floor exists to stop.",
+			len(symptoms), publishedTroubleshootingSymptomFloor, publishedTroubleshootingURL)
 	}
 
 	// Validate the INSTRUMENT before reading its verdict: the searcher must be

@@ -1490,13 +1490,6 @@ lands you on the row that explains it. Rows are grouped by what you were doing
 generating, and everything else — and each one links the guide section that
 holds the detail.
 
-**Those strings are kept honest from this repository, not by hand.**
-`internal/cmd/troubleshooting_published_test.go` vendors the symptom strings that
-page quotes and searches the CLI's own non-test source for each one, so rewording
-an error message in Go is a **failing build** until the page is updated too. The
-check covers what that ledger holds — a row added to the page without a matching
-entry is simply unwatched, not misreported.
-
 Still stuck? Every command takes `--help`, `civitai --help` prints the
 exit-code contract, and failures are differentiated by
 [exit code](#exit-codes) — so a script can branch on the *kind* of failure

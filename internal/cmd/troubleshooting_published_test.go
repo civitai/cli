@@ -23,12 +23,29 @@ import (
 // the token-scope bitmask (item 4) and the ready-ack emitter (item 11). The
 // mechanism is exitcodes_doc.go's: a Go declaration is the authority.
 //
-// 🔴 THE PROPERTY THIS PRESERVES, and it is the only coverage in the suite that
-// has it: A REWORDED ERROR MESSAGE IN THE GO SOURCE MUST REDDEN SOMETHING.
-// TestPublishedTroubleshootingSymptomsExistInTheSource still searches every
-// non-test .go/.tmpl/.js file under internal/, cmd/ and pkg/ for each string
-// below, so rewording a message the published page quotes is still red — the
-// failure now names the page to fix instead of a README row.
+// 🔴 THE PROPERTY THIS PRESERVES: A REWORDED ERROR MESSAGE IN THE GO SOURCE MUST
+// REDDEN SOMETHING. TestPublishedTroubleshootingSymptomsExistInTheSource still
+// searches every non-test .go/.tmpl/.js file under internal/, cmd/ and pkg/ for
+// each string below, so rewording a message the published page quotes is still
+// red — the failure now names the page to fix instead of a README row.
+//
+// 🔴 AN EARLIER VERSION OF THIS PARAGRAPH CALLED THAT "the only coverage in the
+// suite that has it". MEASURED FALSE, and the correction is worth more than the
+// boast. Over all 380 other `_test.go` files (this one excluded, comments
+// stripped, adjacent literals joined), **49 of the 69 strings already appear in
+// test code elsewhere** — app_submit_r2_test.go, readme_submit_entry_block_test.go
+// and generate_test.go among them. This file is the ONLY cover for **20** of
+// them, plus `insufficient Buzz`, whose one other site (generate_test.go:802)
+// sits behind a `t.Skip` that fires when the string stops appearing — so it
+// self-skips instead of failing and is not anti-rot coverage. Call it 21.
+//
+// The overclaim was refutable from this change's own evidence and was not
+// noticed: mutation M1 reworded `refusing to submit without --yes` and produced
+// FIVE failing tests, not one. A "unique coverage" claim contradicted by the
+// matrix printed beside it is the shape to distrust.
+//
+// 21 of 69 is still real, still the only thing watching those 21, and still worth
+// the file — the honest number simply does not need the superlative.
 //
 // 🔴 WHY THIS FILE MUST NOT BECOME A NON-TEST FILE. symptomSourceCorpus excludes
 // `_test.go` on purpose: a corpus that included this file would find every
@@ -46,20 +63,34 @@ import (
 // Named once so every failure message below can hand over an actionable target.
 const publishedTroubleshootingURL = "https://developer.civitai.com/site/guide/cli-troubleshooting"
 
-// publishedTroubleshootingSymptomCount pins the ledger's SIZE exactly, and it
-// replaces a FLOOR of 15 over a 69-string extraction.
+// publishedTroubleshootingSymptomFloor is the anti-GUTTING floor, set at the
+// live count. It replaces a floor of 15 over a 69-string extraction.
 //
-// 🔴 THE FLOOR WAS THE ALL-OR-NOTHING HAZARD, not an anti-vacuity control worth
-// carrying over unchanged. While the strings were EXTRACTED from markdown, 15
-// answered "is the row extractor reading the right text?" — a real question. A
-// literal Go slice cannot be mis-extracted, so that question is gone, and all
-// the floor still did was permit 54 of the 69 strings to be deleted green and
-// silent. That is exactly how a partial cut of the README section would have
-// passed. An exact count cannot be traded that way.
+// 🔴 15 WAS THE ALL-OR-NOTHING HAZARD, AND ITS ORIGINAL PURPOSE IS GONE. While
+// the strings were EXTRACTED from markdown, 15 answered "is the row extractor
+// reading the right text?" — a real question. A literal Go slice cannot be
+// mis-extracted, so that question no longer exists, and all the number still did
+// was permit 54 of the 69 strings to be deleted green and silent. That is exactly
+// how a PARTIAL cut of the README section would have passed.
 //
-// Changing the page is allowed; changing it SILENTLY is not. Add or remove a row
-// here, move this number in the same commit, and say why.
-const publishedTroubleshootingSymptomCount = 69
+// 🔴 IT IS A FLOOR AND NOT AN EXACT COUNT, AND THAT IS A DELIBERATE REVERSAL:
+// this constant WAS `…Count = 69` compared with `!=`. readmeMinExternalURLs in
+// this same package already tried the exact shape and retired it, in terms that
+// apply here unchanged — "IT WAS 37 — THE EXACT COUNT — AND THAT WAS THE WRONG
+// SHAPE. Set on the count, this fires on any honest link removal with a message
+// telling you to lower the constant, which is a change-detector that ratchets,
+// not an invariant." An exact pin taxes every legitimate row the published page
+// gains, and its failure message tells the maintainer to edit the number, which
+// is the habit that makes such a guard worthless.
+//
+// A floor loses nothing, because THE HAZARD IS ONE-DIRECTIONAL: rot is always
+// deletion. The realistic incident is guard 1 going red on a reworded string and
+// somebody deleting the ledger ENTRY instead of updating the page — and `<` at
+// the live count catches that identically, at zero growth tax.
+//
+// Set it to the new count whenever rows are legitimately ADDED, so the floor
+// keeps tracking the live size; never lower it to make a red run green.
+const publishedTroubleshootingSymptomFloor = 69
 
 // publishedTroubleshootingSymptoms is column one of every row of the published
 // index, already split on ` / ` and ellipsis-trimmed — i.e. exactly the strings
