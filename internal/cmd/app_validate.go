@@ -54,8 +54,11 @@ It also emits non-fatal WARNINGS the schema can't catch as hard errors:
     a page app until it acks BLOCK_INIT, so such an app renders fine locally and
     is replaced by a failure card in the real host — the shape of anything
     scaffolded before that was fixed. Advisory ONLY: it infers runtime behaviour
-    from static text. A project depending on @civitai/* is never flagged (the
-    SDK transport acks internally), and it reads source only — never outputDir,
+    from static text. A dependency that ACKS ends the check, and that is an
+    EXACT SET, not the @civitai/ scope: @civitai/blocks-react acks internally
+    (its iframe transport does it for you), while @civitai/app-sdk is the
+    server-side SDK and @civitai/theme and @civitai/components are CSS — none
+    of those three silences it. It reads source only — never outputDir,
     node_modules, markdown, or comments.
 Warnings do NOT fail validation (exit 0) unless --strict is passed.
 

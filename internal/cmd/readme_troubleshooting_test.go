@@ -352,9 +352,13 @@ func symptomAttributions() []symptomAttribution {
 		},
 		{
 			fragment: "is this an App project?",
-			// NOT #listing-media-requirements: that section is image formats,
-			// byte caps and aspect ratios, and says nothing about how `app
-			// listing` decides WHICH app you mean. "After you submit" is where
+			// NOT the listing-media requirements: those are image formats, byte
+			// caps and aspect ratios, and say nothing about how `app listing`
+			// decides WHICH app you mean. (They are no longer a README section at
+			// all — `### Listing media requirements` was relocated to the
+			// platform's Store listing guide — which only strengthens the original
+			// reasoning: there is now no such anchor to point at even if someone
+			// wanted to.) "After you submit" is where
 			// the `app listing` flow is walked through, and it states both the
 			// working-directory resolution and the --slug/--dir remedy this row
 			// sends the reader to use.
@@ -371,7 +375,16 @@ func symptomAttributions() []symptomAttribution {
 			// weaker reason than the one that was recorded — the section
 			// explained the remedy all along, and the row could have pointed
 			// here from the start.
-			anchor: "#after-you-submit-review--approve--deploy",
+			// 🔴 RE-POINTED by the front-door reduction. This row used to link
+			// `### After you submit: review → approve → deploy`, a `###` inside
+			// `## Submit & auth` whose body now lives on the hosted apps guide.
+			// readmeHasAnchor
+			// below requires the target to be a heading IN README.md, so an
+			// off-site URL cannot serve here — the surviving `## Submit & auth`
+			// is the nearest in-document section that explains this error, which
+			// is the property #361 made this assertion about. The README row moved
+			// with it in the same commit.
+			anchor: "#submit--auth",
 			emittedBy: []attributionRun{
 				{
 					// The slug resolve fails on the manifest before any request

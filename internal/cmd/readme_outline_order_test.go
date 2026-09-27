@@ -143,13 +143,22 @@ func TestREADMEContentsListsSectionsInDocumentOrder(t *testing.T) {
 	// floors are about each side in isolation; this one is about the COMPARISON
 	// being worth making. Two short lists agree trivially, and a guard that
 	// passes by having almost nothing to compare is the vacuous green this arc
-	// keeps finding. The real count is 66, so the floor sits well below it.
-	if len(doc) < 40 {
+	// keeps finding.
+	//
+	// 🔴 LOWERED 40 -> 30 by the front-door reduction. The count was 66 when this
+	// guard landed and is 40 at the head of this change: `## Generate`'s 12
+	// `###`, `## Validate fidelity`'s 1, `## Scripting with --json`'s 1 and two
+	// of `## Submit & auth`'s became pointers into developer.civitai.com. 40 is
+	// EXACTLY the old floor, so leaving it there would redden this guard on the
+	// next `###` anyone retires — a false red about ordering, which is the one
+	// thing this test is not about. 30 keeps it a real control: the comparison
+	// still spans every `##` in the document.
+	if len(doc) < 30 {
 		t.Fatalf("CONTROL failure: the document walk found only %d in-scope headings — the section "+
 			"walk or the exemption map is reading the wrong text, and an order verdict over that "+
 			"is a verdict about nothing", len(doc))
 	}
-	if len(toc) < 40 {
+	if len(toc) < 30 {
 		t.Fatalf("CONTROL failure: the Contents block yielded only %d anchors — the TOC extractor is "+
 			"reading the wrong block", len(toc))
 	}

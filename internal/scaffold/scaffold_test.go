@@ -189,7 +189,7 @@ func TestRenderPageMoney(t *testing.T) {
 	// @civitai/app-sdk@0.14.0+. The pins track the CURRENT published minors — the
 	// pins-vs-published guard (TestScaffoldPinsSatisfyPublished) fails CI if they
 	// fall behind npm, so bump BOTH assertions here in lockstep with the .tmpl.
-	mustContain(t, pkg, `"@civitai/blocks-react": "^0.57.0"`)
+	mustContain(t, pkg, `"@civitai/blocks-react": "^0.58.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk": "^0.51.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk"`)
 	mustContain(t, pkg, `"dev:harness"`)

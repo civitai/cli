@@ -226,6 +226,68 @@ import (
 // author still re-derives rather than raises — but the lever the paragraph above
 // said was gone (evicting prose) has now been shown to work, and the prose
 // sections remain the place to pull it.
+//
+// 🔴 THE PROSE LEVER, PULLED A SECOND TIME, AND BOTH CONSTANTS ARE AGAIN
+// UNCHANGED (2026-09-25). #707 had left ONE byte of headroom — 30,499 against
+// 30,500 — which is the frozen-file state the 🔴 note four paragraphs up says is
+// a worse failure than the one the ceiling exists to prevent.
+//
+// WHAT WAS EVICTED, AND WHY IT IS NOT AN ITEM. The eviction playbook's own
+// advice applied literally: the ranking it prints holds no item over 305 bytes
+// (the largest is a trigger block, and the sole inline item is 301), so "the
+// growth is in the PROSE sections and no eviction will fix it" — meaning no ITEM
+// eviction. The `## Shell & CI gotchas` section went to CONTRIBUTING.md
+// VERBATIM, under a heading of its own, with a routing line left behind. It is
+// contributor/CI operating material — four traps that produce a clean exit while
+// measuring nothing — and CONTRIBUTING.md already carried the `make ci-shallow`
+// section those traps are about, so the move puts them beside their subject
+// rather than merely elsewhere. AGENTS.md pays for a session's bytes whether or
+// not the session runs a command; CONTRIBUTING.md costs zero until someone
+// opens it. The routing line keeps the one trap that most often reads as a green
+// about YOUR change (ci-shallow clones the branch tip, so a dirty tree measures
+// the previous commit) inline, because that one fires on a command in this
+// repo's own Makefile.
+//
+// MEASURED, not rounded, and re-measured rather than inherited: AGENTS.md was
+// 30,499 bytes at origin/main 27f2afd and is 28,873 after the eviction plus
+// item 25's amendment, −1,626. Headroom under agentsMaxBytes goes from 1 to
+// 1,627.
+//
+// 🔴 agentsMaxBytesCeiling (30,600) IS UNCHANGED AND DID NOT NEED RE-DERIVING,
+// for the same reason as the 2026-08-26 raise: its property is "the three
+// largest evicted bodies cannot all be re-inlined", and the achieved size FELL,
+// so that restoration now lands at 28,873 + 5,381 = 34,254 — clearing the bound
+// by 3,654 where wave 4 cleared it by 39. It got stricter without being touched.
+//
+// 🔴 WHERE 1,627 SITS, MEASURED — AND A RETRACTION. A first draft of this
+// paragraph called it "the largest budget this file has ever carried", which the
+// SAME FILE refutes 209 lines up: the note on this constant records wave 4
+// leaving 3,500. The full series of achieved headrooms is 3,500 (wave 4, #317),
+// 950 (#495), 210, 183, 673 (2026-09-08) and 1 (main before this change). So
+// 1,627 is the largest SINCE WAVE 4, and it is under half the 3,500 that this
+// constant's own derivation picked in order to "buy the worst prose rewrite this
+// file has ever had". Against that derivation's measured non-item churn — median
+// 103, p90 1,127, max 3,399 — it clears p90 by ~500 and is under half the max.
+// That is the position; there is no superlative to reach for, and composing one
+// is how the retracted sentence got written.
+//
+// 🔴 SAY THE THIN PART OUT LOUD. The CHEAPEST single re-inline of those three —
+// the 1,809-byte body behind item 8, against a 167-byte trigger, so 1,642 net —
+// exceeds 1,627 by FIFTEEN bytes.
+// One more ordinary prose edit and a re-inlined body would fit inside the
+// budget. That is not a reason to lower the budget — the anti-re-inlining
+// property moved out of this constant several waves ago and lives in
+// TestEvidencePointersAndFilesAreTheSameSet and
+// TestInlineAgentsItemsStayUnderTheBreakEven, which are structural and
+// byte-free — but it IS the reason not to read a size failure here as "someone
+// re-inlined an item". Two other tests say that, by name.
+//
+// ⚠ WRITING THOSE FIGURES COST TWO CI ROUNDS, SO THE MECHANISM IS RECORDED HERE
+// RATHER THAN RE-DISCOVERED. agents_xrefs_test.go collapses paragraphs and then
+// reads a comma OR any dash following an item number as a CLUSTER separator, so
+// an item number placed immediately before a figure resolves to a nonexistent
+// item and fails this package. Put the figure first, or put the item number last
+// in its clause.
 const agentsMaxBytes = 30_500
 
 // agentsMaxBytesCeiling bounds agentsMaxBytes itself, so the budget above cannot

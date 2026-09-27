@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/viper"
@@ -870,11 +869,6 @@ const retractedFlagWinsClaim = "the flag wins over the environment"
 // ASSERTION of it.
 var mentionDelims = map[rune]bool{'"': true, '“': true, '”': true, '\'': true, '`': true, '‘': true, '’': true}
 
-// flagWinsRe matches retractedFlagWinsClaim case-insensitively. It is a regexp
-// rather than a strings.Index over a lowercased copy so that the match indices
-// address the ORIGINAL string — see readmeAssertsFlagWinsRule.
-var flagWinsRe = regexp.MustCompile(`(?i)` + regexp.QuoteMeta(retractedFlagWinsClaim))
-
 // readmeAssertsFlagWinsRule reports whether `flat` — a flattenWS-normalised
 // document — STATES the retracted rule, and returns the surrounding text of the
 // first such occurrence.
@@ -921,20 +915,16 @@ func readmeAssertsFlagWinsRule(flat string) (bool, string) {
 	// as an assertion, which is the false-positive direction this whole exemption
 	// exists to remove. Caught by the F4ctl control in the revert matrix, not by
 	// the hand-written fixtures — they are pure ASCII and cannot drift.
-	for _, loc := range flagWinsRe.FindAllStringIndex(flat, -1) {
-		i, end := loc[0], loc[1]
-		before, _ := utf8.DecodeLastRuneInString(flat[:i])
-		after, _ := utf8.DecodeRuneInString(flat[end:])
-		if mentionDelims[before] && mentionDelims[after] {
-			continue // quoted: the document is retracting the claim, not making it.
-		}
-		lo := max(0, i-90)
-		hi := min(len(flat), end+90)
-		// The window is a byte slice of a normalised document, so it can land
-		// mid-rune; the caller only ever prints it.
-		return true, strings.ToValidUTF8(flat[lo:hi], "")
-	}
-	return false, ""
+	//
+	// 🔴 THE BODY IS NOW ONE CALL, AND THAT IS THE POINT. This function and
+	// readme_output_contract_test.go's assertsUnquotedClaim were two copies of the
+	// same predicate over two byte-identical tables of quotation delimiters — the
+	// exact duplication the second one's own comment warned about ("two tables of
+	// quotation characters that disagree is how one of them starts admitting a
+	// claim the other rejects") while shipping it. One rule, one place: the
+	// mechanism lives there, mentionDelims lives here, and both callers get the
+	// same answer by construction rather than by two maintainers agreeing.
+	return assertsUnquotedClaim(flat, retractedFlagWinsClaim)
 }
 
 // TestREADMEConfigPrecedenceIsPerSetting ties the `## Configuration` precedence

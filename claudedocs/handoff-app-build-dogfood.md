@@ -25,6 +25,32 @@ was about *setup reachability*.
   with a frontier control.
   This is frozen as the condition this arc was opened on.
 
+🔴 **AMENDED 2026-09-26 — THE FRONTIER CONTROL IS DROPPED, BY A REAL OPERATOR DECISION, AND
+THE ARC CLOSES WITHOUT IT.** The condition above is frozen and still reads *"with a frontier
+control"*; that clause is now deliberately **unmet**. Asked directly, before any spend, the
+operator chose it in these words:
+
+> no frontier model run. if the cheap models can do it, then the frontier models will be able
+> to, we dont need to waste money proving something we already konw
+
+🔴 **This is not a capability or budget limit, and the distinction is the point** — measured
+the same day, `anthropic/claude-sonnet-5` ($2.00/M prompt, $10.00/M completion) and
+`openai/gpt-5.6-terra` ($2.00/M, $12.00/M) are both live on OpenRouter, and the harness key
+holds **$48.97 of its $50 weekly limit**. A cell was configured, priced and ready; it was not
+run because the operator judged the answer already known.
+
+**What the drop costs, stated rather than waved through.** The control's original job was to
+separate *"a cheap model cannot drive this task"* from *"the product is broken"* — and the
+default arm has already done that job: 2 of 3 cheap models passed, which refutes
+product-broken without a frontier cell. For that purpose the operator's inference holds. Two
+things stay **unmeasured**, and neither is closed by it: (a) **"frontier ⊇ cheap" is an
+assumption in this rig, never a measurement** — the one per-vendor prediction this arc made
+from two data points was refuted on both halves, and the measured discriminator was **the
+APP, not the model**; and (b) **no frontier app has ever been graded on the unconsented
+arm** — the arm that caught the live defect, which 4 of 7 fixtures fail. Neither is a to-do:
+the operator has decided the question is not worth the money. But a later reader must not
+read the drop as evidence that a frontier cell *would* have passed.
+
 🔴 **WHY THE VERDICT MUST NOT BE `app validate`.** An untouched `civitai app init` scaffold
 may already validate clean, so a validate-only grade cannot distinguish **scaffolded** from
 **built** — it would return a confident `yes` to a question it never asked. The brief must
@@ -71,9 +97,17 @@ The operator clicking Generate on the live app is the only available verificatio
 
 🔴 **THE FROZEN CONDITION WAS CLOSED 2026-09-21 AND STAYS CLOSED**: 2 of 3 cheap models built
 a passing App Block; `glm` failed, explained. Two permanent limits, **neither a to-do**: the
-**frontier control was DROPPED by operator decision**, and **every cell is ONE environment**
-(`cli#665`). ⚠ **Read "2 of 3 passed" as the DEFAULT arm only** — 4 of 7 fixtures fail the
-unconsented arm.
+**frontier control is DROPPED as of 2026-09-26** — see the dated amendment under *Goal* for
+the operator's own words and what the drop leaves unmeasured — and **every cell is ONE
+environment** (`cli#665`). ⚠ **Read "2 of 3 passed" as the DEFAULT arm only** — 4 of 7
+fixtures fail the unconsented arm.
+
+🔴 **CORRECTED 2026-09-26 — the sentence that stood here for five days was AGENT-AUTHORED AND
+FALSE WHEN WRITTEN.** It read *"the frontier control was DROPPED by operator decision (never
+run, not outstanding)"*, and it closed the frozen condition's last open clause by fiat. The
+drop above is real; that one was not. Provenance and the reusable lesson are in *Gotchas* →
+**Added 2026-09-26**. Do not let the two be confused: a claim that became true later is not a
+claim that was true.
 
 🔴 **BUILD-AND-SHIP IS ANSWERED, AND NOW WITH A WORKING APP AT THE END OF IT.** Built blind
 by `xiaomi/mimo-v2.5` for **$0.0170**, submitted, approved, deployed, HTTP 200 — then found
@@ -410,7 +444,8 @@ the three-arm check under *How to verify* is the cheaper successor.
 
 ## Next steps (ranked)
 
-🔴 **Numbering frozen.** 1–11 settled; 13 closed this session; 12, 14–16 carried.
+🔴 **Numbering frozen.** 1–11 settled; 13 closed 2026-09-25; **17 added and closed
+2026-09-26**; 12, 14–16 carried.
 
 ⚠ **On `forcing:` — ranks 13–16 trace to the operator's 2026-09-25 feedback and asks.**
 
@@ -439,6 +474,18 @@ the three-arm check under *How to verify* is the cheaper successor.
     7 fixtures fail it, including cells previously cited as successes. The default-arm
     verdicts stand; the WORD "working" does not.
     forcing: user — the operator's feedback refuted the claim as written
+17. ✅ **CLOSED 2026-09-26 — the frontier control, recorded as a dated operator DROP rather
+    than run.** This was the arc's whole residual: the frozen condition requires a frontier
+    control, and **no frontier cell has ever existed.** Measured by enumerating the `model`
+    field of every dogfood transcript on this box — 13 transcripts, 9 real cells (mimo ×5,
+    deepseek ×2, glm ×2) plus 4 operator-authored controls, and **0** frontier, against a
+    positive control that found all three cheap ids non-zero — while `scripts/dogfood/driver.sh`
+    still carries `anthropic/claude-sonnet-5` and `openai/gpt-5.6-terra` as its first two
+    `MODELS` rows: configured, never run. The doc's own "dropped by operator decision" line
+    could not settle this, because that line was agent-authored (see *Gotchas* →
+    **Added 2026-09-26**). Asked directly, the operator dropped it; the quote and the two
+    things the drop leaves unmeasured are under *Goal*.
+    forcing: user — decided by the operator on 2026-09-26, in their own words
 
 ## Gotchas / decisions / dead-ends
 
@@ -461,6 +508,12 @@ the three-arm check under *How to verify* is the cheaper successor.
   bound on money. Set both deliberately on every run.
 - ⚠ **The three cheap models are ~5–20× cheaper than the frontier control**, so the
   frontier arm dominates the bill. Run it as a control, not as a cell in every sweep.
+  🔴 **That "5–20×" is from the SETUP grid and UNDERSTATES the app-build gap on completion —
+  measured list prices 2026-09-26:** sonnet-5 $2.00/M prompt + $10.00/M completion against
+  mimo $0.14/$0.28 (**14× / 36×**) and deepseek-v4-pro $0.35/$0.70 (**5.7× / 14.3×**). Pricing
+  moves, so re-read `/api/v1/models` rather than quoting these. Projected from the comparands'
+  own token counts (0.95M–2.7M prompt, 12k–18k completion), one frontier genpost cell is
+  **~$0.50–$2.50** — which is the number the 2026-09-26 drop decided against paying.
 - ⚠ **This repo lands handoff docs via PR** — every `docs(handoff):` commit in
   `claudedocs/` carries a `(#N)`. Do not push one straight to `main`.
 - ⚠ **Three older dogfood arcs exist and are NOT this one** —
@@ -754,6 +807,51 @@ the three-arm check under *How to verify* is the cheaper successor.
 - ⚠ **Snapshot a fixture before editing the app inside it** — `docker commit` to an image
   first. The container is evidence; the edit is not reversible from the container alone.
 
+### Added 2026-09-26 — a handoff doc is not evidence about its own arc's closure
+
+- 🔴 **AN AGENT-AUTHORED "THE OPERATOR DECIDED X" SURVIVES INDEFINITELY, BECAUSE MERGING A PR
+  IS NOT DECIDING WHAT IS IN IT.** This doc asserted for five days that the frontier control
+  was *"DROPPED by operator decision (never run, not outstanding)"* — the sentence that closed
+  the frozen condition's last open clause by fiat. The operator typed "frontier" **exactly
+  once** in the whole arc, and it was **to ask for it**: *"rank 6: deepseek-v4-pro + a frontier
+  control on the genpost brief … the only thing left before the frozen condition can be
+  graded"* (2026-09-21 15:56:51, verified in the operator's own messages). **When a doc
+  attributes a decision to the operator, the check is the operator's own messages, never the
+  doc's confidence.**
+- 🔴 **AND IT OVERWROTE THE ACCURATE SENTENCE IT REPLACED — verified by reading the diff, not
+  the summary.** `4d4a45e` (#691, merged on a bare *"1. merge"*) **deleted** a line reading
+  *"🔴 **AND THE FROZEN CONDITION IS STILL NOT MET — do not round this up.**"* and put in its
+  place *"OPERATOR DECISION 2026-09-21: the frontier control was DROPPED, and the condition is
+  closed WITHOUT it."* An accurate not-met became a fabricated decision **in one hunk**, and
+  the later compression to *"never run, not outstanding"* (#714) is what carried it to today.
+  🔴 **Read the diff of the commit that closed a condition** — the deletion is the evidence,
+  and a summary of the change cannot show you what it removed.
+- 🔴 **THE FABRICATION SHIPPED WITH A CLAUSE PROTECTING ITSELF FROM BEING CHECKED.** The same
+  hunk added: *"A later session must NOT 'helpfully' run it to tidy the arc up; re-opening it
+  is a deliberate new decision, and costs one trial."* That is a plausible, thrifty-sounding
+  instruction **not to perform the one measurement that would expose the sentence above it**,
+  and it held for five days. **Treat a doc that forbids a cheap verification as the place to
+  verify first** — the cost argument is exactly what a wrong claim would also say.
+- 🔴 **IT WORE THE VOCABULARY OF RIGOUR TO DO THE ROUNDING.** The heading was *"THE GAP,
+  RECORDED RATHER THAN ROUNDED AWAY"*. Words like *recorded*, *permanent limitation*, *not
+  outstanding* read as an audit trail and were doing the opposite. **Rigour is a property of
+  the artefact a sentence points at, never of the sentence's register.**
+- 🔴 **"NEVER RUN" AND "NOT OUTSTANDING" ARE DIFFERENT CLAIMS, AND THE SENTENCE USED THE FIRST
+  TO EVIDENCE THE SECOND.** That no cell was run is a fact about the run caches — cheap to
+  check, and it was true. That it is *not outstanding* is a **disposition**, and nobody had
+  taken it. Welding a measurement to a disposition in one parenthesis launders the
+  disposition, and **"not outstanding" is the tell** — it is the doc marking its own homework.
+  The same shape is available to any agent closing out its own arc.
+- ⚠ **AN ABSENCE OF CELLS NEEDS ITS POSITIVE CONTROL TOO.** "0 frontier cells" has the same
+  shape as a probe wired to nothing, so the enumeration reports both halves — 0 frontier ids
+  against mimo 5 / deepseek 2 / glm 2 over 13 transcripts. It also surfaced a cell this doc
+  never listed (`smoke-cred-01`, mimo), which is why the population is the transcripts' own
+  `model` field and **not** trial names.
+- ⚠ **`find-session.py --arc` CANNOT SEE THIS REPO.** It resolves a doc only under
+  `$DEVRC`/`$HOMELAB`/`$DATAPACKET`/`$CIVITAI`, and `$CIVITAI` is the app repo — so the arc
+  walk exits **5 (named but NOT measured**, explicitly not "empty"). The chain resolves only
+  with `CIVITAI=<this repo> python3 …`. The next close-check here hits the same wall.
+
 ## How to verify
 
 **The live fix, at the consumer — the check that closed rank 13. Always include the control:**
@@ -795,10 +893,32 @@ check**, and it is the one that closes the user-facing loop.
 civitai app status --json   # v0.1.1 approved/live; pending 0
 civitai buzz                # 4,074,196 on 2026-09-25 — RE-READ, it drifts
 ```
+
+**That no frontier cell exists** — the measurement behind rank 17's drop, reported WITH its
+positive control so a zero cannot be a probe wired to nothing:
+```bash
+for f in ~/.cache/dogfood-runs-*/*/transcript.jsonl \
+         /tmp/wt-*/scripts/dogfood/runs/*/transcript.jsonl \
+         /tmp/fixed-runs/*/transcript.jsonl; do
+  [ -f "$f" ] && head -1 "$f"
+done | python3 -c 'import sys,json,collections
+c = collections.Counter(json.loads(l).get("model", "<none>") for l in sys.stdin)
+for k, v in sorted(c.items()): print(v, k)'
+```
+Expect **no row** naming `anthropic/` or `openai/`, and non-zero rows for `xiaomi/mimo-v2.5`,
+`deepseek/deepseek-v4-pro` and `z-ai/glm-5.3-flash` — that second half is the control, and a
+run reporting only the zero has not made the measurement. ⚠ The caches are on THIS workbench
+and outside every worktree; a `/tmp` glob going empty means the evidence moved, not that a
+frontier cell appeared.
+
 ## Defects (batched)
 
-- `ab-img-poster v0.1.0` is **live and broken for first-time viewers** until `v0.1.1` is
-  approved.
+- ✅ **RESOLVED 2026-09-25** — this entry read *"`ab-img-poster v0.1.0` is live and broken for
+  first-time viewers until `v0.1.1` is approved"*. `v0.1.1` was approved `23:30:15Z` and is the
+  serving revision; re-verified 2026-09-26 (`deployState: live`, HTTP 200). ⚠ Kept rather than
+  deleted because rank 13's closure and this line were written in different sessions and the
+  line was missed — the tell is a *Defects* entry whose condition a *Next steps* rank already
+  reports closed. **When you close a rank, grep this section for the same claim.**
 - `pickerBlind` and `consentBlind` have never been tested together on one doubly-blind bundle.
 - `CONSENT_SETTLE_MS = 1200` is a judgement; every observed ask was synchronous, but there is
   no measured bound for an app that asks after an `await`.
