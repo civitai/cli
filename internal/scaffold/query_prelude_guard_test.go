@@ -217,7 +217,19 @@ func TestStripCommentsForQueryScan(t *testing.T) {
 	t.Run("a URL is not a comment start", func(t *testing.T) {
 		// `//` inside `https://` must not eat the rest of the line — that is the
 		// exact over-strip that would hide a violation written after a URL.
-		src := "/* https://developer.civitai.com/apps/responsive */\n" +
+		//
+		// 🔴 THE PATH IS INCIDENTAL, THE `//` IS NOT. What this fixture needs is a
+		// URL carrying a `//` inside a block comment; which page it names changes
+		// nothing about the assertion. It is nonetheless kept LIVE rather than
+		// left on the dead `/apps/responsive` spelling it used to carry, because
+		// TestEveryShippedDocsURLResolves (internal/cmd/docs_links_corpus_test.go)
+		// probes every docs URL this repository spells, a test fixture included —
+		// a dead one here would redden that guard forever with a finding nobody
+		// can act on, and a permanently-red gate is worse than no gate. Do not
+		// "fix" this by excluding test files from that corpus: the corpus covers
+		// them on purpose, because `wantDocsSection` — the golden the shipped
+		// template is compared against — is itself a test literal.
+		src := "/* https://developer.civitai.com/apps/guide/responsive */\n" +
 			"a { background: url(https://x/y.png) } @media (min-width: var(--x)) { .b { color: red } }\n"
 		got := ExtractQueryPreludes(src)
 		if len(got) != 1 || !PreludeUsesVar(got[0]) {

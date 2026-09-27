@@ -1,0 +1,312 @@
+# Docs-site link liveness — the NETWORK half of the docs-URL guards.
+#
+# WHY THIS FILE EXISTS. `internal/cmd/agent_setup_docs_test.go` has shipped a
+# careful four-verdict link prober since #549 — redirects deliberately not
+# followed, a negative control, separate wording for gone/moved/cannot-tell — and
+# NOTHING EVER RAN IT. Its env gate `CIVITAI_CHECK_DOCS_LINKS` was set by no job
+# and no cron, so it fired only when a developer happened to type it.
+#
+# That is not a theoretical gap. The path `/apps/responsive` on that host
+# was a 404 shipped at FOUR scaffold template sites — into every project `civitai
+# app init` produced with `page-money` or `page-vite` — and it survived because
+# both of this repo's link guards were structurally unable to see it:
+# `TestBlockDocsLinksResolve` had the right prober and a corpus of the managed
+# block only, while `TestREADMEExternalURLsResolve` was wired (readme-links.yml)
+# over a corpus of `README.md` only. `readme-links.yml`'s own header states the
+# principle: *a guard nobody runs reads as coverage while providing none, because
+# it stops the next person looking.* It stopped somebody looking for months.
+#
+# So this file is the "wire it" half of that change. The other half is
+# `internal/cmd/docs_links_corpus_test.go`, which widens the corpus to every
+# `developer.civitai.com` address the repository spells. THE PROBER ITSELF IS
+# UNCHANGED — this file adds a caller, and classifies outcomes that were already
+# correct.
+#
+# 🔴 WHY SCHEDULED AND NOT A REQUIRED CHECK — and do NOT add it to branch
+# protection. This repo has measured what a live-network required check does:
+# `pins-vs-published` compares the scaffold pins against npm's published latest,
+# so it reddens every open PR the moment upstream publishes, with no code change
+# anywhere. It froze every open PR twice. A docs page going 404 is not a reason to
+# block an unrelated merge, and published documentation URLs rot on the scale of
+# months. `readme-links.yml` is the precedent being followed, deliberately and in
+# full, including its finding that a red SCHEDULED run reaches almost nobody —
+# GitHub mails scheduled-failure notices only to whoever last touched the `cron`
+# line, through that person's own per-user setting. That is why the `signal` job
+# below exists rather than relying on the run going red.
+#
+# 🔴 WHY IT IS A SECOND WORKFLOW RATHER THAN A SECOND STEP IN readme-links.yml.
+# Two probers with different corpora produce different findings that need
+# different wording, and that file argues the point at length itself: "THE TWO
+# REDS ARE NOT THE SAME FINDING AND MUST NOT SHARE WORDING". Folding this in would
+# have meant one job's `state` output describing two guards, so a dead scaffold
+# link and a dead README link would file one issue under one title. The reusable
+# part — `failure-issue.yml` — IS shared; the classifier is what differs, and that
+# is the part that must not be.
+
+name: docs-links
+
+on:
+  # Weekly, and on a DIFFERENT day from readme-links.yml's Monday. Both probe the
+  # same host and the corpora overlap; running them on the same morning doubles
+  # the chance that one trips a rate limit and reports CANNOT TELL for the other's
+  # reason. Published documentation URLs rot on a scale of months, so nothing is
+  # lost by spreading them.
+  schedule:
+    - cron: "23 7 * * 3"
+  # On demand — load-bearing, not a convenience. It is how a human verifies the
+  # guard still works after editing it, without waiting a week.
+  workflow_dispatch:
+    inputs:
+      # 🔴 THE FIRE DRILL. A notification path nobody has watched work is the same
+      # class of defect as a guard that cannot fail, and it is the specific defect
+      # this whole workflow exists to repair — so shipping the caller without a
+      # rehearsal would repeat the mistake one level up.
+      #
+      # It exercises the REAL path end to end, and it plants the defect in the
+      # place the real one hid: a SCAFFOLD TEMPLATE. Nothing is stubbed — a
+      # genuinely 404ing address, the guard's own DEAD DOCS LINK arm, the real
+      # classifier, the real issue. A rehearsal against a fake failure would only
+      # prove the fake works.
+      drill:
+        description: "Fire drill: append a known-404 docs URL to a scaffold template in the RUNNER's checkout, so the dead-link path and the issue it files are rehearsed for real. Opens a REAL issue — close it when you are done. It cannot change the repo: the edit lives in the ephemeral checkout and this workflow only has `contents: read`."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-links
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      # One of: ok | dead-link | unmeasurable | guard-did-not-run.
+      # The `signal` job branches on it, and failure-issue.yml posts its one
+      # notifying comment only when it CHANGES between runs.
+      state: ${{ steps.check.outputs.state }}
+      title: ${{ steps.check.outputs.title }}
+      body: ${{ steps.check.outputs.body }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: check every docs URL this repo spells resolves
+        id: check
+        env:
+          CIVITAI_CHECK_DOCS_LINKS: "1"
+          DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || false }}
+        run: |
+          # GitHub runs this as `bash -e {0}`, so errexit is already on and
+          # `set -uo pipefail` does not clear it. The `go test` below IS expected
+          # to fail on a dead link, so its status is captured explicitly rather
+          # than being allowed to kill the step before the classifier runs.
+          set -uo pipefail
+
+          # THE DRILL, applied to the runner's ephemeral checkout only. This
+          # workflow holds `contents: read` and never pushes, so the edit cannot
+          # outlive the job.
+          #
+          # 🔴 THE TARGET IS A SCAFFOLD TEMPLATE, NOT README.md, AND THAT IS THE
+          # WHOLE POINT. README.md is already covered by readme-links.yml; a
+          # template was covered by nothing, which is how `/apps/responsive`
+          # shipped. Planting it here rehearses the arm that was missing AND
+          # proves the widened corpus actually reads templates — if the corpus
+          # ever narrows back to the managed block, this drill goes green and
+          # says so.
+          #
+          # The address must match docsCorpusDrillURL() in
+          # internal/cmd/docs_links_corpus_test.go, which
+          # TestDocsCorpusDrillURLMatchesTheWorkflow asserts by reading this
+          # file. It is spelled whole here on purpose: this directory is excluded
+          # from the guard's own corpus (see docsCorpusSkipPathPrefixes) exactly
+          # so a drill sentinel can live in it without becoming a permanent
+          # finding against itself.
+          if [ "$DRILL" = "true" ]; then
+            echo "::warning title=docs-links::FIRE DRILL — a known-404 docs URL was appended to a scaffold template in this runner's checkout. Any failure below is rehearsed, not real."
+            printf '\n<!-- fire drill: not committed, runner checkout only -->\nhttps://developer.civitai.com/zz-docs-links-fire-drill\n' \
+              >> internal/scaffold/templates/page-vite/README.md.tmpl
+          fi
+
+          # 🔴 `-count=1` IS LOAD-BEARING, NOT HYGIENE — the trap
+          # `pins-vs-published` and `readme-links` both document. `setup-go` with
+          # `cache: true` restores GOCACHE across runs, and Go's test cache
+          # tracks the env vars a test reads but NOT what a remote host answered.
+          # Without this, a second run contacts the network ZERO times and
+          # replays the first run's PASS line verbatim — a network guard
+          # reporting green on a page that had already gone 404.
+          #
+          # BOTH probers run here. TestBlockDocsLinksResolve is the one that
+          # never had a caller, and its corpus is a subset of the other's; it is
+          # kept separate because its findings name the two files to edit for an
+          # address written irrecoverably into strangers' projects.
+          rc=0
+          go test ./internal/cmd \
+            -run 'TestEveryShippedDocsURLResolves|TestBlockDocsLinksResolve' \
+            -count=1 -v 2>&1 | tee "$RUNNER_TEMP/docs-links.log" || rc=$?
+
+          # POSITIVE CONTROL — can this job ever observe the thing at all?
+          # "0 dead links" and "the -run pattern matched no test" are the same
+          # exit 0 otherwise. A rename, a move, or a change to the
+          # CIVITAI_CHECK_DOCS_LINKS gate each produce a serene pass over an
+          # unchecked tree.
+          #
+          # 🔴 IT ASSERTS A MINIMUM COUNT OF 2, NOT MERELY "SOMETHING RAN". With
+          # a presence-only check, a `-run` alternation that silently matches
+          # only ONE of the two probers passes — and the one it would drop is
+          # whichever was renamed, which is exactly the case this exists for.
+          # SKIP is an accepted result line because a skipped test is a REAL
+          # result classified below, not because a skip is acceptable here.
+          #
+          # 🔴 EVERY `grep` OVER THIS LOG PASSES `-a`, AND THAT IS A MEASURED
+          # SCAR RATHER THAN A STYLE CHOICE. grep treats a file it deems BINARY
+          # as having no matches, so a single stray control byte anywhere in the
+          # log silently turns every test below into "no match" — which this
+          # classifier reads as `guard-did-not-run` at best and as a serene `ok`
+          # at worst. It happened while this workflow was being written: the
+          # guard's own extractor matched ~200 bytes of Python bytecode as part
+          # of a URL, echoed them in a transport-error line, and `file(1)`
+          # classified the log as `data`. The extractor was fixed (see
+          # docsSiteURLRe), but a test log is a place control bytes arrive from
+          # anywhere, so the `-a` stays.
+          ran=0
+          for name in TestEveryShippedDocsURLResolves TestBlockDocsLinksResolve; do
+            if grep -aEq -- "^ *--- (PASS|SKIP|FAIL): ${name}( |/|$)" "$RUNNER_TEMP/docs-links.log"; then
+              ran=$((ran + 1))
+            else
+              echo "::error::${name} produced no result line — the -run pattern did not match it (renamed? moved?)."
+            fi
+          done
+          if [ "$ran" -lt 2 ]; then
+            {
+              echo "state=guard-did-not-run"
+              echo "title=[docs-links] the docs link guard did not run"
+              echo "body<<DOCSLINKS_EOF"
+              echo "Only **$ran of 2** docs link probers produced a result line, so this run's verdict is a claim about nothing."
+              echo ""
+              echo "Expected both \`TestEveryShippedDocsURLResolves\` and \`TestBlockDocsLinksResolve\`. The usual causes are a rename, a move to another package, or a change to the \`CIVITAI_CHECK_DOCS_LINKS\` env gate."
+              echo ""
+              echo "Until this is fixed, every \`developer.civitai.com\` address in the repository is unchecked — which is the state that let a 404 ship in four scaffold templates."
+              echo "DOCSLINKS_EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          # A SKIP can be legitimate here (an unreachable host, no positive
+          # control, a partial run) — those are classified below. A skip caused
+          # by the ENV GATE is not, and it is the one that means the guard did
+          # not run at all. The gate is the only t.Skipf that mentions the env
+          # var's name.
+          if grep -aq -- "set CIVITAI_CHECK_DOCS_LINKS=1 to run" "$RUNNER_TEMP/docs-links.log"; then
+            echo "::error::a prober SKIPPED itself on its env gate despite CIVITAI_CHECK_DOCS_LINKS=1 — its gate no longer matches what this workflow sets."
+            {
+              echo "state=guard-did-not-run"
+              echo "title=[docs-links] the docs link guard did not run"
+              echo "body<<DOCSLINKS_EOF"
+              echo "A prober skipped itself on its env gate even though this workflow sets \`CIVITAI_CHECK_DOCS_LINKS=1\`."
+              echo ""
+              echo "Its gate and this workflow have drifted apart. Until they agree, the repository's docs addresses are unchecked."
+              echo "DOCSLINKS_EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          # Surface the probed/scanned/verdict counts. The guards log them
+          # precisely so a zero is never read alone; hide them in the log and the
+          # run summary says "green" without saying green about WHAT.
+          grep -aE 'docs-corpus liveness: |checked [0-9]+ of [0-9]+ link' "$RUNNER_TEMP/docs-links.log" \
+            >> "$GITHUB_STEP_SUMMARY" || true
+
+          if [ "$rc" -eq 0 ]; then
+            echo "state=ok" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # 🔴 THE TWO REDS ARE NOT THE SAME FINDING AND MUST NOT SHARE WORDING.
+          # A dead address and "we reached nothing" lead to different actions,
+          # and reporting the second as the first sends someone hunting a dead
+          # link that does not exist. A distinct state is also what makes
+          # failure-issue.yml post its one notifying comment when an outage turns
+          # into a genuine dead link.
+          if grep -aEq 'probed 0 of|NONE of the [0-9]+ link' "$RUNNER_TEMP/docs-links.log"; then
+            echo "::warning title=docs-links::no address answered — this run measured NOTHING about link health."
+            {
+              echo "state=unmeasurable"
+              echo "title=[docs-links] the docs link check could not reach anything"
+              echo "body<<DOCSLINKS_EOF"
+              echo "Every request failed, so this run proves nothing about link health — it is **no measurement**, not a pass."
+              echo ""
+              echo "This is about the runner's network or the docs host, not about this repository. If it persists, the question is whether the scheduled runner can reach \`developer.civitai.com\` at all — and if it cannot, this job should be retired rather than left reporting weekly."
+              echo "DOCSLINKS_EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          {
+            echo "### Dead or moved docs link(s)"
+            echo
+            echo '```'
+            grep -aE 'DEAD DOCS LINK|MOVED DOCS LINK|DEAD LINK IN THE MANAGED BLOCK|MOVED LINK IN THE MANAGED BLOCK|CANNOT TELL|COVERAGE control' \
+              "$RUNNER_TEMP/docs-links.log" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          {
+            echo "state=dead-link"
+            echo "title=[docs-links] this repo points at a docs URL that no longer resolves"
+            echo "body<<DOCSLINKS_EOF"
+            # A drill files a REAL issue on purpose — that is what is being
+            # rehearsed. Say so in the body, or the rehearsal becomes the very
+            # false alarm it exists to prevent.
+            if [ "$DRILL" = "true" ]; then
+              echo "> ⚠️ **FIRE DRILL — not a real dead link.** This issue was raised by a hand-dispatched run with \`drill: true\`, which appends a known-404 URL to the runner's copy of \`internal/scaffold/templates/page-vite/README.md.tmpl\`. The repository itself is untouched. Close this issue."
+              echo ""
+            fi
+            echo "The weekly docs-site link check found an address that does not serve."
+            echo ""
+            echo "**Why this matters more than a broken link usually does.** Several files here deleted their own prose on the grounds that \`developer.civitai.com\` carries it, so a 404 is content loss rather than a cosmetic blemish — and two kinds of spelling in this repo **cannot be recalled once released**: a scaffold template is written into somebody else's project, and a \`--help\` string is compiled into a binary already on their PATH. No docs edit reaches either."
+            echo ""
+            echo "**What to do:** open the run log and read the finding. Each one names the files that spell the address — fix every one of them, or publish the page. If the page moved, read the spelling carefully: this host serves \`/apps/guide/<page>\`, and an \`/apps/<page>\` address that looks right 404s. That was the original defect."
+            echo ""
+            echo "**What a failure here is NOT.** The guard does not fail on an unreachable host, and it reports \`CANNOT TELL\` rather than a finding for 401/403/429/5xx — those are a blocked or failing edge, indistinguishable from a broken page without a positive control. It also refuses to report a dead link at all when no address in the run answered \`< 300\`. So a red here means a server answered **404/410** definitively, or answered 3xx at a spelling this repo writes, while other addresses in the same run were live."
+            echo ""
+            echo "Reproduce locally:"
+            echo ""
+            echo '```bash'
+            echo "CIVITAI_CHECK_DOCS_LINKS=1 go test ./internal/cmd \\"
+            echo "  -run 'TestEveryShippedDocsURLResolves|TestBlockDocsLinksResolve' -count=1 -v"
+            echo '```'
+            echo "DOCSLINKS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          exit 1
+
+  # File a report when the check is red, and close it when it recovers. See
+  # `failure-issue.yml` for why this is an issue rather than email, and for the
+  # anti-spam rules that stop it becoming noise.
+  #
+  # `always()` so a red `check` job still reports; `!= 'cancelled'` so a hand
+  # cancellation is not filed as a defect.
+  signal:
+    needs: [check]
+    if: always() && needs.check.result != 'cancelled'
+    uses: ./.github/workflows/failure-issue.yml
+    permissions:
+      contents: read
+      issues: write
+    with:
+      # Unique per caller — failure-issue.yml keeps ONE open issue per marker, so
+      # sharing `[readme-links]` would make the two guards fight over one issue.
+      marker: "[docs-links]"
+      failing: ${{ needs.check.result != 'success' }}
+      # Empty when `check` died before the classifier ran — a runner failure, a
+      # failed checkout, setup-go failing. That is its own state and must not
+      # borrow the wording of a verdict this job never reached.
+      state: ${{ needs.check.outputs.state || 'unknown' }}
+      title: "${{ needs.check.outputs.title || '[docs-links] the docs link check could not run' }}"
+      body: "${{ needs.check.outputs.body || 'The `check` job failed before it could classify what went wrong, so it did not reach the end of the test step. Check the run log — the usual causes are the runner dying, the checkout failing, or `setup-go` failing.' }}"
