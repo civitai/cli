@@ -12,17 +12,23 @@
 // The oracle emulates a host by seeding `window.__CIVITAI_BLOCK_CONTEXT__`,
 // which the SDK's transport detector answers with `InlineTransport`. That
 // transport is a v1 stub: `sendRequest` REJECTS and host pushes never arrive.
-// So NO generation and NO post can complete here, ever, on any machine, with or
-// without a credential. An assertion that waited for a rendered image or a post
-// id would time out against a perfect app.
+// So ON THE DEFAULT AND UNCONSENTED ARMS no generation and no post can complete
+// here, on any machine, with or without a credential, and an assertion that waited
+// for a rendered image or a post id would time out against a perfect app. The
+// exceptions are the entries of `INVARIANT_EXCEPTIONS` in `_cdp.mjs` — a LEDGER, so
+// that neither this file nor any doc in this tree has to spell a count that goes
+// stale the next time an arm lands. Each class has its own paragraph below saying
+// what it costs: the resource pick immediately following, and the post arm under
+// "AND A THIRD ARM". The scope seed between them is NOT one of them — it widens the
+// answered set by nothing, which is why it is written as a separate paragraph.
 //
-// 🔴 ONE REQUEST CLASS IS ANSWERED, AND IT IS NOT A SPENDING ONE. Since
+// 🔴 THE PICK IS ANSWERED ON EVERY ARM, AND IT IS NOT A SPENDING ONE. Since
 // 2026-09-25 the oracle answers a host RESOURCE PICK (`OPEN_RESOURCE_PICKER` /
 // `OPEN_CHECKPOINT_PICKER`) with the resource the SDK's own mock host resolves
 // with, because an app that gates Generate behind `openPicker` could otherwise
 // never reach `generating` — measured on `ab-ship-mimo-02`, which graded
 // `RENDER=no observed=ready generateDisabled=true` for that reason and no other.
-// Every OTHER request type still rejects with the SDK's own
+// Off the post arm every OTHER request type still rejects with the SDK's own
 // `InlineTransport.sendRequest is not implemented in v1`, and this file reports
 // which ones did on the cell as `hostRefused` — so the paragraph above is checked
 // per cell rather than promised in a comment. See `HOST_RESOURCE_PICKS` and
@@ -32,7 +38,8 @@
 // scope list the block's own manifest declares (argv[3], handed down by
 // oracle.sh) so that a consent-gated Generate handler takes the granted branch
 // instead of the refused one — but `token.raw` is still `''` and `sendRequest`
-// still rejects unconditionally. Scopes buy a BRANCH, never a CAPABILITY. See
+// still rejects everything outside the running arm's answered set: the scope seed
+// widens that set by nothing. Scopes buy a BRANCH, never a CAPABILITY. See
 // `hostBootstrap` in `_cdp.mjs` for the four-arm measurement behind it.
 //
 // What IS deterministic without a host round-trip is the block's own state
@@ -66,7 +73,27 @@
 // `UNCONSENTED` in `_cdp.mjs` for the defect, the three reasons the default arm is
 // structurally blind to it, and the measurement that the split is not a
 // per-vendor story.
-import { launch, cdp, openPage, parseScopes, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, HOST_PICKS_LABEL, HOST_ARM, UNCONSENTED, CONSENT_MESSAGE, seededScopes, CLICKABLES, labelExpr, sleep } from './_cdp.mjs';
+//
+// 🔴 AND A THIRD ARM, BECAUSE THE SAME APP THEN SHIPPED A SECOND USER-FOUND
+// DEFECT — ON THE HALF NO ARM ABOVE CAN REACH AT ALL.
+// `CIVITAI_ASSERT_POST_PATH=1` answers the workflow and post requests in the page,
+// so the block's POST branch becomes reachable, and replaces the predicate again:
+// instead of "did the Generate click drive the machine to `generating`", it asks
+// "does the Post gate hold for a generation that produced NO images, and does a
+// generation that DID produce images actually post". `ab-img-poster@0.1.1` was
+// graded green by both arms above and then showed a real user
+// *"Posting failed. Please try again."* — because it opened Post on any terminal
+// workflow and posted a workflow with nothing in it.
+//
+// 🔴 THIS ARM SUSPENDS THE INVARIANT IN THE PARAGRAPH ABOVE, AND ONLY THIS ARM.
+// With the flag set, a canned generation DOES complete and a canned post IS
+// created — in the page, with no credential and nothing leaving the browser. Every
+// verdict this arc has recorded was taken with the flag unset, and with it unset
+// `inlineHostSource()` returns byte-for-byte the source it returned before this
+// arm existed (measured, and pinned by the unit driver). `arm=post` on the cell is
+// what stops the two being confused. See `POST_PATH` in `_cdp.mjs` for the full
+// statement, including what a green here does NOT prove.
+import { launch, cdp, openPage, parseScopes, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, HOST_PICKS_LABEL, HOST_ARM, UNCONSENTED, POST_PATH, ARM_CONFLICT, CONSENT_MESSAGE, POST_ARM_PLAN, POST_ARM_NO_IMAGES_ERROR, POST_ARM_CREATE_POST_RESULT, POST_ARM_GLOBAL, POST_ARM_CEILING_TOKEN, seededScopes, CLICKABLES, labelExpr, sleep } from './_cdp.mjs';
 
 const TARGET = process.argv[2];
 if (!TARGET) {
@@ -84,6 +111,19 @@ const SCOPES = parseScopes(process.argv[3]);
 // older one.
 if (typeof WebSocket === 'undefined') {
   console.error(`node ${process.versions.node} has no global WebSocket — this needs node >= 22`);
+  process.exit(2);
+}
+// 🔴 AN INCOHERENT ARM COMBINATION IS REFUSED BEFORE A BROWSER IS EVEN STARTED,
+// and it exits 2 (`oracle.sh` renders that as `RENDER=unmeasured`) rather than
+// emitting the verdict it would have produced. Every arm here is selected by an
+// AMBIENT environment variable, so the combinations `ARM_CONFLICT` names are one
+// stale export away on any operator's shell — and each of them would grade a
+// confident `no` about nothing. See `ARM_CONFLICT` in `_cdp.mjs`.
+if (ARM_CONFLICT) {
+  console.log(JSON.stringify({
+    assertion: 'genpost', pass: false, unmeasured: true,
+    reason: `harness error: ${ARM_CONFLICT}`, hostArm: HOST_ARM,
+  }));
   process.exit(2);
 }
 
@@ -136,6 +176,42 @@ const PREREQ_SETTLE_MS = 400;
  * step 6 may already have spent are on top of this.
  */
 const CONSENT_SETTLE_MS = 1200;
+
+// ── the POST arm's own timings ───────────────────────────────────────────────
+
+/**
+ * How long the POST arm gives the block to finish RENDERING a terminal workflow
+ * snapshot, after the shim has already answered the poll that carried it.
+ *
+ * 🔴 TWO WAITS, AND ONLY ONE OF THEM CAN BE A `waitFor`. The arm's first phase
+ * asserts an ABSENCE — the Post control must still be shut after a workflow that
+ * produced no images — and you cannot wait for an absence: a `waitFor` would
+ * either return immediately (proving nothing about a block that opens Post 50 ms
+ * later) or burn the full budget on every correct app. So the sequence is: wait for
+ * the terminal snapshot to have been DELIVERED (a positive fact the shim's own
+ * ledger carries), then wait for the block to have visibly finished with it — the
+ * Generate control coming back is the signal where an app offers one, bounded by
+ * {@link GENERATE_RECOVERY_MS} because an app is free not to — and only then read
+ * the gate, after a fixed settle.
+ *
+ * ⚠ SAY WHAT THAT DOES NOT COVER: an app that opens Post LATER than the settle
+ * would pass phase 1 here. The settle is sized against the measured shape (React
+ * commits the terminal snapshot in one tick after the awaited poll resolves), not
+ * against an adversary.
+ */
+const POST_SETTLE_MS = 700;
+
+/** How long the arm waits for the Generate control to become clickable again
+ * after a run — the positive signal that the block has finished handling a
+ * terminal snapshot. Bounded and NOT fatal: an app that deliberately keeps
+ * Generate shut after a run is not wrong, it just offers no such signal, and the
+ * fixed settle above covers it. */
+const GENERATE_RECOVERY_MS = 3000;
+
+/** The two canned runs the arm drives, named here so a reason can say which phase
+ * it is talking about. Read off the plan rather than retyped, so the labels on a
+ * cell and the outcomes the shim serves cannot drift. */
+const PHASE_LABELS = POST_ARM_PLAN.map((p) => p.label);
 
 // A recorder for every value `[data-testid="status"]` ever holds, installed
 // BEFORE the click. 🔴 Polling cannot do this job: the machine may pass through
@@ -249,6 +325,20 @@ async function main() {
     // not be ANSWERED.
     evidence.messageShim = `sites=${page.shim.messageSites}` +
       (page.shim.messageUnmatched ? `,unmatched=${page.shim.messageUnmatched}` : '');
+    // 🔴 THE POST ARM'S LEDGER, AND ONLY ON THAT ARM. On every other arm the shim
+    // installs no ledger, so this field would be a row of zeros on every cell —
+    // and a `postArm=` field that is always present is exactly how a reader stops
+    // noticing which arm they are looking at. `posts` is the decided half: an
+    // `answered:` entry means the host CREATED the canned post, a `refused:` entry
+    // names which gate turned the payload down.
+    if (POST_PATH) {
+      const arm = await page.postArm();
+      evidence.postArm = `estimates=${arm.estimates},submits=${arm.submits},` +
+        `polls=${arm.polls},terminal=${arm.terminal}`;
+      evidence.postArmQueued = arm.queued.join(',') || 'none';
+      evidence.postArmPosts = arm.posts.join(',') || 'none';
+      if (arm.unknownPolls.length) evidence.postArmUnknownPolls = arm.unknownPolls.join(',');
+    }
   };
 
   /**
@@ -373,6 +463,160 @@ async function main() {
     // refusal list is only complete AFTER it. The earlier call is for the
     // still-disabled throw above, which happens before any of that.
     await captureHostEvidence();
+  };
+
+  // ── the POST arm ───────────────────────────────────────────────────────────
+
+  /** Wait for the block to have finished with canned run number `n`, then settle.
+   * See POST_SETTLE_MS for why the two halves are different kinds of wait. */
+  const settleAfterRun = async (n) => {
+    await page.waitFor(
+      `(window.${POST_ARM_GLOBAL} || { terminal: 0 }).terminal >= ${n}`,
+      `the canned workflow #${n} (${PHASE_LABELS[Math.min(n, PHASE_LABELS.length) - 1]}) ` +
+      `to reach a terminal snapshot`);
+    const deadline = Date.now() + GENERATE_RECOVERY_MS;
+    for (;;) {
+      if (await page.evalJs(disabledExpr(labelExpr(GENERATE_LABEL))) !== true) break;
+      if (Date.now() > deadline) break;
+      await sleep(100);
+    }
+    await sleep(POST_SETTLE_MS);
+  };
+
+  /** Click a label that must be live, returning `true` if it was clicked. */
+  const clickLive = async (label) => !!(await page.evalJs(`(() => {
+    const hit = ${labelExpr(label)};
+    if (!hit || hit.disabled === true || hit.getAttribute('aria-disabled') === 'true') return false;
+    hit.click();
+    return true;
+  })()`));
+
+  /**
+   * The POST arm's steps 7-onward. TWO canned runs, in this order:
+   *
+   *   1. a workflow that reaches `succeeded` carrying NO `imageUrls`. The Post gate
+   *      must STAY SHUT. This is the users' case and it is first precisely so that
+   *      the discriminating claim needs nothing else to be earned.
+   *   2. a workflow that succeeds WITH an image. The gate must OPEN, the Post click
+   *      must actually send a `CREATE_POST_FROM_APP`, and the payload must satisfy
+   *      the host's gate.
+   *
+   * 🔴 BOTH PHASES ARE REQUIRED AND NEITHER IS SUFFICIENT. Phase 1 alone is passed
+   * by an app with no Post control at all — the gate is trivially shut — which is
+   * the very thing the brief's step 3 exists to reject. Phase 2 alone is passed by
+   * `ab-img-poster@0.1.1`, which posts perfectly well when there IS an image and
+   * shipped broken anyway.
+   *
+   * 🔴 AND PHASE 1 DOES NOT STOP AT THE GATE. If the gate is open, the arm CLICKS
+   * Post and records what the host did with it, because "this app would have
+   * published a workflow with nothing in it" and "the host refused it with
+   * `no images to post`" is the whole causal chain of the reported defect — and a
+   * reason that carries the refusal is a reason a reader can act on, where a bare
+   * "the gate was open" is a claim they have to take on trust.
+   */
+  const gradeThePostPath = async () => {
+    // Phase 1's front half is the DEFAULT arm's step 7, unchanged and reused: the
+    // Generate click must drive the machine to `generating`. If it did not, the post
+    // path was never reachable and that arm's reason is the right one to report.
+    await gradeTheGenerateClick();
+    if (!pass) {
+      reason = `${reason} (the post arm never reached its own phases: the generate ` +
+        `click has to work first)`;
+      return;
+    }
+    pass = false;
+
+    // ── phase 1: a succeeded workflow that produced NO images ────────────────
+    await settleAfterRun(1);
+    evidence.postGateAfterImagelessRun = await page.evalJs(disabledExpr(labelExpr(POST_LABEL)));
+    await captureHostEvidence();
+    if (evidence.postGateAfterImagelessRun === null) {
+      // Step 3 found a Post control at rest and it has since vanished. Reported as
+      // its own reason rather than collapsing into the gate verdict.
+      reason = `the "${POST_LABEL}" control disappeared after the first generation ` +
+        `(${PHASE_LABELS[0]}), so there is nothing to post with`;
+      return;
+    }
+    if (evidence.postGateAfterImagelessRun !== true) {
+      // 🔴 THE DEFECT. Show the consequence rather than asserting it: the click
+      // sends whatever payload the app would have sent in production, and the
+      // host's own refusal code comes back on the arm's ledger.
+      evidence.postClickedOnImagelessRun = await clickLive(POST_LABEL);
+      if (evidence.postClickedOnImagelessRun) {
+        try {
+          await page.waitFor(`(window.${POST_ARM_GLOBAL} || { posts: [] }).posts.length > 0`,
+            'the host to answer the post this app sent for an image-less workflow');
+        } catch { /* it sent nothing at all; the ledger says so */ }
+        await sleep(POST_SETTLE_MS);
+        await captureHostEvidence();
+      }
+      reason = `the "${POST_LABEL}" control is OPEN after a workflow that reached ` +
+        `"succeeded" with an EMPTY imageUrls list — there is nothing to post, and a viewer ` +
+        `who clicks it gets the host's refusal. Clicking it here ` +
+        `${evidence.postClickedOnImagelessRun
+          ? `sent ${evidence.postArmPosts === 'none'
+            ? 'no CREATE_POST_FROM_APP at all' : `a post the host answered ${evidence.postArmPosts}`}`
+          : 'was not possible (the control went away)'}. ` +
+        `That is the live defect ab-img-poster@0.1.1 shipped: "Posting failed. Please try again.". ` +
+        `A correct app gates Post on status === "succeeded" AND a non-empty imageUrls.`;
+      return;
+    }
+
+    // ── phase 2: a succeeded workflow that DID produce an image ──────────────
+    evidence.secondGenerateClicked = await clickLive(GENERATE_LABEL);
+    if (!evidence.secondGenerateClicked) {
+      // 🔴 UNMEASURED, NOT `no`. The arm needs a second generation to reach the
+      // post path at all, and an app that will not start one — because it demands a
+      // fresh prompt, say — has not been shown to be wrong about anything. Emitting
+      // `no` here would be this file's own blindness, one level up.
+      unmeasured = true;
+      throw new Error(`harness error: the post arm held its Post gate correctly on the ` +
+        `image-less run, and then could not start the SECOND canned run ` +
+        `(${PHASE_LABELS[1]}) — the "${GENERATE_LABEL}" control was not clickable ` +
+        `${GENERATE_RECOVERY_MS}ms after the first run finished. The post half of this arm ` +
+        `needs that run, so nothing was measured about it. Queued so far: ${evidence.postArmQueued}.`);
+    }
+    await settleAfterRun(2);
+    evidence.postGateAfterSuccessfulRun = await page.evalJs(disabledExpr(labelExpr(POST_LABEL)));
+    await captureHostEvidence();
+    try { evidence.observed = JSON.parse(await page.evalJs(READ_RECORDER)).join('>'); } catch { /* none */ }
+    if (evidence.postGateAfterSuccessfulRun !== false) {
+      reason = `the "${POST_LABEL}" control never opened after a workflow that reached ` +
+        `"succeeded" with an image (${PHASE_LABELS[1]}) — it reads ` +
+        `${JSON.stringify(evidence.postGateAfterSuccessfulRun)}. The gate held on the ` +
+        `image-less run, so this app is not wrong about the hazard; it cannot post at all. ` +
+        `Workflows queued: ${evidence.postArmQueued}; host refused: ${evidence.hostRefused}.`;
+      return;
+    }
+    if (!(await clickLive(POST_LABEL))) {
+      reason = `the "${POST_LABEL}" control was open and then could not be clicked`;
+      return;
+    }
+    try {
+      await page.waitFor(`(window.${POST_ARM_GLOBAL} || { posts: [] }).posts.length > 0`,
+        `the block to send a ${'CREATE_POST_FROM_APP'} after the ${POST_LABEL} click`);
+    } catch { /* nothing was sent; the reason below says so */ }
+    await sleep(POST_SETTLE_MS);
+    await captureHostEvidence();
+    const posts = (evidence.postArmPosts || 'none').split(',');
+    const last = posts[posts.length - 1];
+    pass = last.startsWith('answered:');
+    if (!pass) {
+      reason = last === 'none'
+        ? `clicking "${POST_LABEL}" on a postable generation sent NO CREATE_POST_FROM_APP — ` +
+          `the control is live and wired to nothing the host can act on. Host refused: ` +
+          `${evidence.hostRefused}; messages sent: ${evidence.hostMessages}.`
+        : `the host REFUSED the post this block sent for a workflow that succeeded WITH an ` +
+          `image (${last}). The payload does not satisfy the host's gate: ` +
+          `\`sources\` must be a non-empty array, and a \`workflow\` source must name a ` +
+          `workflow that actually produced images. The canned refusal is ` +
+          `${JSON.stringify(POST_ARM_NO_IMAGES_ERROR)}, exactly as the platform sends it.`;
+    } else {
+      // Reported on a PASS too, because "the post was created" is the one fact this
+      // arm exists to establish and a reader must be able to see it without
+      // re-deriving it from a boolean.
+      evidence.postCreated = POST_ARM_CREATE_POST_RESULT.postId;
+    }
   };
 
   try {
@@ -502,6 +746,8 @@ async function main() {
           `A real first-time viewer of this block gets whatever its no-consent path does — ` +
           `for ab-ship-mimo-02 that was "Generation failed. Please try again.".`;
       }
+    } else if (POST_PATH) {
+      await gradeThePostPath();
     } else {
       await gradeTheGenerateClick();
     }
@@ -527,6 +773,26 @@ async function main() {
   // `RENDER=unmeasured` rather than a verdict. `pass` is forced false on the
   // unmeasured path so no reader can take the pair for a verdict either way.
   if (unmeasured) pass = false;
+  // 🔴 THE POST ARM STATES ITS OWN CEILING IN ITS OWN OUTPUT, AS A FIELD, NOT ONLY
+  // IN A DOC. This arm is the one whose green is easiest to over-read — it answers
+  // a submit and creates a post, so "the post path works" is one careless sentence
+  // away from "posting works on civitai.com".
+  //
+  // 🔴 TWO LAYERS, BECAUSE THE PROSE CANNOT RIDE ON THE ROW. `postArmCeiling` is the
+  // full sentence and it lives here, in the assertion's JSON — which `grade.sh` does
+  // not parse. `postCeiling` is a short TOKEN, which `oracle.sh` puts on the summary
+  // line and `grade.sh` carries onto the grade row, so a reader of a matrix row cannot
+  // get this arm's verdict without it either. See `POST_ARM_CEILING_TOKEN` in
+  // `_cdp.mjs` for why it is a token and why it is appended only on this arm.
+  if (POST_PATH) {
+    evidence.postCeiling = POST_ARM_CEILING_TOKEN;
+    evidence.postArmCeiling = 'proves the block\'s post BRANCH exists and its payload satisfies '
+      + 'the host payload gate as the SDK\'s own mock host implements it (non-empty `sources`, and '
+      + 'a `workflow` source that actually produced images). Does NOT prove the real host accepts '
+      + 'it: the platform re-resolves every source server-side, re-checks the posts:write:self '
+      + 'grant, opens a viewer confirm and moderates the outputs. No credential was used and '
+      + 'nothing left the page.';
+  }
   console.log(JSON.stringify({ assertion: 'genpost', pass, unmeasured, reason, ...evidence }));
   process.exit(unmeasured ? 2 : (pass ? 0 : 1));
 }

@@ -82,11 +82,14 @@ ESC="$HERE/_esc.sh"
 # app-controlled field would silently render BLANK on a stream two consumers
 # parse. A blank field is a worse reading than the raw value, not a safer one — so
 # the functions are asserted to exist before anything is measured.
-for _f in esc tok prose; do
+for _f in esc tok prose pathdec; do
   declare -F "$_f" >/dev/null \
     || fatal "$ESC did not define \`$_f\` — app-controlled values would render unescaped or blank"
 done
 unset _f
+# The manifest discovery command lives there too — see the INPUT rule in `_esc.sh`.
+[ -n "${MANIFEST_FIND:-}" ] \
+  || fatal "$ESC did not define \`MANIFEST_FIND\` — the app discovery would find nothing and every trial would grade as 'no app was created'"
 
 # ── the instrument, before any verdict ───────────────────────────────────────
 command -v docker >/dev/null || fatal "no docker on PATH"
@@ -224,7 +227,24 @@ STATE=$(docker inspect -f '{{.State.Status}}' "$C" 2>/dev/null)
 [ -n "$STATE" ] || fatal "no such container: $C"
 [ "$STATE" = "running" ] || fatal "container $C is $STATE, not running"
 
+# `x` runs a command text this script AUTHORED. Nothing app-controlled may be
+# spliced into it.
 x() { docker exec -u "$U" -w /work "$C" bash -lc "$1" 2>/dev/null; }
+
+# 🔴 AN APP-CONTROLLED VALUE CROSSES INTO THE CONTAINER THROUGH THE ENVIRONMENT,
+# NEVER THROUGH THE COMMAND TEXT. `dex NAME=value … '<script referencing "$NAME">'`
+# hands each value to `docker exec -e`, which passes it as one argv element — so a
+# directory name containing `'` is a directory name, not the end of a quote and
+# the start of a command. It used to be `bash -lc "civitai app validate '$APP_DIR'"`,
+# i.e. the trial could run anything it liked inside the grader's own exec by
+# naming a directory after it. Deliberately NOT hand-rolled quote escaping: every
+# such escaper is one edge case away from being the hole it closed.
+dex() {
+  local -a ev=()
+  while [ "$#" -gt 1 ]; do ev+=(-e "$1"); shift; done
+  docker exec ${ev[@]+"${ev[@]}"} -u "$U" -w /work "$C" bash -lc "$1"
+}
+xe() { dex "$@" 2>/dev/null; }
 
 docker exec "$C" sh -c 'command -v node >/dev/null' \
   || fatal "no node inside $C — the block cannot be served from where it was built"
@@ -253,10 +273,25 @@ if [ -n "$BRIEF_NOTE" ]; then printf '%s\n' "$(prose "$BRIEF_NOTE")"; fi
 # measurement of the box — the same mistake grade.sh's AGENT_ID read exists to
 # avoid. node_modules is excluded: a dependency shipping a manifest of its own
 # would otherwise out-sort the real app on a deep path.
-MANIFESTS=$(x 'find /work -maxdepth 4 -name block.manifest.json -not -path "*/node_modules/*" 2>/dev/null | sort')
+#
+# 🔴 ONE LINE PER MANIFEST, WHATEVER THE TRIAL NAMED ITS DIRECTORIES. The
+# discovery command and the decode are `MANIFEST_FIND`/`pathdec` from `_esc.sh`,
+# which is where the three defects this used to have — an `xargs dirname` that
+# word-split a path with a space into `/work` + `app`, a line count that read a
+# path with a newline as two manifests, and NUL being undeliverable through a
+# command substitution — are recorded with their measurements.
+MANIFESTS=$(x "$MANIFEST_FIND")
 APP_COUNT=$(printf '%s' "$MANIFESTS" | grep -c . || true)
 APP_DIR=""
-[ "$APP_COUNT" -gt 0 ] && APP_DIR=$(printf '%s\n' "$MANIFESTS" | head -1 | xargs dirname)
+if [ "$APP_COUNT" -gt 0 ]; then
+  # `read`, not `head -1` through a pipe: one line of a string, in this shell.
+  IFS= read -r FIRST_MANIFEST <<<"$MANIFESTS"
+  pathdec APP_DIR "$FIRST_MANIFEST"
+  # `${…%/*}` rather than `dirname`: it is pure parameter expansion, so there is
+  # no argv for a space to split and no quote for a tool to choke on. `find`
+  # always prints `<dir>/block.manifest.json`, so the path always has a `/`.
+  APP_DIR=${APP_DIR%/*}
+fi
 
 printf -- '--- app discovery\n'
 # The count, then one path per line. The paths are directory names the TRIAL
@@ -269,6 +304,9 @@ if [ -z "$MANIFESTS" ]; then
 else
   while IFS= read -r m; do
     [ -n "$m" ] || continue
+    # Decode BEFORE `tok`, so a path carrying a newline renders as the `%0A` it
+    # actually holds rather than as the 0x01 the transport used to carry it.
+    pathdec m "$m"
     printf '%s\n' "$(tok "$m")"
   done <<<"$MANIFESTS"
 fi
@@ -278,8 +316,8 @@ printf -- '--- gate: civitai app validate (reported, NOT the verdict)\n'
 GATE=unavailable
 GATE_RC=
 if [ -n "$APP_DIR" ] && x 'command -v civitai >/dev/null'; then
-  GATE_OUT=$(docker exec -u "$U" -w /work "$C" bash -lc "civitai app validate '$APP_DIR'" 2>&1)
-  docker exec -u "$U" -w /work "$C" bash -lc "civitai app validate '$APP_DIR'" >/dev/null 2>&1
+  GATE_OUT=$(dex "DF_APP_DIR=$APP_DIR" 'civitai app validate "$DF_APP_DIR"' 2>&1)
+  dex "DF_APP_DIR=$APP_DIR" 'civitai app validate "$DF_APP_DIR"' >/dev/null 2>&1
   GATE_RC=$?
   # The validator's own words, and it is legitimately MULTI-LINE — so the
   # newlines stay and each line is control-escaped instead. It reaches this
@@ -320,7 +358,11 @@ BUILDCMD=
 # platform's grant derives from this same declaration at review time. It still
 # decides no verdict: `TestOracleReportsScopesWithoutDeciding` pins that a
 # manifest declaring nothing can grade `yes` and one declaring both can grade
-# `no`, and `token.raw` stays empty so nothing can COMPLETE here either way.
+# `no`, and `token.raw` stays empty either way — the seed buys a BRANCH, never a
+# CAPABILITY. Off the post arm that means nothing can COMPLETE here at all; ON the
+# post arm a canned generation and a canned post do complete, in the page, still
+# with no credential and still without a request leaving the browser. Neither
+# reading is changed by the scope list, which is the claim this paragraph makes.
 # Measured 2026-09-21 on `ab-genpost-dsv4-01`: with `scopes: []` seeded
 # unconditionally, a correct consent-first app never left `ready` and the cell
 # read `RENDER=no` about the harness. See briefs/_cdp.mjs `hostBootstrap`.
@@ -336,6 +378,10 @@ AVIEWER=
 # `set -u` when nothing was served.
 AARM=
 ADECL=
+# The post arm's ceiling TOKEN, read back from the assertion. Empty on every other
+# arm, which is what keeps a non-post summary line byte-identical — see
+# `POST_ARM_CEILING_TOKEN` in briefs/_cdp.mjs.
+ACEIL=
 
 if [ -z "$APP_DIR" ]; then
   REASON="no block.manifest.json under /work — no app was created"
@@ -344,7 +390,7 @@ else
   # was about to be added for the scope seed below — at which point the cell's
   # `scopes=` field and the list the block is shown would have been two
   # independent reads of one file.
-  MANIFEST=$(x "cat '$APP_DIR/block.manifest.json'")
+  MANIFEST=$(xe "DF_APP_DIR=$APP_DIR" 'cat "$DF_APP_DIR/block.manifest.json"')
   OUTDIR=$(printf '%s' "$MANIFEST" | jq -r '.outputDir // empty' 2>/dev/null)
   BUILDCMD=$(printf '%s' "$MANIFEST" | jq -r '.buildCommand // empty' 2>/dev/null)
   SCOPES_CSV=$(printf '%s' "$MANIFEST" | jq -r '(.scopes // []) | join(",")' 2>/dev/null)
@@ -353,9 +399,12 @@ else
   SCOPES="${SCOPES_CSV:-none}"
   CAND="$APP_DIR"
   [ -n "$OUTDIR" ] && CAND="$APP_DIR/$OUTDIR"
-  if x "test -f '$CAND/index.html'"; then
+  # 🔴 `$CAND` CARRIES THE MANIFEST'S OWN `outputDir`, so it is app-controlled
+  # twice over — the directory name AND the declared subdirectory. Both cross
+  # through the environment.
+  if xe "DF_CAND=$CAND" 'test -f "$DF_CAND/index.html"'; then
     SERVED="$CAND"
-  elif [ "$CAND" != "$APP_DIR" ] && x "test -f '$APP_DIR/index.html'"; then
+  elif [ "$CAND" != "$APP_DIR" ] && xe "DF_APP_DIR=$APP_DIR" 'test -f "$DF_APP_DIR/index.html"'; then
     # Declared an outputDir, did not produce one, but the source tree has an
     # entry document. Serve it and SAY SO — this is the shape a model that wrote
     # the app and never ran the build leaves behind.
@@ -389,8 +438,11 @@ if [ -n "$SERVED" ]; then
   # `-d`, not a backgrounded `&` inside a foreground exec: the detached form is
   # what docker provides for this, and it returns immediately without leaving a
   # client attached to a pipe nobody reads.
-  docker exec -d "$C" sh -c \
-    "node /tmp/dogfood-serve-block.mjs '$SERVED' >/tmp/dogfood-serve.log 2>&1" \
+  # `-e`, not a spliced `'$SERVED'`: the served directory is a name the TRIAL
+  # chose, and this exec is detached, so a quote in it would have run whatever
+  # followed with nothing on the terminal to show it.
+  docker exec -d -e "DF_SERVED=$SERVED" "$C" sh -c \
+    'node /tmp/dogfood-serve-block.mjs "$DF_SERVED" >/tmp/dogfood-serve.log 2>&1' \
     >/dev/null 2>&1
 
   PORT=
@@ -427,6 +479,14 @@ if [ -n "$SERVED" ]; then
   # an ordinary cell's clothes. `arm=` on the summary line is the machine-readable
   # half; this is the half a human scrolling the run sees.
   [ "${CIVITAI_ASSERT_UNCONSENTED:-}" = "1" ] && printf '⚠ UNCONSENTED ARM: token.scopes is seeded EMPTY and the verdict is "did the block ASK the host for consent", NOT "did it reach generating". This is a different question from the default arm; see briefs/genpost.md.\n'
+  # 🔴 THE POST ARM IS THE ONE THAT SUSPENDS THE RIG'S STANDING INVARIANT, so its
+  # banner says so rather than only naming the arm. With it on, a canned generation
+  # COMPLETES and a canned post IS CREATED — in the page, with no credential and
+  # nothing leaving the browser — which is the opposite of what every other cell in
+  # this arc was graded under. Same reason as the line above (the arm is ambient), one
+  # degree louder because a reader who misses it misreads the invariant, not just the
+  # predicate.
+  [ "${CIVITAI_ASSERT_POST_PATH:-}" = "1" ] && printf '⚠ POST-PATH ARM: the in-page host shim ANSWERS ESTIMATE_WORKFLOW, SUBMIT_WORKFLOW, POLL_WORKFLOW and CREATE_POST_FROM_APP, so a canned generation completes and a canned post is created here. The verdict is "does the Post gate hold for a workflow with no images, and does a postable one actually post", NOT "did it reach generating". It proves the block PAYLOAD satisfies the mock host gate; it does NOT prove the real host accepts it. See briefs/genpost.md.\n'
   # 🔴 THE SCOPE LIST IS AN ARGUMENT, NOT AN ENVIRONMENT VARIABLE. It is data
   # about THIS block, derived from THIS container's manifest, so it belongs on
   # the call that grades that block — an env var would be ambient state a
@@ -477,9 +537,31 @@ if [ -n "$SERVED" ]; then
       [ "$ASCOPES" = "none" ] || fatal "arm seam mismatch: the assertion reports arm=unconsented but the block was shown scopes '$ASCOPES' — an unconsented arm that granted the block its scopes measures nothing" ;;
     consented)
       [ "$ASCOPES" = "$SCOPES" ] || fatal "arm seam mismatch: the assertion reports arm=consented but presented '$ASCOPES' where the manifest declares '$SCOPES'" ;;
+    # 🔴 THE POST ARM IS A CONSENTED ARM, so it gets the SAME seam check — an app
+    # shown less than its manifest declares takes the consent-first branch and never
+    # reaches a workflow at all, which would make every post verdict on it a
+    # measurement of the missing seed. The arm ALSO answers four more request types,
+    # and that half is not checkable from here: the answered set lives in the page,
+    # so it is pinned by the unit driver's ledger check instead.
+    post)
+      [ "$ASCOPES" = "$SCOPES" ] || fatal "arm seam mismatch: the assertion reports arm=post but presented '$ASCOPES' where the manifest declares '$SCOPES' — a post arm on a block that was not shown its scopes grades the consent branch, not the post path" ;;
     '') : ;;
     *) fatal "the assertion reported an unknown arm '$AARM'" ;;
   esac
+  # 🔴 THE CEILING TOKEN, AND ITS OWN SEAM. The post arm's green is the one most
+  # easily over-read, so the token that says "mock host gate only" must be ON THE
+  # CELL, not only in the assertion's JSON and the run's banner. Read back rather than
+  # derived here, for the same reason `arm=` is. The two directions are both defects in
+  # this harness, so both exit 2 rather than emitting a verdict: a post-arm cell with no
+  # token would be the over-readable green this exists to prevent, and a token on any
+  # other arm would append a field to a line format every recorded verdict was read off.
+  ACEIL=$(printf '%s' "$JSON" | jq -r '.postCeiling // empty' 2>/dev/null)
+  if [ "$AARM" = "post" ] && [ -z "$ACEIL" ]; then
+    fatal "the assertion reports arm=post but no postCeiling token — the cell would carry this arm's verdict without its ceiling"
+  fi
+  if [ "$AARM" != "post" ] && [ -n "$ACEIL" ]; then
+    fatal "the assertion reports arm='$AARM' but sent a postCeiling token '$ACEIL' — only the post arm may add a field to the summary line"
+  fi
   AREASON=$(printf '%s' "$JSON" | jq -r '.reason // empty' 2>/dev/null)
   APASS=$(printf '%s' "$JSON" | jq -r 'if has("pass") then (.pass|tostring) else "absent" end' 2>/dev/null)
   [ "$APASS" = "true" ] && RENDER_PASS=yes
@@ -522,9 +604,16 @@ OBS_FIELD="''"
 # field that a first-match reader prefers to the real one. `observed=` was
 # already quoted and now uses the same function as its siblings rather than a
 # second rule.
-printf 'brief=%s brief_source=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s scopes=%s viewer=%s arm=%s served=%s observed=%s RENDER=%s\n' \
+# 🔴 APPENDED, AND EMPTY ON EVERY ARM BUT `post`, WHICH IS THE WHOLE POINT. Every
+# verdict this arc recorded was read off this line's format, and `grade.sh` plus both Go
+# suites compare fields exactly — so this field may only ever be an ADDITION to the post
+# arm's line, never a reordering, and never a field a non-post line carries empty.
+# `TestANonPostSummaryLineIsByteIdentical` pins the non-post format byte for byte.
+CEIL_FIELD=
+[ -n "$ACEIL" ] && CEIL_FIELD=" post_ceiling=$(tok "$ACEIL")"
+printf 'brief=%s brief_source=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s scopes=%s viewer=%s arm=%s served=%s observed=%s RENDER=%s%s\n' \
   "$(tok "$BRIEF")" "$BRIEF_SOURCE" "$APP_COUNT" "$(tok "${APP_DIR:-none}")" \
   "$GATE" "${GATE_RC:-none}" "$(tok "${SCOPES:-none}")" \
   "$(tok "${AVIEWER:-unmeasured}")" "$(tok "${AARM:-unmeasured}")" "$(tok "${SERVED:-none}")" \
-  "$OBS_FIELD" "$RENDER_PASS"
+  "$OBS_FIELD" "$RENDER_PASS" "$CEIL_FIELD"
 exit 0

@@ -17,7 +17,7 @@
 // that file's header for the reasoning; it is load-bearing and is not repeated
 // here.
 
-import { launch, cdp, openPage, parseScopes, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, HOST_ARM, seededScopes, labelExpr } from './_cdp.mjs';
+import { launch, cdp, openPage, parseScopes, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, HOST_ARM, armConflict, seededScopes, labelExpr } from './_cdp.mjs';
 
 const TARGET = process.argv[2];
 if (!TARGET) {
@@ -35,6 +35,22 @@ const SCOPES = parseScopes(process.argv[3]);
 // older one.
 if (typeof WebSocket === 'undefined') {
   console.error(`node ${process.versions.node} has no global WebSocket — this needs node >= 22`);
+  process.exit(2);
+}
+// 🔴 THIS BRIEF HAS NO POST ARM, AND `CIVITAI_ASSERT_POST_PATH=1` IS AMBIENT — so
+// the flag has to be REFUSED here rather than ignored. Ignoring it is what used to
+// happen, and it was wrong in the diagnosis rather than in the direction: `HOST_ARM`
+// reports `post` whenever the flag is set, this file emits no `postCeiling` (it has
+// none to emit), and `oracle.sh`'s ceiling seam then exited 2 blaming the assertion
+// for "report[ing] arm=post but no postCeiling token" — a true sentence about a
+// symptom, naming nothing about the operator's stale export. Same refusal mechanism
+// and same exit code as `genpost.assert.mjs`, one branch further in.
+const ARM_REFUSAL = armConflict({ postArm: false });
+if (ARM_REFUSAL) {
+  console.log(JSON.stringify({
+    assertion: 'celsius', pass: false, unmeasured: true,
+    reason: `harness error: ${ARM_REFUSAL}`, hostArm: HOST_ARM,
+  }));
   process.exit(2);
 }
 

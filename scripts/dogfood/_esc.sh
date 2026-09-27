@@ -1,8 +1,17 @@
 # shellcheck shell=bash
 # ── app-controlled text must not be able to write the verdict ────────────────
 # NOT A SCRIPT. This file is SOURCED by every grader under this directory that
-# prints a value it did not itself author — `oracle.sh` and `ship.verdict.sh`
-# today. It defines nothing else and runs nothing on its own.
+# READS OR PRINTS a value it did not itself author — `oracle.sh` and
+# `ship.verdict.sh` today. It runs nothing on its own.
+#
+# It holds two rules, both of which had already been open-coded wrong in both
+# graders at once:
+#
+#   * the OUTPUT rule (`esc`/`tok`/`prose`, below) — app-controlled text must not
+#     be able to write a field or a line of a grader's own output stream;
+#   * the INPUT rule (`MANIFEST_FIND`/`pathdec`, at the foot of this file) — the
+#     app-controlled PATHS the graders discover must survive being carried out of
+#     the container, counted, and handed back in.
 #
 # 🔴 THE THING BEING GRADED WRITES THE TEXT THE GRADER PRINTS. `oracle.sh` reads
 # `outputDir`, `buildCommand` and `scopes` out of the trial's own
@@ -97,3 +106,61 @@ esc() {
 }
 tok()   { esc tok   "${1-}"; }
 prose() { esc prose "${1-}"; }
+
+# ── the INPUT rule: discovering the trial's manifests ────────────────────────
+# 🔴 THE PATHS ARE APP-CONTROLLED TOO, AND READING THEM WRONG MOVES A VERDICT.
+# Both graders locate the trial's app by `find`ing its manifests inside the
+# container and carrying the result back through a command substitution. Three
+# things were wrong with that, all three chosen by the app, and all three
+# duplicated in both files — the N−1 shape this file exists to make impossible:
+#
+#   1. `… | head -1 | xargs dirname` WORD-SPLITS. Measured:
+#      `printf '%s\n' '/work/my app/block.manifest.json' | xargs dirname` prints
+#      TWO lines, `/work` and `app`, so `$APP_DIR` became `/work<LF>app` — and
+#      `$APP_DIR` is what gets validated, what `outputDir` resolves against, and
+#      what is SERVED to the browser. A space in a directory name therefore moved
+#      a RENDER verdict. A path containing a single quote is worse: `xargs` exits
+#      non-zero with `unmatched single quote` and `$APP_DIR` is EMPTY, which reads
+#      as "the trial created no app".
+#   2. `grep -c .` over newline-separated `find` output COUNTS LINES, so a
+#      directory name containing a newline counts as two manifests — and the
+#      `while IFS= read -r` loops fed from the same string split one path into two
+#      halves, neither of which names a file. On `ship.verdict.sh` that emptied
+#      `TRIAL_SLUGS` and turned a real `SHIP=yes` into an exit-2 `unmeasured`.
+#   3. The discovered path was then spliced into a `bash -lc "… '$path' …"`
+#      COMMAND STRING, so a quote in it ran the rest of the name as a command in
+#      the grader's own exec. Closed at the call sites by passing every such value
+#      through `docker exec -e`; nothing here hand-rolls quote escaping.
+#
+# 🔴 WHY NOT `-print0`, WHICH IS THE OBVIOUS FIX FOR (2). Bash COMMAND
+# SUBSTITUTION DISCARDS NUL BYTES — measured: `X=$(printf 'a\0b\0')` warns
+# `ignored null byte in input` and leaves `${#X}` = 2. So NUL-delimited data
+# cannot be carried out of `$(docker exec …)` at all, and a grader built on
+# `-print0` would silently concatenate every path into one.
+#
+# So the container SWAPS THE TWO DELIMITERS instead: `-print0` separates records
+# with NUL, then a real newline inside a path becomes 0x01 and the NUL separators
+# become newlines. The result is one line per path, carried through a command
+# substitution intact, and `pathdec` puts the newline back before the path is used
+# or printed.
+#
+# 🔴 AN ORDINARY PATH IS LEFT BYTE-IDENTICAL by both halves, which is what keeps
+# `grade.sh`, the Go suites and a human reader seeing the strings they already
+# see. `TestOracleLeavesLegitimateManifestValuesByteIdentical` and
+# `TestShipVerdictLeavesLegitimateValuesByteIdentical` are the arms that pin it.
+#
+# ⚠ ONE KNOWN LIMIT, STATED RATHER THAN HIDDEN: a path that already contains a
+# literal 0x01 byte decodes back as a newline, i.e. this transport cannot tell
+# 0x01 from LF. Both are control bytes, so the COUNT and the escaped output stay
+# right either way; only a `cat` of that exact path would miss. `tr` is the only
+# tool involved, so this needs nothing the trial images do not already ship
+# (coreutils in the Debian/Ubuntu images, busybox elsewhere) — unlike `base64`,
+# which would also defeat the test harness's container-path rewriting.
+MANIFEST_FIND='find /work -maxdepth 4 -name block.manifest.json -not -path "*/node_modules/*" -print0 2>/dev/null | LC_ALL=C tr "\n" "\001" | LC_ALL=C tr "\000" "\n" | LC_ALL=C sort'
+
+# pathdec <varname> <transported-path> — assigns the real path to <varname>.
+#
+# `printf -v`, not a `$(…)` substitution, and that is load-bearing: command
+# substitution strips TRAILING newlines, so a decoded path ending in one would
+# come back short. Assigning directly cannot lose a byte.
+pathdec() { local _v="${2-}"; printf -v "$1" '%s' "${_v//$'\001'/$'\n'}"; }
