@@ -131,6 +131,34 @@ MAX_SUBMISSIONS="${DOGFOOD_MAX_SUBMISSIONS:-}"
 # editing runner.py. Empty => runner.py's own default. It is a ceiling, not a
 # spend cap; money is still bounded by runner.py's --max-cost.
 MAX_TOKENS="${DOGFOOD_MAX_TOKENS:-}"
+# Same shape, for runner.py's --max-steps. Empty => runner.py's own default of 40.
+#
+# 🔴 40 CANNOT CARRY A BUILD-AND-SHIP BRIEF, AND UNTIL THIS KNOB EXISTED NO
+# DRIVER-LAUNCHED CELL COULD RUN UNDER ANY OTHER NUMBER. Measured on
+# `at1-mimo-noderoot-claudeid` (brief `t1`, xiaomi/mimo-v2.5): the trial ended
+# `stop: max-steps` at step 40 with `generations: 0`, `submissions: 0`, and its
+# last three tool calls were `npx tsc --noEmit`, `npm run build`,
+# `civitai app validate` — it had BUILT the app and was cut off immediately
+# before the submit-and-media phase the brief is graded on. A plain build-only
+# `celsius` cell took 65 steps, so 40 is below the floor for any brief that
+# builds AND ships, and that cell was ungradeable for a reason that had nothing
+# to do with the model or the product. Every rank-3-style "caps 80/$0.50" run on
+# record must therefore have been a direct runner.py invocation; the driver could
+# not have produced one.
+#
+# 🔴 AND THERE IS DELIBERATELY NO WARNING ON A HIGH VALUE. A step cap is not a
+# spend cap (runner.py's own comment at the flag says so: every turn resends the
+# whole history, so cumulative prompt tokens grow O(n^2) in steps). The bound
+# that IS about money is --max-cost, which is denominated in dollars and so is
+# model-priced; a step number is not. The only (steps, cost) pair we have is that
+# same cell — 40 steps = 856,834 prompt tokens = $0.0113, heavily cache-
+# discounted at ~$0.013/M effective — one point on one model, which fixes no
+# quadratic. Reading cost ~ steps^2 off it FOR SCALE ONLY (an extrapolation, not
+# a measurement), the $1.00 --max-cost default binds that model near ~375 steps
+# and a 100x-pricier one near ~38: any single threshold typed here would be wrong
+# for most of the matrix while --max-cost is right for all of it. Enforcement
+# stays in runner.py.
+MAX_STEPS="${DOGFOOD_MAX_STEPS:-}"
 if [ -n "$CREDENTIAL" ]; then
   # 🔴 SAME RESUME-GUARD TRAP AS THE BRIEF, AND WORSE. A credentialed cell run
   # under the setup matrix's namespace is skipped as "complete" by an
@@ -186,6 +214,7 @@ run_one() {  # model short image ienv trial user
   [ -n "$MAX_GENERATIONS" ] && args+=(--max-generations "$MAX_GENERATIONS")
   [ -n "$MAX_SUBMISSIONS" ] && args+=(--max-submissions "$MAX_SUBMISSIONS")
   [ -n "$MAX_TOKENS" ] && args+=(--max-tokens "$MAX_TOKENS")
+  [ -n "$MAX_STEPS" ] && args+=(--max-steps "$MAX_STEPS")
   ( timeout 1500 python3 runner.py "${args[@]}" >"logs/$trial.out" 2>"logs/$trial.err"
     echo "done $trial rc=$?" ) &
 }

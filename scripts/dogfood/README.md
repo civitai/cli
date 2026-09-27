@@ -670,6 +670,29 @@ human reads**: a `truncated` cell must not be counted as a model failure.
   **ceiling, not a spend cap** — tokens are billed as generated and `--max-cost`
   (still $1) is the only bound on money.
 
+### The step cap, and why 40 was not enough
+
+- `--max-steps` (default **40**, `DOGFOOD_MAX_STEPS` in `driver.sh`). Until that
+  knob existed the driver did not forward the flag at all, so **every**
+  driver-launched cell ran at 40 whatever the brief asked for. Measured on
+  `at1-mimo-noderoot-claudeid` (brief `t1`, `xiaomi/mimo-v2.5`): `stop: max-steps`
+  at step 40 with `generations: 0` and `submissions: 0`, its last three tool calls
+  `npx tsc --noEmit`, `npm run build`, `civitai app validate` — it had **built**
+  the app and was cut off immediately before the submit-and-media phase the brief
+  is graded on. A build-only `celsius` cell took **65** steps, so 40 is below the
+  floor for any brief that builds *and* ships, and a cell that hits it is
+  ungradeable for a harness reason rather than a model or product one.
+- **The driver does not warn on a high value, deliberately.** A step cap is not a
+  spend cap — every turn resends the whole history, so cumulative prompt tokens
+  grow O(n²) in steps — but the bound that *is* about money is `--max-cost`, which
+  is denominated in dollars and therefore model-priced, while a step number is
+  not. The one (steps, cost) pair on record is that same cell: 40 steps =
+  **856,834** prompt tokens = **$0.0113**, heavily cache-discounted at ~$0.013/M
+  effective. One point on one model fixes no quadratic; reading cost ~ steps² off
+  it *for scale only*, the $1.00 `--max-cost` default binds that model near ~375
+  steps and a 100×-pricier one near ~38, so any single threshold would be wrong
+  for most of the matrix. Enforcement stays in `runner.py`.
+
 ### 🔴 The money cap could silently never fire
 
 `--max-cost` is a comparison against a running total that comes **entirely** from
