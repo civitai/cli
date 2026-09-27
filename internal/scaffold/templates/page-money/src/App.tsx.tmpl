@@ -165,7 +165,7 @@ export function App() {
   //
   // Re-render safety: the hook stores the resolved TIER, not the width, so
   // dragging a window edge 200px inside one tier re-renders this block zero
-  // times. Full guide: https://developer.civitai.com/apps/responsive
+  // times. Full guide: https://developer.civitai.com/apps/guide/responsive
   const bp = useBlockBreakpoint(rootRef);
   // ONE structural decision, deliberately. `below('sm')` is the "am I in a narrow
   // slot?" question every block eventually asks; everything else here is fluid

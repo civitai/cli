@@ -86,11 +86,16 @@ ESC="$HERE/_esc.sh"
 # writes `command not found` to stderr and substitutes the EMPTY STRING, so every
 # app-controlled field would silently render BLANK on a stream a consumer parses.
 # A blank field is a worse reading than the raw value, not a safer one.
-for _f in esc tok prose; do
+for _f in esc tok prose pathdec; do
   declare -F "$_f" >/dev/null \
     || fatal "$ESC did not define \`$_f\` — app-controlled values would render unescaped or blank"
 done
 unset _f
+# The manifest discovery command lives there too — see the INPUT rule in `_esc.sh`.
+# An empty one would find no manifest, and this script exits 2 on that, so the
+# failure would read as "the trial created no app" rather than as a broken grader.
+[ -n "${MANIFEST_FIND:-}" ] \
+  || fatal "$ESC did not define \`MANIFEST_FIND\` — every trial would grade as having created no app"
 
 # ── the instrument, before any verdict ───────────────────────────────────────
 command -v docker >/dev/null || fatal "no docker on PATH"
@@ -136,14 +141,37 @@ STATE=$(docker inspect -f '{{.State.Status}}' "$C" 2>/dev/null)
 [ -n "$STATE" ] || fatal "no such container: $C"
 [ "$STATE" = "running" ] || fatal "container $C is $STATE, not running"
 
+# `x` runs a command text this script AUTHORED. Nothing app-controlled may be
+# spliced into it.
 x() { docker exec -u "$U" -w /work "$C" bash -lc "$1" 2>/dev/null; }
+
+# 🔴 AN APP-CONTROLLED VALUE CROSSES INTO THE CONTAINER THROUGH THE ENVIRONMENT,
+# NEVER THROUGH THE COMMAND TEXT. This script's one such site was `x "cat '$m'"`,
+# where `$m` is a path `find` read off the trial's own filesystem — so a directory
+# named with a single quote ran the rest of its own name as a command inside the
+# grader's exec, and the grader is the thing whose output decides the verdict.
+# Deliberately not hand-rolled quote escaping: `docker exec -e` passes the value as
+# one argv element, which has no edge cases to get wrong.
+xe() {
+  local -a ev=()
+  while [ "$#" -gt 1 ]; do ev+=(-e "$1"); shift; done
+  docker exec ${ev[@]+"${ev[@]}"} -u "$U" -w /work "$C" bash -lc "$1" 2>/dev/null
+}
 
 # ── WHOSE app: the slugs this trial created, read out of the container ───────
 # Not the trial id, not a directory name, not the `--app-prefix`: the manifests
 # the trial itself wrote. The prefix would be a claim by whoever started the run;
 # the manifests are a measurement of the box. (The prefix cap is what keeps them
 # honest during the run — that is a different mechanism, enforced elsewhere.)
-MANIFESTS=$(x 'find /work -maxdepth 4 -name block.manifest.json -not -path "*/node_modules/*" 2>/dev/null | sort')
+#
+# 🔴 ONE LINE PER MANIFEST, WHATEVER THE TRIAL NAMED ITS DIRECTORIES. Both the
+# discovery command and the decode are `MANIFEST_FIND`/`pathdec` from `_esc.sh` —
+# one rule, one place, because the `grep -c .` line count below was ALSO wrong in
+# `oracle.sh`, in the same direction, for the same reason. A directory name
+# carrying a newline used to count as two manifests AND split into two halves in
+# the loop that reads each `blockId`, so neither half named a file, `TRIAL_SLUGS`
+# came back empty, and a trial that really did submit graded as exit-2 unmeasured.
+MANIFESTS=$(x "$MANIFEST_FIND")
 APP_COUNT=$(printf '%s' "$MANIFESTS" | grep -c . || true)
 if [ "$APP_COUNT" -eq 0 ]; then
   # 🔴 UNMEASURED, NOT `no`, AND THE REASON IS THE IDENTITY CHECK ITSELF. With no
@@ -164,7 +192,8 @@ fi
 TRIAL_SLUGS=$(
   printf '%s\n' "$MANIFESTS" | while IFS= read -r m; do
     [ -n "$m" ] || continue
-    x "cat '$m'" | jq -r '.blockId // empty' 2>/dev/null
+    pathdec m "$m"
+    xe "DF_M=$m" 'cat "$DF_M"' | jq -r '.blockId // empty' 2>/dev/null
   done | tr 'A-Z' 'a-z' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
        | grep -v '^$' | sort -u
 )
@@ -207,6 +236,9 @@ printf -- '--- the trial'"'"'s own apps\n'
 printf 'manifests=%s\n' "$APP_COUNT"
 while IFS= read -r m; do
   [ -n "$m" ] || continue
+  # Decode BEFORE `tok`, so a path carrying a newline renders as the `%0A` it
+  # actually holds rather than as the 0x01 the transport used to carry it.
+  pathdec m "$m"
   printf '%s\n' "$(tok "$m")"
 done <<<"$MANIFESTS"
 # `blockId` is the app's own choice of name. It is folded to lower case upstream,

@@ -375,9 +375,18 @@ case "${1:-}" in
   cp)
     src="$2"; dst="${3#*:}"; cp "$src" "$(rw "$dst")"; exit $? ;;
   exec)
-    shift; det=0
+    shift; det=0; envs=()
     while [ $# -gt 0 ]; do case "$1" in
       -u|-w) shift 2 ;;
+      # 🔴 -e IS MODELLED, AND IT HAS TO BE. The graders hand every app-controlled
+      # value (a discovered app directory, a manifest path, the manifest's own
+      # outputDir) to the container through "docker exec -e" rather than splicing
+      # it into the command text, so a stub that swallowed the flag would shift the
+      # container name off the wrong argument and every one of those execs would
+      # run something else entirely. The VALUE is path-rewritten like the command
+      # text is: it is a container path (/work/...) and the fixture tree lives
+      # elsewhere on this host.
+      -e) envs+=("$(rw "$2")"); shift 2 ;;
       -d) det=1; shift ;;
       -i) shift ;;
       *) break ;;
@@ -403,8 +412,8 @@ case "${1:-}" in
       *"command -v civitai"*) [ "${STUB_CIVITAI:-1}" = "1" ] || exit 1 ;;
     esac
     cmd="$(rw "$raw")"
-    if [ "$det" = "1" ]; then bash -c "$cmd" & exit 0; fi
-    bash -c "$cmd" | unrw; exit "${PIPESTATUS[0]}" ;;
+    if [ "$det" = "1" ]; then env ${envs[@]+"${envs[@]}"} bash -c "$cmd" & exit 0; fi
+    env ${envs[@]+"${envs[@]}"} bash -c "$cmd" | unrw; exit "${PIPESTATUS[0]}" ;;
 esac
 exit 1
 `
@@ -415,6 +424,15 @@ type stubEnv struct {
 	civitaiRC string // "-" for absent, else the exit code validate returns
 	appHTML   string
 	manifest  string
+	// appDir: the directory under the fixture /work the manifest is written to.
+	// Defaults to "app".
+	//
+	// 🔴 IT IS A KNOB BECAUSE IT IS APP-CONTROLLED IN A REAL TRIAL. The oracle
+	// discovers its app by `find`ing a manifest, so the model's own choice of
+	// directory name is an INPUT to the grader — and a name carrying a space, a
+	// newline or a quote used to change what got validated, what `outputDir`
+	// resolved against and what was served. See dogfood_path_reads_test.go.
+	appDir string
 	// outputDir: when non-empty the HTML is written there, mimicking a built app.
 	outputDir string
 	// Extra files written ALONGSIDE index.html in the served directory, keyed by
@@ -496,11 +514,29 @@ func stubOracleEnv(t *testing.T, s stubEnv) []string {
 	}
 	write(filepath.Join(stub, "docker"), stubDockerScript, 0o755)
 	if s.civitaiRC != "-" && s.civitaiRC != "" {
+		// 🔴 IT ECHOES ITS ARGUMENT VECTOR, AND THAT IS THE ONLY BEHAVIOURAL WITNESS
+		// THAT THE APP DIRECTORY REACHED THE VALIDATOR AS ONE ARGUMENT. The oracle's
+		// `app_dir=` field is printed from its OWN variable, so it stays right even
+		// when the value is then spliced into a command string and re-split by the
+		// container's shell. `stub_argc` is what separates "the grader knows the
+		// directory" from "the grader passed the directory on".
+		//
+		// ⚠ The PATH in `stub_arg=[…]` is a host path on the way out and is mapped
+		// back to `/work/…` by the stub's own outbound rewrite, so compare it after
+		// that — never compute a length here and compare it to a container path's.
 		write(filepath.Join(stub, "civitai"), fmt.Sprintf(
-			"#!/bin/sh\necho 'stub validate says %s'\nexit %s\n", s.civitaiRC, s.civitaiRC), 0o755)
+			"#!/bin/sh\n"+
+				"echo 'stub validate says %s'\n"+
+				"printf 'stub_argc=%%s\\n' \"$#\"\n"+
+				"for a in \"$@\"; do printf 'stub_arg=[%%s]\\n' \"$a\"; done\n"+
+				"exit %s\n", s.civitaiRC, s.civitaiRC), 0o755)
 	}
 	if s.manifest != "" {
-		app := filepath.Join(work, "app")
+		rel := s.appDir
+		if rel == "" {
+			rel = "app"
+		}
+		app := filepath.Join(work, rel)
 		write(filepath.Join(app, "block.manifest.json"), s.manifest, 0o644)
 		if s.appHTML != "" {
 			out := app

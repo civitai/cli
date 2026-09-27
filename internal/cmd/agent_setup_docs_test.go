@@ -285,6 +285,22 @@ var docsURLSpellingLedger = map[string]string{
 		"retiring the index moved the spelling into the template rather than removing it",
 	"internal/scaffold/readme_claims_test.go": "the guard that the scaffolded README names the hosted hooks " +
 		"reference within the first 3 KB pins the URL as a const, so it is a third place the spelling can rot",
+	"internal/scaffold/templates/page-money/src/App.tsx.tmpl": "the `useBlockBreakpoint` comment points at " +
+		"`/apps/guide/responsive`. Ledgered only from the day that URL was repaired: it used to spell " +
+		"`/apps/responsive`, which is a 404 and matches none of the block's URLs, so this file was invisible " +
+		"to this walk while shipping a dead link into every `page-money` project. A THIRD shipped artefact " +
+		"carrying a docs URL, and the one with the longest reach — it is source code an author copies from",
+	"internal/scaffold/templates/page-vite/README.md.tmpl": "the `page-vite` README's responsive section points " +
+		"at `/apps/guide/responsive` instead of restating the breakpoint rules. Same repair, same day, same " +
+		"reason it was invisible before it: the dead `/apps/responsive` spelling matched no needle",
+	"internal/scaffold/templates/page-vite/src/index.css.tmpl": "the `@container` block's explanatory comment " +
+		"points at `/apps/guide/responsive`. It is the cheapest spelling in the ledger to overlook and one of " +
+		"the most-read: it sits in the stylesheet an author edits first",
+	"internal/scaffold/query_prelude_guard_test.go": "a FIXTURE, not a link anybody follows: " +
+		"TestStripCommentsForQueryScan's \"a URL is not a comment start\" case needs a URL containing `//` " +
+		"inside a block comment, and names `/apps/guide/responsive`. Ledgered rather than excluded because " +
+		"TestEveryShippedDocsURLResolves probes it like any other spelling — see the comment at that fixture " +
+		"for why it is kept live rather than left on the dead path it used to carry",
 	"claudedocs/decisions/25-listing-media-bounds.md": "AGENTS.md item 25's evidence file: its 2026-09-25 " +
 		"amendment names the page the README's `### Listing media requirements` section was relocated TO, and " +
 		"records the content verification that justified deleting the prose. Not exempt as a dated record — the " +
@@ -327,8 +343,19 @@ const docsURLLedgerExemptPrefix = "claudedocs/handoff-"
 // `.gitignore` puts `/.claude/worktrees` there, and each worktree is a FULL COPY
 // of the tree, so a walk that entered it would report every ledgered file a
 // second time under a different path.
+//
+// 🔴 `__pycache__` WAS ADDED AFTER A MEASURED FALSE ATTRIBUTION, and it protects
+// both walks that share this set. Python marshals a module's string constants into
+// its `.pyc`, so `scripts/dogfood/__pycache__/` holds a copy of every docs address
+// `scripts/dogfood/runner.py` spells — and the dogfood tests create it, which
+// means a walk that reads it reports a different corpus depending on whether the
+// suite has run. A finding attributed to a `.pyc` also names a file the reader
+// cannot fix; the source is the spelling. (TestEveryShippedDocsURLResolves skips
+// any file containing a NUL byte as well, which is the general form of this; this
+// entry is the cheap half and keeps the ledger walk honest too.)
 var docsURLLedgerSkipDirs = map[string]bool{
 	".git": true, ".claude": true, "bin": true, "dist": true, "node_modules": true, ".venv": true,
+	"__pycache__": true,
 }
 
 // TestEveryDocsURLSpellingIsLedgered is the bidirectional guard behind the file
@@ -442,9 +469,19 @@ func TestEveryDocsURLSpellingIsLedgered(t *testing.T) {
 //
 // 🔴 OPT-IN, NEVER DEFAULT. `make ci` must stay green with no network — a test
 // that fails on a train is a test somebody deletes. This follows the existing
-// pattern in internal/scaffold (CIVITAI_CHECK_PUBLISHED_PINS); no CI job sets
-// this one today, so it is a MANUAL pre-merge check, and saying that out loud is
-// the honest version of "the links are verified".
+// pattern in internal/scaffold (CIVITAI_CHECK_PUBLISHED_PINS).
+//
+// 🔴 IT NOW HAS A CALLER, AND THE OLD WORDING HERE WAS THE DEFECT, NOT A
+// DISCLAIMER. This comment used to end "no CI job sets this one today, so it is a
+// MANUAL pre-merge check, and saying that out loud is the honest version of 'the
+// links are verified'" — honest, and still the worst of the three states, in
+// `.github/workflows/readme-links.yml`'s own words: *a guard nobody runs reads as
+// coverage while providing none, because it stops the next person looking*. It
+// stopped somebody looking: `/apps/responsive` shipped a 404 in four scaffold
+// templates while this file carried a careful four-verdict prober that no job
+// invoked. `.github/workflows/docs-links.yml` is the caller — weekly cron plus
+// `workflow_dispatch`, deliberately NOT a required check (see that file's header
+// for why a live-network required check froze every open PR twice).
 const docsLinkProbeEnv = "CIVITAI_CHECK_DOCS_LINKS"
 
 // mustNotResolve is the probe's NEGATIVE control: a path on the same host that
@@ -474,57 +511,67 @@ type docsProbeResult struct {
 	err      error
 }
 
-// TestBlockDocsLinksResolve fetches every URL the block ships and reports what it
-// found, in four separable verdicts. The split is the point: "gone", "moved",
-// "cannot tell" and "could not reach" lead to four different actions, and the
-// version that printed one message for all of them told a reader to edit the
-// template when the truth was that the prober had been blocked.
+// newDocsProbeClient builds the HTTP client BOTH docs probers use.
 //
-//   - < 300               — live at the spelling that ships.
-//   - 3xx                 — MOVED. The page answers, but not at this spelling.
-//   - 404 / 410           — GONE. This is the dead-link finding.
-//   - other >= 400        — CANNOT TELL: 401/403/429/5xx are what a blocked or
-//     failing edge returns, and are indistinguishable from a
-//     genuinely broken page without a positive control.
-//   - transport error     — COULD NOT REACH. Collected, never fatal, and never a
-//     reason to stop probing the remaining links.
-func TestBlockDocsLinksResolve(t *testing.T) {
-	if os.Getenv(docsLinkProbeEnv) != "1" {
-		t.Skipf("network guard; set %s=1 to run (no CI job does — this is a manual pre-merge check)", docsLinkProbeEnv)
-	}
-
-	// 🔴 REDIRECTS ARE NOT FOLLOWED, BECAUSE THE SPELLING IS THE CLAIM. Go's
-	// default CheckRedirect follows up to 10 hops, so a probe that reports 200 is
-	// reporting on wherever it LANDED, not on the URL written into the block.
-	// Measured 2026-09-11: `/apps/guide` answers 301 to
-	// `http://developer.civitai.com/apps/guide/` — a different spelling, and a
-	// downgrade to cleartext http — which a following probe scores as a clean 200.
-	client := &http.Client{
+// 🔴 REDIRECTS ARE NOT FOLLOWED, BECAUSE THE SPELLING IS THE CLAIM. Go's
+// default CheckRedirect follows up to 10 hops, so a probe that reports 200 is
+// reporting on wherever it LANDED, not on the URL written into the block.
+// Measured 2026-09-11: `/apps/guide` answers 301 to
+// `http://developer.civitai.com/apps/guide/` — a different spelling, and a
+// downgrade to cleartext http — which a following probe scores as a clean 200.
+//
+// 🔴 IT IS SHARED ON PURPOSE, AND THAT IS THE ONE-RULE-ONE-PLACE ARGUMENT, NOT
+// TIDINESS. A second prober with its own client is a second place the
+// no-redirect rule can be dropped, and dropping it there would be invisible:
+// the run goes GREENER, not redder. `TestEveryShippedDocsURLResolves` covers a
+// corpus ~10x this one, so a silently-following copy would launder ten times as
+// many spellings.
+func newDocsProbeClient() *http.Client {
+	return &http.Client{
 		Timeout: 20 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
-	probe := func(url string) docsProbeResult {
-		out := docsProbeResult{url: url}
-		req, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil {
-			out.err = err
-			return out
-		}
-		req.Header.Set("User-Agent", "civitai-cli-docs-link-probe")
-		resp, err := client.Do(req)
-		if err != nil {
-			out.err = err
-			return out
-		}
-		defer func() { _ = resp.Body.Close() }()
-		out.code = resp.StatusCode
-		out.location = resp.Header.Get("Location")
+}
+
+// probeDocsURL fetches one URL and records what came back, diagnosing nothing.
+func probeDocsURL(client *http.Client, url string) docsProbeResult {
+	out := docsProbeResult{url: url}
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		out.err = err
 		return out
 	}
+	req.Header.Set("User-Agent", docsProbeUserAgent)
+	resp, err := client.Do(req)
+	if err != nil {
+		out.err = err
+		return out
+	}
+	defer func() { _ = resp.Body.Close() }()
+	out.code = resp.StatusCode
+	out.location = resp.Header.Get("Location")
+	return out
+}
 
-	control := probe(mustNotResolve)
+// docsProbeUserAgent is named because the failure messages quote it: a reader
+// told "the host may be refusing this probe's User-Agent" needs the string to
+// try in curl, and a message that quotes a literal the code no longer sends
+// sends them hunting the wrong thing.
+const docsProbeUserAgent = "civitai-cli-docs-link-probe"
+
+// runDocsProbeNegativeControl probes mustNotResolve and applies the three
+// verdicts a control can have, identically for every caller. It returns the
+// result so a caller can quote the control's own status in its findings — which
+// is what turns "these look dead" into "these look dead AND an impossible path
+// answered 404, so the host is not refusing us wholesale".
+//
+// It can t.Skip or t.Fatal, so it must be called before any probing worth
+// reporting.
+func runDocsProbeNegativeControl(t *testing.T, client *http.Client) docsProbeResult {
+	t.Helper()
+	control := probeDocsURL(client, mustNotResolve)
 	switch {
 	case control.err != nil:
 		t.Skipf("%s unreachable (%v) — skipping, not failing; the control could not be run either",
@@ -541,6 +588,39 @@ func TestBlockDocsLinksResolve(t *testing.T) {
 			">= 400, read that as 'this prober is being blocked' before reading it as 'the pages are gone'",
 			mustNotResolve, control.code)
 	}
+	return control
+}
+
+// TestBlockDocsLinksResolve fetches every URL the block ships and reports what it
+// found, in four separable verdicts. The split is the point: "gone", "moved",
+// "cannot tell" and "could not reach" lead to four different actions, and the
+// version that printed one message for all of them told a reader to edit the
+// template when the truth was that the prober had been blocked.
+//
+//   - < 300               — live at the spelling that ships.
+//   - 3xx                 — MOVED. The page answers, but not at this spelling.
+//   - 404 / 410           — GONE. This is the dead-link finding.
+//   - other >= 400        — CANNOT TELL: 401/403/429/5xx are what a blocked or
+//     failing edge returns, and are indistinguishable from a
+//     genuinely broken page without a positive control.
+//   - transport error     — COULD NOT REACH. Collected, never fatal, and never a
+//     reason to stop probing the remaining links.
+//
+// 🔴 ITS CORPUS IS THE MANAGED BLOCK AND NOTHING ELSE, AND THAT IS DELIBERATE
+// RATHER THAN AN OVERSIGHT — NOW. The block's URLs are written into somebody
+// else's project and cannot be recalled, so their findings get wording no other
+// spelling deserves, naming the two files to edit. The REST of the repository's
+// docs URLs are probed by TestEveryShippedDocsURLResolves, which is the guard
+// that would have caught `/apps/responsive` in four scaffold templates; this one
+// structurally could not, because a template is not in the block.
+func TestBlockDocsLinksResolve(t *testing.T) {
+	if os.Getenv(docsLinkProbeEnv) != "1" {
+		t.Skipf("network guard; set %s=1 to run", docsLinkProbeEnv)
+	}
+
+	client := newDocsProbeClient()
+	probe := func(url string) docsProbeResult { return probeDocsURL(client, url) }
+	control := runDocsProbeNegativeControl(t, client)
 
 	block, err := agentsManagedBlock(allProjectShapesForTest()[0])
 	if err != nil {
