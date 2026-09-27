@@ -110,6 +110,14 @@ Three things to carry, none of them incidental:
   (`.golangci.yml` — staticcheck/govet/ineffassign/unused/misspell/gofmt) reporting clean one
   version forward, with a negative control proving it can still report. **Do not quote it as
   "CI-identical"** — and note the `lint` job reports without blocking a merge anyway.
+  ✅ **GAP SUBSEQUENTLY CLOSED BY THE GATE ITSELF.** `cli#723`'s own CI run at
+  `3eacfe8` is green on all **13** contexts, `lint` among them — and that job IS
+  `golangci-lint-action@v8` at the pinned **`v2.12.2`**. The branch differs from `origin/main`
+  by one markdown file and no Go, so the Go tree CI linted is `origin/main`'s. Clause 3's lint
+  half therefore holds **at the gate's own pin**, not merely one minor forward. 🔴 The useful
+  generalisation: when a local run cannot reach the pinned version, **a CI run on a
+  Go-identical tree answers the question the local run could not** — cheaper than installing
+  the pin, and it is the gate's verdict rather than a proxy for it.
 - ⚠ **The handoff predicted "make ci fails at `test` on three Chromium-gated `TestOracle*`".**
   It does not, once `CIVITAI_CHROME` is exported — all 23 pass. The predicted FAIL-set control
   was therefore unnecessary, and the honest reading is that the earlier red was a *missing
