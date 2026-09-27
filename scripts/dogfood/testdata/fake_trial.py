@@ -72,6 +72,15 @@ Env knobs:
   FAKE_FINAL_RESPONSE path to a JSON file holding a COMPLETE response body to
                       return verbatim as the final turn. Overrides every knob
                       above for that turn.
+  FAKE_CREDENTIAL_READBACK  what the container returns when runner.py reads the
+                      installed credential BACK as the trial user. Default: the
+                      bytes of the file named by `--credential-file`, i.e. a
+                      container where the install worked. `__absent__` → exit 3
+                      with "there is no credential at …"; `__unreadable__` →
+                      exit 4 with "…is not readable by…"; any other value is
+                      returned verbatim as the bytes read back, which is how a
+                      truncated or overwritten install is reproduced. Inert on a
+                      runner that does no read-back.
 
 The fake response carries no tool_calls once FAKE_TOOL_COMMAND has been served
 once, so the loop always terminates.
@@ -130,6 +139,21 @@ REASONING_DETAILS = os.environ.get("FAKE_REASONING_DETAILS", "")
 REASONING_TOKENS = int(os.environ.get("FAKE_REASONING_TOKENS", "0") or 0)
 FINAL_RESPONSE = os.environ.get("FAKE_FINAL_RESPONSE", "")
 USAGE_COST = os.environ.get("FAKE_USAGE_COST", "")
+# 🔴 THE CREDENTIAL READ-BACK. runner.py verifies its own install by reading the
+# file back as the trial user, so this stub has to answer that exec with what a
+# working container would return — otherwise every credentialed test in the suite
+# would die on a digest mismatch that says nothing about the code under test.
+# This knob is how the FAILURE modes are reproduced instead.
+READBACK = os.environ.get("FAKE_CREDENTIAL_READBACK", "")
+# The credential's own path, taken from the runner flags this trial was given, so
+# the default read-back is the real bytes rather than a fixture that has to be
+# kept in step with the test's own credential file.
+CREDENTIAL_PATH = ""
+for _i, _tok in enumerate(extra):
+    if _tok == "--credential-file" and _i + 1 < len(extra):
+        CREDENTIAL_PATH = extra[_i + 1]
+    elif _tok.startswith("--credential-file="):
+        CREDENTIAL_PATH = _tok.split("=", 1)[1]
 
 
 def _usage() -> dict:
@@ -159,6 +183,42 @@ def _usage() -> dict:
     return usage
 
 
+def _done(cmd, kw, rc=0, out="", err=""):
+    """One CompletedProcess, in whichever of str/bytes the caller asked for.
+
+    runner.py reads bytes from sh() and from the credential read-back, and str
+    everywhere it passes text=True.
+    """
+    if kw.get("text"):
+        return subprocess.CompletedProcess(cmd, rc, stdout=out, stderr=err)
+    return subprocess.CompletedProcess(cmd, rc, stdout=out.encode(), stderr=err.encode())
+
+
+def _readback(cmd, kw):
+    """What a container returns for runner.py's post-install read-back.
+
+    The path in the messages is root's, which is the trial user in every image
+    that runs as root; the arms that matter are the exit codes and the wording,
+    and the caller only ever reads stderr as a diagnosis.
+    """
+    path = "/root/.config/civitai/config.yaml"
+    if READBACK == "__absent__":
+        return _done(cmd, kw, rc=3, err="there is no credential at %s\n" % path)
+    if READBACK == "__unreadable__":
+        return _done(cmd, kw, rc=4,
+                     err="the credential at %s is not readable by 'root'\n" % path)
+    if READBACK:
+        body = READBACK
+    elif CREDENTIAL_PATH:
+        with open(CREDENTIAL_PATH, "rb") as f:
+            body = f.read().decode("utf-8", "replace")
+    else:
+        body = ""
+    # The real script prints the resolved PATH on stderr and the CONTENT on
+    # stdout, which is what lets the caller name the file without printing it.
+    return _done(cmd, kw, rc=0, out=body, err=path + "\n")
+
+
 def fake_run(cmd, *a, **kw):
     """Stands in for every Docker call, and RECORDS ITS FULL ARGV.
 
@@ -167,6 +227,15 @@ def fake_run(cmd, *a, **kw):
     """
     cmd = list(cmd)
     captured.setdefault("subprocess", []).append(cmd)
+    # 🔴 MATCHED STRUCTURALLY, ON THE SCRIPT runner.py ACTUALLY SHIPS. A marker
+    # string in the script would stop matching the moment anyone reworded it, and
+    # this stub would then answer the read-back with "fake\n" — a digest mismatch
+    # reported as a credential defect. `getattr` because a runner with no
+    # read-back has no such constant, and the knob must be inert there rather
+    # than crashing.
+    verify = getattr(runner, "VERIFY_SH", None)
+    if verify and "exec" in cmd and verify in cmd:
+        return _readback(cmd, kw)
     out = "fake\n"
     err = ""
     rc = 0
@@ -184,10 +253,7 @@ def fake_run(cmd, *a, **kw):
         rc = int(r.get("rc", 0))
         out = r.get("out", "")
         err = r.get("err", "")
-    # runner.py reads bytes from sh() and str everywhere it passes text=True.
-    if kw.get("text"):
-        return subprocess.CompletedProcess(cmd, rc, stdout=out, stderr=err)
-    return subprocess.CompletedProcess(cmd, rc, stdout=out.encode(), stderr=err.encode())
+    return _done(cmd, kw, rc=rc, out=out, err=err)
 
 
 class _Resp:
