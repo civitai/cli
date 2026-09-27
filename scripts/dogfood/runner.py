@@ -251,6 +251,13 @@ def reasoning_echo(msg: dict) -> dict:
 # container and lands in the artifacts an operator keeps — not about hiding the
 # credential from the trial.
 #
+# ⚠ AND IT DOES NOT CHECK THAT THE CREDENTIAL WORKS. install_credential proves
+# the file is installed and readable BY THE TRIAL; nothing here proves the token
+# inside it is still valid. An expired credential installs, reads back clean, and
+# then fails every authenticated command with `invalid_grant` — which is what
+# actually happened on trial `at2-mimo-noderoot-claudeid` (2026-09-27). Declared
+# gap, not a solved one.
+#
 # ⚠ ONE MORE PLACE THE VALUE EXISTS, AND IT IS IN THIS PROCESS. The install's
 # read-back (install_credential) `cat`s the file back as the trial user, so the
 # bytes are in this process's memory for as long as it takes to digest them.
@@ -406,19 +413,26 @@ def install_credential(container: str, user: str, path: str, expect: bytes) -> s
     🔴 THE RETURN VALUE IS A STATEMENT ABOUT A READ, NOT ABOUT A WRITE, AND THAT
     IS THE WHOLE POINT OF THIS FUNCTION'S SHAPE. It used to return the
     installer's own stdout — `installed /root/.config/civitai/config.yaml` — so
-    the transcript's `credential_install` field was the INSTALLER'S CLAIM, and a
-    claimed install was indistinguishable from an absent credential. Measured
-    cost: trial `at2-mimo-noderoot-claudeid` (2026-09-27) recorded
-    `credentialed: true` and `credential_install: "installed
-    /root/.config/civitai/config.yaml"`, and at step 60 its own
-    `cat ~/.config/civitai/config.yaml` printed `No config file found`. It then
-    spent steps 56–74 — 18 of its 23 minutes — hunting for a credential, and died
-    at `rc=124` with `generations: 0`.
-    ⚠ WHAT THAT TRIAL DOES **NOT** ESTABLISH is WHY the file was absent. The
-    obvious theory — the trial's own `civitai login` destroyed it — is REFUTED: a
-    cancelled login leaves an existing stored credential intact, measured
-    directly. This function is correct either way, because it does not diagnose
-    the absence, it REFUSES TO PROCEED THROUGH ONE.
+    the transcript's `credential_install` field was the INSTALLER'S CLAIM about a
+    WRITE, and a claimed install was indistinguishable from a credential the trial
+    cannot read. An operator reading `jq .credential_install` got a sentence
+    either way.
+
+    🔴 WHAT THIS DOES **NOT** DO, STATED HERE BECAUSE THE INCIDENT THAT PROMPTED
+    IT IS EXACTLY THIS CASE: it does not check that the credential WORKS. Trial
+    `at2-mimo-noderoot-claudeid` (2026-09-27) died at `rc=124` with
+    `generations: 0` after spending 18 of its 23 minutes on `civitai login`, and
+    the first reading of it — that the installed credential was ABSENT — is
+    REFUTED by its own transcript: at step 60 `cat ~/.config/civitai/config.yaml`
+    exited **0** and printed the file (redacted). What actually failed was the
+    credential's VALIDITY — steps 55 and 62 both returned
+    `device login failed: Invalid grant: refresh token is invalid
+    (invalid_grant)`. The container's `~/.config/civitai` is empty **today**
+    because the trial's own `rm -f` at step 68 removed the file, and the
+    directory's mtime (22:04) matches that step, not the install.
+    So this read-back would have PASSED on that run. It closes the
+    report-vs-read gap and nothing else; an EXPIRED credential is still detected
+    by nothing in this harness, and that is a declared gap, not a solved one.
 
     🔴 NOTHING SECRET OR DIGEST-SHAPED IS RETURNED OR RAISED. The bytes come back
     into this process to be digested and are then dropped: the report line names
@@ -940,16 +954,27 @@ def origin_phrase(origin: str) -> str:
 # 56–74, 18 of the run's 23 minutes, were `civitai login` attempts — several
 # backed by five-minute `sleep` loops waiting for an approval that could never
 # arrive — and the run died at `rc=124`, a wall-clock timeout, with
-# `generations: 0`. Three of those attempts were spelled
-# `rm -f ~/.config/civitai/config.yaml && civitai login …`, i.e. they DELETED the
-# credential the harness had installed before reaching for a login that cannot
-# replace it. Refusing the whole command is what stops that `rm` too.
+# `generations: 0`. FOUR of those attempts deleted the stored credential first
+# (`rm -f ~/.config/civitai/config.yaml && civitai login …`, steps 63/66/68/70),
+# reaching for a login that cannot replace it. Refusing the whole tool call is
+# what stops that `rm` too.
+#
+# 🔴 AND THE TRIAL WAS NOT BEING STUPID — READ THIS BEFORE WEAKENING THE MESSAGE.
+# Its credential was installed and readable (step 60's `cat` exited 0) but
+# EXPIRED: steps 55 and 62 both returned `device login failed: Invalid grant:
+# refresh token is invalid (invalid_grant)`. A genuine auth failure with no way
+# to tell that re-authenticating was impossible is exactly the situation that
+# produces 18 minutes of login attempts. The refusal has to answer THAT — which
+# is why the credentialed text says the credential is installed and readable (the
+# two things the harness actually verified) rather than that the trial is
+# authenticated (which nothing here checks), and tells it what to do when a
+# command reports otherwise.
 #
 # 🔴 REFUSED IN THE UNCREDENTIALED CASE AS WELL, AND THAT IS A DELIBERATE CHOICE
 # RATHER THAN A SIDE EFFECT. The device flow is no more approvable without a
 # credential than with one, so an uncredentialed trial that tries to log in burns
 # exactly the same budget on exactly the same impossibility. The two messages
-# differ because the ACCURATE thing to say differs — "you already have one" vs
+# differ because the ACCURATE thing to say differs — "one is installed" vs
 # "there is none and there will not be one".
 #
 # ⚠ THE DIFFERENCE LEAKS THAT A CREDENTIAL EXISTS, AND THAT IS FINE HERE. It
@@ -974,12 +999,13 @@ def origin_phrase(origin: str) -> str:
 LOGIN_VERB = "login"
 LOGIN_REFUSAL_CREDENTIALED = (
     "refused by the run harness: `civitai login` cannot succeed inside a trial and is "
-    "disabled. YOU ARE ALREADY AUTHENTICATED — a credential was installed at "
-    "~/.config/civitai/config.yaml and verified readable by this user before the run "
-    "started. Use it as it is: do not run `civitai login`, and do not delete, move or "
-    "overwrite that file. If some command still reports you are not authenticated, say "
-    "so in your report and move on to the rest of the task — logging in is not a "
-    "remedy available here.")
+    "disabled. A CIVITAI CREDENTIAL IS ALREADY INSTALLED at "
+    "~/.config/civitai/config.yaml and was verified readable by this user before the "
+    "run started. Use it as it is: do not run `civitai login`, and do not delete, move "
+    "or overwrite that file. If a command reports that you are NOT authenticated, then "
+    "the stored credential is installed but not working — it can be expired — and "
+    "logging in cannot fix that from inside this trial: say so explicitly in your "
+    "report and carry on with the parts of the task that do not need an account.")
 LOGIN_REFUSAL_UNCREDENTIALED = (
     "refused by the run harness: `civitai login` cannot succeed inside a trial and is "
     "disabled. The browser device flow needs a human to approve the request in a "

@@ -399,15 +399,20 @@ func TestDogfoodCredentialInstallerResolvesTheUsersHome(t *testing.T) {
 // INSTALL_SH` and returned THE INSTALL SCRIPT'S OWN STDOUT as the transcript's
 // `credential_install` field. It raised only on a non-zero exit, so
 // `credential_install: "installed /root/.config/civitai/config.yaml"` was the
-// installer's CLAIM — and a claimed install was indistinguishable from an absent
-// credential. Measured cost, trial `at2-mimo-noderoot-claudeid` (2026-09-27):
-// that exact line in the transcript, `credentialed: true` beside it, and at step
-// 60 the trial's own `cat ~/.config/civitai/config.yaml` printing `No config file
-// found`. Steps 56–74 — 18 of 23 minutes — went on `civitai login`, and the run
-// died at `rc=124` with `generations: 0`.
+// installer's CLAIM about a WRITE — and an operator running
+// `jq .credential_install` got that sentence whether or not the trial could read
+// the file. The install path is where a capability confound enters unseen: a
+// credential the trial cannot read grades as an ordinary "not authenticated"
+// failure.
 //
-// ⚠ WHY THE FILE WAS ABSENT IS NOT ESTABLISHED, and these tests do not claim it.
-// The read-back does not diagnose the absence; it refuses to run through one.
+// ⚠ THIS IS NOT THE DEFECT THAT KILLED `at2-mimo-noderoot-claudeid`, AND SAYING
+// SO HERE IS THE POINT. That trial's credential was installed AND readable —
+// step 60's `cat ~/.config/civitai/config.yaml` exited **0** and printed the file
+// — and what failed was its VALIDITY: steps 55 and 62 both returned `device
+// login failed: Invalid grant: refresh token is invalid (invalid_grant)`. The
+// read-back below would have PASSED on that run. It closes the report-vs-read
+// gap; an EXPIRED credential is detected by nothing here, and the harness says
+// so rather than implying otherwise.
 
 // The `credential_install` field of a transcript's `start` record, and whether it
 // was present at all.
@@ -450,8 +455,7 @@ func credentialInstallField(t *testing.T, transcript string) (string, bool) {
 func TestDogfoodCredentialInstallIsVerifiedByReadingItBack(t *testing.T) {
 	credPath, _ := credentialFile(t)
 	for _, tc := range []struct{ name, readback, says, carries string }{
-		// The measured shape: the harness said "installed", the trial found
-		// nothing there.
+		// The harness says "installed" and there is nothing there.
 		{"the file is not there", "__absent__",
 			"is not readable by container user 'root' after install", "there is no credential at"},
 		// Installed somewhere the TRIAL cannot read. Root could; the trial is what
@@ -475,9 +479,9 @@ func TestDogfoodCredentialInstallIsVerifiedByReadingItBack(t *testing.T) {
 			stop, _ := end["stop"].(string)
 			if !strings.HasPrefix(stop, "credential install failed:") {
 				t.Fatalf("a credential the trial cannot read was recorded stop=%q, want a "+
-					"\"credential install failed:\" value. The harness reported an install it "+
-					"never confirmed, which is what cost trial at2-mimo-noderoot-claudeid its "+
-					"whole budget.\n%s", stop, body)
+					"\"credential install failed:\" value. A trial that reaches the model "+
+					"without the credential it was supposed to carry grades as an ordinary "+
+					"failure and burns the cell.\n%s", stop, body)
 			}
 			if !strings.Contains(stop, tc.says) {
 				t.Fatalf("the run died for the WRONG reason: stop=%q does not contain %q, so this "+
@@ -711,15 +715,21 @@ func TestDogfoodCredentialReadBackScriptArms(t *testing.T) {
 
 // ── `civitai login` is refused in every trial ────────────────────────────────
 //
-// 🔴 THE DEFECT. The device flow needs a human to approve the request in a
-// browser, and `--token <key>` needs a personal API key minted in the web UI, so
-// neither can complete inside a blind trial. Nothing stopped one from trying.
-// Measured on `at2-mimo-noderoot-claudeid` (2026-09-27): steps 56–74 — 18 of the
-// run's 23 minutes — were login attempts, several with five-minute `sleep` loops
-// waiting for an approval that could not arrive, and three of them spelled
-// `rm -f ~/.config/civitai/config.yaml && civitai login …` — deleting the
-// credential the harness had installed. The run died at `rc=124`, a wall-clock
-// timeout, having produced `generations: 0`.
+// 🔴 THE DEFECT, AND THE ONE THAT ACTUALLY KILLED THE MEASURED TRIAL. The device
+// flow needs a human to approve the request in a browser, and `--token <key>`
+// needs a personal API key minted in the web UI, so neither can complete inside a
+// blind trial. Nothing stopped one from trying. On
+// `at2-mimo-noderoot-claudeid` (2026-09-27): steps 56–74 — 18 of the run's 23
+// minutes — were login attempts, several with five-minute `sleep` loops waiting
+// for an approval that could not arrive, and FOUR of them deleted the stored
+// credential first (steps 63/66/68/70). The run died at `rc=124`, a wall-clock
+// timeout, with `generations: 0`.
+//
+// ⚠ AND ITS CREDENTIAL WAS INSTALLED AND READABLE THE WHOLE TIME — it was
+// EXPIRED (`invalid_grant` at steps 55 and 62). So the trial was responding
+// rationally to a real auth failure with no way to know that re-authenticating
+// was impossible. That is why the refusal's TEXT is tested as carefully as the
+// refusal itself, below.
 
 // The refusal handed back for a command, or "" if the command ran. Reads the
 // `refused` record's reason, which is the exact string the model receives.
@@ -794,10 +804,17 @@ func TestDogfoodLoginIsRefusedInEveryTrial(t *testing.T) {
 
 // 🔴 THE REFUSAL CARRIES THE INFORMATION THE TRIAL NEEDS, AND IT IS DIFFERENT
 // INFORMATION IN THE TWO CASES. This is the half that makes the gate useful
-// rather than merely safe: a credentialed trial has to be told it is ALREADY
-// authenticated and where the file is, or it does what the measured run did and
-// goes looking. An uncredentialed one has to be told no credential exists, or it
-// waits for one.
+// rather than merely safe: a credentialed trial has to be told a credential is
+// installed and where, or it does what the measured run did and goes looking. An
+// uncredentialed one has to be told none exists, or it waits for one.
+//
+// 🔴 AND THE CREDENTIALED TEXT MUST NOT OVERCLAIM. The harness verifies that the
+// file is installed and READABLE; it does not verify that the token WORKS. The
+// measured trial's credential was readable and expired, so a message asserting
+// "you are already authenticated" would have been false exactly when it mattered
+// most — and a trial that believes it while every command 401s has been handed a
+// worse instruction than none. The claim has to be the one the code checked, plus
+// what to do when a command disagrees with it.
 //
 // A blanket "login is disabled" message passes TestDogfoodLoginIsRefusedInEveryTrial
 // completely and fails here.
@@ -807,12 +824,26 @@ func TestDogfoodLoginRefusalSaysWhatTheTrialShouldDoInstead(t *testing.T) {
 	credentialed := refusalReason(t, readFile(t, runFakeTrial(t,
 		[]string{"civitai login --no-browser"}, "", "--credential-file", credPath).transcript))
 	for _, want := range []string{
-		"ALREADY AUTHENTICATED",
+		"A CIVITAI CREDENTIAL IS ALREADY INSTALLED",
 		"~/.config/civitai/config.yaml",
 		"do not delete, move or overwrite that file",
+		// The expired-credential case, which is what the measured trial actually
+		// hit. Without this the message sends a trial with a dead token into the
+		// same 18-minute loop the gate exists to end.
+		"installed but not working",
+		"it can be expired",
 	} {
 		if !strings.Contains(credentialed, want) {
 			t.Fatalf("the credentialed refusal does not tell the trial %q:\n%s", want, credentialed)
+		}
+	}
+	// 🔴 AND IT MUST NOT ASSERT A THING THE HARNESS NEVER CHECKED. Nothing here
+	// verifies the token is valid, so the refusal may not say the trial IS
+	// authenticated.
+	for _, forbidden := range []string{"ALREADY AUTHENTICATED", "you are authenticated"} {
+		if strings.Contains(credentialed, forbidden) {
+			t.Fatalf("the credentialed refusal claims %q, which the harness does not verify — "+
+				"install and readability are checked, validity is not:\n%s", forbidden, credentialed)
 		}
 	}
 
@@ -827,10 +858,10 @@ func TestDogfoodLoginRefusalSaysWhatTheTrialShouldDoInstead(t *testing.T) {
 		}
 	}
 	// 🔴 AND IT MUST NOT CLAIM A CREDENTIAL THERE IS NONE OF. An uncredentialed
-	// trial told it is "already authenticated" would hunt for a file that does not
-	// exist, which is the measured failure with the sign flipped.
-	if strings.Contains(bare, "ALREADY AUTHENTICATED") {
-		t.Fatalf("the uncredentialed refusal claims the trial is authenticated:\n%s", bare)
+	// trial told one is installed would hunt for a file that does not exist, which
+	// is the measured failure with the sign flipped.
+	if strings.Contains(bare, "IS ALREADY INSTALLED") {
+		t.Fatalf("the uncredentialed refusal claims a credential is installed:\n%s", bare)
 	}
 	if credentialed == bare {
 		t.Fatal("both cases get the same refusal, so one of them is wrong about reality")

@@ -162,16 +162,26 @@ with `stop: "credential install failed: …"` and the `credential_install` key i
 absent entirely rather than carrying a sentence.
 
 It used to return the installer's own stdout — `installed
-/root/.config/civitai/config.yaml` — which was the installer's **claim**, and a
-claimed install was indistinguishable from an absent credential. Trial
-`at2-mimo-noderoot-claudeid` (2026-09-27) recorded exactly that line, with
-`credentialed: true` beside it, and at step 60 its own
-`cat ~/.config/civitai/config.yaml` printed `No config file found`. It then spent
-steps 56–74 — 18 of its 23 minutes — on `civitai login`, and died at `rc=124`
-with `generations: 0`. ⚠ **Why the file was absent is not established.** The
-obvious theory, that the trial's own `civitai login` destroyed it, is REFUTED: a
-cancelled login leaves an existing stored credential intact, measured directly.
-The read-back does not diagnose an absence; it refuses to run through one.
+/root/.config/civitai/config.yaml` — which was the installer's **claim about a
+write**, so `jq .credential_install` returned a sentence whether or not the trial
+could read the file. The install path is where a capability confound enters
+unseen: a credential the trial cannot read grades as an ordinary "not
+authenticated" failure.
+
+🔴 **What it does NOT check is that the credential WORKS, and that is the gap the
+incident behind it actually sits in.** Trial `at2-mimo-noderoot-claudeid`
+(2026-09-27) died at `rc=124` with `generations: 0` after spending 18 of its 23
+minutes on `civitai login`. The first reading — that its installed credential was
+absent — is **refuted by its own transcript**: step 60's
+`cat ~/.config/civitai/config.yaml` exited **0** and printed the file (redacted).
+What failed was **validity** — steps 55 and 62 both returned `device login
+failed: Invalid grant: refresh token is invalid (invalid_grant)`. The container's
+`~/.config/civitai` is empty *today* because the trial's own `rm -f` at step 68
+removed the file; the directory's mtime (22:04) matches that step, not the
+install, and both directories are mode 0777, which the installer never sets.
+**So this read-back would have PASSED on that run.** An EXPIRED credential is
+still detected by nothing in this harness — declared gap, not a solved one. The
+thing that would have saved that run is the login gate below.
 
 ⚠ One more place the value exists, and it is in the runner process: the read-back
 `cat`s the file back, so the bytes are in memory for as long as it takes to
@@ -257,15 +267,26 @@ paths need a human and neither can complete in a container: the device flow need
 someone to approve the request in a browser, and `--token <key>` needs a personal
 API key minted in the web UI. What it does instead is burn the wall clock —
 measured on `at2-mimo-noderoot-claudeid`, steps 56–74 were login attempts,
-several backed by five-minute `sleep` loops, and **three of them were spelled
-`rm -f ~/.config/civitai/config.yaml && civitai login …`**, deleting the
-credential the harness had installed before reaching for a login that cannot
-replace it. Refusing the whole tool call is what stops that `rm` too.
+several backed by five-minute `sleep` loops, and **four of them deleted the stored
+credential first** (`rm -f ~/.config/civitai/config.yaml && civitai login …`,
+steps 63/66/68/70), reaching for a login that cannot replace it. Refusing the
+whole tool call is what stops that `rm` too. **This is the fix that would have
+saved that run**, not the read-back above.
 
-The refusal carries what the trial needs, and that differs by case: a
-credentialed trial is told it is **already authenticated**, where the file is, and
-not to delete it; an uncredentialed one is told no credential exists and to
-report that and carry on. ⚠ The difference does reveal that a credential exists —
+🔴 **And the trial was not being stupid — read this before weakening the
+message.** Its credential was installed and readable; it was **expired**
+(`invalid_grant` at steps 55 and 62). A genuine auth failure with no way to tell
+that re-authenticating is impossible is exactly what produces 18 minutes of login
+attempts.
+
+So the refusal carries what the trial needs, and that differs by case: a
+credentialed trial is told a credential **is installed** and readable — the two
+things the harness actually verified, deliberately *not* that it is
+authenticated, which nothing here checks — where the file is, not to delete it,
+and **what to do if a command reports it is not authenticated anyway** (the
+credential is installed but not working, possibly expired; say so and carry on).
+An uncredentialed one is told no credential exists and to report that and carry
+on. ⚠ The difference does reveal that a credential exists —
 which leaks nothing `ls ~/.config/civitai` does not already answer (the guarantee
 above is about what leaves the container, explicitly not about hiding the
 credential from the trial), and withholding it is what cost the 18 minutes. The
