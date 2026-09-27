@@ -381,7 +381,7 @@ bind a debugging port, instead of that surfacing eighty lines into a Go test.
   The arm's own `no` was already observed on a real bundle — `ab-ship-mimo-02`
   above is exactly that — so what those fixtures add is narrower: a pair
   differing in ONE controlled variable rather than a version bump, rebuildable
-  from git in ~5 min where the seven fixtures are preserved containers.
+  from git in ~5 min where the do-not-destroy fixtures are preserved containers.
   `ctl-genpost-blind` grades `yes`/**`no`** across the arms with the consent
   reason; `ctl-genpost-asks`, identical but for the `requestConsent` branch,
   grades `yes`/`yes` and is the positive control proving an ask is observable on

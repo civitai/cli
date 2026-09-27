@@ -62,6 +62,86 @@ fatal() { printf 'oracle: %s — nothing was measured (this is NOT a failing tri
 
 [ -f "$SERVER" ] || fatal "missing $SERVER"
 
+# ── app-controlled text must not be able to write the verdict ────────────────
+# 🔴 THE MANIFEST IS WRITTEN BY THE THING BEING GRADED. `outputDir`,
+# `buildCommand` and `scopes` are read out of the trial's own
+# `block.manifest.json`, and `app_dir`/`served` out of directories the trial
+# itself created. Printed with a raw `%s` they could forge this script's output,
+# and the output is PARSED — `grade.sh` finds the summary as the last `^brief=`
+# line and then takes the FIRST `KEY=` token per field
+# (`tr ' ' '\n' | sed -n 's/^KEY=//p' | head -1`); the Go suite splits the same
+# line with `strings.Fields`. So there were two forgeries, neither of which
+# needed the container to be escaped:
+#
+#   * a SPACE ends the field and starts another. `scopes=` is printed BEFORE
+#     `viewer=`, `arm=`, `served=` and `RENDER=`, so a manifest declaring
+#     `"scopes": ["x RENDER=yes"]` puts a `RENDER=yes` token on the summary line
+#     AHEAD of the real verdict and a first-match read takes the manifest's
+#     number. Measured: the graded cell read `RENDER=yes` for an app that built
+#     nothing.
+#   * a NEWLINE ends the line. `render_reason=` carries `outputDir` and
+#     `buildCommand` verbatim, so a newline followed by a complete
+#     `brief=… RENDER=yes` line emits a SECOND summary-shaped line.
+#
+# `observed=` was already shell-quoted for exactly this reason. The defect was
+# that it was the ONLY field that was — so the quoting is one function now, in
+# two forms, and every app-controlled value goes through one of them.
+#
+# 🔴 WHY NOT `printf '%q'`, WHICH IS WHAT `observed=` USED. Two reasons, and the
+# first is a live break. bash 5.3 escapes a COMMA where 5.2 does not, so `%q`
+# would render a two-scope manifest as `ai:write:budgeted\,posts:write:self` on
+# this host and `ai:write:budgeted,posts:write:self` under CI — a field whose
+# bytes depend on the grader's bash version, which is the two-tier trap in a
+# format both consumers compare exactly (`TestOracleReportsScopesWithoutDeciding`
+# pins the bare form). Second, `%q` escapes with backslashes that a reader then
+# has to un-read. The rule below is version-independent and leaves every
+# legitimate value BYTE-IDENTICAL, which is what keeps grade.sh and the Go suite
+# reading the strings they already read.
+#
+# The escape is percent-hex, and `%` is escaped too — but ONLY when the value
+# needed escaping at all, so a path or a reason that merely contains a `%` is
+# still emitted verbatim.
+#
+#   tok   — a value that must stay ONE field: whitespace and control bytes are
+#           escaped. A path, a comma-joined scope list, `none`, `212` and
+#           `dist` are untouched.
+#   prose — a value that IS a line of its own (`render_reason=`, the brief
+#           notes): control bytes are escaped, SPACES ARE KEPT, because the
+#           reason is a sentence that both a reader and the suite's
+#           `strings.Contains` need to stay one.
+esc() {
+  local mode="$1" v="${2-}" out= i c h
+  case "$mode" in
+    # The fast path's predicate is the slow path's escape set, or a value could
+    # pass the test and still carry a byte the loop would have escaped.
+    tok)   [[ "$v" == *[[:space:]]* || "$v" == *[[:cntrl:]]* ]] || { printf '%s' "$v"; return 0; } ;;
+    prose) [[ "$v" == *[[:cntrl:]]* ]]                         || { printf '%s' "$v"; return 0; } ;;
+    *) printf 'oracle: esc: unknown mode %s\n' "$mode" >&2; exit 2 ;;
+  esac
+  for (( i = 0; i < ${#v}; i++ )); do
+    c=${v:i:1}
+    case "$c" in
+      '%') out+='%25' ;;
+      # 🔴 `=` GOES TOO, ONCE A VALUE IS ON THE SLOW PATH, AND IT IS NOT
+      # COSMETIC. Escaping only the whitespace leaves the token
+      # `x%20RENDER=yes` — inert to both consumers, which split on whitespace,
+      # but it still CONTAINS the string `RENDER=yes`, so a person or a script
+      # grepping a matrix for `RENDER=yes` matches a cell whose verdict is `no`.
+      # A value that needed escaping at all has forfeited the benefit of the
+      # doubt, so nothing in it is left looking like a field assignment.
+      '=') out+='%3D' ;;
+      # `[[:cntrl:]]` covers LF, CR and TAB, so `prose` neutralises the
+      # line-ending vector without touching the spaces between its words.
+      [[:cntrl:]]) printf -v h '%%%02X' "'$c"; out+="$h" ;;
+      [[:space:]]) if [ "$mode" = tok ]; then printf -v h '%%%02X' "'$c"; out+="$h"; else out+="$c"; fi ;;
+      *) out+="$c" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+tok()   { esc tok   "${1-}"; }
+prose() { esc prose "${1-}"; }
+
 # ── the instrument, before any verdict ───────────────────────────────────────
 command -v docker >/dev/null || fatal "no docker on PATH"
 command -v node   >/dev/null || fatal "no node on PATH (the assertion runs on the HOST)"
@@ -203,16 +283,23 @@ x() { docker exec -u "$U" -w /work "$C" bash -lc "$1" 2>/dev/null; }
 docker exec "$C" sh -c 'command -v node >/dev/null' \
   || fatal "no node inside $C — the block cannot be served from where it was built"
 
-printf '=== render oracle: %s (brief=%s) ===\n' "$TRIAL" "$BRIEF"
+# Both of these are already constrained by an earlier existence check — a trial id
+# carrying whitespace names no container and a brief carrying it names no
+# assertion file, so each has already gone through `fatal` — but they go through
+# `tok` anyway rather than resting on that reasoning, which a later edit to either
+# check would silently invalidate.
+printf '=== render oracle: %s (brief=%s) ===\n' "$(tok "$TRIAL")" "$(tok "$BRIEF")"
 
 # Deliberately NOT prefixed `brief=`: that prefix is how grade.sh and the Go
 # tests find the SUMMARY line, and a second line starting with it would be read
 # as one.
 printf -- '--- brief resolution\n'
+# `source=` is this script's own vocabulary and is the only unwrapped field here;
+# the other three come from the transcript, from argv and from the environment.
 printf 'resolved_brief=%s source=%s requested=%s transcript=%s\n' \
-  "$BRIEF" "$BRIEF_SOURCE" "${REQUESTED:-none}" \
-  "$([ "$HAVE_START" = "yes" ] && printf '%s' "$TRANSCRIPT" || printf '(none at %s)' "$TRANSCRIPT")"
-[ -n "$BRIEF_NOTE" ] && printf '%s\n' "$BRIEF_NOTE"
+  "$(tok "$BRIEF")" "$BRIEF_SOURCE" "$(tok "${REQUESTED:-none}")" \
+  "$([ "$HAVE_START" = "yes" ] && tok "$TRANSCRIPT" || printf '(none at %s)' "$(tok "$TRANSCRIPT")")"
+if [ -n "$BRIEF_NOTE" ]; then printf '%s\n' "$(prose "$BRIEF_NOTE")"; fi
 
 # ── locate the app ───────────────────────────────────────────────────────────
 # The app is wherever the model put a manifest. Reading the trial id or guessing
@@ -226,7 +313,19 @@ APP_DIR=""
 [ "$APP_COUNT" -gt 0 ] && APP_DIR=$(printf '%s\n' "$MANIFESTS" | head -1 | xargs dirname)
 
 printf -- '--- app discovery\n'
-printf 'manifests=%s\n%s\n' "$APP_COUNT" "${MANIFESTS:-(none)}"
+# The count, then one path per line. The paths are directory names the TRIAL
+# created, so each one goes through `tok` — a path carrying a space could
+# otherwise put a `RENDER=yes` token into the stream, and one carrying a newline
+# is already two lines by the time `find` has printed it.
+printf 'manifests=%s\n' "$APP_COUNT"
+if [ -z "$MANIFESTS" ]; then
+  printf '(none)\n'
+else
+  while IFS= read -r m; do
+    [ -n "$m" ] || continue
+    printf '%s\n' "$(tok "$m")"
+  done <<<"$MANIFESTS"
+fi
 
 # ── A: the offline gate. Reported. Never the verdict. ────────────────────────
 printf -- '--- gate: civitai app validate (reported, NOT the verdict)\n'
@@ -236,7 +335,14 @@ if [ -n "$APP_DIR" ] && x 'command -v civitai >/dev/null'; then
   GATE_OUT=$(docker exec -u "$U" -w /work "$C" bash -lc "civitai app validate '$APP_DIR'" 2>&1)
   docker exec -u "$U" -w /work "$C" bash -lc "civitai app validate '$APP_DIR'" >/dev/null 2>&1
   GATE_RC=$?
-  printf '%s\nrc=%s\n' "$GATE_OUT" "$GATE_RC"
+  # The validator's own words, and it is legitimately MULTI-LINE — so the
+  # newlines stay and each line is control-escaped instead. It reaches this
+  # stream having rendered an app-controlled path and an app-controlled manifest,
+  # which is what puts it in scope; a line of it that merely LOOKS like the
+  # summary cannot win, because the summary is the LAST `brief=` line of the run
+  # and that is how both consumers resolve it.
+  while IFS= read -r l || [ -n "$l" ]; do printf '%s\n' "$(prose "$l")"; done <<<"$GATE_OUT"
+  printf 'rc=%s\n' "$GATE_RC"
   [ "$GATE_RC" = "0" ] && GATE=pass || GATE=fail
 else
   printf 'skipped: %s\n' \
@@ -315,7 +421,8 @@ else
 fi
 
 printf -- '--- serving\n'
-printf 'app_dir=%s outputDir=%s served=%s\n' "${APP_DIR:-none}" "${OUTDIR:-none}" "${SERVED:-none}"
+printf 'app_dir=%s outputDir=%s served=%s\n' \
+  "$(tok "${APP_DIR:-none}")" "$(tok "${OUTDIR:-none}")" "$(tok "${SERVED:-none}")"
 
 # ── C: serve it, inside the container, and drive it from the host ────────────
 SRV_PID=
@@ -367,7 +474,7 @@ if [ -n "$SERVED" ]; then
   done
   [ "$REACHED" = "yes" ] || fatal "served $SERVED in $C but could not reach $URL from the host"
 
-  printf -- '--- assertion: %s (scopes=%s)\n' "$BRIEF" "$SCOPES"
+  printf -- '--- assertion: %s (scopes=%s)\n' "$(tok "$BRIEF")" "$(tok "$SCOPES")"
   # 🔴 SAY IT OUT LOUD WHEN THE ARM IS NOT THE DEFAULT. The arm is selected by an
   # ambient environment variable, so a stale export in an operator's shell would
   # otherwise silently turn every cell of a matrix into a consent verdict wearing
@@ -443,7 +550,11 @@ printf -- '--- render verdict\n'
 # brief's own doc requires an oracle to carry through, because the assertion is
 # strict (`212 °F` fails where `212` passes) and a bare `no` cannot tell a
 # near-miss from a block that rendered nothing.
-printf 'render_reason=%s\n' "${REASON:-none}"
+# `prose`, not `tok`: the reason is a SENTENCE — it carries `outputDir` and
+# `buildCommand` from the manifest, and the assertion's own free-form `.reason`,
+# which quotes the block's DOM. Its spaces are its words, so only the bytes that
+# could end the line are escaped.
+printf 'render_reason=%s\n' "$(prose "${REASON:-none}")"
 # 🔴 `arm=` IS ON THE SUMMARY LINE, NOT ONLY IN THE ASSERTION'S JSON, BECAUSE THE
 # ARM IS SET BY AN ENVIRONMENT VARIABLE AND A CELL IS READ OUT OF CONTEXT. Two
 # runs of the same trial now legitimately disagree — `yes` on the consented arm
@@ -451,7 +562,23 @@ printf 'render_reason=%s\n' "${REASON:-none}"
 # so a verdict without this field does not say which question it answers. It is
 # read back from the assertion rather than from this script's own environment,
 # so it describes the run that happened.
+# An unmeasured `observed` renders as `''` rather than as an empty field, which is
+# what `printf '%q'` used to give it and what a reader scanning a matrix column
+# has been seeing. `tok` leaves an empty string empty, so the two-quote form is
+# spelled out here instead of falling out of the quoting.
+OBS_FIELD="''"
+[ -n "$OBSERVED" ] && OBS_FIELD=$(tok "$OBSERVED")
+# 🔴 EVERY FIELD ON THIS LINE THAT IS NOT THIS SCRIPT'S OWN VOCABULARY GOES
+# THROUGH `tok`. `brief_source`, `gate`, `gate_rc`, `app_dirs` and `RENDER` are
+# set from fixed strings, an integer counter and `$?` — the rest are the
+# manifest's, the trial's filesystem's, or read back across a process boundary
+# from the assertion's JSON, and any one of them carrying a space would start a
+# field that a first-match reader prefers to the real one. `observed=` was
+# already quoted and now uses the same function as its siblings rather than a
+# second rule.
 printf 'brief=%s brief_source=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s scopes=%s viewer=%s arm=%s served=%s observed=%s RENDER=%s\n' \
-  "$BRIEF" "$BRIEF_SOURCE" "$APP_COUNT" "${APP_DIR:-none}" "$GATE" "${GATE_RC:-none}" "${SCOPES:-none}" \
-  "${AVIEWER:-unmeasured}" "${AARM:-unmeasured}" "${SERVED:-none}" "$(printf '%q' "${OBSERVED:-}")" "$RENDER_PASS"
+  "$(tok "$BRIEF")" "$BRIEF_SOURCE" "$APP_COUNT" "$(tok "${APP_DIR:-none}")" \
+  "$GATE" "${GATE_RC:-none}" "$(tok "${SCOPES:-none}")" \
+  "$(tok "${AVIEWER:-unmeasured}")" "$(tok "${AARM:-unmeasured}")" "$(tok "${SERVED:-none}")" \
+  "$OBS_FIELD" "$RENDER_PASS"
 exit 0

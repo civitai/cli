@@ -266,6 +266,12 @@ func sortedKindNames(set map[projectKind]bool) []string {
 // file that spells the URL twice. A sentence cannot notice a fourth; the walk
 // below can.
 var docsURLSpellingLedger = map[string]string{
+	"internal/cmd/exitcodes_doc.go": "the GENERATED exit-code contract. The front-door reduction " +
+		"moved `## Generate` and `## Validate fidelity` to developer.civitai.com, so exit code 1's and " +
+		"exit code 3's Detail bullets now cross-reference the hosted guides instead of two `###` " +
+		"anchors that no longer exist. This file is the ONLY writable copy: the same sentences are " +
+		"rendered byte-for-byte into README.md and asserted by TestREADMEExitCodeSectionsAreGenerated, " +
+		"so a URL that rots here rots on the published contract too and cannot be repaired in the README",
 	"internal/cmd/templates/agents-app.md": "the literal that SHIPS — this is the one that is written into somebody " +
 		"else's project and cannot be recalled",
 	"internal/cmd/agent_setup_docs_test.go": "wantDocsSection, the golden the template is compared against, plus " +
@@ -279,11 +285,26 @@ var docsURLSpellingLedger = map[string]string{
 		"retiring the index moved the spelling into the template rather than removing it",
 	"internal/scaffold/readme_claims_test.go": "the guard that the scaffolded README names the hosted hooks " +
 		"reference within the first 3 KB pins the URL as a const, so it is a third place the spelling can rot",
+	"claudedocs/decisions/25-listing-media-bounds.md": "AGENTS.md item 25's evidence file: its 2026-09-25 " +
+		"amendment names the page the README's `### Listing media requirements` section was relocated TO, and " +
+		"records the content verification that justified deleting the prose. Not exempt as a dated record — the " +
+		"URL there is a live pointer a reader follows, not just evidence of what was true",
+	"internal/cmd/app_listing.go": "the listing-media `--help` bodies (set-icon / set-cover / add-screenshot) and " +
+		"the two attach-rejection errors name `/apps/guide/store-listing` where they used to name a README section " +
+		"this repo deleted. It is the most expensive spelling in the ledger: these five strings are COMPILED INTO " +
+		"a released binary, so a moved page rots in every version already on somebody's PATH and no docs edit " +
+		"reaches them",
 	"README.md": "the published user contract now LINKS OUT to individual pages under the block's Guide URL " +
 		"(`/apps/guide/local-dev`, `/apps/guide/review-and-deploy`, `/apps/guide/store-listing`) in place of " +
 		"the prose those pages carry, so what matches here is the `/apps/guide/` PREFIX rather than a whole " +
 		"URL. It rots the same way and costs more: a reader sent to a moved page does not get a stale " +
 		"paragraph, they get nothing, because the paragraph was deleted on the grounds that the page carries it",
+	"internal/pkgzip/testdata/readme_dotenv_section.golden.txt": "the whitespace-collapsed COPY of README.md's " +
+		"dotenv section that TestREADMEDotenvSectionIsTheReviewedCopy pins. That section now ends in a pointer " +
+		"to `/apps/guide/packaging#which-dotenv-files-end-up-in-the-bundle`, so the URL is spelled here as well " +
+		"as in the README. It is a MECHANICAL MIRROR — repair it by editing README.md and re-running that test " +
+		"with `-update`, never by hand-editing this file — but it is still a second place the spelling rots, " +
+		"and a stale copy reddens that guard for a reason whose message says nothing about the URL",
 }
 
 // docsURLLedgerExemptPrefix is the ONE exemption, and it is not a convenience.

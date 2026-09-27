@@ -1,10 +1,20 @@
 # ARCHIVE — handoff-app-build-dogfood
 
 Closed investigation blocks evicted from `handoff-app-build-dogfood.md` so the
-live doc stays under the size ratchet. **Nothing here was deleted or edited** —
-each block is byte-identical to the copy the doc carried, including its
-`as-of:` stamp. These are RESOLVED: read them to avoid re-deriving an
-elimination, not as current state.
+live doc stays under the size ratchet. These are RESOLVED: read them to avoid
+re-deriving an elimination, **not** as current state.
+
+🔴 **Two provenances, and the distinction matters when you cite one.** The seven
+blocks under *Evicted 2026-09-26* that the live doc **did** carry are
+**byte-identical to its copies**, `as-of:` stamps included — asserted
+mechanically at eviction time, not by eye, and the eviction script refuses rather
+than writes if any copy differs. ⚠ The remaining blocks (*rank 15's premise was
+backwards*, and everything under *Evicted 2026-09-27*) were written **straight
+into this file**; the live doc never carried them, so "byte-identical to the copy
+the doc carried" does not apply — there is no such copy.
+
+🔴 **Do not quote a block count from this preamble** — blocks get appended.
+Derive it: `grep -c '^### ' claudedocs/handoff-app-build-dogfood-ARCHIVE.md`.
 
 ## Evicted 2026-09-26
 
@@ -317,3 +327,62 @@ git. That is the whole increment. Do not re-inflate it.
 - **Next probe:** none. `fixtures/consent-controls/` is the durable artifact; the
   containers are evidence and the runs are at `~/.cache/dogfood-consent-controls/`.
 
+
+## Evicted 2026-09-27
+
+### ✅ MEASURED 2026-09-27 — what `v0.1.2` actually changed, and the control that refuted my first answer
+- as-of: 2026-09-27
+
+🔴 **THIS CLOSES "what did `v0.1.2` fix", AND IT RETRACTS MY OWN FIRST ANSWER TO IT — caught by a
+control, not by review.** Written while reconciling `#718`; the live-doc summary is in *State now*.
+
+- **Observed (with values), three revisions of the same app:** `v0.1.0` =
+  `dogfood-ab-ship-mimo-02` (`index-CkrWgKXb.js`); `v0.1.1` = the image
+  `dogfood-fixture/ab-imgposter:v0.1.1-pre-post-fix` (`index-CJh51XL4.js`, md5
+  `b8a1936e5939e39aa3e26f6e9e777113`, manifest `"version": "0.1.1"`); `v0.1.2` = the LIVE bundle
+  `index-CcmcNwgc.js` (md5 `c603fa854eba4d5206b73e04c14a1f3c`), byte-identical to
+  `dogfood-ab-imgposter-fixed`, whose manifest reads `0.1.2`. `via: measurement`
+- 🔴 **RETRACTED — "`posts:write:self` 4 vs 1, so the POST path is where `v0.1.2` moved."** I read
+  that count against the `v0.1.0` control only, and it looked decisive. **The `v0.1.1` snapshot
+  reads 4 as well** — as it does for budgeted-scope (4/4) and `requestConsent` (2/2) — so all
+  three counts separate `v0.1.1`+`v0.1.2` from `v0.1.0` and **none** of them discriminates the
+  revision I was trying to characterise. This is this doc's own lesson landing on its author:
+  *pick a string the NEW content introduces, never the identifier the work has been discussing
+  all along.* **The fix was to find the control that brackets the change, not to reason harder.**
+  `via: measurement`
+- **The discriminating read — failure-message vocabulary.** `"Please try again."` sites go
+  **3 → 6**, and the new tokens are reads of an error's `code` / `message` / `status`:
+
+  | string | v0.1.0 | v0.1.1 | v0.1.2 |
+  |---|---|---|---|
+  | `Generation failed. Please try again.` | 2 | 2 | 2 |
+  | `Posting failed. Please try again.` | 1 | 1 | **2** |
+  | `Generation was refused. Please try again.` | 0 | 0 | **1** |
+  | `That generation expired before it finished.` | 0 | 0 | **1** |
+  | `so there is nothing to post` | 0 | 0 | **2** |
+  | `still connecting to Civitai` | 0 | 0 | **1** |
+  | `lost its Civitai session` | 0 | 0 | **1** |
+  | `may already have been created` | 0 | 0 | **1** |
+
+  So the generic post failure the user reported gains a **second distinguishable branch**, plus
+  five new specific messages — including *"Your post may already have been created — check your
+  Civitai profile before trying again."* `via: measurement`
+- **Ruled out — that `v0.1.2` added a capability or a scope.** The manifest scope set and the
+  `requestConsent` call count are unchanged from `v0.1.1`; only message strings and error-field
+  reads differ. `via: measurement`
+- ⚠ **NOT VERIFIED — that a real user reported *"Posting failed. Please try again."*** The string
+  is present in `v0.1.0`/`v0.1.1` at **1** site, which is consistent with the report, but the
+  report itself is operator-relayed and this session had no access to it. Do not upgrade it.
+- 🔴 **THE STRUCTURAL POINT, and it is the third instance: the oracle cannot see this class at
+  all.** `InlineTransport` rejects every request, so the app's *error* branch is the only one the
+  rig ever reaches; a change that makes failures legible cannot move `RENDER=`. Two user-found
+  defects (`v0.1.1` generate, `v0.1.2` post) now sit in the gap between "the oracle passes it" and
+  "a person can use it". See *Gotchas* → **Added 2026-09-25 (feedback)**.
+- ⚠ **A METHOD TRAP worth carrying:** a greedy `grep -o '"[^"]\{6,70\}...[^"]\{0,40\}"'` over a
+  267 KB **single-line** minified bundle backtracked past a 120 s timeout and returned nothing —
+  which reads as "the string is absent". A double-quote-only extractor then **missed
+  `Posting failed. Please try again.` entirely**, and had I stopped there I would have reported it
+  absent from every revision. **Count exact needles in Python; never infer absence from a regex
+  sweep over minified output.**
+- **Next probe:** none. The three bundles are preserved; the two images are in the do-not-destroy
+  set.

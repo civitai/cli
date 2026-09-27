@@ -248,7 +248,34 @@ var splitItems = []splitItem{
 	{num: 30, file: "claudedocs/decisions/30-listing-change-may-be-staged.md", base: agentsSplitBaseWave8, nonBlank: 7, sha: "3fbea5dc77a22e8d567b8340b1022915434fc68e2a21a13ab204c5f8b325d722"},
 }
 
-// --- the one deliberate delta, item 3 ---------------------------------------
+// --- the deliberate deltas: item 3 and item 25 -------------------------------
+//
+// 🔴 TWO, NOT ONE, AND THE SECOND IS NOT A LOOSENING. This header said "the one
+// deliberate delta" for eight waves. Item 25 is the second, and it is the same
+// SHAPE as item 3's, deliberately: an exact line-for-line swap, both halves
+// asserted live, reversed before digesting. What is NOT done here is generalise
+// the two into a table — a table invites a third entry as a matter of
+// configuration, and this file's own header warns that "I made the pinning more
+// flexible" is exactly how a pin stops pinning. Each delta is its own branch,
+// its own constants and its own live assertions, so adding one is a visible edit
+// to the reversal function rather than a row.
+//
+// 🔴 WHAT A DELTA MAY BE USED FOR, AND WHAT IT MAY NOT. Both existing deltas fix
+// a body sentence that is FALSE — item 3 a false reason, item 25 a stale
+// LOCATION claim plus the cross-reference that went with it. Neither rewords,
+// condenses or re-wraps. A re-wrap is specifically out of reach by design: it is
+// a multi-line SEQUENCE match rather than a line-for-line swap, and that is the
+// step from "reverse three known lines" to "diff two texts", which is the
+// loosening.
+//
+// ⚠ A ROUND-1 VERSION OF THIS PARAGRAPH USED THAT RULE TO EXCUSE A RESIDUAL,
+// AND THE EXCUSE WAS FALSE. It said item 25's heading could not be corrected
+// because doing so needed a re-wrap. It did not: a single replacement line that
+// still flows into the following one is a line-for-line swap like any other, and
+// raggedness is already tolerated (item25NewLineB is 59 columns where the line it
+// replaced was 78). The heading is now corrected by item25OldLineC. Keep the
+// rule; do not reuse it as a reason not to fix something until you have tried the
+// one-line swap.
 
 const (
 	// item3OldLine is what stood at agentsSplitBase. It states a reason that is
@@ -262,6 +289,47 @@ const (
 	// even if someone writes "RETRACTED" elsewhere in the item.
 	item3RetractionFirst = `   🔴 **"A NEW DEPENDENCY, 'ASK FIRST'" IS RETRACTED — THE REASON WAS FALSE,`
 	item3RetractionLast  = `   change is documentation-only, and it is the copy to fix next.`
+
+	// item25OldLineA / item25OldLineB are what stood at agentsSplitBaseWave3.
+	// Together they pointed the reader at README → *Listing media requirements*
+	// for the platform's bounds. That section was DELETED in the same change that
+	// records this delta, so the item's canonical rule text named a heading the
+	// repository no longer has — and nothing checked it.
+	item25OldLineA = `    the measured value. Those numbers are documented in README →`
+	item25OldLineB = "    *Listing media requirements* and in the scaffolded `assets/README.md`, and"
+	// item25NewLineA / item25NewLineB are what replaced them. The bounds now live
+	// on the platform's published Store listing guide and in the scaffolded
+	// assets README; the URL is deliberately NOT spelled here, because this file
+	// would then need a docsURLSpellingLedger row of its own for a line whose job
+	// is to be reversed rather than read.
+	item25NewLineA = `    the measured value. Those numbers are documented in the platform's Store`
+	item25NewLineB = "    listing guide and in the scaffolded `assets/README.md`, and"
+
+	// item25OldLineC / item25NewLineC are the rule's own HEADING. The old text
+	// named a LOCATION ("live in the README as prose") where the item's argument
+	// only ever constrained a MECHANISM — guidance must not become a gate — and
+	// that location stopped being true when the README section was deleted.
+	//
+	// 🔴 A ROUND-1 NOTE HERE CLAIMED THIS COULD NOT BE FIXED BECAUSE IT NEEDED A
+	// RE-WRAP. That was wrong, and an audit showed why: item25NewLineB already
+	// replaces a 78-column line with a 59-column one, so the mechanism plainly
+	// tolerates a ragged result — which means a single replacement line that still
+	// flows into the next one ("…and must NOT become a local check.**") is
+	// expressible. It is, at 85 columns. The note was a reason composed to justify
+	// a residual rather than derived from the mechanism, which is exactly the shape
+	// this file exists to catch in prose. The residual is closed instead.
+	//
+	// The rule about re-wraps is unchanged and still true: a multi-line re-flow is
+	// a SEQUENCE match rather than a line-for-line swap, and that step — from
+	// "reverse three known lines" to "diff two texts" — is the loosening. This is
+	// not one.
+	//
+	// ⚠ The historical STUB quotation near the top of the evidence file still
+	// carries the old sentence, deliberately: it is a record of what waves 1–3 left
+	// behind, it is prefixed with `> `, and it sits ABOVE the `---` so evidenceBody
+	// never reaches it.
+	item25OldLineC = `25. **The listing-media DIMENSION and ASPECT bounds live in the README as prose,`
+	item25NewLineC = `25. **The listing-media DIMENSION and ASPECT bounds are GUIDANCE wherever documented,`
 )
 
 var evidenceBodyStartRe = regexp.MustCompile(`^([0-9]+)\. \*\*`)
@@ -299,12 +367,74 @@ func evidenceBody(t *testing.T, path string, wantNum int) []string {
 }
 
 // reverseKnownDelta maps an evidence body back to the text it was moved from.
-// It is a no-op for every item but 3.
+// It is a no-op for every item but 3 and 25.
 func reverseKnownDelta(t *testing.T, num int, body []string) []string {
 	t.Helper()
-	if num != 3 {
-		return body
+	switch num {
+	case 3:
+		return reverseItem3Delta(t, body)
+	case 25:
+		return reverseItem25Delta(t, body)
 	}
+	return body
+}
+
+// reverseItem25Delta undoes the two-line swap described on item25OldLineA.
+//
+// It is an exact line-for-line reversal and nothing more: three known lines out,
+// three known lines in, with BOTH directions asserted so a revert of the
+// correction fails loudly instead of silently re-matching the base digest.
+func reverseItem25Delta(t *testing.T, body []string) []string {
+	t.Helper()
+	joined := strings.Join(body, "\n")
+
+	// Assert the delta is PRESENT before reversing it. Without this, restoring
+	// the dead cross-reference would sail through: the reversal would find
+	// nothing to undo, the digest would still match the base, and the guard would
+	// certify a body that had quietly gone back to naming a deleted README
+	// section.
+	for _, dead := range []string{item25OldLineA, item25OldLineB, item25OldLineC} {
+		if strings.Contains(joined, dead) {
+			t.Errorf("item 25's evidence file has gone back to the DEAD cross-reference:\n  %s\n"+
+				"README.md has no `### Listing media requirements` section — it was relocated to the platform's published "+
+				"Store listing guide. The rule and the behaviour are unchanged; only the pointer was corrected.", dead)
+		}
+	}
+	for _, live := range []string{item25NewLineA, item25NewLineB, item25NewLineC} {
+		if !strings.Contains(joined, live) {
+			t.Errorf("item 25's evidence file no longer carries the corrected line:\n  %s", live)
+		}
+	}
+
+	out := make([]string, 0, len(body))
+	swapped := 0
+	for _, l := range body {
+		switch l {
+		case item25NewLineA:
+			out = append(out, item25OldLineA)
+			swapped++
+		case item25NewLineB:
+			out = append(out, item25OldLineB)
+			swapped++
+		case item25NewLineC:
+			out = append(out, item25OldLineC)
+			swapped++
+		default:
+			out = append(out, l)
+		}
+	}
+	if swapped != 3 {
+		t.Fatalf("item 25's corrected lines were not all found (swapped %d of 3), so the reversal to base text "+
+			"could not be performed. This delta reverses THREE EXACT LINES and nothing else: if you changed the "+
+			"body's wording, add the old/new pair to the constants above in the same commit — the reversal cannot "+
+			"absorb an edit it was not told about, and must never be relaxed into a diff.", swapped)
+	}
+	return out
+}
+
+// reverseItem3Delta undoes the correction described on item3OldLine.
+func reverseItem3Delta(t *testing.T, body []string) []string {
+	t.Helper()
 
 	// Assert the delta is actually PRESENT before reversing it. Without this,
 	// a revert of the correction would sail through: the reversal would find
@@ -897,8 +1027,14 @@ func TestEveryBaseBodyLineSurvivedTheMove(t *testing.T) {
 			}
 			var missing []string
 			for _, l := range nonBlank(baseItemBody(t, doc, it.num)) {
+				// The recorded, reviewed deltas — see the header above item3OldLine.
+				// Each exemption names an EXACT line for an EXACT item, so a body
+				// that lost some other line is still reported.
 				if it.num == 3 && l == item3OldLine {
-					continue // the one recorded, reviewed delta
+					continue
+				}
+				if it.num == 25 && (l == item25OldLineA || l == item25OldLineB || l == item25OldLineC) {
+					continue
 				}
 				if have[l] == 0 {
 					missing = append(missing, "  "+l)
