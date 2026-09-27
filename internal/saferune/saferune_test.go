@@ -697,6 +697,108 @@ func TestDegradationScriptsMatchThePackageDoc(t *testing.T) {
 			want, len(scripts), sortedKeys(scripts), len(documentedDegradations))
 	}
 
+	// 🔴 WHICH ROWS, NOT JUST HOW MANY — the leg that was missing, and the gap it
+	// left produced the defect this whole guard exists to prevent, INSIDE the fix.
+	// The doc's parenthetical named "the subdivision flag, VS15, Mongolian FVS1" as
+	// the three non-script rows. Mongolian FVS1 carries script "Mongolian" — it IS
+	// a script row — and the emoji-ZWJ row was omitted. Read literally that makes
+	// 13−3=10 script rows with Devanagari ×2 and Mongolian ×1, i.e. NINE distinct
+	// scripts: the paragraph explaining why "nine" was wrong regenerated nine. The
+	// totals were right, so a count-only check was green throughout.
+	//
+	// So the list is derived from nonScriptDegradations, whose keys ARE the answer,
+	// and it is checked inside the sentence that makes the claim rather than
+	// anywhere in the doc — a name appearing elsewhere (Mongolian is named twice as
+	// a legitimate script) must not satisfy or break it.
+	//
+	// 🔴 THE CANONICAL PHRASING IS LOAD-BEARING, AND THE DIAGNOSTIC DEGRADES WITHOUT
+	// IT. The name checks are scoped to the sentence located by the derived count
+	// phrase, so a doc that says the same thing in other words — the defect's actual
+	// wording was "three rows (the subdivision flag, VS15, Mongolian FVS1)" — reddens
+	// on the COUNT phrase and then on this block's own control, never reaching the
+	// informative "names a script row" message. Measured. That is a caught defect
+	// with a worse error message, not a miss; the remedy CI prints is still "state
+	// the derived sentence", after which these checks bind. Do not read a green here
+	// as "the enumeration is right" unless the count phrase is present.
+	nonScript := make([]string, 0, len(nonScriptDegradations))
+	for name := range nonScriptDegradations {
+		nonScript = append(nonScript, name)
+	}
+	sort.Strings(nonScript)
+
+	wantCount := fmt.Sprintf("%d rows are not script degradations", len(nonScript))
+	if !strings.Contains(flat, wantCount) {
+		t.Errorf("the package doc does not state %q. nonScriptDegradations declares %d: %v",
+			wantCount, len(nonScript), nonScript)
+	}
+	// Scope to the claiming sentence, so the check is about the enumeration.
+	sentence := ""
+	if i := strings.Index(flat, wantCount); i >= 0 {
+		end := len(flat)
+		if j := strings.IndexAny(flat[i:], "."); j >= 0 {
+			end = i + j
+		}
+		sentence = flat[i:end]
+	}
+	// CONTROL: an empty sentence would make both loops below vacuous.
+	if len(sentence) < len(wantCount) {
+		t.Fatalf("CONTROL failure, not a finding: could not isolate the non-script sentence from the doc "+
+			"(got %q) — the two assertions below would pass by absence", sentence)
+	}
+	for _, name := range nonScript {
+		if !strings.Contains(sentence, name) {
+			t.Errorf("the doc's non-script sentence does not name the row %q, which nonScriptDegradations "+
+				"declares as NOT a script degradation.\n  sentence: %q\n  declared: %v",
+				name, sentence, nonScript)
+		}
+	}
+	// The other direction, which is the one that actually fired: a SCRIPT row must
+	// not be listed among the non-script rows.
+	for _, tc := range documentedDegradations {
+		if tc.script == "" {
+			continue
+		}
+		if strings.Contains(sentence, tc.name) {
+			t.Errorf("the doc's non-script sentence names %q, which carries script %q and IS a script "+
+				"degradation. Listing it there subtracts it from the script count in prose while the "+
+				"derived figure keeps it — that disagreement is how \"nine\" was regenerated inside the "+
+				"paragraph retracting it.\n  sentence: %q", tc.name, tc.script, sentence)
+		}
+	}
+
+	// 🔴 NO FIGURE MAY BE RESTATED AS A WORD. Measured: with the count spelled
+	// "EIGHT" in two other sentences, adding a 14th row with a 9th script fired the
+	// guard with exactly two remedies, and applying exactly those left the module
+	// GREEN with the doc reading "EIGHT scripts are MEASURED" beside "9 distinct
+	// scripts across 14 rows". A guard that cannot see a copy cannot keep it
+	// honest, so the copies are banned rather than checked.
+	//
+	// 🔴 QUOTED SPANS ARE REMOVED FIRST, and that is not optional: this comment's own
+	// retraction has to quote "at least nine scripts" in order to retract it, and the
+	// paragraph above has to quote the mutant's "EIGHT scripts are MEASURED" output
+	// to record the measurement. A ban that cannot tell a mention from an assertion
+	// forbids the most useful prose here — the same too-strict half that
+	// internal/cmd's readmeAssertsFlagWinsRule documents. The mechanism differs on
+	// purpose: there, ONE known claim is tested for adjacency to quote marks; here,
+	// ANY figure is scanned for, so the quoted regions are excised instead.
+	unquoted := regexp.MustCompile("\"[^\"]*\"|`[^`]*`").ReplaceAllString(flat, " ")
+	// CONTROL: excision must not have eaten the document.
+	if len(unquoted) < len(flat)/2 {
+		t.Fatalf("CONTROL failure, not a finding: stripping quoted spans left %d of %d bytes — the ban "+
+			"below would pass by absence", len(unquoted), len(flat))
+	}
+	for _, w := range []string{
+		"FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN", "ELEVEN", "TWELVE", "THIRTEEN",
+		"FOURTEEN", "FIFTEEN", "SIXTEEN",
+	} {
+		re := regexp.MustCompile(`(?i)\b` + w + `\b ?(?:distinct )?(?:scripts?|rows?)\b`)
+		if m := re.FindString(unquoted); m != "" {
+			t.Errorf("the package doc states a figure as a WORD, unquoted: %q. Only the derived digit "+
+				"sentence may carry a count — a word-spelled copy is invisible to the derivation and WILL "+
+				"drift out of agreement with it (measured). Delete the restatement, or quote it if you are "+
+				"retracting it.", m)
+		}
+	}
 }
 
 func sortedKeys(m map[string]bool) []string {

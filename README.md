@@ -1393,8 +1393,9 @@ it reaches your terminal, and this is what that gate promises:
   when you set it with `--out`**, because the same variable holds a
   **server**-chosen file name in its other branches. **No surface enumerates the
   set, so do not read those two as its boundary** — `civitai download` also
-  filters the values you give `--root` and `--for-base`, in the very lines that
-  report them.
+  filters the values you give `--root` and `--for-base` in some of the lines that
+  report them, while other lines — an error that names a directory it could not
+  create, for instance — print what you typed exactly.
 - **A table cell is one line, and one column.** Every **server-supplied** value
   that reaches a cell of a rendered table — `models search`, `images search`, `app status`,
   `workflows list`, the pre-spend cost table, and the rest — has any newline or

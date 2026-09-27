@@ -138,22 +138,32 @@
 //
 // 🔴 THE ACCEPTED COST, WHICH IS REAL. The class contains U+200D ZERO WIDTH
 // JOINER and U+200C ZERO WIDTH NON-JOINER, so text that depends on them renders
-// differently: emoji ZWJ sequences break into their components, and EIGHT
-// scripts are MEASURED to lose orthographic distinctions — Malayalam chillu
-// (`ണ്‍` becomes `ണ്`, a DIFFERENT letter), Devanagari half-forms and conjuncts,
-// Bengali, Tamil, Kannada, Sinhala repaya, Persian/Arabic ZWNJ, and Mongolian
-// (both the vowel separator and the free variation selectors). The measured
-// sheet is TestStripDocumentedDegradations, and the count is pinned to it in
-// both directions by TestDegradationScriptsMatchThePackageDoc.
+// differently: emoji ZWJ sequences break into their components, and the scripts
+// MEASURED to lose orthographic distinctions are Malayalam chillu (`ണ്‍` becomes
+// `ണ്`, a DIFFERENT letter), Devanagari half-forms and conjuncts, Bengali, Tamil,
+// Kannada, Sinhala repaya, Persian/Arabic ZWNJ, and Mongolian (both the vowel
+// separator and the free variation selectors). The measured sheet is
+// TestStripDocumentedDegradations.
 //
-// 🔴 EIGHT IS WHAT IS MEASURED, NOT A CEILING, AND IT IS NOT THE ROW COUNT. The
+// 🔴 THE COUNT IS MEASURED, IT IS NOT A CEILING, AND IT IS NOT THE ROW COUNT. The
 // sheet measures 8 distinct scripts across 13 rows: Devanagari and Mongolian each
-// contribute two rows, and three rows (the subdivision flag, VS15, Mongolian
-// FVS1) are not script degradations at all. Both numbers are derived from that
-// sheet and pinned to it by TestDegradationScriptsMatchThePackageDoc. Eight is a
-// FLOOR on the damage rather than its boundary, because any script that uses the
-// join controls orthographically loses the same distinctions whether or not a row
-// names it — so do not put an exhaustiveness word on it.
+// contribute two rows, and 3 rows are not script degradations at all — emoji ZWJ
+// sequence, subdivision flag, emoji TEXT presentation selector. Every figure in
+// this paragraph is derived from the sheet and pinned to it by
+// TestDegradationScriptsMatchThePackageDoc, INCLUDING which rows those are.
+//
+// 🔴 THE FIGURES APPEAR EXACTLY ONCE EACH, AS DIGITS, ON PURPOSE. An earlier draft
+// also spelled the script count as a WORD in two other sentences. Measured: adding
+// a 14th row with a 9th script fired the guard with two remedies, and applying
+// exactly those two left the module GREEN with the doc reading "EIGHT scripts are
+// MEASURED" beside "9 distinct scripts across 14 rows" — the published defect this
+// comment exists to record, reproduced by obeying the guard. A number a guard
+// cannot see is a number that will disagree with the one it can. Do not restate a
+// figure here in words.
+//
+// That count is a FLOOR on the damage rather than its boundary, because any script
+// that uses the join controls orthographically loses the same distinctions whether
+// or not a row names it — so do not put an exhaustiveness word on it.
 //
 // 🔴 THIS SENTENCE SAID "at least nine scripts" AND THEN ENUMERATED EIGHT, AND
 // WHERE NINE CAME FROM IS UNKNOWN. Do not reconstruct it; a reconstruction is how

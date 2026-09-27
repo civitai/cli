@@ -130,16 +130,31 @@ func TestREADMEDoesNotAssertTheUnqualifiedEchoPromise(t *testing.T) {
 // unique: deleting the safeTermSingle call (TestSafeTermIsNeverAppliedToUserTypedInput
 // also reddens) or removing U+2800 from saferune's class (ten other tests redden).
 //
-// 🔴 A `--for-base` SUBTEST WAS HERE AND WAS DELETED for having no unique kill:
-// the analogous mutant is caught by TestBaseModelWarningMentionsBothModels, and
-// the call-site removal by the structural ledger. Its one durable finding is kept
-// here because it cost a false measurement to learn: baseModelFamily classifies by
-// prefix/substring over the RAW label, so an invisible rune INSIDE a token
-// ("SD<U+2800>1.5") defeats the classifier — the family resolves to "",
-// baseModelMismatch is conservatively false, and reportBaseModel prints NO warning
-// at all. A probe placed there measures nothing while looking like a pass; append
-// the rune instead. That silence is the conservative direction the classifier
-// documents, not a defect.
+// 🔴 THE `--for-base` SUBTEST WAS DELETED ONCE AND IS BACK, because "a
+// pre-existing test also reddens" was the WRONG test of redundancy here. Removing
+// the gate at reportBaseModel leaves exactly one red module-wide,
+// TestSafeTermIsNeverAppliedToUserTypedInput, and its message is:
+//
+//	bareIdentArgs classifies "reportBaseModel::w", which is no longer a bare
+//	safeTerm argument in that function. A stale note reads as coverage; DELETE IT,
+//	or fix the key if the function was renamed.
+//
+// The first remedy it offers is to delete the LEDGER ROW. Follow it and the suite
+// is green with the gate gone and the README's `--for-base` claim false. A guard
+// whose only co-killer instructs the maintainer to remove the coverage is not a
+// co-killer — so this subtest's kill IS unique in the only sense that matters.
+// Measured both ways; the matrix is in the PR body.
+//
+// TestBaseModelWarningMentionsBothModels cannot substitute: it calls
+// baseModelWarning directly with ASCII fixtures and never reaches this gate.
+//
+// 🔴 WHERE THE PROBE RUNE SITS, which cost a false measurement to learn:
+// baseModelFamily classifies by prefix/substring over the RAW label, so an
+// invisible rune INSIDE a token ("SD<U+2800>1.5") defeats the classifier — the
+// family resolves to "", baseModelMismatch is conservatively false, and
+// reportBaseModel prints NO warning at all. A probe placed there measures nothing
+// while looking like a pass. Append the rune instead. That silence is the
+// conservative direction the classifier documents, not a defect.
 func TestDownloadFiltersRootAndForBase(t *testing.T) {
 	const invisible = "⠀"
 
@@ -158,9 +173,19 @@ func TestDownloadFiltersRootAndForBase(t *testing.T) {
 			t.Fatal("CONTROL failure, not a finding: routeDir emitted no note, so no line reports --root " +
 				"and this subtest asserts nothing")
 		}
+		// 🔴 THIS IS A FINDING, NOT A CONTROL FAILURE, and it used to be labelled the
+		// other way. A note that EXISTS but no longer names `--root` is precisely the
+		// mutation this subtest uniquely kills: the README's sentence becomes false
+		// and every structural ledger stays green. Labelled "CONTROL failure, not a
+		// finding" it told CI's reader to go fix the test — the opposite of the
+		// remedy. The empty-note case above stays a control, because an absent note
+		// means the FIXTURE stopped reaching the routing path.
 		if !strings.Contains(note, root) {
-			t.Fatalf("CONTROL failure, not a finding: routeDir's note does not interpolate the user's "+
-				"--root at all:\n  %q", note)
+			t.Fatalf("FINDING: routeDir emits a note but no longer interpolates the user's --root, so the "+
+				"line whose job is to say WHERE the file goes does not report it.\n  note: %q\n\n"+
+				"README's `## Global flags` states that `civitai download` filters the value given to "+
+				"--root in the very line reporting it. With --root absent from that line the claim is "+
+				"unfalsifiable and should be removed from the README — do not relax this assertion.", note)
 		}
 
 		var out bytes.Buffer
@@ -178,6 +203,46 @@ func TestDownloadFiltersRootAndForBase(t *testing.T) {
 		if !strings.Contains(plan, "my"+"models") {
 			t.Errorf("the plan's note did not render --root with the invisible rune removed, so it is neither "+
 				"verbatim nor filtered — re-derive what this path does:\n%s", plan)
+		}
+	})
+
+	t.Run("--for-base, in the mismatch warning", func(t *testing.T) {
+		// Appended, not embedded — see the header: a rune inside the token defeats
+		// baseModelFamily and produces no warning at all.
+		forBase := "SDXL 1.0" + invisible
+		const have = "SD 1.5"
+
+		// CONTROL: these two bases really are a confident mismatch, so a warning
+		// exists to inspect at all.
+		w := baseModelWarning(have, forBase)
+		if w == "" {
+			t.Fatalf("CONTROL failure, not a finding: baseModelWarning(%q, %q) is empty, so reportBaseModel "+
+				"prints nothing and this subtest asserts nothing. The classifier stopped seeing these two "+
+				"as a confident mismatch — pick fixtures that still are.", have, forBase)
+		}
+		// FINDING, by the same argument as the --root case above: a warning that no
+		// longer names --for-base makes the README's claim unfalsifiable.
+		if !strings.Contains(w, forBase) {
+			t.Fatalf("FINDING: baseModelWarning no longer interpolates the user's --for-base, so no line "+
+				"reports it.\n  warning: %q\n\nThe README names --for-base as a value download filters; "+
+				"with it absent that claim should be removed rather than this assertion relaxed.", w)
+		}
+
+		var out, errb bytes.Buffer
+		reportBaseModel(&out, &errb, have, forBase)
+		warn := errb.String()
+		if warn == "" {
+			t.Fatal("CONTROL failure, not a finding: reportBaseModel wrote nothing to stderr")
+		}
+		if strings.Contains(warn, forBase) {
+			t.Errorf("the mismatch warning echoed --for-base BYTE-FOR-BYTE, invisible rune included. This "+
+				"is the gate at reportBaseModel being gone.\n  warning: %q\n\nIf a ledger row was deleted "+
+				"to make TestSafeTermIsNeverAppliedToUserTypedInput green, that was the wrong remedy — "+
+				"restore the safeTermSingle call, not the row.", warn)
+		}
+		if !strings.Contains(warn, "SDXL 1.0\"") {
+			t.Errorf("the warning did not render --for-base with the invisible rune removed, so it is "+
+				"neither verbatim nor filtered:\n  warning: %q", warn)
 		}
 	})
 }

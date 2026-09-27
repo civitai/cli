@@ -109,7 +109,7 @@ var bareIdentArgs = map[string]string{
 	"printDownloadPlan::sha":         "SERVER: a published hash",
 	"printDownloadPlan::w":           "SERVER-derived: a MIXED-TYPE warning (mixedTypeWarning), not a weight — see printImageResources::w, which is a different value under the same name",
 	"warnMixedTypes::w":              "SERVER-derived: the mixed-type warning again, at its own call site",
-	"reportBaseModel::w":             "🔴 MIXED, not SERVER — an earlier draft of this row said SERVER and was wrong. baseModelWarning(have, want) (compat.go:103) interpolates `want`, the USER's --for-base flag. MEASURED: a --for-base carrying a U+2800 renders without it at download.go:336 — the gate rewrites the user's own bytes. Accepted on this path for the same reason the ::target rows are, but the row has to SAY so",
+	"reportBaseModel::w":             "🔴 MIXED, not SERVER — an earlier draft of this row said SERVER and was wrong. baseModelWarning(have, want) (compat.go:103) interpolates `want`, the USER's --for-base flag. MEASURED: a --for-base carrying a U+2800 renders without it at reportBaseModel's warn print (download.go:403; this row cited :336 for months, which is a different branch entirely — cite the FUNCTION, since a line number in prose nothing asserts on drifts every refactor). Now exercised by TestDownloadFiltersRootAndForBase rather than only recorded here. Accepted on this path for the same reason the ::target rows are, but the row has to SAY so",
 	"reportBaseModel::baseModel":     "SERVER: a base-model label",
 
 	// --- read path ----------------------------------------------------------
