@@ -209,10 +209,13 @@ func Render(tmpl Template, destDir string, data Data) ([]string, error) {
 // directory that already holds files (issue #260, item 7).
 //
 // The refusal itself was already right — clobbering an author's directory is
-// not recoverable — but it named no way forward, while the README's
-// Troubleshooting section carried the remedy the CLI did not print. AGENTS.md's
-// house rule is that an error names the next command to run, so the remedy
-// moved into the message and the README now agrees with the binary.
+// not recoverable — but it named no way forward, while the troubleshooting index
+// carried the remedy the CLI did not print. AGENTS.md's house rule is that an
+// error names the next command to run, so the remedy moved into the message and
+// the docs agree with the binary. (The index is now published at
+// developer.civitai.com/site/guide/cli-troubleshooting rather than being a README
+// section; this message is the surface that has to be right either way, which was
+// the point of moving the remedy into it.)
 //
 // 🔴 IT ENDS BY SAYING THERE IS NO `--force`, and that sentence is the point
 // rather than a hedge. Without it the natural next move on reading "refusing to

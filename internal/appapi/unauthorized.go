@@ -23,9 +23,12 @@ import "fmt"
 // false about the other case: "the refresh failed too" is false when it
 // succeeded, and "it has already failed twice" is false when no retry ever ran.
 // A personal key never refreshes at all (`auth/source.go` returns ErrNoRefresh),
-// which is why the clause is conditioned on OAuth. The README's Troubleshooting table
+// which is why the clause is conditioned on OAuth. The troubleshooting index
 // carried that diagnosis and the personal-key escape hatch; no 401 in THIS
-// package did, and a table is not reachable from a CI log.
+// package did, and a table is not reachable from a CI log. (That index is no
+// longer a README section at all — it is published at
+// developer.civitai.com/site/guide/cli-troubleshooting — which only sharpens the
+// last clause: it is now not even in the repository, let alone in a CI log.)
 //
 // ⚠ NARROWER THAN AN EARLIER DRAFT OF THIS COMMENT CLAIMED. It said the key
 // route was carried by "no user-facing surface" and that this wording is

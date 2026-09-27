@@ -1614,22 +1614,38 @@ func TestAttributionProseParser(t *testing.T) {
 // which is why the same table carries mis-attributed cells and asserts a
 // non-zero count with the right message. Neither half means anything alone.
 //
-// Every fixture is built by editing the cell the README really ships, and each
-// edit asserts it matched something first: a fixture built by a replacement that
-// silently did nothing is the shipped cell again, and would report a clean pass
-// about a case it never constructed.
+// Every fixture is built by editing the cause cell the index really PUBLISHES —
+// vendored in publishedTroubleshootingRows — and each edit asserts it matched
+// something first: a fixture built by a replacement that silently did nothing is
+// the shipped cell again, and would report a clean pass about a case it never
+// constructed.
 //
-// 🔴 A FILTERED RUN DOES NOT REACH THIS TEST, AND THE OBVIOUS FILTER IS THE ONE
-// THAT MISSES IT. Editing the README's Troubleshooting section invites
-// `go test ./internal/cmd/ -run 'README|Readme|readme'` — and this test's name
-// starts with `TestAttribution`, so that pattern matches NONE of the frozen
-// cause-cell spans below, nor `TestAttributionProseParser` above. Measured on
-// this file at HEAD: rewording row 20's shipped cell (`never print it` ->
-// `do not emit it`) produces 7 `--- FAIL` lines under
-// `-run 'Attribution|Troubleshooting|README|Readme|readme'` and a plain `ok`
-// under `-run 'README|Readme|readme'`. `make ci` runs `go test ./...` with no
-// `-run` at all and does reach it, so a full local `make ci` — or the WIDE
-// pattern above — is the only run whose green says anything about these spans.
+// 🔴 A FILTERED RUN DOES NOT REACH THIS TEST, AND EVERY OBVIOUS FILTER MISSES IT.
+// This test's name starts with `TestAttribution`, so no pattern named after the
+// document or the guards matches the frozen cause-cell spans below, nor
+// `TestAttributionProseParser` above.
+//
+// RE-MEASURED at HEAD, and the trap got WORSE rather than better when
+// `## Troubleshooting` became a pointer and the guards were renamed
+// `TestPublished…`. Rewording the vendored cell (`never print it` ->
+// `do not emit it`) gives:
+//
+//	-run 'README|Readme|readme'                        ok    0 --- FAIL
+//	-run 'Troubleshooting'                             ok    0 --- FAIL   <- NEW
+//	-run 'Published'                                   ok    0 --- FAIL   <- NEW
+//	-run 'Attribution|Troubleshooting|Published|README' FAIL  7 --- FAIL
+//	no -run at all (what `make ci` does)                FAIL  7 --- FAIL
+//
+// The two NEW rows are the cost of the rename: `-run 'Troubleshooting'` and
+// `-run 'Published'` both now match real guards in this file, so they look like
+// well-aimed filters and still report a serene `ok` over these spans. Note also
+// that the mutant leaves the ATTRIBUTION guard green on purpose — `do not emit
+// it` is correct prose that the #373 parser handles — so only the frozen spans
+// here can see it.
+//
+// `make ci` runs `go test ./...` with no `-run`, so a full local `make ci` — or a
+// pattern that includes `Attribution` — is the only run whose green says anything
+// about these spans.
 func TestAttributionProseCheckAcceptsCorrectProseAndRejectsMisattribution(t *testing.T) {
 	paths := knownCommandPaths(t)
 	row := symptomAttributions()[1]
