@@ -328,68 +328,6 @@ same mechanism: it is neither free nor possible.
   building and none has a render oracle. Checked before minting this slug, so a future
   session does not re-litigate whether this was a duplicate.
 
-### Added 2026-09-21 — rank 3's measurement, and three inferences that did not survive it
-
-- 🔴 **I ESTIMATED THE TRIAL AT $0.06–0.18 AND IT CAME IN AT $0.0145 — 4–12× CHEAPER.** The
-  estimate was "setup cost × step ratio", which is the right shape and still wrong, because
-  it priced every step at the average of a SHORT run. **Where a cheap measurement exists,
-  take it instead of extrapolating** — this one cost 1.5 cents and deleted a ranked item.
-- 🔴 **A MECHANISM CAN BE REAL AND ITS CONSEQUENCE STILL WRONG.** The O(n²) prompt growth
-  is exactly as documented — per-call prompt went 452 → 45,328 and the run consumed 1.56M
-  prompt tokens for 9,468 completion tokens. The *conclusion* drawn from it ("the harness
-  cannot carry this task") was false at this price point. **Naming a mechanism correctly is
-  not the same as pricing it.**
-- 🔴 **A PIN-BUMP PR THAT MERGES CLEAN CAN LEAVE `main` RED, AND THE `CLEAN` IS AN ABSENCE
-  OF CHECKS, NOT A PASS.** `cli#676` was bot-authored, and
-  `.github/workflows/bump-scaffold-pins.yml:232-239` documents that a PR opened with the
-  default `GITHUB_TOKEN` does **not** trigger this repo's other workflows (GitHub's
-  loop-guard). So `pins-vs-published` / `scaffold-currency` never ran on it, its
-  `mergeStateStatus: CLEAN` reported nothing, and `main` went red on merge. **Treat a
-  missing check as UNMEASURED and assert a minimum check count before believing any
-  rollup.** ⚠ Still open: that workflow validates `pins-vs-published` in-job but has **no
-  in-job equivalent for `scaffold-currency`**, which is the half that actually broke. It
-  will recur.
-- 🔴 **THE PRIMARY CLONE'S WORKING TREE IS STALE AND IT COST ME A WRONG CONCLUSION.** I read
-  `scripts/dogfood/driver.sh` from `/home/zach/workspace/civit/cli` and concluded the brief
-  plumbing did not exist — the clone sat at `4f1df8c`, behind the `528b977` that had merged
-  #678 twenty minutes earlier. **Read from `origin/main` or a fresh worktree before
-  concluding a feature is missing.** The tell is concluding that work you just merged is
-  absent.
-- ⚠ **The agent used `civitai app create`, not `app init`.** A scan for `app init` returned
-  zero and read as "it skipped scaffolding"; the real chain was
-  `agent-setup --track app` → `--check --json` → `app create` → `app validate`. **Grep for
-  the command the CLI actually ships**, not the one you assumed it ships.
-- ⚠ **The specimen container is a consumable.** `dogfood-ab-curve-01` holds the only
-  agent-built app in existence for this arc and re-creating it costs a trial. Snapshot with
-  `docker commit` before doing anything mutating to it.
-
-### Added 2026-09-21 — the credentialed turn
-
-- 🔴 **CAPTURE THE ACCOUNT BASELINE BEFORE THE RUN, NOT AFTER — IT CANNOT BE RECOVERED.**
-  The `dogfood-3` precedent verified its spend as a balance delta (4,187,454 → 4,187,393 for
-  3 generations / 61 Buzz) rather than believing the agent. That only works with a
-  pre-reading. Taken here as Buzz **4,101,822** across 13 listings. A run that starts without
-  one is ungradeable on spend no matter how well it goes.
-- 🔴 **THE ONLY CREDENTIAL PATH INTO THE HARNESS WAS A LEAK.** `--agent-env` records its
-  value in the transcript, so the obvious way to authenticate a trial writes a live account
-  token to disk in plaintext. **Before wiring a secret through any harness, grep where its
-  parameters get RECORDED** — the argv, the transcript, the logs, the shell history. This one
-  was two lines from the flag definition and would have been invisible until someone read a
-  transcript months later.
-- 🔴 **A GREP THAT FINDS NOTHING IS NOT EVIDENCE OF ABSENCE — a leak test needs a POSITIVE
-  CONTROL.** Requested explicitly for the fix: the test must demonstrate its pattern DOES
-  find a planted secret before its zero on the real transcript means anything. This is the
-  same shape that has bitten repeatedly across this repo's history.
-- ⚠ **I QUOTED THE BLAST RADIUS FROM A TRUNCATED COMMAND AND IT WAS WRONG BY 5×.**
-  `civitai app doctor 2>&1 | head -4` showed two apps; `civitai app list` shows 13 listings,
-  ~10 operator-owned. The approval was taken on the smaller number. **When a number bounds a
-  risk someone is consenting to, read the whole output.**
-- ⚠ **An account-scoped capability cannot be narrowed for this task.** `app dev-token` mints
-  a budgeted `ai:write:budgeted` JWT (clamped against the bearer's `AIServicesWrite` bit), so
-  GENERATION can be scoped — but `app create`, `app submit` and `app listing` need the
-  account token. A run that includes submit therefore cannot be credential-bounded, only
-  behaviour-bounded, and behaviour bounds on a blind model are prose.
-
 ### Added 2026-09-21 — the instrument was wrong more often than the models were
 
 - 🔴 **I GRADED AN APP AGAINST THE WRONG ASSERTION AND NEARLY REPORTED IT AS THE RESULT.**
@@ -431,59 +369,23 @@ same mechanism: it is neither free nor possible.
   must NOT be loosened into a skip)"*). **Unfixed, and it will keep training people to merge
   through a required check.**
 
-### Added 2026-09-21 (late) — the pin treadmill, and a control that was not one
+### Evicted 2026-09-27 (resume) — four closed 2026-09-21 blocks
 
-- 🔴 **UPSTREAM PUBLISHES FASTER THAN THE SWEEP, AND IT BIT THREE TIMES IN ONE DAY.** npm
-  published `app-sdk@0.49.0` / `blocks-react@0.56.0` at **15:33:32Z** — after `main`'s green
-  pins run (15:19:22Z) and before `#687`'s (15:40:50Z). Nothing anyone did caused it.
-  `bump-scaffold-pins.yml:64-69` already measured the cause: **six minors in 19 days, a
-  ~3.6-day mean** against what was then a 7-day sweep. They moved to daily; daily is still
-  slower than upstream. **Every window between a publish and the next sweep reds every open
-  PR on a required check for reasons unrelated to its content.**
-- 🔴 **MY NEGATIVE CONTROL WAS MUDDIED BY THE ARC'S OWN EARLIER TEXT — THIRD TIME TODAY.**
-  Verifying `#682` I grepped `RENDER=yes` and got **2 hits at `main~1`**, because the
-  celsius specimen already graded that way. The discriminating string was
-  `ready>generating` (**2 on main, 0 at `main~1`**). **Pick a string the NEW content
-  introduces, never the identifier the work has been discussing all along.** Same shape as
-  the `local/share/opencode/auth.json` path count earlier in the day.
-- ⚠ **A `count=1` replace in a mutation sweep can hit a DOC COMMENT instead of the code.**
-  `#687`'s author had a mutant report SURVIVED for exactly that reason; re-run correctly it
-  was killed. **A survivor is a claim about the sweep before it is a claim about the guard.**
-- ⚠ **`gh api … check-runs | jq` can die on control characters** in a check's output
-  (`Invalid string: control characters from U+0000 through U+001F must be escaped`). Use
-  `gh api --jq` (server-side) rather than piping into `jq`. A failed parse printed empty
-  counts beside a reassuring echo — read the counts, not the banner.
+🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md) under *Evicted
+2026-09-27 (resume)*.** The size ratchet refuses a doc that is over budget and growing, and this
+round needed 7,116 B; these four are 2026-09-21 detail from a phase that has closed, and their
+conclusions survive in **Added 2026-09-21 (close) — what this arc actually taught**, which is kept.
+**Read them there before re-running any probe from that phase** — each is a resolved elimination:
 
-### Added 2026-09-21 (late) — the merge round, and a verdict that was about the instrument
-
-- 🔴 **THE THIRD INSTRUMENT DEFECT OF THE ARC, AND THE PATTERN IS NOW UNMISTAKABLE: when a
-  cell grades `no`, the harness has been wrong more often than the model.** `#686` fixed an
-  anonymous viewer and a defaulted brief; this session found an inert token. **Before
-  recording a `RENDER=no` as a model result, find the branch the app actually took** — here
-  it was three source reads (`_cdp.mjs` seed → `granted` → `handleGenerate`) and cost
-  minutes, against a wrong headline that would have stood indefinitely.
-- 🔴 **A PROBE'S ZERO NEEDED ITS POSITIVE CONTROL AND THE CONTROL CHANGED THE READING.** The
-  old-value harvest returned `[]` on deepseek — which is what a probe wired to nothing also
-  returns. Running the **same** probe on the passing mimo cell returned a non-empty list,
-  and only then was the zero evidence. **Never quote a probe's zero without the arm that
-  makes it non-zero.**
-- 🔴 **A MERGED FIX IS NOT A SHIPPED FIX WHEN THE HARNESS INSTALLS FROM npm.** Rank 6 said
-  pricing `cli#685` was *"free if folded into rank 6"*; it is impossible until a release.
-  **Check the fix is in the ARTEFACT the measurement loads** — npm's `latest`, not
-  `origin/main`.
-- ⚠ **DEEPSEEK IS NOT A CHEAP MODEL AT APP-BUILD LENGTH: $0.1859 in 50 steps, ~7.8× the
-  mimo cell in FEWER steps.** The "5–20× under the frontier" figure comes from the SETUP
-  grid, where a trial is 7–11 steps. **Price an app-build cell from an app-build cell.**
-- ⚠ **The rebase of `#687` was the whole fix for its `BLOCKED` state** — its only
-  non-success was `pins-vs-published`, a check about its **base**, not its diff. A PR can be
-  red on a fact that is true of `main`; rebasing, not editing, is the remedy. (The store's
-  `scaffold` entry already records the general case from 2026-09-01.)
-- ⚠ **`civitai app create` scaffolds LOCALLY and creates no listing.** A credentialed
-  trial's `app create ab-…` at step 11 is not an account mutation — checked against
-  `app list`, which was byte-identical before and after.
-- ⚠ **Both PRs' landings were confirmed by `mergedAt` + `mergeCommit.oid` and the new
-  `origin/main` tip**, never by `git merge-base --is-ancestor`, which is permanently false
-  after a squash merge.
+- rank 3's measurement, and three inferences that did not survive it (the $0.06–0.18 estimate that
+  came in at $0.0145; a real mechanism whose consequence was still wrong; the pin-bump PR that
+  merged CLEAN because no checks ran)
+- the credentialed turn (capture the account baseline BEFORE the run; `--agent-env` records its
+  value in the transcript; a leak test needs a positive control)
+- the pin treadmill, and a control that was not one (upstream publishes faster than the sweep; pick
+  a discriminating string the NEW content introduces)
+- the merge round, and a verdict that was about the instrument (the third instrument defect; a
+  probe's zero needs the arm that makes it non-zero; a merged fix is not a shipped fix)
 
 ### Added 2026-09-21 (close) — what this arc actually taught
 
