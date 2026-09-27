@@ -1325,9 +1325,9 @@ release and prints a one-line notice; `--no-update-check` (or
 
 ## Global flags
 
-Five flags are accepted by **every** command — `--no-color`, `--color`,
-`--no-update-check`, `-h` / `--help`, and `-v` / `--version`, which is the one
-exception: it is **root-only**. `civitai app validate --version` fails with
+Four flags are accepted by **every** command: `--no-color`, `--color`,
+`--no-update-check` and `-h` / `--help`. `-v` / `--version` is the exception — it
+is **root-only**, so `civitai app validate --version` fails with
 `unknown flag: --version` and exits `2`; from a script use `civitai version`,
 which works from anywhere. `civitai <command> --help` lists the flags any
 command accepts.
@@ -1491,11 +1491,11 @@ generating, and everything else — and each one links the guide section that
 holds the detail.
 
 **Those strings are kept honest from this repository, not by hand.**
-`internal/cmd/troubleshooting_published_test.go` vendors every symptom string
-that page quotes and searches the CLI's own non-test source for each one, so
-rewording an error message in Go is a **failing build** until the page is
-updated too. A row can never quietly end up quoting a sentence the binary
-stopped emitting.
+`internal/cmd/troubleshooting_published_test.go` vendors the symptom strings that
+page quotes and searches the CLI's own non-test source for each one, so rewording
+an error message in Go is a **failing build** until the page is updated too. The
+check covers what that ledger holds — a row added to the page without a matching
+entry is simply unwatched, not misreported.
 
 Still stuck? Every command takes `--help`, `civitai --help` prints the
 exit-code contract, and failures are differentiated by
