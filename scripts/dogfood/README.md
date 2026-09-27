@@ -443,8 +443,28 @@ rm`/`stop`/`commit` appears in the script — a graded container is evidence.
 `TestShipVerdictNeverMutatesTheAccount` pins both, with a positive control so a
 file of pure comments cannot pass it.
 
+🔴 **THE TRIAL WRITES THE TEXT THE GRADER PRINTS, SO EVERY FIELD IS ESCAPED — AND
+IT IS THE SAME ESCAPER `oracle.sh` USES.** `blockId` comes out of the trial's own
+manifest, the manifest PATHS out of directories the trial created (and `find`
+prints a path verbatim, so a directory named with a NEWLINE was a whole forged
+`ship_trial=… SHIP=yes` line), and a submission row's fields come back across a
+process boundary from the platform. A SPACE in any field printed before `SHIP=`
+starts another field that a first-match reader prefers to the real one. The rule
+lives in **one** file, `_esc.sh`, sourced by both graders: `tok` for a value that
+must stay one field, `prose` for a value that IS a line. So in a cell a
+percent-escape means *the trial's own text needed neutralising* — `%20` a space,
+`%0A` a newline, `%3D` an `=`. Ordinary values are left **byte-identical**, which
+is what keeps `grade.sh` and the Go suites reading the strings they already read;
+`printf '%q'` is deliberately NOT used, because bash 5.3 escapes a comma where
+5.2 does not and the field's bytes would then depend on which host graded the
+matrix. `TestDogfoodGradersShareOneEscaper` fails if a grader open-codes its own
+copy, if a summary-line field is added unwrapped, or if `%q` comes back.
+
 Tests: `go test . -run TestShipVerdict`. Docker and the CLI are stubbed, so they
-need no daemon, no network, no credential and no account.
+need no daemon, no network, no credential and no account. The forgery guards
+(`go test . -run 'TestShipVerdictCannotBeForgedByTheTrial|TestShipVerdictLeaves'`)
+never launch a browser either, deliberately — a skipped security guard is a green
+that checked nothing.
 
 ### The briefs
 

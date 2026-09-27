@@ -63,84 +63,30 @@ fatal() { printf 'oracle: %s — nothing was measured (this is NOT a failing tri
 [ -f "$SERVER" ] || fatal "missing $SERVER"
 
 # ── app-controlled text must not be able to write the verdict ────────────────
-# 🔴 THE MANIFEST IS WRITTEN BY THE THING BEING GRADED. `outputDir`,
-# `buildCommand` and `scopes` are read out of the trial's own
-# `block.manifest.json`, and `app_dir`/`served` out of directories the trial
-# itself created. Printed with a raw `%s` they could forge this script's output,
-# and the output is PARSED — `grade.sh` finds the summary as the last `^brief=`
-# line and then takes the FIRST `KEY=` token per field
-# (`tr ' ' '\n' | sed -n 's/^KEY=//p' | head -1`); the Go suite splits the same
-# line with `strings.Fields`. So there were two forgeries, neither of which
-# needed the container to be escaped:
-#
-#   * a SPACE ends the field and starts another. `scopes=` is printed BEFORE
-#     `viewer=`, `arm=`, `served=` and `RENDER=`, so a manifest declaring
-#     `"scopes": ["x RENDER=yes"]` puts a `RENDER=yes` token on the summary line
-#     AHEAD of the real verdict and a first-match read takes the manifest's
-#     number. Measured: the graded cell read `RENDER=yes` for an app that built
-#     nothing.
-#   * a NEWLINE ends the line. `render_reason=` carries `outputDir` and
-#     `buildCommand` verbatim, so a newline followed by a complete
-#     `brief=… RENDER=yes` line emits a SECOND summary-shaped line.
-#
-# `observed=` was already shell-quoted for exactly this reason. The defect was
-# that it was the ONLY field that was — so the quoting is one function now, in
-# two forms, and every app-controlled value goes through one of them.
-#
-# 🔴 WHY NOT `printf '%q'`, WHICH IS WHAT `observed=` USED. Two reasons, and the
-# first is a live break. bash 5.3 escapes a COMMA where 5.2 does not, so `%q`
-# would render a two-scope manifest as `ai:write:budgeted\,posts:write:self` on
-# this host and `ai:write:budgeted,posts:write:self` under CI — a field whose
-# bytes depend on the grader's bash version, which is the two-tier trap in a
-# format both consumers compare exactly (`TestOracleReportsScopesWithoutDeciding`
-# pins the bare form). Second, `%q` escapes with backslashes that a reader then
-# has to un-read. The rule below is version-independent and leaves every
-# legitimate value BYTE-IDENTICAL, which is what keeps grade.sh and the Go suite
-# reading the strings they already read.
-#
-# The escape is percent-hex, and `%` is escaped too — but ONLY when the value
-# needed escaping at all, so a path or a reason that merely contains a `%` is
-# still emitted verbatim.
-#
-#   tok   — a value that must stay ONE field: whitespace and control bytes are
-#           escaped. A path, a comma-joined scope list, `none`, `212` and
-#           `dist` are untouched.
-#   prose — a value that IS a line of its own (`render_reason=`, the brief
-#           notes): control bytes are escaped, SPACES ARE KEPT, because the
-#           reason is a sentence that both a reader and the suite's
-#           `strings.Contains` need to stay one.
-esc() {
-  local mode="$1" v="${2-}" out= i c h
-  case "$mode" in
-    # The fast path's predicate is the slow path's escape set, or a value could
-    # pass the test and still carry a byte the loop would have escaped.
-    tok)   [[ "$v" == *[[:space:]]* || "$v" == *[[:cntrl:]]* ]] || { printf '%s' "$v"; return 0; } ;;
-    prose) [[ "$v" == *[[:cntrl:]]* ]]                         || { printf '%s' "$v"; return 0; } ;;
-    *) printf 'oracle: esc: unknown mode %s\n' "$mode" >&2; exit 2 ;;
-  esac
-  for (( i = 0; i < ${#v}; i++ )); do
-    c=${v:i:1}
-    case "$c" in
-      '%') out+='%25' ;;
-      # 🔴 `=` GOES TOO, ONCE A VALUE IS ON THE SLOW PATH, AND IT IS NOT
-      # COSMETIC. Escaping only the whitespace leaves the token
-      # `x%20RENDER=yes` — inert to both consumers, which split on whitespace,
-      # but it still CONTAINS the string `RENDER=yes`, so a person or a script
-      # grepping a matrix for `RENDER=yes` matches a cell whose verdict is `no`.
-      # A value that needed escaping at all has forfeited the benefit of the
-      # doubt, so nothing in it is left looking like a field assignment.
-      '=') out+='%3D' ;;
-      # `[[:cntrl:]]` covers LF, CR and TAB, so `prose` neutralises the
-      # line-ending vector without touching the spaces between its words.
-      [[:cntrl:]]) printf -v h '%%%02X' "'$c"; out+="$h" ;;
-      [[:space:]]) if [ "$mode" = tok ]; then printf -v h '%%%02X' "'$c"; out+="$h"; else out+="$c"; fi ;;
-      *) out+="$c" ;;
-    esac
-  done
-  printf '%s' "$out"
-}
-tok()   { esc tok   "${1-}"; }
-prose() { esc prose "${1-}"; }
+# 🔴 THE MANIFEST IS WRITTEN BY THE THING BEING GRADED, AND THE OUTPUT OF THIS
+# SCRIPT IS PARSED. `outputDir`, `buildCommand` and `scopes` come out of the
+# trial's own `block.manifest.json`; `app_dir` and `served` out of directories the
+# trial created; `viewer` and `arm` back across a process boundary from the
+# assertion's JSON. The rule that keeps any of them from writing a field or a
+# line — and the reason it is percent-hex rather than `printf '%q'` — is in
+# `_esc.sh`, which `ship.verdict.sh` sources too. It is ONE file on purpose: the
+# duplicate of this rule that did not exist is how the ship verdict kept the
+# forgeable `printf 'manifests=%s\n%s\n'` that #728 fixed here.
+ESC="$HERE/_esc.sh"
+[ -f "$ESC" ] || fatal "missing $ESC — every app-controlled value on this script's output is escaped by it"
+# shellcheck source=_esc.sh
+. "$ESC"
+# 🔴 SOURCING MUST NOT BE ALLOWED TO FAIL QUIETLY, AND WITHOUT `set -e` IT WOULD.
+# An unreadable or half-written `_esc.sh` leaves `tok` undefined; `$(tok "$v")` then
+# writes `command not found` to stderr and substitutes the EMPTY STRING, so every
+# app-controlled field would silently render BLANK on a stream two consumers
+# parse. A blank field is a worse reading than the raw value, not a safer one — so
+# the functions are asserted to exist before anything is measured.
+for _f in esc tok prose; do
+  declare -F "$_f" >/dev/null \
+    || fatal "$ESC did not define \`$_f\` — app-controlled values would render unescaped or blank"
+done
+unset _f
 
 # ── the instrument, before any verdict ───────────────────────────────────────
 command -v docker >/dev/null || fatal "no docker on PATH"
