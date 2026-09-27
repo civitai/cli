@@ -5,6 +5,18 @@
 #
 #   ship.verdict.sh <trial-id> [container-user]
 #
+# 🔴 IT ALSO GRADES THE T1 PUBLISH FLOOR, AND THAT IS A SECOND VERDICT ON THE SAME
+# LINE RATHER THAN A SECOND SCRIPT. The `t1` brief is the `ship` brief plus "give
+# the listing an icon and a cover", so a T1 cell is a SHIP cell plus one more
+# account read — and the hard part of the ship verdict, the identity check that
+# attributes server state to THIS trial's own blockIds read out of the container's
+# own manifests, is exactly what the floor check needs too. A forked grader would
+# be that predicate open-coded at two sites, which is the shape `_esc.sh` and
+# `MANIFEST_FIND` already exist to prevent here. So: `SHIP=` is T0, `FLOOR=` is the
+# publish floor, `T1=` is the conjunction, and the EXIT CODE still belongs to the
+# ship half alone (see the floor section for why). A `ship` cell reads its own
+# fields unchanged and gets the floor state for free.
+#
 # Exit 0 = something was measured (SHIP=yes or SHIP=no).
 # Exit 2 = NOTHING was measured. Same split, and for the same reason, as
 # oracle.sh: a harness that could not reach the account must not emit the verdict
@@ -259,6 +271,119 @@ printf -- '--- the account\n'
 # refused on, because a genuinely empty account is a legal state.
 printf 'account_submissions=%s\n' "$(tok "$ACCOUNT_N")"
 
+# ── the PUBLISH FLOOR: an icon AND a cover, on the trial's own listing ───────
+# 🔴 THIS IS THE T1 HALF, AND IT IS A THIRD STATE ON THE LINE RATHER THAN A
+# SECOND EXIT CODE. T0 = SUBMITTED is graded above and its exit code is the
+# measured/unmeasured split for THAT question. A floor read that fails must not
+# be able to turn a working T0 cell into `unmeasured`: every `ship` cell already
+# graded, and every `ship` cell graded from here on, is entitled to its verdict
+# whether or not this account also answers `app doctor`. So `FLOOR` carries its
+# own `yes|no|unmeasured` and the exit code never moves for it.
+#
+# 🔴 WHY `app doctor` AND NOT `app listing status`. The listing form is the
+# obvious command and it is the one that must never appear here: on a LIVE
+# listing it calls `getMyListingForEdit`, which idempotently OPENS a shadow
+# revision draft server-side that this CLI has NO command to close (it happened
+# to the operator's `panorama-360` listing on 2026-09-25). `app doctor` reads
+# `appListings.listMine`, which `internal/appapi/listing.go` states is a pure
+# read that opens no shadow revision and is safe to poll — and `runner.py`'s
+# `APP_MUTATING` tuple ledgers `listing` as mutating while leaving `doctor`
+# ungated. `TestShipVerdictNeverMutatesTheAccount` fails on the listing form.
+#
+# 🔴 AND THE FLOOR IS READ AS THE ABSENCE OF TWO SERVER CODES, WHICH IS WEAKER
+# THAN A POSITIVE READ OF THE ASSETS — stated here rather than left for a reader
+# to discover. `computeListingProblems` emits `missing-icon` / `missing-cover`
+# when the slot is empty, so "neither code on this listing" is "both attached"
+# only while the server keeps emitting them. The positive alternative —
+# `getMyListingForEdit`, which returns the icon and cover image ids — is exactly
+# the shadow-revision call above, so it is not available to a grader. Three
+# things carry the weight instead: the row must be FOUND by the trial's own slug
+# (an attribution, not an absence), `floor_listings=` is the positive control
+# that the read reached a real account, and `floor_codes=` puts every code the
+# server DID emit for that row on the cell so a reader can see the vocabulary is
+# live. `t1.md` records the residual.
+FLOOR=unmeasured
+FLOOR_REASON=
+F_N=none
+F_TRUNC=none
+F_MINE=none
+F_SLUG=none
+F_MISSING=none
+F_CODES=none
+
+# The `command -v civitai` check above already fataled if the CLI is absent, so
+# this read is reached only when there is one to run.
+DOCTOR_JSON=$(x 'civitai app doctor --json')
+# 🔴 THE EXIT CODE IS NOT THE READ-SUCCESS SIGNAL, AND USING IT WOULD INVERT THE
+# VERDICT ON THE ONE CASE THAT MATTERS MOST. `app doctor` exits 1 whenever
+# anything is GATING — and a submitted app whose listing has no icon is precisely
+# that — so the sharpest `FLOOR=no` there is arrives as a NON-ZERO exit carrying a
+# COMPLETE payload. Branching on the code would file it as "the account could not
+# be read". The PAYLOAD is the signal: a parseable `apps` array means the read
+# reached the account, and `[]` is a real answer (a caller with no listings), not
+# an empty one. Same reasoning as the `submissions` array above, opposite
+# treatment of the exit code, for a measured reason.
+F_APPS=$(printf '%s' "$DOCTOR_JSON" | jq -c '.apps // empty' 2>/dev/null)
+printf -- '--- the publish floor\n'
+if [ -z "$F_APPS" ]; then
+  FLOOR_REASON="\`civitai app doctor --json\` returned no \`apps\` array this script can read (first 200 bytes: $(printf '%s' "$DOCTOR_JSON" | head -c 200)). FLOOR is UNMEASURED — it is NOT 'the floor was not met' — and the ship verdict is unaffected by it"
+else
+  F_N=$(printf '%s' "$F_APPS" | jq -r 'length' 2>/dev/null)
+  F_N=${F_N:-none}
+  # `truncated` renders `unknown` when the key is absent rather than `false`: a
+  # missing field is an older CLI, and reading it as `false` would assert that the
+  # page was complete on exactly the payload that cannot say so.
+  F_TRUNC=$(printf '%s' "$DOCTOR_JSON" \
+    | jq -r 'if has("summary") and (.summary|has("truncated")) then (.summary.truncated|tostring) else "unknown" end' 2>/dev/null)
+  F_TRUNC=${F_TRUNC:-unknown}
+  # The SAME identity conjunct as the ship half, against the same normalised slug
+  # set. A listing's slug IS the manifest's blockId — `resolveListingSlug` in
+  # `internal/cmd/app_listing.go` returns `m.BlockID` — so the two reads are
+  # attributed by one predicate rather than two.
+  MY_L=$(printf '%s' "$F_APPS" | jq -c --arg slugs "$TRIAL_SLUGS" '
+    ($slugs | split("\n") | map(select(length > 0))) as $mine
+    | map(select((.slug // "" | ascii_downcase | gsub("^\\s+|\\s+$"; "")) as $s
+                 | $mine | index($s) != null))' 2>/dev/null)
+  F_MINE=$(printf '%s' "$MY_L" | jq -r 'length' 2>/dev/null)
+  F_MINE=${F_MINE:-0}
+  if [ "$F_MINE" = "0" ]; then
+    FLOOR=no
+    FLOOR_REASON="none of the $F_N listing(s) this account can work on names any of the trial's own apps, so no listing of its own carries an icon or a cover (doctor page truncated: $F_TRUNC)"
+  else
+    FLOOR=no
+    LIDX=0
+    while [ "$LIDX" -lt "$F_MINE" ]; do
+      LROW=$(printf '%s' "$MY_L" | jq -c ".[$LIDX]")
+      LIDX=$((LIDX + 1))
+      L_SLUG=$(printf '%s' "$LROW" | jq -r '.slug // "none"')
+      # Every code the server emitted for this row, both severities, so the cell
+      # shows that the completeness computation RAN on it. A row with an empty
+      # code list is the shape a reader should distrust.
+      L_CODES=$(printf '%s' "$LROW" | jq -r '[(.blocking // [])[].code, (.advisory // [])[].code] | join(",")' 2>/dev/null)
+      [ -n "$L_CODES" ] || L_CODES=none
+      # The floor itself: the two BLOCKING codes that mean a mandatory slot is
+      # empty. `blocked-media` / `scanning-media` are deliberately NOT graded —
+      # they mean an asset IS attached — but they are on `floor_codes=`.
+      L_MISSING=$(printf '%s' "$LROW" | jq -r '
+        [(.blocking // [])[].code | select(. == "missing-icon" or . == "missing-cover")] | join(",")' 2>/dev/null)
+      [ -n "$L_MISSING" ] || L_MISSING=none
+      if [ "$F_SLUG" = none ] || [ "$L_MISSING" = none ]; then
+        F_SLUG="$L_SLUG"; F_CODES="$L_CODES"; F_MISSING="$L_MISSING"
+      fi
+      if [ "$L_MISSING" = none ]; then
+        FLOOR=yes
+        FLOOR_REASON=
+        break
+      fi
+      FLOOR_REASON="listing '$L_SLUG' is the trial's own but is still below the publish floor: $L_MISSING"
+    done
+  fi
+fi
+printf 'floor_listings=%s floor_truncated=%s floor_matched=%s floor_slug=%s\n' \
+  "$(tok "$F_N")" "$(tok "$F_TRUNC")" "$(tok "$F_MINE")" "$(tok "$F_SLUG")"
+printf 'floor_codes=%s\n' "$(tok "$F_CODES")"
+printf 'floor_reason=%s\n' "$(prose "${FLOOR_REASON:-none}")"
+
 # ── grade ────────────────────────────────────────────────────────────────────
 SHIP=no
 REASON=
@@ -324,6 +449,28 @@ else
   done
 fi
 
+# ── T1 = the whole rung: built, submitted, AND at the publish floor ──────────
+# 🔴 A CONJUNCT MEASURED FALSE SETTLES `T1` EVEN WHEN THE OTHER IS UNMEASURED,
+# and the asymmetry is the point rather than an oversight. `SHIP=no` means the app
+# is provably not in the queue, so `T1=no` is a MEASUREMENT however the floor read
+# went; the same the other way round. `T1=unmeasured` is reserved for the case
+# where nothing false was established and something could not be read — which is
+# the only reading under which re-running the grader could change the answer.
+#
+# ⚠ `T1=yes` IS NOT "the app is live". Approval is asynchronous and
+# operator-observed: measured across 8 real submissions on this account, review
+# latency is median ~5.6 min but the tail reaches 741 min (12 h). A verdict that
+# waited for `approved` would be flaky by construction, so this one stops at
+# "submitted with the floor met" — see t1.md.
+T1=no
+if [ "$SHIP" = yes ] && [ "$FLOOR" = yes ]; then
+  T1=yes
+elif [ "$SHIP" = no ] || [ "$FLOOR" = no ]; then
+  T1=no
+else
+  T1=unmeasured
+fi
+
 printf -- '--- ship verdict\n'
 # `prose`, not `tok`: the reason is a SENTENCE, and it quotes a submission's
 # `blockId`, `status` and `submittedAt` — spaces are its words, so only the bytes
@@ -342,9 +489,18 @@ printf 'ship_reason=%s\n' "$(prose "${REASON:-none}")"
 # integer byte-identical, so they go through it too rather than inviting a
 # judgement about which fields are exempt. `TestDogfoodGradersShareOneEscaper`
 # pins that ledger: a new argument here that is not `tok`-wrapped fails it.
-printf 'ship_trial=%s brief=%s trial_slugs=%s account_submissions=%s matched=%s sub_id=%s sub_block=%s sub_status=%s submitted_at=%s window=%s-%s grace_s=%s SHIP=%s\n' \
+#
+# 🔴 THE FLOOR FIELDS ARE APPENDED AFTER `SHIP=`, NOT SPLICED IN AMONG ITS FIELDS.
+# `TestShipVerdictLeavesLegitimateValuesByteIdentical` pins the whole leading run
+# of this line contiguously, and every already-graded `ship` cell was read off that
+# run — so the T1 fields go on the end, where they widen the line without re-basing
+# what a `ship` reader matches. `FLOOR=` and `T1=` are this script's own vocabulary
+# (three fixed strings each) and are the only unwrapped arguments besides `SHIP=`.
+printf 'ship_trial=%s brief=%s trial_slugs=%s account_submissions=%s matched=%s sub_id=%s sub_block=%s sub_status=%s submitted_at=%s window=%s-%s grace_s=%s SHIP=%s floor_listings=%s floor_truncated=%s floor_matched=%s floor_slug=%s floor_missing=%s FLOOR=%s T1=%s\n' \
   "$(tok "$TRIAL")" "$(tok "${T_BRIEF_NAME:-none}")" \
   "$(tok "$(printf '%s' "$TRIAL_SLUGS" | tr '\n' ',' | sed 's/,$//')")" \
   "$(tok "$ACCOUNT_N")" "$(tok "$MINE_N")" "$(tok "$M_ID")" "$(tok "$M_BLOCK")" \
-  "$(tok "$M_STATUS")" "$(tok "$M_AT")" "$(tok "$LO")" "$(tok "$HI")" "$(tok "$GRACE")" "$SHIP"
+  "$(tok "$M_STATUS")" "$(tok "$M_AT")" "$(tok "$LO")" "$(tok "$HI")" "$(tok "$GRACE")" "$SHIP" \
+  "$(tok "$F_N")" "$(tok "$F_TRUNC")" "$(tok "$F_MINE")" "$(tok "$F_SLUG")" \
+  "$(tok "$F_MISSING")" "$FLOOR" "$T1"
 exit 0

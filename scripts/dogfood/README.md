@@ -445,8 +445,17 @@ else — so no browser assertion can ever see one. `ship.verdict.sh` is the othe
 instrument.
 
 ```bash
-bash ship.verdict.sh <trial-id> <container-user>    # T0 = SUBMITTED
+bash ship.verdict.sh <trial-id> <container-user>    # T0 = SUBMITTED, and the T1 FLOOR
 ```
+
+It emits **three verdicts on one line**: `SHIP=` (T0 = submitted), `FLOOR=` (the
+publish floor — an icon AND a cover on the trial's own listing) and `T1=` (the
+conjunction). 🔴 **The exit code belongs to the SHIP half alone**: a floor read
+that cannot be taken emits `FLOOR=unmeasured` and leaves `SHIP=` and the exit code
+untouched, because every `ship` cell already graded is entitled to its verdict
+whether or not the account also answers `app doctor`. The floor half, the two
+reads it must and must not make, and why it lives in this script rather than a
+second one: `briefs/t1.md`.
 
 It reads `civitai app status --json` **inside the trial's own container**, with
 the trial's own credential, and counts a row only when all three hold:
@@ -541,6 +550,7 @@ that checked nothing.
 | `celsius` | the agent built *something that runs* — a converter wired to prescribed hooks | `briefs/celsius.md` |
 | `genpost` | the agent wired a *generate-then-post* flow: prompt, a Post control gated shut until a generation succeeds, and a status machine the Generate click drives | `briefs/genpost.md` |
 | `ship` | `genpost`'s brief verbatim **plus a submit instruction** — so a green cell needs BOTH the render verdict and `ship.verdict.sh`'s account verdict | `briefs/ship.md` |
+| `t1` | `ship`'s brief verbatim **plus a listing-media instruction** — the agent generates its own square icon and landscape cover with `civitai generate` and attaches both, so a green cell needs the render verdict AND `SHIP=yes` AND `FLOOR=yes`. It is the first brief that may **spend Buzz** | `briefs/t1.md` |
 
 🔴 **`ship` EXISTS BECAUSE A CAP THAT ALLOWS A SUBMIT DOES NOT PRODUCE ONE.** Four
 credentialed trials ran with `--max-submissions 1` and all four submitted nothing

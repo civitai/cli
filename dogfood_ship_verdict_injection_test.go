@@ -625,10 +625,18 @@ func TestDogfoodGradersShareOneEscaper(t *testing.T) {
 	}{
 		{
 			file: "ship.verdict.sh", prefix: "printf 'ship_trial=%s ",
-			// Only the verdict itself. Everything else on that line is the
+			// Only the three verdicts. Everything else on that line is the
 			// manifest's, the filesystem's, the environment's or the platform's.
-			allow:   []string{`"$SHIP"`},
-			minArgs: 13,
+			// `FLOOR` and `T1` joined `SHIP` when the publish-floor half landed:
+			// each is one of three fixed strings this script chooses between
+			// (`yes`/`no`/`unmeasured`), so nothing app-controlled can reach them.
+			allow: []string{`"$SHIP"`, `"$FLOOR"`, `"$T1"`},
+			// 🔴 RAISED FROM 13 WITH THE FLOOR FIELDS. This is the extractor's
+			// positive control, so it must track the real argument count: left at
+			// 13 it would still pass on a summary line that had SILENTLY LOST the
+			// six floor arguments, and the ledger would then certify a line that no
+			// longer carries the T1 verdict at all.
+			minArgs: 19,
 		},
 		{
 			file: "oracle.sh", prefix: "printf 'brief=%s ",
