@@ -43,57 +43,24 @@ nothing). This one AUTHORS the coverage first, then cuts. The operator retired t
 
 ## State now
 
-🔴 **README.md is 127,616 B and has been since `823fa4f` (#721).** Every figure here is
-`git cat-file -s <sha>:README.md`. ⚠ **#721's own commit subject says
-`237,568 -> 139,244 B` and is WRONG by 11,628** — the file it landed is 127,616.
+🔴 **The arc's destinations are MERGED and the cut is open.** `README.md` on `civitai/cli` `main` is **129,039 B**; `civitai/cli#727` takes it to **102,805 B** (−26,234, −20%) and is open, 13/13 green, **not merged**. Every figure is `git cat-file -s`.
 
-- `civitai/cli` `main` = `823fa4f`, clean. `civitai-developer-docs` `main` = `2221d42`,
-  clean (untracked `opencode.json` predates this session).
-- **This session is rank 1 only**: commissioning the two destination pages. No README
-  byte moved.
-- **IN FLIGHT — the docs PR is NOT yet open.** An implementation agent is authoring
-  `site/guide/cli-troubleshooting.md` + a colour/output page in worktree
-  `/home/zach/workspace/civit/civitai-developer-docs-cli-pages`, branch
-  `docs/cli-troubleshooting-and-output`, based on docs `origin/main` = `2221d42`.
-  `npm ci` and `npm run gen:appblocks` have been run there.
-- **Two claims held**: `readme-front-door` (the arc) and `readme-front-door-1` (rank 1).
-  Release both when they close.
-- This doc is updated from worktree `/home/zach/workspace/civit/cli-handoff-p3` on
-  `docs/handoff-rfd-p3-local`, tracking **open PR cli#723** (`docs/handoff-rfd-p3`,
-  head `818dada`). 🔴 **`main`'s copy of this file is the PRE-phase-3 version** — 197
-  lines shorter. Never update from `main`.
-- **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` → **rc=5**, 0 tasks, with
-  a positive control proving the board answered for a different session id. A wrong id
-  also returns 200 + an empty array, so that zero is **not** a clean bill of health.
+| repo | ref | state |
+|---|---|---|
+| `civitai-developer-docs` | `main` = **`70e63b8`** | **#123 MERGED** — `site/guide/cli-troubleshooting.md` 21,334 B + `site/guide/cli-output.md` 13,270 B live |
+| `civitai/cli` | `main` = **`721edae`** | **#725 MERGED** (`7b3be7a`), **#726 MERGED** (schema re-vendor), **#727 OPEN** |
 
-### Docs-repo baseline, measured in a clean worktree
+- `main` on `civitai/cli` has **zero failing CI jobs** at `721edae`. `schema-drift` was red on `main` itself for part of this session; #726 closed it. ⚠ That job resolves the canonical schema **at run time** from `civitai/civitai`, so its verdict moves on an external input — a red there is not necessarily about the PR under test, and a green is not necessarily a fix.
+- **Claims held:** `readme-front-door` and `readme-front-door-1`. Release both when #727 lands.
+- **No `clawgate-task:`** — `resolve` → rc=5, 0 tasks, positive control proved the board answered; a wrong id also returns an empty array, so that zero is not a clean bill of health.
 
-`check:no-flag-tables`, `check:page-context`, `check:md-regions`,
-`check:cli-install-parity`, `check:cli-download-ids` — **all rc=0** after `npm ci` +
-`npm run gen:appblocks`. See the Gotchas block on why two of them are red in the base
-clone for reasons that are not repo defects.
+### What shipped
 
-**Required status contexts on docs `main`** (measured, `gh api …/branches/main/protection`):
-`test-cli`, `test-messages`, `test-bridge`, `typecheck-snippets`, `build-site`,
-`test-md-regions`. `typecheck-snippets` is the one that runs `check:no-flag-tables`,
-`check:cli-install-parity`, `check:page-context` and `check:cli-download-ids`
-(`.github/workflows/appblocks-snippets.yml:31,97,110,118,164`); `build-site` runs
-`npm run build`, the only link gate in the repo.
+**`civitai-developer-docs#123`** — the two destination pages. **Six audit rounds**, eleven findings, **six of them in prose the coordinator wrote**. Ladder closed on the **prose stop criterion**, not by declaring victory: no 🔴 at any round, blast radius never wider than "the document contains a false sentence", round 6 swept the recurring shape at every one of the 13 path-reporting surfaces in `download.go`, and the final fix's pre-image lines were 100% ladder-authored against a two-thirds threshold. Payload was non-zero every round, so the attribution gate never fired.
 
-### What is left, and where it lands
+**`civitai/cli#725`** — the source-of-truth half. Its round 0 found the first attempt had corrected the README while leaving the **authoritative** copy wrong in `internal/saferune/saferune.go`, and that the closed-set claim survived in **six** places, not four. All six fixed; `AGENTS.md` went subtractive (−20 B).
 
-| block | bytes | status |
-|---|---:|---|
-| `## Troubleshooting` | 19,207 | rank 1's destination is being authored now |
-| `## Exit codes` | 16,527 | rank 3 — destination does not exist yet |
-| `## Command reference` | 10,111 | col 1 pinned by `TestREADMECommandSynopsesNameRealFlags` |
-| `## Global flags` | 8,212 | rank 1's second destination |
-
-🔴 **OPERATOR DECISION 2026-09-26: ~84 KB IS THE LANDING POINT, and the byte target is
-retired again.** Put to the operator with the arithmetic below; they chose "execute
-ranks 1+2 as scoped and stop there", explicitly declining to keep cutting to 70 KB.
-**Do NOT restore a byte target, and do not re-propose cutting the remaining 25 small
-sections.**
+**`civitai/cli#727`** — the cut. Round 0 + a fix round; round 1 in flight.
 
 ## Open investigations — live diagnosis state
 
@@ -245,57 +212,38 @@ sections.**
   `civitai/cli`'s default branch (HTTP 404), so that claim needs re-deriving against
   whatever workflow actually publishes from there. `via: command`
 
+### ⚠ OPEN — `civitai/cli#727` is mid-ladder; three guards were deleted after round 0 read the diff
+- as-of: 2026-09-27
+
+- **Where it stands:** round 0 (requirements & deletion) produced 5 findings; the fix round accepted all 5 and **deleted three guards it had previously defended**, plus inverted a floor. Round 1 (nine axes, first correctness audit) is running against `7b3be7a..1355cb3`.
+- 🔴 **The finding that generalises beyond this PR: a guard can be BREAKABLE without being REACHABLE, and a mutation matrix cannot tell the difference.** Guard 6 leg 3's own comment claimed it fires when Go's boolean grammar or `boolValueCandidates` changes. Measured: dropping `"True"` from `boolValueCandidates` dies at `readme_install_accuracy_test.go:435` — a `t.Fatalf` ~150 lines *earlier in the same function* — and leg 3's message never appears. Its only reachable trigger was an edit to its own constant, which is exactly what the mutant did. **It was reported as a clean kill.** `via: measurement`
+- **Ruled out — that the exact-count pin was the right shape.** `readme_external_links_test.go:136-147` had already litigated and retired it in the same package: *"IT WAS 37 — THE EXACT COUNT — AND THAT WAS THE WRONG SHAPE … a change-detector that ratchets, not an invariant."* Now `publishedTroubleshootingSymptomFloor = 69` tested `<`. Measured: gut-to-15 red, delete-one red with one clean message, add-a-row green. `via: measurement`
+- **Ruled out — that the vendored ledger is "the only coverage in the suite" for those strings.** Measured across 380 `_test.go` files: **49 of 69** already appear in non-comment test code elsewhere, so unique coverage is ~20 (21 counting one behind a `t.Skip` at `generate_test.go:803`). The PR's own matrix corroborated it — M1 printed **5 FAIL, not 1** — and nobody noticed. `via: measurement`
+- **Next probe:** read round 1's findings, fix, and run a delta. Then the merge decision.
+
+### ⚠ OPEN — nothing in either repo guards the two published pages
+- as-of: 2026-09-27
+
+- **Observed:** zero `_test.go` in `civitai/cli` mention either page; zero scripts under `scripts/` or `.github/` in the docs repo name them. Positive control: 2 scripts name `site/guide/cli.md`. `via: measurement`
+- **And the docs repo cannot check a CLI claim at all:** nothing there validates a prose page against `appblocks-snapshots/civitai-cli-help.txt`; exactly one file gets that treatment (`public/agent-setup/prompt.md`, scoped by `.vitepress/agent-setup.mjs:45`). `via: code`
+- 🔴 **Consequence, stated rather than implied:** the ledger's claim is a **subset** claim — every string it holds is still printed by the CLI. It never asserts a row exists on the page. So page drift makes a row **unguarded, never misreported**. That is the honest reading; do not upgrade it.
+- **Next probe:** none proposed. Any fix is cross-repo and needs a sync mechanism nobody has designed.
+
 ## Next steps (ranked)
 
-1. **Land the two destination pages** in `civitai/civitai-developer-docs`.
-   **IN FLIGHT** — worktree `/home/zach/workspace/civit/civitai-developer-docs-cli-pages`,
-   branch `docs/cli-troubleshooting-and-output`, no PR yet. Audit it before merging:
-   the two highest-risk properties are byte-identity of the 60 rows' first two columns
-   and the per-row verification of the third column's targets.
-   forcing: user — operator asked for an aggressive trim and this is the only destination that exists for these two sections
+1. **Land `civitai/cli#727`.** Round 1 is running; fix what it finds, delta-audit, then merge. Operator has pre-authorised `--admin` past an upstream red but **not** past correctness findings.
+   forcing: user — operator chose "proceed now" on the cut and merged its two prerequisites
 
-2. **Then cut `## Troubleshooting` + `## Global flags` from `README.md`** (→ ~100 KB).
-   🔴 **Read the first Open investigation above in full before touching a byte — it is a
-   measured ledger of EIGHT guards over these two sections, and the mechanism is already
-   settled by precedent (`listing_media_docs_test.go`), so do not re-derive it.** Three
-   things bind the shape of the cut: it must be **all-or-nothing** (the symptom floor is
-   15 against 69, so a partial cut is green and silent); two rows' anchors cannot leave
-   README.md while `readmeHasAnchor` lives; and README.md:1605's cause cell has nine
-   spans frozen verbatim. Also in the same commit: drop the `"Troubleshooting"` key from
-   `readmeTOCExemptSections` (`readme_nav_test.go:398`), the three TOC lines
-   (README.md:108, 109, 112), the inbound link at README.md:1463, and README.md:1538 —
-   which means editing `internal/cmd/exitcodes_doc.go:176` and regenerating.
-   ⚠ `readmeTOCMinSubsections = 7` leaves a **margin of 1** after this cut (9 → 8).
-   forcing: gate — clause 2 of the closing condition is what this satisfies
+2. **Fix the `403` row on the published troubleshooting page.** `not permitted for your account (403)`'s cause cell claims Apps-author access is "a narrower grant than submitting". That is unsupportable and probably backwards: `internal/appapi/appblocks.go:2357` gates submitting behind the **same** invite-only beta, submitting additionally needs `ScopeAppBlocksSubmit` (excluded from `ScopeFull`), and there is no Apps-author scope bit at all. `appblocks.go:2319-2329` is an in-repo retraction of the same shape. It was deferred because the cell was byte-identical to the README's; **once #727 lands the README half is gone, so this is a standalone docs PR.**
+   forcing: regression — a published page states something the code contradicts
 
-3. **The exit-code guard + page PR** in `civitai-developer-docs`. 🔴 Direction is settled,
-   do not re-derive: **generate** the per-code blockquotes from
-   `appblocks-snapshots/civitai-cli-help.txt` into a committed md-region
-   (`gen-appblocks-md.mjs` → `check:md-regions`, a required context) rather than
-   parity-checking hand-written ones. ⚠ Note the countervailing fact measured this
-   session: every existing CLI page deliberately points exit-code questions at
-   `https://github.com/civitai/cli#exit-codes` (`site/guide/cli.md:355-356`,
-   `cli-json.md:176-178`, `cli-auth.md:199-201`), so a page that enumerates them
-   reverses a live decision — say why before doing it.
-   forcing: gate — `## Exit codes` cannot be cut until its destination exists
+3. **The exit-code page + guard PR** in `civitai-developer-docs`. 🔴 Direction settled, do not re-derive: **generate** the per-code blockquotes from `appblocks-snapshots/civitai-cli-help.txt` into a committed md-region (`gen-appblocks-md.mjs` → `check:md-regions`, a required context). ⚠ Countervailing fact measured this session: every existing CLI page deliberately points exit-code questions at `https://github.com/civitai/cli#exit-codes` (`site/guide/cli.md:355-356`, `cli-json.md:176-178`, `cli-auth.md:199-201`), so a page that enumerates them reverses a live decision — say why first.
+   forcing: gate — `## Exit codes` (16,527 B) cannot be cut until its destination exists
 
-4. **Fix the one real content loss from the relocation.** `site/guide/cli-workflows.md:105-113`
-   kept *"…holds a filename the server chose"* and dropped *"so an `--out` path containing an
-   invisible character is reported without it while the file is written to the path you gave."*
-   The surviving half reads as though the CLI sanitises the path **before writing** — inverted.
-   forcing: regression — a published page now states the opposite of the behaviour
-
-5. **`cli#602` needs FOUR README edits, and only TWO conflict.** Both `README:321` and
-   `README:729` say "larger than the server can receive"; #602 flips the ceiling to `>=`,
-   so both become false, and **neither produces a conflict marker**. 🔴 #602's 14-line
-   *"Why 'at or above' and not 'above'"* block exists **only in #602** — keep it or land
-   it on `packaging.md` first. ⚠ Re-measure the line numbers: they predate #721, which
-   cut 110 KB out of this file.
+4. **`cli#602` needs four README edits and only two conflict.** Both `README:321` and `README:729` said "larger than the server can receive"; #602 flips the ceiling to `>=`, so both go false and **neither produces a conflict marker**. 🔴 Its 14-line *"Why 'at or above' and not 'above'"* block exists **only in #602**. ⚠ **Re-measure the line numbers** — the README has moved 127,616 → 129,039 → 102,805 B since those were taken.
    forcing: regression — merging #602 as-is publishes two false statements
 
-6. **`/simplify` the three byte-identical `assets/README.md.tmpl` files** into one embedded
-   authority, the way item 11 does for `ready-ack.js`. All three share md5
-   `51ebc5538e3bccbd14b2fbd93a928228` and **nothing pins that identity**.
+5. **`/simplify` the three byte-identical `assets/README.md.tmpl` files** into one embedded authority, as item 11 does for `ready-ack.js`. All three share md5 `51ebc5538e3bccbd14b2fbd93a928228` and nothing pins that identity.
    forcing: none
 
 ## Defects (batched)
@@ -785,6 +733,67 @@ Two consequences for rank 1:
 - `MIN_SCANNABLE_LINES = 320` against a measured 462 today: moving more than ~142
   scannable lines out of `site/guide/cli.md` trips "corpus out of reach".
 
+### 🔴 THE OPERATOR DECISIONS (2026-09-26/27) — APPEND BUCKET ON PURPOSE
+
+| question | answer |
+|---|---|
+| Landing point | **~84 KB accepted**, byte target retired for the third and final time. #727 lands at 102,805 B; ranks 2–3 would take it to ~86 KB |
+| Merge | **Merge #123 and #725 now, `--admin` past the upstream red.** Done. #727 not covered |
+| The cut | **Proceed now** — design the guard re-point and cut |
+| Colour-precedence guard | **Accept no document guard, record why.** Every candidate was walkable or redundant; pinning it properly would need `resolveMode` to expose its tiers as data, a production change to serve a docs check |
+| The ledger classification gap | **Run it through `/the-algorithm`** — done, verdict below |
+
+### 🔴 `/the-algorithm` ON THE SAFETERM LEDGER: DO NOT BUILD THE GUARD
+
+The requirement "the row classifications must be guarded" has **no maker** — it began as an audit observation and the coordinator amplified it by writing "recorded as MEASURED in the ledger" into a brief. The ledger's own header refutes it: *"The ledger does not decide whether sanitising is right; it makes the decision impossible to skip."*
+
+**Decisive:** a guard that could verify a classification would have to decide each argument's ORIGIN mechanically — and the ledger exists *because* that is not decidable ("the same name holds a server-returned id at other call sites, so a name-based rule there would report the wrong answer with confidence"). **Such a guard would make the ledger unnecessary.** The request asks for the thing whose absence is the ledger's reason to exist.
+
+The gap is a **citation problem, not a coverage problem**: three files cited the rows as verified. All three are fixed. The ~10% added back is the right pattern — #725's `TestDownloadFiltersRootAndForBase` converts one row's *past* measurement into a standing one. **Do not add a classification guard.**
+
+### 🔴 A GUARD CAN BE BREAKABLE WITHOUT BEING REACHABLE, AND A MUTATION MATRIX CANNOT SEE THE DIFFERENCE
+
+The session's most transferable finding, measured twice. Guard 6 leg 3 (above) was mutated, went red, and was recorded as a clean kill — but the mutant edited *the constant the guard read*, not the thing the guard claimed to watch, and every trigger its comment named dies at an earlier `t.Fatalf` in the same function. Independently, #727's own round-1 matrix found **M6 and M7 dying to their CONTROL rather than their assertion**, and had to isolate M6b/M7b to prove the real arms reachable.
+
+🔴 **So: after watching a mutant die, ask WHICH assertion killed it and whether a REAL change could reach that assertion at all.** "I broke it and a test failed" is necessary and not sufficient.
+
+### 🔴 I RELAYED SEVEN NUMBERS AND CITATIONS I HAD NOT DERIVED, AND EVERY AGENT THAT CAUGHT ONE WAS RIGHT
+
+Not a list of trivia — a single behaviour with one fix. In order: `safeterm_userinput_test.go:68,73` (real rows 107/108/112); "~90 bytes" for an AGENTS.md edit (+138); "12 recipe pages carry `## Troubleshooting`" (49, and my own earlier grep had shown ~50); "28 of 60 rows / 32 of 64 links" (32 of 60 / 33 of 69); `download.go:336` for `reportBaseModel` (:320/:399, inherited from the ledger's own stale text); "prints the raw `--root` twice" (once — the wrapped `%w` names the *blocker* path, so the doubling is fixture-dependent); and 19 distinct external URLs in Troubleshooting (25).
+
+🔴 **The fix is not "check numbers". It is: a citation in a subagent's report, an audit finding, or a code comment is a CLAIM, and relaying it makes it MINE.** Two of the seven I had already measured correctly myself and then overwrote with someone else's figure.
+
+### 🔴 THE BIGGEST SINGLE ERROR: I CALLED A README CUT A BEHAVIOUR CHANGE IN THE SHIPPED BINARY, TWICE
+
+I read `internal/cmd/exitcodes_doc.go:176`'s `[Troubleshooting](#troubleshooting)` as reaching `civitai --help`, and briefed two agents and the operator that cutting the section would dangle an anchor **in the CLI itself**. It is a `Detail` entry; `TestBothFieldsReachTheirSurfaces` asserts `Detail` must **not** reach `--help`. Measured on a built binary: **0** mentions, positive control `Full ledger` = 1. The cut is README-only.
+
+🔴 **A field's CONTENT does not tell you its SURFACE.** I never asked which struct field the line sat in.
+
+### 🔴 AND MY CRITICISM OF #727's DESIGN WAS BACKWARDS
+
+I briefed round 0 that keeping the two `##` headings was "chosen to avoid editing two guards" and asked whether it left a shape nobody would design on purpose. Both anchors are live inbound targets from prose that **survives**: the *generated* Exit-codes `Detail` (`README.md:1455`), the *verbatim-pinned* `configPrecedenceClaim` (`:1380`), and TOC lines `:108`/`:111`. Deleting them creates **four** dead in-README anchors, two inside generated or frozen text. Measured: 0 dead `](#…)` anchors at head. **Keeping them is the only correct design — authored by the code, not chosen for convenience.**
+
+### 🔴 AN INSTRUMENT THAT OVER-FIRES IS AS USELESS AS ONE THAT UNDER-FIRES
+
+Sweeping for the surviving closed-set claim, my first pattern (`a cardinal near "exception"`) returned ~60 hits across the tree — every *correct* sentence that says "two are documented, and the set is not closed" matched, burying the signal. The defect is an **unqualified** closed-set assertion, so the pattern needs the *absence* of a not-closed qualifier. Narrowed, with base as the positive control: **4 assertions at base, 0 at head.** The one head hit was a false positive of my own pattern.
+
+🔴 **Validate an instrument in BOTH directions. A pattern with no negative case is not narrow enough to quote.**
+
+### ⚠ THREE MORE MEASUREMENT TRAPS, EACH COSTING A WRONG READING
+
+- **The `grep` wrapper choked on an ESC regex** (`ugrep: error at position 5 … mismatched [`) and a loop over four surfaces printed `plain` four times — a broken instrument reading as a measurement. Replaced with `tr -dc '\033' | wc -c`, validated at 2 on a string containing ESC and 0 on one that does not.
+- **A `custom-block` grep found ZERO** and nearly had me report a rendering break; the class order is `warning custom-block`, not the reverse. Positive control on a page known to carry containers: 5.
+- **A background runner reported `exit code 0` for a `make ci` control** because a trailing `tee` swallowed the status. Real rc 2, found by reading content. **Count the runner's own result lines; never read a wrapper's exit code.**
+
+### ⚠ TWO GUARDS NOBODY'S INVENTORY FOUND, AND HOW EACH WAS CAUGHT
+
+- **`TestREADMEDoesNotAssertTheUnqualifiedEchoPromise`** — a **whole-document ban that survives the cut, whose CONTROL read the section being deleted**. The assertion looks unaffected, so a filename sweep finds the file and only *reading* it finds the hazard. The shape recurs: two other guards had controls on the section while their assertions did not.
+- **`TestSubmitCeilingValueAndBoundary`** (`internal/appapi/submit_ceiling_value_test.go:77`) — a surface ledger requiring the README to quote `10485760`, which lived **only** in a deleted row. 🔴 **No `internal/cmd` run could ever see it** — caught by full `make ci`. My "run the whole `internal/cmd` package" instruction was structurally insufficient.
+
+### ⚠ A SUBAGENT'S SELF-CORRECTION REMAINS THE BEST SIGNAL IN THE SESSION
+
+Five instances, each volunteered rather than caught: the byte-identity checker that **passed a deleted row** until a count assertion was added; the "a Go map key cannot be ambiguous" comment written about a **slice**; a 47/22 uniqueness count wrong because `unicode_escape` mangled five em-dashed strings (corrected to 49/20); the round-0 deletion of the `--for-base` leg, diagnosed by its own author as *"'no unique kill ⇒ delete' is unsound when the sole co-killer's own remedy removes the coverage"*; and the disclosure that `schema-drift` flipped green for an external reason rather than letting it read as a fix.
+
 ## How to verify
 
 ```bash
@@ -792,54 +801,28 @@ CLI=/home/zach/workspace/civit/cli
 DOCS=/home/zach/workspace/civit/civitai-developer-docs
 
 # --- the arc's numbers. git cat-file ONLY ------------------------------------
-git -C "$CLI" cat-file -s origin/main:README.md      # 127,616
-git -C "$CLI" cat-file -s origin/main:AGENTS.md      # 28,873 (ceiling 30,500)
+git -C "$CLI"  cat-file -s origin/main:README.md    # 129,039 (102,805 once #727 lands)
+git -C "$CLI"  cat-file -s origin/main:AGENTS.md    # 28,853 (ceiling 30,500)
+git -C "$DOCS" cat-file -s origin/main:site/guide/cli-troubleshooting.md  # 21,334
+git -C "$DOCS" cat-file -s origin/main:site/guide/cli-output.md           # 13,270
 
-# --- 🔴 this doc's canonical copy is the PR's, not main's ---------------------
+# --- 🔴 the handoff's canonical copy is the PR's, not main's ------------------
 git -C "$CLI" fetch origin +refs/heads/docs/handoff-rfd-p3:refs/remotes/origin/docs/handoff-rfd-p3 --force
 [ "$(git -C "$CLI" ls-remote origin refs/heads/docs/handoff-rfd-p3 | cut -f1)" \
   = "$(git -C "$CLI" rev-parse origin/docs/handoff-rfd-p3)" ] && echo refs-agree
 
-# --- the no-destination claims, with BOTH controls ---------------------------
-md() { find "$DOCS" -name '*.md' -not -path '*/node_modules/*' -not -path '*/.vitepress/*' -print0; }
-for t in 'Off always beats on' 'no-color.org' 'Default_Ignorable' 'direction-reversing'; do
-  printf '%-24s hits=%s\n' "$t" "$(md | xargs -0 grep -l -- "$t" 2>/dev/null | wc -l)"
-done                                             # all 0
-md | xargs -0 grep -l -- 'dev-tunnel' | wc -l    # POSITIVE control, 6
-md | xargs -0 grep -l -- 'frobnicate-zzz' | wc -l # NEGATIVE control, 0
+# --- the byte-identity property #727 rests on, with a NEGATIVE control -------
+#     60 rows, col 1 60/60 and col 2 60/60 modulo link targets, against
+#     README@823fa4f. Mutate one character in a col-1 cell and it MUST report.
 
-# --- the docs gates. 🔴 RUN THESE IN A WORKTREE WITH `npm ci` + gen:appblocks -
-#     In the base clone check:page-context and check:md-regions are RED for
-#     LOCAL reasons and say so themselves. That is not a repo defect.
-WT=/home/zach/workspace/civit/civitai-developer-docs-cli-pages
-(cd "$WT" && npm ci --no-audit --no-fund && npm run gen:appblocks) >/dev/null
-for c in check:no-flag-tables check:page-context check:md-regions \
-         check:cli-install-parity check:cli-download-ids; do
-  printf '%-28s ' "$c"; (cd "$WT" && npm run --silent "$c" >/dev/null 2>&1); echo "rc=$?"
-done                                             # all rc=0 at 2221d42
+# --- did the cut change the BINARY? (it must not) ----------------------------
+./bin/civitai --help | grep -c Troubleshooting    # 0
+./bin/civitai --help | grep -c 'Full ledger'      # 1 = POSITIVE control
 
-# --- the colour contract the README does NOT state ---------------------------
-grep -c 'TERM' "$CLI/README.md"                  # 0 — and TERM=dumb forces colour OFF
-grep -n 'dumb' "$CLI/internal/ui/ui.go"          # :177, the missing 3rd tier
-grep -n 'TERM dumb off' "$CLI/internal/ui/ui_test.go"   # :97, it IS pinned
-
-# --- the guards over the two sections. 🔴 A NARROW -run FILTER MISSES TWO -----
-go test ./internal/cmd/ -count=1 \
-  -run 'README|Readme|readme|Attribution|Troubleshooting|FlattenedWaitPath'
-#   `-run 'README'` alone reports a plain ok while 7 subtests of
-#   TestAttributionProseCheckAcceptsCorrectProseAndRejectsMisattribution fail.
-#   Safest is the whole suite.
-
-# --- the full cli suite. Chromium REQUIRED ----------------------------------
-nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) go test ./... -count=1'
-make lint    # golangci-lint; `make ci` does NOT run it
-# WITHOUT CIVITAI_CHROME exactly three dogfood_oracle_test.go functions fail and SAY SO:
-#   "no Chromium on PATH … nothing was measured (this is NOT a failing trial)"
-# ⚠ TestREADMEExternalURLsResolve is t.Skip'd unless CIVITAI_CHECK_README_LINKS=1
-#   (readme_external_links_test.go:183), so `make ci` never dereferences the 21
-#   absolute URLs in ## Troubleshooting.
-
-# --- #602 before merging it (rank 5) -----------------------------------------
-git -C "$CLI" show origin/main:README.md | grep -n 'larger than the server can receive'
-#   2 hits, both go FALSE under #602, neither produces a conflict marker
+# --- the guards, whole package: a narrow -run MISSES two ---------------------
+(cd "$CLI" && go test ./internal/cmd/ -count=1)
+(cd "$CLI" && make ci)    # the ONLY run that sees internal/appapi's README ledger
+make lint                 # `make ci` does NOT run it; errors if golangci-lint is absent
+# ⚠ make ci fails at `test` on three Chromium-gated TestOracle*. Establish the
+#   identical FAIL set at origin/main as the control and diff the two sets.
 ```
