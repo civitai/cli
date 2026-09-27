@@ -59,135 +59,37 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-🔴 **THIS SESSION SPENT `$0` AND LANDED NO COMMIT — its output is THREE DISPATCHED PRs (in flight
-at write time), one operator decision recorded, one fork resolved, and two of this doc's own claims
-corrected.** Read the corrections before acting on anything below them.
+🔴 **THREE PRs ARE READY AND UNMERGED; THE MERGE IS THE OPERATOR'S CALL AND WAS NEVER TAKEN.**
+Ranks 20, 21, 22 are implemented, audited through a closed 3-round ladder, and validated on a
+merged tree at the **current** heads. `$0` of model spend this session.
 
-🔴 **THREE PRs ARE IN FLIGHT AND HAD NOT APPEARED IN `gh pr list` WHEN THIS WAS WRITTEN** — agents
-were still working. **Do not re-dispatch these; look them up first.** Branches, so they can be
-found before any duplicate work: `zach/dogfood-path-reads` (rank 21), `zach/dogfood-post-arm`
-(rank 22), `zach/docs-link-corpus` (rank 20). ⚠ The three `origin/zach/dogfood-*` branches that
-DO exist (`-consent-negative-control`, `-grader-identity`, `-spend-cap-and-listing-gating`) are
-from EARLIER arcs and are not these. Check with
-`gh pr list --repo civitai/cli --state open --json number,headRefName`.
+| PR | rank | head | checks (SHA-pinned) | acceptance evidence |
+|---|---|---|---|---|
+| `#733` | 21 grader path reads | `d3e6895` | 13/13 | 18 `=== RUN` both sides; 5 FAIL at base → 0 at HEAD; **7** injection sites fixed |
+| `#734` | 22 post-path arm | `86d6472` | 13/13 | 19 RUN, 13 FAIL at base → 19 PASS; real-artifact matrix `v0.1.1`=no / `v0.1.2`=yes |
+| `#735` | 20 dead link + corpus | `86c5a36` | 13/13 | widened prober FAILS at base while the old one PASSES, **same run** |
 
-**Prior merges stand, unchanged:** the six PRs of 2026-09-27 (`#724` `#726` `#717` `#728` `#718`
-`#729`) and the live `v0.1.2`. ⚠ `origin/main` moved again since (`#723`/`#727` README reduction,
-`#731`), and the local clone read `behind 1` — re-fetch before basing anything.
+**Merged tree, `origin/main` `b408912` + all three, 2026-09-27:** 21 packages `ok`, 0 `FAIL`, 0
+`--- SKIP`, root browser suite `ok 239.546s` (a skipped suite returns in ~0 s, so the duration is
+the positive control that the real-browser tests RAN). ⚠ **Re-run it if `main` moves** — this
+covers `86d6472` and nothing newer.
 
-🔴 **`clawgate-task:` DELIBERATELY ABSENT.** `clawgate_handoff.sh resolve` exited **5** — nothing
-resolved. An unknown session id answers 200 with an EMPTY ARRAY, so that zero cannot distinguish
-"this session touched no task" from "the id is wrong". Not a clean bill of health.
-
-### 🔴 RANK 14 IS DECIDED — and the decision's PROVENANCE is the load-bearing part
-
-The operator chose **"let the brief spend Buzz on a generated cover"**, by **SELECTING it from a
-four-option question posed on 2026-09-27**. 🔴 **They did not type a sentence. The wording is the
-agent's; the choice is theirs. Do NOT quote this as the operator's own words** — this arc already
-shipped a fabricated *"the operator decided X"* that survived five days (see *Gotchas* → **Added
-2026-09-26**), and the cure was checking the operator's own messages. The distinction is the whole
-lesson, so it is recorded as a selection, not a quote. The three rejected options were: bake
-ImageMagick/Pillow into the trial image; drop media from T1 and attach by hand; retire rank 14.
-
-🔴 **MEASURED THE SAME DAY: T1 NEEDS NO IMAGE TOOLING AT ALL, AND THAT REFUTES THE OPTION I
-RECOMMENDED.** Choosing "spend Buzz" answers where the pixels come from; it does not answer whether
-a container with no `python3`/`convert`/`magick`/`pip3` can produce **compliant** media, because the
-platform enforces aspect. Bounds: icon **0.9–1.1**, ≥128 px short side, ≤2.0 MiB; cover
-**1.3–2.4**, ≥640 px wide, ≤4.0 MiB; screenshot 0.4–2.6, ≥320 px, ≤2.0 MiB (≤8, optional). Icon is
-re-encoded server-side to PNG ≤1024 px and the platform caps **that** image (≤1 MiB) — a different
-measurement from the source cap, so a detailed 1024×1024 icon can pass locally and be refused at
-attach; the lever is fewer pixels, not a smaller file.
-
-`civitai generate` has **no `--width`/`--height`**; the lever is `--aspect-ratio`, a bucket string
-passed through to the server (`internal/genapi/graph.go:52` — "width/height derive from it"), so the
-bucket→pixel mapping is a SERVER-side fact this repo cannot settle. But `1:1` = **1.0** sits inside
-the icon band and `16:9` = **1.78** / `3:2` = **1.5** inside the cover band, so both floors are hit
-by ordinary generation output with no crop or resize. **The ImageMagick option was unnecessary —
-and it was my recommendation, overturned by the measurement.**
-
-The retry loop closes without local tooling too: the CLI reads geometry with the **Go stdlib**
-(`internal/appapi/imageinfo.go`, `image.DecodeConfig` + a hand-rolled WebP header parse), and
-dimensions/aspect are enforced at **ATTACH**, refused "in seconds" with a legible message
-(`icon must be square-ish (aspect 2.00 …)`, `internal/cmd/app_listing.go:770`).
-
-**Guardrails that already exist — use them, do not invent caps:** `civitai generate --dry-run`
-prints the estimate and **spends nothing**; `--max-cost` bounds one generation; `--out-dir`/
-`--out-name` place the file for `listing set-icon|set-cover`; and `runner.py` enforces the
-`generations`/`submissions` counters **before** `docker exec`, which is the authoritative bound (a
-watchdog grepping whole transcript records fires on the CLI's own help text instead).
-
-🔴 **Two hazards stand, stated rather than waved through.** (a) A moderator **REJECTION deletes the
-listing and everything attached** — stronger than the withdrawal-only hazard recorded before, and
-it destroys Buzz-bought media with it. The Buzz at risk is small (the `dogfood-3` precedent: 3
-generations = 61 Buzz), so a rejection costs a re-run, not value — but the listing must be
-re-minted. (b) **A T1 run cannot be credential-bounded.** Generation alone could be scoped via
-`app dev-token` (a budgeted `ai:write:budgeted` JWT), but `app create`, `app submit` and
-`app listing` need the **account** token, so a brief including submit is bounded by behaviour only
-— and behaviour bounds on a blind model are prose.
-
-### Pre-spend baseline, captured 2026-09-27 BEFORE anything was run
-
-- `civitai app status --json`: **100** submission rows (AT the cap, no cursor), **0** pending.
-  `ab-img-poster` — `0.1.2` approved/live reviewed `2026-09-27T03:13:52.743Z`; `0.1.1`
-  `2026-09-25T23:30:15.974Z`; `0.1.0` `2026-09-25T18:53:04.623Z`.
-- `civitai buzz`: Blue **1,305,224** / Green **919,796** / Yellow **1,848,987** / Total
-  **4,074,007**.
-- **11** `dogfood-*` containers and **2** `dogfood-fixture/*` images re-verified intact
-  (`docker ps -a --format '{{.Names}}' | grep -c '^dogfood-'` → 11). Nothing destroyed.
-
-🔴 **CORRECTION — this doc said `civitai buzz` "does NOT reconcile" with the single total older
-entries carry. IT DOES.** The earlier read simply omitted the **Yellow** pool:
-1,305,224 + 919,796 + 1,848,987 = **4,074,007** exactly, and the CLI prints that Total itself. The
-older 4,074,196 is ordinary drift (−189). Blue/Green are also 21/30 below the figures recorded
-earlier the SAME day, so ~51 Buzz moved between two reads hours apart. **Baselines drift — re-read,
-never quote** (that part was right); but there is no reconciliation mystery, and treating one as
-open cost a probe.
-
-### Carried forward — durable values a `State now` replace would otherwise eat
-
-🔴 **THE FROZEN CONDITION WAS CLOSED 2026-09-21 AND STAYS CLOSED**: 2 of 3 cheap models built
-a passing App Block; `glm` failed, explained. Two permanent limits, **neither a to-do**: the
-**frontier control is DROPPED as of 2026-09-26** — see the dated amendment under *Goal* for the
-operator's own words and what the drop leaves unmeasured — and **every cell is ONE environment**
-(`cli#665`). ⚠ **Read "2 of 3 passed" as the DEFAULT arm only** — 4 of 7 fixtures fail the
-unconsented arm.
-
-🔴 **CORRECTED 2026-09-26 — the sentence that stood here for five days was AGENT-AUTHORED AND
-FALSE WHEN WRITTEN.** It read *"the frontier control was DROPPED by operator decision (never run,
-not outstanding)"*, and it closed the frozen condition's last open clause by fiat. The drop above
-is real; that one was not. Provenance and the reusable lesson are in *Gotchas* → **Added
-2026-09-26**. Do not let the two be confused: a claim that became true later is not a claim that
-was true. 🔴 **The rank 14 decision above is recorded as a SELECTION for exactly this reason.**
-
-🔴 **BUILD-AND-SHIP IS ANSWERED, AND NOW WITH A WORKING APP AT THE END OF IT.** Built blind by
-`xiaomi/mimo-v2.5` for **$0.0170**, submitted, approved, deployed, HTTP 200 — then found broken by
-a real user, fixed, resubmitted as `v0.1.1`, re-approved and re-verified — **then broken again, on
-a DIFFERENT path, by a second real-user report, and shipped as `v0.1.2` (live
-2026-09-27T03:15:10Z).** **The word "working" is earned only at `v0.1.2`, and only for the paths the
-oracle can see.** 🔴 **Two user-found defects on two different paths, after the oracle passed the
-app both times, is the durable reading** — rank 22 is the instrument fix for it.
-
-🔴 **RANK 3'S TABLE** (the arc's only record of the step/cost curve): mimo-v2.5, celsius,
-**65 steps / $0.0145 / 1,564,496 prompt tokens / per-call 452 → 45,328 / `stop=finished`**,
-caps 80/$0.50.
-
-🔴 **BASELINES DRIFT — RE-READ, NEVER QUOTE.** Buzz 4,101,822 (09-21) → 4,074,196 (09-25) →
-4,074,007 (09-27). The submissions listing is **at its 100-row cap, no cursor**.
-
-🔴 **COST IS DEAD AS A CROSS-DAY INSTRUMENT** — 2.15× drift in $/1k on the same model and task in
-four days. Grade on steps, prompt tokens and behavioural signals.
-
-🔴 **ELEVEN FIXTURES + TWO SNAPSHOTS — DO NOT DESTROY.** Re-derive, do not quote:
-`docker ps -a --format '{{.Names}}' | grep -c '^dogfood-'` (11 on 2026-09-27: 8 `ab-*` + 3 `ctl-*`),
-images `dogfood-fixture/ab-ship-mimo-02:pre-consent-fix` and
-`dogfood-fixture/ab-imgposter:v0.1.1-pre-post-fix`. `dogfood-ab-genpost-glm-01` is the negative
-control; `dogfood-ab-imgposter-fixed` holds the fixed app (**`v0.1.2`**, byte-exact to live) with a
-synthetic trial dir at `/tmp/fixed-runs/ab-imgposter-fixed`. Evidence lives OUTSIDE every worktree:
-`~/.cache/dogfood-runs-2026-09-21/`, `~/.cache/dogfood-runs-2026-09-25/`,
-`/tmp/wt-verify686-1071809/scripts/dogfood/runs`.
-
-**The credentialed precedent:** `claudedocs/handoff-dogfood-3.md` — withdrawing a **first-version**
-submission destroys captioned media permanently.
+🔴 **#733 AND #734 CONFLICT — ONE add/add HUNK — SO THE SECOND ONE TO MERGE NEEDS A RESOLUTION
+COMMIT.** It was clean earlier in the session and stopped being clean when `#734`'s round-1 fix
+rewrote the escaper guard in `dogfood_ship_verdict_injection_test.go`, the same file `#733`
+widened. Both sides are pure additions at one anchor (base side **0 bytes**), each ending
+mid-function around a **SHARED closing brace** — which is exactly why concatenating the two sides
+produces an uncompilable file. The resolution: keep both, and give the first function its own `}`.
+```bash
+CLI=/home/zach/workspace/civit/cli; W=/tmp/wt-m-$$
+git -C "$CLI" worktree add -q "$W" -b zach/merge-check origin/main
+git -C "$W" merge --no-edit origin/zach/dogfood-path-reads
+git -C "$W" merge --no-edit origin/zach/dogfood-post-arm     # rc 1, markers at 697/715/816
+#   keep OURS (joinContinuations) + a closing `}` + a blank line + THEIRS
+#   (assertEscapedAtAssignment); the pre-existing `}` after the last marker closes THEIRS.
+(cd "$W" && gofmt -e -l dogfood_ship_verdict_injection_test.go && go vet ./...)   # must be silent
+git -C "$W" merge --no-edit origin/zach/docs-link-corpus     # clean after both
+```
 
 ## Open investigations — live diagnosis state
 
@@ -263,99 +165,96 @@ same mechanism: it is neither free nor possible.
   same model and diff carry cost. Until then the doc-stack block's figures are a claim
   about `0.1.106` and nothing newer.
 
+### 🔴 RESOLVED but RECORD IT — a BROKEN conflict resolution was cached in `cli`'s rerere and replayed SILENTLY
+- as-of: 2026-09-27
+
+- **Symptom + exact repro:** merging `origin/zach/dogfood-path-reads` then
+  `origin/zach/dogfood-post-arm` reported `rc=1` and `UU`, but the working-tree file contained
+  **no conflict markers** and failed to parse:
+  `dogfood_ship_verdict_injection_test.go:741:6: expected '(', found assertEscapedAtAssignment`.
+- **Observed (with values):** `git config --global --get rerere.enabled` → **`true`** (global, so
+  every repo on this host). `cli`'s rr-cache held
+  `05f1bf1575478c8235348926cc2e81756fb8a39e/postimage.1` — 41,073 B, **mtime 04:17–04:18**, both
+  functions present, and `gofmt -e` on it reproduces the identical error. Diffed against a correct
+  resolution, the only difference is a missing `}` and a blank line. `via: measurement`
+- **Ruled out — that this was the auditing session's own hand-resolution.** The entry predates it
+  by ~5 h; it was written by an earlier fix agent in the same session. `via: measurement`
+- 🔴 **Why it matters beyond this PR:** `rr-cache` lives in the **common** git dir, so it is
+  repo-global, shared by every worktree, and outlives the worktree that made it — the same hazard
+  class as `refs/stash`. A person merging these two PRs on this machine would have been handed an
+  uncompilable file with **no markers and no warning**; `git status` says `UU`, so one `git add` +
+  commit lands it.
+- **Fix applied + positive control:** the entry was deleted, and a fresh merge then produced real
+  markers at **697/715/816** again. That control is the only thing distinguishing "fixed" from
+  "still silently resolving".
+- **Next probe:** none needed here. The durable question — whether a global `rerere.enabled` is
+  wanted on a host that runs many agents through the same clones — is a devrc/tooling decision,
+  recorded in the `devrc` store scope, not this repo's.
+
 ## Next steps (ranked)
 
-🔴 **Numbering frozen and cumulative** (`#718` published 17–20 first; 21–22 added 2026-09-27):
-1–11 settled; 13, 15, 16, 17, 18, 19 closed; 12, 14, 20, 21, 22 live — **20, 21 and 22 are IN
-FLIGHT as of 2026-09-27 and must be looked up before being touched.**
+🔴 **Numbering frozen and cumulative.** 1–11 settled; 13, 15, 16, 17, 18, 19 closed;
+**20, 21, 22 IMPLEMENTED AND AWAITING A MERGE DECISION**; 12 and 14 live.
 
 1–11. ✅ **DONE** — the arc through build-and-ship. forcing: user/gate — satisfied
-12. 🔴 **FORK RESOLVED 2026-09-27: RE-SCOPE, not retire — and the slot is NOT the obvious one.**
-    Premise re-verified: `CIVITAI_SCAFFOLD_TYPECHECK` is set by **ZERO** workflows, living only at
-    `internal/scaffold/page_money_typecheck_test.go:54`/`:136` and in this doc. **Why not retire:**
-    `bump-scaffold-pins.yml:64-69` measures **six upstream minors in 19 days (~3.6-day mean)**, so a
-    scaffolded app's typecheck is exactly what a new minor breaks. ⚠ Bound it honestly — *"every
-    scaffolded page-money app fails its own build"* was **overstated and install-shape-dependent**,
-    so this is regression protection, not a live break. **The environment is already paid for:**
-    `ci.yml` has a job on **node 24** that scaffolds + `npm install`s a page-money app for
-    `CIVITAI_CHECK_SCAFFOLD_RUNTIME=1`; the typecheck's marginal cost is ~6.5 s. 🔴 **But that job
-    is `scaffold-currency`, REQUIRED + `enforce_admins`, and adding a network-dependent assertion to
-    a required check is the hazard this repo has paid for TWICE** (`pins-vs-published` froze every
-    open PR when upstream published; npm 10's arborist crash froze every PR when `vitest@5.0.0`
-    published). **So wire it into the DAILY `bump-scaffold-pins.yml` instead** — not required,
-    already installs, and a red there is a report about upstream, which is what it is. Use the
-    neighbouring positive-control shape (`-count=1`, grep the log for the test's own
-    `--- (PASS|SKIP|FAIL):` line, a distinct `guard-did-not-run` state) or the wiring reproduces the
-    silent-green defect it closes. **Closing condition:** the env var is set by ≥1 scheduled
-    non-required job whose log is asserted to contain the typecheck's own result line, shown red by
-    breaking the template's types once and green after; checked by the workflow run.
+12. **RE-SCOPED 2026-09-27, ready to implement.** `CIVITAI_SCAFFOLD_TYPECHECK` is set by **ZERO**
+    workflows (only `internal/scaffold/page_money_typecheck_test.go:54`/`:136`). Do **not** wire it
+    into `ci.yml`'s `scaffold-currency` job — that is REQUIRED + `enforce_admins`, and a
+    network-dependent assertion there has frozen every open PR **twice** (`pins-vs-published`; npm
+    10's arborist crash on `vitest@5.0.0`). Wire it into the **daily `bump-scaffold-pins.yml`**,
+    which already installs a page-money app on node 24; marginal cost ~6.5 s. Use the neighbouring
+    positive-control shape (`-count=1`, grep the log for the test's own `--- (PASS|SKIP|FAIL):`
+    line, a distinct `guard-did-not-run` state). ⚠ Bound the claim honestly: *"every scaffolded
+    page-money app fails its own build"* was **overstated and install-shape-dependent**, so this is
+    regression protection, not a live break. **Closing condition:** the env var is set by ≥1
+    scheduled non-required job whose log is asserted to contain the typecheck's own result line,
+    shown red by breaking the template's types once and green after; checked by the workflow run.
     forcing: regression — the defect shipped once and CI still cannot see it
-13. ✅ **CLOSED 2026-09-25** — `v0.1.1` approved and verified; superseded by `v0.1.2` on 09-27.
-    forcing: user — satisfied
-14. 🔴 **DECIDED 2026-09-27 — NO LONGER WAITING ON THE OPERATOR.** They selected *spend Buzz on a
-    generated cover* (provenance and the measurement that no image tooling is needed: *State now*).
-    What remains is IMPLEMENTATION, not a decision: a T1 brief that generates a `1:1` icon and a
-    landscape cover, attaches both, and submits — plus the paid, credentialed, account-mutating run
-    itself. 🔴 **Do this only with the operator present, and only AFTER 20/21/22 land** — it touches
-    `scripts/dogfood/briefs/`, which rank 22 is editing. Re-read the Buzz baseline immediately
-    before spending, never when planning. **Closing condition:** one blind cheap-model trial
-    produces an app that reaches `approved`/live with an icon and a cover it generated itself,
-    graded by `app status --json`; the operator confirms the run was theirs to spend.
-    forcing: user — asked about "complete working apps" on 2026-09-25, decision taken 2026-09-27
-15. ✅ **CLOSED 2026-09-27** — `scripts/dogfood/fixtures/consent-controls/` on `main` via `#718`.
-    forcing: gate — satisfied
-16. ✅ **CLOSED 2026-09-27** — the re-read landed with `#718`'s eviction. forcing: user — satisfied
-17. ✅ **CLOSED 2026-09-26** — frontier control dropped by a dated operator decision (`#724`). See
-    *Goal*. **Do not re-open to "tidy the arc up"** — that instruction is what hid the fabrication
-    for five days; if you re-open it, say who asked.
-    forcing: user — decided by the operator, in their own words
-18. ✅ **CLOSED 2026-09-27** — `#726` → `#717` → `#718` all merged, in that order.
-    forcing: gate — satisfied
-19. ✅ **CLOSED 2026-09-27** — `#728` + `#729`, one shared escaper. forcing: security — satisfied
-20. **IN FLIGHT** (`zach/docs-link-corpus`) — the `apps/responsive` 404, **and the corpus gap that
-    let it live.** Measured 2026-09-27: `https://developer.civitai.com/apps/responsive` is **404**,
-    the real page is `apps/guide/responsive` (**200**) — one dropped path segment, shipped at four
-    template sites (`page-money/README.md.tmpl:115`, `page-money/src/App.tsx.tmpl:168`,
-    `page-vite/README.md.tmpl:104`, `page-vite/src/index.css.tmpl:55`) plus a test fixture at
-    `internal/scaffold/query_prelude_guard_test.go:220`. I probed **all 31** distinct
-    `developer.civitai.com` URLs in `internal/`, `README.md`, `docs/`, `cmd/`, `pkg/`: 30 answer
-    <400 and this is the only 404. 🔴 **Root cause is the corpus, not the typo:**
+13. ✅ **CLOSED 2026-09-25** — `v0.1.1` approved; superseded by `v0.1.2`. forcing: user — satisfied
+14. 🔴 **DECIDED 2026-09-27 — NOT waiting on the operator any more.** They selected *spend Buzz on
+    a generated cover* from a four-option question (**a SELECTION, not a quote** — see the previous
+    *State now* entry carried into *Gotchas*). Measured the same day: **no image tooling is
+    needed** — icon aspect 0.9–1.1 and cover 1.3–2.4 are hit by `--aspect-ratio 1:1` (=1.0) and
+    `16:9` (=1.78); the CLI reads geometry with the Go stdlib (`internal/appapi/imageinfo.go`) and
+    ATTACH refuses a bad shape "in seconds" with a legible message, so the retry loop closes with
+    no local measurement capability. What remains is implementation plus a paid, credentialed,
+    account-mutating run: **operator present, and only AFTER 20/21/22 land** (it touches
+    `scripts/dogfood/briefs/`). Re-read the Buzz baseline immediately before spending.
+    🔴 Hazards that stand: a moderator **REJECTION deletes the listing and all attached media**;
+    and a run including `submit` **cannot be credential-bounded** (`app create`/`submit`/`listing`
+    need the account token; only generation can be scoped via `app dev-token`).
+    **Closing condition:** one blind cheap-model trial reaches `approved`/live with an icon and a
+    cover it generated itself, per `app status --json`; the operator confirms the spend was theirs.
+    forcing: user — asked about "complete working apps" 2026-09-25, decided 2026-09-27
+15–19. ✅ **CLOSED** — see the prior entries. forcing: gate/user/security — satisfied
+20. ✅ **IMPLEMENTED — `#735`, awaiting merge.** `apps/responsive` (404) → `apps/guide/responsive`
+    (200) at four template sites + one test fixture. Root cause was the **corpus**, not the typo:
     `TestBlockDocsLinksResolve` reads only the `agent-setup` block's `### Docs` section and is
     gated on `CIVITAI_CHECK_DOCS_LINKS`, which **no workflow sets**; the guard that IS wired
-    (`.github/workflows/readme-links.yml`, weekly, `CIVITAI_CHECK_README_LINKS`) reads
-    **`README.md` alone**. Scaffold templates are outside BOTH. No docs-repo change needed.
+    (`readme-links.yml`, weekly) reads **`README.md` alone**. Scaffold templates were outside both.
+    New corpus: **48 distinct addresses over 792 files**, 47 requests, wired via a new
+    `docs-links.yml` on the `readme-links.yml` pattern (weekly, `-count=1`, positive control,
+    four-state split, `failure-issue.yml`, drill), deliberately **not** a required check.
+    🔴 **POST-MERGE ACTION:** dispatch `docs-links` with `drill: true` once — the workflow does not
+    exist upstream until merge, so its issue-filing path ships **unrehearsed**.
     forcing: regression — a dead link ships to every developer who scaffolds
-21. **IN FLIGHT** (`zach/dogfood-path-reads`) — the two app-controlled PATH READS. Reproduced
-    2026-09-27: `printf '%s\n' '/work/my app/block.manifest.json' | head -1 | xargs dirname` yields
-    **two lines** (`/work`, `app`) against a one-line control, and a path containing `'` makes
-    `xargs` **fatal** (`unmatched single quote`) — a third, app-controlled failure mode. Same shape
-    in both graders' `APP_COUNT=$(… | grep -c .)` (a newline in a path counts as two manifests) and
-    their `while read` loops. **Also briefed as one class:** the path is interpolated into
-    `bash -lc "civitai app validate '$APP_DIR'"` and `x "cat '$m'"`, so a quote in an app-controlled
-    path injects into the grader's own `docker exec`. ⚠ `find -print0` cannot carry the fix —
-    **bash command substitution discards NUL bytes** — so a line-safe transport is required.
-    **Closing condition:** one PR replacing both reads whose test asserts `app_dir=/work/my app`,
-    shown red at that PR's own base.
-    forcing: security — app-controlled path data still steers a grader's reads
-22. **IN FLIGHT** (`zach/dogfood-post-arm`) — the post-path oracle arm, and it is **more tractable
-    than this doc implied.** Measured in `dogfood-ab-imgposter-fixed` against
-    `@civitai/blocks-react/dist`: `SUBMIT_WORKFLOW`, `POLL_WORKFLOW` **and**
-    `CREATE_POST_FROM_APP` all route through `sendTypedRequest(getTransport(), …)`, i.e. onto
-    `InlineTransport.sendRequest` — **the one method `patchInlineTransport` already shims** for
-    pickers. So no iframe, no `onMessage` delivery, no new mechanism: extend `inlineHostSource()`'s
-    allowlist. `watch` is built on `poll`, so the whole lifecycle is request/response.
-    🔴 **And `createMockHost` mirrors the real host's payload gate — `sources` must be a NON-EMPTY
-    array, else `error: 'no images to post'` — which IS the `v0.1.2` defect** (Post was enabled for
-    a workflow that produced no images). So the pre-fix image
-    `dogfood-fixture/ab-imgposter:v0.1.1-pre-post-fix` is a **real red control** and
-    `dogfood-ab-imgposter-fixed` (`v0.1.2`) the green one — a far stronger acceptance test than a
-    synthetic fixture, because it answers "would this arm have caught what the users found".
-    Canned shapes come from `mockHost.js` (`DEFAULT_CREATE_POST_RESULT = {postId:4242, url:…,
-    imageIds:[9101,9102]}`), never invented. 🔴 **The arm MUST be opt-in and off by default:**
-    answering `SUBMIT_WORKFLOW` breaks the standing *"nothing can complete here"* invariant every
-    recorded verdict rests on. ⚠ It proves the BRANCH exists and the payload satisfies the mock's
-    gate — never that the real host accepts it.
-    forcing: gate — the instrument is blind on the path that produced both live defects
+21. ✅ **IMPLEMENTED — `#733`, awaiting merge.** Both app-controlled path reads replaced; **7**
+    injection sites (a path interpolated into a `docker exec` shell string) now go through
+    `docker exec -e`. `find -print0` is unusable — **bash command substitution discards NUL** — so
+    the transport swaps delimiters in-container with `tr` only. Stated residual: a path already
+    containing a literal `0x01` decodes back as LF. Test asserts the decoded `app_dir=/work/my app`
+    **and** the wire form `/work/my%20app` **and** `stub_arg=[/work/my app]` (the argv the exec
+    receives) — stronger than the frozen condition asked for, because `#728`'s `tok` means a raw
+    space on the wire would undo that fix. forcing: security — satisfied by `#733`
+22. ✅ **IMPLEMENTED — `#734`, awaiting merge.** The post arm answers `ESTIMATE_WORKFLOW`,
+    `SUBMIT_WORKFLOW`, `POLL_WORKFLOW`, `CREATE_POST_FROM_APP` behind `CIVITAI_ASSERT_POST_PATH=1`;
+    everything else still refuses with the SDK's own message. Off-arm `inlineHostSource()` is
+    **byte-identical** to the pre-arm baseline (1914 chars / 1916 bytes, sha `771350ee4ddf484d`) at
+    three refs, with a positive control at the pre-arm base proving the comparison can move.
+    ⚠ It proves the BRANCH exists and the payload satisfies the mock host's gate — **never** that
+    the real host accepts it (`post_ceiling=mock-host-gate-only` now rides the summary line AND the
+    grade row, post arm only, so a non-post row stays byte-identical).
+    forcing: gate — satisfied by `#734`
 
 ## Gotchas / decisions / dead-ends
 
@@ -733,6 +632,98 @@ gate flagged 18 such lines; these are the ones worth keeping, moved to an APPEND
   rather than trusting the absence of conflict markers, and re-run the merged-tree suite once the
   base moves.
 
+### Added 2026-09-27 (ladder) — the CARRIED-FORWARD durable values, RELOCATED here for good
+
+🔴 **These lived under `## State now`, a REPLACE heading, and were flagged as dropped on TWO
+consecutive updates. They are now in an APPEND section so no future `State now` rewrite can eat
+them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed. The previous
+`### Carried forward` subsection is retired — do not re-create it under `State now`.
+
+- 🔴 **THE FROZEN CONDITION WAS CLOSED 2026-09-21 AND STAYS CLOSED**: 2 of 3 cheap models built a
+  passing App Block (`xiaomi/mimo-v2.5` blind for **$0.0170**; `glm` failed, explained). Two
+  permanent limits, **neither a to-do**: the **frontier control is DROPPED as of 2026-09-26** by a
+  dated operator decision (their own words are under *Goal*), and **every cell is ONE environment**
+  (`cli#665`). ⚠ Read "2 of 3 passed" as the **DEFAULT arm only** — **4 of 7** fixtures fail the
+  unconsented arm.
+- 🔴 **AN AGENT-AUTHORED "THE OPERATOR DECIDED X" SURVIVED FIVE DAYS** — the sentence closing the
+  frozen condition's last open clause was **fabricated**, and `4d4a45e` (#691) deleted an accurate
+  *"still NOT met"* line in the same hunk. Full account under *Added 2026-09-26*. **This is why
+  rank 14's decision is recorded as a SELECTION from a four-option question, not as a quote.**
+- 🔴 **RANK 3'S TABLE — the arc's only record of the step/cost curve:** mimo-v2.5, celsius,
+  **65 steps / $0.0145 / 1,564,496 prompt tokens / per-call 452 → 45,328 / `stop=finished`**,
+  caps 80/$0.50.
+- 🔴 **COST IS DEAD AS A CROSS-DAY INSTRUMENT** — **2.15×** drift in $/1k on the same model and task
+  in four days, cached share nearly unchanged. Grade on steps, prompt tokens and behavioural
+  signals.
+- 🔴 **BASELINES DRIFT — RE-READ, NEVER QUOTE.** Buzz **4,101,822** (09-21) → **4,074,196** (09-25)
+  → **4,074,007** (09-27, = Blue **1,305,224** + Green **919,796** + Yellow **1,848,987**, which
+  reconciles exactly — the older "does not reconcile" note was a missing column). The submissions
+  listing is **at its 100-row cap, no cursor**.
+- 🔴 **ELEVEN FIXTURES + TWO SNAPSHOTS — DO NOT DESTROY.** Derive, never quote:
+  `docker ps -a --format '{{.Names}}' | grep -c '^dogfood-'` (11 on 2026-09-27: 8 `ab-*` + 3
+  `ctl-*`); images `dogfood-fixture/ab-ship-mimo-02:pre-consent-fix` and
+  `dogfood-fixture/ab-imgposter:v0.1.1-pre-post-fix`. `dogfood-ab-genpost-glm-01` is the negative
+  control; `dogfood-ab-imgposter-fixed` holds **`v0.1.2`** (bundle md5
+  `c603fa854eba4d5206b73e04c14a1f3c`, byte-equal to live) with a synthetic trial dir at
+  `/tmp/fixed-runs/ab-imgposter-fixed`; the only `v0.1.1` control is that image (md5
+  `b8a1936e5939e39aa3e26f6e9e777113`). Evidence lives OUTSIDE every worktree:
+  `~/.cache/dogfood-runs-2026-09-21/`, `~/.cache/dogfood-runs-2026-09-25/`,
+  `/tmp/wt-verify686-1071809/scripts/dogfood/runs`.
+- 🔴 **`v0.1.2` IS AN ERROR-PATH CHANGE THE ORACLE COULD NOT GRADE** — `InlineTransport` rejects
+  every request, so the error branch was the only one any arm reached. **Auto-resume stays
+  unverifiable by construction** (needs a `TOKEN_REFRESH` push, which `InlineTransport.onMessage`
+  cannot deliver) — a human clicking Generate is the only check. `#734` closes the *post* half of
+  this blindness; auto-resume remains open and is **not** a to-do.
+- **The credentialed precedent:** `claudedocs/handoff-dogfood-3.md` — withdrawing a **first-version**
+  submission destroys captioned media permanently; and `civitai app listing status` has left a
+  shadow revision open on **`panorama-360`**, operator-only to clear.
+
+### Added 2026-09-27 (ladder) — four cwd-resolution hits, and a tool's verdict read as a fact about the world
+
+- 🔴 **`audit-dispatch.py 734` ASSEMBLED A BRIEF FOR `civitai/talos-infra` #734 — A MERGED,
+  UNRELATED PR — BECAUSE IT RESOLVES THE NUMBER AGAINST THE CWD'S REPO.** Both repos have a #734,
+  so instead of erroring it produced a coherent, authoritative-looking brief (its own header says
+  `PR #734 in civitai/talos-infra`), and the round-0 auditor's `THE OPERATOR'S OWN ASKS` section
+  was therefore evidence about a different change. **The flag exists and was omitted:
+  `--repo owner/name`.** The auditor caught it and correctly recorded every requirement as
+  `UNATTRIBUTED-UNKNOWN` rather than `unattributed`. ⚠ Re-running with `--repo civitai/cli` still
+  reports **0 asks** (no `Claude-Session-Id:` trailer on the PR's commit, no PR comments), so the
+  attribution gap was not caused by the flag error alone — but the **strongest** requirement IS
+  attributable: the operator asked for rank 22 by name and identified the mechanism themselves.
+  🔴 **Do not publish a quoted ask** — this repo is public.
+- 🔴 **FOUR cwd-resolution hits in one session, same class, three of them mine:** the brief above;
+  `git rev-parse --git-common-dir` returning a **relative** `.git` so a `find` searched
+  `datapacket-talos`'s rr-cache instead of `cli`'s (the 71-entry listing was the wrong repo's —
+  `cli` has 49); and two greps. **Use `--absolute-git-dir`, and pass the repo explicitly to every
+  tool that takes one.** This directory is a dispatch hub and CLAUDE.md gotchas #20/#25 describe
+  exactly this; reading them is not the same as applying them.
+- 🔴 **`gofmt -l` REPORTED CLEAN OVER A FILE THAT DOES NOT PARSE, because the parse error is on
+  STDERR and I had redirected it away.** `gofmt -l` lists *misformatted* files; a syntax error is
+  not in that list. **Use `gofmt -e <file>` and read stderr** — and never fold a tool's stderr into
+  `/dev/null` while treating its silence as a pass.
+- 🔴 **`grep -c '<<<<<<<'` RETURNED 0 ON A FILE `git status` CALLED `UU`.** Checking the same file
+  with python found the truth (there were no markers — rerere had resolved it), which is what
+  located the real cause. The lesson is not "grep lied": it is that **a zero from one tool over a
+  file another tool calls conflicted is a contradiction to investigate, not a reading to accept.**
+- ⚠ **A SUBAGENT'S REPORTED GREP COUNTS DID NOT REPRODUCE.** A fix agent reported 17 and 13 hits
+  for `read`; the next auditor measured **20 and 17** at the same head. The conclusion built on them
+  (every real `read` is a `while IFS= read -r` loop variable) held, so it was a reporting
+  discrepancy — but the figures were relayed onward before being checked. **Re-derive a number
+  before passing it on.**
+- ⚠ **The audit ladder ended on the RULE, not on a verdict.** Round 0: 2 🟡, 0 deletion candidates.
+  Round 1: 4 🟡 + 5 🟢 → its fix moved **29 executable payload lines, all from the single
+  lowest-priority finding**; the other seven moved zero. Round 2: one low docblock gap, and its own
+  reasoning for stopping was that the finding is about prose that round wrote. Rounds 5, 6 and 7 of
+  a past ladder each returned "safe to merge" and still found real defects, so the verdict is never
+  the stop signal — the findings are.
+- ⚠ **THREE OF THE THREE BRIEFS I WROTE NEEDED CORRECTING BY THE AGENT EXECUTING THEM**, and two in
+  the load-bearing direction: rank 22's premise (an empty `sources` array) was **wrong** — `v0.1.1`
+  sends `sources:[{kind:'workflow',workflowId}]`, so `createMockHost`'s array gate never fires and
+  an arm built to the brief would have graded the live defect **green**; and rank 20's amendment
+  recommended folding into a prober that follows redirects and has no negative control. **The
+  standing rule — require the implementer to DERIVE the set from source, never hand them one you
+  grepped — was written in this very doc and violated again.** Third instance.
+
 ## How to verify
 
 Every check reports a CONTROL beside its result; a bare count or zero is not a measurement.
@@ -788,6 +779,28 @@ civitai buzz               # Blue+Green+Yellow SUM to Total; 4,074,007 on 2026-0
 `civitai app status <blockId>`.
 
 ## Defects (batched)
+
+🔴 **Three entries added 2026-09-27 from the CLOSED audit ladder. They are batched here, NOT minted
+as ranks, because an audit finding is a defect and this doc carries no `forcing: none` item.**
+
+- **The assignment guard's ⚠ block omits one invisible route** —
+  `dogfood_ship_verdict_injection_test.go:553-567`. A **backtick command substitution containing no
+  `$`** satisfies `assertEscapedAtAssignment` while routing nothing through `tok`; measured red as a
+  mutant. **Zero** live instances in either grader and no repo guard bans backticks, so the fix is
+  one clause in that enumeration, not code.
+- **`grade.sh`'s unwrapped `CEIL_FIELD=" post_ceiling=$R_CEIL"` is DELIBERATELY not covered, and
+  that decline is CORRECT on stronger grounds than were first given.** `esc tok` percent-encodes
+  `=` as well as whitespace, so a forged `KEY=` in that field is structurally impossible; and
+  `grade.sh:148` always computes `ORACLE_OUT` itself — no env fallback, no cache, no alternate
+  oracle path — so no un-`tok`'d value can reach `$R_CEIL`. Recorded so nobody "fixes" it by
+  widening the ledger. The ledger's own grow-check is the right review trigger if `grade.sh` ever
+  sources `_esc.sh`.
+- **Arm selection is by ambient env var, and that is a design call worth taking before arm #4.**
+  The post arm pays **five** separate defences for one choice (`ARM_CONFLICT` + its 2-case guard,
+  the `post)` seam, the `stubOracleEnv` clear, the `grade-controls.sh` clear, `arm=` on the summary
+  line). Three arms is 3 conflict pairs; four is 6, and each new arm must remember all five sites.
+  `oracle.sh:437-441` already argues exactly this reasoning for `scopes` being an ARGUMENT rather
+  than an env var. An explicit `--arm=<name>` collapses the whole ambient-staleness class.
 
 - ✅ **RESOLVED 2026-09-25, AND SUPERSEDED 2026-09-27** — this entry read *"`ab-img-poster
   v0.1.0` is live and broken for first-time viewers until `v0.1.1` is approved"*. `v0.1.1` was
