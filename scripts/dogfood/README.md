@@ -150,6 +150,18 @@ What is recorded is `credentialed: true` plus `credential_sha256`, a 12-hex
 prefix of the file's digest: not reversible, not a substring, and enough to tell
 two runs apart.
 
+⚠ **What this does NOT do.** The credential is a real file inside the container
+and the model runs shell as a user who can read it — it must, or the CLI cannot
+authenticate. The guarantee is about what leaves the container and lands in the
+artifacts you keep, not about hiding the credential from the trial.
+
+**Prove it rather than trusting this table:**
+`go test . -run 'TestDogfoodCredential|TestDogfoodLogin' -v`. `TestDogfoodCredentialNeverLeaks`
+plants a canary, runs a trial that `cat`s the config, greps all three surfaces
+for zero hits — and runs the same grep over the un-redacted file first, because a
+grep that finds nothing because its PATTERN is wrong is indistinguishable from
+one that finds nothing because there is nothing there.
+
 ### 🔴 The install is VERIFIED, not reported
 
 `credential_install` in the `start` record is a statement about a **read**:
@@ -188,18 +200,6 @@ thing that would have saved that run is the login gate below.
 digest them. They are never written, logged, raised or returned — what leaves
 that function is a sentence naming the path and the user, and the mismatch error
 carries two byte COUNTS and nothing else.
-
-⚠ **What this does NOT do.** The credential is a real file inside the container
-and the model runs shell as a user who can read it — it must, or the CLI cannot
-authenticate. The guarantee is about what leaves the container and lands in the
-artifacts you keep, not about hiding the credential from the trial.
-
-**Prove it rather than trusting this table:**
-`go test . -run 'TestDogfoodCredential|TestDogfoodLogin' -v`. `TestDogfoodCredentialNeverLeaks`
-plants a canary, runs a trial that `cat`s the config, greps all three surfaces
-for zero hits — and runs the same grep over the un-redacted file first, because a
-grep that finds nothing because its PATTERN is wrong is indistinguishable from
-one that finds nothing because there is nothing there.
 
 ### The caps — what is mechanical and what is not
 
