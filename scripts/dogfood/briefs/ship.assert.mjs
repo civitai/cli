@@ -33,34 +33,19 @@
 // answers is the app-store submission: nothing the arm adds reaches the store.
 // Grading that needs the account, which is what `ship.verdict.sh` reads.
 //
-// Delegation is by SPAWN rather than by import, and that is a deliberate
-// trade: `genpost.assert.mjs` is exercised by a real browser under
-// `TestOracleGradesTheGenpostBrief` and friends, and refactoring it to export a
-// grader would put that working, measured file in the blast radius of a brief
-// that has never been run. stdio is inherited, so the one JSON line, the exit
-// code and the 0/1/2 contract `oracle.sh` reads all pass through untouched —
-// including exit 2, the "the harness could not run" code that must never become
-// a verdict about the block.
-import { spawnSync } from 'node:child_process';
+// Delegation is by SPAWN rather than by import, and the MECHANISM now lives in
+// `_delegate.mjs` because `t1.assert.mjs` needs the same one: `t1` is this brief
+// plus a store-listing-media clause, so its renderable half is `genpost`'s too. A
+// second hand-written spawner would be the 0/1/2 contract open-coded twice, and it
+// has one case that fails in the reassuring direction — a delegate killed by a
+// signal reports `status: null`, and `process.exit(null)` exits **0**, i.e. a PASS.
+// See `_delegate.mjs` for the full argument, which is the one this file shipped
+// with.
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { delegate } from './_delegate.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DELEGATE = path.join(HERE, 'genpost.assert.mjs');
 
-const r = spawnSync(process.execPath, [DELEGATE, ...process.argv.slice(2)], {
-  stdio: 'inherit',
-  env: process.env,
-});
-// A child killed by a signal reports `status: null`. That is "the assertion
-// could not run", not "the block failed" — exit 2, the same third state the
-// rest of this harness uses.
-if (r.error || r.status === null) {
-  console.log(JSON.stringify({
-    assertion: 'ship',
-    pass: false,
-    reason: `harness error: could not run ${DELEGATE}: ${r.error ? r.error.message : `killed by ${r.signal}`}`,
-  }));
-  process.exit(2);
-}
-process.exit(r.status);
+delegate(DELEGATE, 'ship');

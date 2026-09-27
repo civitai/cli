@@ -826,6 +826,138 @@ func TestShipBriefAndAssertionAgree(t *testing.T) {
 	}
 }
 
+// 🔴 `t1` IS `ship` PLUS A LISTING-MEDIA CLAUSE, AND THAT RELATIONSHIP IS WHAT
+// THIS PINS — the same shape one rung up. `ship` is `genpost` verbatim plus a
+// submit clause; `t1` is `ship` verbatim plus "bring the listing to the publish
+// floor". So all three share ONE renderable half, graded by `genpost.assert.mjs`,
+// and the guard is the whole normalised string rather than a keyword set a reword
+// could still spell while asking for something different. A cosmetic reword of
+// `ship` (or of `genpost`, through it) fails this test; the remedy is to move the
+// files together.
+//
+// 🔴 AND THE MEDIA CLAUSE IS THE HALF THE WHOLE BRIEF EXISTS FOR. `ship` already
+// gets an app into the moderation queue with an EMPTY store listing — that is what
+// a submitted app looks like by default, and `civitai app doctor` calls it gating.
+// If the trailing clause is dropped, `t1` becomes `ship` under a second name and
+// every T1 cell grades `FLOOR=no` for a reason nobody typed. The clause has to name
+// BOTH assets and BOTH shapes: the icon band (aspect 0.9–1.1) and the cover band
+// (1.3–2.4) are disjoint, so "an image" is not an answer to either and one image
+// cannot serve as both.
+func TestT1BriefAndAssertionAgree(t *testing.T) {
+	briefRaw, err := os.ReadFile(filepath.Join(dogfoodDir, "briefs", "t1.brief.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	brief := strings.TrimSpace(string(briefRaw))
+	if brief == "" || strings.Contains(brief, "\n") {
+		t.Fatalf("the brief must be exactly one non-empty line, got %q", brief)
+	}
+	ship := dogfoodBriefText(t, "ship")
+
+	// (a) The submit-and-render half, pinned as the WHOLE string. This transitively
+	// pins the genpost half too, because TestShipBriefAndAssertionAgree requires
+	// `ship` to begin with `genpost`.
+	if !strings.HasPrefix(brief, ship) {
+		t.Fatalf("the t1 brief no longer begins with the ship brief verbatim.\n"+
+			"   t1: %q\n ship: %q\n\nt1.assert.mjs grades the same renderable half as ship.assert.mjs "+
+			"(both delegate to genpost.assert.mjs) and ship.verdict.sh grades the same submission, so "+
+			"the two briefs' shared prefix must be the same text. Move both files together.", brief, ship)
+	}
+	// (b) The media half exists, and asks for both assets in both shapes.
+	tail := strings.TrimSpace(strings.TrimPrefix(brief, ship))
+	if tail == "" {
+		t.Fatal("the t1 brief is byte-identical to the ship brief — it asks for no listing media, " +
+			"which is the exact defect it exists to fix: a bare `ship` trial submits an app whose " +
+			"listing has NO icon and NO cover, and `civitai app doctor` calls both gating")
+	}
+	lower := strings.ToLower(tail)
+	for _, hook := range []string{"icon", "cover", "square", "landscape", "generate", "attach"} {
+		if !strings.Contains(lower, hook) {
+			t.Fatalf("the t1 brief's trailing clause does not ask for %q: %q. The floor is an icon "+
+				"AND a cover, and their aspect bands (0.9–1.1 and 1.3–2.4) are disjoint — a clause "+
+				"that names only one asset, or neither shape, is satisfiable by a listing the "+
+				"platform still refuses to publish", hook, tail)
+		}
+	}
+	// 🔴 (c) AND IT MUST NOT NAME A CLI FLAG, for the reason ship.brief.txt must not:
+	// the brief is appended RAW, so the only Civitai knowledge a trial gets is the
+	// hosted URL and what the operator typed. `--aspect-ratio` is the lever that puts
+	// a generation in the icon or cover band (`civitai generate` has no --width
+	// /--height), and naming it would hand the trial the one fact T1 measures whether
+	// it can discover.
+	if strings.Contains(brief, "--") {
+		t.Fatalf("the brief names a command-line flag: %q. The brief is what the OPERATOR typed; "+
+			"a flag in it is Civitai knowledge injected by the rig", brief)
+	}
+
+	// (d) The render half is the genpost assertion, by delegation, through the SHARED
+	// spawner. 🔴 The shared one matters: a hand-copied spawner is the 0/1/2 contract
+	// open-coded twice, and it has one case that fails in the reassuring direction — a
+	// delegate killed by a signal reports `status: null` and `process.exit(null)` exits
+	// 0, i.e. reports the block as PASSING.
+	assertRaw, err := os.ReadFile(filepath.Join(dogfoodDir, "briefs", "t1.assert.mjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion := string(assertRaw)
+	for _, hook := range []string{"genpost.assert.mjs", "_delegate.mjs", "delegate("} {
+		if !strings.Contains(assertion, hook) {
+			t.Fatalf("t1.assert.mjs no longer names %q. If the delegation has been forked, the same "+
+				"predicate is now open-coded at three sites and briefs/genpost.md's scaffold and "+
+				"generate-only controls are no longer controls for THIS assertion — give it its own "+
+				"constants here and its own controls in t1.md, or restore the delegation", hook)
+		}
+	}
+	// 🔴 THE TWO DELEGATING BRIEFS MUST DELEGATE TO THE SAME FILE. Nothing else stops
+	// `t1` quietly acquiring a different render half from `ship` while both tests stay
+	// green on their own halves.
+	shipAssert, err := os.ReadFile(filepath.Join(dogfoodDir, "briefs", "ship.assert.mjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(shipAssert), "genpost.assert.mjs") {
+		t.Fatal("ship.assert.mjs no longer delegates to genpost.assert.mjs, so `ship` and `t1` no " +
+			"longer share one render half")
+	}
+	// The spawner's own load-bearing lines, in the one place they now live.
+	delegateRaw, err := os.ReadFile(filepath.Join(dogfoodDir, "briefs", "_delegate.mjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	del := string(delegateRaw)
+	for _, hook := range []string{
+		// A signal-killed delegate is exit 2, never exit 0.
+		"r.status === null",
+		"process.exit(2)",
+		// stdio inherited, so the delegate's one JSON line and its reason reach
+		// oracle.sh untouched.
+		`stdio: 'inherit'`,
+		// The arm switches reach the delegate only through the environment.
+		"env: process.env",
+	} {
+		if !strings.Contains(del, hook) {
+			t.Fatalf("_delegate.mjs no longer contains %q — both `ship` and `t1` depend on it", hook)
+		}
+	}
+
+	// (e) The SHIP and FLOOR halves have a verdict path at all. The assertion above
+	// grades the DOM and can see NEITHER a store submission nor a listing asset (the
+	// oracle's host stub rejects every request and `token.raw` is empty), so a t1
+	// brief whose only grader is browser-shaped measures exactly the genpost brief
+	// under a third name.
+	vraw, err := os.ReadFile(filepath.Join(dogfoodDir, "ship.verdict.sh"))
+	if err != nil {
+		t.Fatalf("no %s/ship.verdict.sh: %v — the t1 brief's submit and floor halves would be "+
+			"ungraded, and an ungraded half is indistinguishable from a passing one", dogfoodDir, err)
+	}
+	for _, field := range []string{"FLOOR=%s", "T1=%s"} {
+		if !strings.Contains(string(vraw), field) {
+			t.Fatalf("ship.verdict.sh does not emit `%s` — the t1 brief's publish-floor half has no "+
+				"verdict, so a T1 cell would be a ship cell with a longer brief", field)
+		}
+	}
+}
+
 // 🔴 THE LEDGER. The tests above pin one pair each; nothing pins that a
 // FOURTH brief gets a guard at all. A brief with no drift guard is the failure
 // this whole pair exists to prevent, arriving by addition instead of by edit:

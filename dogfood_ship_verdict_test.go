@@ -34,12 +34,20 @@ import (
 
 const shipDir = "scripts/dogfood"
 
-// stubCivitaiScript answers exactly the one read ship.verdict.sh makes.
+// stubCivitaiScript answers exactly the two reads ship.verdict.sh makes.
 //
 // 🔴 IT MUST BE ABLE TO FAIL. `STUB_STATUS_RC` is the negative control for the
 // instrument itself: a stub that always succeeds could not tell a script that
 // distinguishes "the call failed" from "no such submission" from one that folds
 // them together, which is the distinction the whole exit-2 split rests on.
+//
+// 🔴 AND THE DOCTOR ARM MUST BE ABLE TO EXIT NON-ZERO *WITH* A PAYLOAD, because
+// that is the real command's normal behaviour and the trap the floor check is
+// built around: `civitai app doctor` exits 1 whenever anything is GATING — a
+// listing missing its icon is exactly that — so the sharpest `FLOOR=no` arrives
+// as a non-zero exit carrying a COMPLETE payload. `STUB_DOCTOR_RC` and
+// `STUB_DOCTOR_FILE` are independent for that reason: a stub that coupled them
+// could not tell a script keyed on the payload from one keyed on the exit code.
 const stubCivitaiScript = `#!/bin/sh
 if [ "${1:-}" = "app" ] && [ "${2:-}" = "status" ]; then
   rc="${STUB_STATUS_RC:-0}"
@@ -53,6 +61,13 @@ if [ "${1:-}" = "app" ] && [ "${2:-}" = "status" ]; then
   echo "note: the server returned the newest N submissions" >&2
   cat "$STUB_STATUS_FILE"
   exit 0
+fi
+if [ "${1:-}" = "app" ] && [ "${2:-}" = "doctor" ]; then
+  # The truncation caveat goes to stderr on the real command precisely so --json
+  # stdout stays a pure payload. Same here.
+  echo "note: this read is capped server-side" >&2
+  cat "$STUB_DOCTOR_FILE"
+  exit "${STUB_DOCTOR_RC:-0}"
 fi
 exit 0
 `
@@ -83,6 +98,15 @@ type shipEnv struct {
 	statusRC   string // non-"0" => the status call fails
 	statusBody string // raw stdout of `civitai app status --json`
 	transcript string // "" => no transcript at all
+	// doctorBody is the raw stdout of `civitai app doctor --json`. EMPTY is the
+	// default and it is a meaningful default: it is what a `ship`-era fixture
+	// produces, so every test written before the floor check keeps its verdict and
+	// reads `FLOOR=unmeasured`.
+	doctorBody string
+	// doctorRC is the doctor call's exit code. 🔴 INDEPENDENT OF doctorBody ON
+	// PURPOSE — the real command exits 1 with a full payload whenever anything is
+	// gating, which is the normal shape of a below-floor listing.
+	doctorRC string
 }
 
 // shipStubEnv builds the stub PATH, the fixture /work tree and the runs dir.
@@ -127,12 +151,18 @@ func shipStubEnv(t *testing.T, s shipEnv) []string {
 	}
 	statusFile := filepath.Join(dir, "status.json")
 	write(statusFile, s.statusBody, 0o644)
+	doctorFile := filepath.Join(dir, "doctor.json")
+	write(doctorFile, s.doctorBody, 0o644)
 	if s.transcript != "" {
 		write(filepath.Join(runs, "ctl", "transcript.jsonl"), s.transcript, 0o644)
 	}
 	rc := s.statusRC
 	if rc == "" {
 		rc = "0"
+	}
+	doctorRC := s.doctorRC
+	if doctorRC == "" {
+		doctorRC = "0"
 	}
 	// 🔴 `STUB_CIVITAI=0` IS WHAT MAKES "the container has no CLI" A REAL ARM.
 	// Omitting the stub script is NOT enough: the stub docker keeps the host PATH
@@ -155,6 +185,8 @@ func shipStubEnv(t *testing.T, s shipEnv) []string {
 		"STUB_CIVITAI=" + civitaiPresent,
 		"STUB_STATUS_RC=" + rc,
 		"STUB_STATUS_FILE=" + statusFile,
+		"STUB_DOCTOR_RC=" + doctorRC,
+		"STUB_DOCTOR_FILE=" + doctorFile,
 		"DOGFOOD_RUNS=" + runs,
 		// Never inherit an operator's shell default — it would silently widen
 		// the window in every case below.
