@@ -79,7 +79,10 @@ nothing). This one AUTHORS the coverage first, then cuts. The operator retired t
 | 4. `generate --help` ≤ 25,000 | ✅ **MET — 16,668** (unchanged; the cut moved nothing into `Long`). Negative control: `zzbogus --help` = 4,636 = root help, exit 0 |
 
 **So: ADDRESSED.** Nothing in the ranked list below is a gate any more — every remaining item is
-elective. Release the `readme-front-door` claim.
+elective. ⚠ **`readme-front-door` is deliberately still HELD until `cli#723` MERGES**, not
+until the clauses pass: this doc is the arc's canonical copy and it is still only a PR, so
+releasing the claim first would leave the closing record unmerged and unowned — the exact
+stranded-docs shape. Release it the moment #723 lands.
 
 ### 🔴 CLAUSE 3'S VERDICT, AND THE CONTROLS THAT MAKE IT MEAN ANYTHING
 
