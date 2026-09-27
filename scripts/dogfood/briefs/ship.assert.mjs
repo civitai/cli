@@ -20,12 +20,18 @@
 // second copy would silently stop being the thing those controls were run
 // against. `ship.md` pins the delegation so a fork cannot happen quietly.
 //
-// 🔴 IT CANNOT GRADE THE SUBMIT, AND NO BROWSER ASSERTION EVER COULD. A
-// submission is server state. It leaves nothing in the DOM, the oracle's host
+// 🔴 IT CANNOT GRADE THE APP-STORE SUBMISSION, AND NO BROWSER ASSERTION EVER COULD.
+// A submission is server state. It leaves nothing in the DOM, the oracle's host
 // emulation is the SDK's `InlineTransport` stub whose `sendRequest` rejects
-// unconditionally, and `token.raw` is empty — so nothing can COMPLETE here, by
-// construction. Grading the submit needs the account, which is what
-// `ship.verdict.sh` reads.
+// everything outside the running arm's answered set, and `token.raw` is empty — so no
+// SUBMISSION can complete here, by construction, on any arm.
+//
+// ⚠ "SUBMIT" IS TWO DIFFERENT THINGS IN THIS RIG AND THIS PARAGRAPH IS ABOUT ONLY
+// ONE OF THEM. The post arm DOES answer `SUBMIT_WORKFLOW` — it is one of the four
+// workflow/post types it widens the answered set by (`INVARIANT_EXCEPTIONS` in
+// `_cdp.mjs`) — so a generation's submit completes there, in the page. What no arm
+// answers is the app-store submission: nothing the arm adds reaches the store.
+// Grading that needs the account, which is what `ship.verdict.sh` reads.
 //
 // Delegation is by SPAWN rather than by import, and that is a deliberate
 // trade: `genpost.assert.mjs` is exercised by a real browser under

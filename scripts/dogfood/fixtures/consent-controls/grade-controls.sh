@@ -84,7 +84,10 @@ printf '=== consent controls, both arms (runs under %s)\n\n' "$RUNS"
 # to see it except by noticing `arm=` inside the pasted summary line. This script
 # is the first tool in this tree that prints its own arm COLUMN, so it is the one
 # that has to defend it. The rule is not new — `dogfood_oracle_test.go` clears the
-# same five by name, and says why in a comment; `oracle.sh` names the same hazard.
+# same knobs by name, and says why in a comment; `oracle.sh` names the same hazard.
+# ⚠ Do not restate the COUNT here — it was "five" and went stale the moment the
+# post-path arm added a sixth. `stubOracleEnv` in `dogfood_oracle_test.go` is the
+# list to compare against.
 #
 # ⚠ THE TIMING KNOBS RIDE ALONG, and they are a quieter version of the same
 # class: `../../briefs/_cdp.mjs` also reads CIVITAI_ASSERT_WAIT_MS / _LAUNCH_MS /
@@ -93,8 +96,17 @@ printf '=== consent controls, both arms (runs under %s)\n\n' "$RUNS"
 # `RENDER=no` matrix. Less dangerous than the arm knobs — `render_reason=` shows
 # a timeout, so it is visible rather than silent — but there is no reason to
 # inherit it either.
+#
+# 🔴 AND `CIVITAI_ASSERT_POST_PATH` IS THE WORST OF THE SET, so it is cleared here
+# too. A stale export of that one does not merely change the predicate — it
+# SUSPENDS the invariant this whole tree rests on (`no generation and no post can
+# complete here`), answering ESTIMATE/SUBMIT/POLL/CREATE_POST in the page. Both
+# rows this script prints would then be post-path measurements labelled
+# `consented` and `unconsented`, and the `unconsented` one would not even run: the
+# combination is refused (exit 2), which this script counts as UNMEASURED.
 ARM_ENV="env -u CIVITAI_ASSERT_UNCONSENTED -u CIVITAI_ASSERT_ANON_VIEWER \
          -u CIVITAI_ASSERT_NO_HOST -u CIVITAI_ASSERT_NO_HOST_PICKS -u DOGFOOD_ASSERT \
+         -u CIVITAI_ASSERT_POST_PATH \
          -u CIVITAI_ASSERT_WAIT_MS -u CIVITAI_ASSERT_LAUNCH_MS \
          -u CIVITAI_ASSERT_LAUNCH_ATTEMPTS"
 

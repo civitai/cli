@@ -358,7 +358,11 @@ BUILDCMD=
 # platform's grant derives from this same declaration at review time. It still
 # decides no verdict: `TestOracleReportsScopesWithoutDeciding` pins that a
 # manifest declaring nothing can grade `yes` and one declaring both can grade
-# `no`, and `token.raw` stays empty so nothing can COMPLETE here either way.
+# `no`, and `token.raw` stays empty either way — the seed buys a BRANCH, never a
+# CAPABILITY. Off the post arm that means nothing can COMPLETE here at all; ON the
+# post arm a canned generation and a canned post do complete, in the page, still
+# with no credential and still without a request leaving the browser. Neither
+# reading is changed by the scope list, which is the claim this paragraph makes.
 # Measured 2026-09-21 on `ab-genpost-dsv4-01`: with `scopes: []` seeded
 # unconditionally, a correct consent-first app never left `ready` and the cell
 # read `RENDER=no` about the harness. See briefs/_cdp.mjs `hostBootstrap`.
@@ -374,6 +378,10 @@ AVIEWER=
 # `set -u` when nothing was served.
 AARM=
 ADECL=
+# The post arm's ceiling TOKEN, read back from the assertion. Empty on every other
+# arm, which is what keeps a non-post summary line byte-identical — see
+# `POST_ARM_CEILING_TOKEN` in briefs/_cdp.mjs.
+ACEIL=
 
 if [ -z "$APP_DIR" ]; then
   REASON="no block.manifest.json under /work — no app was created"
@@ -471,6 +479,14 @@ if [ -n "$SERVED" ]; then
   # an ordinary cell's clothes. `arm=` on the summary line is the machine-readable
   # half; this is the half a human scrolling the run sees.
   [ "${CIVITAI_ASSERT_UNCONSENTED:-}" = "1" ] && printf '⚠ UNCONSENTED ARM: token.scopes is seeded EMPTY and the verdict is "did the block ASK the host for consent", NOT "did it reach generating". This is a different question from the default arm; see briefs/genpost.md.\n'
+  # 🔴 THE POST ARM IS THE ONE THAT SUSPENDS THE RIG'S STANDING INVARIANT, so its
+  # banner says so rather than only naming the arm. With it on, a canned generation
+  # COMPLETES and a canned post IS CREATED — in the page, with no credential and
+  # nothing leaving the browser — which is the opposite of what every other cell in
+  # this arc was graded under. Same reason as the line above (the arm is ambient), one
+  # degree louder because a reader who misses it misreads the invariant, not just the
+  # predicate.
+  [ "${CIVITAI_ASSERT_POST_PATH:-}" = "1" ] && printf '⚠ POST-PATH ARM: the in-page host shim ANSWERS ESTIMATE_WORKFLOW, SUBMIT_WORKFLOW, POLL_WORKFLOW and CREATE_POST_FROM_APP, so a canned generation completes and a canned post is created here. The verdict is "does the Post gate hold for a workflow with no images, and does a postable one actually post", NOT "did it reach generating". It proves the block PAYLOAD satisfies the mock host gate; it does NOT prove the real host accepts it. See briefs/genpost.md.\n'
   # 🔴 THE SCOPE LIST IS AN ARGUMENT, NOT AN ENVIRONMENT VARIABLE. It is data
   # about THIS block, derived from THIS container's manifest, so it belongs on
   # the call that grades that block — an env var would be ambient state a
@@ -521,9 +537,31 @@ if [ -n "$SERVED" ]; then
       [ "$ASCOPES" = "none" ] || fatal "arm seam mismatch: the assertion reports arm=unconsented but the block was shown scopes '$ASCOPES' — an unconsented arm that granted the block its scopes measures nothing" ;;
     consented)
       [ "$ASCOPES" = "$SCOPES" ] || fatal "arm seam mismatch: the assertion reports arm=consented but presented '$ASCOPES' where the manifest declares '$SCOPES'" ;;
+    # 🔴 THE POST ARM IS A CONSENTED ARM, so it gets the SAME seam check — an app
+    # shown less than its manifest declares takes the consent-first branch and never
+    # reaches a workflow at all, which would make every post verdict on it a
+    # measurement of the missing seed. The arm ALSO answers four more request types,
+    # and that half is not checkable from here: the answered set lives in the page,
+    # so it is pinned by the unit driver's ledger check instead.
+    post)
+      [ "$ASCOPES" = "$SCOPES" ] || fatal "arm seam mismatch: the assertion reports arm=post but presented '$ASCOPES' where the manifest declares '$SCOPES' — a post arm on a block that was not shown its scopes grades the consent branch, not the post path" ;;
     '') : ;;
     *) fatal "the assertion reported an unknown arm '$AARM'" ;;
   esac
+  # 🔴 THE CEILING TOKEN, AND ITS OWN SEAM. The post arm's green is the one most
+  # easily over-read, so the token that says "mock host gate only" must be ON THE
+  # CELL, not only in the assertion's JSON and the run's banner. Read back rather than
+  # derived here, for the same reason `arm=` is. The two directions are both defects in
+  # this harness, so both exit 2 rather than emitting a verdict: a post-arm cell with no
+  # token would be the over-readable green this exists to prevent, and a token on any
+  # other arm would append a field to a line format every recorded verdict was read off.
+  ACEIL=$(printf '%s' "$JSON" | jq -r '.postCeiling // empty' 2>/dev/null)
+  if [ "$AARM" = "post" ] && [ -z "$ACEIL" ]; then
+    fatal "the assertion reports arm=post but no postCeiling token — the cell would carry this arm's verdict without its ceiling"
+  fi
+  if [ "$AARM" != "post" ] && [ -n "$ACEIL" ]; then
+    fatal "the assertion reports arm='$AARM' but sent a postCeiling token '$ACEIL' — only the post arm may add a field to the summary line"
+  fi
   AREASON=$(printf '%s' "$JSON" | jq -r '.reason // empty' 2>/dev/null)
   APASS=$(printf '%s' "$JSON" | jq -r 'if has("pass") then (.pass|tostring) else "absent" end' 2>/dev/null)
   [ "$APASS" = "true" ] && RENDER_PASS=yes
@@ -566,9 +604,16 @@ OBS_FIELD="''"
 # field that a first-match reader prefers to the real one. `observed=` was
 # already quoted and now uses the same function as its siblings rather than a
 # second rule.
-printf 'brief=%s brief_source=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s scopes=%s viewer=%s arm=%s served=%s observed=%s RENDER=%s\n' \
+# 🔴 APPENDED, AND EMPTY ON EVERY ARM BUT `post`, WHICH IS THE WHOLE POINT. Every
+# verdict this arc recorded was read off this line's format, and `grade.sh` plus both Go
+# suites compare fields exactly — so this field may only ever be an ADDITION to the post
+# arm's line, never a reordering, and never a field a non-post line carries empty.
+# `TestANonPostSummaryLineIsByteIdentical` pins the non-post format byte for byte.
+CEIL_FIELD=
+[ -n "$ACEIL" ] && CEIL_FIELD=" post_ceiling=$(tok "$ACEIL")"
+printf 'brief=%s brief_source=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s scopes=%s viewer=%s arm=%s served=%s observed=%s RENDER=%s%s\n' \
   "$(tok "$BRIEF")" "$BRIEF_SOURCE" "$APP_COUNT" "$(tok "${APP_DIR:-none}")" \
   "$GATE" "${GATE_RC:-none}" "$(tok "${SCOPES:-none}")" \
   "$(tok "${AVIEWER:-unmeasured}")" "$(tok "${AARM:-unmeasured}")" "$(tok "${SERVED:-none}")" \
-  "$OBS_FIELD" "$RENDER_PASS"
+  "$OBS_FIELD" "$RENDER_PASS" "$CEIL_FIELD"
 exit 0

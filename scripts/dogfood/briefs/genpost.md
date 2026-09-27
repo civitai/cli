@@ -30,21 +30,25 @@ python3 runner.py --model "$MODEL" --image "$IMAGE" --trial "$TRIAL" \
 
 ## 🔴 What this assertion can and cannot see
 
-**It cannot see a generation or a post happen. Not here, not on any machine,
-not with a credential.** The oracle emulates a host by seeding
+**On the default and unconsented arms it cannot see a generation or a post happen.
+Not on any machine, not with a credential.** The oracle emulates a host by seeding
 `window.__CIVITAI_BLOCK_CONTEXT__`, which the SDK's transport detector answers
 with `InlineTransport` — a v1 stub whose `sendRequest` REJECTS and which never
 delivers a host push. An assertion that waited for a rendered image or a post id
 would time out against a perfect app, every time, and the cell would read as a
-statement about the model.
+statement about the model. **The exceptions are enumerated, not counted:**
+`INVARIANT_EXCEPTIONS` in `scripts/dogfood/briefs/_cdp.mjs` is the ledger, and the
+opt-in **post arm** is the class that does complete both (see **The POST-PATH arm**
+below). No doc in this tree states a count — the one that did went stale the day the
+second class landed.
 
-⚠ **ONE CLASS OF REQUEST IS NOW ANSWERED, AND IT IS NOT A SPENDING ONE.** Since
+⚠ **THE PICK IS ANSWERED ON EVERY ARM, AND IT IS NOT A SPENDING ONE.** Since
 2026-09-25 the oracle answers a **host resource pick** —
 `OPEN_RESOURCE_PICKER` and `OPEN_CHECKPOINT_PICKER` — with the stubbed resource
 the SDK's own mock host resolves with, because an app that gates Generate behind
 `openPicker` could otherwise never reach `generating` (measured on
-`ab-ship-mimo-02`; see **The host answers a resource pick** below). Every OTHER
-request type still rejects with the SDK's own
+`ab-ship-mimo-02`; see **The host answers a resource pick** below). Off the post arm
+every OTHER request type still rejects with the SDK's own
 `InlineTransport.sendRequest is not implemented in v1`, and the cell carries
 `hostRefused=` naming the ones that did, so the sentence above is checked per
 cell rather than asserted here. A pick is a host **discovery** call: it hands the
@@ -106,8 +110,9 @@ Three reasons the signed-in branch is the right one to grade, in order of weight
 platform every privileged path re-derives identity from the JWT `sub` rather than
 from anything the block was handed — so a populated `viewer` cannot make a
 generation or a post appear to succeed. `InlineTransport.sendRequest` rejects
-every request but a resource pick regardless (see **The host answers a resource
-pick** below). `TestOracleSeedsTheProductionViewerAndNoCredential`
+everything outside the running arm's answered set regardless — off the post arm, every
+request but a resource pick (see **The host answers a resource pick** below) — and the
+viewer widens that set by nothing. `TestOracleSeedsTheProductionViewerAndNoCredential`
 asserts the seeded object from inside the page rather than by reading the source.
 The scope list is *not* empty — see **Scopes are seeded, and decide no verdict**
 below — and that changes which branch a block takes, never what it can complete.
@@ -269,10 +274,12 @@ baked into the harness), and a generate-only app plus an untouched scaffold stil
 graded `no` with both scopes seeded.
 
 🔴 **`raw` stays empty, and that is the load-bearing half.** Scopes buy the block
-a *branch*, never a *capability*: `InlineTransport.sendRequest` rejects every
-request but a resource pick (see the next section) whatever the scope list says,
-so this brief's "no generation and no post can complete here" premise is
-untouched.
+a *branch*, never a *capability*: `InlineTransport.sendRequest` rejects everything
+outside the running arm's answered set — off the post arm, everything but a resource
+pick (see the next section) — whatever the scope list says, so the scope seed leaves
+this brief's "no generation and no post can complete here" premise untouched. (The
+one thing that does suspend that premise is the opt-in post arm, below;
+`INVARIANT_EXCEPTIONS` in `_cdp.mjs` is the ledger of both classes.)
 `TestOracleSeedsTheProductionViewerAndNoCredential` asserts both halves from
 inside the page — the scopes match the manifest, and `token.raw` is `''` — and
 `oracle.sh` refuses (exit 2) if its own `scopes=` field and the list the
@@ -317,9 +324,10 @@ Two halves make it gradeable, and both are needed:
 generation attempt appears there — the app reached `generating`, asked the host to
 estimate a workflow, and was refused. A pick buys a **branch**, never a
 capability. ⚠ Stated precisely: the SDK's stub no longer rejects *unconditionally*
-in a patched page; it rejects everything except the two picker types. What is
-unchanged is the property that matters — nothing here can complete a generation, a
-post or a purchase — and it is held by
+in a patched page; it rejects everything except the two picker types. What the PICK
+leaves unchanged is the property that matters — nothing a pick answers can complete a
+generation, a post or a purchase, so off the post arm nothing here can — and it is
+held by
 `TestOracleRefusesEveryRequestThatIsNotAPick` plus
 `TestOracleInlineHostAnswersOnlyThePickerLedger`, which walks the SDK's whole
 47-entry `BLOCK_TO_PARENT_MESSAGE_TYPES` and fails if the answered set grows *or*
@@ -384,9 +392,14 @@ had to find "review permissions" by hand. Measured in `dogfood-ab-ship-mimo-02` 
 
 **Three things compounded to make the oracle blind to it:**
 
-1. `InlineTransport` rejects every request, so *"generation fails for everyone"*
-   and *"generation works"* produce the identical trace `ready>generating>ready`.
-   The default predicate grades the status word, and both apps produce it.
+1. On both arms that existed then — the default and the unconsented one —
+   `InlineTransport` **rejected** every request, so *"generation fails for
+   everyone"* and *"generation works"* produced the identical trace
+   `ready>generating>ready`.
+   The default predicate grades the status word, and both apps produce it. (Past
+   tense: at HEAD a resource pick is answered on every arm and the post arm answers
+   four more types, so "rejects every request" is no longer true of any arm — but no
+   generation completes on either of those two, so the blindness is unchanged.)
 2. `#690` seeds `token.scopes` and `#708` answers resource picks. Both fixed real
    false negatives — and **together they mean an app that never asks for consent
    is indistinguishable from one that asks correctly**, because the harness has
@@ -533,6 +546,197 @@ trials to restate a requirement the assertion can carry on its own. So the
 requirement lives in the assertion, and the arm is labelled on every cell
 (`arm=`) so no reader mistakes it for the brief's own verdict.
 
+## 🔴 The POST-PATH arm — the half no other arm can reach
+
+`CIVITAI_ASSERT_POST_PATH=1` makes the in-page host shim **answer** four request
+types, so a canned generation completes and a canned post is created, and replaces
+the predicate again:
+
+> Does the Post gate **hold** for a workflow that reached `succeeded` carrying no
+> images, and does a workflow that *did* produce an image **actually post**?
+
+### Why it exists: the same live app shipped a SECOND user-found defect
+
+`ab-img-poster` was graded green here, deployed, and failed for real users twice:
+
+| version | what the user saw | the fix |
+|---|---|---|
+| `v0.1.1` | Generate → *"Generation failed. Please try again."* | ask for `ai:write:budgeted` instead of spending — the defect the UNCONSENTED arm above exists for |
+| `v0.1.2` | Post → *"Posting failed. Please try again."* | gate Post on `status === 'succeeded'` **and** a non-empty `imageUrls` |
+
+The `v0.1.2` defect is one expression. `watch()` resolves on **any** terminal
+status (`TERMINAL_STATUSES` is succeeded/failed/canceled/expired) and `imageUrls`
+is **optional even on `succeeded`** — host-side output moderation can empty it — so
+
+```js
+const postable = Boolean(workflowResult);                    // v0.1.1: "it ended"
+const postable = Boolean(workflowResult &&                   // v0.1.2: "it produced something"
+  workflowResult.status === 'succeeded' &&
+  workflowResult.imageUrls?.length > 0);
+```
+
+`v0.1.1` opened Post for a generation that had produced nothing, and the only
+possible outcome was the host refusing with its closed code `no images to post`.
+
+**Neither existing arm can see it**, and not by oversight: both stop on the near
+side of a request. `InlineTransport.sendRequest` rejects every submit and every
+post, so no generation ever reaches a terminal snapshot, no Post gate is ever
+re-evaluated, and *"Post works"* and *"Post fails for every user"* leave the
+identical trace `ready>generating>ready`.
+
+### The real-artifact matrix — measured 2026-09-27
+
+Graded by running `briefs/genpost.assert.mjs` against each bundle copied out of its
+container, presenting the manifest's two scopes.
+
+| bundle | md5 | default arm | unconsented arm | **post arm** |
+|---|---|---|---|---|
+| `v0.1.1` (the defect), image `dogfood-fixture/ab-imgposter:v0.1.1-pre-post-fix` | `b8a1936e5939e39aa3e26f6e9e777113` | `yes` | `yes` | **`no`** |
+| `v0.1.2` (the fix), container `dogfood-ab-imgposter-fixed` | `c603fa854eba4d5206b73e04c14a1f3c` | `yes` | `yes` | **`yes`** |
+
+The two left-hand columns are the blindness, stated as a measurement: every arm
+that existed before this one grades the broken app and the fixed app identically.
+
+The `no` carries its own causal chain:
+
+```
+postGateAfterImagelessRun : false
+postArmQueued             : wf_dogfood_1:succeeded-no-images
+postArmPosts              : refused:image-less-workflow:wf_dogfood_1
+reason                    : the "post" control is OPEN after a workflow that reached
+                            "succeeded" with an EMPTY imageUrls list …
+```
+
+### What the arm answers, and what it still refuses
+
+| answered | why it has to be |
+|---|---|
+| `ESTIMATE_WORKFLOW` | a generate-then-post app prices before it queues; `estimate()` rejects a snapshot with no numeric `cost.total` |
+| `SUBMIT_WORKFLOW` | nothing to post until something is queued |
+| `POLL_WORKFLOW` | `watch()` is built on `poll()` — the SDK's own words: *"the single place that builds a `POLL_WORKFLOW` message, so `poll` and `watch` cannot drift"* |
+| `CREATE_POST_FROM_APP` | the request under test |
+
+Everything else still rejects with the SDK's own
+`InlineTransport.sendRequest is not implemented in v1` — `CANCEL_WORKFLOW`,
+`OPEN_BUZZ_PURCHASE`, `PUBLISH_GENERATION_OUTPUTS`, `REQUEST_TOKEN`, `SAVE_IMAGE`
+and the rest of the vocabulary. A top-up flow and a bare image publish are both
+reachable from a generate-then-post app and neither is needed to reach Post, so
+answering them would widen the arm past the thing it was built to see.
+
+### The canned shapes are `createMockHost`'s, with one deliberate divergence
+
+Every value comes from `@civitai/blocks-react/dist/internal/mockHost.js` (0.57.2)
+field for field — `DEFAULT_CREATE_POST_RESULT` (`postId: 4242`,
+`url: https://civitai.com/posts/4242`, `imageIds: [9101, 9102]`), the `cost` default
+of `8`, the `wf_estimate` sentinel, `spentAccountType` falling back to `yellow` —
+so an app that works in `dev:harness` behaves identically here.
+
+**The one divergence is the image, and it is the network invariant.** The mock
+host's default output is `https://placehold.co/512x512/…?text=MOCK…`; a block that
+renders it makes a real request from the page. This arm serves a `data:` URI
+carrying the same `MOCK` label, so even rendering a result reaches nothing.
+
+### The payload gate is the mock host's, PLUS the half it cannot implement
+
+`createMockHost` refuses a post whose `sources` is not a non-empty array, and says
+why: *"Mirror the real host's payload gate (`resolveCreatePostRequest`) … Without
+this a block bug (an empty selection, say) would WORK in the mock and be refused in
+production — the exact drift a mock exists to prevent."* That rule is mirrored
+exactly.
+
+It is also **not sufficient for this defect**: `v0.1.1` sent
+`sources: [{ kind: 'workflow', workflowId }]` — a perfectly non-empty array —
+naming a workflow that had produced no images. The real host refuses that when it
+*resolves* the workflow, which is a read the mock host has no ledger for. This shim
+does have that ledger (it minted the workflow), so it applies the same refusal with
+the same closed code, and records **which** rule fired on `postArmPosts`
+(`refused:no-sources` vs `refused:image-less-workflow:<id>`).
+
+### 🔴 Nothing spends, and nothing leaves the page
+
+Structurally, not by policy. Every reply is built by the shim **in the browser** —
+there is no host, no parent frame, no `fetch` and no socket on the answering path;
+`token.raw` is still `''`, so no privileged path on the platform would accept
+anything this block sent even if it could send it; and the canned image is a
+`data:` URI. The Buzz "spend" is a number in a JSON object that exists for ~200 ms
+inside a headless Chromium.
+
+### 🔴 Its ceiling, in the arm's own words
+
+A green here proves **the block's post branch exists and its payload satisfies the
+host's payload gate as the SDK's own mock host implements it.** It does **not**
+prove the real host accepts the payload: the platform re-resolves every source
+server-side (a workflow id against the app's own subqueue, image ids against the
+viewer's own rows), re-checks the `posts:write:self` grant, opens a viewer confirm,
+and moderates the outputs. None of that is visible here.
+
+It rides at **three layers**, because the sentence and the row are different surfaces
+and only the short form fits a row:
+
+- the **summary line and the grade row** carry `post_ceiling=mock-host-gate-only`,
+  appended by `oracle.sh` and carried through by `grade.sh` on this arm only — so a
+  reader of a matrix row cannot get this arm's verdict without it
+  (`TestThePostArmStatesItsCeilingOnEveryCell` reads the *summary line*,
+  `TestThePostArmsCeilingReachesTheGradeRow` reads `grade.sh`'s *row*, and
+  `TestANonPostSummaryLineIsByteIdentical` pins that no other arm's line moved);
+- the **assertion's JSON** carries the full sentence as `postArmCeiling`;
+- the **run stream** carries `oracle.sh`'s `⚠ POST-PATH ARM:` banner, naming both the
+  suspended invariant and the ceiling, and `grade.sh` re-prints the whole oracle output
+  so it is in a human's scrollback too.
+
+Because this is the arm whose green is easiest to over-read.
+
+### 🔴 It suspends the invariant every other verdict rests on
+
+**Scopes are seeded, and decide no verdict** above, and the module docblock of
+`scripts/dogfood/briefs/_cdp.mjs`, both state the invariant *for the default and
+unconsented arms*: no generation and no post can complete here, on any machine, with
+or without a credential. **With this flag set that sentence is false** — which is why
+both of those sites now carry the qualifier, and why the exception classes are
+enumerated by `INVARIANT_EXCEPTIONS` in `_cdp.mjs` rather than counted in prose. So:
+
+- The flag is **off by default** and named on the cell (`arm=post`).
+- With it unset, `inlineHostSource()` returns **byte-for-byte** the source it
+  returned before this arm existed (measured against the base commit; the two
+  interpolations are empty strings and the template collapses).
+- Both existing arms' verdicts on both real bundles were re-measured at the base
+  commit and at `HEAD` and are identical, field for field including `hostRefused`.
+- `stubOracleEnv` clears `CIVITAI_ASSERT_POST_PATH`, as it does every other arm
+  knob, so a stale export cannot regrade the Go suite.
+
+### The two phases, and why neither alone is the arm
+
+1. **`succeeded-no-images`.** The Post gate must stay **shut**. If it is open the arm
+   *clicks Post anyway* and records what the host did — the whole causal chain of the
+   reported defect, rather than a claim a reader has to trust.
+2. **`succeeded-with-images`.** The gate must **open**, the click must actually send
+   a `CREATE_POST_FROM_APP`, and the payload must satisfy the gate.
+
+Phase 1 alone is passed by an app with **no Post control at all** — the gate is
+trivially shut. Phase 2 alone is passed by `v0.1.1`, which posts perfectly well
+when there *is* an image and shipped broken anyway.
+
+⚠ **Phase 1 asserts an ABSENCE, and you cannot wait for one.** The sequence is:
+wait for the terminal snapshot to have been delivered (a positive fact on the
+shim's ledger), then wait up to 3 s for the Generate control to come back (the
+positive signal that the block has finished rendering it, where an app offers one),
+then settle 700 ms and read the gate. An app that opens Post *later* than that
+would pass phase 1 here; the settle is sized against the measured shape, not
+against an adversary.
+
+⚠ **An app that will not start a SECOND generation is `unmeasured`, not `no`.** The
+post half needs that run, and an app demanding a fresh prompt has not been shown to
+be wrong about anything.
+
+### 🔴 Two arms at once is refused, before a browser is started
+
+`ARM_CONFLICT` in `_cdp.mjs` makes the assertion exit 2 (`RENDER=unmeasured`) for
+`POST_PATH` + `UNCONSENTED` (the post arm drives a generation on a token the other
+arm has emptied — it would fail every *correct* app) and for `POST_PATH` +
+`NO_HOST_PICKS`/`NO_HOST` (those stop the shim being installed at all, so nothing
+would be answered while the cell still said `arm=post`). Both arms are selected by
+ambient environment variables, so both combinations are one stale export away.
+
 ## Run it
 
 ```bash
@@ -544,7 +748,19 @@ bash grade.sh  <trial-id> <container-user> genpost
 
 # the UNCONSENTED arm — token.scopes seeded EMPTY, verdict = "did the block ask"
 CIVITAI_ASSERT_UNCONSENTED=1 bash oracle.sh <trial-id> <container-user>
+
+# the POST-PATH arm — a canned generation COMPLETES and a canned post IS CREATED,
+# verdict = "does the Post gate hold with no images, and does a postable run post"
+CIVITAI_ASSERT_POST_PATH=1 bash oracle.sh <trial-id> <container-user>
 ```
+
+⚠ **`CIVITAI_ASSERT_POST_PATH` suspends this file's own invariant, so it is the one
+arm whose flag you must check before quoting a cell.** With it set, the sentence
+*"no generation and no post can complete here"* is false. `oracle.sh` prints a
+`⚠ POST-PATH ARM:` banner, the cell says `arm=post`, and the assertion's JSON
+carries `postArmCeiling` spelling out what the green does and does not prove. It is
+refused outright alongside `CIVITAI_ASSERT_UNCONSENTED` or
+`CIVITAI_ASSERT_NO_HOST_PICKS` (exit 2, nothing measured).
 
 ⚠ **`CIVITAI_ASSERT_UNCONSENTED` is ambient, so check `arm=` on the cell before
 reading a verdict.** A stale export turns a whole matrix into consent verdicts

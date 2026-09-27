@@ -603,14 +603,25 @@ func TestDogfoodGradersShareOneEscaper(t *testing.T) {
 	}
 
 	// ── every summary-line argument goes through the escaper ──────────────────
-	// The allowlists are this-script's-own-vocabulary fields: fixed strings, an
-	// integer counter, `$?`, a verdict, or a value already escaped at its
-	// assignment. Anything else on a summary line must be wrapped, and a NEW
-	// argument that is neither fails here.
+	// Two allowlists, because they are granted on two DIFFERENT properties and
+	// only one of them used to be checked:
+	//
+	//   - `allow` is this-script's-own-vocabulary: fixed strings, an integer
+	//     counter, `$?`, a verdict. Nothing app-controlled can reach it, so the
+	//     printf statement is the whole story.
+	//   - `escapedAtAssignment` is admitted BECAUSE the variable it names is
+	//     `tok`/`prose`-wrapped where it is ASSIGNED. That is a property of a line
+	//     this extractor never reads, so it is read by `assertEscapedAtAssignment`
+	//     below rather than asserted in a comment here.
+	//
+	// Anything in neither list fails, and a NEW argument that is neither fails here.
 	for _, tc := range []struct {
 		file, prefix string
 		allow        []string
-		minArgs      int
+		// 🔴 SEE `assertEscapedAtAssignment`. Every entry here is a promise about
+		// another line of the same script, and it is now KEPT BY A CHECK.
+		escapedAtAssignment []string
+		minArgs             int
 	}{
 		{
 			file: "ship.verdict.sh", prefix: "printf 'ship_trial=%s ",
@@ -626,10 +637,21 @@ func TestDogfoodGradersShareOneEscaper(t *testing.T) {
 				`"$APP_COUNT"`,    // `grep -c`
 				`"$GATE"`,         // pass|fail
 				`"${GATE_RC:-none}"`,
-				`"$OBS_FIELD"`,   // already `tok`-wrapped at its assignment
 				`"$RENDER_PASS"`, // the verdict
 			},
-			minArgs: 12,
+			escapedAtAssignment: []string{
+				// `observed`, which renders `''` when unmeasured and `$(tok "$OBSERVED")`
+				// otherwise.
+				`"$OBS_FIELD"`,
+				// The post arm's ceiling field: a fixed ` post_ceiling=` label plus a
+				// `tok`-wrapped value. It carries a LEADING SPACE on purpose — it is an
+				// appended field, empty on every other arm, which is what keeps a non-post
+				// summary line byte-identical (`TestANonPostSummaryLineIsByteIdentical`),
+				// so it cannot be wrapped HERE without the wrapper eating the separator.
+				// That is exactly why the wrapping has to be checked at its assignment.
+				`"$CEIL_FIELD"`,
+			},
+			minArgs: 13,
 		},
 	} {
 		args := summaryPrintfArgs(t, src[tc.file], tc.prefix)
@@ -648,7 +670,7 @@ func TestDogfoodGradersShareOneEscaper(t *testing.T) {
 				continue
 			}
 			allowed := false
-			for _, ok := range tc.allow {
+			for _, ok := range append(append([]string{}, tc.allow...), tc.escapedAtAssignment...) {
 				if a == ok {
 					allowed = true
 					break
@@ -665,7 +687,113 @@ func TestDogfoodGradersShareOneEscaper(t *testing.T) {
 			t.Errorf("%s: not one summary argument goes through the escaper — the extractor is "+
 				"reading the wrong statement", tc.file)
 		}
+		// The half the printf statement cannot see.
+		for _, a := range tc.escapedAtAssignment {
+			assertEscapedAtAssignment(t, tc.file, src[tc.file], a)
+		}
 	}
+}
+
+// assertEscapedAtAssignment enforces the property the `escapedAtAssignment`
+// allowlist is GRANTED ON: that `arg` — a `"$NAME"` summary-line argument — names
+// a variable whose every `NAME=…` assignment in this script either holds no
+// expansion at all (a literal of this script's own vocabulary) or routes every
+// expansion it does hold through `tok`/`prose`.
+//
+// ⚠ THE SCOPE IS THE `NAME=…` FORM, AND THAT IS NARROWER THAN "EVERY WAY A VALUE
+// CAN BE SET" — this note is the claim, rather than a wider sentence the code does
+// not keep. A value arriving via `read NAME`, `eval`, `printf -v NAME` or inherited
+// from the environment is INVISIBLE here. Measured across both graders: `eval` and
+// `printf -v` appear in neither, and every `read` is a `while IFS= read -r <var>`
+// loop variable (`m`/`l`), never a summary field — so the form does cover every live
+// assignment to an allowlisted name. A grader that grew one of the other routes
+// would pass this check having had it read nothing, which is why the positive
+// control below asserts an assignment was FOUND rather than trusting a clean sweep.
+//
+// 🔴 THIS EXISTS BECAUSE THE GRANT USED TO BE A COMMENT, AND A COMMENT IS NOT A
+// CHECK. `summaryPrintfArgs` reads the printf statement and nothing else, so
+// un-`tok`-ing an allowlisted variable at its ASSIGNMENT left this whole test
+// GREEN while the app-controlled value reached the cell raw. Measured on both
+// entries — `oracle.sh`'s `CEIL_FIELD=" post_ceiling=$(tok "$ACEIL")"` reduced to
+// `CEIL_FIELD=" post_ceiling=$ACEIL"`, and the same edit to `OBS_FIELD` — each of
+// which this function now fails and the printf check still cannot see.
+//
+// The residue test is deliberately BLIND TO WHICH function wrapped the value and
+// only sees whether anything expanded outside one: `$(jq …)`, `${X}` and `$X` all
+// fail, so a value routed through some third escaper added later is a finding here
+// rather than a silent second rule.
+func assertEscapedAtAssignment(t *testing.T, file, body, arg string) {
+	t.Helper()
+	name := strings.TrimSuffix(strings.TrimPrefix(arg, `"$`), `"`)
+	if name == arg || name == "" {
+		t.Fatalf("%s: %q is not a `\"$NAME\"` argument, so this check cannot read its assignment "+
+			"— it does not belong on the escaped-at-assignment allowlist", file, arg)
+	}
+	// A boundary before the name so `CEIL_FIELD=` does not also match a
+	// hypothetical `R_CEIL_FIELD=`, and the whole rest of the line is the RHS
+	// (every assignment in these scripts is one line).
+	re := regexp.MustCompile(`(?:^|[\s;&|(])` + regexp.QuoteMeta(name) + `=(.*)$`)
+	found := 0
+	for i, line := range strings.Split(body, "\n") {
+		code := strings.TrimSpace(line)
+		if strings.HasPrefix(code, "#") {
+			continue
+		}
+		m := re.FindStringSubmatch(code)
+		if m == nil {
+			continue
+		}
+		found++
+		if residue := escaperResidue(strings.TrimSpace(m[1])); residue != "" {
+			t.Errorf("%s:%d assigns $%s a value that expands OUTSIDE the escaper (%s), but the "+
+				"summary line admits \"$%s\" only because this assignment wraps it in `tok`/`prose`:\n"+
+				"  %s\nWrap the expansion, or drop the allowlist entry — the printf check cannot "+
+				"see this line, so an unwrapped assignment here reaches the cell raw.",
+				file, i+1, name, residue, name, code)
+		}
+	}
+	// POSITIVE CONTROL: a rename, or a regex that stopped matching, would make
+	// every check above pass having read no assignment at all.
+	if found == 0 {
+		t.Fatalf("%s: no assignment to $%s found, so the escaped-at-assignment grant for %s was "+
+			"just certified against nothing. Did the variable get renamed?", file, name, arg)
+	}
+}
+
+// escaperResidue strips the balanced `$(tok …)` / `$(prose …)` substitutions out of
+// an assignment's right-hand side and returns what is left IF it still expands. An
+// empty return means every expansion went through the escaper; a non-empty one is
+// the unescaped remainder, quoted back in the failure so the reader sees which
+// part escaped the escaper.
+func escaperResidue(rhs string) string {
+	var out strings.Builder
+	for i := 0; i < len(rhs); {
+		if rhs[i] == '$' && i+1 < len(rhs) && rhs[i+1] == '(' {
+			depth, j := 0, i+1
+			for ; j < len(rhs); j++ {
+				if rhs[j] == '(' {
+					depth++
+				} else if rhs[j] == ')' {
+					if depth--; depth == 0 {
+						break
+					}
+				}
+			}
+			if j < len(rhs) {
+				inner := strings.TrimSpace(rhs[i+2 : j])
+				if strings.HasPrefix(inner, "tok ") || strings.HasPrefix(inner, "prose ") {
+					i = j + 1
+					continue
+				}
+			}
+		}
+		out.WriteByte(rhs[i])
+		i++
+	}
+	if res := out.String(); strings.Contains(res, "$") {
+		return res
+	}
+	return ""
 }
 
 // joinContinuations returns one trimmed entry per LOGICAL shell line, folding

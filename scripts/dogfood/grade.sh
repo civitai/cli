@@ -174,7 +174,18 @@ if [ -n "$BRIEF" ]; then
     # saying `arm=unconsented` cannot be mistaken for one; a cell with no arm field
     # at all can.
     R_ARM=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^arm=//p' | head -1)
-    RENDER_FIELDS=" render_brief=${R_BRIEF:-$BRIEF} brief_source=${R_SRC:-unknown} validate_gate=${R_GATE:-unknown} scopes=${R_SCOPES:-unknown} viewer=${R_VIEWER:-unknown} arm=${R_ARM:-unknown} observed=${R_OBS:-} RENDER=${R_PASS:-unreadable}"
+    # 🔴 THE POST ARM'S CEILING TOKEN, CARRIED ONTO THE ROW. "The cell" in this rig is
+    # this row and the summary line it is built from, and the post arm is the one whose
+    # green is easiest to over-read as "posting works on civitai.com" — so the TOKEN
+    # `oracle.sh` appends must reach here too, or nothing about the ceiling reaches the
+    # layer a matrix is read off. The ceiling's full SENTENCE rides on neither layer:
+    # it is `postArmCeiling` in the assertion's JSON and the `⚠ POST-PATH ARM:` banner
+    # in the run stream, which this script re-prints. Appended only when the oracle
+    # sent one (post arm only), which leaves every other row byte-identical.
+    R_CEIL=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^post_ceiling=//p' | head -1)
+    CEIL_FIELD=
+    [ -n "$R_CEIL" ] && CEIL_FIELD=" post_ceiling=$R_CEIL"
+    RENDER_FIELDS=" render_brief=${R_BRIEF:-$BRIEF} brief_source=${R_SRC:-unknown} validate_gate=${R_GATE:-unknown} scopes=${R_SCOPES:-unknown} viewer=${R_VIEWER:-unknown} arm=${R_ARM:-unknown} observed=${R_OBS:-} RENDER=${R_PASS:-unreadable}${CEIL_FIELD}"
   fi
 fi
 

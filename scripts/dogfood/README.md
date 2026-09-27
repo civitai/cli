@@ -241,7 +241,7 @@ bash grade.sh  <trial-id> <container-user> [brief]     # setup arms + the render
 A graded cell then carries both verdicts on one line:
 
 ```
-agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius brief_source=transcript-name validate_gate=pass scopes=none viewer=signed-in observed=212 RENDER=yes
+agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius brief_source=transcript-name validate_gate=pass scopes=none viewer=signed-in arm=consented observed=212 RENDER=yes
 ```
 
 - 🔴 **The brief is DERIVED from the trial, and the argument is only a
@@ -279,6 +279,16 @@ agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius brief_sou
 - 🔴 **`observed=` is on the cell on purpose.** The assertion is strict — `212 °F`
   fails where `212` passes — so without the value a working converter with a unit
   suffix is indistinguishable from a block that rendered nothing.
+- 🔴 **`post_ceiling=` appears on POST-ARM cells only, and its absence elsewhere is
+  the contract.** The post arm is the one that suspends the rig's standing invariant,
+  so its cell carries `post_ceiling=mock-host-gate-only` — the short form of the
+  ceiling, on the summary line and on this row. `oracle.sh` appends it at the END of
+  the line and only when the assertion reports `arm=post`, so **a non-post cell's line
+  is byte-identical to the line it always was**: every verdict this arc recorded was
+  read off that format, `grade.sh` parses it by key, and both Go suites compare fields
+  exactly. `TestANonPostSummaryLineIsByteIdentical` pins the field sequence on all
+  three arms, and `TestThePostArmsCeilingReachesTheGradeRow` pins both directions of
+  this row.
 - 🔴 **`RENDER=unmeasured` is a third state, and it is not `no`.** `oracle.sh`
   exits **2** when it measured nothing at all (no browser, no such container, a
   stopped container, a server the host could not reach, an assertion that could
@@ -362,8 +372,9 @@ bind a debugging port, instead of that surfacing eighty lines into a Go test.
   approved, deployed to `ab-img-poster.civit.ai`, and then **failed for a real
   user** on the first click (`Generation failed. Please try again.`): its generate
   path never requests consent, and its catch handles only `signInRequired` and
-  `declined`. The oracle could not see it because `InlineTransport` rejects every
-  request — so *"generation fails for everyone"* and *"generation works"* leave the
+  `declined`. The oracle could not see it because on both arms that existed then
+  `InlineTransport` rejected every request — so *"generation fails for everyone"* and
+  *"generation works"* leave the
   same trace `ready>generating>ready` — and because seeding the manifest's scopes
   makes an app that never asks indistinguishable from one that asks correctly.
   **Every new user starts unconsented.** `CIVITAI_ASSERT_UNCONSENTED=1` is the arm
@@ -391,12 +402,46 @@ bind a debugging port, instead of that surfacing eighty lines into a Go test.
   `App.tsx` requests consent *correctly* — the apps that fail this arm failed by
   REPLACING the scaffold's generation path, not by keeping it. Matrix and JSON
   evidence in that directory's README.
+- 🔴 **…and the POST path could not be reached AT ALL, which let the SAME app ship
+  broken a SECOND time.** `ab-img-poster` then failed for a real user on
+  **Post** — *"Posting failed. Please try again."* — because it opened its Post
+  control for any workflow that had *ended*: `watch()` resolves on any terminal
+  status and `imageUrls` is optional even on `succeeded`, so Post went live for a
+  generation that had produced nothing and the host refused with its closed code
+  `no images to post`. Every arm above stops on the NEAR side of a request, so no
+  generation ever reaches a terminal snapshot and no Post gate is ever
+  re-evaluated: measured on the two real bundles, the defect (md5
+  `b8a1936e5939e39aa3e26f6e9e777113`) and the fix (md5
+  `c603fa854eba4d5206b73e04c14a1f3c`) grade **identically** on both.
+  `CIVITAI_ASSERT_POST_PATH=1` is the arm for it: the in-page shim answers
+  `ESTIMATE_WORKFLOW`, `SUBMIT_WORKFLOW`, `POLL_WORKFLOW` and
+  `CREATE_POST_FROM_APP` with `createMockHost`'s own canned shapes, drives TWO
+  canned runs — an image-less success then a postable one — and asks *"does the gate
+  hold, and does a postable run actually post"*. The defect grades `no`, the fix
+  `yes`. 🔴 **It is the one arm that SUSPENDS the rig's standing invariant** (*no
+  generation and no post can complete here*), so it is opt-in, it says `arm=post`
+  on the cell, `oracle.sh` prints a `⚠ POST-PATH ARM:` banner, and with the flag
+  unset `inlineHostSource()` returns byte-for-byte the source it always did.
+  Nothing spends and nothing leaves the page: every reply is built in the browser,
+  `token.raw` is still `''`, and the canned image is a `data:` URI rather than the
+  mock host's `placehold.co` URL. ⚠ **Its ceiling is on every cell** as
+  `post_ceiling=mock-host-gate-only` — a token on the summary line and the grade row,
+  appended on this arm only — with the full sentence in the assertion's JSON as
+  `postArmCeiling` and in the run's `⚠ POST-PATH ARM:` banner: it proves the block's
+  post BRANCH and that its payload
+  satisfies the mock host's gate — **not** that the real host accepts it, which
+  re-resolves every source server-side, re-checks the grant, opens a viewer confirm
+  and moderates the outputs. Full statement, the real-artifact matrix and the
+  two-phase design: `briefs/genpost.md`; pinned by
+  `TestThePostArmSeparatesTheGateFromTheWorkflowResult` and friends in
+  `dogfood_oracle_post_test.go`.
 
 ## The ship verdict — the account arm, and the one thing the browser cannot see
 
 `oracle.sh` grades the DOM. A **submission** is server state: it leaves nothing in
-the DOM, the oracle's host emulation rejects every request, and `token.raw` is
-empty — so no browser assertion can ever see one. `ship.verdict.sh` is the other
+the DOM, `token.raw` is empty, and no arm of the host emulation answers a submit —
+not even the post arm, whose widened allowlist covers workflows and posts and nothing
+else — so no browser assertion can ever see one. `ship.verdict.sh` is the other
 instrument.
 
 ```bash
@@ -513,18 +558,22 @@ above; do not read that cell as a result.
 by the **same** assertion (`briefs/ship.assert.mjs` delegates to
 `briefs/genpost.assert.mjs`) so `genpost.md`'s controls still apply to it.
 
-🔴 **`genpost` cannot see a generation or a post happen, and never will here.**
-The oracle's host emulation is the SDK's `InlineTransport`, a v1 stub whose
+🔴 **On the default and unconsented arms `genpost` cannot see a generation or a post
+happen.** The oracle's host emulation is the SDK's `InlineTransport`, a v1 stub whose
 `sendRequest` rejects and which delivers no host pushes — so an assertion that
 waited for an image or a post id would time out against a perfect app. It grades
 the block's own state machine on the near side of the request. Read a green cell
 as *"the flow is wired and gated correctly"*, never as *"the money path works"*.
-⚠ **One exception since 2026-09-25, and it spends nothing:** the oracle answers a
-host *resource pick* (`OPEN_RESOURCE_PICKER` / `OPEN_CHECKPOINT_PICKER`) with a
-stubbed resource, so an app that gates Generate behind the host's picker can reach
-`generating`. Every other request type still rejects with the SDK's own error, and
-each cell carries `hostRefused=` naming the ones that did. `briefs/genpost.md`,
-**The host answers a resource pick**.
+⚠ **The exceptions are ENUMERATED, not counted** — `INVARIANT_EXCEPTIONS` in
+`scripts/dogfood/briefs/_cdp.mjs` is the ledger, and no doc here states a number,
+because the one that did went stale the day the second class landed. Since 2026-09-25
+the oracle answers a host *resource pick* (`OPEN_RESOURCE_PICKER` /
+`OPEN_CHECKPOINT_PICKER`) with a stubbed resource on **every** arm, so an app that
+gates Generate behind the host's picker can reach `generating`, and that class
+completes nothing. The opt-in **post arm** is the class that does complete a
+generation and a post — see **The POST-PATH arm** above. Off it, every other request
+type still rejects with the SDK's own error, and each cell carries `hostRefused=`
+naming the ones that did. `briefs/genpost.md`, **The host answers a resource pick**.
 
 `briefs/` holds each brief and the behavioural assertion that grades it;
 `_cdp.mjs` is the browser plumbing they share. 🔴 **An assertion is

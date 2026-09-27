@@ -22,7 +22,7 @@ import (
 //	disabled={isGenerating || !prompt.trim() || !model}               // src/App.jsx:154
 //
 // — and gated Generate on the pick. The oracle's host emulation is the SDK's
-// `InlineTransport`, whose `sendRequest` rejects unconditionally and which
+// `InlineTransport`, whose `sendRequest` rejected unconditionally then and which
 // delivers no host pushes, so `openPicker` never resolved, `model` stayed null,
 // Generate stayed disabled, and the cell read
 // `RENDER=no observed=ready generateDisabled=true`. Nothing in the app was wrong:
@@ -50,9 +50,12 @@ import (
 // BRANCH, never a capability. ⚠ Read that precisely: the SDK's stub no longer
 // rejects *unconditionally* in a patched page — it rejects for everything except
 // `OPEN_RESOURCE_PICKER` and `OPEN_CHECKPOINT_PICKER`, which are host DISCOVERY
-// calls that hand back an id the author could have hardcoded. What survives
-// untouched is the property that matters: nothing here can complete a generation,
-// a post or a purchase. `TestOracleRefusesEveryRequestThatIsNotAPick` and
+// calls that hand back an id the author could have hardcoded. What the PICK leaves
+// untouched is the property that matters: nothing a pick answers can complete a
+// generation, a post or a purchase — so on every arm in THIS file (none of which sets
+// `CIVITAI_ASSERT_POST_PATH`) nothing here can. The opt-in post arm is the class that
+// does; see `INVARIANT_EXCEPTIONS` in `scripts/dogfood/briefs/_cdp.mjs` and
+// `dogfood_oracle_post_test.go`. `TestOracleRefusesEveryRequestThatIsNotAPick` and
 // `TestOracleInlineHostAnswersOnlyThePickerLedger` are what hold that line, and
 // the second one fails if the allowlist either GROWS or SHRINKS.
 
