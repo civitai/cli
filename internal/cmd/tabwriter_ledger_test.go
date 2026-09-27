@@ -96,7 +96,7 @@ import (
 //     Telling a single-line label from legitimately multi-line free text there is
 //     a per-field judgement, not a structural one; #569 made it for images.go and
 //     this round made it for the app path. Stated as an open residual rather than
-//     half-converted, and the README's "What a table cell can contain" says the
+//     half-converted, and the published output contract's "What a table cell can contain" says the
 //     same thing to users rather than promising the wider claim.
 //  7. A renderer whose cells are ALL CLI-owned — integers and literals, no server
 //     text — has no honest row (civitai/cli#575 R3). The analyzer registers it

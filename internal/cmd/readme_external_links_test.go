@@ -130,9 +130,17 @@ func readmeExternalURLs(t *testing.T) []string {
 }
 
 // readmeMinExternalURLs is an anti-vacuity floor: it answers "is the extractor
-// still reading URLs at all?", and NOTHING else. The live count at the time of
-// writing was 38 (cross-checked against an independent shell extraction applying
-// the same exclusions), so 20 is slack by design.
+// still reading URLs at all?", and NOTHING else. 20 is slack by design.
+//
+// 🔴 A CENSUS USED TO SIT HERE AND IT WAS WRONG BY A FACTOR APPROACHING TWO. It
+// read "the live count at the time of writing was 38 (cross-checked against an
+// independent shell extraction applying the same exclusions)". Measured 65 before
+// the `## Troubleshooting` / `## Global flags` cut and 53 after — so the sentence
+// was already false when the cut found it, and it reads as a current census
+// rather than as history, which is how it kept being believed. Removed rather
+// than updated: a number in a comment here has now been wrong twice, the floor
+// does not depend on it, and the positive control below is what actually defends
+// this guard. If you want the count, run the extractor.
 //
 // 🔴 IT WAS 37 — THE EXACT COUNT — AND THAT WAS THE WRONG SHAPE. Set on the
 // count, this fires on any honest link removal with a message telling you to

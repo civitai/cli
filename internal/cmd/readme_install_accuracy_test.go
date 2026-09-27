@@ -390,13 +390,13 @@ var boolValueCandidates = []string{
 // `internal/ui` reads the standard variables with envSet/envTrue instead, where
 // any non-empty value counts.
 //
-// The guard has three legs, because the claim spans three surfaces and a check
-// on one of them would go stale against the other two:
+// The guard has TWO legs. It had a third, over the README's `## Global flags`
+// section; that section is now a pointer to the published guide, and the leg was
+// RETIRED rather than re-pointed — the argument is recorded where it used to be,
+// at the end of this function.
 //  1. BEHAVIOURAL — the same viper binding root.go uses, exercised per value.
 //  2. LEDGER — root.go must still bind and read those keys that way; a switch to
-//     GetString/envSet semantics reddens this and forces the README to be redone.
-//  3. DOCUMENT — the README must name every accepted spelling and at least one
-//     value that silently does nothing.
+//     GetString/envSet semantics reddens this and forces the docs to be redone.
 func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 	var accepted, rejected []string
 	for _, v := range boolValueCandidates {
@@ -407,10 +407,21 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 		}
 	}
 	// POSITIVE CONTROL on the derivation: both halves must be non-trivial, or the
-	// document assertions below are checking an empty set.
+	// per-value loops below are iterating over an empty set.
+	//
+	// 🔴 IT NO LONGER GUARDS A DOCUMENT ASSERTION — IT IS THE LAST COUPLING TO THE
+	// PUBLISHED LIST. This comment used to say "or the document assertions below are
+	// checking an empty set"; leg 3 was the only document assertion and it was
+	// deleted (see the note at the end of this function). So what this `!= 12` now
+	// does is fail the build if Go's boolean grammar or boolValueCandidates ever
+	// stops yielding exactly the twelve spellings the published output contract
+	// enumerates — which is the only thing left in this repository tying that page's
+	// number to the code. Do not weaken it to a floor: a control described as
+	// protecting something that no longer exists is the shape that gets deleted as
+	// vacuous, which is why it is re-stated here rather than left stale.
 	if len(accepted) != 12 {
 		t.Fatalf("CONTROL failure: strconv.ParseBool accepts %d of the %d candidate(s) (%v), want exactly 12. "+
-			"The Go boolean grammar changed, or boolValueCandidates lost entries — re-derive the README's list "+
+			"The Go boolean grammar changed, or boolValueCandidates lost entries — re-derive the PUBLISHED list "+
 			"rather than adjusting this number", len(accepted), len(boolValueCandidates), accepted)
 	}
 	if len(rejected) < 5 {
@@ -432,7 +443,7 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 				t.Fatalf("BindEnv(%q, %q): %v", key, envName, err)
 			}
 			if got := vp.GetBool(key); got != want {
-				t.Errorf("%s=%q resolves to %v, want %v — the README's documented value set is derived from "+
+				t.Errorf("%s=%q resolves to %v, want %v — the PUBLISHED value set is derived from "+
 					"strconv.ParseBool and this value does not follow it", envName, v, got, want)
 			}
 		}
@@ -444,7 +455,7 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 		t.Fatalf("BindEnv: %v", err)
 	}
 	if vp.GetBool("no_color") {
-		t.Fatal("CIVITAI_NO_COLOR=yes now disables colour — the README says it does nothing. Re-derive both.")
+		t.Fatal("CIVITAI_NO_COLOR=yes now disables colour — the published output contract says it does nothing. Re-derive both.")
 	}
 
 	// --- Leg 1b: the ASYMMETRY. `NO_COLOR=yes` really does disable colour. ---
@@ -462,7 +473,7 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 	t.Setenv("NO_COLOR", "yes")
 	ui.Configure(ui.Options{Writer: io.Discard})
 	if ui.EnabledFor(io.Discard) {
-		t.Error("NO_COLOR=yes did not disable colour — the README says any non-empty NO_COLOR does, " +
+		t.Error("NO_COLOR=yes did not disable colour — the published output contract says any non-empty NO_COLOR does, " +
 			"in contrast with CIVITAI_NO_COLOR=yes which does nothing")
 	}
 
@@ -492,8 +503,8 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 		t.Error("NO_COLOR=0 did not disable colour, with CLICOLOR_FORCE=yes forcing it on. internal/ui " +
 			"reads NO_COLOR with envSet — PRESENT and non-empty, the VALUE is not parsed — so `0` " +
 			"disables colour like any other non-empty value. That is the no-color.org contract and the " +
-			"README states it outright. If envSet grew a `v != \"0\"` clause (harmonising it with " +
-			"envTrue, which legitimately has one for CLICOLOR_FORCE), the README is now wrong in two " +
+			"published output contract states it outright. If envSet grew a `v != \"0\"` clause (harmonising " +
+			"it with envTrue, which legitimately has one for CLICOLOR_FORCE), that contract is wrong in two " +
 			"places: re-derive both, do not adjust this test.")
 	}
 	// The OTHER half of the same sentence, at the SAME value: CIVITAI_NO_COLOR is
@@ -508,7 +519,8 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 	if vpZero.GetBool("no_color") {
 		t.Error("CIVITAI_NO_COLOR=0 now disables colour. It is read as a BOOLEAN (GetBool → cast.ToBool " +
 			"→ strconv.ParseBool), so `0` is a real false that leaves colour alone — which is exactly " +
-			"the contrast the README draws against NO_COLOR=0, where the same value DOES disable. " +
+			"the contrast the published output contract draws against NO_COLOR=0, where the same value DOES " +
+			"disable. " +
 			"Re-derive both.")
 	}
 	t.Setenv("CIVITAI_NO_COLOR", "")
@@ -525,44 +537,46 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 		`GetBool("color")`,
 	} {
 		if !strings.Contains(string(rootSrc), want) {
-			t.Errorf("internal/cmd/root.go no longer contains %s. The README's documented value set is a claim "+
+			t.Errorf("internal/cmd/root.go no longer contains %s. The PUBLISHED value set is a claim "+
 				"about GetBool (→ cast.ToBool → strconv.ParseBool); a different read (GetString, an envSet-style "+
 				"presence test) accepts a DIFFERENT set of values and makes that prose wrong. Re-derive both.", want)
 		}
 	}
 
-	// --- Leg 3: the document. ---
-	md := readREADME(t)
-	body := readmeSectionByAnchor(t, md, "global-flags")
-	if len(strings.TrimSpace(body)) < 800 {
-		t.Fatalf("CONTROL failure: the README's `## Global flags` section is only %d byte(s) long — "+
-			"the extractor is reading the wrong block", len(strings.TrimSpace(body)))
-	}
-	flat := flattenWS(body)
-	for _, v := range accepted {
-		if !strings.Contains(flat, "`"+v+"`") {
-			t.Errorf("the README's `## Global flags` section does not name the accepted value `%s` for "+
-				"CIVITAI_NO_COLOR / CIVITAI_COLOR. strconv.ParseBool accepts exactly %v and the section has to "+
-				"enumerate them, because every OTHER value parses as false and does nothing with no warning.",
-				v, accepted)
-		}
-	}
-	// It must also say, by example, that an unlisted value is inert — an
-	// enumeration a reader does not know is EXHAUSTIVE is not one.
-	if !strings.Contains(flat, "`yes`") {
-		t.Errorf("the README's `## Global flags` section does not name `yes` as a value that does nothing. " +
-			"strconv.ParseBool rejects it, so CIVITAI_NO_COLOR=yes silently leaves colour on — the single " +
-			"symptom this documentation exists to prevent.")
-	}
-	for _, want := range []string{
-		"CIVITAI_NO_COLOR=yes",
-		"not interchangeable",
-	} {
-		if !strings.Contains(strings.ToLower(flat), strings.ToLower(want)) {
-			t.Errorf("the README's `## Global flags` section does not state %q. The two pairs of variables "+
-				"accept different value sets, and presenting them as equivalent is the defect being fixed.", want)
-		}
-	}
+	// --- Leg 3 (the document) WAS HERE, AND IT WAS RETIRED RATHER THAN RE-POINTED.
+	//
+	// 🔴 IT WAS UNREACHABLE VIA BOTH TRIGGERS ITS OWN COMMENT CLAIMED. The comment
+	// said it fires "when Go's boolean grammar or boolValueCandidates changes and
+	// the published sentence has not been re-synced". Neither can reach it: both
+	// inputs feed `accepted`, and the `len(accepted) != 12` CONTROL above is a
+	// t.Fatalf ~150 lines earlier in this same function, so it always wins.
+	// MEASURED: dropping "True" from boolValueCandidates dies at that control
+	// ("accepts 11 of the 22 candidate(s) … want exactly 12") and leg 3's own
+	// message never appears.
+	//
+	// Its ONLY reachable trigger was editing the vendored constant it read — which
+	// is what the mutation that "proved" it worked actually mutated. That is
+	// breakable, not reachable: RULES.md's unreachable-guards case, where a guard
+	// dies to an earlier check while its own assertion never executes.
+	//
+	// 🔴 AND THE CONSTANT WAS NOT THE TRANSCRIPT ITS HEADER CLAIMED. Diffed
+	// clause-by-clause against the raw page (curl + strip tags, per
+	// claudedocs/readme-reduction-plan.md's "diff against the raw page, never a
+	// summary of it"): two of its four clauses were the DELETED README's wording,
+	// not the page's. The page says CIVITAI_NO_COLOR/CIVITAI_COLOR "are **bound
+	// into the CLI's config layer** and read as booleans", and splits the
+	// =yes/=1/=0 clause into three sentences ending "— unlike NO_COLOR=0, where the
+	// same value disables it". So it asserted phrasing the publisher did not
+	// choose — the very thing the old leg's own residual dropped
+	// "not interchangeable" to avoid.
+	//
+	// Legs 1 and 2 pin the BEHAVIOUR (through the viper binding root.go uses) and
+	// the MECHANISM (root.go must still BindEnv/GetBool those keys) against
+	// internal/ui and root.go. They are untouched, and they are what made the
+	// twelve-spelling claim true in the first place. The published page is
+	// developer.civitai.com/site/guide/cli-output; nothing in this repository
+	// asserts on its prose, and that is now stated rather than simulated.
+
 }
 
 // TestREADMECommandReferencePointsAtTheReadCommandTable pins the pointer added

@@ -10,11 +10,23 @@ intentional. For the contributor checklist see
 PLACE.** This file holds the decisions and rationale; the README states/LINKS the
 contract — exit codes, `--json` shapes, the command reference (don't re-derive
 it here) — so **any** behaviour change is incomplete until it moves too, not
-only the ones an item below cites. Its command section, exit-code table and
-Troubleshooting index each state that contract and each goes stale ALONE: #371
-shipped having updated two of three (#378). Grep every surface naming what you
+only the ones an item below cites. Its command section and exit-code table each
+state that contract and each goes stale ALONE: #371 shipped having updated two of
+three (#378). Grep every surface naming what you
 changed: some of that prose is GENERATED (`internal/cmd/exitcodes_doc.go`) or
 frozen verbatim by a provenanced fixture, so it cannot be fixed in place.
+
+🔴 **THE THIRD SURFACE IS NO LONGER IN THE README, AND GREPPING THE README WILL
+NOT FIND IT.** The Troubleshooting symptom index — the page a user searches for
+the error in front of them — is published at
+`developer.civitai.com/site/guide/cli-troubleshooting`. **Reword a user-facing
+error string and you must edit TWO places outside the README:** that page, and
+`internal/cmd/troubleshooting_published_test.go`, which vendors every symptom
+string the page quotes and fails the build when one stops appearing in this CLI's
+non-test source. That ledger is the only thing watching ~21 of those strings, so
+it is a gate and not a copy. `## Troubleshooting` and `## Global flags` survive in
+the README as POINTERS only — keep their headings: live inbound links target both
+anchors, two of them from generated or verbatim-pinned prose.
 
 ## Stack (exact versions — don't assume training-data defaults)
 

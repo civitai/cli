@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -13,9 +14,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// The README's Troubleshooting section is a SYMPTOM INDEX: its first column is a
-// fragment of a string the CLI really prints, so a reader can search the page
-// for the words in front of them and land on the cause.
+// The troubleshooting index is a SYMPTOM INDEX: its first column is a fragment
+// of a string the CLI really prints, so a reader can search the page for the
+// words in front of them and land on the cause.
+//
+// 🔴 IT IS NO LONGER A README SECTION. The index is published at
+// developer.civitai.com/site/guide/cli-troubleshooting and README.md's
+// `## Troubleshooting` is a pointer to it. The guards in this file were
+// RE-POINTED at the vendored mirror in troubleshooting_published_test.go rather
+// than retired — read that file's header for the mechanism, the precedent it
+// follows and the one residual it declares.
 //
 // That only works while the strings are real. The section it replaced was five
 // bullets that had drifted to cover almost nothing the binary emits — the exact
@@ -30,11 +38,6 @@ import (
 // is a different (and much larger) test than "the README stopped describing
 // this product". What it does catch is the change that actually happens:
 // somebody rewords an error and the README keeps quoting the old sentence.
-
-// symptomRowRe matches a Troubleshooting table row and captures its first cell.
-// Rows are `| `symptom` | cause | link |`; the header and the `| --- |` divider
-// do not start with a backtick run and so are skipped.
-var symptomRowRe = regexp.MustCompile("(?m)^\\|\\s*(`{1,2}[^|]+?`{1,2})\\s*\\|")
 
 // goStringConcatRe joins ADJACENT Go string literals, so that
 //
@@ -102,71 +105,37 @@ func symptomSourceCorpus(t *testing.T) string {
 	return goStringConcatRe.ReplaceAllString(b.String(), "")
 }
 
-// readmeTroubleshootingSection returns the README text under `## Troubleshooting`,
-// raw, up to the next `##`.
-func readmeTroubleshootingSection(t *testing.T) string {
-	t.Helper()
-	md := readREADME(t)
-	const heading = "\n## Troubleshooting\n"
-	i := strings.Index(md, heading)
-	if i < 0 {
-		t.Fatal("README.md has no `## Troubleshooting` section — the symptom index a reader " +
-			"searches for their error message is gone")
-	}
-	body := md[i+len(heading):]
-	if j := strings.Index(body, "\n## "); j >= 0 {
-		body = body[:j]
-	}
-	return body
-}
-
-// documentedSymptoms returns the literal symptom strings the Troubleshooting
-// table's first column names.
+// TestPublishedTroubleshootingSymptomsExistInTheSource is the anti-rot guard for
+// the symptom index, and it is THE reason the vendored ledger exists: it is the
+// only coverage in this repository that catches "somebody reworded an error
+// string and the docs kept quoting the old sentence".
 //
-// A cell may hold several alternatives separated by ` / ` (e.g. `insufficient
-// Buzz` / `generation disabled`), and each is a separate claim, so each is
-// returned separately.
+// 🔴 RE-POINTED, NOT RETIRED. It used to extract column one out of README.md's
+// `## Troubleshooting` table; that table is now published at
+// publishedTroubleshootingURL and the strings are vendored in
+// troubleshooting_published_test.go. The corpus side — every non-test .go/.tmpl/
+// .js file under internal/, cmd/ and pkg/ — is UNCHANGED, so the property is
+// preserved exactly: a reworded message in the Go source still reddens this
+// test, by name.
 //
-// An ellipsis at EITHER end is presentational, marking where the real message
-// interpolates a value: the README writes `cannot derive a slug from …` because
-// the name follows, and `… cannot appear in a blockId` because the offending
-// characters precede. Both are trimmed. Trimming only the trailing one is not a
-// harmless simplification — it reported the leading-ellipsis row as a missing
-// string, which is a false failure, and a guard that cries wolf is a guard
-// somebody deletes.
-func documentedSymptoms(t *testing.T, section string) []string {
-	t.Helper()
-	var out []string
-	for _, m := range symptomRowRe.FindAllStringSubmatch(section, -1) {
-		for _, part := range strings.Split(m[1], "` / `") {
-			s := strings.TrimSpace(strings.Trim(strings.TrimSpace(part), "`"))
-			s = strings.TrimSpace(strings.Trim(s, "…"))
-			if s != "" {
-				out = append(out, s)
-			}
-		}
-	}
-	return out
-}
+// Mutation-verified on the new subject: rewording a documented message in its
+// source file (e.g. `refusing to submit without --yes` -> `refusing to submit
+// without --confirm` in app_submit.go) reddens this test, and the failure NAMES
+// the string that no longer exists rather than reporting a count.
+func TestPublishedTroubleshootingSymptomsExistInTheSource(t *testing.T) {
+	symptoms := publishedTroubleshootingSymptoms
 
-// TestREADMETroubleshootingSymptomsExistInTheSource is the anti-rot guard for
-// the symptom index.
-//
-// Mutation-verified: rewording a documented message in its source file (e.g.
-// `refusing to submit without --yes` -> `refusing to submit without --confirm`
-// in app_submit.go) reddens this test, and the failure NAMES the string that no
-// longer exists rather than reporting a count.
-func TestREADMETroubleshootingSymptomsExistInTheSource(t *testing.T) {
-	section := readmeTroubleshootingSection(t)
-	symptoms := documentedSymptoms(t, section)
-
-	// Positive control on the extractor. A regex typo, a reformatted table or a
-	// section that lost its rows all look identical to "everything passed", and
-	// this is the shape that reads most reassuringly while checking nothing.
-	if len(symptoms) < 15 {
-		t.Fatalf("extracted only %d symptom strings from the Troubleshooting section, want >= 15 — "+
-			"the row extractor is reading the wrong text (pattern: %s).\nsection:\n%s",
-			len(symptoms), symptomRowRe, section)
+	// ANTI-GUTTING FLOOR, replacing the old `< 15` over a 69-string extraction.
+	// See publishedTroubleshootingSymptomFloor for why it is a floor and not an
+	// exact count — readmeMinExternalURLs retired the exact shape in this same
+	// package, and rot here is one-directional anyway.
+	if len(symptoms) < publishedTroubleshootingSymptomFloor {
+		t.Fatalf("the vendored symptom ledger holds %d strings, want at least %d.\n"+
+			"Rows were REMOVED from it. If the published index at %s genuinely dropped them, drop them "+
+			"here too and lower the floor in the same commit with the reason — but the likely cause is "+
+			"the opposite: this guard went red on a reworded message and the entry was deleted instead "+
+			"of the page being updated. That is the rot the floor exists to stop.",
+			len(symptoms), publishedTroubleshootingSymptomFloor, publishedTroubleshootingURL)
 	}
 
 	// Validate the INSTRUMENT before reading its verdict: the searcher must be
@@ -180,11 +149,14 @@ func TestREADMETroubleshootingSymptomsExistInTheSource(t *testing.T) {
 
 	for _, s := range symptoms {
 		if !strings.Contains(corpus, s) {
-			t.Errorf("README Troubleshooting documents the symptom %q, but no non-test source file "+
-				"contains that string.\n"+
-				"Either the message was reworded (update the README row — a reader searching for the "+
+			t.Errorf("the published troubleshooting index documents the symptom %q, but no non-test "+
+				"source file contains that string.\n"+
+				"Either the message was reworded (update the row at %s — a reader searching for the "+
 				"text in front of them will not find it) or the row was invented. "+
-				"The index is only navigable while every row quotes a string the CLI really prints.", s)
+				"The index is only navigable while every row quotes a string the CLI really prints.\n"+
+				"The ledger this is read from is publishedTroubleshootingSymptoms "+
+				"(troubleshooting_published_test.go); update it in the same commit as the page.",
+				s, publishedTroubleshootingURL)
 		}
 	}
 }
@@ -246,15 +218,11 @@ type attributionRun struct {
 	env  map[string]string
 }
 
-// symptomAttribution is one Troubleshooting row and the commands it belongs to.
+// symptomAttribution is one troubleshooting row and the commands it belongs to.
 type symptomAttribution struct {
-	// fragment is the row's first column, verbatim after the extractor's
-	// backtick/ellipsis trim — i.e. exactly what documentedSymptoms returns.
+	// fragment is the row's first column, verbatim after the backtick/ellipsis
+	// trim — i.e. exactly as publishedTroubleshootingSymptoms holds it.
 	fragment string
-	// anchor must appear in the row's "Where to read more" cell, and must be a
-	// heading that exists. A right string under a wrong link is still a row that
-	// sends the reader somewhere that does not explain their error.
-	anchor string
 	// emittedBy must each really print fragment.
 	emittedBy []attributionRun
 	// notEmittedBy must each really NOT print it. This is the half that names
@@ -336,10 +304,15 @@ func symptomAttributions() []symptomAttribution {
 			// "a real directory with no block.manifest.json at its root — you
 			// pointed at a real place, so the invocation was right and the
 			// project is wrong" — which is what the row's last sentence is
-			// about. The anchor assertion below is tautological on its own (the
-			// ledger constant IS the expected value), so the choice is argued
-			// here rather than pinned there.
-			anchor: "#exit-code-1",
+			// about.
+			//
+			// 🔴 THE LINK TARGET NOW LIVES IN THE VENDORED LEDGER
+			// (publishedTroubleshootingRows) BECAUSE THE ROW DOES. The published
+			// page writes it as an absolute link BACK into this README —
+			// `https://github.com/civitai/cli#exit-code-1` — so the "does the
+			// target exist?" half is still checkable here, and is checked. That
+			// is why `## Exit codes` staying in README.md is load-bearing rather
+			// than merely convenient.
 			emittedBy: []attributionRun{
 				appValidate(),
 				appSubmit(false),
@@ -375,16 +348,23 @@ func symptomAttributions() []symptomAttribution {
 			// weaker reason than the one that was recorded — the section
 			// explained the remedy all along, and the row could have pointed
 			// here from the start.
-			// 🔴 RE-POINTED by the front-door reduction. This row used to link
-			// `### After you submit: review → approve → deploy`, a `###` inside
-			// `## Submit & auth` whose body now lives on the hosted apps guide.
-			// readmeHasAnchor
-			// below requires the target to be a heading IN README.md, so an
-			// off-site URL cannot serve here — the surviving `## Submit & auth`
-			// is the nearest in-document section that explains this error, which
-			// is the property #361 made this assertion about. The README row moved
-			// with it in the same commit.
-			anchor: "#submit--auth",
+			// 🔴 RE-POINTED TWICE, AND THE SECOND MOVE CHANGED WHAT CAN BE
+			// CHECKED. The front-door reduction moved it from
+			// `### After you submit: review → approve → deploy` to
+			// `#submit--auth`, because readmeHasAnchor required a heading IN
+			// README.md. This change moved the ROW off-repo: the published page
+			// links it to the apps guide's
+			// `store-listing#which-app-a-listing-command-acts-on`, which is the
+			// section that really states the working-directory resolution and the
+			// `--slug` / `--dir` remedy — a BETTER target than the compromise
+			// `#submit--auth` was.
+			//
+			// ⚠ DECLARED RESIDUAL: because that target is off-site, the "does the
+			// target exist?" assertion cannot run for this row. It still runs for
+			// row 1, whose target is an in-README anchor. Nothing hermetic can
+			// dereference a docs-site URL, which is why
+			// TestREADMEExternalURLsResolve is network-gated and skipped by
+			// default; this is the same limit, not a new one.
 			emittedBy: []attributionRun{
 				{
 					// The slug resolve fails on the manifest before any request
@@ -441,7 +421,7 @@ func runAttribution(t *testing.T, r attributionRun, empty, scratch string) strin
 	return b.String()
 }
 
-// TestREADMETroubleshootingRowsAreAttributedToTheEmittingCommand is the #361
+// TestPublishedTroubleshootingRowsAreAttributedToTheEmittingCommand is the #361
 // guard: existence -> attribution.
 //
 // Red/green matrix, re-measured for #373 against a PINNED ref rather than
@@ -460,9 +440,8 @@ func runAttribution(t *testing.T, r attributionRun, empty, scratch string) strin
 // The `attributes` subtest is the one that reads `row[1]`. Without it every
 // assertion here is about a cell a reader never reads for attribution, and the
 // #361 defect can be re-typed into the prose under a green suite.
-func TestREADMETroubleshootingRowsAreAttributedToTheEmittingCommand(t *testing.T) {
+func TestPublishedTroubleshootingRowsAreAttributedToTheEmittingCommand(t *testing.T) {
 	md := readREADME(t)
-	section := readmeTroubleshootingSection(t)
 	ledger := symptomAttributions()
 	paths := knownCommandPaths(t)
 
@@ -488,37 +467,41 @@ func TestREADMETroubleshootingRowsAreAttributedToTheEmittingCommand(t *testing.T
 
 	for _, a := range ledger {
 		t.Run(a.fragment, func(t *testing.T) {
-			row, n := troubleshootingRowFor(section, a.fragment)
-			if n == 0 {
-				t.Fatalf("the Troubleshooting index has no row whose first column quotes %q.\n"+
+			// The row's own prose, from the vendored mirror of the published
+			// index. publishedCauseFor FATALS on a miss and on a cell too short
+			// to be one, so a ledger that lost this row cannot report a pass.
+			cause := publishedCauseFor(t, a.fragment)
+
+			// The fragment must also be a real row of the index, not just a
+			// cause cell somebody added here: the symptom ledger is the
+			// authority on which rows exist.
+			if !slices.Contains(publishedTroubleshootingSymptoms, a.fragment) {
+				t.Fatalf("the published troubleshooting index has no row whose first column quotes %q.\n"+
 					"Why it matters: %s.\n"+
-					"A reader searching this page for the error in front of them finds nothing.", a.fragment, a.why)
+					"A reader searching %s for the error in front of them finds nothing.",
+					a.fragment, a.why, publishedTroubleshootingURL)
 			}
-			if n > 1 {
-				// Two rows quoting the same fragment means this test picked one
-				// of them and said nothing about the other — and a reader
-				// searching the page has the same problem.
-				t.Fatalf("%d Troubleshooting rows quote %q in their first column. "+
-					"This guard can only speak about one of them, so the others would drift unwatched: "+
-					"merge them, or make each fragment name exactly one row.", n, a.fragment)
-			}
-			if len(row) < 3 {
-				t.Fatalf("row for %q has %d cells, want 3: %v", a.fragment, len(row), row)
-			}
+
 			t.Run("attributes it to the ledger's commands", func(t *testing.T) {
-				attributionProseCheck(t, a, row[1], paths)
+				attributionProseCheck(t, a, cause, paths)
 			})
-			if !strings.Contains(row[2], "("+a.anchor+")") {
-				t.Errorf("the row for %q links to %q, but must point at %s.\n"+
-					"Why it matters: %s.\n"+
-					"A row whose string is right and whose link is wrong still lands the reader on a "+
-					"section that does not explain their error — which is the #361 defect exactly.",
-					a.fragment, strings.TrimSpace(row[2]), a.anchor, a.why)
-			}
+
 			// The link has to go somewhere. GitHub renders a dead anchor as a
-			// silent no-op, so this cannot be left to review.
-			if !readmeHasAnchor(md, a.anchor) {
-				t.Errorf("the row for %q points at %s, which is not a heading in README.md", a.fragment, a.anchor)
+			// silent no-op, so this cannot be left to review — but only an
+			// in-REPO target is resolvable hermetically. See the readMore field's
+			// comment for the split, and row 2's for the declared residual.
+			target := publishedReadMoreFor(t, a.fragment)
+			if anchor, ok := readmeAnchorTarget(target); ok {
+				if !readmeHasAnchor(md, anchor) {
+					t.Errorf("the row for %q points at %s, whose anchor %s is not a heading in README.md.\n"+
+						"Why it matters: %s.\n"+
+						"A row whose string is right and whose link is wrong still lands the reader on a "+
+						"section that does not explain their error — which is the #361 defect exactly.",
+						a.fragment, target, anchor, a.why)
+				}
+			} else {
+				t.Logf("residual: %q links off-site to %s, which no hermetic test can dereference",
+					a.fragment, target)
 			}
 
 			for _, r := range a.emittedBy {
@@ -555,36 +538,15 @@ func TestREADMETroubleshootingRowsAreAttributedToTheEmittingCommand(t *testing.T
 	}
 }
 
-// troubleshootingRowFor returns the cells of the Troubleshooting row whose FIRST
-// column quotes fragment, plus HOW MANY rows matched. Matching on the first
-// column only is the point: a fragment mentioned in another row's prose must not
-// satisfy the lookup. Returning the count matters too — the first version
-// returned the first match, so a later row whose first cell is a superset of an
-// earlier one's would silently shadow the row this ledger means.
-func troubleshootingRowFor(section, fragment string) ([]string, int) {
-	var first []string
-	var n int
-	for _, line := range strings.Split(section, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "|") || !strings.HasSuffix(line, "|") {
-			continue
-		}
-		cells := strings.Split(strings.Trim(line, "|"), "|")
-		for i := range cells {
-			cells[i] = strings.TrimSpace(cells[i])
-		}
-		if len(cells) == 0 {
-			continue
-		}
-		if strings.Contains(cells[0], fragment) && strings.Contains(cells[0], "`") {
-			n++
-			if first == nil {
-				first = cells
-			}
-		}
-	}
-	return first, n
-}
+// (troubleshootingRowFor — the markdown row splitter these guards used to locate
+// a row by its first column — was deleted with the README section it parsed. The
+// lookup is now publishedCauseFor / publishedReadMoreFor.
+//
+// Its `n > 1` arm — two rows quoting one fragment, so the guard speaks about one
+// and says nothing about the other — did NOT come for free: publishedTroubleshootingRows
+// is a SLICE, and a duplicate fragment in it would silently resolve to the first
+// entry. TestVendoredTroubleshootingLedgerIsWellFormed carries that property
+// instead.)
 
 // ----------------------------------------------------------------------------
 // Reading the attribution out of the row's own prose
@@ -1652,32 +1614,47 @@ func TestAttributionProseParser(t *testing.T) {
 // which is why the same table carries mis-attributed cells and asserts a
 // non-zero count with the right message. Neither half means anything alone.
 //
-// Every fixture is built by editing the cell the README really ships, and each
-// edit asserts it matched something first: a fixture built by a replacement that
-// silently did nothing is the shipped cell again, and would report a clean pass
-// about a case it never constructed.
+// Every fixture is built by editing the cause cell the index really PUBLISHES —
+// vendored in publishedTroubleshootingRows — and each edit asserts it matched
+// something first: a fixture built by a replacement that silently did nothing is
+// the shipped cell again, and would report a clean pass about a case it never
+// constructed.
 //
-// 🔴 A FILTERED RUN DOES NOT REACH THIS TEST, AND THE OBVIOUS FILTER IS THE ONE
-// THAT MISSES IT. Editing the README's Troubleshooting section invites
-// `go test ./internal/cmd/ -run 'README|Readme|readme'` — and this test's name
-// starts with `TestAttribution`, so that pattern matches NONE of the frozen
-// cause-cell spans below, nor `TestAttributionProseParser` above. Measured on
-// this file at HEAD: rewording row 20's shipped cell (`never print it` ->
-// `do not emit it`) produces 7 `--- FAIL` lines under
-// `-run 'Attribution|Troubleshooting|README|Readme|readme'` and a plain `ok`
-// under `-run 'README|Readme|readme'`. `make ci` runs `go test ./...` with no
-// `-run` at all and does reach it, so a full local `make ci` — or the WIDE
-// pattern above — is the only run whose green says anything about these spans.
+// 🔴 A FILTERED RUN DOES NOT REACH THIS TEST, AND EVERY OBVIOUS FILTER MISSES IT.
+// This test's name starts with `TestAttribution`, so no pattern named after the
+// document or the guards matches the frozen cause-cell spans below, nor
+// `TestAttributionProseParser` above.
+//
+// RE-MEASURED at HEAD, and the trap got WORSE rather than better when
+// `## Troubleshooting` became a pointer and the guards were renamed
+// `TestPublished…`. Rewording the vendored cell (`never print it` ->
+// `do not emit it`) gives:
+//
+//	-run 'README|Readme|readme'                        ok    0 --- FAIL
+//	-run 'Troubleshooting'                             ok    0 --- FAIL   <- NEW
+//	-run 'Published'                                   ok    0 --- FAIL   <- NEW
+//	-run 'Attribution|Troubleshooting|Published|README' FAIL  7 --- FAIL
+//	no -run at all (what `make ci` does)                FAIL  7 --- FAIL
+//
+// The two NEW rows are the cost of the rename: `-run 'Troubleshooting'` and
+// `-run 'Published'` both now match real guards in this file, so they look like
+// well-aimed filters and still report a serene `ok` over these spans. Note also
+// that the mutant leaves the ATTRIBUTION guard green on purpose — `do not emit
+// it` is correct prose that the #373 parser handles — so only the frozen spans
+// here can see it.
+//
+// `make ci` runs `go test ./...` with no `-run`, so a full local `make ci` — or a
+// pattern that includes `Attribution` — is the only run whose green says anything
+// about these spans.
 func TestAttributionProseCheckAcceptsCorrectProseAndRejectsMisattribution(t *testing.T) {
 	paths := knownCommandPaths(t)
 	row := symptomAttributions()[1]
-	section := readmeTroubleshootingSection(t)
-	cells, n := troubleshootingRowFor(section, row.fragment)
-	if n != 1 || len(cells) < 3 {
-		t.Fatalf("expected exactly one Troubleshooting row quoting %q with 3 cells, got n=%d cells=%v",
-			row.fragment, n, cells)
-	}
-	shipped := cells[1]
+	// The fixture base is the cause cell the index really PUBLISHES, from the
+	// vendored mirror. Every fixture below is built by EDITING it, and each edit
+	// asserts it matched something first — so if the vendored cell ever stops
+	// containing one of the nine spans, this test fatals by name instead of
+	// silently testing the unedited cell.
+	shipped := publishedCauseFor(t, row.fragment)
 
 	// edit applies old/new pairs to the shipped cell, asserting each one matched.
 	edit := func(t *testing.T, oldNew ...string) string {
@@ -1813,16 +1790,18 @@ func TestAttributionProseCheckAcceptsCorrectProseAndRejectsMisattribution(t *tes
 //
 // Measured red before the fix: githubAnchorSlug dropped `_`, so the anchor for
 // the `BLOCK_READY` heading came back `the-host-handshake-blockready` and
-// readmeHasAnchor called a live link dead. Both of the ledger rows most likely
-// to be added next (the two `BLOCK_READY` advisory rows) point at that heading.
+// readmeHasAnchor called a live link dead.
 //
-// 🔴 The link COUNT is measured here, not asserted from memory. #373: the
-// comment above githubAnchorSlug, the failure message below, and commit
-// ae58a47's own F4 paragraph all said the anchor was "used five times"; there
-// are FOUR links to it — the table of contents, one prose link in the
-// dev-tunnel walkthrough, and the two Troubleshooting rows. The commit message
-// cannot be rewritten, so this is the correction of record. Counting it means
-// the number in the failure a maintainer reads is whatever is true that day.
+// 🔴 The link COUNT is measured here, not asserted from memory, and this comment
+// has now gone stale TWICE — which is the argument for counting rather than
+// writing it down. #373: the comment above githubAnchorSlug, the failure message
+// below, and commit ae58a47's own F4 paragraph all said the anchor was "used five
+// times"; the measured number was FOUR — the table of contents, one prose link in
+// the dev-tunnel walkthrough, and two Troubleshooting rows. The
+// `## Troubleshooting` cut took those two rows off-repo with the rest of the
+// index, so the measured number is now TWO. The assertion below reads it live, so
+// the number a maintainer sees in the failure is whatever is true that day; only
+// this prose needed correcting, and the guard stayed green throughout (2 != 0).
 func TestGithubAnchorSlugKeepsUnderscores(t *testing.T) {
 	const anchor = "#the-host-handshake-block_ready"
 	if got, want := githubAnchorSlug("The host handshake (`BLOCK_READY`)"), strings.TrimPrefix(anchor, "#"); got != want {
@@ -1856,8 +1835,8 @@ func TestGithubAnchorSlugKeepsUnderscores(t *testing.T) {
 	}
 }
 
-// TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit pins the FLOOR of
-// what the section must cover, independently of the guard above.
+// TestPublishedTroubleshootingCoversTheRefusalsAuthorsActuallyHit pins the FLOOR
+// of what the index must cover, independently of the guard above.
 //
 // The two are not redundant, and neither subsumes the other: the sibling asks
 // "is every row real?", which a section that had been cut down to three
@@ -1866,11 +1845,20 @@ func TestGithubAnchorSlugKeepsUnderscores(t *testing.T) {
 // pre-index section documented none of. Deleting a row to make the sibling green
 // is exactly the repair this forbids.
 //
-// Each entry is derived from the CODE's own constant where one is exported, so a
-// reword moves the expectation and the README together rather than leaving this
-// test asserting a string nothing produces.
-func TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit(t *testing.T) {
-	section := readmeTroubleshootingSection(t)
+// 🔴 RE-POINTED AND STRENGTHENED IN THE SAME MOVE. It used to run
+// `strings.Contains` over the whole README section, which a row's PROSE could
+// satisfy — a cause cell mentioning `refusing to submit without --yes` passed
+// the check for the row itself being present. Against the vendored ledger it is
+// exact MEMBERSHIP of column one, so only a real row satisfies it. All seven
+// strings were verified to be exact members before the swap; none needed
+// loosening to a substring.
+func TestPublishedTroubleshootingCoversTheRefusalsAuthorsActuallyHit(t *testing.T) {
+	// POSITIVE CONTROL: an empty ledger would make every membership check below
+	// fail for the right reason, but a ledger this guard could not see at all
+	// would be indistinguishable from one that is simply complete.
+	if len(publishedTroubleshootingSymptoms) == 0 {
+		t.Fatal("CONTROL failure: the vendored symptom ledger is empty, so this test asserts nothing")
+	}
 
 	cases := []struct {
 		want, why string
@@ -1892,11 +1880,12 @@ func TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit(t *testing.T) 
 			"the ready-ack advisory's weak tier — the disclosure that keeps `valid` from reading as `wired`"},
 	}
 	for _, tc := range cases {
-		if !strings.Contains(section, tc.want) {
-			t.Errorf("the Troubleshooting symptom index no longer documents %q.\n"+
+		if !slices.Contains(publishedTroubleshootingSymptoms, tc.want) {
+			t.Errorf("the published symptom index no longer documents %q.\n"+
 				"It is on the floor because: %s.\n"+
 				"If it was removed deliberately, remove this row too — but do not let the index "+
-				"quietly stop covering the messages that halt an author.", tc.want, tc.why)
+				"quietly stop covering the messages that halt an author. The index is at %s and its "+
+				"vendored mirror is publishedTroubleshootingSymptoms.", tc.want, tc.why, publishedTroubleshootingURL)
 		}
 	}
 }

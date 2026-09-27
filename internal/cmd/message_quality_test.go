@@ -204,15 +204,19 @@ func TestValidateJSONCarriesTheLocationAndTheGloss(t *testing.T) {
 }
 
 // TestAppCreateIntoNonEmptyDirNamesTheRemedy — issue #260 item 7, fourth
-// bullet. The README's Troubleshooting section already had the remedy; the CLI
-// did not print it.
+// bullet. The troubleshooting index already had the remedy; the CLI did not
+// print it.
 //
 // 🔴 BOTH SCAFFOLD COMMANDS ARE DRIVEN, not just `app create`. The exit-code
 // half of this guard reddened exactly ONE leaf subtest when only `create` was
 // covered — the "a battery rested on a single row" shape of AGENTS.md item 24,
 // where deleting the row takes the guard with it. `app init` is the other user
-// of the same refusal and is the command the README's Troubleshooting entry
-// names.
+// of the same refusal and is the command the published troubleshooting entry
+// names (developer.civitai.com/site/guide/cli-troubleshooting; its symptom string
+// is vendored in internal/cmd/troubleshooting_published_test.go). 🔴 DO NOT DROP
+// `init` FROM THE LOOP ON THE GROUNDS THAT README NO LONGER SAYS SO — that index
+// moved off README.md, it still names `app init`, and dropping the verb is exactly
+// the single-row collapse this paragraph warns about.
 func TestAppCreateIntoNonEmptyDirNamesTheRemedy(t *testing.T) {
 	for _, verb := range []string{"create", "init"} {
 		t.Run(verb, func(t *testing.T) {
