@@ -59,37 +59,44 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-🔴 **THREE PRs ARE READY AND UNMERGED; THE MERGE IS THE OPERATOR'S CALL AND WAS NEVER TAKEN.**
-Ranks 20, 21, 22 are implemented, audited through a closed 3-round ladder, and validated on a
-merged tree at the **current** heads. `$0` of model spend this session.
+🔴 **RANKS 20, 21 AND 22 ARE MERGED TO `main`, ON A DATED OPERATOR INSTRUCTION ("merge and
+proceed", 2026-09-27).** `$0` of model spend across the whole session. **Verified BY CONTENT on
+`origin/main`, never by ancestry** — a squash merge never makes the branch head an ancestor:
 
-| PR | rank | head | checks (SHA-pinned) | acceptance evidence |
-|---|---|---|---|---|
-| `#733` | 21 grader path reads | `d3e6895` | 13/13 | 18 `=== RUN` both sides; 5 FAIL at base → 0 at HEAD; **7** injection sites fixed |
-| `#734` | 22 post-path arm | `86d6472` | 13/13 | 19 RUN, 13 FAIL at base → 19 PASS; real-artifact matrix `v0.1.1`=no / `v0.1.2`=yes |
-| `#735` | 20 dead link + corpus | `86c5a36` | 13/13 | widened prober FAILS at base while the old one PASSES, **same run** |
+| PR | rank | squash sha | content check that proved it landed |
+|---|---|---|---|
+| `#735` | 20 docs-link corpus | `6b5e381c7` | 0 `apps/responsive` left under `internal/scaffold/templates`, **4** `apps/guide/responsive`; `.github/workflows/docs-links.yml` + `internal/cmd/docs_links_corpus_test.go` present |
+| `#733` | 21 grader path reads | `cf80b1d32` | live code is `MANIFEST_FIND` + `pathdec`, **no `xargs` in any code path** |
+| `#734` | 22 post-path arm | see below | the arm seam + `post_ceiling` token, off-arm shim byte-identical |
 
-**Merged tree, `origin/main` `b408912` + all three, 2026-09-27:** 21 packages `ok`, 0 `FAIL`, 0
-`--- SKIP`, root browser suite `ok 239.546s` (a skipped suite returns in ~0 s, so the duration is
-the positive control that the real-browser tests RAN). ⚠ **Re-run it if `main` moves** — this
-covers `86d6472` and nothing newer.
+🔴 **THE `#733` CONTENT CHECK IS A TRAP WORTH REPEATING: `git grep 'xargs dirname'` on `main`
+returns SEVEN hits and every one is a DOCBLOCK explaining the defect.** Reading that as "the fix
+did not land" is this arc's own *"pick a string the NEW content introduces, never the identifier the
+work has been discussing"* gotcha. The discriminating check strips comments and reads the live
+assignment lines: `git show origin/main:scripts/dogfood/oracle.sh | grep -vE '^\s*#' | grep -nE
+'APP_DIR=|MANIFESTS=|pathdec'`.
 
-🔴 **#733 AND #734 CONFLICT — ONE add/add HUNK — SO THE SECOND ONE TO MERGE NEEDS A RESOLUTION
-COMMIT.** It was clean earlier in the session and stopped being clean when `#734`'s round-1 fix
-rewrote the escaper guard in `dogfood_ship_verdict_injection_test.go`, the same file `#733`
-widened. Both sides are pure additions at one anchor (base side **0 bytes**), each ending
-mid-function around a **SHARED closing brace** — which is exactly why concatenating the two sides
-produces an uncompilable file. The resolution: keep both, and give the first function its own `}`.
-```bash
-CLI=/home/zach/workspace/civit/cli; W=/tmp/wt-m-$$
-git -C "$CLI" worktree add -q "$W" -b zach/merge-check origin/main
-git -C "$W" merge --no-edit origin/zach/dogfood-path-reads
-git -C "$W" merge --no-edit origin/zach/dogfood-post-arm     # rc 1, markers at 697/715/816
-#   keep OURS (joinContinuations) + a closing `}` + a blank line + THEIRS
-#   (assertEscapedAtAssignment); the pre-existing `}` after the last marker closes THEIRS.
-(cd "$W" && gofmt -e -l dogfood_ship_verdict_injection_test.go && go vet ./...)   # must be silent
-git -C "$W" merge --no-edit origin/zach/docs-link-corpus     # clean after both
-```
+🔴 **`#734` NEEDED A REAL MERGE-RESOLUTION COMMIT (`61b4aef`), AND THE RESOLUTION IS THE DURABLE
+PART.** `#733` landed first and added `joinContinuations` to
+`dogfood_ship_verdict_injection_test.go`; `#734` had added `assertEscapedAtAssignment` at the same
+anchor. An **add/add** conflict (base side **0 bytes**) in which BOTH sides end **mid-function around
+a SHARED closing brace** — so concatenating the two sides, which is the obvious resolution, yields an
+**unterminated function**. Kept both, gave the first its own `}`. Resolved on meaning, not on a side:
+`--ours` drops `#733`'s continuation folding, `--theirs` drops `#734`'s assignment check, and both
+are load-bearing.
+
+**Verified on the resolved branch before merging:** `gofmt -e` silent · `go vet` clean · both
+functions present · the four guards spanning both PRs **6 `=== RUN`, all PASS** · full suite with
+Chromium **21 `ok`, 0 `FAIL`, 0 `--- SKIP`, root browser package `ok 239.167s`** (a skipped suite
+returns in ~0 s, so the duration is the control that the real-browser tests RAN) · and the escaper
+guard's own premise survives the merge — `oracle.sh` still carries
+`CEIL_FIELD=" post_ceiling=$(tok "$ACEIL")"`, so round 1's assignment check still has a
+`tok`-wrapped assignment to find.
+
+⚠ **STILL OWED, and it cannot be done before the merge:** dispatch `docs-links` once with
+`drill: true`. The workflow did not exist upstream until `#735` landed, so its issue-filing path
+ships **unrehearsed**; the drill appends a known-404 URL to the runner's ephemeral checkout and
+files a REAL issue (close it afterwards).
 
 ## Open investigations — live diagnosis state
 
@@ -193,68 +200,48 @@ same mechanism: it is neither free nor possible.
 
 ## Next steps (ranked)
 
-🔴 **Numbering frozen and cumulative.** 1–11 settled; 13, 15, 16, 17, 18, 19 closed;
-**20, 21, 22 IMPLEMENTED AND AWAITING A MERGE DECISION**; 12 and 14 live.
+🔴 **Numbering frozen and cumulative.** 1–11 settled; 13, 15–22 closed; **12 and 14 are the only
+live ranks.** The audit ladder on `#734` is CLOSED — 3 rounds, ended on the rule, not on a verdict.
 
 1–11. ✅ **DONE** — the arc through build-and-ship. forcing: user/gate — satisfied
-12. **RE-SCOPED 2026-09-27, ready to implement.** `CIVITAI_SCAFFOLD_TYPECHECK` is set by **ZERO**
-    workflows (only `internal/scaffold/page_money_typecheck_test.go:54`/`:136`). Do **not** wire it
-    into `ci.yml`'s `scaffold-currency` job — that is REQUIRED + `enforce_admins`, and a
+12. **RE-SCOPED 2026-09-27, ready to implement — do NOT work it as originally written.**
+    `CIVITAI_SCAFFOLD_TYPECHECK` is set by **ZERO** workflows (only
+    `internal/scaffold/page_money_typecheck_test.go:54`/`:136`). 🔴 Do **not** wire it into
+    `ci.yml`'s `scaffold-currency` job — that is REQUIRED + `enforce_admins`, and a
     network-dependent assertion there has frozen every open PR **twice** (`pins-vs-published`; npm
     10's arborist crash on `vitest@5.0.0`). Wire it into the **daily `bump-scaffold-pins.yml`**,
-    which already installs a page-money app on node 24; marginal cost ~6.5 s. Use the neighbouring
+    which already installs a page-money app on node 24; marginal cost ~6.5 s. Copy the neighbouring
     positive-control shape (`-count=1`, grep the log for the test's own `--- (PASS|SKIP|FAIL):`
-    line, a distinct `guard-did-not-run` state). ⚠ Bound the claim honestly: *"every scaffolded
-    page-money app fails its own build"* was **overstated and install-shape-dependent**, so this is
-    regression protection, not a live break. **Closing condition:** the env var is set by ≥1
-    scheduled non-required job whose log is asserted to contain the typecheck's own result line,
-    shown red by breaking the template's types once and green after; checked by the workflow run.
+    line, a distinct `guard-did-not-run` state). ⚠ Bound the claim: *"every scaffolded page-money
+    app fails its own build"* was **overstated and install-shape-dependent**, so this is regression
+    protection, not a live break. **Closing condition:** the env var is set by ≥1 scheduled
+    non-required job whose log is asserted to contain the typecheck's own result line, shown red by
+    breaking the template's types once and green after; checked by the workflow run.
     forcing: regression — the defect shipped once and CI still cannot see it
 13. ✅ **CLOSED 2026-09-25** — `v0.1.1` approved; superseded by `v0.1.2`. forcing: user — satisfied
-14. 🔴 **DECIDED 2026-09-27 — NOT waiting on the operator any more.** They selected *spend Buzz on
-    a generated cover* from a four-option question (**a SELECTION, not a quote** — see the previous
-    *State now* entry carried into *Gotchas*). Measured the same day: **no image tooling is
-    needed** — icon aspect 0.9–1.1 and cover 1.3–2.4 are hit by `--aspect-ratio 1:1` (=1.0) and
-    `16:9` (=1.78); the CLI reads geometry with the Go stdlib (`internal/appapi/imageinfo.go`) and
-    ATTACH refuses a bad shape "in seconds" with a legible message, so the retry loop closes with
-    no local measurement capability. What remains is implementation plus a paid, credentialed,
-    account-mutating run: **operator present, and only AFTER 20/21/22 land** (it touches
-    `scripts/dogfood/briefs/`). Re-read the Buzz baseline immediately before spending.
-    🔴 Hazards that stand: a moderator **REJECTION deletes the listing and all attached media**;
-    and a run including `submit` **cannot be credential-bounded** (`app create`/`submit`/`listing`
-    need the account token; only generation can be scoped via `app dev-token`).
-    **Closing condition:** one blind cheap-model trial reaches `approved`/live with an icon and a
-    cover it generated itself, per `app status --json`; the operator confirms the spend was theirs.
+14. 🔴 **THE ONLY SUBSTANTIVE WORK LEFT IN THIS ARC, AND IT IS NOW UNBLOCKED.** T1 "ship-ready".
+    The operator selected *spend Buzz on a generated cover* from a four-option question on
+    2026-09-27 — **a SELECTION, not a quote; do not attribute words to them** (this arc shipped one
+    fabricated *"the operator decided X"* that survived five days). Measured the same day: **no
+    image tooling is needed** — icon aspect 0.9–1.1 and cover 1.3–2.4 are hit directly by
+    `--aspect-ratio 1:1` (=1.0) and `16:9` (=1.78); `civitai generate` has no `--width`/`--height`,
+    the bucket→pixel mapping is a SERVER-side fact, and the CLI reads geometry with the Go stdlib
+    (`internal/appapi/imageinfo.go`) while ATTACH refuses a bad shape "in seconds" with a legible
+    message — so the retry loop closes with no local measurement capability.
+    **Guardrails that already exist:** `civitai generate --dry-run` spends nothing; `--max-cost`
+    bounds one generation; `--out-dir`/`--out-name` place the file for `listing set-icon|set-cover`;
+    and `runner.py` enforces the `generations`/`submissions` counters **before** `docker exec` —
+    that is the authoritative bound, not a transcript grep (a watchdog matching whole records fires
+    on the CLI's own help text). 🔴 **Hazards that stand:** a moderator **REJECTION deletes the
+    listing and every attached asset**; and a run including `submit` **cannot be
+    credential-bounded** — `app create`/`submit`/`listing` need the account token, only generation
+    can be scoped via `app dev-token`. **Operator present; re-read the Buzz baseline immediately
+    before spending, not when planning.** **Closing condition:** one blind cheap-model trial reaches
+    `approved`/live with an icon AND a cover it generated itself, per `app status --json`; the
+    operator confirms the spend was theirs.
     forcing: user — asked about "complete working apps" 2026-09-25, decided 2026-09-27
-15–19. ✅ **CLOSED** — see the prior entries. forcing: gate/user/security — satisfied
-20. ✅ **IMPLEMENTED — `#735`, awaiting merge.** `apps/responsive` (404) → `apps/guide/responsive`
-    (200) at four template sites + one test fixture. Root cause was the **corpus**, not the typo:
-    `TestBlockDocsLinksResolve` reads only the `agent-setup` block's `### Docs` section and is
-    gated on `CIVITAI_CHECK_DOCS_LINKS`, which **no workflow sets**; the guard that IS wired
-    (`readme-links.yml`, weekly) reads **`README.md` alone**. Scaffold templates were outside both.
-    New corpus: **48 distinct addresses over 792 files**, 47 requests, wired via a new
-    `docs-links.yml` on the `readme-links.yml` pattern (weekly, `-count=1`, positive control,
-    four-state split, `failure-issue.yml`, drill), deliberately **not** a required check.
-    🔴 **POST-MERGE ACTION:** dispatch `docs-links` with `drill: true` once — the workflow does not
-    exist upstream until merge, so its issue-filing path ships **unrehearsed**.
-    forcing: regression — a dead link ships to every developer who scaffolds
-21. ✅ **IMPLEMENTED — `#733`, awaiting merge.** Both app-controlled path reads replaced; **7**
-    injection sites (a path interpolated into a `docker exec` shell string) now go through
-    `docker exec -e`. `find -print0` is unusable — **bash command substitution discards NUL** — so
-    the transport swaps delimiters in-container with `tr` only. Stated residual: a path already
-    containing a literal `0x01` decodes back as LF. Test asserts the decoded `app_dir=/work/my app`
-    **and** the wire form `/work/my%20app` **and** `stub_arg=[/work/my app]` (the argv the exec
-    receives) — stronger than the frozen condition asked for, because `#728`'s `tok` means a raw
-    space on the wire would undo that fix. forcing: security — satisfied by `#733`
-22. ✅ **IMPLEMENTED — `#734`, awaiting merge.** The post arm answers `ESTIMATE_WORKFLOW`,
-    `SUBMIT_WORKFLOW`, `POLL_WORKFLOW`, `CREATE_POST_FROM_APP` behind `CIVITAI_ASSERT_POST_PATH=1`;
-    everything else still refuses with the SDK's own message. Off-arm `inlineHostSource()` is
-    **byte-identical** to the pre-arm baseline (1914 chars / 1916 bytes, sha `771350ee4ddf484d`) at
-    three refs, with a positive control at the pre-arm base proving the comparison can move.
-    ⚠ It proves the BRANCH exists and the payload satisfies the mock host's gate — **never** that
-    the real host accepts it (`post_ceiling=mock-host-gate-only` now rides the summary line AND the
-    grade row, post arm only, so a non-post row stays byte-identical).
-    forcing: gate — satisfied by `#734`
+15–22. ✅ **CLOSED** — 15/16/17/18/19 earlier; **20/21/22 merged 2026-09-27** (`#735`/`#733`/`#734`).
+    forcing: gate/user/security/regression — satisfied
 
 ## Gotchas / decisions / dead-ends
 
@@ -728,45 +715,31 @@ them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed.
 
 Every check reports a CONTROL beside its result; a bare count or zero is not a measurement.
 
-**The three in-flight PRs — find them before anything else** (expect three rows once opened; an
-empty result means they are still being written, NOT that the work was not dispatched):
+**That all three ranks are on `main`** — the discriminating checks, not the discussed identifiers:
 ```bash
-gh pr list --repo civitai/cli --state open --json number,headRefName,title \
-  --jq '.[] | select(.headRefName|test("dogfood-path-reads|dogfood-post-arm|docs-link-corpus")) | "\(.number) \(.headRefName)"'
+CLI=/home/zach/workspace/civit/cli; git -C "$CLI" fetch origin main -q
+git -C "$CLI" show origin/main:scripts/dogfood/oracle.sh | grep -vE '^\s*#' \
+  | grep -nE 'MANIFESTS=|pathdec APP_DIR'                 # rank 21: the live transport
+git -C "$CLI" grep -c 'apps/guide/responsive' origin/main -- internal/scaffold/templates  # rank 20: 4
+git -C "$CLI" grep -n 'CIVITAI_ASSERT_POST_PATH' origin/main -- scripts/dogfood/oracle.sh # rank 22
+git -C "$CLI" ls-tree origin/main --name-only -- .github/workflows/docs-links.yml
 ```
+⚠ **`git grep 'xargs dirname' origin/main` returns SEVEN hits and all are docblocks** — that string
+is not a check.
 
-**Rank 20's defect and its fix** (expect `404` then `200`; the second is the control that the host
-answers honestly rather than serving an SPA 200 for everything):
-```bash
-curl -s -o /dev/null -w 'broken  %{http_code}\n' https://developer.civitai.com/apps/responsive
-curl -s -o /dev/null -w 'correct %{http_code}\n' https://developer.civitai.com/apps/guide/responsive
-```
-
-**Rank 21's defect, reproducible with no repo at all** (expect two lines, then one):
-```bash
-printf 'DEFECT:\n';  printf '%s\n' '/work/my app/block.manifest.json'  | head -1 | xargs dirname
-printf 'CONTROL:\n'; printf '%s\n' '/work/myapp/block.manifest.json'   | head -1 | xargs dirname
-```
-
-**Rank 22's premise — that the post path routes through the shimmed method** (expect a
-`sendTypedRequest` hit for `CREATE_POST_FROM_APP`, and the mock host's non-empty-`sources` gate):
+**The post arm end to end, on the two real bundles** — expect `no` on `v0.1.1` and `yes` on
+`v0.1.2`; the two other arms grade both bundles IDENTICALLY, which is the blindness stated as a
+measurement:
 ```bash
 docker exec dogfood-ab-imgposter-fixed bash -lc \
-  'D=/work/ab-img-poster/node_modules/@civitai/blocks-react/dist;
-   grep -n "sendTypedRequest" $D/hooks/useCreatePostFromApp.js | head -2;
-   grep -n "no images to post" $D/internal/mockHost.js | head -2'
+  'md5sum /work/ab-img-poster/dist/assets/index-*.js'   # c603fa854eba4d5206b73e04c14a1f3c
+docker images --format '{{.Repository}}:{{.Tag}}' | grep 'ab-imgposter:v0.1.1-pre-post-fix'
 ```
 
-**Rank 12's premise** (expect ZERO workflow hits, and a non-zero control proving the grep works):
+**The owed fire drill** (files a REAL issue — close it after):
 ```bash
-git -C /home/zach/workspace/civit/cli grep -c CIVITAI_SCAFFOLD_TYPECHECK origin/main -- .github/  # expect no output
-git -C /home/zach/workspace/civit/cli grep -c CIVITAI_CHECK_SCAFFOLD_RUNTIME origin/main -- .github/  # CONTROL: non-zero
-```
-
-**The fixtures are intact** (expect `11`, and the two images):
-```bash
-docker ps -a --format '{{.Names}}' | grep -c '^dogfood-'
-docker images --format '{{.Repository}}:{{.Tag}}' | grep dogfood-fixture
+gh workflow run docs-links --repo civitai/cli -f drill=true
+gh run list --workflow docs-links --repo civitai/cli --limit 1
 ```
 
 **The account** — re-read immediately before any spend, never when planning:
@@ -774,7 +747,7 @@ docker images --format '{{.Repository}}:{{.Tag}}' | grep dogfood-fixture
 civitai app status --json   # ab-img-poster v0.1.2 approved/live; 100 rows AT the cap; pending 0
 civitai buzz               # Blue+Green+Yellow SUM to Total; 4,074,007 on 2026-09-27 — it drifts
 ```
-⚠ **The submissions listing is AT its 100-row cap with no cursor**, so a blockId absent from
+⚠ The submissions listing is **AT its 100-row cap with no cursor**, so a blockId absent from
 `app status --json` is not evidence it has no submission — look it up with
 `civitai app status <blockId>`.
 
