@@ -63,6 +63,35 @@ GRACE="${DOGFOOD_SHIP_GRACE_S:-300}"
 
 fatal() { printf 'ship.verdict: %s — nothing was measured (this is NOT a trial that failed to submit)\n' "$1" >&2; exit 2; }
 
+# ── app-controlled text must not be able to write the verdict ────────────────
+# 🔴 THE THING BEING GRADED WRITES THE TEXT THIS SCRIPT PRINTS, AND THIS SCRIPT'S
+# OUTPUT IS PARSED. `blockId` comes out of the trial's own `block.manifest.json`;
+# the manifest PATHS out of directories the trial itself created, which `find`
+# prints verbatim — so a directory name carrying a NEWLINE is a whole forged line,
+# and one carrying a SPACE is an extra field. A submission row's
+# `id`/`blockId`/`status`/`submittedAt` come back across a process boundary from
+# the platform. The rule — percent-hex, not `printf '%q'` — lives in `_esc.sh`,
+# the same file `oracle.sh` sources.
+#
+# 🔴 IT IS ONE FILE BECAUSE THIS SCRIPT IS THE EVIDENCE THAT TWO COPIES IS ONE
+# COPY TOO MANY. #728 closed exactly this class in `oracle.sh` and this file kept
+# the identical forgeable `printf 'manifests=%s\n%s\n'` for a month, one directory
+# away, because the rule lived in the other script's body.
+ESC="$HERE/_esc.sh"
+[ -f "$ESC" ] || fatal "missing $ESC — every app-controlled value on this script's output is escaped by it"
+# shellcheck source=_esc.sh
+. "$ESC"
+# 🔴 SOURCING MUST NOT BE ALLOWED TO FAIL QUIETLY, AND WITHOUT `set -e` IT WOULD.
+# An unreadable or half-written `_esc.sh` leaves `tok` undefined; `$(tok "$v")` then
+# writes `command not found` to stderr and substitutes the EMPTY STRING, so every
+# app-controlled field would silently render BLANK on a stream a consumer parses.
+# A blank field is a worse reading than the raw value, not a safer one.
+for _f in esc tok prose; do
+  declare -F "$_f" >/dev/null \
+    || fatal "$ESC did not define \`$_f\` — app-controlled values would render unescaped or blank"
+done
+unset _f
+
 # ── the instrument, before any verdict ───────────────────────────────────────
 command -v docker >/dev/null || fatal "no docker on PATH"
 command -v jq     >/dev/null || fatal "no jq on PATH (the submission listing is JSON)"
@@ -156,13 +185,39 @@ ROWS=$(printf '%s' "$STATUS_JSON" | jq -c '.submissions // empty' 2>/dev/null)
 [ -n "$ROWS" ] || fatal "\`civitai app status --json\` returned no \`submissions\` array this script can read: $(printf '%s' "$STATUS_JSON" | head -c 300)"
 ACCOUNT_N=$(printf '%s' "$ROWS" | jq -r 'length' 2>/dev/null)
 
-printf '=== ship verdict: %s ===\n' "$TRIAL"
+# `$TRIAL` is argv and is already constrained by the container check above — an id
+# carrying whitespace names no container, so it has gone through `fatal` — but it
+# goes through `tok` anyway rather than resting on that reasoning, which a later
+# edit to that check would silently invalidate.
+printf '=== ship verdict: %s ===\n' "$(tok "$TRIAL")"
 printf -- '--- run window\n'
+# `window_end_source` is this script's own vocabulary (two fixed strings) and is
+# the only unwrapped field here. The bounds are read off the transcript, the grace
+# out of the environment, and the brief name off the transcript again.
 printf 'window_start=%s window_end=%s window_end_source=%s grace_s=%s brief=%s\n' \
-  "$WIN_START" "$WIN_END" "$WIN_END_SRC" "$GRACE" "${T_BRIEF_NAME:-none}"
+  "$(tok "$WIN_START")" "$(tok "$WIN_END")" "$WIN_END_SRC" "$(tok "$GRACE")" \
+  "$(tok "${T_BRIEF_NAME:-none}")"
 printf -- '--- the trial'"'"'s own apps\n'
-printf 'manifests=%s\n%s\n' "$APP_COUNT" "$MANIFESTS"
-printf 'trial_slugs=%s\n' "$(printf '%s' "$TRIAL_SLUGS" | tr '\n' ',' | sed 's/,$//')"
+# The count, then one path per line. 🔴 THESE PATHS ARE DIRECTORY NAMES THE TRIAL
+# CREATED and `find` prints them verbatim, so this was the strongest forgery on
+# this script: a directory named `a<LF>ship_trial=… SHIP=yes …` makes `find` emit a
+# complete summary-shaped line, and `shipField` returns off the FIRST
+# `ship_trial=`-prefixed line it sees — which is this one, printed long before the
+# real verdict. A space in a path is the milder version, an extra field.
+printf 'manifests=%s\n' "$APP_COUNT"
+while IFS= read -r m; do
+  [ -n "$m" ] || continue
+  printf '%s\n' "$(tok "$m")"
+done <<<"$MANIFESTS"
+# `blockId` is the app's own choice of name. It is folded to lower case upstream,
+# which happens to deny it the literal token `SHIP=` — but every other field on
+# the summary line below is spelled in lower case (`matched=`, `sub_status=`,
+# `submitted_at=`, `window=`, `grace_s=`), `trial_slugs=` is printed before all of
+# them, and those are the fields a reader checks the verdict AGAINST. Do not read
+# the case fold as the guard: it is an accident of a normalisation that exists for
+# slug matching, and `sub_block=` carries the same name back from the server with
+# its case intact.
+printf 'trial_slugs=%s\n' "$(tok "$(printf '%s' "$TRIAL_SLUGS" | tr '\n' ',' | sed 's/,$//')")"
 printf -- '--- the account\n'
 # 🔴 THE COUNT IS ON THE CELL SO A ZERO CANNOT PASS AS EVIDENCE. An empty
 # listing is what a probe wired to nothing returns, and it is also what a fresh
@@ -170,7 +225,7 @@ printf -- '--- the account\n'
 # is the POSITIVE CONTROL that the read reached a real account at all; a 0 here
 # makes every `no` below suspect rather than conclusive. It is reported, not
 # refused on, because a genuinely empty account is a legal state.
-printf 'account_submissions=%s\n' "$ACCOUNT_N"
+printf 'account_submissions=%s\n' "$(tok "$ACCOUNT_N")"
 
 # ── grade ────────────────────────────────────────────────────────────────────
 SHIP=no
@@ -238,9 +293,26 @@ else
 fi
 
 printf -- '--- ship verdict\n'
-printf 'ship_reason=%s\n' "${REASON:-none}"
+# `prose`, not `tok`: the reason is a SENTENCE, and it quotes a submission's
+# `blockId`, `status` and `submittedAt` — spaces are its words, so only the bytes
+# that could END THE LINE are escaped. A line of it that merely LOOKS like a field
+# list cannot win a field read, because a consumer resolves the summary by the
+# `ship_trial=` prefix; a newline inside it would give that consumer a second
+# prefixed line, which is what this closes.
+printf 'ship_reason=%s\n' "$(prose "${REASON:-none}")"
+# 🔴 EVERY FIELD ON THIS LINE GOES THROUGH `tok` EXCEPT `SHIP=`, WHICH IS THIS
+# SCRIPT'S OWN VERDICT. Everything else is the manifest's, the trial's
+# filesystem's, the environment's, or read back from the platform's JSON, and any
+# one of them carrying a space starts a field that a first-match reader prefers to
+# the real one — `sub_block=` is the sharpest, because it is the app's own chosen
+# name echoed back with its CASE INTACT and it is printed ahead of `SHIP=`.
+# `window=` and `grace_s=` are integers this script computed, and `tok` leaves an
+# integer byte-identical, so they go through it too rather than inviting a
+# judgement about which fields are exempt. `TestDogfoodGradersShareOneEscaper`
+# pins that ledger: a new argument here that is not `tok`-wrapped fails it.
 printf 'ship_trial=%s brief=%s trial_slugs=%s account_submissions=%s matched=%s sub_id=%s sub_block=%s sub_status=%s submitted_at=%s window=%s-%s grace_s=%s SHIP=%s\n' \
-  "$TRIAL" "${T_BRIEF_NAME:-none}" \
-  "$(printf '%s' "$TRIAL_SLUGS" | tr '\n' ',' | sed 's/,$//')" \
-  "$ACCOUNT_N" "$MINE_N" "$M_ID" "$M_BLOCK" "$M_STATUS" "$M_AT" "$LO" "$HI" "$GRACE" "$SHIP"
+  "$(tok "$TRIAL")" "$(tok "${T_BRIEF_NAME:-none}")" \
+  "$(tok "$(printf '%s' "$TRIAL_SLUGS" | tr '\n' ',' | sed 's/,$//')")" \
+  "$(tok "$ACCOUNT_N")" "$(tok "$MINE_N")" "$(tok "$M_ID")" "$(tok "$M_BLOCK")" \
+  "$(tok "$M_STATUS")" "$(tok "$M_AT")" "$(tok "$LO")" "$(tok "$HI")" "$(tok "$GRACE")" "$SHIP"
 exit 0
