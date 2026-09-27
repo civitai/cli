@@ -382,6 +382,62 @@ func TestDogfoodDriverPassesMaxTokensThrough(t *testing.T) {
 	}
 }
 
+// ── the step cap ─────────────────────────────────────────────────────────────
+
+// 🔴 EVERY DRIVER-LAUNCHED TRIAL WAS PINNED TO runner.py's DEFAULT OF 40 STEPS,
+// AND A BUILD-AND-SHIP BRIEF DOES NOT FIT IN 40. driver.sh forwarded
+// --agent-env, --brief, --brief-name, --credential-file, --app-prefix,
+// --max-generations, --max-submissions and --max-tokens, and not --max-steps.
+// Measured on `at1-mimo-noderoot-claudeid` (brief `t1`, xiaomi/mimo-v2.5):
+// `stop: max-steps` at step 40 with `generations: 0`, `submissions: 0`, its last
+// three tool calls `npx tsc --noEmit` / `npm run build` /
+// `civitai app validate` — cut off immediately before the submit-and-media phase
+// the brief is graded on, so the cell was ungradeable for a harness reason
+// rather than a model or product one. A build-only `celsius` cell took 65 steps,
+// so 40 is below the floor for any brief that builds AND ships.
+//
+// Asserted on the ARGV a stubbed cell actually launches, not on driver.sh's
+// source text like the ceiling ledger above: a containment check on the file
+// would be satisfied by the comment block that documents the knob, which this
+// same change adds.
+func TestDogfoodDriverPassesMaxStepsThrough(t *testing.T) {
+	t.Run("set: the cap reaches the runner", func(t *testing.T) {
+		argv, code, out := runStubbedDriver(t, append([]string{
+			"DOGFOOD_MAX_STEPS=80",
+		}, oneCellEnv...))
+		if code != 0 {
+			t.Fatalf("driver.sh exited %d, want 0\n%s", code, out)
+		}
+		var saw bool
+		for i, a := range argv {
+			if a == "--max-steps" {
+				if i+1 >= len(argv) || argv[i+1] != "80" {
+					t.Fatalf("--max-steps value is not 80: %v", argv)
+				}
+				saw = true
+			}
+		}
+		if !saw {
+			t.Fatalf("DOGFOOD_MAX_STEPS did not reach the runner, so every driver-launched "+
+				"trial is pinned to runner.py's default of 40 steps: %v", argv)
+		}
+	})
+	// ⚠ INVARIANT GUARD, not regression coverage: it passes on the pre-change
+	// driver too, which forwarded no --max-steps at all. It is here because a
+	// pass-through must not re-pin the default — an unset knob has to leave
+	// runner.py's own 40 in force rather than forward an empty value, which
+	// argparse would reject as `invalid int value: ''` on every cell.
+	t.Run("unset: runner.py's own default stands", func(t *testing.T) {
+		argv, code, out := runStubbedDriver(t, oneCellEnv)
+		if code != 0 {
+			t.Fatalf("driver.sh exited %d, want 0\n%s", code, out)
+		}
+		if strings.Contains(strings.Join(argv, " "), "--max-steps") {
+			t.Fatalf("the default matrix passed --max-steps: %v", argv)
+		}
+	})
+}
+
 // ── the run summary ──────────────────────────────────────────────────────────
 
 // 🔴 THE ESCALATION WAS VISIBLE IN THE TRANSCRIPT AND INVISIBLE IN THE `.out`.
