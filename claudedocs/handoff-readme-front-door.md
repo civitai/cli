@@ -55,34 +55,45 @@ nothing). This one AUTHORS the coverage first, then cuts. The operator retired t
 
 ## State now
 
-🔴 **THE CUT IS MERGED. `README.md` is 102,933 B on `civitai/cli` `main` — down 62.4% from 273,928.** Every figure is `git cat-file -s`.
+🔴 **THE ARC IS CLOSED AND ITS RECORD IS MERGED.** `README.md` is 102,933 B on `civitai/cli`
+`main` — **-62.4%** from 273,928. Every figure is `git cat-file -s`.
 
 | repo | ref | this arc's PRs |
 |---|---|---|
-| `civitai/cli` | `main` = **`9e9142e`** | **#725 MERGED** `7b3be7a` · **#726 MERGED** `e9c9d78` · **#727 MERGED** `1892d8e` · **#723 OPEN** (this doc) |
+| `civitai/cli` | `main` = **`e7012dd`** | **#725** `7b3be7a` · **#726** `e9c9d78` · **#727** `1892d8e` · **#723** `e7012dd` (this doc) — all MERGED |
 | `civitai-developer-docs` | `main` = **`373d815`** | **#123 MERGED** `70e63b8` |
 
-⚠ `main` moved past the cut: `#718`, `#728` and `#729` (dogfood, other sessions) landed after `1892d8e`. `docs` main moved past `#123` via `#124` and beyond. **README is unchanged at 102,933 B through all of them.**
+⚠ `main` moved past the cut (`#718`, `#728`, `#729`, `#730` — dogfood + another session's
+handoff); README is unchanged at 102,933 B through all of them. 🔴 **The delta from the tree
+clause 3 was measured on (`9e9142e`) to `main` is three markdown files and ZERO Go, so
+clause 3's verdict transfers without a re-run.**
 
 - `README.md` 102,933 B · `AGENTS.md` 29,670 B (ceiling 30,500, **830 B headroom**; `agentsMaxBytesCeiling = 30_600` leaves only 100 B of future raise)
 - `site/guide/cli-troubleshooting.md` 21,334 B + `site/guide/cli-output.md` 13,270 B, live and published
-- **Claim `readme-front-door-1` taken 2026-09-27** for the Exit-codes commissioning, then **RELEASED** when the operator exempted it (below). **`readme-front-door` still HELD** — release it when the arc closes.
-- **No `clawgate-task:`** — `resolve` → rc=**5**, 0 tasks; `field <doc>` → rc=**1** (none present), consistent. A wrong session id also returns an empty array, so that zero is **not** a clean bill of health.
+- 🔴 **BOTH CLAIMS RELEASED 2026-09-27.** `claim-work --list | grep readme-front-door` → **0**. The arc owns no lock; every ranked item is free to take.
+- **No `clawgate-task:`** — `resolve` → rc=**5**, 0 tasks; `field <doc>` → rc=**1**, consistent, re-checked at close. A wrong session id also returns an empty array, so that zero is **not** a clean bill of health.
+- ⚠ **This doc is 594 B over its 65,536 B ceiling and the ratchet now refuses any growth.** The next session that needs to add here must first MOVE closed material to `handoff-readme-front-door-ARCHIVE.md` — eviction, never deletion. Most Gotchas below are now history and are the obvious candidates.
 
-### Closing-condition check — 🔴 ALL FOUR CLAUSES MET at `9e9142e`. THE ARC IS CLOSED.
+### 🔴 THE MERGE WAS VERIFIED BY CONTENT — A SQUASH DEFEATS ANCESTRY
+
+`#723` squash-merged, so `git merge-base --is-ancestor` is false and stays false forever.
+`gh pr view 723` → MERGED, mergeCommit `e7012dd`; and the doc's blob OID on `origin/main`
+equals its OID at `1a2241a` (`402583d78…`). ⚠ A `merge --ff-only` reporting *2 files* against
+a `diff` listing **3** was not a missing file — the base clone fast-forwarded **twice** in one
+call (`9e9142e`→`e14a643`→`e7012dd`). `git reflog` is what says so; read it before diagnosing.
+
+### Closing-condition check — 🔴 ALL FOUR CLAUSES MET. THE ARC IS CLOSED.
 
 | clause | verdict |
 |---|---|
 | 1. `docs#86` + `docs#87` closed | ✅ **MET** |
-| 2. every README section whose substance is published elsewhere is a pointer | ✅ **MET.** The two with destinations are pointers. `## Exit codes` (16,527 B) is **EXEMPT by operator decision 2026-09-27**, and the exemption is clause 2's own wording rather than a waiver of it: the clause binds only a section whose substance *is published elsewhere*, and nothing publishes this one. Measured — Detail prose in the docs repo: **0** occurrences; `public/appblocks/cli.json` exit-code data: **none**. The block below records why generating it was not merely undone but **unbuildable from the named source** |
-| 3. clean checkout of `origin/main`: full suite green + `make lint` 0 issues | ✅ **MET — measured 2026-09-27 at `9e9142e`** in a detached worktree. Suite: **21 `ok`, 0 `FAIL`, 0 `--- FAIL`, empty stderr**. Lint: **`0 issues.`** Both instruments validated in both directions — see the verdict block below |
-| 4. `generate --help` ≤ 25,000 | ✅ **MET — 16,668** (unchanged; the cut moved nothing into `Long`). Negative control: `zzbogus --help` = 4,636 = root help, exit 0 |
+| 2. every README section whose substance is published elsewhere is a pointer | ✅ **MET.** The two with destinations are pointers. `## Exit codes` (16,527 B) is **EXEMPT (operator, 2026-09-27)**, and the exemption is clause 2's own wording rather than a waiver: the clause binds only a section whose substance *is published elsewhere*, and nothing publishes this one. Measured — Detail prose in the docs repo **0**; `public/appblocks/cli.json` exit-code data **none**. The Gotchas block records why generating it was **unbuildable from the named source** |
+| 3. clean checkout of `origin/main`: full suite green + `make lint` 0 issues | ✅ **MET — 2026-09-27 at `9e9142e`**, detached worktree. **21 `ok`, 0 `FAIL`, 0 `--- FAIL`, empty stderr**; lint **`0 issues.`** Both instruments controlled in both directions, and the golangci-lint version gap later closed by CI's own `lint` at the pinned `v2.12.2` — see below |
+| 4. `generate --help` ≤ 25,000 | ✅ **MET — 16,668** (the cut moved nothing into `Long`). Negative control: `zzbogus --help` = 4,636 = root help, exit 0 |
 
-**So: ADDRESSED.** Nothing in the ranked list below is a gate any more — every remaining item is
-elective. ⚠ **`readme-front-door` is deliberately still HELD until `cli#723` MERGES**, not
-until the clauses pass: this doc is the arc's canonical copy and it is still only a PR, so
-releasing the claim first would leave the closing record unmerged and unowned — the exact
-stranded-docs shape. Release it the moment #723 lands.
+**So: ADDRESSED — the arc is CLOSED and this doc is ARCHIVAL.** Nothing in the ranked list is a
+gate; those three items are elective and were never part of this closing condition. Read this
+doc for its lessons, not as a live work queue, and re-verify before acting.
 
 ### 🔴 CLAUSE 3'S VERDICT, AND THE CONTROLS THAT MAKE IT MEAN ANYTHING
 
