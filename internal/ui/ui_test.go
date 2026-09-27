@@ -75,6 +75,28 @@ func TestHelpersColoredWhenEnabled(t *testing.T) {
 	}
 }
 
+// TestResolveEnabledPrecedence pins resolveMode's precedence through
+// resolveEnabled.
+//
+// 🔴 TWO SCOPE LIMITS THIS TABLE HAS, NEITHER OF WHICH IT USED TO STATE, so read
+// them before adding a row here instead of where the behaviour lives:
+//
+//  1. `resolveEnabled` HAS NO NON-TEST CALLER. Production resolves colour through
+//     EnabledFor (ui.go), which reads the mode Configure stored. Measured — the
+//     only references to resolveEnabled in the module are this file's. So a row
+//     added here exercises a function the CLI never calls, and none of the rows
+//     detects a defect in EnabledFor's own three arms. The per-stream behaviour is
+//     covered by TestPerStreamAuto / …NoColorBothPlain / …ForceColorBothColored,
+//     which drive EnabledFor directly.
+//  2. THE `TERM dumb off` ROW IS VACUOUS. Its writer is a bytes.Buffer, so the
+//     AUTO branch answers "off" for it anyway and the row cannot tell modeOff from
+//     modeAuto — deleting the whole TERM tier from resolveMode leaves it green.
+//     Measured. TestTermDumbOffIsNotVacuous below is where that tier is actually
+//     asserted; the row is kept only because it documents the intended answer.
+//
+// Three rows combining force-on with TERM=dumb were added here and then deleted:
+// they were strictly weaker than TestTermDumbOffIsNotVacuous, which kills the same
+// reorder mutant AND the tier-deletion mutant this table cannot see.
 func TestResolveEnabledPrecedence(t *testing.T) {
 	// A non-TTY writer so "auto" resolves to false unless forced.
 	var buf bytes.Buffer
@@ -114,6 +136,68 @@ func TestResolveEnabledPrecedence(t *testing.T) {
 				t.Errorf("resolveEnabled = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestTermDumbOffIsNotVacuous is the control the table above cannot carry, and
+// the reason it needs one.
+//
+// 🔴 THE TABLE'S `TERM dumb off` ROW ASSERTS NOTHING. Its writer is a
+// bytes.Buffer, which is not a TTY, so resolveMode's AUTO branch answers "off"
+// for that writer anyway: delete the `TERM == "dumb"` block from resolveMode
+// entirely and the row stays green. Measured. A row that cannot distinguish
+// modeOff from modeAuto is not evidence about the tier the README publishes as
+// rung 3 — it is evidence about the writer.
+//
+// So this asserts the tier where it is observable, two ways:
+//
+//  1. STRUCTURALLY, on resolveMode itself — modeOff vs modeAuto, the distinction a
+//     non-TTY writer erases downstream.
+//  2. BEHAVIOURALLY, through Configure + EnabledFor — the path PRODUCTION takes
+//     (root.go calls ui.Configure; every styled write asks EnabledFor). It
+//     deliberately does NOT use resolveEnabled, which has no non-test caller in the
+//     module: a behavioural claim routed through a function the CLI never calls is
+//     a claim about the test suite. With a writer that IS a terminal the two answers
+//     differ (dumb → off, xterm → on), which is the user-visible shape: a real
+//     terminal reporting itself dumb.
+func TestTermDumbOffIsNotVacuous(t *testing.T) {
+	var tty ttyBuf
+	withFakeTTY(t, &tty)
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("CLICOLOR_FORCE", "")
+	t.Cleanup(func() { Configure(Options{Writer: io.Discard}) })
+
+	// CONTROL: on this writer AUTO really does resolve to ON, so "off" below is
+	// attributable to TERM and to nothing else.
+	t.Setenv("TERM", "xterm-256color")
+	if m := resolveMode(Options{Writer: &tty}); m != modeAuto {
+		t.Fatalf("CONTROL failure, not a finding: resolveMode with TERM=xterm-256color = %v, want modeAuto", m)
+	}
+	Configure(Options{Writer: &tty})
+	if !EnabledFor(&tty) {
+		t.Fatal("CONTROL failure, not a finding: colour is off for a TTY writer in auto mode, so the " +
+			"TERM=dumb assertion below could not tell TERM apart from the writer")
+	}
+
+	t.Setenv("TERM", "dumb")
+	if m := resolveMode(Options{Writer: &tty}); m != modeOff {
+		t.Errorf("resolveMode with TERM=dumb = %v, want modeOff. The README publishes TERM=dumb as rung 3 "+
+			"of the colour precedence, ABOVE auto — a dumb terminal cannot render the styling.", m)
+	}
+	Configure(Options{Writer: &tty})
+	if EnabledFor(&tty) {
+		t.Error("colour is ON for a TTY writer with TERM=dumb, through the production path " +
+			"(Configure + EnabledFor). Rung 3 of the published precedence forces it off; only a " +
+			"force-ON at rung 2 may override that.")
+	}
+
+	// And the ordering, at the writer where it is visible: force-on still wins.
+	t.Setenv("CLICOLOR_FORCE", "1")
+	Configure(Options{Writer: &tty})
+	if !EnabledFor(&tty) {
+		t.Error("CLICOLOR_FORCE=1 did not force colour on under TERM=dumb. The README states force-on sits " +
+			"ABOVE TERM=dumb, which is true only while resolveMode's force-ON branch returns before its " +
+			"TERM test — do not reorder those two blocks.")
 	}
 }
 

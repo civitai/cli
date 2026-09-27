@@ -152,13 +152,16 @@ var saferuneRefs = map[string]saferuneRefOrigin{
 		inFunc:   "safeTerm",
 		pinnedBy: "TestSafeTermIsNeverAppliedToUserTypedInput",
 		why: "safeTerm's own parameter. This site cannot be classified server/user here and MUST " +
-			"NOT BE: internal/cmd routes two deliberately non-server values through safeTerm — " +
-			"`--input` file content and download's mixed-origin target path — both enumerated in " +
-			"saferune's package doc as documented exceptions. The origin question is answered at " +
-			"safeTerm's own call sites by the named guard, which is structural over every one of " +
-			"them. No count of those call sites is quoted here: nothing asserts on one, so it " +
-			"drifts — an earlier draft quoted a figure already wrong, and its replacement " +
-			"disclaimed counts in a sentence containing two",
+			"NOT BE: internal/cmd deliberately routes non-server values through safeTerm — " +
+			"`--input` file content and download's mixed-origin target path are DOCUMENTED in " +
+			"saferune's package doc, and `--root` and `--for-base` are MEASURED beyond them by " +
+			"internal/cmd's TestDownloadFiltersRootAndForBase, so that set is not closed and no " +
+			"size for it is stated here. The origin question is answered at safeTerm's own call " +
+			"sites by the named guard, which is structural over every one of them. No count of " +
+			"those call sites is quoted here either: nothing asserts on one, so it drifts — an " +
+			"earlier draft quoted a figure already wrong, its replacement disclaimed counts in a " +
+			"sentence containing two, and the draft after THAT kept the disclaimer while calling " +
+			"the non-server set two when four values were already measured",
 	},
 	"internal/genapi:HasVisibleContent": {
 		kind:     originDelegated,

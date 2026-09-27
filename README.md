@@ -1337,10 +1337,18 @@ to override that, the precedence is fixed, highest first:
 
 1. `--no-color` / `NO_COLOR` / `CIVITAI_NO_COLOR` → **off**
 2. `--color` / `CLICOLOR_FORCE` / `CIVITAI_COLOR` → **on**
-3. otherwise: on if stdout is a TTY, off if it is not
+3. `TERM=dumb` → **off**
+4. otherwise: **auto** — on if the stream being written to is a TTY, off if it
+   is not
 
 Off always beats on, so a `NO_COLOR` in the environment cannot be re-enabled by
-a `--color` further down a pipeline.
+a `--color` further down a pipeline. `TERM=dumb` sits *below* force-on, so
+`CLICOLOR_FORCE=1` in a `TERM=dumb` shell still styles.
+
+**Auto is resolved per writer, not once per process.** Tier 4 asks whether
+**that stream** is a terminal, so one run can write plain text to a piped stdout
+and styled text to a TTY stderr at the same time. The force tiers are absolute
+and apply to both.
 
 🔴 **The `CIVITAI_*` pair is NOT interchangeable with the standard pair — it
 parses its value, and silently ignores anything it cannot parse.** `NO_COLOR`
@@ -1371,9 +1379,23 @@ it reaches your terminal, and this is what that gate promises:
 - **Terminal escapes are removed.** Cursor moves, line clears, OSC sequences and
   the invisible / direction-reversing characters are stripped from the
   server-supplied strings the human renderers print, so a hostile value cannot
-  overwrite a line the CLI already printed or reorder what you read. (What the CLI
-  prints from what **you** typed — a prompt, a path, a flag value — is echoed
-  byte-for-byte and is deliberately *not* rewritten.)
+  overwrite a line the CLI already printed or reorder what you read.
+
+  What the CLI prints from what **you** typed is a narrower promise, and it
+  splits by **value**, not by screen. Your prompt, your negative prompt and
+  `--ecosystem` never go through that gate. **The paths you name are different:**
+  they are echoed exactly on the **confirmation screen before a spend**, which
+  has to show what will really be sent, while several of the lines that report a
+  path elsewhere do put it through the same gate as server text. Documented
+  cases: a value read out of an `--input` **file** is filtered like server text,
+  because a graph file can be downloaded or generated and so is not really "what
+  you typed"; and `civitai download` filters the target path it reports **even
+  when you set it with `--out`**, because the same variable holds a
+  **server**-chosen file name in its other branches. **No surface enumerates the
+  set, so do not read those two as its boundary** — `civitai download` also
+  filters the values you give `--root` and `--for-base` in some of the lines that
+  report them, while other lines — an error that names a directory it could not
+  create, for instance — print what you typed exactly.
 - **A table cell is one line, and one column.** Every **server-supplied** value
   that reaches a cell of a rendered table — `models search`, `images search`, `app status`,
   `workflows list`, the pre-spend cost table, and the rest — has any newline or
