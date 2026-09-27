@@ -456,22 +456,17 @@ conclusions survive in **Added 2026-09-21 (close) — what this arc actually tau
 
 ### Added 2026-09-25 (ship) — what shipping taught that building did not
 
-- 🔴 **A BRIEF CAN SHIP A BYPASS, AND MINE DID.** I specified the slug-flag allowlist as
-  `{--slug}` from a literal grep. `--from` takes *a published app slug*; `--name` is
-  slugified into the blockId; `--dir` selects the manifest. Implemented as briefed,
-  `--from=some-other-app` would have been an unguarded path to a foreign published app.
-  **When briefing a change to a security check, require the implementer to DERIVE the set
-  from source and guard it — never hand them a set you grepped.** The seam guard is what
-  made this survivable; the fix alone would not have.
+⚠ **Four bullets were DEDUPED out of this block on 2026-09-27** — they were near-verbatim
+repeats of bullets in the block immediately above (*a brief can ship a bypass*; *a `-run`
+filter that matches nothing prints `ok`* + `tail -20`; *a subagent stopped without
+reporting*; *rebase before merging*). Nothing was lost: read them there.
+
 - 🔴 **A CAP'S FAILURE DIRECTION IS THE WHOLE DESIGN.** The intuitive submission-cap fix
   fails OPEN on a live publishing path. Ask *"if the thing I depend on changes, do I
   over-refuse or under-refuse?"* before choosing the mechanism.
 - 🔴 **`go test ./...` GREEN IS NOT `gofmt` GREEN.** `#708` was reported locally green and CI
   reddened on one unformatted file, taking `build-test` **and** `lint` with it. Two
   different claims, reported as though one covered the other.
-- 🔴 **A `-run` FILTER THAT MATCHES NOTHING PRINTS `ok`,** and `tail -20` on exactly 20 lines
-  silently dropped the root package — the real-browser suite — from a merged-tree run I was
-  about to call green. **Count what ran; name the package.**
 - 🔴 **THE FIX WORKED THROUGH A HALF NOBODY MEASURED.** `#685`'s headline was a local 36-hook
   index; **the index was never read in either run**. Its *docs-links promotion* is what drove
   the agent to the hosted reference (1 → 5 HTTP requests). **Ask which half of a two-part
@@ -484,11 +479,6 @@ conclusions survive in **Added 2026-09-21 (close) — what this arc actually tau
 - ⚠ **RE-READ A BASELINE IMMEDIATELY BEFORE SPENDING, NOT WHEN YOU PLANNED THE RUN.** Doing
   so caught `oauth-probe` appearing mid-setup and killed a shortcut ("0 pending ⇒ any pending
   row is ours") I would otherwise have graded against.
-- ⚠ **A SUBAGENT STOPPED WITHOUT REPORTING TWICE, AND THE WORK WAS FINE BOTH TIMES.** Ask for
-  the report; do not re-derive the work.
-- ⚠ **REBASE BEFORE MERGING HERE, ALWAYS.** Four PRs this session were green on a base that
-  had moved. Zero file overlap is not safety; the merged-tree suite is.
-
 ### Added 2026-09-25 (feedback) — the instrument was too LENIENT, for the first time
 
 - 🔴 **EVERY PRIOR INSTRUMENT FINDING WAS THE ORACLE BEING TOO HARSH. THIS ONE WAS THE
