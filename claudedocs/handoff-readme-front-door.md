@@ -669,52 +669,16 @@ The requirement "the row classifications must be guarded" has **no maker** — i
 
 The gap is a **citation problem, not a coverage problem**: three files cited the rows as verified. All three are fixed. The ~10% added back is the right pattern — #725's `TestDownloadFiltersRootAndForBase` converts one row's *past* measurement into a standing one. **Do not add a classification guard.**
 
-### 🔴 A GUARD CAN BE BREAKABLE WITHOUT BEING REACHABLE, AND A MUTATION MATRIX CANNOT SEE THE DIFFERENCE
-
-The session's most transferable finding, measured twice. Guard 6 leg 3 (above) was mutated, went red, and was recorded as a clean kill — but the mutant edited *the constant the guard read*, not the thing the guard claimed to watch, and every trigger its comment named dies at an earlier `t.Fatalf` in the same function. Independently, #727's own round-1 matrix found **M6 and M7 dying to their CONTROL rather than their assertion**, and had to isolate M6b/M7b to prove the real arms reachable.
-
-🔴 **So: after watching a mutant die, ask WHICH assertion killed it and whether a REAL change could reach that assertion at all.** "I broke it and a test failed" is necessary and not sufficient.
-
-### 🔴 I RELAYED SEVEN NUMBERS AND CITATIONS I HAD NOT DERIVED, AND EVERY AGENT THAT CAUGHT ONE WAS RIGHT
-
-Not a list of trivia — a single behaviour with one fix. In order: `safeterm_userinput_test.go:68,73` (real rows 107/108/112); "~90 bytes" for an AGENTS.md edit (+138); "12 recipe pages carry `## Troubleshooting`" (49, and my own earlier grep had shown ~50); "28 of 60 rows / 32 of 64 links" (32 of 60 / 33 of 69); `download.go:336` for `reportBaseModel` (:320/:399, inherited from the ledger's own stale text); "prints the raw `--root` twice" (once — the wrapped `%w` names the *blocker* path, so the doubling is fixture-dependent); and 19 distinct external URLs in Troubleshooting (25).
-
-🔴 **The fix is not "check numbers". It is: a citation in a subagent's report, an audit finding, or a code comment is a CLAIM, and relaying it makes it MINE.** Two of the seven I had already measured correctly myself and then overwrote with someone else's figure.
-
-### 🔴 THE BIGGEST SINGLE ERROR: I CALLED A README CUT A BEHAVIOUR CHANGE IN THE SHIPPED BINARY, TWICE
-
-I read `internal/cmd/exitcodes_doc.go:176`'s `[Troubleshooting](#troubleshooting)` as reaching `civitai --help`, and briefed two agents and the operator that cutting the section would dangle an anchor **in the CLI itself**. It is a `Detail` entry; `TestBothFieldsReachTheirSurfaces` asserts `Detail` must **not** reach `--help`. Measured on a built binary: **0** mentions, positive control `Full ledger` = 1. The cut is README-only.
-
-🔴 **A field's CONTENT does not tell you its SURFACE.** I never asked which struct field the line sat in.
-
 ### 🔴 AND MY CRITICISM OF #727's DESIGN WAS BACKWARDS
 
 I briefed round 0 that keeping the two `##` headings was "chosen to avoid editing two guards" and asked whether it left a shape nobody would design on purpose. Both anchors are live inbound targets from prose that **survives**: the *generated* Exit-codes `Detail` (`README.md:1455`), the *verbatim-pinned* `configPrecedenceClaim` (`:1380`), and TOC lines `:108`/`:111`. Deleting them creates **four** dead in-README anchors, two inside generated or frozen text. Measured: 0 dead `](#…)` anchors at head. **Keeping them is the only correct design — authored by the code, not chosen for convenience.**
 
-### 🔴 AN INSTRUMENT THAT OVER-FIRES IS AS USELESS AS ONE THAT UNDER-FIRES
+### ⤴ EVICTED to `handoff-readme-front-door-ARCHIVE.md` (size ratchet — two rounds, 21 blocks)
 
-Sweeping for the surviving closed-set claim, my first pattern (`a cardinal near "exception"`) returned ~60 hits across the tree — every *correct* sentence that says "two are documented, and the set is not closed" matched, burying the signal. The defect is an **unqualified** closed-set assertion, so the pattern needs the *absence* of a not-closed qualifier. Narrowed, with base as the positive control: **4 assertions at base, 0 at head.** The one head hit was a false positive of my own pattern.
+Moved, **not deleted** — read the archive before concluding any of it is untried.
 
-🔴 **Validate an instrument in BOTH directions. A pattern with no negative case is not narrow enough to quote.**
-
-### ⚠ THREE MORE MEASUREMENT TRAPS, EACH COSTING A WRONG READING
-
-- **The `grep` wrapper choked on an ESC regex** (`ugrep: error at position 5 … mismatched [`) and a loop over four surfaces printed `plain` four times — a broken instrument reading as a measurement. Replaced with `tr -dc '\033' | wc -c`, validated at 2 on a string containing ESC and 0 on one that does not.
-- **A `custom-block` grep found ZERO** and nearly had me report a rendering break; the class order is `warning custom-block`, not the reverse. Positive control on a page known to carry containers: 5.
-- **A background runner reported `exit code 0` for a `make ci` control** because a trailing `tee` swallowed the status. Real rc 2, found by reading content. **Count the runner's own result lines; never read a wrapper's exit code.**
-
-### ⚠ TWO GUARDS NOBODY'S INVENTORY FOUND, AND HOW EACH WAS CAUGHT
-
-- **`TestREADMEDoesNotAssertTheUnqualifiedEchoPromise`** — a **whole-document ban that survives the cut, whose CONTROL read the section being deleted**. The assertion looks unaffected, so a filename sweep finds the file and only *reading* it finds the hazard. The shape recurs: two other guards had controls on the section while their assertions did not.
-- **`TestSubmitCeilingValueAndBoundary`** (`internal/appapi/submit_ceiling_value_test.go:77`) — a surface ledger requiring the README to quote `10485760`, which lived **only** in a deleted row. 🔴 **No `internal/cmd` run could ever see it** — caught by full `make ci`. My "run the whole `internal/cmd` package" instruction was structurally insufficient.
-
-### ⚠ A SUBAGENT'S SELF-CORRECTION REMAINS THE BEST SIGNAL IN THE SESSION
-
-Five instances, each volunteered rather than caught: the byte-identity checker that **passed a deleted row** until a count assertion was added; the "a Go map key cannot be ambiguous" comment written about a **slice**; a 47/22 uniqueness count wrong because `unicode_escape` mangled five em-dashed strings (corrected to 49/20); the round-0 deletion of the `--for-base` leg, diagnosed by its own author as *"'no unique kill ⇒ delete' is unsound when the sole co-killer's own remedy removes the coverage"*; and the disclosure that `schema-drift` flipped green for an external reason rather than letting it read as a fix.
-
-### ⤴ EVICTED to `handoff-readme-front-door-ARCHIVE.md` (size ratchet, 17648 B, 13 blocks)
-
-Moved, **not deleted** — the arc's byte-target history (three thresholds, all retired), four investigations that have since CLOSED (the org Actions policy, where page-shaped prose could land, `cli#727`'s ladder), two superseded generations of the relayed-citation lesson, two superseded operator-decision tables, and two duplicate blocks the append bucket accumulated. Read the archive before concluding any of it is untried.
+- **Round 1 (17,648 B, 13 blocks)** — the arc's byte-target history (three thresholds, all retired), four investigations that have since CLOSED (the org Actions policy, where page-shaped prose could land, `cli#727`'s ladder), two superseded generations of the relayed-citation lesson, two superseded operator-decision tables, and two duplicate blocks the append bucket accumulated.
+- **Round 2 (6,300 B, 8 blocks, 2026-09-27 at arc close)** — the EARLIER copy of each block the bucket had accumulated in DUPLICATE, every one superseded by a fuller later generation that stays here: *guard breakable-but-unreachable*, *relayed citations* (seven→nine), *biggest single error* (→ *a field's content does not tell you its surface*), *instrument that over-fires* plus *three more measurement traps* (absorbed into it), *two guards nobody's inventory found*, *subagent self-correction*, and the condensed second `/the-algorithm` block. 🔴 **Two pairs had BYTE-IDENTICAL headings**, so they were selected by OCCURRENCE INDEX, not by text — a `count=1` text replace would have hit the wrong copy. Preservation was checked mechanically: **8/8 present in the archive**, with a negative control.
 
 ### 🔴 A GUARD CAN BE BREAKABLE WITHOUT BEING REACHABLE, AND A MUTATION MATRIX CANNOT SEE THE DIFFERENCE
 
@@ -760,12 +724,6 @@ no -run (make ci)           FAIL   7 FAIL
 ```
 
 Both new ones match real guards in that file, so they look well-aimed and still return a serene `ok`. 🔴 **And `make ci` is the only run that sees `internal/appapi`'s README ledger** (`TestSubmitCeilingValueAndBoundary`, which required the README to quote `10485760` — a literal living only in a deleted row). "Run the whole `internal/cmd` package" is structurally insufficient.
-
-### 🔴 `/the-algorithm` ON THE SAFETERM LEDGER: DO NOT BUILD THE GUARD
-
-The requirement "the row classifications must be guarded" has **no maker** — an audit observation the coordinator amplified by writing "recorded as MEASURED in the ledger" into a brief. The ledger's own header refutes it: *"The ledger does not decide whether sanitising is right; it makes the decision impossible to skip."*
-
-**Decisive:** a guard verifying a classification would have to decide each argument's ORIGIN mechanically — and the ledger exists *because* that is not decidable. **Such a guard would make the ledger unnecessary.** The gap was a **citation problem**: three files cited the rows as verified; all three fixed. The ~10% added back is `#725`'s `TestDownloadFiltersRootAndForBase`, which converts one row's *past* measurement into a standing one. **Do not add a classification guard.**
 
 ### ⚠ TWO GUARDS NO INVENTORY FOUND, AND THE SEARCH THAT FINDS EACH
 
