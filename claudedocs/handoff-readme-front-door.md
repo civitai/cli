@@ -1,4 +1,11 @@
-# Handoff: readme-front-door — 2026-09-25
+# Handoff: readme-front-door — 2026-09-25 · 🔴 CLOSED 2026-09-27
+
+> **THE ARC IS CLOSED.** All four closing-condition clauses are MET at `9e9142e`:
+> `README.md` **273,928 → 102,933 B (-62.4%)**, two destination pages live, `## Exit codes`
+> exempted on measurement, and the clean-checkout suite + lint verified with controls in both
+> directions. Nothing in *Next steps* is a gate — the three items there are elective.
+> This document is now **archival**: read it for the lessons, not for a live work queue, and
+> re-verify anything before acting on it.
 
 ## Run this first — the index, one command
 ```bash
@@ -33,9 +40,14 @@ nothing). This one AUTHORS the coverage first, then cuts. The operator retired t
      developer.civitai.com page covers it, or the section is a pointer rather than a
      restatement. The audit is `git -C <cli> show origin/main:README.md` against the pages
      listed under *How to verify*; a section that duplicates a page is an open item.
+     ✅ **MET 2026-09-27.** Note the clause's shape: *"whose substance is published
+     elsewhere"* is a PRECONDITION, not a promise that every section acquires a destination.
+     `## Exit codes` fails that precondition — measured 0 published copies — so it satisfies
+     the clause by staying, and the operator exempted it on that reading.
   3. From a **clean checkout of `origin/main`**:
      `nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) go test ./... -count=1'`
-     green AND `make lint` 0 issues.
+     green AND `make lint` 0 issues. ✅ **MET 2026-09-27 at `9e9142e`** — 21 `ok` / 0 `FAIL`,
+     and `0 issues.` Controls and the golangci-lint version caveat are in the verdict block.
   4. `./bin/civitai generate --help | wc -c` ≤ **25,000** (16,668 today). This clause
      SURVIVES the amendment: it bounds the relocation's cost to the most-used help surface,
      and the naive Long-only plan projected **52,729 B / 959 lines** against a repo that
@@ -47,26 +59,58 @@ nothing). This one AUTHORS the coverage first, then cuts. The operator retired t
 
 | repo | ref | this arc's PRs |
 |---|---|---|
-| `civitai/cli` | `main` = **`3c450ea`** | **#725 MERGED** `7b3be7a` · **#726 MERGED** `e9c9d78` · **#727 MERGED** `1892d8e` · **#723 OPEN** (this doc) |
-| `civitai-developer-docs` | `main` = **`2aaba54`** | **#123 MERGED** `70e63b8` |
+| `civitai/cli` | `main` = **`9e9142e`** | **#725 MERGED** `7b3be7a` · **#726 MERGED** `e9c9d78` · **#727 MERGED** `1892d8e` · **#723 OPEN** (this doc) |
+| `civitai-developer-docs` | `main` = **`373d815`** | **#123 MERGED** `70e63b8` |
 
-⚠ `main` moved past the cut: `#718` and `#728` (dogfood, other sessions) landed after `1892d8e`. `docs` main moved past `#123` via `#124`.
+⚠ `main` moved past the cut: `#718`, `#728` and `#729` (dogfood, other sessions) landed after `1892d8e`. `docs` main moved past `#123` via `#124` and beyond. **README is unchanged at 102,933 B through all of them.**
 
 - `README.md` 102,933 B · `AGENTS.md` 29,670 B (ceiling 30,500, **830 B headroom**; `agentsMaxBytesCeiling = 30_600` leaves only 100 B of future raise)
 - `site/guide/cli-troubleshooting.md` 21,334 B + `site/guide/cli-output.md` 13,270 B, live and published
-- **Claim `readme-front-door-1` RELEASED** (rank 1 complete). **`readme-front-door` still HELD** — release it when the arc closes.
+- **Claim `readme-front-door-1` taken 2026-09-27** for the Exit-codes commissioning, then **RELEASED** when the operator exempted it (below). **`readme-front-door` still HELD** — release it when the arc closes.
 - **No `clawgate-task:`** — `resolve` → rc=**5**, 0 tasks; `field <doc>` → rc=**1** (none present), consistent. A wrong session id also returns an empty array, so that zero is **not** a clean bill of health.
 
-### Closing-condition check — 2 of 4 clauses MET, arc NOT closed
+### Closing-condition check — 🔴 ALL FOUR CLAUSES MET at `9e9142e`. THE ARC IS CLOSED.
 
 | clause | verdict |
 |---|---|
 | 1. `docs#86` + `docs#87` closed | ✅ **MET** |
-| 2. every README section whose substance is published elsewhere is a pointer | ⚠ **substantially met, not re-audited section-by-section at `3c450ea`.** The two with destinations are now pointers. `## Exit codes` (16,527 B) restates nothing published — no page covers it — so under clause 2's own wording it legitimately stays |
-| 3. clean checkout of `origin/main`: full suite green + `make lint` 0 issues | ❌ **NOT RUN at `3c450ea`** |
+| 2. every README section whose substance is published elsewhere is a pointer | ✅ **MET.** The two with destinations are pointers. `## Exit codes` (16,527 B) is **EXEMPT by operator decision 2026-09-27**, and the exemption is clause 2's own wording rather than a waiver of it: the clause binds only a section whose substance *is published elsewhere*, and nothing publishes this one. Measured — Detail prose in the docs repo: **0** occurrences; `public/appblocks/cli.json` exit-code data: **none**. The block below records why generating it was not merely undone but **unbuildable from the named source** |
+| 3. clean checkout of `origin/main`: full suite green + `make lint` 0 issues | ✅ **MET — measured 2026-09-27 at `9e9142e`** in a detached worktree. Suite: **21 `ok`, 0 `FAIL`, 0 `--- FAIL`, empty stderr**. Lint: **`0 issues.`** Both instruments validated in both directions — see the verdict block below |
 | 4. `generate --help` ≤ 25,000 | ✅ **MET — 16,668** (unchanged; the cut moved nothing into `Long`). Negative control: `zzbogus --help` = 4,636 = root help, exit 0 |
 
-**So: NOT ADDRESSED. The one item is clause 3** — run it from a clean checkout — plus rank 1 below if clause 2 is to be satisfied for `## Exit codes` rather than exempted.
+**So: ADDRESSED.** Nothing in the ranked list below is a gate any more — every remaining item is
+elective. Release the `readme-front-door` claim.
+
+### 🔴 CLAUSE 3'S VERDICT, AND THE CONTROLS THAT MAKE IT MEAN ANYTHING
+
+A green suite is a claim; these are what turn it into evidence. Measured at `9e9142e`,
+detached worktree `origin/main`, nothing dirty.
+
+| instrument | under test | negative control | positive control |
+|---|---|---|---|
+| `go test ./... -count=1` under `nix-shell -p chromium` with `CIVITAI_CHROME` | **21 `ok`, 0 `FAIL`, 0 `--- FAIL`**, 1 "no test files", 0 panic/timeout, **stderr empty** | injected `t.Fatal` test → **1 `--- FAIL`**, caught by the same `grep -c '^--- FAIL'` used to read the green | **the Chromium-gated `TestOracle*` really RAN: 23 `--- PASS`, `0` `--- SKIP`.** Without this the green is a skip wearing a pass |
+| `golangci-lint run` | **`0 issues.`**, stderr empty | injected ineffassign + misspell → **2 issues** (`ineffassign: 1`, `misspell: 1`) | — |
+
+Three things to carry, none of them incidental:
+
+- 🔴 **`make lint` refused rather than degrading, and that refusal is the feature.** On this
+  host golangci-lint is not on `PATH`, so `make lint` printed the install hint and exited **2**.
+  AGENTS.md says not to "helpfully" add a fallback, and this is why: a fallback would have
+  returned a green that measured nothing. The real run is
+  `nix-shell -p golangci-lint --run 'golangci-lint run'`, which the Makefile's own comment
+  already sanctions.
+- ⚠ **VERSION DIFFERS FROM THE GATE, stated rather than buried.** CI pins
+  **`v2.12.2`** (`.github/workflows/ci.yml:261`); nixpkgs supplied **`2.13.2`**. One minor
+  ahead, same major. `0 issues.` here is therefore **not** the gate's verdict re-run: a minor
+  bump can add, retune or retire a check in either direction, so this neither proves nor
+  disproves what `v2.12.2` would say. What it is: the same curated linter set
+  (`.golangci.yml` — staticcheck/govet/ineffassign/unused/misspell/gofmt) reporting clean one
+  version forward, with a negative control proving it can still report. **Do not quote it as
+  "CI-identical"** — and note the `lint` job reports without blocking a merge anyway.
+- ⚠ **The handoff predicted "make ci fails at `test` on three Chromium-gated `TestOracle*`".**
+  It does not, once `CIVITAI_CHROME` is exported — all 23 pass. The predicted FAIL-set control
+  was therefore unnecessary, and the honest reading is that the earlier red was a *missing
+  environment variable*, not a repo defect.
 
 ### What shipped, and what it cost to verify
 
@@ -163,30 +207,121 @@ nothing). This one AUTHORS the coverage first, then cuts. The operator retired t
 
 ## Next steps (ranked)
 
-1. **Commission the `## Exit codes` destination page** in `civitai-developer-docs`, then cut it from `README.md` (16,527 B → ~86 KB, the operator's landing point). 🔴 **Direction is settled — do not re-derive:** *generate* the per-code blockquotes from `appblocks-snapshots/civitai-cli-help.txt` into a committed md-region (`gen-appblocks-md.mjs` → `check:md-regions`, a required context), rather than hand-writing and parity-checking them. ⚠ **Countervailing fact, measured:** every existing CLI page deliberately points exit-code questions at `https://github.com/civitai/cli#exit-codes` (`site/guide/cli.md:355-356`, `cli-json.md:176-178`, `cli-auth.md:199-201`), so a page that enumerates them **reverses a live decision** — say why before doing it. And `internal/cmd/exitcodes_doc.go` generates the README table and `--help` from one slice, so the README half is generated output, not prose.
-   forcing: gate — clause 2 of the closing condition, and the largest remaining block
+🔴 **THE ARC IS CLOSED — NOTHING BELOW IS A GATE.** Both former gates are resolved:
+the `## Exit codes` page is **EXEMPT** (operator, 2026-09-27 — unbuildable from the named
+source, and clause 2 never bound it), and **clause 3 is MET** (measured at `9e9142e`, both
+instruments controlled). Every item below is elective and independently startable.
 
-2. **Run closing-condition clause 3** from a clean checkout of `origin/main`: `nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) go test ./... -count=1'` green AND `make lint` 0 issues. Not run at `3c450ea`. This is the only clause with no work attached — just a measurement nobody has taken.
-   forcing: gate — the arc cannot be declared closed without it
-
-3. **Fix the `403` row on the published troubleshooting page.** `not permitted for your account (403)` claims Apps-author access is "a narrower grant than submitting" — unsupportable and probably backwards: `internal/appapi/appblocks.go:2357` gates submitting behind the **same** invite-only beta, submitting additionally needs `ScopeAppBlocksSubmit` (excluded from `ScopeFull`), and there is **no Apps-author scope bit at all**. `appblocks.go:2319-2329` is an in-repo retraction of the same shape. Deferred all session because the cell was byte-identical to the README's; **#727 deleted the README half, so this is now a standalone docs PR.**
+1. **Fix the `403` row on the published troubleshooting page.** `not permitted for your account (403)` claims Apps-author access is "a narrower grant than submitting" — unsupportable and probably backwards: `internal/appapi/appblocks.go:2357` gates submitting behind the **same** invite-only beta, submitting additionally needs `ScopeAppBlocksSubmit` (excluded from `ScopeFull`), and there is **no Apps-author scope bit at all**. `appblocks.go:2319-2329` is an in-repo retraction of the same shape. Deferred all session because the cell was byte-identical to the README's; **#727 deleted the README half, so this is now a standalone docs PR.**
    forcing: regression — a published page states something the code contradicts
 
-4. **`cli#602` needs four README edits and only two conflict.** Both `README:321` and `README:729` said "larger than the server can receive"; #602 flips the ceiling to `>=`, so both go false and **neither produces a conflict marker**. 🔴 Its 14-line *"Why 'at or above' and not 'above'"* block exists **only in #602**. ⚠ **Re-measure the line numbers** — the README has moved 127,616 → 129,039 → 102,933 B since those were taken.
+2. **`cli#602` needs four README edits and only two conflict.** Both `README:321` and `README:729` said "larger than the server can receive"; #602 flips the ceiling to `>=`, so both go false and **neither produces a conflict marker**. 🔴 Its 14-line *"Why 'at or above' and not 'above'"* block exists **only in #602**. ⚠ **Re-measure the line numbers** — the README has moved 127,616 → 129,039 → 102,933 B since those were taken.
    forcing: regression — merging #602 as-is publishes two false statements
 
-5. **`/simplify` the three byte-identical `assets/README.md.tmpl` files** into one embedded authority, as item 11 does for `ready-ack.js`. All three share md5 `51ebc5538e3bccbd14b2fbd93a928228` and nothing pins that identity.
+3. **`/simplify` the three byte-identical `assets/README.md.tmpl` files** into one embedded authority, as item 11 does for `ready-ack.js`. All three share md5 `51ebc5538e3bccbd14b2fbd93a928228` and nothing pins that identity.
    forcing: none
 
 ## Defects (batched)
 
 - `cli-snapshot-refresh.yml`'s failure message tells the reader to fix a REPOSITORY setting
-  for what is an ORG policy, and `docs#86`'s issue body repeats it. Both should be corrected
-  when rank 2 is settled — but the workflow file is "Ask first".
+  for what is an ORG policy, and `docs#86`'s issue body repeats it. ⚠ **The lane itself is
+  GREEN again as of 2026-09-27** (see Gotchas), so this is now a wrong-remedy-in-a-message
+  defect rather than a live blocker — the misleading text still ships. The workflow file is
+  "Ask first".
 - `scripts/check-no-hand-flag-tables.mjs` cannot see a flag table whose flag is in column two;
   stated honestly in its own docstring, not fixed.
 
 ## Gotchas / decisions / dead-ends
+
+### 🔴 A SETTLED DIRECTION NAMED A SOURCE THAT DOES NOT CONTAIN THE CONTENT — AND "SETTLED" IS WHAT STOPPED ANYONE CHECKING
+
+This doc's rank 1 read: *"Direction is settled — do not re-derive: **generate** the per-code
+blockquotes from `appblocks-snapshots/civitai-cli-help.txt` into a committed md-region."* The
+instruction was sound in shape and **false in its premise**, and the `do not re-derive` is
+precisely what would have carried an implementer past the one measurement that matters.
+
+**The snapshot carries the SUMMARY only — about 6% of the section.**
+
+```
+## Exit codes in README.md                     16,658 B   (git cat-file -s: 16,527 for the section as counted earlier)
+  ├─ intro + table + bash example               1,692 B   <- Summary-derived, IS in the snapshot
+  └─ six ### Exit code N subsections           14,966 B   <- Detail. IS NOT, BY DESIGN.
+root help `Exit codes:` block in the snapshot   1,050 B
+```
+
+Controls, both directions — three Summary phrases against four Detail sentences:
+
+```
+POSITIVE (Summary, must be >0)          DETAIL sentences (measured 0)
+  Generic / unclassified error   1        unwritable config directory  0
+  the deep-paging cap ...        1        dirty git work tree          0
+  Rate limited                   1        A usage error emits          0
+                                          no JSON object               0
+```
+
+⚠ **Two Detail-adjacent greps return non-zero and mean nothing** — `allow-downgrade` (3) and
+`set-cover` (10) are in the snapshot because they are *flags and commands with their own
+subcommand help*, not because the prose is. A token-level grep would have "confirmed" the
+premise. **Grep the SENTENCE, not the identifier it mentions.**
+
+**Why it can never be there.** `internal/cmd/exitcodes_doc.go`'s header states the
+summary/detail split as a deliberate trade, and `TestBothFieldsReachTheirSurfaces`
+(`exitcodes_doc_test.go:200`) *asserts* it with sentinels: Summary must reach both
+`--help` and the README table; Detail must reach the README **and not `--help`**. So the
+snapshot cannot carry Detail without a guard going red. The named source is structurally
+incapable of holding the content, not merely missing it today.
+
+**And no other channel exists.** Detail prose in the entire tracked docs repo: **0 files**.
+`public/appblocks/cli.json` — the artifact the `cli` md-region renders from —
+`JSON.stringify(j).includes('Exit codes')` → **false**.
+
+🔴 **An md-region is also not a general-purpose generated block.** All 7 entries in
+`scripts/appblocks-md.mjs:625` `REGIONS` are `{key, page, component, render}` — each is the
+markdown fallback **for a Vue island**, and `assertRegionInSlot` *refuses* to write a region
+that has escaped its component's slot, because there it would render and duplicate the island.
+So "put it in an md-region" silently implies **a new Vue component plus a new JSON artifact**.
+(The cheaper precedent, if this is ever revived, is a wholly-generated page:
+`gen-agent-setup-page.mjs` + `check:agent-setup`, which reads no artifact and touches no
+network — but its source lives *in the docs repo*, which is exactly what Detail does not.)
+
+**Generalise, and this is the transferable half:** a direction marked *settled* transfers a
+CONCLUSION while dropping the MEASUREMENT it rested on. The cheap check is not "is the plan
+good" but **"does the named source contain the bytes the plan moves?"** — one grep with a
+negative control, before any design.
+
+### 🔴 THE OPERATOR EXEMPTED `## Exit codes`, AND THE EXEMPTION IS CLAUSE 2's OWN WORDING
+
+Put as a fork with the measurements above; answer 2026-09-27: **exempt it, close the arc.**
+Not a waiver. Clause 2 binds a section *whose substance is published elsewhere*; this one's is
+published nowhere, so the clause is satisfied as-is — which is what this doc's own clause-2
+verdict already said before rank 1 proposed to override it.
+
+🔴 **The only remaining motive for the cut was BYTES, and the byte target is retired.** This
+doc says so in three places ("Do NOT restore a byte target"; the landing point "retired for the
+third and final time"). Rank 1's stated forcing was *"gate — clause 2"*, but clause 2 did not
+force it; **a retired target had re-entered the plan wearing a gate's clothes.** That is the
+shape to watch for in the next arc: check a ranked item's *forcing* against the condition it
+cites, not against its own summary line.
+
+Two further facts measured while deciding, both arguing the same way:
+
+- **FIVE pages route exit-code questions to the README**, not the three this doc recorded:
+  `apps/guide/packaging.md:388`, `apps/guide/validate.md:285`, `site/guide/cli-json.md:178`,
+  `site/guide/cli-workflows.md:246`, `site/guide/cli.md:355`. Negative control
+  (`cli#zzz-not-an-anchor`): 0. Publishing the page reverses a live decision at **five** sites.
+- The README half is **generated output** (`readmeExitCodeSections()`), so a cut is a change to
+  a Go slice and three byte-identity guards, not an edit to prose.
+
+### ⚠ THE "PERMANENTLY RED" SNAPSHOT LANE IS GREEN AGAIN — a stale diagnosis in this very doc
+
+This doc states `cli-snapshot-refresh.yml` is *"permanently red: 11 consecutive failed runs
+because an org Actions policy refuses `gh pr create`"* and that *"the `cli` half is still
+broken"*. **Measured 2026-09-27:** the last two runs are **`success`** (2026-09-25 18:32,
+2026-09-26 12:10) after four prior failures. Whatever fixed it, the lane works.
+
+🔴 **A handoff's own Gotchas are memory, not observation** — they age exactly like everything
+else, and this one would have made a live channel look unavailable. Re-measure a blocker before
+designing around it.
 
 ### 🔴 THE DOCS REPO IS A SHALLOW CLONE AND ITS REMOTE-TRACKING REFS LIE — this inverted a conclusion
 
@@ -513,6 +648,7 @@ Two consequences for rank 1:
 | The cut | **Proceed now** — design the guard re-point and cut |
 | Colour-precedence guard | **Accept no document guard, record why.** Every candidate was walkable or redundant; pinning it properly would need `resolveMode` to expose its tiers as data, a production change to serve a docs check |
 | The ledger classification gap | **Run it through `/the-algorithm`** — done, verdict below |
+| **`## Exit codes` page (2026-09-27)** | **EXEMPT — do not commission it; close the arc.** Put as a fork with the measurement that the named source carries ~6% of the section and no channel carries the rest. Chosen over building a real cli→docs contract channel (new public CLI surface + new snapshot + generated page, and it reverses 5 live pointers) and over cutting the subsections outright (destroys contract). README stays **102,933 B** |
 
 ### 🔴 `/the-algorithm` ON THE SAFETERM LEDGER: DO NOT BUILD THE GUARD
 
@@ -653,11 +789,25 @@ git -C "$CLI" fetch origin +refs/heads/docs/handoff-rfd-p3:refs/remotes/origin/d
 # --- closing condition, clause by clause ------------------------------------
 ./bin/civitai generate --help | wc -c   # 16,668 — clause 4 caps at 25,000 ✅
 ./bin/civitai zzbogus   --help | wc -c  # 4,636 = ROOT help, exit 0 — the trap
-# clause 3, NOT YET RUN at 3c450ea — from a CLEAN checkout of origin/main:
+# clause 3 — ✅ MET 2026-09-27 at 9e9142e. To re-run, use a CLEAN detached worktree:
+#   git -C "$CLI" worktree add --detach /tmp/cli-c3 origin/main
 nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) go test ./... -count=1'
-make lint    # `make ci` does NOT run it; it ERRORS if golangci-lint is absent
-# ⚠ make ci fails at `test` on three Chromium-gated TestOracle*. Establish the
-#   identical FAIL set at origin/main as the control and DIFF the two sets.
+#   -> 21 ok / 0 FAIL / 0 '--- FAIL' / stderr empty.  READ THE COUNTS, NOT THE rc.
+# 🔴 make lint EXITS 2 HERE: golangci-lint is not on PATH on this host. That is the
+#    designed refusal, not a failure to work around — run the real thing instead:
+nix-shell -p golangci-lint --run 'golangci-lint run'      # -> "0 issues."
+#    ⚠ nixpkgs ships 2.13.2; CI pins v2.12.2 (.github/workflows/ci.yml:261). One
+#      minor ahead — do NOT quote the result as "CI-identical".
+# ⚠ The old note "make ci fails on three Chromium-gated TestOracle*" is WRONG once
+#   CIVITAI_CHROME is exported: 23 --- PASS, 0 --- SKIP. No FAIL-set control needed.
+
+# --- 🔴 the settled Exit-codes direction was unbuildable. The one-line proof ---
+D="$DOCS/appblocks-snapshots/civitai-cli-help.txt"
+grep -cF 'Generic / unclassified error' "$D"    # 1  = POS control (Summary IS there)
+grep -cF 'unwritable config directory'  "$D"    # 0  = a Detail SENTENCE is not
+grep -cF 'A usage error emits'          "$D"    # 0
+# ⚠ do NOT grep identifiers: 'allow-downgrade' -> 3, 'set-cover' -> 10, both from
+#   subcommand help, both of which would have "confirmed" the false premise.
 
 # --- the cut landed, and the pointers resolve (use an 8-line window: a -A2
 #     window misses the URL three lines below the heading — that zero was MINE)
