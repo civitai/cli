@@ -71,8 +71,10 @@ exit contract `oracle.sh` reads all pass through untouched.
 
 1. **A browser assertion cannot see a submit, and never will here.** The oracle's
    host emulation is the SDK's `InlineTransport` stub: `sendRequest` rejects every
+   request outside the running arm's answered set — off the opt-in post arm, every
    request but a host resource pick (`genpost.md`, **The host answers a resource
-   pick**), host pushes never arrive, and `token.raw` stays `''`. A
+   pick**) — host pushes never arrive, and `token.raw` stays `''`. No arm answers a
+   submit, the post arm included. A
    submission is server state and leaves nothing in the DOM. So "something new"
    for the render half would either measure the submit (impossible) or
    re-implement `genpost` (below).
@@ -302,9 +304,11 @@ generate-then-post flow a headless browser watched behave as specified, **and**
 put that same app into the moderation queue inside the trial's own run window.
 
 **Does not:** that a generation ran, that a post was created, or that the app
-would be approved. The oracle's host stub rejects every request, so nothing can
-complete there by construction. `SHIP=yes` says the submission exists and is
-pending — nothing about its quality.
+would be approved. On the arms a `SHIP` verdict is taken under, the oracle's host stub
+rejects every request but a resource pick, so nothing can complete there by
+construction — and the opt-in post arm, which does complete a canned generation and a
+canned post in the page, still answers no submit. `SHIP=yes` says the submission
+exists and is pending — nothing about its quality.
 
 ## Run it
 

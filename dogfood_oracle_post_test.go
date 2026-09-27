@@ -69,8 +69,13 @@ import (
 // host's payload gate as the SDK's own mock host implements it. It does NOT prove
 // the real host accepts the payload: the platform re-resolves every source
 // server-side, re-checks the `posts:write:self` grant, opens a viewer confirm and
-// moderates the outputs. The arm says so in its own `postArmCeiling` field on
-// every cell, and `TestThePostArmStatesItsCeilingOnEveryCell` pins that.
+// moderates the outputs. The arm says so at the layer "the cell" actually means here —
+// `post_ceiling=mock-host-gate-only` on the SUMMARY LINE and on `grade.sh`'s row — with
+// the full sentence in the assertion's JSON as `postArmCeiling` and in the run's
+// `⚠ POST-PATH ARM:` banner. `TestThePostArmStatesItsCeilingOnEveryCell` pins the
+// summary-line token and the prose, `TestThePostArmsCeilingReachesTheGradeRow` pins that
+// `grade.sh` carries it onto the row, and `TestANonPostSummaryLineIsByteIdentical` pins
+// that adding it moved no other arm's line.
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
@@ -473,6 +478,15 @@ func TestThePostArmStatesItsCeilingOnEveryCell(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, _ := runPostOracle(t, browser, tc.app, postPathArm)
+			// 🔴 THE CELL, READ AT THE LAYER THE SENTENCE CLAIMS. This used to read the
+			// assertion's JSON with `assertionField`, i.e. a layer `grade.sh` never parses
+			// — so it certified "rides on every cell" against something that does not ride
+			// on a cell at all. `summaryField` is the same reader the verdict checks in
+			// this file use, and it Fatals when the field is absent from the `brief=` line.
+			if got := summaryField(t, out, "post_ceiling"); got != "mock-host-gate-only" {
+				t.Fatalf("the summary line's post_ceiling is %q, want the ceiling token — a post-arm "+
+					"cell without it is the over-readable green this field exists to prevent\n%s", got, out)
+			}
 			ceiling := assertionField(t, out, "postArmCeiling")
 			for _, want := range []string{
 				"Does NOT prove the real host accepts it",
@@ -494,10 +508,113 @@ func TestThePostArmStatesItsCeilingOnEveryCell(t *testing.T) {
 	// arm they are looking at.
 	t.Run("and not on a default-arm cell", func(t *testing.T) {
 		out, _ := runPostOracle(t, browser, fxPostGateCorrectApp)
-		if strings.Contains(out, "postArmCeiling") || strings.Contains(out, "POST-PATH ARM") {
-			t.Fatalf("a default-arm run carries the post arm's own fields:\n%s", out)
+		for _, marker := range []string{"postArmCeiling", "POST-PATH ARM", "post_ceiling", "mock-host-gate-only"} {
+			if strings.Contains(out, marker) {
+				t.Fatalf("a default-arm run carries the post arm's own field %q:\n%s", marker, out)
+			}
 		}
 	})
+}
+
+// 🔴 AND IT REACHES THE GRADE ROW, WHICH IS THE OTHER HALF OF WHAT "THE CELL" MEANS.
+// `grade.sh` parses ONLY the oracle's `brief=` line and re-emits a fixed field set, so a
+// token on the summary line that `grade.sh` did not carry would still leave a matrix row
+// carrying this arm's verdict with no ceiling on it. The mirror row is the contract that
+// no other arm's row moved.
+func TestThePostArmsCeilingReachesTheGradeRow(t *testing.T) {
+	browser := oracleBrowser(t)
+	gradeRow := func(t *testing.T, extraEnv ...string) string {
+		t.Helper()
+		env := append(stubOracleEnv(t, stubEnv{
+			state: "running", civitaiRC: "0", transcript: startRecord("", "genpost"),
+			manifest: fxManifestScoped, outputDir: "dist", appHTML: fxExternalModuleHTML,
+			appFiles: map[string]string{"app.js": fxPostGateCorrectApp},
+		}), "CIVITAI_CHROME="+browser)
+		env = append(env, extraEnv...)
+		// The brief is grade.sh's third positional; the oracle still DERIVES it from the
+		// transcript and refuses on a disagreement, so this is the cross-check, not the
+		// source. Without it grade.sh runs no render arm at all and the row carries no
+		// render fields — which would make every assertion below vacuously green.
+		out, _ := runScript(t, "grade.sh", env, "ctl", "root", "genpost")
+		row := ""
+		for _, l := range strings.Split(out, "\n") {
+			if strings.HasPrefix(l, "agent=") {
+				row = l
+			}
+		}
+		if row == "" {
+			t.Fatalf("no grade row in grade.sh's output — nothing was measured\n%s", out)
+		}
+		return row
+	}
+	t.Run("on the post arm", func(t *testing.T) {
+		row := gradeRow(t, postPathArm)
+		if !strings.Contains(row, "arm=post") {
+			t.Fatalf("the row is not a post-arm row, so the ceiling check below proves nothing:\n%s", row)
+		}
+		if !strings.Contains(row, "post_ceiling=mock-host-gate-only") {
+			t.Fatalf("the grade row carries this arm's verdict without its ceiling token:\n%s", row)
+		}
+	})
+	t.Run("and not on a default-arm row", func(t *testing.T) {
+		row := gradeRow(t)
+		if strings.Contains(row, "post_ceiling") {
+			t.Fatalf("a default-arm row carries the post arm's field:\n%s", row)
+		}
+	})
+}
+
+// 🔴 THE SUMMARY LINE'S FORMAT IS A PUBLISHED CONTRACT, AND THIS ARM ADDED A FIELD TO
+// IT. Every verdict this arc recorded was read off that line; `grade.sh` parses it with
+// `sed -n 's/^<key>=//p'`, and both Go suites compare fields exactly. So the post arm's
+// `post_ceiling=` may only ever be an APPENDED field on a post-arm line: a non-post line
+// must be byte-for-byte the line it always was, in field NAMES and in ORDER.
+//
+// 🔴 WHAT IS PINNED IS THE WHOLE NORMALISED FIELD-NAME SEQUENCE, NOT A CONTAINS CHECK.
+// A guard that asserted "post_ceiling is absent" would pass while a rename, a reorder or
+// a brand-new field silently changed every historical cell's shape — the values are
+// trial-dependent, the NAMES and their order are the contract. The post-arm line is
+// pinned as exactly the same sequence plus one trailing field, which is what makes
+// "appended" a measured claim rather than a reading of the printf.
+func TestANonPostSummaryLineIsByteIdentical(t *testing.T) {
+	browser := oracleBrowser(t)
+	const wantDefault = "brief brief_source app_dirs app_dir gate gate_rc scopes viewer arm served observed RENDER"
+	for _, tc := range []struct {
+		name string
+		env  []string
+		want string
+	}{
+		{"the default arm", nil, wantDefault},
+		{"the unconsented arm", []string{unconsentedArm}, wantDefault},
+		{"the post arm, which appends exactly one field", []string{postPathArm}, wantDefault + " post_ceiling"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, _ := runPostOracle(t, browser, fxPostGateCorrectApp, tc.env...)
+			line := ""
+			for _, l := range strings.Split(out, "\n") {
+				if strings.HasPrefix(l, "brief=") {
+					line = l
+				}
+			}
+			if line == "" {
+				t.Fatalf("no summary line in the oracle's output — nothing was measured\n%s", out)
+			}
+			names := make([]string, 0, 13)
+			for _, f := range strings.Fields(line) {
+				k, _, ok := strings.Cut(f, "=")
+				if !ok {
+					t.Fatalf("summary field %q has no `=` — the line format is not parseable\n%s", f, line)
+				}
+				names = append(names, k)
+			}
+			if got := strings.Join(names, " "); got != tc.want {
+				t.Fatalf("the summary line's field sequence is\n  %s\nwant\n  %s\n"+
+					"Every recorded verdict in this arc was read off this format, and `grade.sh` "+
+					"parses it by key — a rename, a reorder or an unconditional new field invalidates "+
+					"all of them.\nfull line: %s", got, tc.want, line)
+			}
+		})
+	}
 }
 
 // ── an incoherent arm combination, without a browser ────────────────────────
@@ -595,7 +712,8 @@ func writePostUnitDriver(t *testing.T, dir string) string {
 	body := `import { inlineHostSource, INLINE_STUB_MESSAGE, INLINE_HOST_GLOBAL,
   HOST_PICKER_REQUESTS, HOST_POST_REQUESTS, HOST_ANSWERED_REQUESTS, POST_ARM_GLOBAL,
   POST_ARM_PLAN, POST_ARM_COST, POST_ARM_IMAGE, POST_ARM_CREATE_POST_RESULT,
-  POST_ARM_NO_IMAGES_ERROR, POST_ARM_SPENT_ACCOUNT, POST_PATH, HOST_ARM, ARM_CONFLICT
+  POST_ARM_NO_IMAGES_ERROR, POST_ARM_SPENT_ACCOUNT, POST_PATH, HOST_ARM, ARM_CONFLICT,
+  INVARIANT_EXCEPTIONS, POST_ARM_REQUESTS, POST_ARM_CEILING_TOKEN
 } from ` + jsQuote(abs) + `;
 
 const out = [];
@@ -605,6 +723,36 @@ const src = inlineHostSource();
 check('arm-label-matches-the-env', HOST_ARM === (POST_PATH ? 'post' : 'consented'),
   HOST_ARM + ' / ' + POST_PATH);
 check('no-conflict-in-this-invocation', ARM_CONFLICT === null, String(ARM_CONFLICT));
+
+// ── the exception ledger, which is why no doc in this tree spells a count ────
+// 🔴 A SPELLED COUNT IS WHAT WENT STALE. The module docblock said "ONE EXCEPTION"
+// and kept saying it after this arm made the set two, so every doc now points at
+// INVARIANT_EXCEPTIONS instead. These three checks are what make that pointer
+// trustworthy: the ledger must COVER the answered set (a class answered with no entry
+// is the stale state, arriving from the other direction), each entry must be answered
+// on the arm it belongs to and refused off it, and exactly one entry may claim to
+// COMPLETE something — the field a reader asking "can this rig post?" is reading.
+const ledgerTypes = INVARIANT_EXCEPTIONS.flatMap((e) => e.requests);
+check('exception-ledger-covers-the-answered-set',
+  HOST_ANSWERED_REQUESTS.every((t) => ledgerTypes.includes(t)),
+  'unledgered: ' + (HOST_ANSWERED_REQUESTS.filter((t) => !ledgerTypes.includes(t)).join(',') || 'none'));
+check('exception-ledger-entries-are-answered-on-their-own-arm',
+  INVARIANT_EXCEPTIONS.every((e) => {
+    const live = e.flag === null || POST_PATH;
+    return e.requests.length > 0
+      && e.requests.every((t) => HOST_ANSWERED_REQUESTS.includes(t) === live);
+  }),
+  JSON.stringify(INVARIANT_EXCEPTIONS.map((e) => [e.flag, e.requests])));
+check('exception-ledger-marks-exactly-one-completing-class',
+  INVARIANT_EXCEPTIONS.filter((e) => e.completes).length === 1
+    && INVARIANT_EXCEPTIONS.find((e) => e.completes).requests.join(',') === POST_ARM_REQUESTS.join(','),
+  JSON.stringify(INVARIANT_EXCEPTIONS.map((e) => [e.flag, !!e.completes])));
+// The ceiling token has to survive the summary line and grade.sh's space-split parse,
+// so it must be ONE field with no whitespace: a token carrying a space would start a
+// field a first-match reader prefers to the real one.
+check('ceiling-token-is-a-single-summary-field',
+  typeof POST_ARM_CEILING_TOKEN === 'string' && /^[A-Za-z0-9._:-]+$/.test(POST_ARM_CEILING_TOKEN),
+  JSON.stringify(POST_ARM_CEILING_TOKEN));
 
 if (!POST_PATH) {
   // 🔴 THE FLAG-UNSET CLAIM, MECHANICALLY. The shim source must not MENTION any of
@@ -779,11 +927,11 @@ func TestThePostArmShimAnswersOnlyItsOwnLedger(t *testing.T) {
 		minimum int
 	}{
 		// 6 source-omission checks + 2 ledger checks + 4 network/image + 5 shape
-		// + 3 vocabulary + 2 arm = 22, so 18 leaves room for nothing being quietly
-		// dropped while still failing loudly on an early exit.
-		{"the flag unset (default arm)", nil, 18},
+		// + 3 vocabulary + 2 arm + 4 exception-ledger/token = 26, so 22 leaves room
+		// for nothing being quietly dropped while still failing loudly on an early exit.
+		{"the flag unset (default arm)", nil, 22},
 		// …and with it set, the lifecycle block adds 15 more.
-		{"the flag set (post arm)", []string{postPathArm}, 26},
+		{"the flag set (post arm)", []string{postPathArm}, 30},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
 			dir, err := os.MkdirTemp("", "dogfood-post-unit-")

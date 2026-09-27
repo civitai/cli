@@ -137,11 +137,13 @@ grading its own timeout. A model-authored app that keeps the template's host gat
 would have graded `no` either way before this, and can now grade `yes`.
 
 ⚠ **It is a v1 stub on the SDK side.** `InlineTransport.sendRequest` rejects
-every request but a host resource pick and host pushes never arrive, so a block
+every request outside the running arm's answered set — off the opt-in post arm, that
+is every request but a host resource pick — and host pushes never arrive, so a block
 that AWAITS any other host reply still hangs. This brief needs no host round-trip;
-do not read a pass as evidence that the money path works. (The picker exception
-landed 2026-09-25 for `genpost`/`ship`; `briefs/genpost.md`, **The host answers a
-resource pick**.)
+do not read a pass as evidence that the money path works. (The exception classes are
+enumerated by `INVARIANT_EXCEPTIONS` in `scripts/dogfood/briefs/_cdp.mjs`, never
+counted in prose. The picker class landed 2026-09-25 for `genpost`/`ship`; see
+`briefs/genpost.md`, **The host answers a resource pick**, and **The POST-PATH arm**.)
 
 ⚠ **The bootstrap's viewer changed on 2026-09-21 and the table above predates
 it.** It now carries a SIGNED-IN viewer (`{ id, username, signedIn: true }`,

@@ -34,8 +34,8 @@ import (
 //
 // # WHY THE ORACLE COULD NOT SEE IT — THREE THINGS COMPOUNDING
 //
-//  1. `InlineTransport.sendRequest` rejects EVERY request, so "generation fails
-//     for everyone" and "generation works" leave the identical status trace
+//  1. on both of these arms `InlineTransport.sendRequest` rejects EVERY request, so
+//     "generation fails for everyone" and "generation works" leave the identical trace
 //     `ready>generating>ready`. The predicate grades the status word.
 //  2. #690 seeds `token.scopes` from the manifest and #708 answers resource
 //     picks. Both fixed real false negatives — and TOGETHER they mean an app that

@@ -12,17 +12,20 @@
 // The oracle emulates a host by seeding `window.__CIVITAI_BLOCK_CONTEXT__`,
 // which the SDK's transport detector answers with `InlineTransport`. That
 // transport is a v1 stub: `sendRequest` REJECTS and host pushes never arrive.
-// So NO generation and NO post can complete here, ever, on any machine, with or
-// without a credential. An assertion that waited for a rendered image or a post
-// id would time out against a perfect app.
+// So ON THE DEFAULT AND UNCONSENTED ARMS no generation and no post can complete
+// here, on any machine, with or without a credential, and an assertion that waited
+// for a rendered image or a post id would time out against a perfect app. The
+// exceptions are the entries of `INVARIANT_EXCEPTIONS` in `_cdp.mjs` — a LEDGER, so
+// that neither this file nor any doc in this tree has to spell a count that goes
+// stale the next time an arm lands. The two below say what each class costs.
 //
-// 🔴 ONE REQUEST CLASS IS ANSWERED, AND IT IS NOT A SPENDING ONE. Since
+// 🔴 THE PICK IS ANSWERED ON EVERY ARM, AND IT IS NOT A SPENDING ONE. Since
 // 2026-09-25 the oracle answers a host RESOURCE PICK (`OPEN_RESOURCE_PICKER` /
 // `OPEN_CHECKPOINT_PICKER`) with the resource the SDK's own mock host resolves
 // with, because an app that gates Generate behind `openPicker` could otherwise
 // never reach `generating` — measured on `ab-ship-mimo-02`, which graded
 // `RENDER=no observed=ready generateDisabled=true` for that reason and no other.
-// Every OTHER request type still rejects with the SDK's own
+// Off the post arm every OTHER request type still rejects with the SDK's own
 // `InlineTransport.sendRequest is not implemented in v1`, and this file reports
 // which ones did on the cell as `hostRefused` — so the paragraph above is checked
 // per cell rather than promised in a comment. See `HOST_RESOURCE_PICKS` and
@@ -32,7 +35,8 @@
 // scope list the block's own manifest declares (argv[3], handed down by
 // oracle.sh) so that a consent-gated Generate handler takes the granted branch
 // instead of the refused one — but `token.raw` is still `''` and `sendRequest`
-// still rejects unconditionally. Scopes buy a BRANCH, never a CAPABILITY. See
+// still rejects everything outside the running arm's answered set: the scope seed
+// widens that set by nothing. Scopes buy a BRANCH, never a CAPABILITY. See
 // `hostBootstrap` in `_cdp.mjs` for the four-arm measurement behind it.
 //
 // What IS deterministic without a host round-trip is the block's own state
@@ -86,7 +90,7 @@
 // arm existed (measured, and pinned by the unit driver). `arm=post` on the cell is
 // what stops the two being confused. See `POST_PATH` in `_cdp.mjs` for the full
 // statement, including what a green here does NOT prove.
-import { launch, cdp, openPage, parseScopes, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, HOST_PICKS_LABEL, HOST_ARM, UNCONSENTED, POST_PATH, ARM_CONFLICT, CONSENT_MESSAGE, POST_ARM_PLAN, POST_ARM_NO_IMAGES_ERROR, POST_ARM_CREATE_POST_RESULT, POST_ARM_GLOBAL, seededScopes, CLICKABLES, labelExpr, sleep } from './_cdp.mjs';
+import { launch, cdp, openPage, parseScopes, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, HOST_PICKS_LABEL, HOST_ARM, UNCONSENTED, POST_PATH, ARM_CONFLICT, CONSENT_MESSAGE, POST_ARM_PLAN, POST_ARM_NO_IMAGES_ERROR, POST_ARM_CREATE_POST_RESULT, POST_ARM_GLOBAL, POST_ARM_CEILING_TOKEN, seededScopes, CLICKABLES, labelExpr, sleep } from './_cdp.mjs';
 
 const TARGET = process.argv[2];
 if (!TARGET) {
@@ -769,9 +773,16 @@ async function main() {
   // 🔴 THE POST ARM STATES ITS OWN CEILING IN ITS OWN OUTPUT, AS A FIELD, NOT ONLY
   // IN A DOC. This arm is the one whose green is easiest to over-read — it answers
   // a submit and creates a post, so "the post path works" is one careless sentence
-  // away from "posting works on civitai.com". The sentence rides on every cell so a
-  // reader cannot get the verdict without it.
+  // away from "posting works on civitai.com".
+  //
+  // 🔴 TWO LAYERS, BECAUSE THE PROSE CANNOT RIDE ON THE ROW. `postArmCeiling` is the
+  // full sentence and it lives here, in the assertion's JSON — which `grade.sh` does
+  // not parse. `postCeiling` is a short TOKEN, which `oracle.sh` puts on the summary
+  // line and `grade.sh` carries onto the grade row, so a reader of a matrix row cannot
+  // get this arm's verdict without it either. See `POST_ARM_CEILING_TOKEN` in
+  // `_cdp.mjs` for why it is a token and why it is appended only on this arm.
   if (POST_PATH) {
+    evidence.postCeiling = POST_ARM_CEILING_TOKEN;
     evidence.postArmCeiling = 'proves the block\'s post BRANCH exists and its payload satisfies '
       + 'the host payload gate as the SDK\'s own mock host implements it (non-empty `sources`, and '
       + 'a `workflow` source that actually produced images). Does NOT prove the real host accepts '

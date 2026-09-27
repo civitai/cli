@@ -484,8 +484,15 @@ func TestDogfoodGradersShareOneEscaper(t *testing.T) {
 				`"${GATE_RC:-none}"`,
 				`"$OBS_FIELD"`,   // already `tok`-wrapped at its assignment
 				`"$RENDER_PASS"`, // the verdict
+				// The post arm's ceiling field: a fixed ` post_ceiling=` label plus a
+				// value `tok`-wrapped at its assignment, same shape as `$OBS_FIELD`. It
+				// carries a LEADING SPACE on purpose — it is an appended field, empty on
+				// every other arm, which is what keeps a non-post summary line
+				// byte-identical (`TestANonPostSummaryLineIsByteIdentical`), so it cannot
+				// be wrapped here without the wrapper eating the separator.
+				`"$CEIL_FIELD"`,
 			},
-			minArgs: 12,
+			minArgs: 13,
 		},
 	} {
 		args := summaryPrintfArgs(t, src[tc.file], tc.prefix)

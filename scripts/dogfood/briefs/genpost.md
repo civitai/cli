@@ -30,21 +30,25 @@ python3 runner.py --model "$MODEL" --image "$IMAGE" --trial "$TRIAL" \
 
 ## 🔴 What this assertion can and cannot see
 
-**It cannot see a generation or a post happen. Not here, not on any machine,
-not with a credential.** The oracle emulates a host by seeding
+**On the default and unconsented arms it cannot see a generation or a post happen.
+Not on any machine, not with a credential.** The oracle emulates a host by seeding
 `window.__CIVITAI_BLOCK_CONTEXT__`, which the SDK's transport detector answers
 with `InlineTransport` — a v1 stub whose `sendRequest` REJECTS and which never
 delivers a host push. An assertion that waited for a rendered image or a post id
 would time out against a perfect app, every time, and the cell would read as a
-statement about the model.
+statement about the model. **The exceptions are enumerated, not counted:**
+`INVARIANT_EXCEPTIONS` in `scripts/dogfood/briefs/_cdp.mjs` is the ledger, and the
+opt-in **post arm** is the class that does complete both (see **The POST-PATH arm**
+below). No doc in this tree states a count — the one that did went stale the day the
+second class landed.
 
-⚠ **ONE CLASS OF REQUEST IS NOW ANSWERED, AND IT IS NOT A SPENDING ONE.** Since
+⚠ **THE PICK IS ANSWERED ON EVERY ARM, AND IT IS NOT A SPENDING ONE.** Since
 2026-09-25 the oracle answers a **host resource pick** —
 `OPEN_RESOURCE_PICKER` and `OPEN_CHECKPOINT_PICKER` — with the stubbed resource
 the SDK's own mock host resolves with, because an app that gates Generate behind
 `openPicker` could otherwise never reach `generating` (measured on
-`ab-ship-mimo-02`; see **The host answers a resource pick** below). Every OTHER
-request type still rejects with the SDK's own
+`ab-ship-mimo-02`; see **The host answers a resource pick** below). Off the post arm
+every OTHER request type still rejects with the SDK's own
 `InlineTransport.sendRequest is not implemented in v1`, and the cell carries
 `hostRefused=` naming the ones that did, so the sentence above is checked per
 cell rather than asserted here. A pick is a host **discovery** call: it hands the
@@ -106,8 +110,9 @@ Three reasons the signed-in branch is the right one to grade, in order of weight
 platform every privileged path re-derives identity from the JWT `sub` rather than
 from anything the block was handed — so a populated `viewer` cannot make a
 generation or a post appear to succeed. `InlineTransport.sendRequest` rejects
-every request but a resource pick regardless (see **The host answers a resource
-pick** below). `TestOracleSeedsTheProductionViewerAndNoCredential`
+everything outside the running arm's answered set regardless — off the post arm, every
+request but a resource pick (see **The host answers a resource pick** below) — and the
+viewer widens that set by nothing. `TestOracleSeedsTheProductionViewerAndNoCredential`
 asserts the seeded object from inside the page rather than by reading the source.
 The scope list is *not* empty — see **Scopes are seeded, and decide no verdict**
 below — and that changes which branch a block takes, never what it can complete.
@@ -269,10 +274,12 @@ baked into the harness), and a generate-only app plus an untouched scaffold stil
 graded `no` with both scopes seeded.
 
 🔴 **`raw` stays empty, and that is the load-bearing half.** Scopes buy the block
-a *branch*, never a *capability*: `InlineTransport.sendRequest` rejects every
-request but a resource pick (see the next section) whatever the scope list says,
-so this brief's "no generation and no post can complete here" premise is
-untouched.
+a *branch*, never a *capability*: `InlineTransport.sendRequest` rejects everything
+outside the running arm's answered set — off the post arm, everything but a resource
+pick (see the next section) — whatever the scope list says, so the scope seed leaves
+this brief's "no generation and no post can complete here" premise untouched. (The
+one thing that does suspend that premise is the opt-in post arm, below;
+`INVARIANT_EXCEPTIONS` in `_cdp.mjs` is the ledger of both classes.)
 `TestOracleSeedsTheProductionViewerAndNoCredential` asserts both halves from
 inside the page — the scopes match the manifest, and `token.raw` is `''` — and
 `oracle.sh` refuses (exit 2) if its own `scopes=` field and the list the
@@ -317,9 +324,10 @@ Two halves make it gradeable, and both are needed:
 generation attempt appears there — the app reached `generating`, asked the host to
 estimate a workflow, and was refused. A pick buys a **branch**, never a
 capability. ⚠ Stated precisely: the SDK's stub no longer rejects *unconditionally*
-in a patched page; it rejects everything except the two picker types. What is
-unchanged is the property that matters — nothing here can complete a generation, a
-post or a purchase — and it is held by
+in a patched page; it rejects everything except the two picker types. What the PICK
+leaves unchanged is the property that matters — nothing a pick answers can complete a
+generation, a post or a purchase, so off the post arm nothing here can — and it is
+held by
 `TestOracleRefusesEveryRequestThatIsNotAPick` plus
 `TestOracleInlineHostAnswersOnlyThePickerLedger`, which walks the SDK's whole
 47-entry `BLOCK_TO_PARENT_MESSAGE_TYPES` and fails if the answered set grows *or*
@@ -384,8 +392,9 @@ had to find "review permissions" by hand. Measured in `dogfood-ab-ship-mimo-02` 
 
 **Three things compounded to make the oracle blind to it:**
 
-1. `InlineTransport` rejects every request, so *"generation fails for everyone"*
-   and *"generation works"* produce the identical trace `ready>generating>ready`.
+1. On both of these arms `InlineTransport` rejects every request, so *"generation
+   fails for everyone"* and *"generation works"* produce the identical trace
+   `ready>generating>ready`.
    The default predicate grades the status word, and both apps produce it.
 2. `#690` seeds `token.scopes` and `#708` answers resource picks. Both fixed real
    false negatives — and **together they mean an app that never asks for consent
@@ -657,15 +666,30 @@ server-side (a workflow id against the app's own subqueue, image ids against the
 viewer's own rows), re-checks the `posts:write:self` grant, opens a viewer confirm,
 and moderates the outputs. None of that is visible here.
 
-That sentence rides on **every cell** as `postArmCeiling`, and `oracle.sh` prints a
-`⚠ POST-PATH ARM:` banner naming both the suspended invariant and the ceiling —
-because this is the arm whose green is easiest to over-read.
+It rides at **three layers**, because the sentence and the row are different surfaces
+and only the short form fits a row:
+
+- the **summary line and the grade row** carry `post_ceiling=mock-host-gate-only`,
+  appended by `oracle.sh` and carried through by `grade.sh` on this arm only — so a
+  reader of a matrix row cannot get this arm's verdict without it
+  (`TestThePostArmStatesItsCeilingOnEveryCell` reads the *summary line*,
+  `TestThePostArmsCeilingReachesTheGradeRow` reads `grade.sh`'s *row*, and
+  `TestANonPostSummaryLineIsByteIdentical` pins that no other arm's line moved);
+- the **assertion's JSON** carries the full sentence as `postArmCeiling`;
+- the **run stream** carries `oracle.sh`'s `⚠ POST-PATH ARM:` banner, naming both the
+  suspended invariant and the ceiling, and `grade.sh` re-prints the whole oracle output
+  so it is in a human's scrollback too.
+
+Because this is the arm whose green is easiest to over-read.
 
 ### 🔴 It suspends the invariant every other verdict rests on
 
-The header of this file, and of `_cdp.mjs`, says *no generation and no post can
-complete here, ever, on any machine, with or without a credential*. **With this flag
-set that sentence is false.** So:
+**Scopes are seeded, and decide no verdict** above, and the module docblock of
+`scripts/dogfood/briefs/_cdp.mjs`, both state the invariant *for the default and
+unconsented arms*: no generation and no post can complete here, on any machine, with
+or without a credential. **With this flag set that sentence is false** — which is why
+both of those sites now carry the qualifier, and why the exception classes are
+enumerated by `INVARIANT_EXCEPTIONS` in `_cdp.mjs` rather than counted in prose. So:
 
 - The flag is **off by default** and named on the cell (`arm=post`).
 - With it unset, `inlineHostSource()` returns **byte-for-byte** the source it

@@ -336,6 +336,10 @@ AVIEWER=
 # `set -u` when nothing was served.
 AARM=
 ADECL=
+# The post arm's ceiling TOKEN, read back from the assertion. Empty on every other
+# arm, which is what keeps a non-post summary line byte-identical — see
+# `POST_ARM_CEILING_TOKEN` in briefs/_cdp.mjs.
+ACEIL=
 
 if [ -z "$APP_DIR" ]; then
   REASON="no block.manifest.json under /work — no app was created"
@@ -496,6 +500,20 @@ if [ -n "$SERVED" ]; then
     '') : ;;
     *) fatal "the assertion reported an unknown arm '$AARM'" ;;
   esac
+  # 🔴 THE CEILING TOKEN, AND ITS OWN SEAM. The post arm's green is the one most
+  # easily over-read, so the token that says "mock host gate only" must be ON THE
+  # CELL, not only in the assertion's JSON and the run's banner. Read back rather than
+  # derived here, for the same reason `arm=` is. The two directions are both defects in
+  # this harness, so both exit 2 rather than emitting a verdict: a post-arm cell with no
+  # token would be the over-readable green this exists to prevent, and a token on any
+  # other arm would append a field to a line format every recorded verdict was read off.
+  ACEIL=$(printf '%s' "$JSON" | jq -r '.postCeiling // empty' 2>/dev/null)
+  if [ "$AARM" = "post" ] && [ -z "$ACEIL" ]; then
+    fatal "the assertion reports arm=post but no postCeiling token — the cell would carry this arm's verdict without its ceiling"
+  fi
+  if [ "$AARM" != "post" ] && [ -n "$ACEIL" ]; then
+    fatal "the assertion reports arm='$AARM' but sent a postCeiling token '$ACEIL' — only the post arm may add a field to the summary line"
+  fi
   AREASON=$(printf '%s' "$JSON" | jq -r '.reason // empty' 2>/dev/null)
   APASS=$(printf '%s' "$JSON" | jq -r 'if has("pass") then (.pass|tostring) else "absent" end' 2>/dev/null)
   [ "$APASS" = "true" ] && RENDER_PASS=yes
@@ -538,9 +556,16 @@ OBS_FIELD="''"
 # field that a first-match reader prefers to the real one. `observed=` was
 # already quoted and now uses the same function as its siblings rather than a
 # second rule.
-printf 'brief=%s brief_source=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s scopes=%s viewer=%s arm=%s served=%s observed=%s RENDER=%s\n' \
+# 🔴 APPENDED, AND EMPTY ON EVERY ARM BUT `post`, WHICH IS THE WHOLE POINT. Every
+# verdict this arc recorded was read off this line's format, and `grade.sh` plus both Go
+# suites compare fields exactly — so this field may only ever be an ADDITION to the post
+# arm's line, never a reordering, and never a field a non-post line carries empty.
+# `TestANonPostSummaryLineIsByteIdentical` pins the non-post format byte for byte.
+CEIL_FIELD=
+[ -n "$ACEIL" ] && CEIL_FIELD=" post_ceiling=$(tok "$ACEIL")"
+printf 'brief=%s brief_source=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s scopes=%s viewer=%s arm=%s served=%s observed=%s RENDER=%s%s\n' \
   "$(tok "$BRIEF")" "$BRIEF_SOURCE" "$APP_COUNT" "$(tok "${APP_DIR:-none}")" \
   "$GATE" "${GATE_RC:-none}" "$(tok "${SCOPES:-none}")" \
   "$(tok "${AVIEWER:-unmeasured}")" "$(tok "${AARM:-unmeasured}")" "$(tok "${SERVED:-none}")" \
-  "$OBS_FIELD" "$RENDER_PASS"
+  "$OBS_FIELD" "$RENDER_PASS" "$CEIL_FIELD"
 exit 0

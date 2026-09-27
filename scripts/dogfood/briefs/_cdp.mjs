@@ -29,22 +29,28 @@
 // arm, and it is what proves the injection is doing something.
 //
 // ⚠ It is a v1 stub on the SDK side: `InlineTransport.sendRequest` REJECTS and
-// host pushes never arrive. So a block that AWAITS a host reply — a real
-// generation, a real post — never gets one here. Every assertion in this
-// directory must be satisfiable WITHOUT a host round-trip, and must say so in
-// its own doc. A green cell is never evidence that the money path works. That
-// holds with the block's declared scopes seeded (see `hostBootstrap`): the
-// scope list picks a BRANCH, `token.raw` would be the CAPABILITY, and it stays
-// empty.
+// host pushes never arrive. So ON THE DEFAULT AND UNCONSENTED ARMS a block that
+// AWAITS a host reply — a real generation, a real post — never gets one here, and
+// a green cell there is never evidence that the money path works. Every assertion
+// in this directory must be satisfiable WITHOUT a host round-trip, and must say so
+// in its own doc. That holds with the block's declared scopes seeded (see
+// `hostBootstrap`): the scope list picks a BRANCH, `token.raw` would be the
+// CAPABILITY, and it stays empty.
 //
-// ⚠ ONE EXCEPTION, ADDED 2026-09-25, AND IT COMPLETES NOTHING: a host RESOURCE
-// PICK is answered. `patchInlineTransport` rewrites that one stub expression so it
-// consults `inlineHostSource`'s shim, which resolves `OPEN_RESOURCE_PICKER` and
-// `OPEN_CHECKPOINT_PICKER` with a stubbed `BlockResourceInfo` and rejects every
-// other request type with the SDK's own error, byte for byte. So "a block that
-// awaits a real generation or a real post never gets one" is unchanged; what
-// changed is that an app gating Generate on a PICK is no longer graded on a branch
-// production never puts it in. See `HOST_RESOURCE_PICKS` for the measurement.
+// ⚠ THE EXCEPTIONS ARE ENUMERATED BY {@link INVARIANT_EXCEPTIONS}, NOT COUNTED
+// HERE — a spelled count is exactly what went stale when the second class landed,
+// so no doc in this tree states one. What matters at this altitude is that the
+// classes do NOT have the same ceiling. A host RESOURCE PICK is answered on EVERY
+// arm and COMPLETES NOTHING: `patchInlineTransport` rewrites that one stub
+// expression so it consults `inlineHostSource`'s shim, which resolves
+// `OPEN_RESOURCE_PICKER` / `OPEN_CHECKPOINT_PICKER` with a stubbed
+// `BlockResourceInfo` and rejects every other request type with the SDK's own
+// error, byte for byte (see `HOST_RESOURCE_PICKS`). The opt-in POST ARM
+// (`CIVITAI_ASSERT_POST_PATH=1`, off by default) additionally answers the workflow
+// estimate/submit/poll and `CREATE_POST_FROM_APP`, so a canned generation and a
+// canned post DO complete in the page — with that flag set the sentence above is
+// FALSE, which is why the cell carries `arm=post` and `post_ceiling=`. See
+// `POST_PATH`. Every verdict this arc has recorded was taken with it unset.
 //
 // 🔴 AND IT ANSWERS A HOST RESOURCE-PICK, BECAUSE A PICKER-GATED APP OTHERWISE
 // GRADES A BRANCH PRODUCTION NEVER EXHIBITS EITHER. Third instance of one class
@@ -53,7 +59,8 @@
 // supplied nothing. Measured on `ab-ship-mimo-02` (2026-09-25) — see
 // `HOST_RESOURCE_PICKS` and `inlineHostSource` for the measurement, the shape,
 // and the exact boundary of what the answer buys the block (a BRANCH; never a
-// capability — every non-picker request still rejects with the SDK's own error).
+// capability — every non-picker request still rejects with the SDK's own error,
+// unless the post arm above is on and named it).
 //
 // 🔴 AND SINCE 2026-09-25 IT CAN PRESENT AN *UNCONSENTED* ONE, WHICH IS THE
 // STATE EVERY NEW USER IS IN. `CIVITAI_ASSERT_UNCONSENTED=1` seeds `token.scopes`
@@ -182,7 +189,8 @@ export const ANON_VIEWER = process.env.CIVITAI_ASSERT_ANON_VIEWER === '1';
  * token below stays `raw: ''`, and on the platform every privileged path
  * re-derives identity from the JWT `sub` rather than from anything the block was
  * handed — so a populated `viewer` cannot make a generation or a post appear to
- * succeed. `InlineTransport.sendRequest` rejects unconditionally anyway.
+ * succeed. `InlineTransport.sendRequest` rejects everything outside
+ * {@link HOST_ANSWERED_REQUESTS} anyway, and the viewer is not what widens that set.
  * `fxGenpostBootstrapProbe` in dogfood_oracle_test.go asserts the seeded object
  * from inside the page. The scope LIST is not empty any more — see
  * `hostBootstrap` — and that changes which branch a block takes, never what it
@@ -209,8 +217,8 @@ export const HOST_VIEWER = ANON_VIEWER
  * `dogfood-ab-ship-mimo-02` 2026-09-25).
  *
  * 🔴 AND THE ORACLE COULD NOT SEE IT, FOR THREE COMPOUNDING REASONS:
- *   - `InlineTransport` rejects every request, so "generation fails for
- *     everyone" and "generation works" leave the IDENTICAL status trace
+ *   - on both of these arms `InlineTransport` rejects every request, so "generation
+ *     fails for everyone" and "generation works" leave the IDENTICAL status trace
  *     `ready>generating>ready`. The assertion grades the status word, and both
  *     apps produce it.
  *   - #690 seeds `token.scopes` from the manifest and #708 answers resource
@@ -251,10 +259,10 @@ export const UNCONSENTED = process.env.CIVITAI_ASSERT_UNCONSENTED === '1';
  * `ready>generating>ready`.
  *
  * 🔴 IT BREAKS THE STANDING INVARIANT, WHICH IS WHY IT IS OPT-IN AND LOUD.
- * `briefs/genpost.md` and the module docblock at the top of this file both say
- * *no generation and no post can complete here, ever, on any machine, with or
- * without a credential*, and the DEFAULT and UNCONSENTED arms' verdicts rest on
- * it. With this flag set that sentence is FALSE — a canned generation completes
+ * `briefs/genpost.md` and the module docblock at the top of this file both state
+ * that invariant *for the default and unconsented arms* — no generation and no post
+ * can complete, on any machine, with or without a credential — and those two arms'
+ * verdicts rest on it. With this flag set that sentence is FALSE — a canned generation completes
  * and a canned post is created — so the flag must stay unset for every verdict
  * this arc has recorded, and the arm carries its own label (`arm=post`) onto the
  * cell so a reader can never mistake one for the other.
@@ -338,8 +346,10 @@ export function parseScopes(csv) {
  *
  * 🔴 `raw` STAYS EMPTY, AND THAT IS THE LOAD-BEARING HALF. Scopes buy the block
  * a BRANCH, never a CAPABILITY: `InlineTransport.sendRequest` rejects
- * unconditionally whatever the scope list says, so briefs/genpost.md's premise —
- * no generation and no post can complete here, on any machine — is untouched. A
+ * unconditionally whatever the scope list says, so briefs/genpost.md's premise for
+ * the default and unconsented arms — no generation and no post can complete here, on
+ * any machine — is untouched by the scope seed. (What DOES suspend it is the opt-in
+ * post arm; see {@link INVARIANT_EXCEPTIONS}.) A
  * bootstrap carrying a real `raw` would make a green cell earnable with a
  * credential the oracle handed over, which is a different and much worse
  * instrument. `fxGenpostBootstrapProbe` in dogfood_oracle_test.go asserts BOTH
@@ -478,16 +488,19 @@ export const INLINE_MESSAGE_GLOBAL = '__CIVITAI_DOGFOOD_INLINE_MESSAGE__';
 export const CONSENT_MESSAGE = 'REQUEST_CONSENT';
 
 /**
- * The request types this oracle will ANSWER. Everything else — every workflow
- * estimate, submit and poll, every post, every purchase, every token refresh —
- * keeps rejecting with {@link INLINE_STUB_MESSAGE}.
+ * The request types this oracle will ANSWER on EVERY arm. Off the post arm that is
+ * the whole answered set, and everything else — every workflow estimate, submit and
+ * poll, every post, every purchase, every token refresh — keeps rejecting with
+ * {@link INLINE_STUB_MESSAGE}. For what the post arm adds see
+ * {@link HOST_POST_REQUESTS}; for the answered set of the arm that is actually
+ * running, {@link HOST_ANSWERED_REQUESTS}.
  *
  * 🔴 THIS LIST IS THE INVARIANT, AND IT IS AN ALLOWLIST FOR THAT REASON. The two
  * entries are host *discovery* calls: they hand the block an id it could have
  * hardcoded, and the SDK's own docblock says so — "DISCOVERY ONLY: the returned
  * `versionId` is a hint, never an entitlement … the spend path is the enforcement
- * boundary, not the picker". Nothing here can complete a generation or a post,
- * because nothing here answers a request that does one.
+ * boundary, not the picker". Nothing in THIS list can complete a generation or a
+ * post, because nothing in it answers a request that does one.
  */
 export const HOST_PICKER_REQUESTS = ['OPEN_RESOURCE_PICKER', 'OPEN_CHECKPOINT_PICKER'];
 
@@ -564,13 +577,20 @@ export const HOST_RESOURCE_PICKS = {
  * app and NONE of them is needed to reach Post, so answering them would widen the
  * arm past the thing it was built to see.
  */
-export const HOST_POST_REQUESTS = POST_PATH
-  ? ['ESTIMATE_WORKFLOW', 'SUBMIT_WORKFLOW', 'POLL_WORKFLOW', 'CREATE_POST_FROM_APP']
-  : [];
+export const POST_ARM_REQUESTS = ['ESTIMATE_WORKFLOW', 'SUBMIT_WORKFLOW', 'POLL_WORKFLOW', 'CREATE_POST_FROM_APP'];
+
+export const HOST_POST_REQUESTS = POST_PATH ? POST_ARM_REQUESTS : [];
 
 /**
- * The FULL set this oracle answers on the arm that is running — the one source
- * both the shim's allowlist and the tests' ledger read.
+ * The FULL set this oracle answers on the arm that is running — what the tests'
+ * ledger reads, and the list to quote when describing the arm.
+ *
+ * ⚠ THE SHIM DOES NOT READ IT. `inlineHostSource`'s template spells its own
+ * allowlist INLINE, as literal `case`/`===` comparisons in the page source, because
+ * the template is a string the page parses rather than a module that can import a
+ * constant. So this is one of two spellings, not the single source — the thing that
+ * keeps them from drifting is `TestThePostArmShimAnswersOnlyItsOwnLedger`, which
+ * anchors the literal types in the emitted source.
  *
  * 🔴 DERIVED, NEVER RETYPED. `HOST_PICKER_REQUESTS` is asserted against the SDK's
  * whole outbound vocabulary by `TestOracleInlineHostAnswersOnlyThePickerLedger`,
@@ -578,6 +598,39 @@ export const HOST_POST_REQUESTS = POST_PATH
  * env set, so it is also the guard that this arm adds nothing when it is off.
  */
 export const HOST_ANSWERED_REQUESTS = [...HOST_PICKER_REQUESTS, ...HOST_POST_REQUESTS];
+
+/**
+ * Every exception to the standing invariant — "nothing completes here" — one entry
+ * per CLASS, arm-independent.
+ *
+ * 🔴 IT EXISTS SO NO DOC HAS TO SPELL A COUNT. The module docblock above said "ONE
+ * EXCEPTION" and stayed saying it after the post arm made the set two, which is the
+ * failure mode a number has: it is a claim that has to be re-edited by whoever adds
+ * the next arm, and nothing fails when they don't. A ledger is derivable — read
+ * `INVARIANT_EXCEPTIONS.length`, or read the entries — and the
+ * `exception-ledger-*` checks in `TestThePostArmShimAnswersOnlyItsOwnLedger` fail
+ * if a request type is answered without an entry here, or an entry here names a
+ * type the answered set does not contain on the arm that entry belongs to.
+ *
+ * `completes` is the field that matters and it is NOT uniform: a pick hands the
+ * block an id it could have hardcoded, while the post arm lets a generation and a
+ * post finish. A reader asking "can this rig complete a post?" is asking about this
+ * column, not about the request names.
+ */
+export const INVARIANT_EXCEPTIONS = [
+  {
+    flag: null,
+    arms: 'every arm (unless `CIVITAI_ASSERT_NO_HOST_PICKS=1`)',
+    requests: HOST_PICKER_REQUESTS,
+    completes: null,
+  },
+  {
+    flag: 'CIVITAI_ASSERT_POST_PATH=1',
+    arms: 'the post arm only, opt-in and off by default',
+    requests: POST_ARM_REQUESTS,
+    completes: 'a canned generation and a canned post, in the page',
+  },
+];
 
 /**
  * The arm combinations this oracle refuses to run, as a sentence — `null` when
@@ -618,6 +671,27 @@ export const ARM_CONFLICT = !POST_PATH ? null
  * ANSWERED" the same cell field.
  */
 export const POST_ARM_GLOBAL = '__dogfoodPostArm';
+
+/**
+ * The ceiling as a SUMMARY-LINE TOKEN, which is a different layer from the
+ * assertion's `postArmCeiling` prose and is here for a reason.
+ *
+ * 🔴 "THE CELL" IN THIS RIG MEANS THE SUMMARY LINE AND THE GRADE ROW (see
+ * `scripts/dogfood/README.md`), AND THE PROSE RIDES ON NEITHER. `postArmCeiling` is
+ * a field of the assertion's JSON; `grade.sh` parses only the `brief=` line and
+ * emits eight fields, none of them that one. So four sites claiming the sentence
+ * "rides on every cell so a reader cannot get the verdict without it" were claiming
+ * a layer it does not reach — true of the run STREAM (the `⚠ POST-PATH ARM:` banner,
+ * re-printed by `grade.sh`), false of the row a matrix is read off.
+ *
+ * 🔴 IT IS A TOKEN, NOT THE SENTENCE, AND IT IS APPENDED ONLY ON THIS ARM. Every
+ * verdict this arc recorded was read off the summary-line FORMAT, and both Go suites
+ * plus `grade.sh` compare fields exactly — so a field added unconditionally would
+ * change every historical cell's shape. `oracle.sh` appends ` post_ceiling=` at the
+ * END of the line when and only when the assertion reports `arm=post`, which leaves a
+ * non-post line byte-identical. `TestANonPostSummaryLineIsByteIdentical` pins that.
+ */
+export const POST_ARM_CEILING_TOKEN = 'mock-host-gate-only';
 
 /**
  * The price the arm quotes, mirroring `createMockHost`'s `legacyCost` default
@@ -728,7 +802,8 @@ export const POST_ARM_PLAN = [
  * the oracle, is what the module docblock above explains it cannot, and would
  * hand the harness the power to answer a SUBMIT — or (c) leave a correct app
  * graded as broken. (a) is the only one that keeps "nothing can complete here"
- * structurally true.
+ * structurally true off the post arm, and keeps the post arm's widening confined to
+ * one runtime-selected allowlist rather than to the transport itself.
  *
  * 🔴 IT IS DELIBERATELY THE NARROWEST EDIT THAT WORKS, AND IT IS REVERSIBLE AT
  * RUNTIME. It replaces one expression — the stub's `Promise.reject(new Error(<the
@@ -831,10 +906,12 @@ export function patchInlineTransport(code) {
  * resolves with the wire shape the iframe transport resolves with — the response
  * message's `payload`, i.e. `{ requestId, selected }` (`IframeTransport`'s
  * `pending.resolve(payload)`) — and every other request type rejects with
- * {@link INLINE_STUB_MESSAGE}, the string the SDK's own stub throws. So a block
- * cannot tell this harness from an unpatched one on any path that spends or
- * publishes, and `briefs/genpost.md`'s premise — no generation and no post can
- * complete here, on any machine — is untouched.
+ * {@link INLINE_STUB_MESSAGE}, the string the SDK's own stub throws. So OFF THE POST
+ * ARM a block cannot tell this harness from an unpatched one on any path that spends
+ * or publishes, and `briefs/genpost.md`'s premise — no generation and no post can
+ * complete here, on any machine — is untouched. On the post arm the allowlist is
+ * widened by exactly {@link HOST_POST_REQUESTS} and nothing else; the refusal
+ * mechanism, and every other type, are the same.
  *
  * 🔴 AND IT COUNTS BOTH SIDES, ONTO THE CELL. `window.__dogfoodHostPicks` records
  * what was answered and `window.__dogfoodHostRefused` what was refused, and the
@@ -1496,9 +1573,10 @@ export async function openPage(c, url, { scopes = [] } = {}) {
   };
   /**
    * What the host shim was asked for and what it did about it, read out of the
-   * page. `answered` is the picker requests it satisfied; `refused` is every other
-   * request type it turned down with the SDK's own error — which is the half that
-   * SHOWS, per cell, that the money path still cannot complete. `messages` is
+   * page. `answered` is the requests it satisfied; `refused` is every other request
+   * type it turned down with the SDK's own error — which is the half that SHOWS, per
+   * cell, which money paths still cannot complete (off the post arm, all of them;
+   * on it, everything outside {@link HOST_POST_REQUESTS}). `messages` is
    * every FIRE-AND-FORGET message the block sent, which nothing answered — the
    * ledger a consent ask lands in. See `CONSENT_MESSAGE`.
    */

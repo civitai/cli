@@ -278,7 +278,8 @@ if (!b || !b.viewer) {
 //   - the token's `raw` stays EMPTY. Scopes must buy the block a BRANCH and
 //     never a CAPABILITY: if a green cell could be earned with a credential the
 //     oracle handed over, the brief's "no generation and no post can complete
-//     here" premise is gone.
+//     here" premise would be gone on EVERY arm — where the opt-in post arm suspends
+//     it deliberately, loudly, and for four named request types only.
 const fxGenpostBootstrapProbe = `<!doctype html><meta charset="utf-8"><body>
 <input data-testid="prompt" type="text">
 <button id="gen">Generate</button>
@@ -1297,7 +1298,8 @@ func TestOracleShowsTheBlockASignedInViewer(t *testing.T) {
 
 // 🔴 AND THE SEEDED VIEWER AND SCOPES BUY THE BLOCK NOTHING. A host emulation
 // that hands a block a viewer AND a usable credential would make the `genpost`
-// brief's premise false — briefs/genpost.md says in as many words that no
+// brief's premise false — briefs/genpost.md says in as many words that, off the
+// opt-in post arm, no
 // generation and no post can complete here, on any machine, and the assertion
 // grades the state machine only on that basis. Scopes are a BRANCH, `token.raw`
 // is the CAPABILITY, and only the first of those is seeded. This reads the

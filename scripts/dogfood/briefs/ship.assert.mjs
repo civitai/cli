@@ -23,8 +23,10 @@
 // 🔴 IT CANNOT GRADE THE SUBMIT, AND NO BROWSER ASSERTION EVER COULD. A
 // submission is server state. It leaves nothing in the DOM, the oracle's host
 // emulation is the SDK's `InlineTransport` stub whose `sendRequest` rejects
-// unconditionally, and `token.raw` is empty — so nothing can COMPLETE here, by
-// construction. Grading the submit needs the account, which is what
+// everything outside the running arm's answered set, and `token.raw` is empty — so no
+// SUBMIT can complete here, by construction, on any arm: the post arm widens that set
+// by four workflow/post types (`INVARIANT_EXCEPTIONS` in `_cdp.mjs`) and by nothing
+// that reaches the store. Grading the submit needs the account, which is what
 // `ship.verdict.sh` reads.
 //
 // Delegation is by SPAWN rather than by import, and that is a deliberate
