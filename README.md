@@ -1487,8 +1487,9 @@ It is a **symptom index**: every row's left column is a fragment of a string
 this CLI really prints, so searching that page for a few words of your error
 lands you on the row that explains it. Rows are grouped by what you were doing
 — credentials and access, scaffolding a project, validating and submitting,
-generating, and everything else — and each one links the guide section that
-holds the detail.
+generating, and everything else — and each row links onward to whatever explains
+it, which is usually a section of that guide and sometimes a heading back in this
+README (the [exit-code](#exit-codes) contract lives here).
 
 Still stuck? Every command takes `--help`, `civitai --help` prints the
 exit-code contract, and failures are differentiated by

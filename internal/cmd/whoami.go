@@ -192,12 +192,27 @@ const whoamiLabelColumn = 26
 
 // whoamiRow renders one `  <label><pad><value>` line of either section.
 //
-// 🔴 THE LABEL IS PASSED WITH ITS COLON, ON PURPOSE. `README.md`'s
-// Troubleshooting index quotes `Submit Apps:` as a symptom, and
-// TestREADMETroubleshootingSymptomsExistInTheSource proves that string still
+// 🔴 THE LABEL IS PASSED WITH ITS COLON, ON PURPOSE. The published
+// troubleshooting index (developer.civitai.com/site/guide/cli-troubleshooting)
+// quotes `Submit Apps:` as a symptom, its symptom strings are vendored in
+// `internal/cmd/troubleshooting_published_test.go`, and
+// TestPublishedTroubleshootingSymptomsExistInTheSource proves that string still
 // exists in non-test source. Appending the colon here instead would leave the
 // emitted label as `"Submit Apps"`, and that guard would then be satisfied only
 // by a COMMENT — green while the row it indexes had drifted.
+//
+// 🔴 THAT LAST SENTENCE IS NOT HYPOTHETICAL, AND THE COMMENTS IT WARNS ABOUT ARE
+// IN THIS FILE: `Submit Apps:` also appears at line 102 (a rejected-naming note)
+// and inside this very comment. So the guard's corpus finds the string whether or
+// not `whoamiRow` is still called with it — only the call at line 120 makes the
+// binary emit it. Move the colon and nothing goes red.
+//
+// (The index moved off README.md when `## Troubleshooting` became a pointer; the
+// test was renamed with it. An earlier version of this comment named
+// `TestREADMETroubleshootingSymptomsExistInTheSource`, which no longer exists —
+// `go test -run` on a name that matches nothing exits 0 and reports
+// "no tests to run", so following a stale signpost here returns a green that
+// measured nothing.)
 func whoamiRow(label, value string) string {
 	return fmt.Sprintf("  %-*s%s", whoamiLabelColumn, label, value)
 }

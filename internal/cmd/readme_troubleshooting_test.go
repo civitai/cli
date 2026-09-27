@@ -421,7 +421,7 @@ func runAttribution(t *testing.T, r attributionRun, empty, scratch string) strin
 	return b.String()
 }
 
-// TestREADMETroubleshootingRowsAreAttributedToTheEmittingCommand is the #361
+// TestPublishedTroubleshootingRowsAreAttributedToTheEmittingCommand is the #361
 // guard: existence -> attribution.
 //
 // Red/green matrix, re-measured for #373 against a PINNED ref rather than
@@ -1819,8 +1819,8 @@ func TestGithubAnchorSlugKeepsUnderscores(t *testing.T) {
 	}
 }
 
-// TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit pins the FLOOR of
-// what the section must cover, independently of the guard above.
+// TestPublishedTroubleshootingCoversTheRefusalsAuthorsActuallyHit pins the FLOOR
+// of what the index must cover, independently of the guard above.
 //
 // The two are not redundant, and neither subsumes the other: the sibling asks
 // "is every row real?", which a section that had been cut down to three

@@ -14,8 +14,13 @@ import (
 //	https://developer.civitai.com/site/guide/cli-troubleshooting
 //
 // verified by CONTENT before the deletion rather than by heading — all 69
-// symptom strings, all six bucket tables and the three cause cells the guards
-// assert on were read back off the live page.
+// symptom strings, all FIVE bucket tables and the three cause cells the guards
+// assert on were read back off the live page. (Five, counted: the deleted section
+// had five `###` buckets and five `| You saw ` table headers at 7b3be7a. An
+// earlier version of this paragraph said six — in the evidence justifying the
+// deletion of 26 KB of user-facing contract, in a file whose own norm is that a
+// count in a comment is a claim, in a change that deleted another comment's count
+// for exactly that reason.)
 //
 // A hosted page cannot be an oracle for a hermetic test, so the guards were
 // RE-POINTED rather than deleted, at the ledger below: a VENDORED mirror of the
@@ -83,10 +88,30 @@ const publishedTroubleshootingURL = "https://developer.civitai.com/site/guide/cl
 // gains, and its failure message tells the maintainer to edit the number, which
 // is the habit that makes such a guard worthless.
 //
-// A floor loses nothing, because THE HAZARD IS ONE-DIRECTIONAL: rot is always
-// deletion. The realistic incident is guard 1 going red on a reworded string and
-// somebody deleting the ledger ENTRY instead of updating the page — and `<` at
-// the live count catches that identically, at zero growth tax.
+// WHAT THE FLOOR BUYS: the realistic incident is guard 1 going red on a reworded
+// string and somebody deleting the ledger ENTRY instead of updating the page.
+// `<` at the live count catches that — measured, a 69 -> 68 deletion is red with
+// one clean message — and it does not charge the growth tax an exact pin does.
+//
+// ⚠ WHAT IT GIVES UP, AND AN EARLIER VERSION OF THIS COMMENT DENIED IT. That
+// version said "A floor loses nothing, because THE HAZARD IS ONE-DIRECTIONAL:
+// rot is always deletion." That is FALSE, and measurably so. One deletion
+// pattern the exact pin caught and this floor does not:
+//
+//	add one real row      -> 69 becomes 70, and nothing prompts a bump: GREEN
+//	then delete any row   -> back to 69: GREEN, and that string is now unwatched
+//
+// With `!= 69` step one is red and forces the constant to 70, which makes step
+// two red. So the floor's protection is only as strong as the last time somebody
+// obeyed the instruction below, and NOTHING CHECKS THAT. This is recorded as a
+// residual rather than argued away; the decision still stands, because an exact
+// pin is the ratchet readmeMinExternalURLs retired and the window here needs two
+// separate edits that each look innocent.
+//
+// The window is NARROWED, not closed, by
+// TestVendoredTroubleshootingLedgerIsWellFormed: a deletion disguised as a
+// duplicate (retyping one symptom as a copy of its neighbour, which keeps the
+// count at 69) is red there. A deletion-after-addition is not.
 //
 // Set it to the new count whenever rows are legitimately ADDED, so the floor
 // keeps tracking the live size; never lower it to make a red run green.
@@ -268,24 +293,54 @@ func publishedReadMoreFor(t *testing.T, fragment string) string {
 	return ""
 }
 
-// TestVendoredTroubleshootingLedgerIsWellFormed carries the two properties the
+// TestVendoredTroubleshootingLedgerIsWellFormed carries the properties the
 // deleted markdown extractor gave away for free.
 //
 // 🔴 NEITHER IS AUTOMATIC IN A SLICE, WHICH IS WHY THIS EXISTS. (1) The old
 // troubleshootingRowFor counted matches and FATALED on two rows quoting one
 // fragment, because a guard that picks one of them says nothing about the other.
-// publishedTroubleshootingRows is a slice and a duplicate would silently resolve
-// to the first entry. (2) The old lookup matched a row's real first column, so a
-// cause cell could not exist for a row the index does not have; here the two
-// ledgers are separate declarations and can disagree.
+// A slice duplicate would silently resolve to the first entry. (2) The old lookup
+// matched a row's real first column, so a cause cell could not exist for a row
+// the index does not have; here the two ledgers are separate declarations and can
+// disagree.
+//
+// 🔴 (1) APPLIED TO THE 3-ENTRY SLICE ONLY, AND THE ARGUMENT WAS ALWAYS ABOUT
+// BOTH. The uniqueness check below used to run on publishedTroubleshootingRows
+// (3 entries) and never on publishedTroubleshootingSymptoms (69) — the slice the
+// floor counts. MEASURED: retyping one symptom as a copy of its neighbour keeps
+// the count at 69, so the floor stays green, and that string silently stops being
+// watched with the whole package green. A docstring that argued the property for
+// slices in general while the body checked the smaller one is the
+// narrower-than-its-docstring shape this repository keeps finding; it is now
+// checked on both, and the symptom slice is the one that matters.
 func TestVendoredTroubleshootingLedgerIsWellFormed(t *testing.T) {
+	// POSITIVE CONTROL: empty ledgers satisfy every loop below in silence.
+	if len(publishedTroubleshootingRows) == 0 {
+		t.Fatal("CONTROL failure: publishedTroubleshootingRows is empty, so this test asserts nothing")
+	}
+	if len(publishedTroubleshootingSymptoms) == 0 {
+		t.Fatal("CONTROL failure: publishedTroubleshootingSymptoms is empty, so this test asserts nothing")
+	}
+
+	// The 69-entry symptom ledger: every string must be distinct. A duplicate is
+	// a DELETION the floor cannot see, because the count does not move.
+	symSeen := map[string]int{}
+	for _, s := range publishedTroubleshootingSymptoms {
+		symSeen[s]++
+	}
+	for s, n := range symSeen {
+		if n > 1 {
+			t.Errorf("the symptom ledger holds %d copies of %q.\n"+
+				"A duplicate is a DELETION IN DISGUISE: the count stays at "+
+				"publishedTroubleshootingSymptomFloor, so that floor stays green, while whichever string "+
+				"was overwritten silently stops being searched for in the CLI's source. Restore the "+
+				"overwritten row from %s.", n, s, publishedTroubleshootingURL)
+		}
+	}
+
 	seen := map[string]int{}
 	for _, r := range publishedTroubleshootingRows {
 		seen[r.fragment]++
-	}
-	// POSITIVE CONTROL: an empty ledger satisfies every loop below in silence.
-	if len(publishedTroubleshootingRows) == 0 {
-		t.Fatal("CONTROL failure: publishedTroubleshootingRows is empty, so this test asserts nothing")
 	}
 	for frag, n := range seen {
 		if n > 1 {

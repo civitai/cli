@@ -14,10 +14,17 @@ import (
 // repaired, and it exists because nothing pinned them while they were wrong.
 //
 // 🔴 THE MEASURED GAP. Every behavioural sentence in the `## Submit & auth`
-// entry-table paragraph, and in its Troubleshooting row, was unasserted.
-// TestREADMETroubleshootingSymptomsExistInTheSource guards only the LEFT-HAND
+// entry-table paragraph, and in its troubleshooting row, was unasserted.
+// TestPublishedTroubleshootingSymptomsExistInTheSource guards only the LEFT-HAND
 // symptom column; app_submit_oversize_test.go names those rows in a comment and
-// never opens README.md. So each of the four rounds shipped a false claim into
+// never opens README.md.
+//
+// ⚠ THE TWO SURFACES ARE NO LONGER BOTH IN README.md. The paragraph still is;
+// the troubleshooting row is published at
+// developer.civitai.com/site/guide/cli-troubleshooting and VENDORED here by
+// publishedTroubleshootingRows. Where a message below says "README.md is the only
+// place either appears", read it as the history it is — see the re-pointing note
+// above troubleshootingEntryBlockCause. So each of the four rounds shipped a false claim into
 // the published user contract with the full suite green, and the next round
 // found it by reading rather than by running anything.
 //
@@ -248,17 +255,20 @@ func TestREADMESubmitEntryBlockSentinelLedger(t *testing.T) {
 		if _, ok := ledgered[name]; !ok {
 			t.Errorf("doUpload's switch branches on %s, but no row in entryBlockSentinels covers it.\n"+
 				"A new case changes WHICH failures print the entry block, which is exactly what the "+
-				"README paragraph and its Troubleshooting row promise a reader. Add a row here naming "+
-				"what the README must now say — and update both surfaces, because README.md is the "+
-				"only place either appears and they went out of sync for a commit in #635.", name)
+				"README paragraph and the published troubleshooting row promise a reader. Add a row here "+
+				"naming what both must now say — and update BOTH: the `## Submit & auth` paragraph in "+
+				"README.md, and the row at "+
+				publishedTroubleshootingURL+" whose cause cell is vendored in "+
+				"publishedTroubleshootingRows. They went out of sync for a commit in #635.", name)
 		}
 	}
 	for name, s := range ledgered {
 		if !found[name] {
 			t.Errorf("entryBlockSentinels still carries %s, but doUpload's switch no longer branches on it.\n"+
 				"Reason it was ledgered: %s.\n"+
-				"The README currently tells readers %q (paragraph) and %q (Troubleshooting row). If the "+
-				"branch is genuinely gone, delete both claims in the same commit, then drop this row.",
+				"The README paragraph currently tells readers %q, and the vendored troubleshooting cause "+
+				"cell tells them %q. If the branch is genuinely gone, delete both claims in the same "+
+				"commit (the second one on the published page too), then drop this row.",
 				name, s.why, s.paragraphSays, s.rowSays)
 		}
 	}
@@ -352,8 +362,9 @@ func TestREADMEEntryBlockClaimsArePinned(t *testing.T) {
 				"audit rounds of #635, and three of those rounds were fixing the previous round's fix. "+
 				"Re-verify it at: %s\n"+
 				"If it is genuinely being reworded, change the expectation here in the SAME commit, "+
-				"and change the Troubleshooting row too — README.md is the only place either surface "+
-				"appears and they disagreed for one commit during that ladder.",
+				"and change the published troubleshooting row too — its cause cell is vendored in "+
+				"publishedTroubleshootingRows and the page is "+publishedTroubleshootingURL+". The two "+
+				"surfaces disagreed for one commit during that ladder, which is why they move together.",
 				c.claim, c.want, c.verifyAt)
 		}
 	}
@@ -483,11 +494,11 @@ func TestREADMEPreUploadRefusalPrintsNoEntryBlock(t *testing.T) {
 //	ISOLATED — arm returns nil, message literal kept in the file:  4 red
 //	WIDE     — the whole `if !stdinIsTTY()` block deleted:         5 red
 //
-// The fifth is TestREADMETroubleshootingSymptomsExistInTheSource, and it is a
-// fact about a STRING, not about the gate: the README indexes `refusing to
-// submit without --yes` as a symptom and requires it to exist in non-test
-// source, so deleting the literal reddens it whether or not the gate still
-// works. The isolated mutant is the one that measures this gate.
+// The fifth is TestPublishedTroubleshootingSymptomsExistInTheSource, and it is a
+// fact about a STRING, not about the gate: the published index carries `refusing
+// to submit without --yes` as a symptom and the vendored ledger requires it to
+// exist in non-test source, so deleting the literal reddens it whether or not the
+// gate still works. The isolated mutant is the one that measures this gate.
 //
 // ⚠ AND THE EARLIER "A FILTERED SWEEP MISSED THE FIFTH" DIAGNOSIS IS RETRACTED,
 // not softened. Whole-package under ISOLATED also returns four, so the first

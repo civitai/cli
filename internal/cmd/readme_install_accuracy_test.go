@@ -407,7 +407,18 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 		}
 	}
 	// POSITIVE CONTROL on the derivation: both halves must be non-trivial, or the
-	// document assertions below are checking an empty set.
+	// per-value loops below are iterating over an empty set.
+	//
+	// 🔴 IT NO LONGER GUARDS A DOCUMENT ASSERTION — IT IS THE LAST COUPLING TO THE
+	// PUBLISHED LIST. This comment used to say "or the document assertions below are
+	// checking an empty set"; leg 3 was the only document assertion and it was
+	// deleted (see the note at the end of this function). So what this `!= 12` now
+	// does is fail the build if Go's boolean grammar or boolValueCandidates ever
+	// stops yielding exactly the twelve spellings the published output contract
+	// enumerates — which is the only thing left in this repository tying that page's
+	// number to the code. Do not weaken it to a floor: a control described as
+	// protecting something that no longer exists is the shape that gets deleted as
+	// vacuous, which is why it is re-stated here rather than left stale.
 	if len(accepted) != 12 {
 		t.Fatalf("CONTROL failure: strconv.ParseBool accepts %d of the %d candidate(s) (%v), want exactly 12. "+
 			"The Go boolean grammar changed, or boolValueCandidates lost entries — re-derive the PUBLISHED list "+

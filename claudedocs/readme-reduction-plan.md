@@ -306,8 +306,10 @@ counting a row as a line beginning `` | ` ``:
     cause cell >250 B 16 rows / 6,601
 
 ⚠ **"The incident floor is 10 rows" is a COMPOSITE and the label is wrong.** It is 7 from
-`TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit` — which *is* the incident
-floor — plus 2 from `symptomAttributionsFloor` and 1 from the submit entry-block ledger.
+`TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit` (renamed
+`TestPublishedTroubleshootingCoversTheRefusalsAuthorsActuallyHit` when the index moved to
+the published guide — the old name matches no test, and `go test -run` on it exits 0) —
+which *is* the incident floor — plus 2 from `symptomAttributionsFloor` and 1 from the submit entry-block ledger.
 A future re-derivation reading the incident-floor test alone will find **7** and conclude
 this doc is stale. Of the band's rows, **2** are on the INCIDENT floor specifically
 (`block lacks ai:write:budgeted scope`, `it did NOT check that the file is loaded`); the
