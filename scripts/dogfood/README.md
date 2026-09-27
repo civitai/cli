@@ -460,6 +460,29 @@ is what keeps `grade.sh` and the Go suites reading the strings they already read
 matrix. `TestDogfoodGradersShareOneEscaper` fails if a grader open-codes its own
 copy, if a summary-line field is added unwrapped, or if `%q` comes back.
 
+🔴 **`_esc.sh` NOW HOLDS THE MIRROR-IMAGE RULE FOR THE PATHS COMING IN, BECAUSE
+THAT ONE WAS OPEN-CODED IN BOTH GRADERS AND WRONG IN BOTH.** Both located the app
+by `find`ing `block.manifest.json`, then (a) resolved the directory with
+`head -1 | xargs dirname`, which WORD-SPLITS — measured,
+`/work/my app/block.manifest.json` came back as the two lines `/work` and `app`,
+so `$APP_DIR` was `/work<LF>app`, and that variable is what gets validated, what
+`outputDir` resolves against and what is SERVED; (b) counted manifests with
+`grep -c .` over newline-separated output, so a directory named with a newline
+counted as two and split in two in every read loop (on the ship half that emptied
+`TRIAL_SLUGS` and turned a real `SHIP=yes` into exit-2 `unmeasured`); and (c)
+spliced the discovered path into `bash -lc "… '$path' …"`, so a quote in a
+directory name ran the rest of that name as a command inside the grader. Now:
+`MANIFEST_FIND` uses `-print0` and swaps the delimiters inside the container
+(newline-in-a-path → 0x01, NUL separators → newlines), because bash command
+substitution DISCARDS NUL and a `-print0` stream cannot be carried out of
+`$(docker exec …)` at all; `pathdec` puts the newline back; and every
+app-controlled value crosses into the container through `docker exec -e` instead
+of being spelled into the command text. An ordinary path is left byte-identical by
+all of it. The same test ledgers these: no grader may assign its own
+`MANIFEST_FIND` or drop its `-print0`, `xargs dirname` over a discovered path
+cannot come back, and no double-quoted string on an exec site may contain `'$`.
+Tests: `go test . -run 'TestOracleResolvesAnAppDirectory|TestShipVerdictReadsAManifestPath|NeverRuns'`.
+
 Tests: `go test . -run TestShipVerdict`. Docker and the CLI are stubbed, so they
 need no daemon, no network, no credential and no account. The forgery guards
 (`go test . -run 'TestShipVerdictCannotBeForgedByTheTrial|TestShipVerdictLeaves'`)
