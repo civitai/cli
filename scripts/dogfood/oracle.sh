@@ -320,7 +320,11 @@ BUILDCMD=
 # platform's grant derives from this same declaration at review time. It still
 # decides no verdict: `TestOracleReportsScopesWithoutDeciding` pins that a
 # manifest declaring nothing can grade `yes` and one declaring both can grade
-# `no`, and `token.raw` stays empty so nothing can COMPLETE here either way.
+# `no`, and `token.raw` stays empty either way — the seed buys a BRANCH, never a
+# CAPABILITY. Off the post arm that means nothing can COMPLETE here at all; ON the
+# post arm a canned generation and a canned post do complete, in the page, still
+# with no credential and still without a request leaving the browser. Neither
+# reading is changed by the scope list, which is the claim this paragraph makes.
 # Measured 2026-09-21 on `ab-genpost-dsv4-01`: with `scopes: []` seeded
 # unconditionally, a correct consent-first app never left `ready` and the cell
 # read `RENDER=no` about the harness. See briefs/_cdp.mjs `hostBootstrap`.

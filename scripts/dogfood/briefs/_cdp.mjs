@@ -217,10 +217,14 @@ export const HOST_VIEWER = ANON_VIEWER
  * `dogfood-ab-ship-mimo-02` 2026-09-25).
  *
  * 🔴 AND THE ORACLE COULD NOT SEE IT, FOR THREE COMPOUNDING REASONS:
- *   - on both of these arms `InlineTransport` rejects every request, so "generation
- *     fails for everyone" and "generation works" leave the IDENTICAL status trace
+ *   - on both arms that existed then — the default and the unconsented one —
+ *     `InlineTransport` rejected every request, so "generation fails for everyone"
+ *     and "generation works" left the IDENTICAL status trace
  *     `ready>generating>ready`. The assertion grades the status word, and both
- *     apps produce it.
+ *     apps produce it. (Past tense on purpose: at HEAD a resource pick is answered
+ *     on every arm and the post arm answers four more types. Neither changes the
+ *     reading — no generation completes on either of those two arms — but "rejects
+ *     every request" is no longer true of any arm.)
  *   - #690 seeds `token.scopes` from the manifest and #708 answers resource
  *     picks. Both fixed real false negatives — and TOGETHER they mean an app
  *     that never asks for consent is indistinguishable from one that asks
@@ -634,11 +638,20 @@ export const INVARIANT_EXCEPTIONS = [
 
 /**
  * The arm combinations this oracle refuses to run, as a sentence — `null` when
- * the environment names one coherent arm.
+ * the environment names one coherent arm for the CALLING brief.
  *
- * 🔴 A REFUSAL, NOT A PRECEDENCE RULE, BECAUSE BOTH COMBINATIONS WOULD PRODUCE A
- * CONFIDENT VERDICT ABOUT NOTHING.
+ * 🔴 A REFUSAL, NOT A PRECEDENCE RULE, BECAUSE EVERY COMBINATION BELOW WOULD
+ * PRODUCE A CONFIDENT VERDICT ABOUT NOTHING.
  *
+ *   - POST on a brief that has NO POST ARM (`postArm: false`): the flag is ambient,
+ *     so `CIVITAI_ASSERT_POST_PATH=1` left in a shell reaches EVERY assertion in
+ *     this directory. `HOST_ARM` then reports `post` for a brief that installs no
+ *     post-arm shim, answers no workflow and emits no `postCeiling` — and
+ *     `oracle.sh`'s ceiling seam catches the resulting cell and blames the
+ *     ASSERTION ("reports arm=post but no postCeiling token"), which names a
+ *     symptom two layers from the cause. The direction was always safe
+ *     (`RENDER=unmeasured`); what was wrong was the diagnosis, so the brief now
+ *     refuses the flag itself and says why.
  *   - POST + UNCONSENTED: the post arm drives a generation and then a post, and a
  *     correct app on an unconsented token does NEITHER — it asks for consent and
  *     stops (that is exactly what the unconsented arm grades). So the pair would
@@ -650,17 +663,39 @@ export const INVARIANT_EXCEPTIONS = [
  *
  * The assertion turns this into exit 2 ("nothing was measured"), which `oracle.sh`
  * already renders as `RENDER=unmeasured` rather than a verdict.
+ *
+ * @param {{postArm: boolean}} opts whether the calling brief IMPLEMENTS the post
+ *   arm — i.e. installs the shim, drives the lifecycle and emits `postCeiling`.
+ *   There is no default: a new brief has to state it, because the wrong answer is
+ *   the one that grades under a label it cannot honour.
  */
-export const ARM_CONFLICT = !POST_PATH ? null
-  : UNCONSENTED
-    ? 'CIVITAI_ASSERT_POST_PATH=1 and CIVITAI_ASSERT_UNCONSENTED=1 are both set. The post arm '
+export function armConflict({ postArm }) {
+  if (!POST_PATH) return null;
+  if (!postArm) {
+    return 'CIVITAI_ASSERT_POST_PATH=1 is set, but this brief does not implement the post arm — '
+      + 'it installs no post-arm shim, answers no workflow or post request, and emits no '
+      + 'postCeiling token, so a cell labelled arm=post would carry this arm\'s label over the '
+      + 'default arm\'s measurement. The flag is ambient: unset it, or run the genpost brief.';
+  }
+  if (UNCONSENTED) {
+    return 'CIVITAI_ASSERT_POST_PATH=1 and CIVITAI_ASSERT_UNCONSENTED=1 are both set. The post arm '
       + 'drives a generation and a post; a correct app on an unconsented token does neither, so '
-      + 'the pair would fail every correct app. Run one arm at a time.'
-    : !SEND_HOST_PICKS
-      ? 'CIVITAI_ASSERT_POST_PATH=1 is set together with CIVITAI_ASSERT_NO_HOST_PICKS=1 or '
-        + 'CIVITAI_ASSERT_NO_HOST=1, which stop the in-page host shim being installed at all — '
-        + 'and that shim is the only thing this arm answers with. Nothing would be measured.'
-      : null;
+      + 'the pair would fail every correct app. Run one arm at a time.';
+  }
+  if (!SEND_HOST_PICKS) {
+    return 'CIVITAI_ASSERT_POST_PATH=1 is set together with CIVITAI_ASSERT_NO_HOST_PICKS=1 or '
+      + 'CIVITAI_ASSERT_NO_HOST=1, which stop the in-page host shim being installed at all — '
+      + 'and that shim is the only thing this arm answers with. Nothing would be measured.';
+  }
+  return null;
+}
+
+/**
+ * The refusal for a brief that DOES implement the post arm — currently `genpost`
+ * (and `ship`, which delegates to it by spawn). A brief without the arm calls
+ * `armConflict({ postArm: false })` instead.
+ */
+export const ARM_CONFLICT = armConflict({ postArm: true });
 
 /**
  * The page global the post arm's ledger lives on, so the assertion can read what

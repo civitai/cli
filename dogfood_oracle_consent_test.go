@@ -34,9 +34,13 @@ import (
 //
 // # WHY THE ORACLE COULD NOT SEE IT — THREE THINGS COMPOUNDING
 //
-//  1. on both of these arms `InlineTransport.sendRequest` rejects EVERY request, so
-//     "generation fails for everyone" and "generation works" leave the identical trace
-//     `ready>generating>ready`. The predicate grades the status word.
+//  1. on both arms that existed then — the default and the unconsented one —
+//     `InlineTransport.sendRequest` REJECTED every request, so "generation fails for
+//     everyone" and "generation works" left the identical trace
+//     `ready>generating>ready`. The predicate grades the status word. (Past tense: at
+//     HEAD a resource pick is answered on every arm and the post arm answers four
+//     more types, so "rejects every request" is true of no arm — but no generation
+//     completes on either of those two, so this reading is unchanged.)
 //  2. #690 seeds `token.scopes` from the manifest and #708 answers resource
 //     picks. Both fixed real false negatives — and TOGETHER they mean an app that
 //     never asks for consent is indistinguishable from one that asks correctly,

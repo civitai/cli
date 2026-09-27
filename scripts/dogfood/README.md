@@ -241,7 +241,7 @@ bash grade.sh  <trial-id> <container-user> [brief]     # setup arms + the render
 A graded cell then carries both verdicts on one line:
 
 ```
-agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius brief_source=transcript-name validate_gate=pass scopes=none viewer=signed-in observed=212 RENDER=yes
+agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius brief_source=transcript-name validate_gate=pass scopes=none viewer=signed-in arm=consented observed=212 RENDER=yes
 ```
 
 - 🔴 **The brief is DERIVED from the trial, and the argument is only a

@@ -307,7 +307,9 @@ put that same app into the moderation queue inside the trial's own run window.
 would be approved. On the arms a `SHIP` verdict is taken under, the oracle's host stub
 rejects every request but a resource pick, so nothing can complete there by
 construction — and the opt-in post arm, which does complete a canned generation and a
-canned post in the page, still answers no submit. `SHIP=yes` says the submission
+canned post in the page (`SUBMIT_WORKFLOW` included), still reaches **no app-store
+submission**: that is the other sense of "submit", it is server state, and only
+`ship.verdict.sh`'s account read can see it. `SHIP=yes` says the submission
 exists and is pending — nothing about its quality.
 
 ## Run it

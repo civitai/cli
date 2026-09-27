@@ -17,7 +17,10 @@
 // for a rendered image or a post id would time out against a perfect app. The
 // exceptions are the entries of `INVARIANT_EXCEPTIONS` in `_cdp.mjs` — a LEDGER, so
 // that neither this file nor any doc in this tree has to spell a count that goes
-// stale the next time an arm lands. The two below say what each class costs.
+// stale the next time an arm lands. Each class has its own paragraph below saying
+// what it costs: the resource pick immediately following, and the post arm under
+// "AND A THIRD ARM". The scope seed between them is NOT one of them — it widens the
+// answered set by nothing, which is why it is written as a separate paragraph.
 //
 // 🔴 THE PICK IS ANSWERED ON EVERY ARM, AND IT IS NOT A SPENDING ONE. Since
 // 2026-09-25 the oracle answers a host RESOURCE PICK (`OPEN_RESOURCE_PICKER` /

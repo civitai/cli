@@ -466,10 +466,18 @@ func TestThePostArmStillRefusesEveryRequestOutsideItsLedger(t *testing.T) {
 	}
 }
 
-// 🔴 THE CEILING RIDES ON EVERY CELL, BECAUSE THIS IS THE ARM WHOSE GREEN IS
-// EASIEST TO OVER-READ. It answers a submit and creates a post, so "the post path
-// works" is one careless sentence away from "posting works on civitai.com". A
-// reader must not be able to get the verdict without the sentence.
+// 🔴 THE CEILING'S TOKEN RIDES ON EVERY POST-ARM CELL, BECAUSE THIS IS THE ARM
+// WHOSE GREEN IS EASIEST TO OVER-READ. It answers a submit and creates a post, so
+// "the post path works" is one careless sentence away from "posting works on
+// civitai.com".
+//
+// ⚠ TOKEN AND SENTENCE ARE TWO DIFFERENT LAYERS AND THIS DOCBLOCK USED TO CONFLATE
+// THEM. What rides on the cell — the summary line and the grade row — is the short
+// token `post_ceiling=mock-host-gate-only`. The full SENTENCE rides on neither: it
+// is `postArmCeiling` in the assertion's JSON and the `⚠ POST-PATH ARM:` banner in
+// the run stream. So the property is that a reader cannot get the verdict without
+// the TOKEN, and cannot get the token without a pointer to the sentence. All three
+// layers are checked below, each at its own layer.
 func TestThePostArmStatesItsCeilingOnEveryCell(t *testing.T) {
 	browser := oracleBrowser(t)
 	for _, tc := range []struct{ name, app string }{
@@ -503,9 +511,11 @@ func TestThePostArmStatesItsCeilingOnEveryCell(t *testing.T) {
 			}
 		})
 	}
-	// The mirror half: a DEFAULT-arm cell must not carry the field at all. A
-	// `postArmCeiling` on every cell is exactly how a reader stops noticing which
-	// arm they are looking at.
+	// The mirror half: a DEFAULT-arm run must carry NONE of the arm's own markers —
+	// neither the cell's `post_ceiling=` token nor the sentence's two carriers
+	// (`postArmCeiling` in the JSON, the banner in the stream). A marker that showed
+	// up on every arm is exactly how a reader stops noticing which arm they are
+	// looking at, and the token half is also the byte-identical-line contract.
 	t.Run("and not on a default-arm cell", func(t *testing.T) {
 		out, _ := runPostOracle(t, browser, fxPostGateCorrectApp)
 		for _, marker := range []string{"postArmCeiling", "POST-PATH ARM", "post_ceiling", "mock-host-gate-only"} {
@@ -926,11 +936,19 @@ func TestThePostArmShimAnswersOnlyItsOwnLedger(t *testing.T) {
 		env     []string
 		minimum int
 	}{
-		// 6 source-omission checks + 2 ledger checks + 4 network/image + 5 shape
-		// + 3 vocabulary + 2 arm + 4 exception-ledger/token = 26, so 22 leaves room
-		// for nothing being quietly dropped while still failing loudly on an early exit.
+		// 🔴 A MINIMUM, AND ITS BREAKDOWN IS RE-DERIVED FROM THE DRIVER, NOT PATCHED.
+		// The previous breakdown had three labels wrong in directions that cancelled
+		// (it summed to the right total, which is why nothing caught it), so the
+		// derivation is written out here: 7 `default-arm-source-omits:*` (the four
+		// request-type names + `POST_ARM_GLOBAL` + `data:image` + the canned postId)
+		// + 2 default-arm ledger (answers-only-the-pickers, adds-no-post-types)
+		// + 2 network/image + 5 canned-shape literals + 4 shim/vocabulary
+		// + 2 arm + 4 exception-ledger/token = 26 on this arm. 22 leaves room for
+		// nothing being quietly dropped while still failing loudly on an early exit.
 		{"the flag unset (default arm)", nil, 22},
-		// …and with it set, the lifecycle block adds 15 more.
+		// The post arm trades the 7+2 default-arm checks for the single
+		// `post-arm-answers-pickers-plus-four` (18 shared), and the lifecycle block
+		// adds 14: 11 named checks plus the 3-label refused-sources loop = 32.
 		{"the flag set (post arm)", []string{postPathArm}, 30},
 	} {
 		t.Run(arm.name, func(t *testing.T) {

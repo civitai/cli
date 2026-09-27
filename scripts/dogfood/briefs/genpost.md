@@ -392,10 +392,14 @@ had to find "review permissions" by hand. Measured in `dogfood-ab-ship-mimo-02` 
 
 **Three things compounded to make the oracle blind to it:**
 
-1. On both of these arms `InlineTransport` rejects every request, so *"generation
-   fails for everyone"* and *"generation works"* produce the identical trace
+1. On both arms that existed then — the default and the unconsented one —
+   `InlineTransport` **rejected** every request, so *"generation fails for
+   everyone"* and *"generation works"* produced the identical trace
    `ready>generating>ready`.
-   The default predicate grades the status word, and both apps produce it.
+   The default predicate grades the status word, and both apps produce it. (Past
+   tense: at HEAD a resource pick is answered on every arm and the post arm answers
+   four more types, so "rejects every request" is no longer true of any arm — but no
+   generation completes on either of those two, so the blindness is unchanged.)
 2. `#690` seeds `token.scopes` and `#708` answers resource picks. Both fixed real
    false negatives — and **together they mean an app that never asks for consent
    is indistinguishable from one that asks correctly**, because the harness has
