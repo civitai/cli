@@ -678,11 +678,12 @@ export const POST_ARM_GLOBAL = '__dogfoodPostArm';
  *
  * 🔴 "THE CELL" IN THIS RIG MEANS THE SUMMARY LINE AND THE GRADE ROW (see
  * `scripts/dogfood/README.md`), AND THE PROSE RIDES ON NEITHER. `postArmCeiling` is
- * a field of the assertion's JSON; `grade.sh` parses only the `brief=` line and
- * emits eight fields, none of them that one. So four sites claiming the sentence
- * "rides on every cell so a reader cannot get the verdict without it" were claiming
- * a layer it does not reach — true of the run STREAM (the `⚠ POST-PATH ARM:` banner,
- * re-printed by `grade.sh`), false of the row a matrix is read off.
+ * a field of the assertion's JSON, and `grade.sh` parses only the `brief=` line — so
+ * before this token existed the row carried eight fields and none of them was that
+ * one. Four sites claimed the sentence "rides on every cell so a reader cannot get the
+ * verdict without it", which was true of the run STREAM (the `⚠ POST-PATH ARM:` banner,
+ * re-printed by `grade.sh`) and false of the row a matrix is read off. This token is
+ * what makes the row half true; `TestThePostArmsCeilingReachesTheGradeRow` pins it.
  *
  * 🔴 IT IS A TOKEN, NOT THE SENTENCE, AND IT IS APPENDED ONLY ON THIS ARM. Every
  * verdict this arc recorded was read off the summary-line FORMAT, and both Go suites
