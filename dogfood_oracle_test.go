@@ -551,6 +551,11 @@ func stubOracleEnv(t *testing.T, s stubEnv) []string {
 		"CIVITAI_ASSERT_UNCONSENTED=",
 		"CIVITAI_ASSERT_NO_HOST_PICKS=",
 		"CIVITAI_ASSERT_NO_HOST=",
+		// 🔴 AND THE POST ARM, WHICH IS THE ONE THAT WOULD DO REAL DAMAGE HERE: it
+		// SUSPENDS the invariant every other case in this suite rests on (with it set
+		// a canned generation completes and a canned post is created), so a stale
+		// export would silently regrade the whole suite against a different host.
+		"CIVITAI_ASSERT_POST_PATH=",
 	}
 }
 

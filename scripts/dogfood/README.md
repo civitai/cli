@@ -391,6 +391,36 @@ bind a debugging port, instead of that surfacing eighty lines into a Go test.
   `App.tsx` requests consent *correctly* — the apps that fail this arm failed by
   REPLACING the scaffold's generation path, not by keeping it. Matrix and JSON
   evidence in that directory's README.
+- 🔴 **…and the POST path could not be reached AT ALL, which let the SAME app ship
+  broken a SECOND time.** `ab-img-poster` then failed for a real user on
+  **Post** — *"Posting failed. Please try again."* — because it opened its Post
+  control for any workflow that had *ended*: `watch()` resolves on any terminal
+  status and `imageUrls` is optional even on `succeeded`, so Post went live for a
+  generation that had produced nothing and the host refused with its closed code
+  `no images to post`. Every arm above stops on the NEAR side of a request, so no
+  generation ever reaches a terminal snapshot and no Post gate is ever
+  re-evaluated: measured on the two real bundles, the defect (md5
+  `b8a1936e5939e39aa3e26f6e9e777113`) and the fix (md5
+  `c603fa854eba4d5206b73e04c14a1f3c`) grade **identically** on both.
+  `CIVITAI_ASSERT_POST_PATH=1` is the arm for it: the in-page shim answers
+  `ESTIMATE_WORKFLOW`, `SUBMIT_WORKFLOW`, `POLL_WORKFLOW` and
+  `CREATE_POST_FROM_APP` with `createMockHost`'s own canned shapes, drives TWO
+  canned runs — an image-less success then a postable one — and asks *"does the gate
+  hold, and does a postable run actually post"*. The defect grades `no`, the fix
+  `yes`. 🔴 **It is the one arm that SUSPENDS the rig's standing invariant** (*no
+  generation and no post can complete here*), so it is opt-in, it says `arm=post`
+  on the cell, `oracle.sh` prints a `⚠ POST-PATH ARM:` banner, and with the flag
+  unset `inlineHostSource()` returns byte-for-byte the source it always did.
+  Nothing spends and nothing leaves the page: every reply is built in the browser,
+  `token.raw` is still `''`, and the canned image is a `data:` URI rather than the
+  mock host's `placehold.co` URL. ⚠ **Its ceiling is on every cell** as
+  `postArmCeiling`: it proves the block's post BRANCH and that its payload
+  satisfies the mock host's gate — **not** that the real host accepts it, which
+  re-resolves every source server-side, re-checks the grant, opens a viewer confirm
+  and moderates the outputs. Full statement, the real-artifact matrix and the
+  two-phase design: `briefs/genpost.md`; pinned by
+  `TestThePostArmSeparatesTheGateFromTheWorkflowResult` and friends in
+  `dogfood_oracle_post_test.go`.
 
 ## The ship verdict — the account arm, and the one thing the browser cannot see
 

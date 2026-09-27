@@ -427,6 +427,14 @@ if [ -n "$SERVED" ]; then
   # an ordinary cell's clothes. `arm=` on the summary line is the machine-readable
   # half; this is the half a human scrolling the run sees.
   [ "${CIVITAI_ASSERT_UNCONSENTED:-}" = "1" ] && printf '⚠ UNCONSENTED ARM: token.scopes is seeded EMPTY and the verdict is "did the block ASK the host for consent", NOT "did it reach generating". This is a different question from the default arm; see briefs/genpost.md.\n'
+  # 🔴 THE POST ARM IS THE ONE THAT SUSPENDS THE RIG'S STANDING INVARIANT, so its
+  # banner says so rather than only naming the arm. With it on, a canned generation
+  # COMPLETES and a canned post IS CREATED — in the page, with no credential and
+  # nothing leaving the browser — which is the opposite of what every other cell in
+  # this arc was graded under. Same reason as the line above (the arm is ambient), one
+  # degree louder because a reader who misses it misreads the invariant, not just the
+  # predicate.
+  [ "${CIVITAI_ASSERT_POST_PATH:-}" = "1" ] && printf '⚠ POST-PATH ARM: the in-page host shim ANSWERS ESTIMATE_WORKFLOW, SUBMIT_WORKFLOW, POLL_WORKFLOW and CREATE_POST_FROM_APP, so a canned generation completes and a canned post is created here. The verdict is "does the Post gate hold for a workflow with no images, and does a postable one actually post", NOT "did it reach generating". It proves the block PAYLOAD satisfies the mock host gate; it does NOT prove the real host accepts it. See briefs/genpost.md.\n'
   # 🔴 THE SCOPE LIST IS AN ARGUMENT, NOT AN ENVIRONMENT VARIABLE. It is data
   # about THIS block, derived from THIS container's manifest, so it belongs on
   # the call that grades that block — an env var would be ambient state a
@@ -477,6 +485,14 @@ if [ -n "$SERVED" ]; then
       [ "$ASCOPES" = "none" ] || fatal "arm seam mismatch: the assertion reports arm=unconsented but the block was shown scopes '$ASCOPES' — an unconsented arm that granted the block its scopes measures nothing" ;;
     consented)
       [ "$ASCOPES" = "$SCOPES" ] || fatal "arm seam mismatch: the assertion reports arm=consented but presented '$ASCOPES' where the manifest declares '$SCOPES'" ;;
+    # 🔴 THE POST ARM IS A CONSENTED ARM, so it gets the SAME seam check — an app
+    # shown less than its manifest declares takes the consent-first branch and never
+    # reaches a workflow at all, which would make every post verdict on it a
+    # measurement of the missing seed. The arm ALSO answers four more request types,
+    # and that half is not checkable from here: the answered set lives in the page,
+    # so it is pinned by the unit driver's ledger check instead.
+    post)
+      [ "$ASCOPES" = "$SCOPES" ] || fatal "arm seam mismatch: the assertion reports arm=post but presented '$ASCOPES' where the manifest declares '$SCOPES' — a post arm on a block that was not shown its scopes grades the consent branch, not the post path" ;;
     '') : ;;
     *) fatal "the assertion reported an unknown arm '$AARM'" ;;
   esac

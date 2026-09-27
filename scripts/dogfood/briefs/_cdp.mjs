@@ -234,10 +234,60 @@ export const HOST_VIEWER = ANON_VIEWER
  */
 export const UNCONSENTED = process.env.CIVITAI_ASSERT_UNCONSENTED === '1';
 
+// ── the post-path arm ────────────────────────────────────────────────────────
+
+/**
+ * Answer the workflow and post requests, so the POST half of a
+ * generate-then-post app is reachable at all.
+ *
+ * 🔴 WHY THIS EXISTS: THE ORACLE CANNOT SEE THE POST PATH, AND SHIPPED THE SAME
+ * LIVE APP BROKEN TWICE. `ab-img-poster` was graded green and deployed to
+ * https://ab-img-poster.civit.ai/ at `v0.1.1`, where a real user hit
+ * *"Posting failed. Please try again."*; that is the SECOND user-found defect on
+ * that one app, after the consent defect `UNCONSENTED` exists for. Both arms
+ * above stop at the near side of a request: `InlineTransport.sendRequest` rejects
+ * every workflow submit and every post, so "Post works" and "Post fails for every
+ * user" leave the block in the same DOM state and the assertion grades the same
+ * `ready>generating>ready`.
+ *
+ * 🔴 IT BREAKS THE STANDING INVARIANT, WHICH IS WHY IT IS OPT-IN AND LOUD.
+ * `briefs/genpost.md` and the module docblock at the top of this file both say
+ * *no generation and no post can complete here, ever, on any machine, with or
+ * without a credential*, and the DEFAULT and UNCONSENTED arms' verdicts rest on
+ * it. With this flag set that sentence is FALSE — a canned generation completes
+ * and a canned post is created — so the flag must stay unset for every verdict
+ * this arc has recorded, and the arm carries its own label (`arm=post`) onto the
+ * cell so a reader can never mistake one for the other.
+ * `TestTheDefaultArmIsUnchangedWithThePostFlagUnset` is what holds that line.
+ *
+ * 🔴 AND NOTHING SPENDS AND NOTHING LEAVES THE PAGE, STRUCTURALLY. Every reply is
+ * built by {@link inlineHostSource}'s shim IN THE PAGE: there is no host, no
+ * parent frame, no fetch and no socket on the answering path, `token.raw` is
+ * still `''` (so no privileged path on the platform would accept anything this
+ * block sent even if it could send it), and the canned image is a `data:` URI
+ * rather than the mock host's `placehold.co` URL precisely so that rendering a
+ * result does not reach the network either. The Buzz "spend" is a number in a
+ * JSON object that exists for ~200 ms inside a headless browser.
+ *
+ * ⚠ WHAT A GREEN ON THIS ARM DOES NOT MEAN. It proves the block's post BRANCH
+ * exists and that the payload it sends satisfies the host's payload gate as the
+ * SDK's own mock host implements it. It does NOT prove the real host accepts the
+ * payload: the platform re-resolves every source server-side (a workflow id
+ * against the app's own subqueue, image ids against the viewer's own rows),
+ * re-checks the `posts:write:self` grant, opens a viewer confirm, and applies
+ * moderation. This arm cannot see any of that. See `briefs/genpost.md`.
+ */
+export const POST_PATH = process.env.CIVITAI_ASSERT_POST_PATH === '1';
+
 /** Which arm the cell was graded on. On the summary line and in the assertion's
  * JSON, because two runs of the same trial now legitimately disagree and a
- * verdict read without this cannot tell which question it answers. */
-export const HOST_ARM = UNCONSENTED ? 'unconsented' : 'consented';
+ * verdict read without this cannot tell which question it answers.
+ *
+ * 🔴 `unconsented` WINS OVER `post` RATHER THAN THE TWO COMBINING, and the
+ * combination is REFUSED outright by {@link ARM_CONFLICT} rather than silently
+ * resolved here — see that constant for why a post arm on an unconsented token
+ * would be a measurement of nothing. This expression only has to be total. */
+export const HOST_ARM = UNCONSENTED ? 'unconsented' : (POST_PATH ? 'post' : 'consented');
 
 /**
  * Parse the comma-separated scope list an assertion was handed into the array
@@ -491,6 +541,176 @@ export const HOST_RESOURCE_PICKS = {
   },
 };
 
+// ── what the post arm answers, and with what ─────────────────────────────────
+
+/**
+ * The request types the POST ARM adds to the answered set. Empty unless
+ * {@link POST_PATH} is on.
+ *
+ * 🔴 THIS IS THE WHOLE OF THE CAPABILITY THIS ARM ADDS, IN ONE LIST. Four types,
+ * and each is here because the app under test cannot reach the Post control
+ * without it: `ESTIMATE_WORKFLOW` and `SUBMIT_WORKFLOW` because a
+ * generate-then-post app prices and queues before it has anything to post
+ * (`ab-img-poster` awaits `estimate(body)` and then `submit(body)`),
+ * `POLL_WORKFLOW` because `watch()` is built on `poll()` — the SDK says so in
+ * `useBuzzWorkflow`, "the single place that builds a `POLL_WORKFLOW` message, so
+ * `poll` and `watch` cannot drift" — and `CREATE_POST_FROM_APP` because that is
+ * the request under test.
+ *
+ * 🔴 AND WHAT IS DELIBERATELY NOT HERE. `CANCEL_WORKFLOW`, `OPEN_BUZZ_PURCHASE`,
+ * `PUBLISH_GENERATION_OUTPUTS`, `REQUEST_TOKEN`, `SAVE_IMAGE` and every other
+ * type keep rejecting with {@link INLINE_STUB_MESSAGE}. A top-up flow, a bare
+ * image publish and a token refresh are all reachable from a generate-then-post
+ * app and NONE of them is needed to reach Post, so answering them would widen the
+ * arm past the thing it was built to see.
+ */
+export const HOST_POST_REQUESTS = POST_PATH
+  ? ['ESTIMATE_WORKFLOW', 'SUBMIT_WORKFLOW', 'POLL_WORKFLOW', 'CREATE_POST_FROM_APP']
+  : [];
+
+/**
+ * The FULL set this oracle answers on the arm that is running — the one source
+ * both the shim's allowlist and the tests' ledger read.
+ *
+ * 🔴 DERIVED, NEVER RETYPED. `HOST_PICKER_REQUESTS` is asserted against the SDK's
+ * whole outbound vocabulary by `TestOracleInlineHostAnswersOnlyThePickerLedger`,
+ * which fails if the answered set grows OR shrinks; that test runs with no arm
+ * env set, so it is also the guard that this arm adds nothing when it is off.
+ */
+export const HOST_ANSWERED_REQUESTS = [...HOST_PICKER_REQUESTS, ...HOST_POST_REQUESTS];
+
+/**
+ * The arm combinations this oracle refuses to run, as a sentence — `null` when
+ * the environment names one coherent arm.
+ *
+ * 🔴 A REFUSAL, NOT A PRECEDENCE RULE, BECAUSE BOTH COMBINATIONS WOULD PRODUCE A
+ * CONFIDENT VERDICT ABOUT NOTHING.
+ *
+ *   - POST + UNCONSENTED: the post arm drives a generation and then a post, and a
+ *     correct app on an unconsented token does NEITHER — it asks for consent and
+ *     stops (that is exactly what the unconsented arm grades). So the pair would
+ *     fail every correct app for the reason the other arm rewards it.
+ *   - POST + NO_HOST_PICKS (or NO_HOST): the shim is the ONLY delivery mechanism
+ *     this arm has, and those flags stop it being installed at all. The requests
+ *     would all reject, the run would look exactly like the default arm, and the
+ *     cell would still say `arm=post`.
+ *
+ * The assertion turns this into exit 2 ("nothing was measured"), which `oracle.sh`
+ * already renders as `RENDER=unmeasured` rather than a verdict.
+ */
+export const ARM_CONFLICT = !POST_PATH ? null
+  : UNCONSENTED
+    ? 'CIVITAI_ASSERT_POST_PATH=1 and CIVITAI_ASSERT_UNCONSENTED=1 are both set. The post arm '
+      + 'drives a generation and a post; a correct app on an unconsented token does neither, so '
+      + 'the pair would fail every correct app. Run one arm at a time.'
+    : !SEND_HOST_PICKS
+      ? 'CIVITAI_ASSERT_POST_PATH=1 is set together with CIVITAI_ASSERT_NO_HOST_PICKS=1 or '
+        + 'CIVITAI_ASSERT_NO_HOST=1, which stop the in-page host shim being installed at all — '
+        + 'and that shim is the only thing this arm answers with. Nothing would be measured.'
+      : null;
+
+/**
+ * The page global the post arm's ledger lives on, so the assertion can read what
+ * the shim was asked for and what it did about it. Separate from
+ * `__dogfoodHostPicks` / `__dogfoodHostRefused`, which are a flat list of type
+ * names: this arm's evidence is per-workflow and per-post, and flattening it into
+ * a name list is what would make "the post was REFUSED" and "the post was
+ * ANSWERED" the same cell field.
+ */
+export const POST_ARM_GLOBAL = '__dogfoodPostArm';
+
+/**
+ * The price the arm quotes, mirroring `createMockHost`'s `legacyCost` default
+ * (`options.cost ?? 8` in `@civitai/blocks-react/dist/internal/mockHost.js`,
+ * 0.57.2). `estimate()` REJECTS a snapshot whose `cost.total` is not a number, so
+ * this field is load-bearing rather than decorative — see
+ * `WorkflowEstimateError`'s `'no-cost'` code.
+ */
+export const POST_ARM_COST = 8;
+
+/**
+ * The account the arm stamps a succeeded snapshot's `spentAccountType` with.
+ *
+ * `createMockHost` computes `preferredAccountType(body) ?? primaryFunder(buzzBalance)`,
+ * and its default balance `{ blue: 1000, green: 0, yellow: 5000 }` makes
+ * `primaryFunder` return `yellow`. The shim mirrors that: the body's own
+ * `accountType` when it carries one, `yellow` otherwise.
+ */
+export const POST_ARM_SPENT_ACCOUNT = 'yellow';
+
+/**
+ * The one image a succeeded canned workflow produces.
+ *
+ * 🔴 A `data:` URI, AND THAT IS THE ONE PLACE THIS ARM DELIBERATELY DIVERGES FROM
+ * `createMockHost`'s VALUE. The mock host's default output is
+ * `https://placehold.co/512x512/…?text=MOCK…`, and a block that renders it makes
+ * a REAL network request from the page — which this oracle's whole premise
+ * forbids, and which would also make a cell's verdict depend on a third party's
+ * uptime. The SHAPE is identical (a string in `imageUrls` that an `<img src>`
+ * renders), the label is the mock host's own `MOCK` for the same reason it gives
+ * — so a human looking at a screenshot cannot mistake it for a real generation —
+ * and nothing leaves the page.
+ */
+export const POST_ARM_IMAGE =
+  'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI1MTIi'
+  + 'IGhlaWdodD0iNTEyIj48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgZmlsbD0iIzE5NzFjMiIvPjx0ZXh0IHg9'
+  + 'IjI1NiIgeT0iMjg4IiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSI5NiIgZmlsbD0iI2ZmZmZmZiIg'
+  + 'dGV4dC1hbmNob3I9Im1pZGRsZSI+TU9DSzwvdGV4dD48L3N2Zz4=';
+
+/**
+ * The refusal the host answers a post it cannot satisfy with. One of the SDK's
+ * CLOSED refusal codes (`CREATE_POST_ERROR_CODES` in `useCreatePostFromApp`),
+ * spelled EXACTLY — a block is entitled to compare against it with
+ * `isCreatePostErrorCode()`, and a paraphrase would silently route it down the
+ * free-text branch instead.
+ */
+export const POST_ARM_NO_IMAGES_ERROR = 'no images to post';
+
+/**
+ * The post the arm reports on success — `DEFAULT_CREATE_POST_RESULT` from
+ * `@civitai/blocks-react/dist/internal/mockHost.js` (0.57.2), field for field and
+ * value for value, including that `imageIds` deliberately differs from that
+ * file's `DEFAULT_PUBLISH_IMAGE_IDS` so a block conflating the two is not
+ * rewarded here.
+ */
+export const POST_ARM_CREATE_POST_RESULT = {
+  postId: 4242,
+  url: 'https://civitai.com/posts/4242',
+  imageIds: [9101, 9102],
+};
+
+/**
+ * The canned workflow outcomes, IN ORDER, one per `SUBMIT_WORKFLOW` the block
+ * makes. A submit past the end of the list reuses the LAST entry.
+ *
+ * 🔴 THE FIRST ENTRY IS THE DEFECT THE USERS HIT, AND IT IS FIRST ON PURPOSE. A
+ * workflow that reaches `succeeded` carrying NO `imageUrls` is a real outcome —
+ * `imageUrls` is optional even on `succeeded`, because host-side output
+ * moderation can empty it — and it is the state `ab-img-poster@0.1.1` opened its
+ * Post control on: `watch()` resolves on ANY terminal status and the app gated
+ * Post on `!workflowResult` alone, so Post went live for a generation that had
+ * produced nothing. The only possible outcome was the host refusing, which is the
+ * *"Posting failed. Please try again."* a real user reported. Grading that FIRST
+ * means the discriminating claim needs no second generation to be earned.
+ *
+ * 🔴 AND THE SECOND ENTRY IS WHAT MAKES THE ARM MORE THAN A GATE TEST. Without a
+ * run that CAN be posted, an app which simply has no Post control at all — or one
+ * whose Post button is wired to nothing — would look identical to a correct one.
+ * The second phase is the only thing that exercises `CREATE_POST_FROM_APP`.
+ *
+ * ⚠ ONE POLL PER WORKFLOW, WHERE `createMockHost` TAKES TWO
+ * (`pollsUntilDone ?? 2`, i.e. one `processing` reply and then the terminal one).
+ * That is a LATENCY knob, not a shape: every field of both replies is the mock
+ * host's, and `watch()` sleeps `DEFAULT_WATCH_INTERVAL_MS` (1.5 s) between polls,
+ * which this arm would pay twice per cell for an intermediate state no predicate
+ * reads. The cost of the deviation is that an app which renders only intermediate
+ * snapshots is not exercised; the cost of mirroring it is 3 s on every cell.
+ */
+export const POST_ARM_PLAN = [
+  { label: 'succeeded-no-images', status: 'succeeded', imageUrls: [] },
+  { label: 'succeeded-with-images', status: 'succeeded', imageUrls: [POST_ARM_IMAGE] },
+];
+
 /**
  * Rewrite the SDK's v1 inline stub so it consults this oracle's host shim.
  *
@@ -627,11 +847,134 @@ export function patchInlineTransport(code) {
  * `createMockHost` (`cannedPicks[rtype]` is `undefined` for anything else) and the
  * platform, whose native modal refuses to open for a type outside
  * `BlockResourcePickerType`.
+ *
+ * 🔴 THE POST ARM ADDS FOUR MORE TYPES AND NOTHING ELSE CHANGES. Both post
+ * interpolations below are the EMPTY STRING when {@link POST_PATH} is off, so the
+ * template collapses to exactly the source this function returned before the arm
+ * existed — which is what keeps every verdict this arc has recorded reproducible.
+ * The mechanical checks are the unit driver's `default-arm-source-*` cases (the
+ * four types, the ledger global, the canned post and the canned image all absent)
+ * and `TestOracleInlineHostAnswersOnlyThePickerLedger`, which runs with no arm env
+ * and fails if the answered set grows. See {@link HOST_POST_REQUESTS} for why those
+ * four and not others, and {@link POST_ARM_PLAN} for the canned outcomes.
+ *
+ * 🔴 THE POST GATE IS THE MOCK HOST'S, PLUS THE HALF THE MOCK HOST CANNOT
+ * IMPLEMENT. `createMockHost` refuses `CREATE_POST_FROM_APP` when
+ * `payload.sources` is not a non-empty array — "Mirror the real host's payload
+ * gate (`resolveCreatePostRequest`) … Without this a block bug (an empty
+ * selection, say) would WORK in the mock and be refused in production". That gate
+ * is mirrored exactly. It is also NOT SUFFICIENT for the defect this arm exists
+ * for: `ab-img-poster@0.1.1` sent `sources: [{ kind: 'workflow', workflowId }]` —
+ * a perfectly non-empty array — naming a workflow that had produced no images, and
+ * the REAL host refuses that when it resolves the workflow, which is a read the
+ * mock host has no ledger for. This shim DOES have that ledger (it minted the
+ * workflow), so it applies the same refusal, with the same CLOSED code, and
+ * records WHICH rule fired on the arm's ledger. Anything else would answer a post
+ * the platform would reject — a mock that is more permissive than production,
+ * about the exact request the app got wrong.
  */
 export function inlineHostSource() {
+  const post = POST_PATH ? `
+    if (type === 'ESTIMATE_WORKFLOW') {
+      // \`createMockHost\`'s ESTIMATE_WORKFLOW reply, field for field: the
+      // 'wf_estimate' sentinel id, 'pending', and a numeric total. \`estimate()\`
+      // rejects a cost-less snapshot, so the price is what makes this resolve.
+      answered.push(type);
+      arm.estimates += 1;
+      return Promise.resolve({ requestId: requestId, snapshot: {
+        workflowId: 'wf_estimate', status: 'pending', cost: { total: COST } } });
+    }
+    if (type === 'SUBMIT_WORKFLOW') {
+      // The mock host's success path: a fresh id and \`status: 'pending'\`, with the
+      // planned outcome remembered against that id so the poll can echo it. The
+      // id is this oracle's own spelling rather than the mock's
+      // \`wf_\${n}_\${Date.now()}\` — a timestamp would make the arm's ledger, and
+      // therefore a failure message, unreproducible between runs.
+      arm.submits += 1;
+      var plan = PLAN[Math.min(arm.submits, PLAN.length) - 1];
+      var wfId = 'wf_dogfood_' + arm.submits;
+      // The picked pool is remembered HERE because only the submit carries a body;
+      // a POLL_WORKFLOW payload is \`{ workflowId, waitSeconds? }\` and has none.
+      // \`createMockHost\` keeps the body against the workflow for the same reason.
+      WF[wfId] = { plan: plan, account: (payload.body && payload.body.accountType) || SPENT };
+      arm.queued.push(wfId + ':' + plan.label);
+      answered.push(type);
+      return Promise.resolve({ requestId: requestId, snapshot: {
+        workflowId: wfId, status: 'pending' } });
+    }
+    if (type === 'POLL_WORKFLOW') {
+      var pollId = payload.workflowId || '';
+      var planned = WF[pollId];
+      answered.push(type);
+      arm.polls += 1;
+      if (!planned) {
+        // 🔴 A WORKFLOW THIS ORACLE NEVER QUEUED, ANSWERED TERMINALLY ON PURPOSE.
+        // \`createMockHost\` replies 'processing' to an unknown id, which \`watch()\`
+        // would poll until its own ten-minute deadline; here the honest reply is
+        // that no such workflow exists, and 'expired' is the terminal status the
+        // platform uses for one that is gone. Recorded, so a cell can say the
+        // block polled an id it invented rather than merely timing out.
+        arm.unknownPolls.push(pollId || '(no workflowId)');
+        return Promise.resolve({ requestId: requestId, snapshot: {
+          workflowId: pollId, status: 'expired' } });
+      }
+      arm.terminal += 1;
+      return Promise.resolve({ requestId: requestId, snapshot: {
+        workflowId: pollId, status: planned.plan.status, cost: { total: COST },
+        imageUrls: planned.plan.imageUrls.slice(),
+        spentAccountType: planned.account } });
+    }
+    if (type === 'CREATE_POST_FROM_APP') {
+      var sources = payload.sources;
+      answered.push(type);
+      // Gate 1 — \`createMockHost\`'s own, byte for byte: a non-empty array or the
+      // CLOSED refusal code, never a coercion.
+      if (!Array.isArray(sources) || sources.length === 0) {
+        arm.posts.push('refused:no-sources');
+        return Promise.resolve({ requestId: requestId, error: NO_IMAGES });
+      }
+      // Gate 2 — the real host's \`resolveCreatePostRequest\` half. A 'workflow'
+      // source naming a workflow THIS shim minted with no images cannot produce a
+      // post, and the platform refuses it with this same code. A source naming
+      // anything else (an image id, an unknown workflow) is left alone: this shim
+      // has no ledger for those and must not invent a refusal it cannot justify.
+      var empty = [];
+      for (var i = 0; i < sources.length; i++) {
+        var s = sources[i] || {};
+        var known = s.kind === 'workflow' ? WF[s.workflowId] : null;
+        if (known && known.plan.imageUrls.length === 0) empty.push(s.workflowId);
+      }
+      if (empty.length) {
+        arm.posts.push('refused:image-less-workflow:' + empty.join('+'));
+        return Promise.resolve({ requestId: requestId, error: NO_IMAGES });
+      }
+      arm.posts.push('answered:sources=' + sources.length);
+      return Promise.resolve({ requestId: requestId, result: JSON.parse(JSON.stringify(RESULT)) });
+    }
+` : '';
+  // 🔴 THE POST ARM'S CONSTANTS AND ITS LEDGER ARE EMITTED ONLY WITH THE FLAG ON,
+  // NOT DECLARED-AND-UNUSED ON BOTH. That is what makes "with the flag unset this
+  // function returns what it returned before the arm existed" a MECHANICAL claim
+  // rather than a reading of the branches: the default arm's source mentions none
+  // of the four request types, carries no canned post and no canned image, and
+  // installs no `__dogfoodPostArm`. `TestTheDefaultArmIsUnchangedWithThePostFlagUnset`
+  // and the unit driver's `default-arm-source-*` checks both assert it.
+  const postConsts = POST_PATH ? `
+  var PLAN = ${JSON.stringify(POST_ARM_PLAN)};
+  var RESULT = ${JSON.stringify(POST_ARM_CREATE_POST_RESULT)};
+  var COST = ${JSON.stringify(POST_ARM_COST)};
+  var SPENT = ${JSON.stringify(POST_ARM_SPENT_ACCOUNT)};
+  var NO_IMAGES = ${JSON.stringify(POST_ARM_NO_IMAGES_ERROR)};
+  // workflowId -> { plan, account }, the ledger both the poll and the post gate
+  // read. It is the thing \`createMockHost\` has and the reason this shim can apply
+  // the real host's workflow-resolution refusal at all.
+  var WF = {};
+  var arm = { estimates: 0, submits: 0, polls: 0, terminal: 0,
+              queued: [], unknownPolls: [], posts: [] };
+  window.${POST_ARM_GLOBAL} = arm;` : '';
   return `(() => {
   var PICKS = ${JSON.stringify(HOST_RESOURCE_PICKS)};
-  var STUB = ${JSON.stringify(INLINE_STUB_MESSAGE)};
+  var STUB = ${JSON.stringify(INLINE_STUB_MESSAGE)};${postConsts}
   var answered = [], refused = [];
   window.__dogfoodHostPicks = answered;
   window.__dogfoodHostRefused = refused;
@@ -641,7 +984,7 @@ export function inlineHostSource() {
     // The inline path never assigns one (IframeTransport adds it on dispatch),
     // so this is the wire field, filled in rather than left undefined.
     var requestId = payload.requestId || 'dogfood-oracle-inline';
-    if (type === 'OPEN_RESOURCE_PICKER') {
+${post}    if (type === 'OPEN_RESOURCE_PICKER') {
       var picked = PICKS[payload.resourceType];
       answered.push(type + ':' + payload.resourceType);
       return Promise.resolve(picked ? { requestId: requestId, selected: picked }
@@ -1168,7 +1511,29 @@ export async function openPage(c, url, { scopes = [] } = {}) {
       })`));
     } catch { return { answered: [], refused: [], messages: [] }; }
   };
-  return { sessionId, evalJs, waitFor, typeInto, bodyHtml, hostRequests, shim };
+  /**
+   * The POST ARM's ledger, read out of the page. Absent on every other arm — the
+   * shim does not install it (see `inlineHostSource`) — so the zeroed shape is
+   * returned instead of `null`, and a caller reads one shape whatever arm is
+   * running.
+   *
+   * 🔴 IT IS SEPARATE FROM `hostRequests` BECAUSE A REFUSED POST IS NOT A REFUSED
+   * REQUEST. `__dogfoodHostRefused` means "rejected with the SDK's own error, so
+   * the block cannot tell this harness from an unpatched one"; a
+   * `CREATE_POST_FROM_APP` the host declines carries `error: 'no images to post'`
+   * in a perfectly ordinary REPLY, which is a completely different event and the
+   * one the arm's verdict turns on.
+   */
+  const postArm = async () => {
+    const zero = { estimates: 0, submits: 0, polls: 0, terminal: 0,
+      queued: [], unknownPolls: [], posts: [] };
+    try {
+      const raw = await evalJs(
+        `window.${POST_ARM_GLOBAL} ? JSON.stringify(window.${POST_ARM_GLOBAL}) : ''`);
+      return raw ? { ...zero, ...JSON.parse(raw) } : zero;
+    } catch { return zero; }
+  };
+  return { sessionId, evalJs, waitFor, typeInto, bodyHtml, hostRequests, postArm, shim };
 }
 
 /**
