@@ -844,3 +844,64 @@ Moved for the size ratchet. A completed incident; nothing in it was retracted.
   reporting. **A clean git merge is not a clean merge** — read the merged result of `oracle.sh`
   rather than trusting the absence of conflict markers, and re-run the merged-tree suite once the
   base moves.
+
+### Evicted 2026-09-28 (audit batch) — the schema-drift RESOLVED block, verbatim
+
+Moved for the size ratchet once ranks 25/26 closed and six PRs had landed. Fully resolved;
+kept because it records WHY the third closing-condition half is unreachable by design, which
+a later reader would otherwise re-litigate as a failure.
+
+### ✅ RESOLVED 2026-09-28 — `schema-drift` was self-blocking, and the automation can now succeed unaided
+- as-of: 2026-09-28
+
+**This supersedes the OPEN block *"`schema-drift` is red repo-wide, and the automation that exists to
+fix it CANNOT"*, which was EVICTED VERBATIM to the ARCHIVE in the commit before this one** (the size
+ratchet needed the room, and retiring a superseded heading is the half of an append that otherwise
+goes undone). That block's diagnosis was correct in full and its instructions were followed; what
+follows is only what it could not yet know.
+
+- **Fixed by:** `#745` (`ee45282`), green on all 13 checks. Retire that block's *"Next probe / the
+  actual work"* — it is done.
+- 🔴 **The stated closing condition's THIRD half is UNREACHABLE AS WORDED, and that is a defect in
+  the condition, not in the fix.** It asks that *"one manual `gh workflow run
+  revendor-canonical-schema` completes **and opens a PR** unaided"*. Once the mirror is in sync the
+  re-vendor script correctly reports *"already current — nothing to do"*, `changed=false`, and the
+  workflow **skips both the validate step and the PR-creation step**. So a post-merge dispatch can
+  never open a PR, for the correct reason. 🔴 **Do NOT read a PR-less run as a failure, and do not
+  "fix" the workflow to force one.** `via: code` (`.github/workflows/revendor-canonical-schema.yml`,
+  the `detect changes` / `if: steps.changed.outputs.changed == 'true'` gates).
+- ✅ **So the failing path was REHEARSED end-to-end instead, which is the stronger claim** — measured
+  in a worktree at `#745`'s tip: restore the pre-`goods` schema from `origin/main` (`goods:` count
+  **0**) → run the automation's own `scripts/revendor-canonical-schema.sh` → `goods:` count **4**,
+  and its output is **`cmp`-identical** to what `#745` commits → `git status --porcelain` non-empty,
+  i.e. `changed=true`, so the validate step **would** run → the two tests that killed run
+  `36379098603` both **PASS** on that output, and `internal/validate` + `internal/cmd` + the root
+  examples test are green. `via: measurement`
+- ⚠ **Do NOT dispatch the workflow while the mirror is still stale to "get a control"** — a failing
+  run **files its own GitHub issue** (`signal` job → `failure-issue.yml`). The pre-fix control already
+  exists on the record as run `36379098603`; do not manufacture a second.
+- **Next probe:** after `#745` merges, dispatch it **once** to confirm it completes green and files no
+  failure issue, and report the no-PR outcome as correct-by-design rather than as a pass.
+
+**Round 0's four items** (the ladder's own findings, kept here rather than in *Defects* — that section
+replaces wholesale):
+- ✅ **FIXED `6ccab59`** — my mutant table claimed *"remove a scope from the vendored enum → killed by
+  the content control"*. It names **two** members and guards only those. **Independently re-measured,
+  not taken from the report:** dropping `collections:write:self` or `apps:storage:read` leaves
+  `internal/validate` **`ok`**. The shrink direction belongs to `schema-drift` (`jq -S` against the
+  LIVE canonical) — stronger than a hand-typed list, so the list is deliberately NOT grown to fifteen.
+- ✅ **FIXED `6ccab59`** — 🔴 **carry this one forward:** *"the guard was the one thing stopping the
+  mirror from being updated"* is **half true.** There are **TWO** guards; `#745` fixes one. A canonical
+  adding a `pattern` still reds `TestPatternRulesCoverTheVendoredSchema` until a human writes the
+  gloss, **so the bot could not have self-landed even the `goods` change** — it added the `goods[].id`
+  pattern as well as two scopes. Deliberate: a gloss is prose about what a regex MEANS. **Expect
+  enum-only canonical changes to land unaided and pattern-adding ones to need a human** — which
+  narrows rank 25's third closing condition to the enum-only case on top of it being unreachable as
+  worded.
+- ⚠ **OPEN, operator's call — D1:** the ~80 lines of `schemaEnum` + the derived `scopes[1]` row could be
+  a prefix + membership assertion instead, keeping the anchor literal — ~75 lines cheaper, equally
+  un-self-blocking. What the derived form buys, and nothing else checks, is **render order == schema
+  order**. Left in; say the word to cut it.
+- ⚠ **OPEN, cosmetic — D2:** `semantic_test.go`'s *"goods:purchase:self unjustified"* row is
+  duplicative (`unjustifiedSensitiveScopes` loops the map generically and the `posts:write:self` row
+  already exercises that seam). The `goods:read:self` near-miss row earns its place — keep that one.
