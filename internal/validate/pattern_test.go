@@ -356,11 +356,21 @@ func TestPatternFindingsCarryTheRuleAndAnExample(t *testing.T) {
 // runs the suite on its own output before opening a PR. This test used to spell
 // out all thirteen scopes, so the canonical adding `goods:read:self` /
 // `goods:purchase:self` reddened it — and the automation whose whole job is to
-// land that change could not land it. The guard that keeps the mirror in step
-// was the one thing stopping the mirror from ever being updated: it could never
-// accept a canonical that ADDS an enum member, which is the ordinary way a
-// capability list changes. So WHICH values are allowed now comes from the
-// vendored schema, and the sentence they are rendered into is spelled here.
+// land that change could not land it: it could never accept a canonical that
+// ADDS an enum member, which is the ordinary way a capability list changes. So
+// WHICH values are allowed now comes from the vendored schema, and the sentence
+// they are rendered into is spelled here.
+//
+// 🔴 THIS UNBLOCKS ENUM GROWTH ONLY — IT DOES NOT MAKE THE RE-VENDOR BOT
+// SELF-SUFFICIENT, and do not read it as doing so. There are TWO guards over the
+// mirror and this is one of them: a canonical that adds a `pattern` still reds
+// `TestPatternRulesCoverTheVendoredSchema` until a human writes the gloss, so
+// the bot could not have self-landed even the change that motivated this edit
+// (the `goods` canonical added BOTH two scopes and the `goods[].id` pattern).
+// That is deliberate — a gloss is English prose about what a regex MEANS, which
+// cannot be derived, and a bot shipping a bare regex to app authors would be
+// worse than a red check. Expect a canonical that adds a pattern to need a
+// human; expect an enum-only one not to.
 func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"zz",` +
 		`"scopes":["models:read:self","bogus:scope"],"kind":"page",` +
@@ -402,6 +412,15 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	// missing or empty enum, but not on resolving to the WRONG array, and a
 	// set that lost long-standing members is a real regression rather than
 	// growth. These two are the oldest and the most consequential member.
+	//
+	// 🔴 IT NAMES TWO MEMBERS AND GUARDS ONLY THOSE TWO — it is NOT a shrink
+	// detector for the enum as a whole, and must not be quoted as one. Measured:
+	// dropping `apps:storage:read` or `collections:write:self` from the vendored
+	// enum leaves this whole package GREEN. The shrink direction is owned by
+	// `schema-drift` (`scripts/check-canonical-schema.sh`), which normalises with
+	// `jq -S` and compares against the LIVE canonical, so it reds on any dropped
+	// value — a strictly stronger instrument than a hand-typed list here, which
+	// is why this list is deliberately not grown to all fifteen.
 	for _, must := range []string{"models:read:self", "posts:write:self"} {
 		if !slices.Contains(scopes, must) {
 			t.Fatalf("the schema's scope enum does not contain %q — %d values read, so this "+
