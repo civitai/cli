@@ -59,64 +59,40 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-🔴 **`schema-drift` IS FIXED AND THE FIX IS GREEN IN CI — as `civitai/cli#745`, NOT YET MERGED.**
-All **13** checks success on SHA-pinned `ee45282a1661eb70a031b38f10b95b9680cc971f`, which equals the
-branch tip, so the rollup is not the stale-head kind. `$0` of model spend this round.
+✅ **RANK 25 AND RANK 26 ARE CLOSED. `schema-drift` IS GREEN ON `main` AND THE RE-VENDOR BOT IS
+UNBLOCKED FOR ENUM CHANGES.** Three PRs merged 2026-09-28, each verified **by content** on
+`origin/main` (a squash merge never makes the branch an ancestor, so ancestry is never the check):
 
-**IN FLIGHT:** `#745` is unmerged by a deliberate operator choice — asked directly, the operator chose
-**audit before merge** over merging on green.
+| PR | what | merge commit |
+|---|---|---|
+| `#745` | the schema-drift fix — re-vendor + SHAPE/CONTENT split + `goods[].id` gloss + `goods:purchase:self` | `a8a1338` |
+| `#742` | rank 26 — the post arm's `post_link=` | `f4958df` |
+| `#744` | the previous handoff round + 3 archive evictions | `64426e8` |
 
-✅ **ROUND 0 REPORTED: `proceed to the checklist` · requirements: 7 (unattributed: 0) · deletion
-candidates: 2.** It confirmed the change should exist AND should exist as ONE PR — and the part I was
-least sure of, `SENSITIVE_BLOCK_SCOPES`, it justified better than I had: with that **single map entry**
-isolated as the only mutation, `main` gives 1 error, **this PR's schema WITHOUT the entry gives 0 —
-a false PASS** the server 400s, and the full PR gives 1 error byte-identical to the server's. **So the
-schema half of this PR is what OPENS that false pass**; splitting the entry out would ship a regression
-the CLI does not have today. Precedent `#606` shipped the same three-part shape in one commit.
-🔴 **Round 0 does NOT move the ladder — the nine axes have NOT been run. `#745` is green and
-round-0-cleared, NOT audited for correctness.**
+**Closing condition, all three halves, stated separately because they are different claims:**
+1. ✅ `schema-drift` **success** on `origin/main` (CI at `a8a1338`), and the local gate agrees
+   independently — `rc=0`, `OK`, with a one-byte schema edit as the negative control giving `rc=1`.
+2. ✅ `schema-drift` 13/13 on `#742` at `cc23686` before merging it.
+3. ✅ The workflow **completes**; the *"opens a PR"* half is unreachable **by design** and was NOT
+   faked. Dispatched run `36446688394` succeeded with `validate` and `open PR` both **skipped** —
+   the mirror is in sync, so there is nothing to PR. 🔴 **The independent evidence is better than the
+   rehearsal:** failure issue **`#743` was AUTO-CLOSED by that green run** at `15:51:14Z`.
 
-🔴 **It found TWO overstated claims of mine, both fixed in `6ccab59` and corrected publicly on the PR**
-(`#745#issuecomment-5864806691`) rather than by a silent body edit — recorded in the ✅ RESOLVED block
-below, NOT in *Defects*, because that section REPLACES wholesale and restating it to append four lines
-would have cost the size ratchet ~2.6 KB of duplicated text.
+**Claim `app-build-dogfood-25` RELEASED.** Base clone fast-forwarded to `64426e8`.
 
-**What `#745` contains** (branch `zach/schema-drift-unblock`, `ee45282` + `6ccab59`, 5 files):
-- `schema/app-block.manifest.schema.json` re-vendored — `cmp`-identical to the live canonical,
-  re-fetched and re-checked **immediately before** the commit, and to the preserved
-  `~/.cache/schema-revendor-2026-09-28/` copy, so the canonical did not move in between. **Zero
-  hand-authored bytes**, hence no discretion to review in it.
-- `internal/validate/pattern_test.go` — `TestEnumFindingsKeepTheirExactWording` now pins the message
-  **SHAPE** and derives the **CONTENT** from the vendored schema (new `schemaEnum(t, path...)`).
-  🔴 **NOT loosened, and the distinction is the whole fix:** the template is *anchored* — it must
-  first reproduce, byte for byte, a hand-written `contentRating` message, which is *also* asserted
-  against real validator output, so template + schema + validator agree three ways. `contentRating`
-  is the anchor because it is a site-wide rating system, not a capability list, so it is not expected
-  to grow.
-- `internal/validate/pattern.go` — a gloss for `^[a-z0-9][a-z0-9_-]*$` (`goods[].id`), plus its
-  fixture and ledger row; both parent tests **fatal** on a row-count mismatch, so the gloss could not
-  be added alone.
-- `internal/validate/semantic.go` + `semantic_test.go` — see the `SENSITIVE_BLOCK_SCOPES` block below.
+🔴 **THE NINE CORRECTNESS AXES WERE NEVER RUN.** Round 0 returned `proceed to the checklist` and its
+two findings were fixed in `6ccab59` — which RESETS the verification gate — and then the operator
+said *merge and proceed*. So `#745` is merged **green and round-0-cleared, NOT correctness-audited**.
+That is a dated decision, not an oversight; `/audit-pr` against `a8a1338` still works if wanted.
 
-**Verification actually performed** (not inferred): both failures reproduced first; **8 mutants, each
-killed by its own named test with its own message** — a field-prefix reword and a simulated library
-lead-in reword (both kill the enum guard, which is what proves the SHAPE half still bites now that
-content is derived), dropping the gloss, the gloss stating `blockId`'s rule, dropping
-`goods:purchase:self` graded twice (membership *and* behavioural seam), wrongly promoting
-`goods:read:self`, and removing a scope from the vendored enum. Green in **both** tiers: 20 packages
-plus the root real-browser package under Chromium (**342 s**) — red on this host without it (`no
-Chromium on PATH`, an env gap, **not** the `dbus` flake recorded elsewhere here).
-`TestExampleManifestsValidateClean` confirmed to have **RUN** (3 `=== RUN` lines). `gofmt`/`vet` clean.
+⚠ **Two items were left to the operator and are NOT closed** — D1 (~80 lines of `schemaEnum`
+scaffolding could be a prefix+membership assertion; what it buys is render-order == schema-order) and
+D2 (a duplicative `semantic_test.go` row). Both recorded on `#745` and in the ✅ RESOLVED block.
 
-⚠ **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` exited **5** — `NOTHING RESOLVED — 0
-tasks`. An unknown session id answers 200 with an empty array, so that zero cannot distinguish
-"touched no task" from "wrong id". Not a clean bill of health.
-
-⚠ **This round was written into `#744`'s own branch, not as a third version of this doc** — `main` is
-still at `#732` and `#744` was open on the same file, so a separate PR would have hit the hazard this
-doc records as *"rebasing yourself proves nothing about the other open PRs on the same file"*. `#744`'s
-scope now includes this round. **`#744` (doc) and `#745` (fix) touch disjoint files and can land in
-either order; `#742` follows `#745`.**
+⚠ **Correction to this doc's own previous round:** it said `schema-drift` was *"red repo-wide"*.
+Precisely: it was red on every PR whose checks RAN after the canonical changed (`#742`, `#744`, and
+the scheduled bot runs). `#675` and `#602` were never red — their green dates from **2026-09-20** and
+simply predates the change, so they never re-ran. A stale green is not a pass.
 
 ## Open investigations — live diagnosis state
 
@@ -343,7 +319,7 @@ replaces wholesale):
 
 ## Next steps (ranked)
 
-🔴 **Numbering frozen and cumulative.** 1–11 settled; 13, 15–22 closed; **12, 14, 25, 26 live.**
+🔴 **Numbering frozen and cumulative.** 1–11 settled; 13, 15–22, **25, 26** closed; **12, 14** live.
 
 1–11. ✅ **DONE** — the arc through build-and-ship. forcing: user/gate — satisfied
 12. **RE-SCOPED 2026-09-27, ready to implement.** `CIVITAI_SCAFFOLD_TYPECHECK` is set by **ZERO**
@@ -353,28 +329,19 @@ replaces wholesale):
     forcing: regression — the defect shipped once and CI still cannot see it
 13, 15–22. ✅ **CLOSED** — 20/21/22 merged 2026-09-27 (`#735`/`#733`/`#734`).
     forcing: gate/user/security/regression — satisfied
-14. 🔴 **BLOCKED ON THE OPERATOR — one action, then it runs.** T1 "ship-ready". Unchanged this round.
+14. 🔴 **BLOCKED ON THE OPERATOR — one action, then it runs.** T1 "ship-ready". Unchanged.
     The operator selected *spend Buzz on a generated cover* from a four-option question on
     2026-09-27 — **a SELECTION, not a quote; do not attribute words to them.** Measured: **no image
     tooling is needed** (icon aspect 0.9–1.1 ← `--aspect-ratio 1:1`; cover 1.3–2.4 ← `16:9`; the CLI
     reads geometry with the Go stdlib in `internal/appapi/imageinfo.go` and ATTACH refuses a bad
-    shape in seconds with a legible message, so the retry loop closes with no local measurement
-    capability). The brief and floor grader are MERGED (`#737`). What is left is a **personal API
-    key** (see the credential-shape block) plus the run. 🔴 A moderator **REJECTION deletes the
-    listing and every attached asset**, and a run including `submit` **cannot be
-    credential-bounded**. ⚠ Do **not** grade on reaching `approved` inside the trial — measured
-    review latency over 8 submissions is median ~5.6 min with a tail to **741 min**.
+    shape in seconds with a legible message). The brief and floor grader are MERGED (`#737`). What is
+    left is a **personal API key** plus the run. 🔴 A moderator **REJECTION deletes the listing and
+    every attached asset**, and a run including `submit` **cannot be credential-bounded**. ⚠ Do
+    **not** grade on reaching `approved` inside the trial — measured review latency over 8
+    submissions is median ~5.6 min with a tail to **741 min**.
     forcing: user — asked about "complete working apps" 2026-09-25, decided 2026-09-27
-25. 🔴 **IN FLIGHT: `civitai/cli#745`** — implemented, all 13 checks green, **unmerged pending a round-0
-    audit** the operator asked for. Claimed as `app-build-dogfood-25`; **release the claim when it
-    merges** (`claim-work --release app-build-dogfood-25`). Two of the three closing-condition halves
-    are met (`schema-drift` green on `#745`; the third is unreachable as worded — see *Open
-    investigations* — and was rehearsed instead). Remaining: land it, confirm `schema-drift` green on
-    `origin/main`, dispatch the re-vendor workflow once.
-    forcing: gate — a required check is red on every open PR in the repo
-26. **MERGE `#742` once 25 lands.** `MERGEABLE`/`UNSTABLE`; its only non-success is the inherited
-    `schema-drift`, which `#745` fixes. It adds `post_link=` to the post arm.
-    forcing: gate — the instrument is blind on the path that produced both live defects
+25, 26. ✅ **CLOSED 2026-09-28** — `#745` + `#742`. See *State now* for the three-half verification.
+    forcing: gate — satisfied
 
 ## Gotchas / decisions / dead-ends
 
@@ -752,6 +719,38 @@ them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed.
 - ⚠ **`gh run view --log-failed` was the fastest route to the real cause** — the check-run's
   `output.summary` was **empty**, so the SHA-pinned `check-runs` API said only `failure`. The diff and
   the two test names were in the job log.
+
+### Added 2026-09-28 (close) — the bot had been blocked five times, and two instrument traps
+
+- 🔴 **THE VENDORED-SCHEMA GUARDS HAVE BLOCKED THE RE-VENDOR BOT AT LEAST FIVE TIMES — THIS WAS A
+  RECURRING CLASS, NOT AN INCIDENT.** `[schema-revendor-bot] the canonical schema changed in a way
+  the CLI cannot accept`: issues **#323** (08-10), **#486** (08-24), **#607** (09-15), **#695**
+  (09-25), **#743** (09-28). Roughly monthly. Nobody had connected them, because each one reads as a
+  one-off and the bot closes its own issue on the next green run. 🔴 **A green run AUTO-CLOSES the
+  failure issue, so `gh issue list --state all --search 'revendor in:title'` is the health history —
+  and the closed ones are the evidence, which is exactly why the pattern stayed invisible.**
+- 🔴 **`gh run rerun` REPLAYS THE EVENT'S PINNED SHA, SO IT CANNOT CLEAR A RED A PR INHERITED FROM A
+  MOVED BASE.** After `#745` merged and `main` went green, rerunning the failed `schema-drift` job on
+  `#742` and `#744` returned **`failure` in 6 seconds** — replaying the OLD merge commit, which still
+  carried the stale schema. It reads exactly like *"the fix did not work"*. **The tells:** an
+  implausibly short rerun, and `main` green on the same check while the PR is red. **The remedy is a
+  NEW EVENT, not a replay — `gh pr update-branch <n>`** (non-destructive, no force-push). 🔴 **And the
+  corollary that matters more: once the base moves, the PR's OTHER green checks are stale too** —
+  `build-test` passed against the old base and nothing re-reds it.
+- ⚠ **Two GitHub API lags misread as state, both in one minute:** `gh pr view --json headRefOid`
+  served the **pre-update** head right after `update-branch` reported success, and `mergeStateStatus`
+  returned `UNKNOWN`. Neither is evidence; re-read, or `git fetch` the branch and compare.
+- 🔴 **`CDPATH` IS EXPORTED ON THIS HOST, SO `$(cd "$(dirname "$0")/.." && pwd)` RETURNS TWO LINES**
+  and `scripts/check-canonical-schema.sh` reports a confident **`FAIL: … has DRIFTED`** over a file
+  `cmp` calls identical. `jq` then fails inside a process substitution, which `set -euo pipefail` does
+  NOT catch, so `diff <(empty) <(canonical)` prints the whole canonical as `>` lines. **The tell is
+  that EVERY diff line is `>` — one operand is empty, not different.** Run repo scripts with
+  `env -u CDPATH`; do **not** "fix" the scripts — the idiom is correct and the host is the anomaly.
+  CI is unaffected, which is worse: it contradicts a green CI for reasons unrelated to the code.
+- ⚠ **A zsh monitor printed `PR7 PR7` instead of a check tally** — `PR$n[$term/$tot]` is ARRAY
+  SUBSCRIPTING in zsh, so the display was garbage while the arithmetic was fine. The verdict happened
+  to be right; it was re-read directly before acting, because a mangled instrument does not get
+  believed. Brace it (`${n}`) — same family as the `$VAR:` history-modifier trap.
 
 ## How to verify
 
