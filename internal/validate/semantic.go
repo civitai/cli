@@ -131,6 +131,14 @@ var SENSITIVE_BLOCK_SCOPES = map[string]struct{}{
 	// the "write data other users see" arm of the server's criterion, and the
 	// most consequential member of it.
 	"posts:write:self": {},
+	// goods:purchase:self SPENDS the viewer's Buzz on a manifest-declared good
+	// — the "can spend the viewer's Buzz" arm. Its READ half, `goods:read:self`,
+	// is deliberately NOT here and must not be added: the server scopes that
+	// reply to `claims.appBlockId`, so an app reading it sees only what it
+	// itself sold to that viewer. Verified against the DEPLOYED constant
+	// (civitai `origin/release`, not `main` — dp-prod serves `release`), where
+	// the set is these seven.
+	"goods:purchase:self": {},
 }
 
 // isSensitiveBlockScope reports whether scope is in SENSITIVE_BLOCK_SCOPES.
