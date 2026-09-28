@@ -630,9 +630,13 @@ async function main() {
           'relative url exactly like this, which is why the harness can serve one)'
         : ''}. ` +
       `That is the live defect ab-img-poster@0.1.2 shipped after its Post gate was fixed. ` +
-      `A correct app renders an href that carries a scheme and host — resolve the host's ` +
-      `url against https://civitai.com before putting it in an \`href\`, or render it as ` +
-      `text instead of a link.`;
+      // 🔴 THE ADVICE MUST MATCH THE PREDICATE. Not "carry a scheme": a
+      // protocol-relative href carries none and is graded `absolute` here, correctly,
+      // because it reaches the post. What is required is that the href resolve to a
+      // host that is NOT the block's own.
+      `A correct app renders an href that resolves to civitai.com rather than back onto ` +
+      `the block's own subdomain — resolve the host's url against https://civitai.com ` +
+      `before putting it in an href, or render it as text instead of a link.`;
   };
 
   /** Click a label that must be live, returning `true` if it was clicked. */
