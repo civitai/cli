@@ -362,7 +362,7 @@ func rowNamed(t *testing.T, rows []agentCheckJSON, name string) agentCheckJSON {
 // PR and again on npm 10's arborist crash. A gate that reddens because a network
 // went away trains everyone to click through it.
 func TestCLIVersionRowIsFalseOnlyWhenStale(t *testing.T) {
-	t.Run("stale is ok:false, names the newer tag, and fails the verdict", func(t *testing.T) {
+	t.Run("stale is ok:false and names the newer tag, WITHOUT failing the verdict", func(t *testing.T) {
 		dir, _ := agentSetupProject(t)
 		if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentClaude); err != nil {
 			t.Fatalf("PREMISE BROKEN: the setup run itself failed: %v", err)
@@ -387,20 +387,88 @@ func TestCLIVersionRowIsFalseOnlyWhenStale(t *testing.T) {
 			t.Errorf("the detail names no remedy — `civitai upgrade` is the one command that fixes "+
 				"it.\n  detail: %s", row.Detail)
 		}
-		// The row is NOT verdict-exempt, unlike the two auth rows: a stale CLI ships
-		// stale instructions, and `civitai upgrade` is a remedy the user can run.
-		if ok {
-			t.Error("`ok` is true with the `cli-version` row failing — a consumer reading only the " +
-				"verdict (which developer.civitai.com's prompt is told to do) sees nothing")
+		// 🔴 AND IT IS VERDICT-EXEMPT, LIKE THE TWO AUTH ROWS. A counted freshness row
+		// on a repo that cuts releases days apart is red for a large share of ordinary
+		// runs over a usually-harmless state — a permanently-red gate people learn to
+		// click through — and because the hosted prompt instructs its reader to read
+		// `ok` and NOT the rows, counting it does not produce an ignored warning, it
+		// produces an agent that concludes the setup is broken and starts repairing
+		// something that was fine.
+		//
+		// ⚠ THE COST OF THAT CHOICE IS ASSERTED HERE RATHER THAN LEFT IMPLICIT: the
+		// two lines below are what make "a consumer reading only `ok` cannot see a
+		// stale CLI" a pinned property of this command instead of a remark. Closing
+		// that gap needs a change to the hosted prompt, not to this repo.
+		if !ok {
+			t.Error("`ok` is false with only `cli-version` failing. That makes the published verdict " +
+				"red for every user a few days behind a release, which is the permanently-red gate " +
+				"shape — and the hosted prompt reads `ok`, so it would report a BROKEN setup for one " +
+				"that works.")
 		}
-		if err == nil {
-			t.Error("`--check` exited 0 with a failing row that counts toward the verdict")
+		if err != nil {
+			t.Errorf("`--check` exited non-zero with only the exempt `cli-version` row failing: %v", err)
 		}
 		// POSITIVE CONTROL: the row really did consult the endpoint. Without this a
 		// row that is red for some unrelated reason passes every assertion above.
 		if *hits == 0 {
 			t.Error("the release endpoint was never requested, so the red verdict above is not about " +
 				"freshness at all")
+		}
+	})
+
+	// 🔴 THE ANTI-`return true` CONTROL FOR THE EXEMPTION ABOVE. "A stale row leaves
+	// `ok` true" is individually satisfiable by a verdict that is always true, so the
+	// same run must still go red on a row that DOES count. Without this pair the
+	// exemption is indistinguishable from having broken the verdict.
+	t.Run("a stale CLI beside a REAL failure still fails the verdict", func(t *testing.T) {
+		dir, _ := agentSetupProject(t)
+		// Deliberately NOT set up: `agents-md` is missing, which counts.
+		srv, _ := releaseServer(t, "v9.9.9")
+		pointAtServer(t, srv.URL)
+		pinVersion(t, "v0.1.105")
+		t.Setenv("CIVITAI_NO_UPDATE_CHECK", "")
+
+		rows, ok, err := checkRows(t, dir, agentClaude)
+		// PREMISE: both conditions really hold in this run.
+		if rowNamed(t, rows, checkCLIVersion).OK {
+			t.Fatal("PREMISE BROKEN: `cli-version` is green, so this is not the stale case")
+		}
+		if rowNamed(t, rows, checkAgentsMD).OK {
+			t.Fatal("PREMISE BROKEN: `agents-md` is green, so there is no counting failure to observe")
+		}
+		if ok || err == nil {
+			t.Errorf("a missing AGENTS.md no longer fails the verdict (ok=%v, err=%v) — exempting "+
+				"`cli-version` has broken the verdict rather than narrowed it", ok, err)
+		}
+	})
+
+	// The human surface has to agree with the verdict, and it is derived from the
+	// SAME predicate — a stale row rendered like a failure tells a reader the run
+	// failed on a row that deliberately cannot fail it.
+	t.Run("the terminal report warns rather than errors, and names the gap", func(t *testing.T) {
+		dir, _ := agentSetupProject(t)
+		if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentClaude); err != nil {
+			t.Fatalf("PREMISE BROKEN: setup: %v", err)
+		}
+		srv, _ := releaseServer(t, "v9.9.9")
+		pointAtServer(t, srv.URL)
+		pinVersion(t, "v0.1.105")
+		t.Setenv("CIVITAI_NO_UPDATE_CHECK", "")
+
+		stdout, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentClaude, "--check")
+		if err != nil {
+			t.Fatalf("`--check` exited non-zero on a stale-but-otherwise-complete setup: %v\n%s", err, stdout)
+		}
+		if !strings.Contains(stdout, "Setup is complete.") {
+			t.Errorf("the report does not call a stale-but-complete setup complete, so the screen "+
+				"disagrees with `ok`:\n%s", stdout)
+		}
+		// 🔴 THE RESIDUAL, PINNED AS TEXT. The exemption means a consumer reading only
+		// `ok` cannot see a stale CLI. That is a real gap this PR does not close, and
+		// an unstated gap is one the next reader has to rediscover.
+		if !strings.Contains(stdout, "reads only `ok` will not see it") {
+			t.Errorf("the report does not say that a consumer reading only `ok` misses this row. "+
+				"The exemption is deliberate; leaving its cost unstated is not.\n%s", stdout)
 		}
 	})
 

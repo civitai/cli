@@ -408,6 +408,28 @@ func checkCountsTowardVerdict(name, agent string) bool {
 	switch name {
 	case checkAuthenticated:
 		return false
+	case checkCLIVersion:
+		// 🔴 A STALE CLI IS WORTH UPGRADING, NOT A BROKEN SETUP — and counting it
+		// would build the one thing this file's neighbours already record twice as
+		// the worst outcome: a permanently-red gate, which trains everyone to click
+		// through. Releases here land days apart (`0.1.105` → `0.1.110` inside one
+		// week, five tags), so a verdict-affecting freshness row is red for a large
+		// fraction of all real invocations over a state that is usually harmless.
+		//
+		// 🔴 AND THE HOSTED PROMPT MAKES THE FAILURE MODE ACTIVE, NOT PASSIVE.
+		// `developer.civitai.com`'s step 4 instructs its reader to read `ok` and NOT
+		// the individual rows, so a counted row does not produce "an agent ignores a
+		// warning" — it produces "an agent reads `ok: false`, concludes the setup is
+		// broken, and stops or starts repairing something that was fine". That is a
+		// worse outcome than the staleness it reports, and it would reach every user
+		// of the published prompt.
+		//
+		// ⚠ THE RESIDUAL IS REAL AND IS NOT FIXED HERE: an agent that reads only
+		// `ok` still will not notice a stale CLI. Closing that needs a change to
+		// `prompt.md`'s "read `ok`, not the rows" instruction, which lives outside
+		// this repository. printAgentSetupChecks says so on screen rather than
+		// leaving it implicit.
+		return false
 	case checkAgentToken:
 		// 🔴 THE SAME EXEMPTION, FOR THE SAME REASON — and the reason is
 		// `authenticated`'s, not `claude-md`'s. Work DOES remain (the user must
@@ -531,6 +553,12 @@ showing this build to be OLDER can make it false. Skip it entirely with
 --no-update-check or CIVITAI_NO_UPDATE_CHECK, the same controls 'version' and
 'upgrade' honour; the row then says it was disabled.
 
+IT DOES NOT FAIL THE VERDICT EITHER, and that is deliberate. Releases land days
+apart, so a counted freshness row would be red for a large share of ordinary runs
+over a state that is usually harmless -- a permanently-red gate people learn to
+click through. READ THE ROW: a consumer that reads only 'ok' will not see a stale
+CLI, which is a real gap and not one this command can close on its own.
+
 'authenticated' and 'agent-token' are the TWO auth rows, and they are separate
 because they are about different stores. 'authenticated' is THIS CLI's
 credential — 'civitai login''s config file or CIVITAI_TOKEN — which is what
@@ -541,11 +569,11 @@ You do NOT need CIVITAI_TOKEN to scaffold, build, dev-run or submit an App; it
 is only for the MCP servers. Neither row can fail the verdict: an
 unauthenticated setup is a success.
 
-The 'ok' verdict is the AND of every row EXCEPT authenticated and agent-token,
-minus claude-md for a non-Claude agent, and minus mcp-site/mcp-orch for an agent
-with no resolvable config target. That last exemption is conditional and narrow:
-for a KNOWN agent a missing entry still fails, and the rows stay in the report
-and stay false.
+The 'ok' verdict is the AND of every row EXCEPT cli-version, authenticated and
+agent-token, minus claude-md for a non-Claude agent, and minus mcp-site/mcp-orch
+for an agent with no resolvable config target. That last exemption is conditional
+and narrow: for a KNOWN agent a missing entry still fails, and the rows stay in
+the report and stay false.
 
 EXIT CODES: --check exits 1 when a check failed, 0 otherwise. A write run exits
 0 when every step happened and 1 when one did not -- a config that does not
@@ -974,6 +1002,13 @@ func printAgentSetupChecks(w io.Writer, payload agentSetupJSON) {
 	}
 	fmt.Fprintln(w, st.Dim("`"+checkAuthenticated+"` and `"+checkAgentToken+"` are reported but never fail this "+
 		"check — setup stops before login on purpose."))
+	// 🔴 THE EXEMPTION IS STATED WITH ITS RESIDUAL, NOT JUST ITS REASON. The row is
+	// deliberately uncounted (see checkCountsTowardVerdict), which means a consumer
+	// reading only `ok` cannot see a stale CLI — and the hosted prompt tells its
+	// reader to do exactly that. Naming the gap on screen is the honest half; the
+	// fix for it is not in this repository.
+	fmt.Fprintln(w, st.Dim("`"+checkCLIVersion+"` likewise: a stale CLI is worth upgrading, not a broken setup. "+
+		"Read the row — a consumer that reads only `ok` will not see it."))
 	if payload.Agent != agentClaude {
 		fmt.Fprintln(w, st.Dim("`claude-md` likewise: "+payload.Agent+" reads "+agentsFilename+" directly, so the shim is inert for it."))
 	}
