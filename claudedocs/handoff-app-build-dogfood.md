@@ -666,15 +666,23 @@ them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed.
   `output.summary` was **empty**, so the SHA-pinned `check-runs` API said only `failure`. The diff and
   the two test names were in the job log.
 
-### Added 2026-09-28 (close) — the bot had been blocked five times, and two instrument traps
+### Added 2026-09-28 (close) — ⚠ RETRACTED HEADING: the bot had NOT been blocked five times, and two instrument traps
 
-- 🔴 **THE VENDORED-SCHEMA GUARDS HAVE BLOCKED THE RE-VENDOR BOT AT LEAST FIVE TIMES — THIS WAS A
-  RECURRING CLASS, NOT AN INCIDENT.** `[schema-revendor-bot] the canonical schema changed in a way
+- 🔴 **⚠ RETRACTED SAME DAY BY MEASUREMENT — THE BULLET BELOW IS FALSE AND THE HEADING ABOVE WAS
+  TOO.** Kept verbatim rather than deleted, because how it was got wrong is the durable part. The
+  correction is in *Gotchas* → **Added 2026-09-28 (audit batch)**; the true figures are **3**
+  schema-shape blockages (`#486`, `#607`, `#743`), of which **2** were the pattern guard, both TRUE
+  POSITIVES cleared in under a day, **0** false positives. `#323` is a hand-dispatched FIRE DRILL
+  ("NOT a real failure of the bot") with a DIFFERENT title; `#695` failed on
+  `TestBuildExcludesGitFileInSubmodule` in `internal/pkgzip`. **Do not cite the bullet below.**
+- 🔴 ~~**THE VENDORED-SCHEMA GUARDS HAVE BLOCKED THE RE-VENDOR BOT AT LEAST FIVE TIMES — THIS WAS A
+  RECURRING CLASS, NOT AN INCIDENT.**~~ `[schema-revendor-bot] the canonical schema changed in a way
   the CLI cannot accept`: issues **#323** (08-10), **#486** (08-24), **#607** (09-15), **#695**
-  (09-25), **#743** (09-28). Roughly monthly. Nobody had connected them, because each one reads as a
-  one-off and the bot closes its own issue on the next green run. 🔴 **A green run AUTO-CLOSES the
-  failure issue, so `gh issue list --state all --search 'revendor in:title'` is the health history —
-  and the closed ones are the evidence, which is exactly why the pattern stayed invisible.**
+  (09-25), **#743** (09-28). ~~Roughly monthly.~~ Nobody had connected them, because each one reads
+  as a one-off and the bot closes its own issue on the next green run. 🔴 **A green run AUTO-CLOSES
+  the failure issue, so `gh issue list --state all --search 'revendor in:title'` is the health
+  history — and the closed ones are the evidence** (that half stands; what was wrong was counting
+  those titles as five instances of ONE mechanism without opening any of them).
 - 🔴 **`gh run rerun` REPLAYS THE EVENT'S PINNED SHA, SO IT CANNOT CLEAR A RED A PR INHERITED FROM A
   MOVED BASE.** After `#745` merged and `main` went green, rerunning the failed `schema-drift` job on
   `#742` and `#744` returned **`failure` in 6 seconds** — replaying the OLD merge commit, which still
