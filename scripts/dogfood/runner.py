@@ -554,6 +554,18 @@ APP_LISTING_DESTRUCTIVE = ("set-text",)
 # cannot parse an invocation out of the segment.
 DANGEROUS_VERBS = ("generate", "submit", "withdraw", "listing")
 # Wrappers to step over when looking for the executable.
+#
+# 🔴 `timeout` IS DELIBERATELY NOT HERE, AND THE REASON IS MEASURED — see
+# login_refusal / bare_segment. Adding it (with its DURATION) plus stripping a
+# subshell's parens makes `invocation()` parse two shapes it used to reject, which
+# moves them out from under the fail-closed rule and into the precise gates — and
+# the precise gates are token-fragile at that boundary:
+# `(civitai app listing set-icon ./i.png --slug sensei)` then yields the candidate
+# `sensei)`, which does not match the slug shape `[a-z0-9][a-z0-9-]*`, so
+# `_prefix_ok` finds no offender and ALLOWS a command aimed at a real listing on
+# the account. Measured while writing this change: refused before, allowed after.
+# So the normalisation lives in the login check, which has no fail-open of its own,
+# and the caps keep their conservative fall-through.
 WRAPPERS = ("env", "sudo", "nice", "ionice", "stdbuf", "nohup", "command", "exec", "builtin")
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -815,6 +827,56 @@ def invocation(segment: str):
     return [t for t in toks[i + 1:]]
 
 
+# `timeout`'s mandatory DURATION: a number with an optional s/m/h/d suffix. Narrow
+# enough that no command name can match it, so the skip below cannot swallow the
+# thing it is looking for.
+_DURATION = re.compile(r"^\d+(\.\d+)?[smhd]?$")
+
+
+def bare_segment(segment: str) -> str:
+    """A segment with shell packaging that hides the command word removed, so
+    `invocation()` can read it.
+
+    🔴 TWO SHAPES WERE MISSED AND BOTH WERE FOUND BY REPLAYING REAL BYTES, NOT BY
+    IMAGINING COMMANDS. Steps 70 and 71 of trial `at2-mimo-noderoot-claudeid` are
+    `timeout 10 civitai login --no-browser 2>&1 || true` and
+    `(civitai login --no-browser 2>&1) &`. `invocation()` tested `10` against
+    "civitai" for the first, and `(civitai` for the second — a subshell's opening
+    paren glues itself to the command word under shlex. A hand-written table of
+    eight login spellings was entirely green while two of the four shapes that
+    actually burned that run's budget walked straight through; see
+    TestDogfoodTheMeasuredRunsLoginCommandsAreRefused.
+
+    🔴 APPLIED ONLY BY THE LOGIN CHECK, AND THAT IS THE WHOLE DESIGN DECISION.
+    Doing it inside `invocation()` would be one predicate in one place, which is
+    the right instinct and is WRONG here: it moves these shapes out from under the
+    fail-closed rule and into the precise gates, and the precise gates are
+    token-fragile at exactly that boundary. Measured, not theorised —
+    `(civitai app listing set-icon ./i.png --slug sensei)` normalises to the
+    candidate `sensei)`, which fails the slug shape test `[a-z0-9][a-z0-9-]*`, so
+    `_prefix_ok` sees no offender and ALLOWS a command aimed at a real listing on
+    the operator's account. It was REFUSED before the widening and ALLOWED after.
+    A refusal that fires for a blunt reason beats a gate that fails open, so the
+    caps keep reading the raw segment and the login check gets this instead. The
+    login check has no fail-open half: it either finds `login` as argv[0] or it
+    does not.
+
+    ⚠ STILL NOT NORMALISED, same class as `eval`: `$(civitai login)`, backticks,
+    and `c=civitai; $c login`. This reads command text.
+    """
+    # A subshell's or group's punctuation cannot change what the segment invokes —
+    # a leading `(` in shell is always a subshell — so both halves come off.
+    toks = segment.strip("(){} \t").split()
+    # `timeout [OPTION]… DURATION COMMAND` puts its own options and its duration
+    # between the wrapper word and the command.
+    if toks and toks[0] == "timeout":
+        i = 1
+        while i < len(toks) and (toks[i].startswith("-") or _DURATION.match(toks[i])):
+            i += 1
+        toks = toks[i:]
+    return " ".join(toks)
+
+
 ARG_ORIGIN = "argument"
 
 
@@ -1030,7 +1092,11 @@ def login_refusal(command: str, credentialed: bool):
     the trial needs than `--help` does.
     """
     for seg in segments(strip_heredoc_bodies(command)):
-        argv = invocation(seg)
+        # `bare_segment` and not the raw segment: two of the four login commands
+        # the measured run actually issued are invisible without it, and it is
+        # applied HERE rather than inside `invocation()` for the measured reason in
+        # its own docstring.
+        argv = invocation(bare_segment(seg))
         if argv and argv[0] == LOGIN_VERB:
             return LOGIN_REFUSAL_CREDENTIALED if credentialed else LOGIN_REFUSAL_UNCREDENTIALED
     return None

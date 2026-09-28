@@ -802,6 +802,147 @@ func TestDogfoodLoginIsRefusedInEveryTrial(t *testing.T) {
 	}
 }
 
+// 🔴 THE FOUR COMMANDS FROM THE FAILING RUN, REPLAYED AS BYTES. Every arm above
+// is a command *I* wrote, which means the whole table could be green while the
+// shapes that actually burned the budget walk past — they are multi-line, they
+// background the login, and one hides it inside a 60-iteration polling loop.
+// These are lifted verbatim out of
+// `~/.cache/dogfood-runs-2026-09-27-t1/at2-mimo-noderoot-claudeid/transcript.jsonl`
+// (steps 63, 68, 70, 71), which between them account for most of the 18 minutes.
+//
+// 🔴 FED THROUGH FAKE_TOOL_COMMANDS_JSON, NOT FAKE_TOOL_COMMAND. The newline
+// separator cannot carry a multi-line command: through the plain knob, step 63
+// arrives as TWO assistant turns and the classifier never sees the shape under
+// test — it would pass or fail for reasons unrelated to it.
+func TestDogfoodTheMeasuredRunsLoginCommandsAreRefused(t *testing.T) {
+	credPath, _ := credentialFile(t)
+	for _, tc := range []struct{ step, command string }{
+		{"63", `rm -f ~/.config/civitai/config.yaml && civitai login --no-browser 2>&1 &
+sleep 5 && cat ~/.config/civitai/config.yaml 2>/dev/null || echo "No config yet"`},
+		{"68", `rm -f ~/.config/civitai/config.yaml && civitai login --no-browser 2>&1 &
+LOGIN_PID=$!
+sleep 3
+cat ~/.config/civitai/config.yaml 2>/dev/null || echo "No config yet - waiting for login"
+wait $LOGIN_PID 2>/dev/null
+echo "Exit: $?"`},
+		{"70", `rm -f ~/.config/civitai/config.yaml
+# Try to get a login session going and capture the URL
+timeout 10 civitai login --no-browser 2>&1 || true`},
+		{"71", `# Let me try to get a login session and wait for it to complete
+(civitai login --no-browser 2>&1) &
+LOGIN_PID=$!
+echo "Login PID: $LOGIN_PID"
+echo "Waiting for approval..."
+
+# Wait up to 5 minutes for the login to complete
+for i in $(seq 1 60); do
+    sleep 5
+    if [ -f ~/.config/civitai/config.yaml ]; then
+        echo "Config file created!"
+        cat ~/.config/civitai/config.yaml 2>/dev/null
+        kill $LOGIN_PID 2>/dev/null
+        break
+    fi
+    if ! kill -0 $LOGIN_PID 2>/dev/null; then
+        echo "Login process exited"
+        break
+    fi
+done`},
+	} {
+		t.Run("step "+tc.step, func(t *testing.T) {
+			payload, err := json.Marshal([]string{tc.command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tr := runFakeTrialEnv(t, []string{"FAKE_TOOL_COMMANDS_JSON=" + string(payload)},
+				nil, "", "--credential-file", credPath)
+			body := readFile(t, tr.transcript)
+			if got := stepVerdicts(t, body); len(got) != 1 || got[0] != "refused" {
+				t.Fatalf("step %s of at2-mimo-noderoot-claudeid still reaches the container "+
+					"(verdicts %v). This is the literal command from the run this gate exists "+
+					"for.\n%s", tc.step, got, body)
+			}
+			if r := refusalReason(t, body); !strings.Contains(r, "`civitai login` cannot succeed inside a trial") {
+				t.Fatalf("step %s was refused by something other than the login gate: %q", tc.step, r)
+			}
+			// 🔴 AND THE `rm -f` NEVER RAN, because the refusal replaces the whole
+			// tool call. Three of these four delete the credential the harness
+			// installed; a gate that refused only the `civitai login` SEGMENT while
+			// executing the rest would satisfy the assertion above and still destroy
+			// it. The absence of any `tool` record is what proves nothing executed.
+			if strings.Contains(body, `"kind": "tool"`) {
+				t.Fatalf("step %s produced a tool record — part of the command ran, and three of "+
+					"these four begin by deleting the credential:\n%s", tc.step, body)
+			}
+		})
+	}
+}
+
+// 🔴 THE NORMALISATION IS THE LOGIN CHECK'S ALONE, AND THIS IS THE SEAM GUARD
+// THAT KEEPS IT THERE. `bare_segment` strips a subshell's parens and `timeout`'s
+// duration so the login gate can see two shapes the measured run used. Applying it
+// inside `invocation()` instead — one predicate in one place, the right instinct —
+// was tried and MEASURED to open a hole: `(civitai app listing set-icon ./i.png
+// --slug sensei)` then yields the candidate `sensei)`, which fails the slug shape
+// test, so `_prefix_ok` finds no offender and ALLOWS a command aimed at a real
+// listing on the account. Refused before, allowed after.
+//
+// So these shapes must still be refused — by the blunt fail-closed rule, which
+// cannot fail open — and this test fails the moment someone "consolidates" the
+// normalisation into `invocation()`.
+func TestDogfoodTheCapsStillReadTheRawSegment(t *testing.T) {
+	credPath, _ := credentialFile(t)
+	for _, tc := range []struct{ name, command string }{
+		{"subshell + a foreign slug", "(civitai app listing set-icon ./i.png --slug sensei)"},
+		{"subshell + submit", "(civitai app submit --yes)"},
+		{"timeout + generate", `timeout 300 civitai generate "a cat"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := runFakeTrial(t, []string{tc.command}, "",
+				"--credential-file", credPath, "--app-prefix", "dogfood4-",
+				"--max-generations", "0", "--max-submissions", "0")
+			body := readFile(t, tr.transcript)
+			if got := stepVerdicts(t, body); len(got) != 1 || got[0] != "refused" {
+				t.Fatalf("%q reached the container (verdicts %v). If the login gate's segment "+
+					"normalisation was moved into invocation(), this now parses — and a trailing "+
+					"`)` on the slug makes the prefix gate fail OPEN.\n%s", tc.command, got, body)
+			}
+			if r := refusalReason(t, body); !strings.Contains(r, "not a form the harness can read") {
+				t.Fatalf("%q is no longer caught by the fail-closed rule — it was refused with "+
+					"%q. That is the symptom of the normalisation having leaked into "+
+					"invocation(); re-read bare_segment's docstring before changing this.",
+					tc.command, r)
+			}
+		})
+	}
+}
+
+// The over-refusal control for `bare_segment`: stripping parens and a `timeout`
+// duration must not turn a non-CLI command into a CLI one.
+func TestDogfoodSegmentNormalisationDoesNotInventInvocations(t *testing.T) {
+	credPath, _ := credentialFile(t)
+	for _, cmd := range []string{
+		"timeout 30 npm run build",
+		"timeout 30 ./node_modules/.bin/vitest run",
+		"(npm test)",
+		// `timeout` with no command after its duration invokes nothing.
+		"timeout 30",
+		// A path that merely CONTAINS something civitai-ish is still not the CLI.
+		"timeout 5 ./scripts/civitai-helper.sh",
+		// A subshell around an ordinary command.
+		"(cd image-generator) && npm run build",
+	} {
+		t.Run(cmd, func(t *testing.T) {
+			tr := runFakeTrial(t, []string{cmd}, "", "--credential-file", credPath,
+				"--app-prefix", "dogfood4-", "--max-generations", "0", "--max-submissions", "0")
+			if got := stepVerdicts(t, readFile(t, tr.transcript)); len(got) != 1 || got[0] != "run" {
+				t.Fatalf("%q was refused (verdicts %v) — the segment normalisation is "+
+					"over-refusing ordinary commands\n%s", cmd, got, readFile(t, tr.transcript))
+			}
+		})
+	}
+}
+
 // 🔴 THE REFUSAL CARRIES THE INFORMATION THE TRIAL NEEDS, AND IT IS DIFFERENT
 // INFORMATION IN THE TWO CASES. This is the half that makes the gate useful
 // rather than merely safe: a credentialed trial has to be told a credential is
