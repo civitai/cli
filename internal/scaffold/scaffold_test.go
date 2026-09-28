@@ -422,6 +422,71 @@ func TestRenderPageMoney(t *testing.T) {
 		}
 	}
 
+	// The THIRD false invariant, same defect class as the two above and found the
+	// same way. The scaffold told the developer the W6 pack "ships no Slider" — in
+	// the README, in a JSX comment, in the component's docstring and in a styles
+	// comment — and hand-rolled a native range input on the strength of it. The
+	// pack has exported `Slider` since long before this template's pin: it is in
+	// `@civitai/blocks-react@^0.58.0`'s `./ui` barrel, the very subpath this file
+	// already imports from, and its own docstring names LoRA weights as the use
+	// case it was built for. A dogfooding developer spent two of four
+	// node_modules probes confirming the claim was false.
+	//
+	// 🔴 THE STRUCTURAL HALF FIRST, because it is the half a reword cannot walk
+	// past: the generated app must IMPORT and USE the pack's Slider, and must not
+	// hand-roll a range input. A claim that the pack lacks a Slider cannot be
+	// restated in any wording while the file in front of the reader renders one.
+	mustContain(t, app, "  Slider,\n") // the ./ui barrel import, not a prose mention
+	mustContain(t, app, "<Slider")
+	mustNotContain(t, app, `type="range"`)
+	// The hand-rolled chrome that existed ONLY to style that input. Pinning the
+	// symbols too, so re-adding a bespoke range under new style names trips this.
+	for _, deadStyle := range []string{"loraRangeStyle", "loraWeightRowStyle", "loraWeightValueStyle", "loraWeightLabelStyle"} {
+		mustNotContain(t, app, deadStyle)
+	}
+	// And the parse the pack's typed onChange removes — Slider hands back the
+	// NUMBER, so a surviving e.target.value read means the switch was cosmetic.
+	mustNotContain(t, app, "onWeight(l.versionId, Number(")
+
+	// 🔴 THE SPELLED HALF, pinned as WHOLE NORMALISED SENTENCES rather than as
+	// keywords. The claim was wrapped differently at all four sites — across a JSX
+	// comment's line break, behind a ` * ` docstring prefix, behind `// `, and as
+	// flowing markdown — so no raw substring matches more than one of them, and a
+	// one-word grep ("Slider") cannot distinguish the falsehood from the fix.
+	// Normalising to words first is what makes one pinned sentence cover every
+	// site regardless of how it is wrapped or commented.
+	//
+	// Same caveat the two loops above carry, and it is why the structural half
+	// leads: this matches PHRASINGS, so it cannot tell an assertion from a
+	// retraction and cannot catch a new way of spelling the same falsehood. It is
+	// a floor. Describe the old claim; never restate it verbatim.
+	sliderSurfaces := map[string]string{
+		"App.tsx":   normalizeCodeProse(app),
+		"README.md": normalizeCodeProse(comfyReadme),
+	}
+	for _, stale := range []string{
+		"a themed native range input — the W6 pack ships no Slider",
+		"the one exception is each LoRA's weight control (a themed native range `<input>`, since the pack ships no Slider yet)",
+		"plus a themed native range input (the pack ships no Slider)",
+		"The W6 pack ships no Slider, so each LoRA's weight uses a themed native range input",
+	} {
+		for name, surface := range sliderSurfaces {
+			if strings.Contains(surface, normalizeCodeProse(stale)) {
+				t.Errorf("%s still asserts the pack has no Slider: %q\n"+
+					"The pack exports Slider from @civitai/blocks-react/ui at the pinned version. "+
+					"Describe the old claim if you must; do not restate it.", name, stale)
+			}
+		}
+	}
+	// Positive control for the loop above — it asserts ABSENCE, so it is green
+	// against a surface that is empty or read from the wrong path. Each surface
+	// must actually be talking about the weight control at all.
+	for name, surface := range sliderSurfaces {
+		if !strings.Contains(surface, "Slider") {
+			t.Errorf("%s never mentions Slider — the stale-claim guard above would pass vacuously against it", name)
+		}
+	}
+
 	// generation.ts threads the chosen checkpoint into modelId/modelVersionId
 	// instead of a hardcoded constant, AND emits the selected LoRAs as
 	// additionalResources (only when non-empty).
@@ -818,6 +883,29 @@ func budgetFromManifest(t *testing.T, manifest string) int {
 		t.Fatal("manifest has no page.buzzBudgetPerGen")
 	}
 	return *m.Page.BuzzBudgetPerGen
+}
+
+// normalizeCodeProse reduces a source or markdown file to the WORDS it tells a
+// reader, dropping comment markers and line wrapping — the sibling of
+// normalizeDotenvProse, for `//`, ` * ` and `{/* … */}` comments.
+//
+// It exists so ONE pinned sentence can cover a claim that appears at several
+// sites wrapped differently. A raw substring match is defeated by a line break
+// landing in a different place, and a keyword match cannot tell a false claim
+// from the sentence that corrects it — so a phrasing guard over prose is only
+// meaningful once layout is normalised away.
+func normalizeCodeProse(body string) string {
+	var words []string
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "{/*")
+		line = strings.TrimSuffix(line, "*/}")
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "//")
+		line = strings.TrimPrefix(line, "*")
+		words = append(words, strings.Fields(line)...)
+	}
+	return strings.Join(words, " ")
 }
 
 func readFile(t *testing.T, p string) string {

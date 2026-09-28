@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/auth"
@@ -186,25 +187,62 @@ func spendNarrowingNotice(sty ui.Styler) string {
 		") so storage/collections scopes are requested too."
 }
 
-// tokenCanSpend reports whether the minted dev-token JWT carries the budgeted
-// spend scope. It decodes the JWT payload segment WITHOUT verifying the
-// signature (that's the server's job on every API call) — we only need the
-// claims to give an early, actionable warning. Any malformed input returns
-// false conservatively (the worst case is an extra warning, never a missed
-// spend). Mirrors the SDK live host's decodeBlockTokenPayload.
-func tokenCanSpend(jwt string) bool {
+// devTokenClaims is the subset of a minted dev token's payload the CLI reads.
+// Only fields that are ECHOED BACK to the developer or branched on locally live
+// here — `sub` and friends are deliberately absent, because nothing should print
+// them.
+//
+// BuzzBudget is a pointer so "the token states no budget" stays distinguishable
+// from "the token states a budget of 0": the former means the CLI cannot report
+// one (say so), the latter is a real, reportable grant.
+type devTokenClaims struct {
+	Scopes     []string `json:"scopes"`
+	BuzzBudget *int     `json:"buzzBudget"`
+	Exp        int64    `json:"exp"`
+}
+
+// decodeDevTokenClaims decodes the minted dev token's payload segment.
+//
+// 🔴 THIS IS NOT A TRUST BOUNDARY AND MUST NEVER BECOME ONE. The signature is
+// NOT verified — that is the server's job on every API call, and it is the only
+// thing that makes any of these claims true. What happens here is strictly an
+// ECHO: the server just told us what it granted, and we are re-displaying it so
+// the developer does not have to hand-decode the JWT to find out. Do NOT branch a
+// security decision on anything this returns, and do not use it to decide whether
+// an operation is ALLOWED — a forged payload would say whatever its author liked.
+// The one existing branch (tokenCanSpend) is sound only because it can do nothing
+// but print an extra warning.
+//
+// ok=false on any malformed input (not a JWT, bad base64, non-JSON payload). Every
+// caller must degrade to "say nothing extra", never to an error: a cosmetic read
+// of a token the mint already returned must not be able to fail the mint.
+func decodeDevTokenClaims(jwt string) (devTokenClaims, bool) {
+	var claims devTokenClaims
 	parts := strings.Split(jwt, ".")
 	if len(parts) < 2 {
-		return false
+		return claims, false
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return false
-	}
-	var claims struct {
-		Scopes []string `json:"scopes"`
+		return claims, false
 	}
 	if err := json.Unmarshal(payload, &claims); err != nil {
+		return claims, false
+	}
+	return claims, true
+}
+
+// tokenCanSpend reports whether the minted dev-token JWT carries the budgeted
+// spend scope. Any malformed input returns false conservatively (the worst case
+// is an extra warning, never a missed spend). Mirrors the SDK live host's
+// decodeBlockTokenPayload.
+//
+// It reads through decodeDevTokenClaims rather than re-parsing, so there is ONE
+// JWT decoder in this file: a second copy would drift from the 🔴 note above,
+// which is the note that keeps this decode out of the trust path.
+func tokenCanSpend(jwt string) bool {
+	claims, ok := decodeDevTokenClaims(jwt)
+	if !ok {
 		return false
 	}
 	for _, s := range claims.Scopes {
@@ -213,6 +251,106 @@ func tokenCanSpend(jwt string) bool {
 		}
 	}
 	return false
+}
+
+// grantedClaimsNotice renders the one-line summary of what the mint actually
+// granted: scopes, per-generation Buzz budget, and expiry.
+//
+// Why it exists: the mint used to print the token and nothing else, so the ONLY
+// way to learn the granted budget was to hand-decode the JWT payload
+// (`cut -d. -f2 | base64 -d`). A developer who does not think to do that ships a
+// default-budget token and dead-ends later on a message about recipe ceilings
+// that never mentions the budget. The token holds the answer; the CLI is holding
+// the token; so it says so.
+//
+// 🔴 IT PRINTS CLAIMS, NEVER THE TOKEN. No segment of the JWT, no signature, no
+// `sub`, nothing digest-shaped — this repo's output is pasted into issues and
+// terminals. Adding a field here means asking whether it is safe to SHOW.
+//
+// Scopes are sanitized for display like dev-tunnel's "Declaring scopes:" line:
+// the granted set derives from a request the LOCAL manifest can influence, so
+// author-supplied text can reach it, and a crafted scope string must not be able
+// to inject ANSI/control sequences into the developer's terminal.
+//
+// Returns "" when the payload did not decode — the caller prints nothing rather
+// than guessing, because a wrong budget is worse than no budget.
+func grantedClaimsNotice(claims devTokenClaims, ok bool, now time.Time) string {
+	if !ok {
+		return ""
+	}
+	parts := make([]string, 0, 3)
+
+	if len(claims.Scopes) > 0 {
+		display := make([]string, len(claims.Scopes))
+		for i, s := range claims.Scopes {
+			display[i] = sanitizeScopeForDisplay(s)
+		}
+		parts = append(parts, "scopes "+strings.Join(display, ", "))
+	} else {
+		parts = append(parts, "scopes: none stated")
+	}
+
+	// Name the ABSENT case rather than printing a plausible default. The server
+	// resolves an omitted budget to DevBuzzBudgetDefault, but that is the
+	// server's business: stating a number this token does not carry is exactly
+	// the misinformation this line exists to remove.
+	if claims.BuzzBudget != nil {
+		parts = append(parts, fmt.Sprintf("buzz budget %d/generation", *claims.BuzzBudget))
+	} else {
+		parts = append(parts, "buzz budget not stated in the token")
+	}
+
+	if claims.Exp > 0 {
+		exp := time.Unix(claims.Exp, 0).UTC()
+		// Absolute time so the line stays meaningful in a pasted log, plus the
+		// relative form because "is it still valid?" is the actual question.
+		rel := exp.Sub(now).Round(time.Minute)
+		if rel > 0 {
+			parts = append(parts, fmt.Sprintf("expires %s (in %s)", exp.Format(time.RFC3339), rel))
+		} else {
+			parts = append(parts, fmt.Sprintf("EXPIRED %s", exp.Format(time.RFC3339)))
+		}
+	}
+
+	return "Granted: " + strings.Join(parts, " · ")
+}
+
+// budgetShortfallNotice warns that the local manifest declares a higher
+// per-generation Buzz budget than the mint granted, and names the literal flag
+// that fixes it — the shape of spendFilteredNotice, which named `--spend` and was
+// the one message in this command that cost the developer nothing.
+//
+// Only the DECLARED-vs-GRANTED gap is reported. It is not an error: a dev token
+// deliberately carries a smaller budget than a submitted app's ceiling, and the
+// server never reads the local file at mint time (there is no server-side
+// manifest until the app is submitted). What makes the gap worth printing is that
+// nothing else surfaces it until a generation is REFUSED — and the refusal talks
+// about recipe ceilings, not about the budget.
+//
+// 🔴 THE REMEDY MUST BE A COMMAND THAT WORKS. The page-money scaffold declares
+// 300 while the route's cap is 250, so echoing the declared figure back as
+// `--budget 300` would print a command validateDevTokenBudget rejects as a usage
+// error. Ask for min(declared, cap) and say plainly when the declared figure is
+// itself unreachable. Same rule as readOnlyTokenWarning: every command this block
+// prints must leave the state it complains about.
+func budgetShortfallNotice(sty ui.Styler, slug string, declared, granted int) string {
+	ask := declared
+	overCap := declared > appapi.DevBuzzBudgetCap
+	if overCap {
+		ask = appapi.DevBuzzBudgetCap
+	}
+	msg := sty.Warn(fmt.Sprintf(
+		"%s declares page.buzzBudgetPerGen %d, but this token was granted %d/generation.",
+		manifest.Filename, declared, granted)) + "\n" +
+		"   A generation is REFUSED outright once the recipe's Buzz ceiling exceeds the token's budget,\n" +
+		"   and that refusal names the ceiling, not the budget. Re-mint asking for it:\n" +
+		"     civitai app dev-token " + slug + fmt.Sprintf(" --budget %d", ask) + " --env >> .env.development.local"
+	if overCap {
+		msg += fmt.Sprintf("\n   (%d is above the route's cap of %d, so %d is the most a dev token can carry — "+
+			"the cap does not limit your SUBMITTED app.)",
+			declared, appapi.DevBuzzBudgetCap, appapi.DevBuzzBudgetCap)
+	}
+	return msg
 }
 
 // readOnlyTokenWarning builds the stderr warning shown when a minted dev token
@@ -462,6 +600,30 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 			fmt.Fprintln(errOut,
 				"Paste into VITE_LIVE_BLOCK_TOKEN in .env.development.local, then restart `npm run dev:live`. "+
 					"Short-lived (~4h); never commit it.")
+
+			// Say what the mint actually GRANTED. Decoded ONCE here and reused by
+			// the two notices below, so they can never disagree about the same
+			// token. A failed decode is not an error — `granted` comes back "" and
+			// nothing extra prints.
+			//
+			// 🔴 The decode is an echo of the server's own answer, not a check —
+			// see decodeDevTokenClaims. Nothing below may gate behaviour on it.
+			claims, claimsOK := decodeDevTokenClaims(token)
+			if granted := grantedClaimsNotice(claims, claimsOK, time.Now()); granted != "" {
+				fmt.Fprintln(errOut, ui.Dim(granted))
+			}
+
+			// The manifest declares what the app needs per generation; the token
+			// carries what it may spend. Nothing reconciles them, and the gap only
+			// surfaces as a refused generation blaming a recipe ceiling — so
+			// compare them here, while the remedy is still one flag away.
+			//
+			// Requires BOTH figures to be real: a token that stated no budget, or a
+			// manifest that declared none, has no gap to report.
+			if declared, haveDeclared := manifest.LoadPageBuzzBudget("."); haveDeclared && claimsOK &&
+				claims.BuzzBudget != nil && declared > *claims.BuzzBudget {
+				fmt.Fprintln(errOut, budgetShortfallNotice(ui.For(errOut), slug, declared, *claims.BuzzBudget))
+			}
 
 			// Catch the #1 dev:live dead-end EARLY: a read-only token makes
 			// `dev:live` Generate silently do nothing (the live host can't grant

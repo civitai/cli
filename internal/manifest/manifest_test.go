@@ -297,6 +297,59 @@ func TestSetBlockIDInvalidJSONNoKeyErrors(t *testing.T) {
 	}
 }
 
+// TestLoadPageBuzzBudget: `civitai app dev-token` compares this figure against
+// the budget the mint granted, so the PRESENT/ABSENT bit matters as much as the
+// value — a declared 0 and a declared nothing have different remedies, and
+// collapsing them would make the command warn about a gap nobody declared.
+func TestLoadPageBuzzBudget(t *testing.T) {
+	cases := []struct {
+		name        string
+		body        string // "" = write no manifest at all
+		wantVal     int
+		wantPresent bool
+	}{
+		{
+			name:        "the page-money scaffold's own declaration",
+			body:        `{"blockId":"x","page":{"path":"/","buzzBudgetPerGen":300}}`,
+			wantVal:     300,
+			wantPresent: true,
+		},
+		{
+			// 🔴 Distinguishable from absent, on purpose.
+			name:        "explicit zero is a declaration",
+			body:        `{"blockId":"x","page":{"buzzBudgetPerGen":0}}`,
+			wantVal:     0,
+			wantPresent: true,
+		},
+		{
+			name:        "negative is returned as declared — the caller judges it",
+			body:        `{"blockId":"x","page":{"buzzBudgetPerGen":-5}}`,
+			wantVal:     -5,
+			wantPresent: true,
+		},
+		{"page object without the member", `{"blockId":"x","page":{"path":"/"}}`, 0, false},
+		{"no page object", `{"blockId":"x"}`, 0, false},
+		{"malformed json degrades, never errors", `{ not json`, 0, false},
+		{"wrong type degrades", `{"blockId":"x","page":{"buzzBudgetPerGen":"300"}}`, 0, false},
+		{"missing manifest degrades", "", 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.body != "" {
+				write(t, dir, tc.body)
+			}
+			got, present := LoadPageBuzzBudget(dir)
+			if present != tc.wantPresent {
+				t.Fatalf("present = %v, want %v", present, tc.wantPresent)
+			}
+			if got != tc.wantVal {
+				t.Errorf("value = %d, want %d", got, tc.wantVal)
+			}
+		})
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(sub) == 0 || (len(s) >= len(sub) && indexOf(s, sub) >= 0)
 }
