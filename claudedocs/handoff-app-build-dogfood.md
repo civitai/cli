@@ -59,48 +59,64 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-🔴 **TEN PRs MERGED, `v0.1.110` RELEASED TO npm + HOMEBREW, AND A LIVE APP FIXED — but the repo's
-CI is RED for everyone right now and that is the first thing to deal with.** `$0` of model spend on
-dogfood trials beyond **$0.031** across two ungradeable cells (see *Open investigations*).
+🔴 **`schema-drift` IS FIXED AND THE FIX IS GREEN IN CI — as `civitai/cli#745`, NOT YET MERGED.**
+All **13** checks success on SHA-pinned `ee45282a1661eb70a031b38f10b95b9680cc971f`, which equals the
+branch tip, so the rollup is not the stale-head kind. `$0` of model spend this round.
 
-**Merged and verified BY CONTENT on `origin/main`** (a squash merge never makes the branch an
-ancestor, so ancestry is never the check). Tip is `3b98778`.
+**IN FLIGHT:** `#745` is unmerged by a deliberate operator choice — asked directly, the operator chose
+**audit before merge** over merging on green.
 
-| PR | what | sha |
-|---|---|---|
-| `#735` | rank 20 — dead `apps/responsive` link + the liveness corpus that should have caught it | `6b5e381c7` |
-| `#733` | rank 21 — the two app-controlled grader path reads (+ **7** injection sites) | `cf80b1d32` |
-| `#734` | rank 22 — the post-path oracle arm | `0ab60e391` |
-| `#732` | handoff | `329af2782` |
-| `#737` | the T1 brief + floor grader | `aacfd71b5` |
-| `#738` | `DOGFOOD_MAX_STEPS` pass-through | `5cdee3529` |
-| `#739` | credential install VERIFIED + `civitai login` refused in a trial | `6c997049c` |
-| `#741` | the false "pack ships no Slider" claim + `dev-token` states what it granted | `1dbe4295d` |
-| `#740` | the auto-setup wizard surfaced + `--check` stops reporting `ok` over a broken state | `3b9877847` |
+✅ **ROUND 0 REPORTED: `proceed to the checklist` · requirements: 7 (unattributed: 0) · deletion
+candidates: 2.** It confirmed the change should exist AND should exist as ONE PR — and the part I was
+least sure of, `SENSITIVE_BLOCK_SCOPES`, it justified better than I had: with that **single map entry**
+isolated as the only mutation, `main` gives 1 error, **this PR's schema WITHOUT the entry gives 0 —
+a false PASS** the server 400s, and the full PR gives 1 error byte-identical to the server's. **So the
+schema half of this PR is what OPENS that false pass**; splitting the entry out would ship a regression
+the CLI does not have today. Precedent `#606` shipped the same three-part shape in one commit.
+🔴 **Round 0 does NOT move the ladder — the nine axes have NOT been run. `#745` is green and
+round-0-cleared, NOT audited for correctness.**
 
-**`v0.1.110` is live on npm** (`npm view @civitai/cli version` → `0.1.110`, published
-`19:46:05Z`). 🔴 **The release run reporting `success` is NOT the release** — `.goreleaser.yaml`
-sets `draft: true` deliberately, and *publishing the draft* is what fires `release-npm.yml` and
-`release-homebrew.yml` (both on `release: types: [published]`). The run was green with 14 assets
-while npm still served `0.1.109`. Read the registry, never the run.
+🔴 **It found TWO overstated claims of mine, both fixed in `6ccab59` and corrected publicly on the PR**
+(`#745#issuecomment-5864806691`) rather than by a silent body edit — recorded in the ✅ RESOLVED block
+below, NOT in *Defects*, because that section REPLACES wholesale and restating it to append four lines
+would have cost the size ratchet ~2.6 KB of duplicated text.
 
-**`ab-img-poster` v0.1.3 is SUBMITTED and PENDING** — `pubreq_01M3K41081PXKNNHZK4S85X0ZX`,
-submitted `2026-09-27 23:23 CDT`, confirmed server-side. **v0.1.2 (`index-CcmcNwgc.js`) is still
-the serving revision** until v0.1.3 is approved, so nothing is broken while it waits. Source now
-lives on the host at **`/home/zach/workspace/civit/ab-img-poster`** (v0.1.3, `node_modules`
-installed); the v0.1.2 bundle stays preserved in the `dogfood-ab-imgposter-fixed` container as
-evidence and was not touched.
+**What `#745` contains** (branch `zach/schema-drift-unblock`, `ee45282` + `6ccab59`, 5 files):
+- `schema/app-block.manifest.schema.json` re-vendored — `cmp`-identical to the live canonical,
+  re-fetched and re-checked **immediately before** the commit, and to the preserved
+  `~/.cache/schema-revendor-2026-09-28/` copy, so the canonical did not move in between. **Zero
+  hand-authored bytes**, hence no discretion to review in it.
+- `internal/validate/pattern_test.go` — `TestEnumFindingsKeepTheirExactWording` now pins the message
+  **SHAPE** and derives the **CONTENT** from the vendored schema (new `schemaEnum(t, path...)`).
+  🔴 **NOT loosened, and the distinction is the whole fix:** the template is *anchored* — it must
+  first reproduce, byte for byte, a hand-written `contentRating` message, which is *also* asserted
+  against real validator output, so template + schema + validator agree three ways. `contentRating`
+  is the anchor because it is a site-wide rating system, not a capability list, so it is not expected
+  to grow.
+- `internal/validate/pattern.go` — a gloss for `^[a-z0-9][a-z0-9_-]*$` (`goods[].id`), plus its
+  fixture and ledger row; both parent tests **fatal** on a row-count mismatch, so the gloss could not
+  be added alone.
+- `internal/validate/semantic.go` + `semantic_test.go` — see the `SENSITIVE_BLOCK_SCOPES` block below.
 
-**Two platform issues filed against `civitai/civitai`** (PUBLIC repo — no infra detail, no
-credential, no operator quote; both bodies re-fetched and scanned with a positive control):
-`#5181` the relative `CREATE_POST_RESULT.url`, `#5182` no generation metadata from a `workflow`
-source and no way to ask for it. Both carry closing conditions; 16 duplicate queries over open AND
-closed issues found none.
+**Verification actually performed** (not inferred): both failures reproduced first; **8 mutants, each
+killed by its own named test with its own message** — a field-prefix reword and a simulated library
+lead-in reword (both kill the enum guard, which is what proves the SHAPE half still bites now that
+content is derived), dropping the gloss, the gloss stating `blockId`'s rule, dropping
+`goods:purchase:self` graded twice (membership *and* behavioural seam), wrongly promoting
+`goods:read:self`, and removing a scope from the vendored enum. Green in **both** tiers: 20 packages
+plus the root real-browser package under Chromium (**342 s**) — red on this host without it (`no
+Chromium on PATH`, an env gap, **not** the `dbus` flake recorded elsewhere here).
+`TestExampleManifestsValidateClean` confirmed to have **RUN** (3 `=== RUN` lines). `gofmt`/`vet` clean.
 
-🔴 **`clawgate-task:` DELIBERATELY ABSENT.** `clawgate_handoff.sh resolve` printed
-`NOTHING RESOLVED — 0 tasks`. ⚠ Its `rc` read `0` only because the status came through a pipe
-(`| head`) — the TEXT is authoritative. An unknown session id answers 200 with an empty array, so
-that zero cannot distinguish "touched no task" from "wrong id". Not a clean bill of health.
+⚠ **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` exited **5** — `NOTHING RESOLVED — 0
+tasks`. An unknown session id answers 200 with an empty array, so that zero cannot distinguish
+"touched no task" from "wrong id". Not a clean bill of health.
+
+⚠ **This round was written into `#744`'s own branch, not as a third version of this doc** — `main` is
+still at `#732` and `#744` was open on the same file, so a separate PR would have hit the hazard this
+doc records as *"rebasing yourself proves nothing about the other open PRs on the same file"*. `#744`'s
+scope now includes this round. **`#744` (doc) and `#745` (fix) touch disjoint files and can land in
+either order; `#742` follows `#745`.**
 
 ## Open investigations — live diagnosis state
 
@@ -242,6 +258,89 @@ same mechanism: it is neither free nor possible.
   `ship.verdict.sh` already does, reading the trial's own manifests out of the container.
   Reporting that delta as trial spend would have been a false claim about the operator's money.
 
+### ✅ RESOLVED 2026-09-28 — `schema-drift` was self-blocking, and the automation can now succeed unaided
+- as-of: 2026-09-28
+
+**This supersedes the OPEN block *"`schema-drift` is red repo-wide, and the automation that exists to
+fix it CANNOT"*, which was EVICTED VERBATIM to the ARCHIVE in the commit before this one** (the size
+ratchet needed the room, and retiring a superseded heading is the half of an append that otherwise
+goes undone). That block's diagnosis was correct in full and its instructions were followed; what
+follows is only what it could not yet know.
+
+- **Fixed by:** `#745` (`ee45282`), green on all 13 checks. Retire that block's *"Next probe / the
+  actual work"* — it is done.
+- 🔴 **The stated closing condition's THIRD half is UNREACHABLE AS WORDED, and that is a defect in
+  the condition, not in the fix.** It asks that *"one manual `gh workflow run
+  revendor-canonical-schema` completes **and opens a PR** unaided"*. Once the mirror is in sync the
+  re-vendor script correctly reports *"already current — nothing to do"*, `changed=false`, and the
+  workflow **skips both the validate step and the PR-creation step**. So a post-merge dispatch can
+  never open a PR, for the correct reason. 🔴 **Do NOT read a PR-less run as a failure, and do not
+  "fix" the workflow to force one.** `via: code` (`.github/workflows/revendor-canonical-schema.yml`,
+  the `detect changes` / `if: steps.changed.outputs.changed == 'true'` gates).
+- ✅ **So the failing path was REHEARSED end-to-end instead, which is the stronger claim** — measured
+  in a worktree at `#745`'s tip: restore the pre-`goods` schema from `origin/main` (`goods:` count
+  **0**) → run the automation's own `scripts/revendor-canonical-schema.sh` → `goods:` count **4**,
+  and its output is **`cmp`-identical** to what `#745` commits → `git status --porcelain` non-empty,
+  i.e. `changed=true`, so the validate step **would** run → the two tests that killed run
+  `36379098603` both **PASS** on that output, and `internal/validate` + `internal/cmd` + the root
+  examples test are green. `via: measurement`
+- ⚠ **Do NOT dispatch the workflow while the mirror is still stale to "get a control"** — a failing
+  run **files its own GitHub issue** (`signal` job → `failure-issue.yml`). The pre-fix control already
+  exists on the record as run `36379098603`; do not manufacture a second.
+- **Next probe:** after `#745` merges, dispatch it **once** to confirm it completes green and files no
+  failure issue, and report the no-PR outcome as correct-by-design rather than as a pass.
+
+**Round 0's four items** (the ladder's own findings, kept here rather than in *Defects* — that section
+replaces wholesale):
+- ✅ **FIXED `6ccab59`** — my mutant table claimed *"remove a scope from the vendored enum → killed by
+  the content control"*. It names **two** members and guards only those. **Independently re-measured,
+  not taken from the report:** dropping `collections:write:self` or `apps:storage:read` leaves
+  `internal/validate` **`ok`**. The shrink direction belongs to `schema-drift` (`jq -S` against the
+  LIVE canonical) — stronger than a hand-typed list, so the list is deliberately NOT grown to fifteen.
+- ✅ **FIXED `6ccab59`** — 🔴 **carry this one forward:** *"the guard was the one thing stopping the
+  mirror from being updated"* is **half true.** There are **TWO** guards; `#745` fixes one. A canonical
+  adding a `pattern` still reds `TestPatternRulesCoverTheVendoredSchema` until a human writes the
+  gloss, **so the bot could not have self-landed even the `goods` change** — it added the `goods[].id`
+  pattern as well as two scopes. Deliberate: a gloss is prose about what a regex MEANS. **Expect
+  enum-only canonical changes to land unaided and pattern-adding ones to need a human** — which
+  narrows rank 25's third closing condition to the enum-only case on top of it being unreachable as
+  worded.
+- ⚠ **OPEN, operator's call — D1:** the ~80 lines of `schemaEnum` + the derived `scopes[1]` row could be
+  a prefix + membership assertion instead, keeping the anchor literal — ~75 lines cheaper, equally
+  un-self-blocking. What the derived form buys, and nothing else checks, is **render order == schema
+  order**. Left in; say the word to cut it.
+- ⚠ **OPEN, cosmetic — D2:** `semantic_test.go`'s *"goods:purchase:self unjustified"* row is
+  duplicative (`unjustifiedSensitiveScopes` loops the map generically and the `posts:write:self` row
+  already exercises that seam). The `goods:read:self` near-miss row earns its place — keep that one.
+
+### 🔴 OPEN — the CLI's sensitive-scope mirror is not derived from anything, and it was already wrong
+- as-of: 2026-09-28
+
+- **Symptom:** `civitai app validate` accepted a manifest declaring `goods:purchase:self` with **no**
+  `scopeJustifications` entry; the server rejects it at submit, so the author ate a 400 after a full
+  package+submit round trip. Fixed in `#745`; the *class* is what stays open.
+- **Observed (with values):** `SENSITIVE_BLOCK_SCOPES` in `internal/validate/semantic.go` held **6**
+  entries; the authoritative constant `SENSITIVE_BLOCK_SCOPES` in
+  `<civitai>/src/shared/constants/block-scope.constants.ts` holds **7** on **`origin/release`** —
+  `ai:write:budgeted`, `social:tip:self`, `buzz:read:self`, `collections:read:private`,
+  `apps:storage:shared:write`, `posts:write:self`, `goods:purchase:self`. `via: measurement`
+- 🔴 **Read `origin/release`, NOT `origin/main`** — the site serves `release`, and this doc's own
+  `revendor` notes record that a canonical change can sit on `main` unpublished for days. Both
+  branches happened to agree here; that is luck, not method.
+- 🔴 **Ruled out — that `goods:read:self` is also sensitive.** It is deliberately absent upstream: the
+  server scopes that reply to `claims.appBlockId`, so an app sees only what it itself sold to that
+  viewer. Adding it would demand a justification the server never asks for. A test row in `#745` now
+  fails if anyone adds it. `via: code`
+- 🔴 **Why nothing caught it, and this is the durable half:** every guard in `internal/validate` keys
+  on the **vendored schema**, and this set mirrors a **separate server constant** that is in no schema
+  — so `schema-drift` going red over `goods:` said nothing about it, and the re-vendor automation
+  would have landed the schema with the mirror still wrong. **A hand-kept mirror with no drift-guard
+  is invisible to a drift-guard suite.**
+- **Next probe:** decide whether this set can be machine-checked at all. It is cross-repo, so the
+  options are a generated fixture or a scheduled check that reads the deployed constant — both
+  bigger than `#745`. Until then, the rule is in `semantic_test.go`'s docstring: when the schema
+  gains a scope, re-read the deployed constant by hand.
+
 ## Next steps (ranked)
 
 🔴 **Numbering frozen and cumulative.** 1–11 settled; 13, 15–22 closed; **12, 14, 25, 26 live.**
@@ -250,48 +349,32 @@ same mechanism: it is neither free nor possible.
 12. **RE-SCOPED 2026-09-27, ready to implement.** `CIVITAI_SCAFFOLD_TYPECHECK` is set by **ZERO**
     workflows. 🔴 Wire it into the **daily `bump-scaffold-pins.yml`**, NOT `ci.yml`'s
     `scaffold-currency` job — that one is REQUIRED + `enforce_admins`, and a network-dependent
-    assertion there has frozen every open PR **twice**. Copy the neighbouring positive-control
-    shape (`-count=1`, grep the log for the test's own `--- (PASS|SKIP|FAIL):` line, a distinct
-    `guard-did-not-run` state). ⚠ *"every scaffolded page-money app fails its own build"* was
-    **overstated and install-shape-dependent** — this is regression protection, not a live break.
+    assertion there has frozen every open PR **twice**.
     forcing: regression — the defect shipped once and CI still cannot see it
-14. 🔴 **BLOCKED ON THE OPERATOR — one action, then it runs.** T1 "ship-ready". The operator
-    selected *spend Buzz on a generated cover* from a four-option question on 2026-09-27 — **a
-    SELECTION, not a quote; do not attribute words to them.** Measured: **no image tooling is
-    needed** (icon aspect 0.9–1.1 ← `--aspect-ratio 1:1`; cover 1.3–2.4 ← `16:9`; the CLI reads
-    geometry with the Go stdlib in `internal/appapi/imageinfo.go` and ATTACH refuses a bad shape in
-    seconds with a legible message, so the retry loop closes with no local measurement capability). The brief and floor
-    grader are MERGED (`#737`). What is left is a **personal API key** (see *Open investigations*)
-    plus the run. 🔴 A moderator **REJECTION deletes the listing and every attached asset**, and a
-    run including `submit` **cannot be credential-bounded** (`app create`/`submit`/`listing` need
-    the account token; only generation can be scoped via `app dev-token`).
-    **Closing condition:** one blind cheap-model trial reaches `approved`/live with an icon AND a
-    cover it generated itself, per `app status --json`; the operator confirms the spend was theirs.
-    ⚠ Do **not** grade on reaching `approved` inside the trial — measured review latency over 8
-    submissions is median ~5.6 min with a tail to **741 min**. `#737`'s grader correctly stops at
-    "submitted with the floor met".
-    forcing: user — asked about "complete working apps" 2026-09-25, decided 2026-09-27
 13, 15–22. ✅ **CLOSED** — 20/21/22 merged 2026-09-27 (`#735`/`#733`/`#734`).
     forcing: gate/user/security/regression — satisfied
-25. 🔴 **UNBLOCK `schema-drift`, AND IT GATES EVERYTHING ELSE IN THIS REPO.** Full diagnosis,
-    the two failing tests with their exact messages, and the preserved byte-identical re-vendor are
-    in *Open investigations*. The work: fix the two pins in
-    `internal/validate/pattern_test.go` (derive enum CONTENT from the schema, pin the message
-    SHAPE; add the gloss for `^[a-z0-9][a-z0-9_-]*$`), commit
-    `~/.cache/schema-revendor-2026-09-28/app-block.manifest.schema.json.revendored` into
-    `schema/app-block.manifest.schema.json`, then sweep `internal/validate` for other hardcoded
-    schema content. ⚠ A branch `zach/revendor-schema-unblock` and a worktree
-    `/tmp/wt-schema-revendor-2053628` exist from a STOPPED agent — 0 commits ahead of main, one
-    uncommitted schema edit, already preserved; safe to remove.
-    **Closing condition:** `schema-drift` green on `origin/main` AND on `#742`, and one manual
-    `gh workflow run revendor-canonical-schema` completes and opens a PR unaided.
+14. 🔴 **BLOCKED ON THE OPERATOR — one action, then it runs.** T1 "ship-ready". Unchanged this round.
+    The operator selected *spend Buzz on a generated cover* from a four-option question on
+    2026-09-27 — **a SELECTION, not a quote; do not attribute words to them.** Measured: **no image
+    tooling is needed** (icon aspect 0.9–1.1 ← `--aspect-ratio 1:1`; cover 1.3–2.4 ← `16:9`; the CLI
+    reads geometry with the Go stdlib in `internal/appapi/imageinfo.go` and ATTACH refuses a bad
+    shape in seconds with a legible message, so the retry loop closes with no local measurement
+    capability). The brief and floor grader are MERGED (`#737`). What is left is a **personal API
+    key** (see the credential-shape block) plus the run. 🔴 A moderator **REJECTION deletes the
+    listing and every attached asset**, and a run including `submit` **cannot be
+    credential-bounded**. ⚠ Do **not** grade on reaching `approved` inside the trial — measured
+    review latency over 8 submissions is median ~5.6 min with a tail to **741 min**.
+    forcing: user — asked about "complete working apps" 2026-09-25, decided 2026-09-27
+25. 🔴 **IN FLIGHT: `civitai/cli#745`** — implemented, all 13 checks green, **unmerged pending a round-0
+    audit** the operator asked for. Claimed as `app-build-dogfood-25`; **release the claim when it
+    merges** (`claim-work --release app-build-dogfood-25`). Two of the three closing-condition halves
+    are met (`schema-drift` green on `#745`; the third is unreachable as worded — see *Open
+    investigations* — and was rehearsed instead). Remaining: land it, confirm `schema-drift` green on
+    `origin/main`, dispatch the re-vendor workflow once.
     forcing: gate — a required check is red on every open PR in the repo
 26. **MERGE `#742` once 25 lands.** `MERGEABLE`/`UNSTABLE`; its only non-success is the inherited
-    `schema-drift`. It adds `post_link=` to the post arm (`absolute` / `relative` / `none` /
-    `unmeasured`, classified by where the href RESOLVES, so a protocol-relative href is correctly
-    not a finding). Escaper, inertness and byte-identical-row guards all re-verified; mutation
-    10/10. Re-read its CI SHA-pinned after 25 merges — do not merge on the stale rollup.
-    forcing: gate — the arm cannot see the defect class a real user found until this lands
+    `schema-drift`, which `#745` fixes. It adds `post_link=` to the post arm.
+    forcing: gate — the instrument is blind on the path that produced both live defects
 
 ## Gotchas / decisions / dead-ends
 
@@ -635,45 +718,75 @@ them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed.
   **shared closing brace**, so concatenating both sides — the obvious resolution — yields an
   unterminated function. Keep both and give the first its own `}`.
 
+### Added 2026-09-28 — a guard over a mirror could not accept the mirror's own update
+
+- 🔴 **A DRIFT-GUARD THAT PINS CONTENT CANNOT EVER ACCEPT AN ADDITIVE UPSTREAM CHANGE, AND THE
+  AUTOMATION THAT EXISTS TO LAND THAT CHANGE IS WHAT IT BLOCKS.** `TestEnumFindingsKeepTheirExactWording`
+  spelled out all thirteen scopes; the canonical added two; `revendor-canonical-schema.yml` runs the
+  suite on its own output, so it failed and opened no PR. **The cure is to split the claim: pin the
+  SHAPE, derive the CONTENT.** Same shape as the base-clone refresh hook that worked exactly once per
+  file and then silently stopped.
+- 🔴 **BUT DERIVING BOTH HALVES IS THE TRAP ON THE OTHER SIDE, AND IT IS SILENT.** If the expected
+  message is built entirely from the schema, a reword of the library's lead-in moves `want` and `got`
+  together and **nothing fails**. **Anchor the template against a hand-written literal over the one
+  enum that is not expected to grow**, and assert that literal against real output too. The mutant
+  that proves it is a reword injected where the code CONSUMES the library message — not a change to
+  the test.
+- 🔴 **A HAND-KEPT MIRROR OF A CONSTANT IN ANOTHER REPO IS INVISIBLE TO A DRIFT-GUARD SUITE THAT KEYS
+  ON THE SCHEMA.** `SENSITIVE_BLOCK_SCOPES` was one entry behind production and no gate could see it,
+  because it mirrors a TypeScript constant and every guard reads the vendored JSON. **When a
+  re-vendor adds a capability, ask what ELSE mirrors that capability by hand.**
+- 🔴 **`CDPATH` IS EXPORTED ON THIS HOST, SO `$(cd "$(dirname "$0")/.." && pwd)` RETURNS TWO LINES.**
+  bash's `cd` echoes its target when it resolves via `CDPATH`, so `check-canonical-schema.sh` and
+  `revendor-canonical-schema.sh` build a `$VENDORED` with an embedded newline. `jq -S . "$VENDORED"`
+  then fails **inside a process substitution**, which `set -euo pipefail` does not catch, so
+  `diff <(empty) <(canonical)` prints the whole canonical as `>` lines and the script announces
+  **`FAIL: … has DRIFTED`** for a file `cmp` calls identical. **The tell is that EVERY diff line is
+  `>` — one operand is empty, not different.** CI has no `CDPATH` and is unaffected, which is worse:
+  it contradicts a green CI for reasons unrelated to the code. **Run repo scripts with
+  `env -u CDPATH`; do NOT "fix" the scripts — the idiom is correct and the host is the anomaly.**
+- ⚠ **A CLOSING CONDITION CAN NAME AN OUTCOME THE SYSTEM CORRECTLY REFUSES TO PRODUCE.** Rank 25's
+  *"…and opens a PR unaided"* is unreachable once the thing it would PR is already in sync. **A
+  condition that only holds while the bug is still present is not a closing condition** — rehearse the
+  failing path instead, and say which half you rehearsed.
+- ⚠ **`gh run view --log-failed` was the fastest route to the real cause** — the check-run's
+  `output.summary` was **empty**, so the SHA-pinned `check-runs` API said only `failure`. The diff and
+  the two test names were in the job log.
+
 ## How to verify
 
 Every check reports a CONTROL beside its result; a bare count or zero is not a measurement.
 
-**That all three ranks are on `main`** — the discriminating checks, not the discussed identifiers:
-```bash
-CLI=/home/zach/workspace/civit/cli; git -C "$CLI" fetch origin main -q
-git -C "$CLI" show origin/main:scripts/dogfood/oracle.sh | grep -vE '^\s*#' \
-  | grep -nE 'MANIFESTS=|pathdec APP_DIR'                 # rank 21: the live transport
-git -C "$CLI" grep -c 'apps/guide/responsive' origin/main -- internal/scaffold/templates  # rank 20: 4
-git -C "$CLI" grep -n 'CIVITAI_ASSERT_POST_PATH' origin/main -- scripts/dogfood/oracle.sh # rank 22
-git -C "$CLI" ls-tree origin/main --name-only -- .github/workflows/docs-links.yml
-```
-⚠ **`git grep 'xargs dirname' origin/main` returns SEVEN hits and all are docblocks** — that string
-is not a check.
+🔴 **Run every repo script below with `env -u CDPATH`** — see *Gotchas*, added 2026-09-28. Without it
+`check-canonical-schema.sh` reports a confident `FAIL: … has DRIFTED` over a **byte-identical** file.
 
-**The post arm end to end, on the two real bundles** — expect `no` on `v0.1.1` and `yes` on
-`v0.1.2`; the two other arms grade both bundles IDENTICALLY, which is the blindness stated as a
-measurement:
+**Rank 25 — the mirror matches the canonical** (expect `OK`, control: a one-byte edit must give
+`FAIL`):
 ```bash
-docker exec dogfood-ab-imgposter-fixed bash -lc \
-  'md5sum /work/ab-img-poster/dist/assets/index-*.js'   # c603fa854eba4d5206b73e04c14a1f3c
-docker images --format '{{.Repository}}:{{.Tag}}' | grep 'ab-imgposter:v0.1.1-pre-post-fix'
+CLI=/home/zach/workspace/civit/cli
+git -C "$CLI" worktree add --detach /tmp/wt-sd origin/main
+(cd /tmp/wt-sd && env -u CDPATH bash scripts/check-canonical-schema.sh); echo "rc=$?"   # want 0 + OK
+(cd /tmp/wt-sd && sed -i 's/"maxItems": 32/"maxItems": 33/' schema/app-block.manifest.schema.json \
+  && env -u CDPATH bash scripts/check-canonical-schema.sh >/dev/null 2>&1; echo "CONTROL rc=$?")  # want 1
+git -C "$CLI" worktree remove --force /tmp/wt-sd
 ```
 
-**The owed fire drill** (files a REAL issue — close it after):
+**The two guards that were self-blocking** (expect both PASS; control: they were RED at `origin/main`
+with the new schema in place). Run inside the same `/tmp/wt-sd` worktree:
+`go test ./internal/validate/ -count=1 -v -run 'TestEnumFindingsKeepTheirExactWording|TestPatternRulesCoverTheVendoredSchema'`
+
+**The sensitive set matches the DEPLOYED server constant** (expect the same 7; `origin/release`, not
+`main`):
 ```bash
-gh workflow run docs-links --repo civitai/cli -f drill=true
-gh run list --workflow docs-links --repo civitai/cli --limit 1
+git -C $CIVITAI fetch origin release
+git -C $CIVITAI show origin/release:src/shared/constants/block-scope.constants.ts \
+  | sed -n '/^export const SENSITIVE_BLOCK_SCOPES/,/^]);/p' | grep -o "'[a-z:]*'"
+grep -c '": {},' /home/zach/workspace/civit/cli/internal/validate/semantic.go   # the Go mirror
 ```
 
-**The account** — re-read immediately before any spend, never when planning:
-```bash
-civitai app status --json   # ab-img-poster v0.1.2 approved/live; 100 rows AT the cap; pending 0
-civitai buzz               # Blue+Green+Yellow SUM to Total; 4,074,007 on 2026-09-27 — it drifts
-```
-⚠ The submissions listing is **AT its 100-row cap with no cursor**, so a blockId absent from
-`app status --json` is not evidence it has no submission — look it up with
-`civitai app status <blockId>`.
+⚠ **The root Go package needs a browser** — `go test ./...` fails on this host with `no Chromium on
+PATH`, which is an ENV gap and not a failing trial. Run it as
+`nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) go test . -count=1'` (~342 s).
 
 ## Defects (batched)
 
