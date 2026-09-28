@@ -75,13 +75,14 @@ on:
   workflow_dispatch:
     inputs:
       drill:
-        description: "Fire drill: fail one or both jobs on purpose so the FAILURE path and the issue it files can be rehearsed. Opens a REAL issue — close it when you are done. It cannot open a PR or rewrite a pin: the drill fails at the bumper step, which is upstream of every step that writes anything."
+        description: "Fire drill: fail one or more jobs on purpose so the FAILURE path and the issue it files can be rehearsed. Opens a REAL issue — close it when you are done. It cannot open a PR or rewrite a pin: the drill fails at the bumper step, which is upstream of every step that writes anything. `both` fails every job, so it also rehearses the multi-failure report."
         type: choice
         default: none
         options:
           - none
           - bump
           - ready-ack
+          - scaffold-typecheck
           - both
 
 permissions:
@@ -170,6 +171,89 @@ jobs:
           # line, so this job's colour is a claim about the ack.
           if ! grep -q -- '--- PASS: TestScaffoldedReadyAckActuallyFires' "$RUNNER_TEMP/ready-ack.log"; then
             echo "::error::the ready-ack runtime check exited 0 without running TestScaffoldedReadyAckActuallyFires — the -run pattern matched no test (renamed? moved? CIVITAI_CHECK_SCAFFOLD_RUNTIME gate changed?). A green here would have been a claim about nothing."
+            exit 1
+          fi
+
+  # Does the page-money scaffold still typecheck on an install shape that does
+  # NOT silently repair it?
+  #
+  # 🔴 WHY THIS IS A SEPARATE DAILY JOB AND NOT A STEP IN `ci.yml`. The guard
+  # needs the network and ~60s, and `ci.yml`'s `scaffold-currency` job is
+  # REQUIRED with `enforce_admins` — a network-dependent assertion there has
+  # frozen every open PR in this repo TWICE (#530 is one of them). A daily drift
+  # runner that files an issue is the right blast radius for a check that can
+  # fail for reasons no PR author controls.
+  #
+  # 🔴 WHY IT IS NOT COVERED BY THE `bump` JOB'S `validate — scaffold builds
+  # against the bumped SDK` STEP, which looks like it already does this. That
+  # step runs a PLAIN `npm install`, and npm >= 7 AUTO-INSTALLS PEERS — so it
+  # repairs the very defect this guard exists for and cannot go red for it.
+  # Measured both ways 2026-09-25 (npm 11.19.0): pre-fix template + plain
+  # install → typechecks CLEAN; pre-fix template + `--legacy-peer-deps` → 7 ×
+  # TS2305. The test below installs with `--legacy-peer-deps` deliberately, so
+  # it is a question about what the TEMPLATE DECLARES rather than about what the
+  # runner's npm happens to paper over. That step is also gated on
+  # `changed == 'true'`, so on a day with no pin movement it does not run at
+  # all, while this defect arrives from a TEMPLATE edit rather than a pin bump.
+  #
+  # The defect it guards cost two blind dogfood trials, the second losing ~26%
+  # of its run to it. `CIVITAI_SCAFFOLD_TYPECHECK` was set by ZERO workflows
+  # before this job existed.
+  scaffold-typecheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      # 🔴 node 24 — same invariant as every other scaffold-and-install job here;
+      # the reason is at ci.yml's `node-version: "24"` sites (npm 10's arborist
+      # crashes installing a scaffolded page-money app). This job DOES run
+      # `npm install`, so it is the literal case that rule is about.
+      # `workflow_node_version_test.go` fails if anyone drops it back.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: the page-money scaffold typechecks its own shipped tests
+        id: typecheck
+        env:
+          CIVITAI_SCAFFOLD_TYPECHECK: "1"
+          DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || 'none' }}
+        run: |
+          set -uo pipefail
+
+          if [ "$DRILL" = "scaffold-typecheck" ] || [ "$DRILL" = "both" ]; then
+            # Fire drill, upstream of every step that does work — same input the
+            # classifier reads on a real regression, so the rehearsal drives the
+            # genuine reporting path rather than a mock of it.
+            echo "⚠️  FIRE DRILL — failing the scaffold typecheck on purpose to rehearse the reporting path."
+            echo "    No test was run, nothing was installed, nothing on disk was touched."
+            exit 1
+          fi
+
+          go test ./internal/scaffold -run TestPageMoneyScaffoldTypechecksItsOwnShippedTests -count=1 -v 2>&1 \
+            | tee "$RUNNER_TEMP/scaffold-typecheck.log"
+
+          # POSITIVE CONTROL, and here it is load-bearing twice over. `go test
+          # -run <name>` exits 0 when the pattern matches NOTHING, AND this test
+          # SKIPS ITSELF unless CIVITAI_SCAFFOLD_TYPECHECK=1 reaches it — a skip
+          # also prints `ok`. So an exit-code-only read scores "the guard never
+          # ran" identically to "the scaffold builds". Require the test's own
+          # PASS line, and name the SKIP case separately: a skip here means the
+          # env gate above stopped reaching the test, which is a defect in THIS
+          # job, not in the scaffold.
+          if grep -q -- '--- SKIP: TestPageMoneyScaffoldTypechecksItsOwnShippedTests' "$RUNNER_TEMP/scaffold-typecheck.log"; then
+            echo "::error::the scaffold typecheck SKIPPED itself — CIVITAI_SCAFFOLD_TYPECHECK did not reach the test (renamed const? gate rewritten?). NOTHING about the scaffold's build was verified by this run."
+            exit 1
+          fi
+          if ! grep -q -- '--- PASS: TestPageMoneyScaffoldTypechecksItsOwnShippedTests' "$RUNNER_TEMP/scaffold-typecheck.log"; then
+            echo "::error::the scaffold typecheck exited 0 without running TestPageMoneyScaffoldTypechecksItsOwnShippedTests — the -run pattern matched no test (renamed? moved?). A green here would have been a claim about nothing."
             exit 1
           fi
 
@@ -487,8 +571,8 @@ jobs:
   # `always()` so it still runs after a failed job; `!= 'cancelled'` on both
   # needs so a hand cancellation is not filed as a defect.
   classify:
-    needs: [ready-ack-runtime, bump]
-    if: always() && needs.ready-ack-runtime.result != 'cancelled' && needs.bump.result != 'cancelled'
+    needs: [ready-ack-runtime, scaffold-typecheck, bump]
+    if: always() && needs.ready-ack-runtime.result != 'cancelled' && needs.scaffold-typecheck.result != 'cancelled' && needs.bump.result != 'cancelled'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -501,6 +585,7 @@ jobs:
         id: classify
         env:
           J_READY: ${{ needs.ready-ack-runtime.result }}
+          J_TYPECHECK: ${{ needs.scaffold-typecheck.result }}
           J_BUMP: ${{ needs.bump.result }}
           R_BUMP: ${{ needs.bump.outputs.r_bump }}
           R_CHANGED: ${{ needs.bump.outputs.r_changed }}
@@ -524,6 +609,20 @@ jobs:
             ready_detail="The \`ready-ack-runtime\` job failed. It runs the vendored emitter in node against a fake host and asserts one correctly-addressed \`{type:'BLOCK_READY',payload:{height:0}}\` goes out — the ONLY check in the repo that proves the handshake actually fires rather than that the file is present.
 
           A red here means a \`page\` app scaffolded from \`main\` today may never reach \`ready\` in the host and would end at a failure card, which is issue #206 all over again. It can also mean the job's own positive control fired: it refuses to pass unless \`--- PASS: TestScaffoldedReadyAckActuallyFires\` is in the output, so a renamed/moved test reports here too. **The run log distinguishes them.**"
+          fi
+
+          # ---- the scaffold typecheck's verdict --------------------------------
+          typecheck_state=""
+          typecheck_title=""
+          typecheck_detail=""
+          if [ "$J_TYPECHECK" != "success" ]; then
+            typecheck_state=scaffold-typecheck-failed
+            typecheck_title="the page-money scaffold no longer typechecks its own shipped tests"
+            typecheck_detail="The \`scaffold-typecheck\` job failed. It renders \`page-money\`, installs with \`npm install --legacy-peer-deps\` and runs the template's OWN \`tsc -p tsconfig.json --noEmit\`.
+
+          The install shape is the point: npm >= 7 auto-installs peer dependencies, so a PLAIN \`npm install\` silently repairs a package the template forgot to declare — which is why the \`bump\` job's \`validate — scaffold builds against the bumped SDK\` step is green on this defect and this job is not. A red here means the template depends on something it does not declare, and every install path that does not paper over it (\`--legacy-peer-deps\`, \`--force\`, \`pnpm\`, yarn classic, \`npm ci\` from any lockfile produced by those) ships an app whose own \`npm run build\` fails out of the box. Two blind dogfood trials hit exactly that; the second lost ~26% of its run to it.
+
+          It can also mean this job's own controls fired: it refuses to pass unless \`--- PASS: TestPageMoneyScaffoldTypechecksItsOwnShippedTests\` is in the output, and it reports a SKIP separately (a skip means \`CIVITAI_SCAFFOLD_TYPECHECK\` stopped reaching the test — a defect in the job, not the scaffold). **The run log distinguishes all three.**"
           fi
 
           # ---- the pin bumper's verdict ---------------------------------------
@@ -609,30 +708,50 @@ jobs:
           fi
 
           # ---- combine ---------------------------------------------------------
-          if [ -n "$ready_state" ] && [ -n "$bump_state" ]; then
-            state="$ready_state+$bump_state"
-            title="both scheduled scaffold checks are failing"
-            detail="**Two independent failures in one run.** They are unrelated jobs; treat them as two problems.
+          # ---- compose ---------------------------------------------------------
+          # 🔴 N-WAY, NOT PAIRWISE, AND THAT IS THE WHOLE REASON THIS BLOCK WAS
+          # REWRITTEN. It used to be an if/elif over TWO jobs — 3 branches. A
+          # third job makes it 7, a fourth 15, and the branch nobody writes is
+          # the one where the report silently names only one of the failures.
+          # The accumulator is identical in behaviour for 0 and 1 failures (the
+          # single-failure body is still the bare detail, with no "## 1."
+          # heading) and stays correct as jobs are added.
+          fail_states=(); fail_titles=(); fail_details=(); fail_names=()
+          if [ -n "$ready_state" ]; then
+            fail_states+=("$ready_state"); fail_titles+=("$ready_title")
+            fail_details+=("$ready_detail"); fail_names+=("ready-ack runtime")
+          fi
+          if [ -n "$typecheck_state" ]; then
+            fail_states+=("$typecheck_state"); fail_titles+=("$typecheck_title")
+            fail_details+=("$typecheck_detail"); fail_names+=("scaffold typecheck")
+          fi
+          if [ -n "$bump_state" ]; then
+            fail_states+=("$bump_state"); fail_titles+=("$bump_title")
+            fail_details+=("$bump_detail"); fail_names+=("pin bumper")
+          fi
 
-          ## 1. ready-ack runtime
-
-          $ready_detail
-
-          ## 2. pin bumper
-
-          $bump_detail"
-          elif [ -n "$ready_state" ]; then
-            state="$ready_state"
-            title="$ready_title"
-            detail="$ready_detail"
-          elif [ -n "$bump_state" ]; then
-            state="$bump_state"
-            title="$bump_title"
-            detail="$bump_detail"
-          else
+          n=${#fail_states[@]}
+          if [ "$n" -eq 0 ]; then
             state=green
             title=""
             detail=""
+          elif [ "$n" -eq 1 ]; then
+            state="${fail_states[0]}"
+            title="${fail_titles[0]}"
+            detail="${fail_details[0]}"
+          else
+            state="$(IFS=+; printf '%s' "${fail_states[*]}")"
+            title="$n scheduled scaffold checks are failing"
+            detail="**$n independent failures in one run.** They are unrelated jobs; treat them as separate problems."
+            i=1
+            for idx in "${!fail_states[@]}"; do
+              detail="$detail
+
+          ## $i. ${fail_names[$idx]}
+
+          ${fail_details[$idx]}"
+              i=$((i + 1))
+            done
           fi
 
           DRILL_NOTE=""
@@ -652,11 +771,11 @@ jobs:
             echo "$detail"
             echo
             echo "---"
-            echo "This workflow runs two independent daily checks: \`ready-ack-runtime\` (does the scaffolded handshake still fire on \`main\`) and \`bump\` (are the template's \`@civitai/*\` pins still current). Either one failing files this issue."
+            echo "This workflow runs three independent daily checks: \`ready-ack-runtime\` (does the scaffolded handshake still fire on \`main\`), \`scaffold-typecheck\` (does the page-money template still typecheck on an install shape that does not silently repair it) and \`bump\` (are the template's \`@civitai/*\` pins still current). Any one of them failing files this issue."
             echo "SCAFFOLD_PINS_BODY_EOF"
           } >> "$GITHUB_OUTPUT"
 
-  # File a report when either check is broken, and close it when both recover.
+  # File a report when any check is broken, and close it when all recover.
   # See `failure-issue.yml` for why this is an issue rather than email, and for
   # the rules that stop it becoming noise.
   #
@@ -665,15 +784,15 @@ jobs:
   # which is a real state and not silence. "The check could not run" must be as
   # visible as "the check failed".
   signal:
-    needs: [ready-ack-runtime, bump, classify]
-    if: always() && needs.ready-ack-runtime.result != 'cancelled' && needs.bump.result != 'cancelled' && needs.classify.result != 'cancelled'
+    needs: [ready-ack-runtime, scaffold-typecheck, bump, classify]
+    if: always() && needs.ready-ack-runtime.result != 'cancelled' && needs.scaffold-typecheck.result != 'cancelled' && needs.bump.result != 'cancelled' && needs.classify.result != 'cancelled'
     uses: ./.github/workflows/failure-issue.yml
     permissions:
       contents: read
       issues: write
     with:
       marker: "[scaffold-pins-bot]"
-      failing: ${{ needs.ready-ack-runtime.result != 'success' || needs.bump.result != 'success' || needs.classify.result != 'success' }}
+      failing: ${{ needs.ready-ack-runtime.result != 'success' || needs.scaffold-typecheck.result != 'success' || needs.bump.result != 'success' || needs.classify.result != 'success' }}
       state: ${{ needs.classify.outputs.state || 'unknown' }}
       title: "${{ needs.classify.outputs.title || '[scaffold-pins-bot] the scaffold bots failed and could not say why' }}"
-      body: "${{ needs.classify.outputs.body || 'The `classify` job did not produce a verdict, so this report cannot name which of `ready-ack-runtime` / `bump` went wrong, or how. Open the run and read both jobs. This state is itself a defect in the reporting path — `classify` only runs a shell script over the two job results.' }}"
+      body: "${{ needs.classify.outputs.body || 'The `classify` job did not produce a verdict, so this report cannot name which of `ready-ack-runtime` / `scaffold-typecheck` / `bump` went wrong, or how. Open the run and read all three jobs. This state is itself a defect in the reporting path — `classify` only runs a shell script over the three job results.' }}"
