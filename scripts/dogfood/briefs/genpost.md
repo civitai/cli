@@ -553,7 +553,8 @@ types, so a canned generation completes and a canned post is created, and replac
 the predicate again:
 
 > Does the Post gate **hold** for a workflow that reached `succeeded` carrying no
-> images, and does a workflow that *did* produce an image **actually post**?
+> images, does a workflow that *did* produce an image **actually post**, and does the
+> block render a link to that post that can **actually reach it**?
 
 ### Why it exists: the same live app shipped a SECOND user-found defect
 
@@ -563,6 +564,7 @@ the predicate again:
 |---|---|---|
 | `v0.1.1` | Generate → *"Generation failed. Please try again."* | ask for `ai:write:budgeted` instead of spending — the defect the UNCONSENTED arm above exists for |
 | `v0.1.2` | Post → *"Posting failed. Please try again."* | gate Post on `status === 'succeeded'` **and** a non-empty `imageUrls` |
+| `v0.1.2` (again) | the post link went nowhere | render the result's `url` as an **absolute** href — the defect **Phase 3** below exists for |
 
 The `v0.1.2` defect is one expression. `watch()` resolves on **any** terminal
 status (`TERMINAL_STATUSES` is succeeded/failed/canceled/expired) and `imageUrls`
@@ -673,6 +675,10 @@ and moderates the outputs. None of that is visible here.
 It rides at **three layers**, because the sentence and the row are different surfaces
 and only the short form fits a row:
 
+- the **summary line and the grade row** carry `post_link=` as well, and it is there
+  for a reason the ceiling does not have: **two of its four values pass and they mean
+  different things**, so a green post-arm row without it cannot say whether the link
+  sub-check measured anything (`TestThePostArmGradesTheLinkTheBlockRendersFromTheResult`);
 - the **summary line and the grade row** carry `post_ceiling=mock-host-gate-only`,
   appended by `oracle.sh` and carried through by `grade.sh` on this arm only — so a
   reader of a matrix row cannot get this arm's verdict without it
@@ -728,14 +734,95 @@ against an adversary.
 post half needs that run, and an app demanding a fresh prompt has not been shown to
 be wrong about anything.
 
+### 🔴 Phase 3: what the block RENDERS from the answer — a THIRD user-found defect
+
+Both phases above grade the **request leaving the block**. Nothing graded the
+**response coming back** — and `v0.1.2`, the version that *fixed* the gate and grades
+green on all three arms, then failed for a real user on exactly that:
+
+```jsx
+<a href={postResult.url}>View post</a>   // the host's value, verbatim
+```
+
+The real platform returns a **relative** `url`, and a block is served from its own
+`<slug>.civit.ai` subdomain — so the link resolved against the *block's* origin and
+could not reach the post.
+
+🔴 **The arm was blind to it BY CONSTRUCTION, and that is the reusable lesson: the
+harness's canned data was BETTER BEHAVED than production.**
+`createMockHost`'s `DEFAULT_CREATE_POST_RESULT` is
+`{ postId: 4242, url: 'https://civitai.com/posts/4242', imageIds: [9101, 9102] }` —
+an **absolute** url, which the shim mirrors field for field. So every cell had ever
+been handed a well-formed answer and no cell had ever seen a malformed one; a block
+rendering it verbatim produced an absolute link and passed.
+
+`postLink` on the cell is the sub-check, and it has **four outcomes that never
+collapse into one another**:
+
+| `post_link=` | what it means | verdict |
+|---|---|---|
+| `absolute` | a link whose href resolves **off** this block's own host, i.e. it reaches the post | pass |
+| `relative` | a link that resolves back onto the block's own host — **the defect** | **fail** |
+| `none` | the block rendered **no** link to the post. Nothing in this brief asks for one, so this is **not** a failure — it says the sub-check measured nothing | pass |
+| `unmeasured` | the arm never reached a successful post, so nothing was looked at. Distinct from `none`: that is a fact about the block, this is a fact about how far the run got | — |
+
+⚠ **It reads `getAttribute('href')`, never the `.href` property — and the reason is
+the EVIDENCE, not the classification.** The tempting claim is *"`.href` is already
+resolved, so a check reading it would call every link absolute"*; that is **false**
+here, and the mutation battery is what proved it: the classification is host-based, so
+`<a href="/posts/4242">` read through `.href` comes back as
+`http://<the block's own origin>/posts/4242` — whose host is still the block's — and
+is still graded `relative`. What `.href` destroys is `postLinkHref`: the cell would
+report the *harness's* `http://172.x.x.x:PORT/…` address instead of the `/posts/4242`
+the block's source actually wrote, so a reader could not see the defect. The mutant
+`M3-read-resolved-href` is killed by that href assertion, not by a verdict.
+
+⚠ **And it classifies by where the href RESOLVES, not by pattern-matching a scheme.**
+A protocol-relative `//civitai.com/posts/4242` carries no scheme and reaches the post
+perfectly well, so it is `absolute`; an app that ignores the host's `url` and builds
+its own `/posts/4242` from the post id is `relative` — and that one is graded red
+**on the ordinary arm, with no self-test flag involved.**
+
+#### 🔴 How the failing branch is reachable at all: `CIVITAI_ASSERT_POST_MALFORMED_URL=1`
+
+With the canned url absolute, **no fixture could produce the `relative` outcome for a
+block that renders the host's value verbatim** — so a guard for it would pass
+vacuously forever. That flag makes the shim serve the same canned post with the url
+the platform actually sends (`/posts/4242`, derived from the absolute one's pathname
+so the two cannot drift), which is what lets the guard be **watched to fail**:
+
+```bash
+# the SELF-TEST run: the canned post carries a RELATIVE url, so a block that renders
+# it verbatim is graded `relative` — this is how the guard is shown to fail
+CIVITAI_ASSERT_POST_PATH=1 CIVITAI_ASSERT_POST_MALFORMED_URL=1 \
+  bash oracle.sh <trial-id> <container-user>
+```
+
+- **The default is untouched.** With the flag unset, `inlineHostSource()` emits
+  byte-for-byte what it emitted before the flag existed — *on the post arm as well as
+  off it*. Every verdict this arc recorded rests on the absolute shape.
+- **It is not an arm and it is not for grading a matrix.** A run under it grades the
+  *instrument's own* link check, so its row carries
+  `post_ceiling=mock-host-gate-only:malformed-url-fixture` rather than the plain
+  token — the field that already exists to stop this arm's green being over-read is
+  where the self-test shape becomes visible.
+- **On its own it is refused** (exit 2, `RENDER=unmeasured`). Off the post arm the
+  shim serves no post at all, so the flag would change nothing while an operator
+  believed they had measured the malformed shape. `stubOracleEnv` and
+  `fixtures/consent-controls/grade-controls.sh` both clear it.
+- **The server-side url defect is a separate filing** against the platform. This flag
+  only makes the instrument able to *see* the rendering half.
+
 ### 🔴 Two arms at once is refused, before a browser is started
 
 `ARM_CONFLICT` in `_cdp.mjs` makes the assertion exit 2 (`RENDER=unmeasured`) for
 `POST_PATH` + `UNCONSENTED` (the post arm drives a generation on a token the other
 arm has emptied — it would fail every *correct* app) and for `POST_PATH` +
 `NO_HOST_PICKS`/`NO_HOST` (those stop the shim being installed at all, so nothing
-would be answered while the cell still said `arm=post`). Both arms are selected by
-ambient environment variables, so both combinations are one stale export away.
+would be answered while the cell still said `arm=post`) — and for
+`POST_MALFORMED_URL` without `POST_PATH`, or on a brief with no post arm, where the
+flag can do nothing at all. Every one of them is selected by an ambient environment
+variable, so every combination is one stale export away.
 
 ## Run it
 

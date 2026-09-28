@@ -658,8 +658,17 @@ func TestDogfoodGradersShareOneEscaper(t *testing.T) {
 				// so it cannot be wrapped HERE without the wrapper eating the separator.
 				// That is exactly why the wrapping has to be checked at its assignment.
 				`"$CEIL_FIELD"`,
+				// The post-link sub-check's outcome, appended on exactly the same terms
+				// as the ceiling above — a fixed ` post_link=` label plus a `tok`-wrapped
+				// value, carrying a LEADING SPACE because it too is empty on every arm
+				// but `post`. Same reason it cannot be wrapped at the printf.
+				`"$LINK_FIELD"`,
 			},
-			minArgs: 13,
+			// 🔴 RAISED FROM 13 WITH THE POST-LINK FIELD, and the raise is the point:
+			// left at 13 this extractor's positive control would still pass on a summary
+			// line that had SILENTLY LOST the new field, and the ledger would then
+			// certify a post-arm line that cannot say whether its link sub-check ran.
+			minArgs: 14,
 		},
 	} {
 		args := summaryPrintfArgs(t, src[tc.file], tc.prefix)

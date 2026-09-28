@@ -593,6 +593,14 @@ func stubOracleEnv(t *testing.T, s stubEnv) []string {
 		// a canned generation completes and a canned post is created), so a stale
 		// export would silently regrade the whole suite against a different host.
 		"CIVITAI_ASSERT_POST_PATH=",
+		// 🔴 AND ITS SELF-TEST CHANNEL. `CIVITAI_ASSERT_POST_MALFORMED_URL=1` makes the
+		// shim serve the canned post with a RELATIVE url, which is the shape the
+		// post-link sub-check FAILS on — so a stale export would turn every post-arm
+		// case below into a self-test run, and the link-check cases into ones that
+		// measure the opposite of what they say. It is also REFUSED (exit 2) whenever
+		// the post flag is unset, so a stale export would break every non-post case in
+		// this file outright rather than quietly.
+		"CIVITAI_ASSERT_POST_MALFORMED_URL=",
 	}
 }
 

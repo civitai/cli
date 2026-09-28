@@ -248,6 +248,94 @@ function postable(s) {
 function postSources() { return [{ kind: 'workflow', workflowId: last.workflowId }]; }
 ` + fxPostHandler
 
+// ── the rendered-link fixtures: what the block does with the ANSWER ─────────
+
+// The post handler the link fixtures share. Identical to `fxPostHandler` except
+// that on success it RENDERS A LINK, built by the per-fixture `postHref`. Kept as
+// its own constant rather than parameterising `fxPostHandler`, so a difference
+// between a link fixture and a payload fixture stays one expression.
+const fxPostLinkHandler = `
+postEl.onclick = async function () {
+  if (!postable(last)) return;
+  try {
+    const r = await req('CREATE_POST_FROM_APP',
+      { sources: postSources(), title: 'Generated' }, 'CREATE_POST_RESULT');
+    if (r.error || !r.result) throw new Error(r.error || 'no images to post');
+    const a = document.createElement('a');
+    a.setAttribute('href', postHref(r.result));
+    a.textContent = 'View post';
+    errEl.appendChild(a);
+  } catch (e) {
+    errEl.textContent = 'Posting failed. Please try again.';
+  }
+};
+`
+
+// 🔴 `ab-img-poster@0.1.2` VERBATIM, WHICH IS THE VERSION THAT FIXED THE GATE AND
+// PASSES EVERY OTHER CHECK ON THIS ARM. It renders `<a href={postResult.url}>` — the
+// host's value, unexamined. That is CORRECT against `createMockHost`'s absolute
+// canned url and BROKEN against the relative one the real platform returns, so this
+// one fixture grades `absolute` on the ordinary arm and `relative` under
+// `CIVITAI_ASSERT_POST_MALFORMED_URL=1`. The pair is the test: the default row proves
+// the check does not fail a correct app, the malformed row proves it can fail at all.
+const fxPostVerbatimLinkApp = fxSdkInlineStubWithMessage + fxPostWorkflow + fxPostMarkup + `
+function postable(s) {
+  return !!s && s.status === 'succeeded' && (s.imageUrls || []).length > 0;
+}
+function postSources() { return [{ kind: 'workflow', workflowId: last.workflowId }]; }
+function postHref(result) { return result.url; }
+` + fxPostLinkHandler
+
+// 🔴 THE RED CASE THAT NEEDS NO FLAG AT ALL, and it is the reason this sub-check is
+// not vacuous on the ordinary arm. This app IGNORES the url the host returned and
+// builds its own path from the post id — a plausible thing to write, and exactly as
+// broken: served from `<slug>.civit.ai`, `/posts/4242` resolves onto the block's own
+// subdomain. Graded `relative` with the DEFAULT absolute canned result.
+const fxPostSelfBuiltLinkApp = fxSdkInlineStubWithMessage + fxPostWorkflow + fxPostMarkup + `
+function postable(s) {
+  return !!s && s.status === 'succeeded' && (s.imageUrls || []).length > 0;
+}
+function postSources() { return [{ kind: 'workflow', workflowId: last.workflowId }]; }
+function postHref(result) { return '/posts/' + result.postId; }
+` + fxPostLinkHandler
+
+// 🔴 THE LINK THAT LOOKS RELATIVE AND IS NOT, which is why the check reads where the
+// href RESOLVES rather than pattern-matching for a scheme. A protocol-relative href
+// carries no scheme, so a `/^https?:/` guard would call it a defect — and it reaches
+// the post perfectly well from any origin. Graded `absolute`, on the ordinary arm.
+const fxPostProtocolRelativeLinkApp = fxSdkInlineStubWithMessage + fxPostWorkflow + fxPostMarkup + `
+function postable(s) {
+  return !!s && s.status === 'succeeded' && (s.imageUrls || []).length > 0;
+}
+function postSources() { return [{ kind: 'workflow', workflowId: last.workflowId }]; }
+function postHref(result) { return '//civitai.com' + new URL(result.url, 'https://civitai.com').pathname; }
+` + fxPostLinkHandler
+
+// 🔴 A GOOD LINK AND A BROKEN ONE ON THE SAME PAGE. A viewer can click either, so the
+// cell must read `relative`: picking the FIRST candidate, or requiring every candidate
+// to be broken, would let the defect hide behind a sibling that works. Reachable — an
+// app that renders both a text link and an icon link, one of them hand-built.
+const fxPostTwoLinksOneBrokenApp = fxSdkInlineStubWithMessage + fxPostWorkflow + fxPostMarkup + `
+function postable(s) {
+  return !!s && s.status === 'succeeded' && (s.imageUrls || []).length > 0;
+}
+function postSources() { return [{ kind: 'workflow', workflowId: last.workflowId }]; }
+function postHref(result) { return result.url; }
+` + fxPostLinkHandler + `
+const origHandler = postEl.onclick;
+postEl.onclick = async function () {
+  await origHandler();
+  const good = errEl.querySelector('a');
+  if (!good) return;
+  // The broken sibling's path is DERIVED from the working link, so this fixture
+  // cannot drift from whatever url shape the arm served.
+  const bad = document.createElement('a');
+  bad.setAttribute('href', new URL(good.getAttribute('href'), document.baseURI).pathname);
+  bad.textContent = 'open';
+  errEl.appendChild(bad);
+};
+`
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 // The one env assignment that selects the arm. Named rather than spelled at a
@@ -466,6 +554,181 @@ func TestThePostArmStillRefusesEveryRequestOutsideItsLedger(t *testing.T) {
 	}
 }
 
+// ── what the block RENDERS from the answer ──────────────────────────────────
+
+// The self-test channel that makes the relative outcome producible at all. Named
+// rather than spelled per case: it is also the string `stubOracleEnv` clears.
+const postMalformedURLArm = "CIVITAI_ASSERT_POST_MALFORMED_URL=1"
+
+// 🔴 THE BLIND SPOT THIS TEST CLOSES, AND WHY IT IS A GOOD ONE. Every phase of the
+// post arm grades the REQUEST leaving the block: the gate, the payload, the host's
+// refusal. None of them reads what the block RENDERS from the answer — and
+// `ab-img-poster@0.1.2`, the version that FIXED the gate and grades green on all
+// three arms, shipped `<a href={postResult.url}>` with the host's value verbatim. The
+// real platform returns a RELATIVE url, so the link resolved against the block's own
+// `*.civit.ai` subdomain and could not reach the post. A real user found it.
+//
+// 🔴 THE ARM WAS BLIND BY CONSTRUCTION, NOT BY OVERSIGHT: `createMockHost`'s
+// `DEFAULT_CREATE_POST_RESULT.url` is ABSOLUTE, so the harness's canned data is
+// BETTER BEHAVED than production and every cell had been handed a well-formed answer.
+// That is what `CIVITAI_ASSERT_POST_MALFORMED_URL=1` exists for — and the default
+// must stay absolute, because every verdict this arc recorded rests on that shape
+// (`TestTheMalformedUrlShapeIsOptInAndVisible` pins both halves).
+//
+// 🔴 FOUR OUTCOMES, AND THE TABLE EXISTS BECAUSE COLLAPSING ANY TWO OF THEM WOULD BE
+// THE DEFECT ONE LEVEL UP. `none` — the block rendered no link — is NOT a failure:
+// nothing in the brief asks for a link, so an app that shows the post id is not
+// wrong, and a guard that failed it would fail `fxPostGateCorrectApp`, the fixture
+// this whole file uses as its correct app.
+//
+// RED AT THE PR'S BASE: `postLink` does not exist there, so the oracle emits no
+// `post_link=` field and `summaryField` Fatals on every row.
+func TestThePostArmGradesTheLinkTheBlockRendersFromTheResult(t *testing.T) {
+	browser := oracleBrowser(t)
+	for _, tc := range []struct {
+		name string
+		app  string
+		// The self-test flag, where the case needs it. Three of the six rows do NOT,
+		// which is what says this sub-check is live on the ordinary arm.
+		malformed  bool
+		wantRender string
+		wantLink   string
+		wantReason string
+	}{
+		// 🔴 THE PAIR THAT IS THE TEST. One fixture — `ab-img-poster@0.1.2`'s own
+		// expression — graded twice. The default row proves the check passes a block
+		// that renders the host's absolute url verbatim; the malformed row is the same
+		// block handed the shape production actually sends, and it must FAIL.
+		{"the verbatim link on the ordinary arm", fxPostVerbatimLinkApp, false, "yes", "absolute", ""},
+		{"the verbatim link on the malformed shape", fxPostVerbatimLinkApp, true, "no", "relative",
+			"resolves against the block's OWN origin"},
+		// 🔴 AND A RED CASE THAT NEEDS NO FLAG, which is what stops the whole
+		// sub-check being an artefact of its own self-test channel.
+		{"an app that builds its own path", fxPostSelfBuiltLinkApp, false, "no", "relative",
+			"resolves against the block's OWN origin"},
+		// `none` is not a failure, on EITHER shape. The malformed row matters most: it
+		// is the case where a check keyed on "did the block render the url we served"
+		// would have failed a block that rendered nothing at all.
+		{"no link at all is not a defect", fxPostGateCorrectApp, false, "yes", "none", ""},
+		{"no link at all is not a defect on the malformed shape", fxPostGateCorrectApp, true, "yes", "none", ""},
+		// The href that carries no scheme and still reaches the post. A guard written
+		// as `/^https?:/` would call this a defect; the check reads where it RESOLVES.
+		{"a protocol-relative link reaches the post", fxPostProtocolRelativeLinkApp, false, "yes", "absolute", ""},
+		// The worst candidate decides.
+		{"one good link and one broken one", fxPostTwoLinksOneBrokenApp, false, "no", "relative",
+			"resolves against the block's OWN origin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := []string{postPathArm}
+			if tc.malformed {
+				env = append(env, postMalformedURLArm)
+			}
+			out, code := runPostOracle(t, browser, tc.app, env...)
+			if code != 0 {
+				t.Fatalf("exit %d, want 0 — a verdict was measured either way\n%s", code, out)
+			}
+			if got := summaryField(t, out, "arm"); got != "post" {
+				t.Fatalf("arm=%s, want post\n%s", got, out)
+			}
+			if got := summaryField(t, out, "post_link"); got != tc.wantLink {
+				t.Fatalf("post_link=%s, want %s — the cell does not say what the block rendered "+
+					"from the post it created\n%s", got, tc.wantLink, out)
+			}
+			if got := summaryField(t, out, "RENDER"); got != tc.wantRender {
+				t.Fatalf("RENDER=%s, want %s\n%s", got, tc.wantRender, out)
+			}
+			if tc.wantReason != "" && !strings.Contains(out, tc.wantReason) {
+				t.Fatalf("the reason does not carry %q — this `no` may have been earned for an "+
+					"unrelated reason, and the link sub-check has its OWN message\n%s", tc.wantReason, out)
+			}
+			// 🔴 REACHABILITY, ON EVERY ROW. The link check runs INSIDE the phase-2
+			// success branch, so a cell that failed earlier — a shut gate, a refused
+			// payload, a Post button wired to nothing — would never execute it and would
+			// still be a `no`. Asserting the post was ANSWERED and the gate had OPENED is
+			// what separates "this guard fired" from "some earlier check did".
+			if got := assertionField(t, out, "postGateAfterSuccessfulRun"); got != "false" {
+				t.Fatalf("postGateAfterSuccessfulRun=%q, want false — the Post gate never opened, so "+
+					"the link sub-check was not the thing that ran\n%s", got, out)
+			}
+			if got := assertionField(t, out, "postArmPosts"); !strings.HasPrefix(got, "answered:") {
+				t.Fatalf("postArmPosts=%q, want an answered: entry — the host never created a post, so "+
+					"there was no result for the block to render a link from\n%s", got, out)
+			}
+			if got := assertionField(t, out, "postCreated"); got != "4242" {
+				t.Fatalf("postCreated=%q, want 4242 — the canned post is the same one on both url "+
+					"shapes, and only its `url` field differs\n%s", got, out)
+			}
+			// The raw href, on the cell, for the two outcomes that HAVE one. A `relative`
+			// finding a reader cannot see the href of is a claim, not a measurement.
+			if tc.wantLink == "none" {
+				if got, has := assertionLine(t, out)["postLinkHref"]; has {
+					t.Fatalf("a `none` cell reports a postLinkHref %v — it graded an href it also "+
+						"says does not exist\n%s", got, out)
+				}
+			} else if assertionField(t, out, "postLinkHref") == "" {
+				t.Fatalf("a %s cell reports no postLinkHref — the href it graded is not on the "+
+					"cell\n%s", tc.wantLink, out)
+			}
+		})
+	}
+}
+
+// 🔴 THE SELF-TEST CHANNEL IS OPT-IN, VISIBLE, AND REFUSED WHERE IT CANNOT WORK —
+// three properties, because it is the one thing in this arm that makes the harness
+// serve data `createMockHost` does not.
+//
+// The default matters most: every verdict this arc recorded was taken against the
+// absolute canned url, so the flag being unset must leave the shim byte-identical.
+// That half is pinned mechanically by the unit driver (`shim-serves-*-url`, which
+// reads the emitted source); what this test pins is the half a MATRIX READER sees —
+// a run under the flag cannot be mistaken for an ordinary post-arm cell, because the
+// ceiling token that already exists to stop this arm's green being over-read says so.
+func TestTheMalformedUrlShapeIsOptInAndVisible(t *testing.T) {
+	browser := oracleBrowser(t)
+	t.Run("an ordinary post-arm cell carries the plain ceiling token", func(t *testing.T) {
+		out, _ := runPostOracle(t, browser, fxPostVerbatimLinkApp, postPathArm)
+		if got := summaryField(t, out, "post_ceiling"); got != "mock-host-gate-only" {
+			t.Fatalf("post_ceiling=%q, want the plain token — the default arm must not look like "+
+				"a self-test run\n%s", got, out)
+		}
+		// And the canned url the block was handed is the mock host's absolute one, read
+		// back from what the BLOCK rendered rather than from a constant in this file.
+		if got := assertionField(t, out, "postLinkHref"); got != "https://civitai.com/posts/4242" {
+			t.Fatalf("the block rendered href %q, want the mock host's absolute url — the default "+
+				"canned result has MOVED, and every recorded verdict rests on it\n%s", got, out)
+		}
+	})
+	t.Run("a malformed-shape cell says so on the row", func(t *testing.T) {
+		out, _ := runPostOracle(t, browser, fxPostVerbatimLinkApp, postPathArm, postMalformedURLArm)
+		if got := summaryField(t, out, "post_ceiling"); got != "mock-host-gate-only:malformed-url-fixture" {
+			t.Fatalf("post_ceiling=%q, want the malformed-fixture token — a self-test run whose row "+
+				"reads like an ordinary cell is the over-reading this field exists to prevent\n%s", got, out)
+		}
+		if got := assertionField(t, out, "postLinkHref"); got != "/posts/4242" {
+			t.Fatalf("the block rendered href %q, want the relative shape — the flag did not reach "+
+				"the shim, so the row below measures nothing\n%s", got, out)
+		}
+		if !strings.Contains(assertionField(t, out, "postArmCeiling"), "MALFORMED-URL SELF-TEST SHAPE") {
+			t.Fatalf("the ceiling SENTENCE does not name the self-test shape:\n%s", out)
+		}
+	})
+	// 🔴 AND THE FLAG ALONE IS REFUSED, NOT SILENTLY INERT. Off the post arm the shim
+	// serves no post at all, so the flag changes NOTHING — an operator who exported it
+	// would read a plain default-arm verdict as a self-test result. Checked in
+	// `TestThePostArmRefusesAnIncoherentArmCombination`, which runs with no browser;
+	// this row is the reachable-from-here half, and it asserts the direction.
+	t.Run("and it is refused without the post arm", func(t *testing.T) {
+		out, code := runPostOracle(t, browser, fxPostVerbatimLinkApp, postMalformedURLArm)
+		if code != 2 {
+			t.Fatalf("exit %d, want 2 — the flag cannot do anything off the post arm, so the run "+
+				"measured nothing\n%s", code, out)
+		}
+		if len(summaryLines(out)) != 0 {
+			t.Fatalf("a summary line was printed for a run that measured nothing:\n%s", out)
+		}
+	})
+}
+
 // 🔴 THE CEILING'S TOKEN RIDES ON EVERY POST-ARM CELL, BECAUSE THIS IS THE ARM
 // WHOSE GREEN IS EASIEST TO OVER-READ. It answers a submit and creates a post, so
 // "the post path works" is one careless sentence away from "posting works on
@@ -518,7 +781,10 @@ func TestThePostArmStatesItsCeilingOnEveryCell(t *testing.T) {
 	// looking at, and the token half is also the byte-identical-line contract.
 	t.Run("and not on a default-arm cell", func(t *testing.T) {
 		out, _ := runPostOracle(t, browser, fxPostGateCorrectApp)
-		for _, marker := range []string{"postArmCeiling", "POST-PATH ARM", "post_ceiling", "mock-host-gate-only"} {
+		for _, marker := range []string{"postArmCeiling", "POST-PATH ARM", "post_ceiling", "mock-host-gate-only",
+			// The post-link sub-check's field is appended on the same terms, so it is
+			// part of the same contract: a default-arm line must not carry it either.
+			"post_link", "postLink"} {
 			if strings.Contains(out, marker) {
 				t.Fatalf("a default-arm run carries the post arm's own field %q:\n%s", marker, out)
 			}
@@ -565,11 +831,21 @@ func TestThePostArmsCeilingReachesTheGradeRow(t *testing.T) {
 		if !strings.Contains(row, "post_ceiling=mock-host-gate-only") {
 			t.Fatalf("the grade row carries this arm's verdict without its ceiling token:\n%s", row)
 		}
+		// 🔴 AND THE POST-LINK OUTCOME, WHICH `grade.sh` HAS TO CARRY FOR A REASON THE
+		// CEILING DOES NOT HAVE: two of its values PASS and they mean different things.
+		// `fxPostGateCorrectApp` renders no link, so this row must read `none` — a row
+		// carrying only `RENDER=yes` cannot distinguish that from a link that works.
+		if !strings.Contains(row, "post_link=none") {
+			t.Fatalf("the grade row does not carry the post-link outcome, so a reader cannot tell "+
+				"a block that rendered a working link from one that rendered none:\n%s", row)
+		}
 	})
 	t.Run("and not on a default-arm row", func(t *testing.T) {
 		row := gradeRow(t)
-		if strings.Contains(row, "post_ceiling") {
-			t.Fatalf("a default-arm row carries the post arm's field:\n%s", row)
+		for _, marker := range []string{"post_ceiling", "post_link"} {
+			if strings.Contains(row, marker) {
+				t.Fatalf("a default-arm row carries the post arm's field %q:\n%s", marker, row)
+			}
 		}
 	})
 }
@@ -596,7 +872,12 @@ func TestANonPostSummaryLineIsByteIdentical(t *testing.T) {
 	}{
 		{"the default arm", nil, wantDefault},
 		{"the unconsented arm", []string{unconsentedArm}, wantDefault},
-		{"the post arm, which appends exactly one field", []string{postPathArm}, wantDefault + " post_ceiling"},
+		// 🔴 TWO APPENDED FIELDS NOW, AND THE ORDER IS PART OF THE CONTRACT. The
+		// post-link sub-check's outcome goes AFTER the ceiling token, so a reader (and
+		// `grade.sh`, which reads by key) sees the same sequence every post-arm cell has
+		// ever carried plus one more at the end — never a reorder.
+		{"the post arm, which appends exactly two fields", []string{postPathArm},
+			wantDefault + " post_ceiling post_link"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, _ := runPostOracle(t, browser, fxPostGateCorrectApp, tc.env...)
@@ -652,6 +933,14 @@ func TestThePostArmRefusesAnIncoherentArmCombination(t *testing.T) {
 			"are both set"},
 		{"with the picker control arm", []string{postPathArm, "CIVITAI_ASSERT_NO_HOST_PICKS=1"},
 			"only thing this arm answers with"},
+		// 🔴 THE SELF-TEST FLAG WITHOUT THE ARM IT RIDES ON, and it is the combination
+		// most likely to be left in a shell, because the flag is only ever exported to
+		// run ONE case. Off the post arm the shim serves no post at all, so the flag
+		// changes NOTHING — the run is an ordinary default-arm measurement, and an
+		// operator who set it believes they graded the malformed-url shape. Refusing is
+		// the only reading that is not a lie.
+		{"the malformed-url self-test flag alone", []string{postMalformedURLArm},
+			"without CIVITAI_ASSERT_POST_PATH=1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, code := runPostOracle(t, browserStandIn, fxPostGateCorrectApp, tc.env...)
@@ -723,7 +1012,8 @@ func writePostUnitDriver(t *testing.T, dir string) string {
   HOST_PICKER_REQUESTS, HOST_POST_REQUESTS, HOST_ANSWERED_REQUESTS, POST_ARM_GLOBAL,
   POST_ARM_PLAN, POST_ARM_COST, POST_ARM_IMAGE, POST_ARM_CREATE_POST_RESULT,
   POST_ARM_NO_IMAGES_ERROR, POST_ARM_SPENT_ACCOUNT, POST_PATH, HOST_ARM, ARM_CONFLICT,
-  INVARIANT_EXCEPTIONS, POST_ARM_REQUESTS, POST_ARM_CEILING_TOKEN
+  INVARIANT_EXCEPTIONS, POST_ARM_REQUESTS, POST_ARM_CEILING_TOKEN,
+  POST_MALFORMED_URL, POST_ARM_RESULT, POST_ARM_RELATIVE_URL_RESULT, POST_ARM_POST_PATHNAME
 } from ` + jsQuote(abs) + `;
 
 const out = [];
@@ -763,6 +1053,43 @@ check('exception-ledger-marks-exactly-one-completing-class',
 check('ceiling-token-is-a-single-summary-field',
   typeof POST_ARM_CEILING_TOKEN === 'string' && /^[A-Za-z0-9._:-]+$/.test(POST_ARM_CEILING_TOKEN),
   JSON.stringify(POST_ARM_CEILING_TOKEN));
+// 🔴 THE SELF-TEST SHAPE IS VISIBLE IN THE TOKEN, IN BOTH DIRECTIONS. A run under the
+// malformed flag is not an ordinary post-arm verdict and its row must say so; a run
+// without it must carry the plain token, or every historical cell's ceiling changes.
+check('ceiling-token-names-the-url-shape',
+  POST_ARM_CEILING_TOKEN === (POST_MALFORMED_URL
+    ? 'mock-host-gate-only:malformed-url-fixture' : 'mock-host-gate-only'),
+  POST_ARM_CEILING_TOKEN + ' / malformed=' + POST_MALFORMED_URL);
+// 🔴 THE TWO URL SHAPES SHARE EVERY FIELD BUT THE url, AND THE RELATIVE ONE IS DERIVED.
+// A hand-written second literal could drift in postId or imageIds, and the self-test
+// fixture would then be grading a different post from every other cell.
+check('relative-result-differs-only-in-its-url',
+  POST_ARM_RELATIVE_URL_RESULT.postId === POST_ARM_CREATE_POST_RESULT.postId &&
+  POST_ARM_RELATIVE_URL_RESULT.imageIds.join(',') === POST_ARM_CREATE_POST_RESULT.imageIds.join(',') &&
+  POST_ARM_RELATIVE_URL_RESULT.url !== POST_ARM_CREATE_POST_RESULT.url,
+  JSON.stringify([POST_ARM_CREATE_POST_RESULT, POST_ARM_RELATIVE_URL_RESULT]));
+// 🔴 AND BOTH SHAPES RESOLVE TO THE SAME PATH, which is the property the assertion's
+// candidate selection rests on: it finds the block's anchor by PATHNAME, so it works
+// under either shape. If these ever diverged, the self-test run would read "none" —
+// "the block rendered no link" — and look like a clean pass.
+check('both-url-shapes-share-one-pathname',
+  new URL(POST_ARM_CREATE_POST_RESULT.url).pathname === POST_ARM_POST_PATHNAME &&
+  new URL(POST_ARM_RELATIVE_URL_RESULT.url, 'https://example.invalid').pathname === POST_ARM_POST_PATHNAME,
+  POST_ARM_POST_PATHNAME);
+// 🔴 THE RELATIVE SHAPE IS ACTUALLY RELATIVE, asserted as the CONSEQUENCE rather than
+// by pattern: it must carry no host of its own, so resolving it against an arbitrary
+// origin lands on THAT origin. That is exactly what makes it unreachable from a
+// block's own subdomain, and it is what the assertion measures in the page.
+check('the-relative-shape-resolves-onto-whatever-origin-it-is-read-from',
+  new URL(POST_ARM_RELATIVE_URL_RESULT.url, 'https://a-block.civit.ai/').host === 'a-block.civit.ai' &&
+  new URL(POST_ARM_CREATE_POST_RESULT.url, 'https://a-block.civit.ai/').host === 'civitai.com',
+  POST_ARM_RELATIVE_URL_RESULT.url);
+// The selected result, and the DEFAULT half is the one every recorded verdict rests
+// on: unset the flag and this must be the mock host's own absolute object.
+check('selected-result-follows-the-flag',
+  POST_ARM_RESULT === (POST_MALFORMED_URL
+    ? POST_ARM_RELATIVE_URL_RESULT : POST_ARM_CREATE_POST_RESULT),
+  JSON.stringify(POST_ARM_RESULT));
 
 if (!POST_PATH) {
   // 🔴 THE FLAG-UNSET CLAIM, MECHANICALLY. The shim source must not MENTION any of
@@ -785,6 +1112,16 @@ if (!POST_PATH) {
       HOST_PICKER_REQUESTS.concat(['ESTIMATE_WORKFLOW', 'SUBMIT_WORKFLOW', 'POLL_WORKFLOW',
                                    'CREATE_POST_FROM_APP']).join(','),
     HOST_ANSWERED_REQUESTS.join(','));
+  // 🔴 WHICH URL SHAPE THE SHIM ACTUALLY EMITS, READ OUT OF ITS SOURCE. The flag is
+  // read at module load and the source is a STRING the page parses, so this is the
+  // only place the two can be compared — and the anchored "url":"…" form matters:
+  // the relative url /posts/4242 is a SUBSTRING of the absolute one, so a bare
+  // src.includes('/posts/4242') is true on both shapes and would measure nothing.
+  check('shim-serves-the-selected-url-shape',
+    src.includes('"url":"' + POST_ARM_RESULT.url + '"') &&
+    !src.includes('"url":"' + (POST_MALFORMED_URL
+      ? POST_ARM_CREATE_POST_RESULT.url : POST_ARM_RELATIVE_URL_RESULT.url) + '"'),
+    'malformed=' + POST_MALFORMED_URL + ' want=' + POST_ARM_RESULT.url);
 }
 
 // 🔴 NOTHING CAN REACH THE NETWORK, ON EITHER ARM, AND THE CANNED IMAGE IS WHERE
@@ -937,19 +1274,29 @@ func TestThePostArmShimAnswersOnlyItsOwnLedger(t *testing.T) {
 		minimum int
 	}{
 		// 🔴 A MINIMUM, AND ITS BREAKDOWN IS RE-DERIVED FROM THE DRIVER, NOT PATCHED.
-		// The previous breakdown had three labels wrong in directions that cancelled
-		// (it summed to the right total, which is why nothing caught it), so the
-		// derivation is written out here: 7 `default-arm-source-omits:*` (the four
-		// request-type names + `POST_ARM_GLOBAL` + `data:image` + the canned postId)
-		// + 2 default-arm ledger (answers-only-the-pickers, adds-no-post-types)
-		// + 2 network/image + 5 canned-shape literals + 4 shim/vocabulary
-		// + 2 arm + 4 exception-ledger/token = 26 on this arm. 22 leaves room for
-		// nothing being quietly dropped while still failing loudly on an early exit.
-		{"the flag unset (default arm)", nil, 22},
-		// The post arm trades the 7+2 default-arm checks for the single
-		// `post-arm-answers-pickers-plus-four` (18 shared), and the lifecycle block
-		// adds 14: 11 named checks plus the 3-label refused-sources loop = 32.
-		{"the flag set (post arm)", []string{postPathArm}, 30},
+		// An earlier breakdown had three labels wrong in directions that cancelled (it
+		// summed to the right total, which is why nothing caught it), so the derivation
+		// is written out: 22 SHARED — 2 arm + 4 exception-ledger/token + 5 url-shape
+		// + 2 network/image + 5 canned-shape literals + 4 shim/vocabulary — plus 9
+		// default-arm-only: 7 `default-arm-source-omits:*` (the four request-type names
+		// + `POST_ARM_GLOBAL` + `data:image` + the canned postId) + 2 ledger
+		// (answers-only-the-pickers, adds-no-post-types) = 31 on this arm. 29 leaves
+		// room for nothing being quietly dropped while still failing loudly on an
+		// early exit.
+		{"the flag unset (default arm)", nil, 29},
+		// The post arm trades those 9 for 2 (`post-arm-answers-pickers-plus-four` and
+		// `shim-serves-the-selected-url-shape`), so 24 shared, and the lifecycle block
+		// adds 14: 11 named checks plus the 3-label refused-sources loop = 38.
+		{"the flag set (post arm)", []string{postPathArm}, 36},
+		// 🔴 AND THE SELF-TEST SHAPE, WHICH IS A THIRD LOAD OF THE MODULE. Both url
+		// flags are read at module load, so the same check count runs against a
+		// DIFFERENT selected result — which is the only way `selected-result-follows-
+		// the-flag`, `ceiling-token-names-the-url-shape` and
+		// `shim-serves-the-selected-url-shape` can be seen to move rather than being
+		// satisfied by whichever branch happens to be live. `canned-post-is-the-mock-
+		// hosts` runs here too, asserting the DEFAULT constant literally: proof that the
+		// flag selects a different object rather than editing the shared one.
+		{"both flags set (the malformed-url self-test)", []string{postPathArm, postMalformedURLArm}, 36},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
 			dir, err := os.MkdirTemp("", "dogfood-post-unit-")

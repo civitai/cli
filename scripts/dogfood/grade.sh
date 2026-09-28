@@ -185,7 +185,17 @@ if [ -n "$BRIEF" ]; then
     R_CEIL=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^post_ceiling=//p' | head -1)
     CEIL_FIELD=
     [ -n "$R_CEIL" ] && CEIL_FIELD=" post_ceiling=$R_CEIL"
-    RENDER_FIELDS=" render_brief=${R_BRIEF:-$BRIEF} brief_source=${R_SRC:-unknown} validate_gate=${R_GATE:-unknown} scopes=${R_SCOPES:-unknown} viewer=${R_VIEWER:-unknown} arm=${R_ARM:-unknown} observed=${R_OBS:-} RENDER=${R_PASS:-unreadable}${CEIL_FIELD}"
+    # 🔴 AND THE POST-LINK SUB-CHECK'S OUTCOME, FOR A REASON THE OTHER FIELDS DO NOT
+    # HAVE: two of its four values PASS and they mean different things. `absolute` is
+    # "the block rendered a link to the post and it works"; `none` is "the block
+    # rendered no link, so this sub-check measured nothing" — legitimate, never a
+    # defect, and indistinguishable from the former on a row that carries only
+    # `RENDER=yes`. Appended only when the oracle sent one (post arm only), which
+    # leaves every other row byte-identical.
+    R_LINK=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^post_link=//p' | head -1)
+    LINK_FIELD=
+    [ -n "$R_LINK" ] && LINK_FIELD=" post_link=$R_LINK"
+    RENDER_FIELDS=" render_brief=${R_BRIEF:-$BRIEF} brief_source=${R_SRC:-unknown} validate_gate=${R_GATE:-unknown} scopes=${R_SCOPES:-unknown} viewer=${R_VIEWER:-unknown} arm=${R_ARM:-unknown} observed=${R_OBS:-} RENDER=${R_PASS:-unreadable}${CEIL_FIELD}${LINK_FIELD}"
   fi
 fi
 

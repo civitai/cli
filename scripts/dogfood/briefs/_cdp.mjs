@@ -291,6 +291,45 @@ export const UNCONSENTED = process.env.CIVITAI_ASSERT_UNCONSENTED === '1';
  */
 export const POST_PATH = process.env.CIVITAI_ASSERT_POST_PATH === '1';
 
+/**
+ * The post arm's SELF-TEST channel: serve the canned post result with a RELATIVE
+ * `url` instead of the absolute one `createMockHost` returns.
+ *
+ * 🔴 IT IS NOT AN ARM AND IT IS NOT FOR GRADING A MATRIX. It exists because the
+ * arm's new `postLink` sub-check — "if the block renders a link from the post
+ * result, does that link actually reach the post" — is UNTESTABLE against the
+ * default canned data. `DEFAULT_CREATE_POST_RESULT`'s `url` is absolute
+ * (`https://civitai.com/posts/4242`), so a block that renders it VERBATIM produces
+ * an absolute link and passes; no fixture could exercise the failing branch, and a
+ * guard no fixture can fail is a guard that passes vacuously forever. This flag is
+ * the one thing that can produce outcome (b), so that the guard is watched to fail.
+ *
+ * 🔴 WHY THE HARNESS'S CANNED DATA IS THE PROBLEM IN THE FIRST PLACE. The real
+ * platform returns a RELATIVE url from `CREATE_POST_FROM_APP`, and
+ * `ab-img-poster@0.1.2` renders `<a href={postResult.url}>` — the host's value,
+ * verbatim — so the link resolves against the block's own `*.civit.ai` subdomain
+ * and cannot reach the post. A real user found that on the exact path this arm was
+ * built to cover, because `createMockHost`'s canned result is BETTER BEHAVED than
+ * production. The server-side url defect is filed separately; this flag is only how
+ * the instrument is made able to see the rendering half.
+ *
+ * 🔴 THE DEFAULT IS UNTOUCHED, AND THAT IS THE LOAD-BEARING PROPERTY. With this
+ * unset, {@link inlineHostSource} emits byte-for-byte the source it emitted before
+ * this flag existed — on the post arm as well as off it — because
+ * {@link POST_ARM_RESULT} resolves to {@link POST_ARM_CREATE_POST_RESULT} and
+ * nothing else in the template moves. Every verdict this arc has recorded rests on
+ * that shape.
+ *
+ * 🔴 AND IT IS VISIBLE ON THE CELL, BECAUSE A RUN UNDER IT IS NOT AN ORDINARY POST
+ * VERDICT. It rides on {@link POST_ARM_CEILING_TOKEN} — the field that already
+ * exists to stop a post-arm green being over-read — rather than on a new summary
+ * field, so `post_ceiling=mock-host-gate-only:malformed-url-fixture` is what a
+ * matrix row carries. It also CONFLICTS with the flag being absent: set without
+ * `CIVITAI_ASSERT_POST_PATH=1` it can do nothing at all, so {@link armConflict}
+ * refuses rather than letting an operator believe they measured something.
+ */
+export const POST_MALFORMED_URL = process.env.CIVITAI_ASSERT_POST_MALFORMED_URL === '1';
+
 /** Which arm the cell was graded on. On the summary line and in the assertion's
  * JSON, because two runs of the same trial now legitimately disagree and a
  * verdict read without this cannot tell which question it answers.
@@ -670,6 +709,24 @@ export const INVARIANT_EXCEPTIONS = [
  *   the one that grades under a label it cannot honour.
  */
 export function armConflict({ postArm }) {
+  // 🔴 CHECKED BEFORE THE `!POST_PATH` EARLY RETURN, BECAUSE THAT IS THE WHOLE
+  // COMBINATION. `CIVITAI_ASSERT_POST_MALFORMED_URL=1` only reaches anything through
+  // the post arm's shim; with the post flag unset it changes NOTHING — the source the
+  // shim emits is the default arm's, the four request types are not answered, and the
+  // canned post is never served. An operator who exported it believes the opposite, so
+  // the honest outcome is "nothing was measured", not a default-arm verdict wearing a
+  // self-test's label. It is also refused on a brief with no post arm, by the same
+  // reasoning as the flag it rides on.
+  if (POST_MALFORMED_URL && (!POST_PATH || !postArm)) {
+    return 'CIVITAI_ASSERT_POST_MALFORMED_URL=1 is set '
+      + (POST_PATH ? 'on a brief that does not implement the post arm'
+        : 'without CIVITAI_ASSERT_POST_PATH=1')
+      + '. That flag serves the canned post result with a RELATIVE url so the post-link '
+      + 'sub-check can be watched to fail, and the post arm\'s shim is the only thing that '
+      + 'serves it at all — so here it changes nothing and the run would be an ordinary '
+      + 'default-arm measurement labelled as the instrument\'s self-test. Unset it, or set '
+      + 'CIVITAI_ASSERT_POST_PATH=1 and run the genpost brief.';
+  }
   if (!POST_PATH) return null;
   if (!postArm) {
     return 'CIVITAI_ASSERT_POST_PATH=1 is set, but this brief does not implement the post arm — '
@@ -726,8 +783,18 @@ export const POST_ARM_GLOBAL = '__dogfoodPostArm';
  * change every historical cell's shape. `oracle.sh` appends ` post_ceiling=` at the
  * END of the line when and only when the assertion reports `arm=post`, which leaves a
  * non-post line byte-identical. `TestANonPostSummaryLineIsByteIdentical` pins that.
+ *
+ * 🔴 AND IT IS WHERE {@link POST_MALFORMED_URL} BECOMES VISIBLE, RATHER THAN A
+ * SECOND SUMMARY FIELD. A run under that flag was handed canned data the platform's
+ * shape but not `createMockHost`'s, so its verdict is a statement about the
+ * INSTRUMENT'S self-test and not an ordinary post-arm cell — exactly the class of
+ * over-reading this token exists to stop. Suffixed with `:` rather than `+` because
+ * the unit driver pins the token to one whitespace-free summary field
+ * (`/^[A-Za-z0-9._:-]+$/`), and a token carrying a space would start a field a
+ * first-match reader prefers to the real one.
  */
-export const POST_ARM_CEILING_TOKEN = 'mock-host-gate-only';
+export const POST_ARM_CEILING_TOKEN = POST_MALFORMED_URL
+  ? 'mock-host-gate-only:malformed-url-fixture' : 'mock-host-gate-only';
 
 /**
  * The price the arm quotes, mirroring `createMockHost`'s `legacyCost` default
@@ -788,6 +855,46 @@ export const POST_ARM_CREATE_POST_RESULT = {
   url: 'https://civitai.com/posts/4242',
   imageIds: [9101, 9102],
 };
+
+/**
+ * The PATH of the canned post, derived from the absolute url above rather than
+ * retyped.
+ *
+ * 🔴 IT IS THE ONE THING BOTH URL SHAPES SHARE, WHICH IS WHAT MAKES THE LINK CHECK
+ * SHAPE-INDEPENDENT. `https://civitai.com/posts/4242` and `/posts/4242` resolve to
+ * the same pathname, so the assertion can find the anchor the block rendered by
+ * pathname on EITHER variant and then classify the raw attribute separately. A
+ * check that looked for the url STRING would only find the anchor on the shape it
+ * was written against, and would read `none` — "the block rendered no link" — on
+ * the other, which is the one outcome that must never be confused with a defect.
+ */
+export const POST_ARM_POST_PATHNAME = new URL(POST_ARM_CREATE_POST_RESULT.url).pathname;
+
+/**
+ * The same post, with the url the REAL platform returns: a path with no scheme and
+ * no host. Served only under {@link POST_MALFORMED_URL}.
+ *
+ * 🔴 DERIVED FROM THE ABSOLUTE RESULT, FIELD FOR FIELD, WITH ONLY `url` REPLACED.
+ * A hand-written second literal would be free to drift in `postId` or `imageIds`,
+ * and then the self-test fixture would be grading a different post from the one
+ * every other cell is graded against — so the only difference between the two
+ * shapes is the property under test.
+ */
+export const POST_ARM_RELATIVE_URL_RESULT = {
+  ...POST_ARM_CREATE_POST_RESULT,
+  url: POST_ARM_POST_PATHNAME,
+};
+
+/**
+ * The result the shim actually serves on this invocation. The absolute
+ * `createMockHost` shape unless {@link POST_MALFORMED_URL} is set.
+ *
+ * ⚠ READ THIS, NOT `POST_ARM_CREATE_POST_RESULT`, anywhere the value the BLOCK WAS
+ * HANDED matters — the assertion's `postCreated` field and its link reason both
+ * quote what was served, not what the default would have been.
+ */
+export const POST_ARM_RESULT = POST_MALFORMED_URL
+  ? POST_ARM_RELATIVE_URL_RESULT : POST_ARM_CREATE_POST_RESULT;
 
 /**
  * The canned workflow outcomes, IN ORDER, one per `SUBMIT_WORKFLOW` the block
@@ -1074,7 +1181,7 @@ export function inlineHostSource() {
   // and the unit driver's `default-arm-source-*` checks both assert it.
   const postConsts = POST_PATH ? `
   var PLAN = ${JSON.stringify(POST_ARM_PLAN)};
-  var RESULT = ${JSON.stringify(POST_ARM_CREATE_POST_RESULT)};
+  var RESULT = ${JSON.stringify(POST_ARM_RESULT)};
   var COST = ${JSON.stringify(POST_ARM_COST)};
   var SPENT = ${JSON.stringify(POST_ARM_SPENT_ACCOUNT)};
   var NO_IMAGES = ${JSON.stringify(POST_ARM_NO_IMAGES_ERROR)};

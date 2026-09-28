@@ -104,9 +104,13 @@ printf '=== consent controls, both arms (runs under %s)\n\n' "$RUNS"
 # rows this script prints would then be post-path measurements labelled
 # `consented` and `unconsented`, and the `unconsented` one would not even run: the
 # combination is refused (exit 2), which this script counts as UNMEASURED.
+# 🔴 AND `CIVITAI_ASSERT_POST_MALFORMED_URL` RIDES WITH IT. On its own — which is
+# what this script's cleared environment would leave it as — it is REFUSED (exit 2),
+# so a stale export would turn BOTH rows into UNMEASURED with nothing on the row
+# saying why. Clearing it is what keeps the two branches measurements at all.
 ARM_ENV="env -u CIVITAI_ASSERT_UNCONSENTED -u CIVITAI_ASSERT_ANON_VIEWER \
          -u CIVITAI_ASSERT_NO_HOST -u CIVITAI_ASSERT_NO_HOST_PICKS -u DOGFOOD_ASSERT \
-         -u CIVITAI_ASSERT_POST_PATH \
+         -u CIVITAI_ASSERT_POST_PATH -u CIVITAI_ASSERT_POST_MALFORMED_URL \
          -u CIVITAI_ASSERT_WAIT_MS -u CIVITAI_ASSERT_LAUNCH_MS \
          -u CIVITAI_ASSERT_LAUNCH_ATTEMPTS"
 
