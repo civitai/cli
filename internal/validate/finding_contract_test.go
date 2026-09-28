@@ -1018,6 +1018,32 @@ func fieldCoverageCorpus() []fieldFixture {
 			}`},
 		},
 		{
+			// All THREE goods rules in one manifest, because goodsChecks stops
+			// at the first hit PER ENTRY — one entry could only ever reach one
+			// of them, and a corpus fixture that trips a single branch leaves
+			// the other two unreached while this test reports the function
+			// covered. Entry 0 is legal (so the duplicate has something to
+			// duplicate), 1 repeats its id, 2 has a blank title, 3 carries an
+			// oversized payload.
+			name: "all three goods rules (goodsChecks)",
+			files: map[string]string{"block.manifest.json": `{
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "description": "goods rules the schema cannot express",
+			  "author": "tester",
+			  "contentRating": "g",
+			  "scopes": [],
+			  "goods": [
+			    {"id": "credits", "title": "Credits", "priceBuzz": 10},
+			    {"id": "credits", "title": "Credits again", "priceBuzz": 10},
+			    {"id": "blanktitle", "title": "   ", "priceBuzz": 10},
+			    {"id": "bigpayload", "title": "Big", "priceBuzz": 10, "payload": {"note": "` + strings.Repeat("x", 4096) + `"}}
+			  ],
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false}
+			}`},
+		},
+		{
 			name: "unknown slot and the page slot in targets (targetChecks)",
 			files: map[string]string{"block.manifest.json": `{
 			  "blockId": "cov-block",

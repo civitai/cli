@@ -375,3 +375,198 @@ func TestSandboxChecksNonStringIgnored(t *testing.T) {
 		t.Error("empty/whitespace sandbox should error")
 	}
 }
+
+// TestGoodsChecksMirrorTheServerRulesJSONSchemaCannotExpress pins the three
+// `goods` rules that live in `parseManifestGoods` and nowhere in the vendored
+// schema, with the server's own message text.
+//
+// 🔴 EVERY `want` HERE IS SPELLED OUT, NOT BUILT FROM THE CODE UNDER TEST. These
+// strings are a contract with the server's 400: the whole value of the mirror is
+// that an author sees the same sentence locally, so a `want` derived from
+// `goodsChecks` would move with a reword and assert nothing.
+func TestGoodsChecksMirrorTheServerRulesJSONSchemaCannotExpress(t *testing.T) {
+	good := func(id, title string) map[string]any {
+		return map[string]any{"id": id, "title": title, "priceBuzz": float64(10)}
+	}
+	// A payload whose SERIALIZED size is what matters: two short keys and one
+	// long value. Deliberately not a fixture whose length equals the bound, so
+	// a mutant that hardcodes 2048 cannot survive on it.
+	bigPayload := map[string]any{"note": strings.Repeat("x", 4096)}
+	okPayload := map[string]any{"note": strings.Repeat("x", 100)}
+
+	cases := []struct {
+		name string
+		in   map[string]any
+		want []string
+	}{
+		{
+			name: "duplicate id → the server's duplicate message, on the SECOND entry",
+			in:   map[string]any{"goods": []any{good("credits", "A"), good("credits", "B")}},
+			want: []string{`goods[1].id duplicates an earlier good id ("credits")`},
+		},
+		{
+			name: "three entries, the third repeats the first → indexed at 2",
+			in:   map[string]any{"goods": []any{good("a", "A"), good("b", "B"), good("a", "C")}},
+			want: []string{`goods[2].id duplicates an earlier good id ("a")`},
+		},
+		{
+			name: "whitespace-only title → non-empty message (schema minLength:1 accepts it)",
+			in:   map[string]any{"goods": []any{good("credits", "   ")}},
+			want: []string{"goods[0].title must be a non-empty string"},
+		},
+		{
+			name: "absent title → same message",
+			in:   map[string]any{"goods": []any{map[string]any{"id": "credits", "priceBuzz": float64(10)}}},
+			want: []string{"goods[0].title must be a non-empty string"},
+		},
+		{
+			name: "payload over the serialized bound → byte message",
+			in: map[string]any{"goods": []any{
+				map[string]any{"id": "credits", "title": "A", "priceBuzz": float64(10), "payload": bigPayload},
+			}},
+			want: []string{"goods[0].payload must serialize to at most 2048 bytes"},
+		},
+		// ---- negative controls: each rule must ACCEPT its legal neighbour ----
+		{
+			name: "distinct ids → nothing",
+			in:   map[string]any{"goods": []any{good("credits", "A"), good("boosts", "B")}},
+			want: nil,
+		},
+		{
+			name: "a title with surrounding space but real content → nothing",
+			in:   map[string]any{"goods": []any{good("credits", "  Extra credits  ")}},
+			want: nil,
+		},
+		{
+			name: "a payload well under the bound → nothing",
+			in: map[string]any{"goods": []any{
+				map[string]any{"id": "credits", "title": "A", "priceBuzz": float64(10), "payload": okPayload},
+			}},
+			want: nil,
+		},
+		{
+			name: "no goods key at all sells nothing and is valid",
+			in:   map[string]any{},
+			want: nil,
+		},
+		{
+			name: "a non-array goods is the schema's to reject, not ours",
+			in:   map[string]any{"goods": "nope"},
+			want: nil,
+		},
+		{
+			name: "an entry that is not an object is the schema's too",
+			in:   map[string]any{"goods": []any{"nope"}},
+			want: nil,
+		},
+		{
+			name: "a non-string id cannot key a duplicate test",
+			in:   map[string]any{"goods": []any{map[string]any{"id": float64(7), "title": "A"}}},
+			want: nil,
+		},
+		// ---- the one-finding-per-entry contract ----
+		{
+			// The server's forEach RETURNS on the duplicate, so the blank title
+			// of the same entry is never reported. Two findings here would make
+			// the local set differ from the 400.
+			name: "duplicate id AND blank title on one entry → only the duplicate",
+			in:   map[string]any{"goods": []any{good("credits", "A"), good("credits", "   ")}},
+			want: []string{`goods[1].id duplicates an earlier good id ("credits")`},
+		},
+		{
+			// Two independent offenders in one manifest DO both report, in
+			// declaration order — the per-entry rule is not a per-manifest one.
+			name: "two different entries each offend → both, in order",
+			in: map[string]any{"goods": []any{
+				good("credits", "   "),
+				good("boosts", "B"),
+				good("boosts", "C"),
+			}},
+			want: []string{
+				"goods[0].title must be a non-empty string",
+				`goods[2].id duplicates an earlier good id ("boosts")`,
+			},
+		},
+	}
+
+	produced := 0
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := goodsChecks(tc.in)
+			produced += len(got)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d finding(s), want %d\n  got:  %v\n  want: %v",
+					len(got), len(tc.want), got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i].Message != tc.want[i] {
+					t.Errorf("finding[%d].Message\n  want: %s\n  got:  %s", i, tc.want[i], got[i].Message)
+				}
+			}
+		})
+	}
+	// POSITIVE CONTROL for the table as a whole. Every `want: nil` row passes
+	// against a goodsChecks that returns nil unconditionally, and they are the
+	// majority here — so assert the table did make it emit something.
+	if produced == 0 {
+		t.Fatal("no case produced a finding — goodsChecks may be wired to nothing and every nil row would still pass")
+	}
+}
+
+// TestGoodsFindingsCarryTheOffendingFieldPath pins the Field, not the Message.
+// The two are separate claims: `--json` consumers key on Field, and a finding
+// whose text names goods[1] while its Field says something else sends a tool to
+// the wrong place.
+func TestGoodsFindingsCarryTheOffendingFieldPath(t *testing.T) {
+	in := map[string]any{"goods": []any{
+		map[string]any{"id": "credits", "title": "A", "priceBuzz": float64(10)},
+		map[string]any{"id": "credits", "title": "B", "priceBuzz": float64(10)},
+		map[string]any{"id": "boosts", "title": "  ", "priceBuzz": float64(10)},
+	}}
+	got := goodsChecks(in)
+	want := []struct{ field, msgHas string }{
+		{"goods[1].id", "duplicates an earlier good id"},
+		{"goods[2].title", "must be a non-empty string"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d finding(s), want %d: %v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i].Field != w.field {
+			t.Errorf("finding[%d].Field = %q, want %q", i, got[i].Field, w.field)
+		}
+		if !strings.Contains(got[i].Message, w.msgHas) {
+			t.Errorf("finding[%d] message %q does not mention %q", i, got[i].Message, w.msgHas)
+		}
+	}
+}
+
+// TestGoodsChecksReachTheRealValidator is the SEAM. goodsChecks being correct in
+// isolation says nothing about whether semanticChecks calls it — the defect that
+// would ship is a perfect function nobody invokes, and every test above would
+// still pass.
+func TestGoodsChecksReachTheRealValidator(t *testing.T) {
+	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"g","scopes":[],` +
+		`"kind":"page","iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
+		`"goods":[{"id":"credits","title":"A","priceBuzz":10},{"id":"credits","title":"B","priceBuzz":10}]}`
+	var hit bool
+	for _, f := range manifestOnlyFindings(t, body) {
+		if f.Message == `goods[1].id duplicates an earlier good id ("credits")` {
+			hit = true
+		}
+	}
+	if !hit {
+		t.Fatal("the duplicate-id finding did not come out of the real ManifestOnly path — " +
+			"goodsChecks is not wired into semanticChecks")
+	}
+
+	// NEGATIVE CONTROL on the same path: the identical manifest with distinct
+	// ids must validate with NO findings at all, or the row above could be
+	// passing because this fixture fails for some unrelated reason.
+	const ok = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"g","scopes":[],` +
+		`"kind":"page","iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
+		`"goods":[{"id":"credits","title":"A","priceBuzz":10},{"id":"boosts","title":"B","priceBuzz":10}]}`
+	for _, f := range manifestOnlyFindings(t, ok) {
+		t.Errorf("unexpected finding on the legal manifest: %s: %s", f.Field, f.Message)
+	}
+}
