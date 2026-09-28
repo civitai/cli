@@ -59,40 +59,41 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-✅ **SIX PRs MERGED 2026-09-28, each verified BY CONTENT on `origin/main`** (never by ancestry — a
-squash merge makes that permanently false). Tip `b98585f`. **Ranks 12, 25, 26 CLOSED**; claims
-`app-build-dogfood-12` and `-25` released; base clone synced.
+✅ **EIGHT PRs MERGED 2026-09-28, each verified BY CONTENT on `origin/main`** (never by ancestry — a
+squash merge makes that permanently false). Tip `2105a33`. **Ranks 12, 25, 26, 28 CLOSED**; claims
+`-12` and `-25` released; base clone synced; no worktrees or branches of this session left behind.
 
-| PR | what | sha |
-|---|---|---|
-| `#745` | schema re-vendor + the SHAPE/CONTENT split + `goods[].id` gloss + `goods:purchase:self` | `a8a1338` |
-| `#742` | rank 26 — the post arm's `post_link=` | `f4958df` |
-| `#744` `#746` | the two handoff rounds | `64426e8` `9052238` |
-| `#748` | the three `goods` rules JSON Schema cannot express | `8d1733e` |
-| `#747` | rank 12 — the daily `scaffold-typecheck` job | `b98585f` |
+`#745` `a8a1338` re-vendor + SHAPE/CONTENT split · `#742` `f4958df` post arm `post_link=` · `#744`
+`64426e8` + `#746` `9052238` + `#750` `7d333a2` handoff · `#748` `8d1733e` the three `goods` rules the
+schema cannot express · `#747` `b98585f` the daily `scaffold-typecheck` job · `#749` `2105a33` the
+gloss-debt ledger. **Verified on `main`:** `check-canonical-schema.sh` → `OK`; the ledger JSON, the
+root `revendor_owed_signal_test.go` (4 tests) and the mutation battery all present.
 
-**OPEN: `#749`** — the durable fix for the OTHER half (patterns). 13/13 green on `f436709`, **round-0
-audit running, NOT merged.** It makes `TestPatternRulesCoverTheVendoredSchema` a total ledger: every
-schema `pattern` is either glossed or recorded as acknowledged debt in a new
-`internal/validate/pattern_gloss_owed.json` **that CI writes**, clearable by a `-update-gloss-ledger`
-flag. Shrink still blocks, deliberately.
+🔴 **RANK 27 IS NOW UNBLOCKED AND IS THE ONLY CODE WORK LEFT** — `#745`'s own fix MOVED the
+self-block to `contentRating`, and it needs **both** sites. Diagnosis in *Open investigations*.
 
-🔴 **ONLY `#745` WAS AUDITED FOR CORRECTNESS, AND THAT AUDIT FOUND THREE DEFECTS — TWO INTRODUCED BY
-THE FIX ITSELF.** `#748` is **payload** (it changes what `app validate` rejects) and merged on a
-mutation battery plus CI alone, by a dated operator decision. **Do not read "green and
-mutation-tested" as "audited".**
+⚠ **THIS DOC IS 82 B OVER ITS 65,536 B CEILING** (65,618). The next round will be REFUSED until it
+evicts — that is the ratchet working, and `handoff_doc.py` prints the exact remedy. **Evict before
+you write.** ⚠ **The ceiling is BYTES.** Python's `len(open(p).read())` counts CHARACTERS and this doc
+is dense with `🔴 ⚠ ✅ —`; that gap is 890 B here and it made me report 64,728 for a 65,618 B file.
+**Use `wc -c`.**
 
-⚠ **`schema-drift` is NOT a required status check** and the operator has the exact `gh api` command
-to add it (handed over 2026-09-28, not yet applied). Until then the enum's CONTENT is guarded by
-nothing that can block a merge — **measured: injecting `evil:total:takeover` into the vendored scope
-enum leaves `internal/validate` and `internal/manifest` GREEN.** Required contexts are
-`pins-vs-published, scaffold-currency, build-test, ready-ack-runtime, template-page-vite`;
-`enforce_admins: true`. The cost of adding it is stated in *Gotchas*.
+⚠ **Only `#745` was ever audited for CORRECTNESS**, and that audit found three defects, two
+introduced by the fix itself. `#749` had round 0 only (its three 🟡s fixed, re-verified). `#748` and
+`#747` merged on their own mutation batteries plus CI, by dated operator decision. **"green and
+mutation-tested" is not "audited".**
 
-⚠ **Carried forward — a correction this doc made about itself:** `schema-drift` was NOT "red
-repo-wide". It was red on every PR whose checks **ran** after the canonical changed. `#675` and
-`#602` were never red — their green dates from **2026-09-20** and predates the change. **A stale
-green is not a pass, and it is not a red either.**
+⚠ **NOT DONE, and both are the operator's:** `schema-drift` is still **NOT** a required status check
+(re-read 2026-09-28: `pins-vs-published, scaffold-currency, build-test, ready-ack-runtime,
+template-page-vite`; `enforce_admins: true`) — the exact `gh api` command and its cost were handed
+over; and rank 14's API key. 🔴 **Until then the vendored enum's CONTENT is guarded by nothing that
+can block a merge — MEASURED: injecting `evil:total:takeover` into the scope enum leaves
+`internal/validate` and `internal/manifest` GREEN.** The `gh api` call REPLACES the context list, so
+all six must be spelled or one is silently un-required. ⚠ **No `clawgate-task:`** — `resolve` exited
+**5**, `NOTHING RESOLVED`; an unknown session id answers 200 with an empty array, so that zero is not
+a clean bill of health. ⚠ **`#675`/`#602` were never red on `schema-drift`** — their green dates from
+**2026-09-20** and predates the canonical change, so they never re-ran. **A stale green is not a pass,
+and it is not a red either.**
 
 ## Open investigations — live diagnosis state
 
@@ -305,42 +306,32 @@ enumeration** — two sources, different methods, same conclusion. All of it re-
 
 ## Next steps (ranked)
 
-🔴 **Numbering frozen and cumulative.** 1–11 settled; 13, 15–22, 25, 26, **12** closed; **14, 27, 28**
-live.
+🔴 **Numbering frozen and cumulative.** 1–11 settled; 13, 15–22, 25, 26, 12, 28 closed; **14, 27** live.
 
-1–11. ✅ **DONE** — the arc through build-and-ship. forcing: user/gate — satisfied
-12. ✅ **CLOSED 2026-09-28** — `#747`. The rank's premise held and grew: the `bump` job's
+1–11, 13, 15–22, 25, 26. ✅ **CLOSED** earlier — 20/21/22 as `#735`/`#733`/`#734` (2026-09-27),
+    25/26 as `#745`/`#742`. forcing: gate/user/security/regression — satisfied
+12. ✅ **CLOSED 2026-09-28** — `#747`. The rank's premise grew: the `bump` job's
     `validate — scaffold builds against the bumped SDK` step LOOKS equivalent and provably is not —
     plain `npm install` auto-installs peers and repairs the defect (measured both ways, npm 11.19.0).
     forcing: regression — satisfied
-13, 15–22, 25, 26. ✅ **CLOSED** earlier — 20/21/22 as `#735`/`#733`/`#734` (2026-09-27), 25/26 as
-    `#745`/`#742`. forcing: gate/user/security/regression — satisfied
-14. 🔴 **BLOCKED ON THE OPERATOR — one action, then it runs.** T1 "ship-ready". **Every other
-    precondition is now verified live** (2026-09-28): XDG isolation works
-    (`XDG_CONFIG_HOME=/tmp/t1cfg civitai whoami` → no token, while the real login stays intact), all
-    10 driver env vars exist, the `t1` brief + `ship.verdict.sh` floor grader are on `main`, and
-    `--max-cost`'s $1.00 default binds mimo near **~375** steps so a 140-step cell will not hit it.
-    Baseline for blockId attribution: 100 submissions (AT the cap), 13 distinct blockIds, **no
-    `ab-t1-*`**. ⚠ **Two figures this doc carried are WRONG and were corrected by measurement:** the
-    OpenRouter key limit is **$20**, not "$48.97 of $50" (usage $0.0313), and `pending` is **5**, not
-    0 — so a T1 submission queues behind them. What is left is the key plus the run.
-    **Carried forward, do not lose again:** the operator selected *spend Buzz on a generated cover*
-    from a four-option question on 2026-09-27 — **a SELECTION, not a quote; do not attribute words to
-    them**; **no image tooling is needed** (icon aspect 0.9–1.1 ← `1:1`, cover 1.3–2.4 ← `16:9`,
-    geometry read by `internal/appapi/imageinfo.go` and ATTACH refuses a bad shape legibly); 🔴 a
-    moderator **REJECTION deletes the listing and every attached asset**, and a run including
-    `submit` **cannot be credential-bounded**; ⚠ do **not** grade on reaching `approved` inside the
-    trial — measured review latency is median ~5.6 min with a tail to **741 min**.
+14. 🔴 **BLOCKED ON THE OPERATOR — the key, then it runs.** T1 "ship-ready". Every other precondition
+    verified live 2026-09-28: XDG isolation works, all 10 driver env vars exist, the `t1` brief +
+    `ship.verdict.sh` floor grader are on `main`, `--max-cost`'s $1.00 default binds mimo near
+    **~375** steps. Baseline: 100 submissions (AT the cap), 13 blockIds, **no `ab-t1-*`**. ⚠ the
+    OpenRouter limit is **$20** (usage $0.0313) and `pending` is **5** — a T1 submission queues behind
+    them. The operator selected *spend Buzz on a generated cover* 2026-09-27 — **a SELECTION, not a
+    quote**; **no image tooling needed**; 🔴 a moderator **REJECTION deletes the listing and every
+    attached asset**; ⚠ do not grade on `approved` inside the trial (median ~5.6 min, tail **741 min**).
     forcing: user — asked 2026-09-25, decided 2026-09-27
-27. 🔴 **FIX THE MOVED SELF-BLOCK — both sites, one PR, based on `#749`.** Full diagnosis, the
-    asymmetric remedy and the two-literal trap are in *Open investigations*. **Closing condition:**
-    adding a value to the canonical's `contentRating` enum leaves `go test ./...` GREEN, shown red at
-    the PR's own base, AND a guard fails if either literal reappears.
+27. 🔴 **THE ONLY CODE WORK LEFT — fix the MOVED self-block, both sites, one PR.** Now unblocked
+    (`#749` merged). Diagnosis, the two-literal trap and the asymmetric remedy are in *Open
+    investigations*. **Closing condition:** adding a value to the canonical's `contentRating` enum
+    leaves `go test ./...` GREEN, shown red at the PR's own base, AND a guard fails if either literal
+    reappears.
     forcing: regression — the fix for a self-blocking guard reintroduced one
-28. **MERGE `#749` once its audit ladder ends.** 13/13 green; round 0 dispatched 2026-09-28. Rank 27
-    is based on it, so it lands first. ⚠ Its own agent reported two things UNEXERCISED — the
-    `signal` job and the `prnote` interpolation are YAML-parsed, not run.
-    forcing: gate — the other half of a guard that has blocked the bot 5 times
+28. ✅ **CLOSED 2026-09-28** — `#749` merged after round 0 + three 🟡 fixes. Its own agent flagged the
+    `signal` job and the `prnote` interpolation as **still unexercised** (YAML-parsed, not run).
+    forcing: gate — satisfied
 
 ## Gotchas / decisions / dead-ends
 
@@ -744,46 +735,57 @@ so you know whether to open it: a backtick inside a double-quoted `echo` EXECUTE
   hand-edited mirror — because a canonical-side change is caught by the daily bot regardless. The
   `gh api` call REPLACES the context list, so all six must be spelled or one is silently un-required.
 
+### Added 2026-09-28 (close) — every mistake I made had ONE cause: I asserted where I should have derived
+
+- 🔴 **FIVE FALSE ZEROS AND ONE FALSE PREMISE, ONE ROOT CAUSE.** (a) "blocked five times" — counted
+  issues by TITLE, never opened one. (b) "2 sites" for a retraction sweep — it was **6**; I used one
+  pattern shape, the agent used three plus a positive control. (c)/(d) two greps that reported a
+  present claim MISSING because the phrase **wraps** and the grep is line-based. (e) a guessed path
+  (`internal/validate/revendor_owed_signal_test.go`) when the file is at the repo ROOT — the diffstat
+  one line above already said so. (f) `len(open(p).read())` = CHARACTERS against a BYTE ceiling, an
+  890 B gap. **Every one was caught by a subagent or by reading CONTENT. Derive the path, vary the
+  pattern shape, and use a positive control — then the count is worth quoting.**
+- 🔴 **AN AUDIT'S REPRODUCTION CAN BE MECHANICALLY WRONG WHILE ITS FINDING IS RIGHT.** The `owed`
+  defect was reported as *"`set -uo pipefail` with no `-e`, so any `jq` failure goes silent"*. GitHub
+  runs every `run:` block as **`bash -e {0}`** — errexit IS on, and **that workflow's own header says
+  so, citing two prior incidents**. The defect is real with a NARROWER trigger: `jq` exits **0
+  printing nothing** on EMPTY input, which is what a truncated ledger write produces. **Re-derive a
+  mechanism before relaying it; the file often already contains the answer.** `via: measurement`
+- ⚠ **`rerere` is ENABLED here and CACHED my conflict resolution** (`Recorded resolution for …`). Mine
+  was verified per-claim on both sides, so replay is safe — but anyone re-doing that merge gets my
+  answer without being asked. This arc has already been bitten by a cached BAD resolution.
+- ⚠ **`gh pr merge` can report `already merged` for a merge it just performed.** Confirmed benign:
+  `mergedBy` was this account and `autoMergeRequest` was null. Read those two fields before treating
+  it as a third party.
+
 ## How to verify
 
-Every check reports a CONTROL beside its result; a bare count or zero is not a measurement.
+🔴 **Run every repo script with `env -u CDPATH`** — exported `CDPATH` makes `cd` echo, so
+`$(cd … && pwd)` yields a two-line path and `check-canonical-schema.sh` claims `DRIFTED` over a
+byte-identical file.
 
-🔴 **Run every repo script below with `env -u CDPATH`** — see *Gotchas*, added 2026-09-28. Without it
-`check-canonical-schema.sh` reports a confident `FAIL: … has DRIFTED` over a **byte-identical** file.
-
-**Rank 25 — the mirror matches the canonical** (expect `OK`, control: a one-byte edit must give
-`FAIL`):
 ```bash
 CLI=/home/zach/workspace/civit/cli
-git -C "$CLI" worktree add --detach /tmp/wt-sd origin/main
-(cd /tmp/wt-sd && env -u CDPATH bash scripts/check-canonical-schema.sh); echo "rc=$?"   # want 0 + OK
-(cd /tmp/wt-sd && sed -i 's/"maxItems": 32/"maxItems": 33/' schema/app-block.manifest.schema.json \
-  && env -u CDPATH bash scripts/check-canonical-schema.sh >/dev/null 2>&1; echo "CONTROL rc=$?")  # want 1
-git -C "$CLI" worktree remove --force /tmp/wt-sd
+git -C "$CLI" worktree add --detach /tmp/wt-v origin/main
+(cd /tmp/wt-v && env -u CDPATH bash scripts/check-canonical-schema.sh); echo "rc=$?"   # 0 + OK
+(cd /tmp/wt-v && sed -i 's/"maxItems": 32/"maxItems": 33/' schema/app-block.manifest.schema.json \
+  && env -u CDPATH bash scripts/check-canonical-schema.sh >/dev/null 2>&1; echo "CONTROL rc=$?")  # 1
+(cd /tmp/wt-v && go test ./internal/validate/ -count=1 && go test . -count=1 -run TestRevendor -v \
+  | grep -cE '^=== RUN')      # want >=1; a -run matching nothing prints ok
+git -C "$CLI" worktree remove --force /tmp/wt-v
 ```
 
-**The two guards that were self-blocking** (expect both PASS; control: they were RED at `origin/main`
-with the new schema in place). Run inside the same `/tmp/wt-sd` worktree:
-`go test ./internal/validate/ -count=1 -v -run 'TestEnumFindingsKeepTheirExactWording|TestPatternRulesCoverTheVendoredSchema'`
+**Rank 27's own red-at-base control** (the mutation that proves the self-block is still there):
+`"enum": ["g", "pg", "pg13", "r", "x"]` → append `, "nc17"` in the vendored schema, then
+`go test ./internal/validate/ -run TestEnumFindingsKeepTheirExactWording` → expect
+`pattern_test.go` `Fatalf`. Revert after.
 
-Since `#749` that `-run` filter is **no longer total over the pattern half** — the reconciliation moved
-into `glossLedgerProblems` with its own guards, and one of them
-(`TestGlossLedgerUpdateFlagDefaultsOff`) is the only thing that sees the mutation which disarms the
-whole ledger. Widen it to `'TestEnumFindingsKeepTheirExactWording|TestPatternRulesCoverTheVendoredSchema|TestGloss|TestUnglossed'`,
-and **count the `=== RUN` lines** — a `-run` filter matching nothing prints `ok`.
-
-**The sensitive set matches the DEPLOYED server constant** (expect the same 7; `origin/release`, not
-`main`):
-```bash
-git -C $CIVITAI fetch origin release
-git -C $CIVITAI show origin/release:src/shared/constants/block-scope.constants.ts \
-  | sed -n '/^export const SENSITIVE_BLOCK_SCOPES/,/^]);/p' | grep -o "'[a-z:]*'"
-grep -c '": {},' /home/zach/workspace/civit/cli/internal/validate/semantic.go   # the Go mirror
-```
-
-⚠ **The root Go package needs a browser** — `go test ./...` fails on this host with `no Chromium on
-PATH`, which is an ENV gap and not a failing trial. Run it as
+⚠ **The root Go package needs a browser** — 3 oracle tests fail with `no Chromium on PATH` (env gap,
+identical at base). Run it as
 `nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) go test . -count=1'` (~342 s).
+
+⚠ **Read wrapped prose on NORMALISED text** — `tr '\n' ' ' | tr -s ' '` before grepping a claim, or a
+line-based grep reports a present phrase as MISSING.
 
 ## Defects (batched)
 
