@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -61,6 +62,17 @@ func patternFixtures() []patternFixture {
 			manifest: `{"blockId":"My First App!",` + base + `}`,
 			field:    "blockId",
 			got:      "My First App!",
+		},
+		{
+			// A SPACE and a "!", the same shape as the blockId fixture, because
+			// the two patterns' messages must be told apart while the offending
+			// value looks identical — the cross-row absence assertion is what
+			// reads this row.
+			name:     "goods.id",
+			pattern:  `^[a-z0-9][a-z0-9_-]*$`,
+			manifest: `{"blockId":"ok-app","goods":[{"id":"Extra Credits!","title":"Extra credits","priceBuzz":100}],` + base + `}`,
+			field:    "goods[0].id",
+			got:      "Extra Credits!",
 		},
 		{
 			name:     "version",
@@ -209,6 +221,14 @@ func TestPatternGlossesAreTheRightWayRound(t *testing.T) {
 	}{
 		{`^[a-z][a-z0-9-]*[a-z0-9]$`, "lowercase letters, digits and hyphens", "my-first-app",
 			"a slug alphabet with a first- and last-character rule"},
+		// The fragment names UNDERSCORES because that is the whole difference
+		// from the blockId row above: same lowercase-slug family, one extra
+		// legal character and no last-character rule. A fragment quoting the
+		// shared part would sit inside blockId's rule too and the absence half
+		// would stop working — which is exactly what the pairwise
+		// non-containment check below is there to catch.
+		{`^[a-z0-9][a-z0-9_-]*$`, "underscores and hyphens", "extra-credits",
+			"a slug alphabet that also admits _ and constrains only the FIRST character"},
 		{`^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`, "semantic version", "1.0.0",
 			"exactly three numeric components plus an optional prerelease"},
 		{`\S`, "non-whitespace", "A tiny image tool",
@@ -327,8 +347,30 @@ func TestPatternFindingsCarryTheRuleAndAnExample(t *testing.T) {
 //
 // The enum messages are the standard the pattern gloss was written to match, so
 // they are the thing a rewrite of schemaErrors is most likely to change by
-// accident. They are asserted BYTE-EXACT, not by fragment: the point is that
-// they did not move at all.
+// accident. The message is asserted BYTE-EXACT, not by fragment: the point is
+// that it did not move at all.
+//
+// 🔴 WHAT IS PINNED IS THE SHAPE, AND WHAT IS DERIVED IS THE CONTENT — because
+// pinning both made this guard SELF-BLOCKING, measured. `schema/` is a vendored
+// mirror (AGENTS.md item 1) re-synced by `revendor-canonical-schema.yml`, which
+// runs the suite on its own output before opening a PR. This test used to spell
+// out all thirteen scopes, so the canonical adding `goods:read:self` /
+// `goods:purchase:self` reddened it — and the automation whose whole job is to
+// land that change could not land it: it could never accept a canonical that
+// ADDS an enum member, which is the ordinary way a capability list changes. So
+// WHICH values are allowed now comes from the vendored schema, and the sentence
+// they are rendered into is spelled here.
+//
+// 🔴 THIS UNBLOCKS ENUM GROWTH ONLY — IT DOES NOT MAKE THE RE-VENDOR BOT
+// SELF-SUFFICIENT, and do not read it as doing so. There are TWO guards over the
+// mirror and this is one of them: a canonical that adds a `pattern` still reds
+// `TestPatternRulesCoverTheVendoredSchema` until a human writes the gloss, so
+// the bot could not have self-landed even the change that motivated this edit
+// (the `goods` canonical added BOTH two scopes and the `goods[].id` pattern).
+// That is deliberate — a gloss is English prose about what a regex MEANS, which
+// cannot be derived, and a bot shipping a bare regex to app authors would be
+// worse than a red check. Expect a canonical that adds a pattern to need a
+// human; expect an enum-only one not to.
 func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"zz",` +
 		`"scopes":["models:read:self","bogus:scope"],"kind":"page",` +
@@ -337,13 +379,58 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	for _, f := range manifestOnlyFindings(t, body) {
 		got[f.Field] = f.Message
 	}
+
+	// enumMessage is the SHAPE, written out once and literally: the field
+	// prefix, the library's lead-in, each value in single quotes, ", " between
+	// them, schema order preserved. Nothing here is read out of the code under
+	// test.
+	enumMessage := func(field string, allowed []string) string {
+		quoted := make([]string, len(allowed))
+		for i, v := range allowed {
+			quoted[i] = "'" + v + "'"
+		}
+		return field + ": value must be one of " + strings.Join(quoted, ", ")
+	}
+
+	// 🔴 THE TEMPLATE IS ANCHORED, NOT TRUSTED. If both halves were derived, the
+	// shape claim would rest on this file's own template and nothing could fail:
+	// reword the library's lead-in and `want` moves with `got`. So the template
+	// must first REPRODUCE, byte for byte, a message a human wrote out in full.
+	// contentRating is the anchor because it is the site-wide rating system
+	// rather than an app-blocks capability list, so unlike `scopes` it is not
+	// expected to grow — and it is asserted against the real output below too,
+	// making template, schema and validator agree three ways.
+	const wantContentRating = "contentRating: value must be one of 'g', 'pg', 'pg13', 'r', 'x'"
+	if tmpl := enumMessage("contentRating", schemaEnum(t, "properties", "contentRating", "enum")); tmpl != wantContentRating {
+		t.Fatalf("the enum message SHAPE moved — every expectation derived from it below is "+
+			"now meaningless, so this is fatal rather than an error\n  want: %s\n  got:  %s",
+			wantContentRating, tmpl)
+	}
+
+	scopes := schemaEnum(t, "properties", "scopes", "items", "enum")
+	// CONTENT control on the derived half. schemaEnum already fatals on a
+	// missing or empty enum, but not on resolving to the WRONG array, and a
+	// set that lost long-standing members is a real regression rather than
+	// growth. These two are the oldest and the most consequential member.
+	//
+	// 🔴 IT NAMES TWO MEMBERS AND GUARDS ONLY THOSE TWO — it is NOT a shrink
+	// detector for the enum as a whole, and must not be quoted as one. Measured:
+	// dropping `apps:storage:read` or `collections:write:self` from the vendored
+	// enum leaves this whole package GREEN. The shrink direction is owned by
+	// `schema-drift` (`scripts/check-canonical-schema.sh`), which normalises with
+	// `jq -S` and compares against the LIVE canonical, so it reds on any dropped
+	// value — a strictly stronger instrument than a hand-typed list here, which
+	// is why this list is deliberately not grown to all fifteen.
+	for _, must := range []string{"models:read:self", "posts:write:self"} {
+		if !slices.Contains(scopes, must) {
+			t.Fatalf("the schema's scope enum does not contain %q — %d values read, so this "+
+				"is reading the wrong node or the canonical lost a scope: %v", must, len(scopes), scopes)
+		}
+	}
+
 	want := map[string]string{
-		"contentRating": "contentRating: value must be one of 'g', 'pg', 'pg13', 'r', 'x'",
-		"scopes[1]": "scopes[1]: value must be one of 'models:read:self', 'user:read:self', " +
-			"'ai:write:budgeted', 'buzz:read:self', 'social:tip:self', 'apps:storage:read', " +
-			"'apps:storage:write', 'apps:storage:shared:read', 'apps:storage:shared:write', " +
-			"'collections:read:self', 'collections:write:self', 'collections:read:private', " +
-			"'posts:write:self'",
+		"contentRating": wantContentRating,
+		"scopes[1]":     enumMessage("scopes[1]", scopes),
 	}
 	for field, wantMsg := range want {
 		if got[field] != wantMsg {
@@ -396,6 +483,53 @@ func TestPostsWriteSelfScopeAccepted(t *testing.T) {
 	if !hit {
 		t.Fatal("removing the justification produced no scopeJustifications finding naming posts:write:self")
 	}
+}
+
+// schemaEnum returns the `enum` the VENDORED schema declares at an explicit key
+// path, in the schema's own order — which is the order the library renders them
+// in, so a derived message matches byte for byte.
+//
+// The path is spelled by the caller rather than searched for: a search would
+// find "some enum" and could silently move to a different one, which is the
+// failure mode the callers' own content controls exist to catch. Every way of
+// not-finding it is FATAL, because an expectation derived from a missing or
+// empty enum is vacuous rather than wrong — `enum: []` would render "value must
+// be one of " on BOTH sides and agree.
+func schemaEnum(t *testing.T, path ...string) []string {
+	t.Helper()
+	var doc any
+	if err := json.Unmarshal(cli.SchemaJSON, &doc); err != nil {
+		t.Fatalf("vendored schema does not decode: %v", err)
+	}
+	node := doc
+	for i, key := range path {
+		m, ok := node.(map[string]any)
+		if !ok {
+			t.Fatalf("schema path %v: %v is not an object, so %q cannot be read",
+				path, path[:i], key)
+		}
+		if node, ok = m[key]; !ok {
+			t.Fatalf("schema path %v: no %q — this test is reading a shape the schema "+
+				"no longer has", path, key)
+		}
+	}
+	arr, ok := node.([]any)
+	if !ok {
+		t.Fatalf("schema path %v is a %T, not an array of enum values", path, node)
+	}
+	if len(arr) == 0 {
+		t.Fatalf("schema path %v is an EMPTY enum — a message derived from it would be "+
+			"vacuously equal to the one the validator produced", path)
+	}
+	out := make([]string, 0, len(arr))
+	for i, v := range arr {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("schema path %v item %d is a %T, not a string", path, i, v)
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // schemaPatterns walks the VENDORED schema and returns every `pattern` that can

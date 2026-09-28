@@ -232,6 +232,32 @@ func TestSensitiveScopeJustificationChecks(t *testing.T) {
 			want: nil,
 		},
 		{
+			// goods:purchase:self spends the viewer's Buzz. Membership in
+			// SENSITIVE_BLOCK_SCOPES is asserted by TestIsSensitiveBlockScope;
+			// this is the BEHAVIOURAL half — that being in the set actually
+			// reaches a finding through unjustifiedSensitiveScopes. The two are
+			// different claims and the set can be right while the seam is not.
+			name: "goods:purchase:self unjustified → hard error",
+			generic: map[string]any{
+				"scopes": []any{"goods:purchase:self"},
+			},
+			want: []string{prefix + "goods:purchase:self"},
+		},
+		{
+			// The PAIR case, and the one that would catch goods:read:self being
+			// wrongly added to the sensitive set: both goods scopes declared,
+			// only the purchase half justified ⇒ NO error. If the read half
+			// were sensitive this row fails, naming it.
+			name: "goods:read:self alongside a justified purchase → no error",
+			generic: map[string]any{
+				"scopes": []any{"goods:read:self", "goods:purchase:self"},
+				"scopeJustifications": map[string]any{
+					"goods:purchase:self": "lets the viewer buy the extra credits this app sells",
+				},
+			},
+			want: nil,
+		},
+		{
 			// posts:write:self publishes a PUBLIC post under the viewer's byline.
 			// It must behave like every other sensitive scope: unjustified is a
 			// hard local failure, matching the 400 the server would return.
@@ -301,12 +327,23 @@ func TestSensitiveScopeJustificationChecks(t *testing.T) {
 	}
 }
 
-// TestIsSensitiveBlockScope pins the sensitive set to the server's 6 scopes.
+// TestIsSensitiveBlockScope pins the sensitive set to the server's 7 scopes.
+//
+// This list is spelled out rather than derived, and that is correct even though
+// the sibling enum guard in pattern_test.go now derives its content: the
+// sensitive set is NOT in the vendored schema. It mirrors a separate server
+// constant (SENSITIVE_BLOCK_SCOPES in block-scope.constants.ts), so there is
+// nothing local to derive it from, and a hand-kept list is the honest shape.
+// The cost is that a scope turning sensitive upstream is silent here until
+// someone checks — re-read the DEPLOYED constant (civitai `origin/release`; the
+// site serves `release`, not `main`) when the schema gains a scope.
 func TestIsSensitiveBlockScope(t *testing.T) {
 	sensitive := []string{
 		"ai:write:budgeted", "social:tip:self", "buzz:read:self",
 		"collections:read:private", "apps:storage:shared:write",
 		"posts:write:self",
+		// Spends the viewer's Buzz on the app's own catalog.
+		"goods:purchase:self",
 	}
 	if len(SENSITIVE_BLOCK_SCOPES) != len(sensitive) {
 		t.Fatalf("SENSITIVE_BLOCK_SCOPES has %d entries, want %d", len(SENSITIVE_BLOCK_SCOPES), len(sensitive))
@@ -316,7 +353,11 @@ func TestIsSensitiveBlockScope(t *testing.T) {
 			t.Errorf("isSensitiveBlockScope(%q) = false, want true", s)
 		}
 	}
-	for _, s := range []string{"user:read:self", "apps:storage:shared:read", "collections:read:self", "AI:WRITE:BUDGETED"} {
+	// goods:read:self is the NEAR MISS and the reason it is listed: it arrived in
+	// the same canonical change as goods:purchase:self and reads like its twin,
+	// but the server scopes it to the calling app's own sales, so treating it as
+	// sensitive would demand a justification the server does not ask for.
+	for _, s := range []string{"user:read:self", "apps:storage:shared:read", "collections:read:self", "goods:read:self", "AI:WRITE:BUDGETED"} {
 		if isSensitiveBlockScope(s) {
 			t.Errorf("isSensitiveBlockScope(%q) = true, want false", s)
 		}
