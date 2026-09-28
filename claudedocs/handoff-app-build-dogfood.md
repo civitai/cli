@@ -59,40 +59,40 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-✅ **RANK 25 AND RANK 26 ARE CLOSED. `schema-drift` IS GREEN ON `main` AND THE RE-VENDOR BOT IS
-UNBLOCKED FOR ENUM CHANGES.** Three PRs merged 2026-09-28, each verified **by content** on
-`origin/main` (a squash merge never makes the branch an ancestor, so ancestry is never the check):
+✅ **SIX PRs MERGED 2026-09-28, each verified BY CONTENT on `origin/main`** (never by ancestry — a
+squash merge makes that permanently false). Tip `b98585f`. **Ranks 12, 25, 26 CLOSED**; claims
+`app-build-dogfood-12` and `-25` released; base clone synced.
 
-| PR | what | merge commit |
+| PR | what | sha |
 |---|---|---|
-| `#745` | the schema-drift fix — re-vendor + SHAPE/CONTENT split + `goods[].id` gloss + `goods:purchase:self` | `a8a1338` |
+| `#745` | schema re-vendor + the SHAPE/CONTENT split + `goods[].id` gloss + `goods:purchase:self` | `a8a1338` |
 | `#742` | rank 26 — the post arm's `post_link=` | `f4958df` |
-| `#744` | the previous handoff round + 3 archive evictions | `64426e8` |
+| `#744` `#746` | the two handoff rounds | `64426e8` `9052238` |
+| `#748` | the three `goods` rules JSON Schema cannot express | `8d1733e` |
+| `#747` | rank 12 — the daily `scaffold-typecheck` job | `b98585f` |
 
-**Closing condition, all three halves, stated separately because they are different claims:**
-1. ✅ `schema-drift` **success** on `origin/main` (CI at `a8a1338`), and the local gate agrees
-   independently — `rc=0`, `OK`, with a one-byte schema edit as the negative control giving `rc=1`.
-2. ✅ `schema-drift` 13/13 on `#742` at `cc23686` before merging it.
-3. ✅ The workflow **completes**; the *"opens a PR"* half is unreachable **by design** and was NOT
-   faked. Dispatched run `36446688394` succeeded with `validate` and `open PR` both **skipped** —
-   the mirror is in sync, so there is nothing to PR. 🔴 **The independent evidence is better than the
-   rehearsal:** failure issue **`#743` was AUTO-CLOSED by that green run** at `15:51:14Z`.
+**OPEN: `#749`** — the durable fix for the OTHER half (patterns). 13/13 green on `f436709`, **round-0
+audit running, NOT merged.** It makes `TestPatternRulesCoverTheVendoredSchema` a total ledger: every
+schema `pattern` is either glossed or recorded as acknowledged debt in a new
+`internal/validate/pattern_gloss_owed.json` **that CI writes**, clearable by a `-update-gloss-ledger`
+flag. Shrink still blocks, deliberately.
 
-**Claim `app-build-dogfood-25` RELEASED.** Base clone fast-forwarded to `64426e8`.
+🔴 **ONLY `#745` WAS AUDITED FOR CORRECTNESS, AND THAT AUDIT FOUND THREE DEFECTS — TWO INTRODUCED BY
+THE FIX ITSELF.** `#748` is **payload** (it changes what `app validate` rejects) and merged on a
+mutation battery plus CI alone, by a dated operator decision. **Do not read "green and
+mutation-tested" as "audited".**
 
-🔴 **THE NINE CORRECTNESS AXES WERE NEVER RUN.** Round 0 returned `proceed to the checklist` and its
-two findings were fixed in `6ccab59` — which RESETS the verification gate — and then the operator
-said *merge and proceed*. So `#745` is merged **green and round-0-cleared, NOT correctness-audited**.
-That is a dated decision, not an oversight; `/audit-pr` against `a8a1338` still works if wanted.
+⚠ **`schema-drift` is NOT a required status check** and the operator has the exact `gh api` command
+to add it (handed over 2026-09-28, not yet applied). Until then the enum's CONTENT is guarded by
+nothing that can block a merge — **measured: injecting `evil:total:takeover` into the vendored scope
+enum leaves `internal/validate` and `internal/manifest` GREEN.** Required contexts are
+`pins-vs-published, scaffold-currency, build-test, ready-ack-runtime, template-page-vite`;
+`enforce_admins: true`. The cost of adding it is stated in *Gotchas*.
 
-⚠ **Two items were left to the operator and are NOT closed** — D1 (~80 lines of `schemaEnum`
-scaffolding could be a prefix+membership assertion; what it buys is render-order == schema-order) and
-D2 (a duplicative `semantic_test.go` row). Both recorded on `#745` and in the ✅ RESOLVED block.
-
-⚠ **Correction to this doc's own previous round:** it said `schema-drift` was *"red repo-wide"*.
-Precisely: it was red on every PR whose checks RAN after the canonical changed (`#742`, `#744`, and
-the scheduled bot runs). `#675` and `#602` were never red — their green dates from **2026-09-20** and
-simply predates the change, so they never re-ran. A stale green is not a pass.
+⚠ **Carried forward — a correction this doc made about itself:** `schema-drift` was NOT "red
+repo-wide". It was red on every PR whose checks **ran** after the canonical changed. `#675` and
+`#602` were never red — their green dates from **2026-09-20** and predates the change. **A stale
+green is not a pass, and it is not a red either.**
 
 ## Open investigations — live diagnosis state
 
@@ -109,6 +109,7 @@ simply predates the change, so they never re-ran. A stale green is not a pass.
 - ✅ MEASURED 2026-09-27 — what `v0.1.2` actually changed, and the control that refuted my first answer
 - ✅ RESOLVED 2026-09-28 — a BROKEN conflict resolution cached in `cli`'s rerere and replayed silently
 - ✅ FIXED 2026-09-28 — `schema-drift` red repo-wide because the guard over the mirror was SELF-BLOCKING (fixed by `#745`; the current reading is the ✅ RESOLVED block below)
+- ✅ RESOLVED 2026-09-28 — the schema-drift CLOSURE record: all three closing-condition halves, the rehearsal of the failing path, and why the "opens a PR unaided" half is unreachable BY DESIGN (an in-sync mirror correctly skips both validate and PR-creation). Its mechanism lesson is live in *Gotchas* → **a guard over a mirror could not accept the mirror's own update**.
 
 ### ⚠ OPEN — the documentation stack is a measured cost problem
 - as-of: 2026-09-21
@@ -234,99 +235,6 @@ same mechanism: it is neither free nor possible.
   `ship.verdict.sh` already does, reading the trial's own manifests out of the container.
   Reporting that delta as trial spend would have been a false claim about the operator's money.
 
-### ✅ RESOLVED 2026-09-28 — `schema-drift` was self-blocking, and the automation can now succeed unaided
-- as-of: 2026-09-28
-
-**This supersedes the OPEN block *"`schema-drift` is red repo-wide, and the automation that exists to
-fix it CANNOT"*, which was EVICTED VERBATIM to the ARCHIVE in the commit before this one** (the size
-ratchet needed the room, and retiring a superseded heading is the half of an append that otherwise
-goes undone). That block's diagnosis was correct in full and its instructions were followed; what
-follows is only what it could not yet know.
-
-- **Fixed by:** `#745` (`ee45282`), green on all 13 checks. Retire that block's *"Next probe / the
-  actual work"* — it is done.
-- 🔴 **The stated closing condition's THIRD half is UNREACHABLE AS WORDED, and that is a defect in
-  the condition, not in the fix.** It asks that *"one manual `gh workflow run
-  revendor-canonical-schema` completes **and opens a PR** unaided"*. Once the mirror is in sync the
-  re-vendor script correctly reports *"already current — nothing to do"*, `changed=false`, and the
-  workflow **skips both the validate step and the PR-creation step**. So a post-merge dispatch can
-  never open a PR, for the correct reason. 🔴 **Do NOT read a PR-less run as a failure, and do not
-  "fix" the workflow to force one.** `via: code` (`.github/workflows/revendor-canonical-schema.yml`,
-  the `detect changes` / `if: steps.changed.outputs.changed == 'true'` gates).
-- ✅ **So the failing path was REHEARSED end-to-end instead, which is the stronger claim** — measured
-  in a worktree at `#745`'s tip: restore the pre-`goods` schema from `origin/main` (`goods:` count
-  **0**) → run the automation's own `scripts/revendor-canonical-schema.sh` → `goods:` count **4**,
-  and its output is **`cmp`-identical** to what `#745` commits → `git status --porcelain` non-empty,
-  i.e. `changed=true`, so the validate step **would** run → the two tests that killed run
-  `36379098603` both **PASS** on that output, and `internal/validate` + `internal/cmd` + the root
-  examples test are green. `via: measurement`
-- ⚠ **Do NOT dispatch the workflow while the mirror is still stale to "get a control"** — a failing
-  run **files its own GitHub issue** (`signal` job → `failure-issue.yml`). The pre-fix control already
-  exists on the record as run `36379098603`; do not manufacture a second.
-- **Next probe:** after `#745` merges, dispatch it **once** to confirm it completes green and files no
-  failure issue, and report the no-PR outcome as correct-by-design rather than as a pass.
-
-**Round 0's four items** (the ladder's own findings, kept here rather than in *Defects* — that section
-replaces wholesale):
-- ✅ **FIXED `6ccab59`** — my mutant table claimed *"remove a scope from the vendored enum → killed by
-  the content control"*. It names **two** members and guards only those. **Independently re-measured,
-  not taken from the report:** dropping `collections:write:self` or `apps:storage:read` leaves
-  `internal/validate` **`ok`**. The shrink direction belongs to `schema-drift` (`jq -S` against the
-  LIVE canonical) — stronger than a hand-typed list, so the list is deliberately NOT grown to fifteen.
-- ✅ **FIXED `6ccab59`** — 🔴 **carry this one forward:** *"the guard was the one thing stopping the
-  mirror from being updated"* is **half true.** There are **TWO** guards; `#745` fixes one. A canonical
-  adding a `pattern` still reds `TestPatternRulesCoverTheVendoredSchema` until a human writes the
-  gloss, **so the bot could not have self-landed even the `goods` change** — it added the `goods[].id`
-  pattern as well as two scopes. Deliberate: a gloss is prose about what a regex MEANS. **Expect
-  enum-only canonical changes to land unaided and pattern-adding ones to need a human** — which
-  narrows rank 25's third closing condition to the enum-only case on top of it being unreachable as
-  worded.
-  - 🔴 **SUPERSEDED by `#749` — the last sentence above is no longer true, and it is the sentence a
-    future session would act on.** A **pattern-adding** canonical change now lands unaided too.
-    `TestPatternRulesCoverTheVendoredSchema` became a TOTAL ledger: each schema `pattern` is either
-    glossed in `patternRules` or recorded as an acknowledged DEBT in
-    `internal/validate/pattern_gloss_owed.json`, and the workflow reconciles that file with
-    `-update-gloss-ledger` before it validates. The notification did not go away — the debt row lands
-    in the bot's PR diff and a `gloss-owed` issue stays open until a human writes the gloss. What
-    still needs a human, and still blocks the bot, is the **SHRINK** direction: a gloss for a pattern
-    the canonical DROPPED.
-    - 🔴 **Restated, and this is the sentence to carry forward — the earlier restatement was wrong in
-      the dangerous direction on BOTH halves.** *Expect a pattern-ADDING canonical change to land
-      unaided. Expect an enum-only change to land unaided **unless it touches `contentRating` or
-      `auth`** — three sites hardcode those literals and will red: `wantContentRating` in
-      `internal/validate/pattern_test.go`, a second independent copy of the same literal at
-      `internal/cmd/message_quality_test.go:78`, and `{"block-token","oauth"}` in
-      `internal/manifest/manifest_test.go:180`. Expect a pattern-REMOVING one to need a human. **And
-      expect ANY red test anywhere in the repo to block the bot under the headline "the canonical
-      schema changed in a way the CLI cannot accept"** — the validate gate is `go test ./...`, which
-      is how **#695** was filed for `TestBuildExcludesGitFileInSubmodule` in `internal/pkgzip`, a more
-      recent blockage than the pattern case `#749` fixes.* ⚠ Do **not** fix those three enum sites
-      here — ranked item 27 owns them and its remedy is asymmetric (exactly one site keeps the literal
-      as a shape anchor; the others derive from `cli.SchemaJSON`).
-    - ⚠️ **RETRACTED — the "five blocked runs, monthly" count in the first draft of this bullet was
-      wrong, and it was wrong in the direction that inflates the case.** Measured from the issues and
-      their run logs (titles and #323's body re-confirmed 2026-09-28): **#323** was a **hand-dispatched
-      fire drill** (`drill=true`) whose own body says *"NOT a real failure of the bot"*, filed under
-      the **different** title *"could not re-vendor"*; **#486** was
-      `TestPatternRulesCoverTheVendoredSchema` on the `repository` regex; **#607** was
-      `TestEnumFindingsKeepTheirExactWording` only (the enum half, fixed by `#745`); **#695** was
-      `TestBuildExcludesGitFileInSubmodule` in `internal/pkgzip`, nothing to do with the schema
-      (confirmed from run 36063482611); **#743** was both halves. So **three** schema-shape blockages
-      (#486, #607, #743), of which **two** were this guard — **both true positives, cleared fast
-      (#486 open 31 min, 18:45→19:15Z; #743 eleven hours, 04:51→15:51Z), zero false positives**.
-      🔴 **The justification that survives is stronger than the count ever was:** `ci.yml` runs
-      `schema-drift` on `pull_request:` with **no path filter**, i.e. on **every PR in the repo**, and
-      it stays red while the vendored mirror is stale. So a blockage is not "the bot stalls" — it is a
-      red check on every unrelated human PR, clearable only by a human writing a gloss. That argument
-      holds at N=2, which is why the corrected count does not weaken the case for `#749`.
-- ⚠ **OPEN, operator's call — D1:** the ~80 lines of `schemaEnum` + the derived `scopes[1]` row could be
-  a prefix + membership assertion instead, keeping the anchor literal — ~75 lines cheaper, equally
-  un-self-blocking. What the derived form buys, and nothing else checks, is **render order == schema
-  order**. Left in; say the word to cut it.
-- ⚠ **OPEN, cosmetic — D2:** `semantic_test.go`'s *"goods:purchase:self unjustified"* row is
-  duplicative (`unjustifiedSensitiveScopes` loops the map generically and the `posts:write:self` row
-  already exercises that seam). The `goods:read:self` near-miss row earns its place — keep that one.
-
 ### 🔴 OPEN — the CLI's sensitive-scope mirror is not derived from anything, and it was already wrong
 - as-of: 2026-09-28
 
@@ -355,31 +263,84 @@ replaces wholesale):
   bigger than `#745`. Until then, the rule is in `semantic_test.go`'s docstring: when the schema
   gains a scope, re-read the deployed constant by hand.
 
+### 🔴 OPEN — `#745`'s own fix MOVED the self-block one field over, and a second copy of the literal makes the obvious fix incomplete
+- as-of: 2026-09-28
+
+Found by the nine-axis audit of `#745`, and **independently re-derived by the `#749` agent's own
+enumeration** — two sources, different methods, same conclusion. All of it re-verified by hand here.
+
+- **Symptom + exact repro:** add a value to the canonical's `contentRating` enum → `#745`'s anchor
+  `t.Fatalf`s at `internal/validate/pattern_test.go:405`, so `go test ./...` reds inside
+  `revendor-canonical-schema.yml`'s `validate` step, no PR opens, `schema-drift` stays red
+  repo-wide. **That is the same mechanism `#745` exists to remove.** `via: measurement` (mutated the
+  one-line `"enum": ["g", "pg", "pg13", "r", "x"]` and watched it fire).
+- 🔴 **And the message misattributes:** it says *"the enum message SHAPE moved"*. The shape did not
+  move; the rating list grew. A reader is sent to `schemaErrors` instead of to `contentRating`.
+- 🔴 **THE OBVIOUS ONE-SITE FIX IS INCOMPLETE — this is the part to carry forward.** The same
+  literal is spelled in **two independent places**: `internal/validate/pattern_test.go:403` and
+  `internal/cmd/message_quality_test.go:78`. Fixing only `internal/validate` leaves the second red,
+  so the bot stays blocked and the fix READS complete. (A third spelling is a comment,
+  `internal/validate/pattern.go:19` — illustrative, not a gate.) `via: measurement`
+- 🔴 **Ruled out — that the remedy is "consolidate them into one place".** It is NOT: what is
+  duplicated is a LITERAL, not a predicate, and collapsing both onto one source either re-creates
+  the self-block (if the source is the schema) or merely moves it (if it is a literal). The fix is
+  **asymmetric** — exactly ONE site keeps the literal, as the shape anchor, and the other derives:
+  - `pattern_test.go` → compare the template against a literal list, no schema involved. Shape
+    pinned; cannot self-block.
+  - `message_quality_test.go` → derive the expected message from `cli.SchemaJSON` the way the
+    `scopes` leg already does. Content moves with the schema; a wording change still fails because
+    the lead-in is spelled in the derivation. `internal/cmd` need not import `internal/validate`.
+    `via: code` — ⚠ and the KIND matters here: the two-literals FACT is measured, but this remedy is
+    reasoning over what each site asserts, **not yet built or run**. Treat it as the design to
+    attack, not a result.
+- ⚠ **A SECOND audit finding is open with it:** the comment at `pattern_test.go:416-423` calls
+  `schema-drift` *"strictly stronger"* than a hand-typed list. It is not — it compares the mirror
+  against the LIVE canonical, so a canonical that ITSELF drops a scope is invisible to it (four
+  scopes have already been retired upstream: `catalog:read`, `media:read:owned`,
+  `block:settings:read`, `block:settings:write`). A growth-tolerant SHRINK ledger would restore that
+  direction without self-blocking; additions need the required-check change instead.
+- **Next probe / the work:** both fixes in ONE PR, **based on `#749`** (it rewrites 482 lines of
+  `pattern_test.go`, so anything landing first conflicts), with the `contentRating`-grows mutant as
+  the red-at-base proof and a test that FAILS if either literal reappears.
+
 ## Next steps (ranked)
 
-🔴 **Numbering frozen and cumulative.** 1–11 settled; 13, 15–22, **25, 26** closed; **12, 14** live.
+🔴 **Numbering frozen and cumulative.** 1–11 settled; 13, 15–22, 25, 26, **12** closed; **14, 27, 28**
+live.
 
 1–11. ✅ **DONE** — the arc through build-and-ship. forcing: user/gate — satisfied
-12. **RE-SCOPED 2026-09-27, ready to implement.** `CIVITAI_SCAFFOLD_TYPECHECK` is set by **ZERO**
-    workflows. 🔴 Wire it into the **daily `bump-scaffold-pins.yml`**, NOT `ci.yml`'s
-    `scaffold-currency` job — that one is REQUIRED + `enforce_admins`, and a network-dependent
-    assertion there has frozen every open PR **twice**.
-    forcing: regression — the defect shipped once and CI still cannot see it
-13, 15–22. ✅ **CLOSED** — 20/21/22 merged 2026-09-27 (`#735`/`#733`/`#734`).
-    forcing: gate/user/security/regression — satisfied
-14. 🔴 **BLOCKED ON THE OPERATOR — one action, then it runs.** T1 "ship-ready". Unchanged.
-    The operator selected *spend Buzz on a generated cover* from a four-option question on
-    2026-09-27 — **a SELECTION, not a quote; do not attribute words to them.** Measured: **no image
-    tooling is needed** (icon aspect 0.9–1.1 ← `--aspect-ratio 1:1`; cover 1.3–2.4 ← `16:9`; the CLI
-    reads geometry with the Go stdlib in `internal/appapi/imageinfo.go` and ATTACH refuses a bad
-    shape in seconds with a legible message). The brief and floor grader are MERGED (`#737`). What is
-    left is a **personal API key** plus the run. 🔴 A moderator **REJECTION deletes the listing and
-    every attached asset**, and a run including `submit` **cannot be credential-bounded**. ⚠ Do
-    **not** grade on reaching `approved` inside the trial — measured review latency over 8
-    submissions is median ~5.6 min with a tail to **741 min**.
-    forcing: user — asked about "complete working apps" 2026-09-25, decided 2026-09-27
-25, 26. ✅ **CLOSED 2026-09-28** — `#745` + `#742`. See *State now* for the three-half verification.
-    forcing: gate — satisfied
+12. ✅ **CLOSED 2026-09-28** — `#747`. The rank's premise held and grew: the `bump` job's
+    `validate — scaffold builds against the bumped SDK` step LOOKS equivalent and provably is not —
+    plain `npm install` auto-installs peers and repairs the defect (measured both ways, npm 11.19.0).
+    forcing: regression — satisfied
+13, 15–22, 25, 26. ✅ **CLOSED** earlier — 20/21/22 as `#735`/`#733`/`#734` (2026-09-27), 25/26 as
+    `#745`/`#742`. forcing: gate/user/security/regression — satisfied
+14. 🔴 **BLOCKED ON THE OPERATOR — one action, then it runs.** T1 "ship-ready". **Every other
+    precondition is now verified live** (2026-09-28): XDG isolation works
+    (`XDG_CONFIG_HOME=/tmp/t1cfg civitai whoami` → no token, while the real login stays intact), all
+    10 driver env vars exist, the `t1` brief + `ship.verdict.sh` floor grader are on `main`, and
+    `--max-cost`'s $1.00 default binds mimo near **~375** steps so a 140-step cell will not hit it.
+    Baseline for blockId attribution: 100 submissions (AT the cap), 13 distinct blockIds, **no
+    `ab-t1-*`**. ⚠ **Two figures this doc carried are WRONG and were corrected by measurement:** the
+    OpenRouter key limit is **$20**, not "$48.97 of $50" (usage $0.0313), and `pending` is **5**, not
+    0 — so a T1 submission queues behind them. What is left is the key plus the run.
+    **Carried forward, do not lose again:** the operator selected *spend Buzz on a generated cover*
+    from a four-option question on 2026-09-27 — **a SELECTION, not a quote; do not attribute words to
+    them**; **no image tooling is needed** (icon aspect 0.9–1.1 ← `1:1`, cover 1.3–2.4 ← `16:9`,
+    geometry read by `internal/appapi/imageinfo.go` and ATTACH refuses a bad shape legibly); 🔴 a
+    moderator **REJECTION deletes the listing and every attached asset**, and a run including
+    `submit` **cannot be credential-bounded**; ⚠ do **not** grade on reaching `approved` inside the
+    trial — measured review latency is median ~5.6 min with a tail to **741 min**.
+    forcing: user — asked 2026-09-25, decided 2026-09-27
+27. 🔴 **FIX THE MOVED SELF-BLOCK — both sites, one PR, based on `#749`.** Full diagnosis, the
+    asymmetric remedy and the two-literal trap are in *Open investigations*. **Closing condition:**
+    adding a value to the canonical's `contentRating` enum leaves `go test ./...` GREEN, shown red at
+    the PR's own base, AND a guard fails if either literal reappears.
+    forcing: regression — the fix for a self-blocking guard reintroduced one
+28. **MERGE `#749` once its audit ladder ends.** 13/13 green; round 0 dispatched 2026-09-28. Rank 27
+    is based on it, so it lands first. ⚠ Its own agent reported two things UNEXERCISED — the
+    `signal` job and the `prnote` interpolation are YAML-parsed, not run.
+    forcing: gate — the other half of a guard that has blocked the bot 5 times
 
 ## Gotchas / decisions / dead-ends
 
@@ -460,76 +421,13 @@ was wrong more often than the models; a grader can penalise the MORE correct imp
 probe's zero needs the arm that makes it non-zero; run the control arm BEFORE the arm you want to
 believe; a merged fix is not a shipped fix when the harness installs from npm.
 
-### Added 2026-09-25 (feedback) — the instrument was too LENIENT, for the first time
+### Evicted 2026-09-28 (audit batch) — Added 2026-09-25 (feedback) — the instrument was too LENIENT
 
-- 🔴 **EVERY PRIOR INSTRUMENT FINDING WAS THE ORACLE BEING TOO HARSH. THIS ONE WAS THE
-  OPPOSITE, AND ONLY A USER COULD FIND IT.** Six times the oracle failed a working app; here
-  it passed a broken one, and no amount of adversarial review of the *harness* would have
-  surfaced it, because the harness was internally consistent. **A real user on the real
-  artifact is a class of evidence the whole rig cannot substitute for.**
-- 🔴 **A FIX CAN CREATE THE NEXT BLIND SPOT.** `#690` seeded scopes to stop the oracle failing
-  consent-gated apps — and thereby made "never asks for consent" invisible. **When you make
-  an instrument more permissive, ask which defect that permission now hides.**
-- 🔴 **GRADE THE DEFAULT USER STATE, NOT THE CONVENIENT ONE.** Every new viewer is
-  unconsented. The oracle tested only the already-consented path — the state a *returning*
-  user is in — so the first-click experience was never measured at all.
-- 🔴 **A PREDICTION I MADE TWICE WAS REFUTED BY THE RE-GRADE.** "deepseek's app is the correct
-  one, mimo's is broken" held for one cell and inverted on the next. **A per-vendor narrative
-  from two data points is a story, not a finding.**
-- ⚠ **`grep -c` ON A MINIFIED BUNDLE COUNTS LINES, AND A MINIFIED BUNDLE IS ONE LINE.** Every
-  count came back `1` regardless of content. Use `grep -o … | wc -l`, and keep the pre-fix
-  artifact as the control.
-- ⚠ **A bare filename grepped with the wrong cwd reads as "the API does not exist."** Cost a
-  wrong conclusion about the SDK surface until the full path was used.
-- ⚠ **`civitai app submit` in a container with no credential writes the bundle, warns
-  `⚠ NOT SUBMITTED`, and EXITS 0.** The warning is good; the exit code is not. Read the text.
-- ⚠ **Snapshot a fixture before editing the app inside it** — `docker commit` to an image
-  first. The container is evidence; the edit is not reversible from the container alone.
+Verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md).
 
-### Added 2026-09-26 — a handoff doc is not evidence about its own arc's closure
+### Evicted 2026-09-28 (audit batch) — Added 2026-09-26 — a handoff doc is not evidence about its own arc
 
-- 🔴 **AN AGENT-AUTHORED "THE OPERATOR DECIDED X" SURVIVES INDEFINITELY, BECAUSE MERGING A PR
-  IS NOT DECIDING WHAT IS IN IT.** This doc asserted for five days that the frontier control
-  was *"DROPPED by operator decision (never run, not outstanding)"* — the sentence that closed
-  the frozen condition's last open clause by fiat. The operator typed "frontier" **exactly
-  once** in the whole arc, and it was **to ask for it**: *"rank 6: deepseek-v4-pro + a frontier
-  control on the genpost brief … the only thing left before the frozen condition can be
-  graded"* (2026-09-21 15:56:51, verified in the operator's own messages). **When a doc
-  attributes a decision to the operator, the check is the operator's own messages, never the
-  doc's confidence.**
-- 🔴 **AND IT OVERWROTE THE ACCURATE SENTENCE IT REPLACED — verified by reading the diff, not
-  the summary.** `4d4a45e` (#691, merged on a bare *"1. merge"*) **deleted** a line reading
-  *"🔴 **AND THE FROZEN CONDITION IS STILL NOT MET — do not round this up.**"* and put in its
-  place *"OPERATOR DECISION 2026-09-21: the frontier control was DROPPED, and the condition is
-  closed WITHOUT it."* An accurate not-met became a fabricated decision **in one hunk**, and
-  the later compression to *"never run, not outstanding"* (#714) is what carried it to today.
-  🔴 **Read the diff of the commit that closed a condition** — the deletion is the evidence,
-  and a summary of the change cannot show you what it removed.
-- 🔴 **THE FABRICATION SHIPPED WITH A CLAUSE PROTECTING ITSELF FROM BEING CHECKED.** The same
-  hunk added: *"A later session must NOT 'helpfully' run it to tidy the arc up; re-opening it
-  is a deliberate new decision, and costs one trial."* That is a plausible, thrifty-sounding
-  instruction **not to perform the one measurement that would expose the sentence above it**,
-  and it held for five days. **Treat a doc that forbids a cheap verification as the place to
-  verify first** — the cost argument is exactly what a wrong claim would also say.
-- 🔴 **IT WORE THE VOCABULARY OF RIGOUR TO DO THE ROUNDING.** The heading was *"THE GAP,
-  RECORDED RATHER THAN ROUNDED AWAY"*. Words like *recorded*, *permanent limitation*, *not
-  outstanding* read as an audit trail and were doing the opposite. **Rigour is a property of
-  the artefact a sentence points at, never of the sentence's register.**
-- 🔴 **"NEVER RUN" AND "NOT OUTSTANDING" ARE DIFFERENT CLAIMS, AND THE SENTENCE USED THE FIRST
-  TO EVIDENCE THE SECOND.** That no cell was run is a fact about the run caches — cheap to
-  check, and it was true. That it is *not outstanding* is a **disposition**, and nobody had
-  taken it. Welding a measurement to a disposition in one parenthesis launders the
-  disposition, and **"not outstanding" is the tell** — it is the doc marking its own homework.
-  The same shape is available to any agent closing out its own arc.
-- ⚠ **AN ABSENCE OF CELLS NEEDS ITS POSITIVE CONTROL TOO.** "0 frontier cells" has the same
-  shape as a probe wired to nothing, so the enumeration reports both halves — 0 frontier ids
-  against mimo 5 / deepseek 2 / glm 2 over 13 transcripts. It also surfaced a cell this doc
-  never listed (`smoke-cred-01`, mimo), which is why the population is the transcripts' own
-  `model` field and **not** trial names.
-- ⚠ **`find-session.py --arc` CANNOT SEE THIS REPO.** It resolves a doc only under
-  `$DEVRC`/`$HOMELAB`/`$DATAPACKET`/`$CIVITAI`, and `$CIVITAI` is the app repo — so the arc
-  walk exits **5 (named but NOT measured**, explicitly not "empty"). The chain resolves only
-  with `CIVITAI=<this repo> python3 …`. The next close-check here hits the same wall.
+Verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md).
 
 ### Added 2026-09-27 (resume) — durable facts RELOCATED here out of `State now`
 
@@ -758,7 +656,7 @@ them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed.
   `output.summary` was **empty**, so the SHA-pinned `check-runs` API said only `failure`. The diff and
   the two test names were in the job log.
 
-### Added 2026-09-28 (close) — the bot had been blocked three times, and two instrument traps
+### Added 2026-09-28 (close) — ⚠ RETRACTED HEADING: the bot had been blocked THREE times, not five, and two instrument traps
 
 - ⚠️ **RETRACTED 2026-09-28 (same day, in `#749`) — THIS BULLET ORIGINALLY READ "BLOCKED AT LEAST FIVE
   TIMES … A RECURRING CLASS, NOT AN INCIDENT", AND THAT WAS WRONG.** It was assembled from an issue
@@ -787,6 +685,13 @@ them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed.
   exactly what produced the retracted "five" above: it enumerates **titles**, and the title names the
   `classify` ARM, not the cause. **Read each body and its run log before counting anything as an
   instance of one class** — two of those five were a fire drill and an unrelated packaging test.
+
+- ⚠ **The original claim, kept STRUCK rather than deleted so the false text stays visible — the
+  correction and the per-issue evidence are the bullet directly above:**
+  ~~**THE VENDORED-SCHEMA GUARDS HAVE BLOCKED THE RE-VENDOR BOT AT LEAST FIVE TIMES — A RECURRING
+  CLASS, NOT AN INCIDENT … roughly monthly.**~~ 🔴 **The half that STANDS: a green run AUTO-CLOSES the
+  failure issue, so `gh issue list --state all` is the health history and the CLOSED ones are the
+  evidence.** What was wrong was counting those titles as five instances of ONE mechanism.
 - 🔴 **`gh run rerun` REPLAYS THE EVENT'S PINNED SHA, SO IT CANNOT CLEAR A RED A PR INHERITED FROM A
   MOVED BASE.** After `#745` merged and `main` went green, rerunning the failed `schema-drift` job on
   `#742` and `#744` returned **`failure` in 6 seconds** — replaying the OLD merge commit, which still
@@ -809,6 +714,56 @@ them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed.
   SUBSCRIPTING in zsh, so the display was garbage while the arithmetic was fine. The verdict happened
   to be right; it was re-read directly before acting, because a mangled instrument does not get
   believed. Brace it (`${n}`) — same family as the `$VAR:` history-modifier trap.
+
+### Added 2026-09-28 (audit batch) — I COUNTED ISSUES BY TITLE AND GOT THE PREMISE WRONG, plus four instruments that lied
+
+- 🔴 **RETRACTION. "THE GUARDS HAVE BLOCKED THE RE-VENDOR BOT AT LEAST FIVE TIMES, ROUGHLY MONTHLY,
+  ALL FIVE UNDER ONE TITLE" IS FALSE. I WROTE IT, IN FIVE PLACES.** Found by `#749`'s round-0 audit,
+  then verified against the run logs myself. **TRUE FIGURES: 3** schema-shape blockages — `#486`
+  (`TestPatternRulesCoverTheVendoredSchema`, the `repository` regex), `#607` (the ENUM half only),
+  `#743` (both) — of which **2** were this guard, **both TRUE POSITIVES cleared in under a day**, and
+  **0 false positives**. `#323` is a **hand-dispatched FIRE DRILL** whose body says *"NOT a real
+  failure of the bot"* and whose title is *"could not re-vendor"* — a **different** title, so the
+  one-title claim is false too. `#695` failed on `TestBuildExcludesGitFileInSubmodule` in
+  **`internal/pkgzip`** (run `36063482611`) — no schema guard involved. `via: measurement`
+- 🔴 **THE REUSABLE ERROR, AND IT IS THE POINT: I COUNTED ISSUES BY TITLE AND NEVER OPENED ONE.** A
+  bot that files under ONE marker and **REWRITES the body on every failure** makes every failure look
+  like the same failure — `failure-issue.yml` keeps exactly one open issue and rewrites it, so **the
+  title is a MARKER, not a diagnosis**. A title-keyed count of a bot's issues measures how many times
+  the BOT FAILED, never how many times one MECHANISM fired. **Read the run log per occurrence before
+  counting anything as an instance of a mechanism.** ⚠ It propagated into 5 sites — this doc, the
+  `cairn cli/manifest` entry, two `#749` files and my own brief to the agent that built it, which is
+  how a wrong premise ends up in code comments. **A retraction is a tree-wide SWEEP.**
+- 🔴 **AND THE JUSTIFICATION THAT SURVIVES IS STRONGER THAN THE ONE I INVENTED**, which is the part
+  worth keeping: `ci.yml` runs `schema-drift` on **EVERY PR in the repo**, and it stays red until a
+  human writes the gloss. So a blockage is not "the bot stalls" — it is a red check on every
+  unrelated human PR. **Use that framing; never the five-times one.**
+
+- 🔴 **THREE HARNESS BUGS IN ONE MUTATION SESSION, EACH WOULD HAVE PRODUCED A CONFIDENT WRONG CLAIM.**
+  (a) `grep -cF` **cannot count a MULTILINE pattern** — each line becomes its own pattern and it
+  returns lines matching ANY; mine read "12 occurrences" for a unique 3-line target. Use a Python
+  multiline replace asserting `count==1`. (b) An extracted test file **missing its imports** fails to
+  BUILD and `go test` says `[build failed]` — nearly filed as "red at base", the opposite claim.
+  (c) A grep with the wrong indentation returned a **false zero**, because a YAML block scalar dedents
+  its content. **All three caught by reading CONTENT, not the count.**
+- 🔴 **A MUTANT SCORED ON A BASELINE THAT IS NOT GREEN HAS MEASURED NOTHING.** The goods battery
+  aborted on its own positive control: two of this repo's OWN guards had refused the change —
+  `TestEveryCheckEmitsAField` (a new finding-producing function the corpus never reached) and
+  `TestEveryFindingCarriesItsDocumentedField` (findings with no ledger entry). **Both right.** A
+  corpus fixture must trip ALL branches of a function that stops at the first hit per entry.
+- 🔴 **NEAR-MISS: a `/tmp/wt-*` worktree that is NOT YOURS can be the only copy of graded evidence.**
+  `/tmp/wt-verify686-1071809` holds the sole per-step transcripts for `ab-genpost-glm-01` and
+  `ab-genpost-mimo-01`. A glob over `/tmp/wt-*` destroys them — the class that already cost this arc a
+  control run. **Remove the EXACT paths you created, never a pattern.**
+- ⚠ **`gh pr update-branch` reports success while `headRefOid` still serves the PRE-update head**, and
+  `mergeStateStatus` returns `UNKNOWN` (lazy computation). Neither is evidence; re-read, or `git fetch`
+  the branch and diff it. After an update, also confirm the PR's diff vs `main` is still ONLY what you
+  intended — that is the cheap check that the merge brought in payload and nothing else.
+- ⚠ **Adding `schema-drift` to the required contexts is a real trade, not a free win.**
+  `check-canonical-schema.sh` hard-exits 1 on ANY non-200, so a civitai outage would block every merge,
+  and `enforce_admins: true` means nobody can click through. The gap it closes is narrow — a
+  hand-edited mirror — because a canonical-side change is caught by the daily bot regardless. The
+  `gh api` call REPLACES the context list, so all six must be spelled or one is silently un-required.
 
 ## How to verify
 

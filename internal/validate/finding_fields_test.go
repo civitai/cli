@@ -126,6 +126,21 @@ func findingFieldLedger() []fieldExpectation {
 				"are correct — and not per-scope, because the server emits ONE message " +
 				"naming them all and this mirror is byte-identical on purpose"},
 
+		// --- semantic.go: goodsChecks -----------------------------------
+		// PER-ELEMENT-AND-SUB-KEY throughout, unlike the sensitive-scope rule
+		// directly above. That difference is not a style choice: the server
+		// emits one message per offending goods ENTRY (its forEach returns), so
+		// `goods` alone would collapse several independent problems onto one
+		// address, and the index plus the key is the only thing that points a
+		// consumer at a line.
+		{"duplicates an earlier good id", "goods[1].id",
+			"the SECOND occurrence is the offender — the first is legal, and renaming " +
+				"it would change what an already-granted entitlement is keyed by"},
+		{"title must be a non-empty string", "goods[2].title",
+			"the value that is blank; the entry itself is otherwise well-formed"},
+		{"payload must serialize to at most", "goods[3].payload",
+			"the oversized value, not the entry: every other field of it is fine"},
+
 		// --- targets.go -------------------------------------------------
 		{"is not a known slot", "targets[0].slotId",
 			"PER-ELEMENT rule: the index plus the sub-key, so a consumer can point at a line"},
