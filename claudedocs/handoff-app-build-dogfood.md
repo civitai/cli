@@ -289,10 +289,36 @@ replaces wholesale):
     `-update-gloss-ledger` before it validates. The notification did not go away — the debt row lands
     in the bot's PR diff and a `gloss-owed` issue stays open until a human writes the gloss. What
     still needs a human, and still blocks the bot, is the **SHRINK** direction: a gloss for a pattern
-    the canonical DROPPED. **Restated: expect enum-only and pattern-ADDING canonical changes to land
-    unaided; expect a pattern-REMOVING one to need a human.** The count of blocked runs was also
-    higher than this doc implies — five (#323, #486, #607, #695, #743), monthly, each auto-closed by a
-    later green run, which is why it read as a string of one-offs.
+    the canonical DROPPED.
+    - 🔴 **Restated, and this is the sentence to carry forward — the earlier restatement was wrong in
+      the dangerous direction on BOTH halves.** *Expect a pattern-ADDING canonical change to land
+      unaided. Expect an enum-only change to land unaided **unless it touches `contentRating` or
+      `auth`** — three sites hardcode those literals and will red: `wantContentRating` in
+      `internal/validate/pattern_test.go`, a second independent copy of the same literal at
+      `internal/cmd/message_quality_test.go:78`, and `{"block-token","oauth"}` in
+      `internal/manifest/manifest_test.go:180`. Expect a pattern-REMOVING one to need a human. **And
+      expect ANY red test anywhere in the repo to block the bot under the headline "the canonical
+      schema changed in a way the CLI cannot accept"** — the validate gate is `go test ./...`, which
+      is how **#695** was filed for `TestBuildExcludesGitFileInSubmodule` in `internal/pkgzip`, a more
+      recent blockage than the pattern case `#749` fixes.* ⚠ Do **not** fix those three enum sites
+      here — ranked item 27 owns them and its remedy is asymmetric (exactly one site keeps the literal
+      as a shape anchor; the others derive from `cli.SchemaJSON`).
+    - ⚠️ **RETRACTED — the "five blocked runs, monthly" count in the first draft of this bullet was
+      wrong, and it was wrong in the direction that inflates the case.** Measured from the issues and
+      their run logs (titles and #323's body re-confirmed 2026-09-28): **#323** was a **hand-dispatched
+      fire drill** (`drill=true`) whose own body says *"NOT a real failure of the bot"*, filed under
+      the **different** title *"could not re-vendor"*; **#486** was
+      `TestPatternRulesCoverTheVendoredSchema` on the `repository` regex; **#607** was
+      `TestEnumFindingsKeepTheirExactWording` only (the enum half, fixed by `#745`); **#695** was
+      `TestBuildExcludesGitFileInSubmodule` in `internal/pkgzip`, nothing to do with the schema
+      (confirmed from run 36063482611); **#743** was both halves. So **three** schema-shape blockages
+      (#486, #607, #743), of which **two** were this guard — **both true positives, cleared fast
+      (#486 open 31 min, 18:45→19:15Z; #743 eleven hours, 04:51→15:51Z), zero false positives**.
+      🔴 **The justification that survives is stronger than the count ever was:** `ci.yml` runs
+      `schema-drift` on `pull_request:` with **no path filter**, i.e. on **every PR in the repo**, and
+      it stays red while the vendored mirror is stale. So a blockage is not "the bot stalls" — it is a
+      red check on every unrelated human PR, clearable only by a human writing a gloss. That argument
+      holds at N=2, which is why the corrected count does not weaken the case for `#749`.
 - ⚠ **OPEN, operator's call — D1:** the ~80 lines of `schemaEnum` + the derived `scopes[1]` row could be
   a prefix + membership assertion instead, keeping the anchor literal — ~75 lines cheaper, equally
   un-self-blocking. What the derived form buys, and nothing else checks, is **render order == schema
@@ -732,15 +758,35 @@ them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed.
   `output.summary` was **empty**, so the SHA-pinned `check-runs` API said only `failure`. The diff and
   the two test names were in the job log.
 
-### Added 2026-09-28 (close) — the bot had been blocked five times, and two instrument traps
+### Added 2026-09-28 (close) — the bot had been blocked three times, and two instrument traps
 
-- 🔴 **THE VENDORED-SCHEMA GUARDS HAVE BLOCKED THE RE-VENDOR BOT AT LEAST FIVE TIMES — THIS WAS A
-  RECURRING CLASS, NOT AN INCIDENT.** `[schema-revendor-bot] the canonical schema changed in a way
-  the CLI cannot accept`: issues **#323** (08-10), **#486** (08-24), **#607** (09-15), **#695**
-  (09-25), **#743** (09-28). Roughly monthly. Nobody had connected them, because each one reads as a
-  one-off and the bot closes its own issue on the next green run. 🔴 **A green run AUTO-CLOSES the
-  failure issue, so `gh issue list --state all --search 'revendor in:title'` is the health history —
-  and the closed ones are the evidence, which is exactly why the pattern stayed invisible.**
+- ⚠️ **RETRACTED 2026-09-28 (same day, in `#749`) — THIS BULLET ORIGINALLY READ "BLOCKED AT LEAST FIVE
+  TIMES … A RECURRING CLASS, NOT AN INCIDENT", AND THAT WAS WRONG.** It was assembled from an issue
+  *title* search, which is the trap: the title is written by whichever `classify` arm fired, so one
+  headline covers unrelated causes. Corrected from the issues' bodies and run logs:
+  | issue | what actually failed |
+  |---|---|
+  | **#323** (08-10) | a **hand-dispatched FIRE DRILL** (`drill=true`) — its body says *"NOT a real failure of the bot"*, and its title is *"could not re-vendor"*, a **different** title (the `revendor-failed` arm) |
+  | **#486** (08-24) | `TestPatternRulesCoverTheVendoredSchema` — the pattern guard, on the `repository` regex |
+  | **#607** (09-15) | `TestEnumFindingsKeepTheirExactWording` only — the enum half, fixed by `#745` |
+  | **#695** (09-25) | `TestBuildExcludesGitFileInSubmodule` in **`internal/pkgzip`** — nothing to do with the schema (run 36063482611) |
+  | **#743** (09-28) | **both** halves |
+
+  So **three** schema-shape blockages (#486, #607, #743), of which **two** were the pattern guard —
+  **both true positives, cleared fast (#486 open 31 min, 2026-08-24 18:45→19:15Z; #743 eleven hours,
+  2026-09-28 04:51→15:51Z), zero false positives**. 🔴 **Two lessons survive the correction, and they
+  are the durable ones.** First: **the validate gate is `go test ./...`, so
+  ANY red test anywhere in the repo blocks the bot under the headline "the canonical schema changed in
+  a way the CLI cannot accept"** — that is #695, and it means the headline is a claim about which ARM
+  fired, never about the cause. Second: **the case for `#749` does not rest on the count.** `ci.yml`
+  runs `schema-drift` on `pull_request:` with **no path filter**, so it runs on **every PR in the
+  repo** and stays red while the vendored mirror is stale — a single blockage reddens a check on every
+  unrelated human PR until a human writes a gloss. That argument holds at N=2 and is what to lead with.
+- 🔴 **A green run AUTO-CLOSES the failure issue, so `gh issue list --state all --search 'revendor
+  in:title'` is the health history — and the closed ones are the evidence.** ⚠️ But that search is
+  exactly what produced the retracted "five" above: it enumerates **titles**, and the title names the
+  `classify` ARM, not the cause. **Read each body and its run log before counting anything as an
+  instance of one class** — two of those five were a fire drill and an unrelated packaging test.
 - 🔴 **`gh run rerun` REPLAYS THE EVENT'S PINNED SHA, SO IT CANNOT CLEAR A RED A PR INHERITED FROM A
   MOVED BASE.** After `#745` merged and `main` went green, rerunning the failed `schema-drift` job on
   `#742` and `#744` returned **`failure` in 6 seconds** — replaying the OLD merge commit, which still
