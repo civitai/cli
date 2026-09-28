@@ -35,6 +35,20 @@ type Manifest struct {
 	OutputDir    string   `json:"outputDir"`
 	Scopes       []string `json:"scopes"`
 	Auth         string   `json:"auth"`
+	Page         *Page    `json:"page"`
+}
+
+// Page is the manifest's `page` object, partial like its parent — only
+// buzzBudgetPerGen is read, and only so `civitai app dev-token` can compare what
+// the app DECLARES it needs per generation against what the mint actually
+// granted. The declared figure is a SAFETY CEILING the author chose, not an
+// estimate, and nothing at runtime reconciles it with the token's budget.
+//
+// The pointer is load-bearing: an absent `page.buzzBudgetPerGen` and an explicit
+// `0` must stay distinguishable, because "the author declared nothing" has no
+// remedy to print while "the author declared 0" is a manifest bug.
+type Page struct {
+	BuzzBudgetPerGen *int `json:"buzzBudgetPerGen"`
 }
 
 // authKinds is the set of `auth` values the vendored manifest schema admits,
@@ -133,6 +147,32 @@ func LoadScopes(dir string) []string {
 		return nil
 	}
 	return m.Scopes
+}
+
+// LoadPageBuzzBudget reads `page.buzzBudgetPerGen` from the manifest in dir with
+// exactly LoadScopes' degrade-to-nothing rules: a missing manifest, an unreadable
+// file, malformed JSON, no `page` object, or no `buzzBudgetPerGen` member all
+// report (0, false) and are never an error. `civitai app dev-token` reads it to
+// compare the app's DECLARED per-generation budget against the one the mint
+// granted, which is purely informational — it must never be able to fail a mint.
+//
+// The second return is the present/absent bit, NOT a validity bit: a declared 0
+// or a negative reports (v, true) and is the caller's to judge. Collapsing them
+// would make "declared nothing" and "declared something unusable" the same
+// answer, and only the latter has anything worth printing.
+func LoadPageBuzzBudget(dir string) (int, bool) {
+	raw, err := os.ReadFile(Path(dir))
+	if err != nil {
+		return 0, false
+	}
+	var m Manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return 0, false
+	}
+	if m.Page == nil || m.Page.BuzzBudgetPerGen == nil {
+		return 0, false
+	}
+	return *m.Page.BuzzBudgetPerGen, true
 }
 
 // Path returns the manifest path for a project directory.

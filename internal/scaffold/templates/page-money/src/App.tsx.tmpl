@@ -19,6 +19,7 @@ import {
   Card,
   Group,
   SegmentedControl,
+  Slider,
   Stack,
   Textarea,
   injectBlocksStyles,
@@ -649,8 +650,8 @@ export function App() {
 
               {/* LoRA control. Add up to MAX_LORAS LoRAs on top of the checkpoint
                   via the HOST's resource picker (useResourcePicker, type=LORA),
-                  each with an adjustable weight (a themed native range input — the
-                  W6 pack ships no Slider). Every LoRA + weight is DISCOVERY ONLY:
+                  each with an adjustable weight (the W6 pack's own `Slider`).
+                  Every LoRA + weight is DISCOVERY ONLY:
                   the server re-validates (LoRA-only? base-model compatible?
                   entitled?) + re-prices the whole body at estimate/submit. */}
               <LoraSelector
@@ -751,9 +752,9 @@ export function App() {
 
 /**
  * The LoRA selector: an "Add LoRA" button (opens the HOST resource picker) + the
- * selected rows, each with a weight control + Remove. Built from the W6 pack
- * (Group/Stack/Badge/Button) plus a themed native range input (the pack ships no
- * Slider). Every pick + weight is DISCOVERY ONLY — server-revalidated + re-priced.
+ * selected rows, each with a weight control + Remove. Built ENTIRELY from the W6
+ * pack (Group/Stack/Badge/Button/Slider) — no hand-rolled inputs. Every pick +
+ * weight is DISCOVERY ONLY — server-revalidated + re-priced.
  */
 function LoraSelector({
   selected,
@@ -803,21 +804,30 @@ function LoraSelector({
                   Remove
                 </Button>
               </div>
-              <label style={loraWeightRowStyle}>
-                <span style={loraWeightLabelStyle}>weight</span>
-                <input
-                  type="range"
-                  min={LORA_STRENGTH_MIN}
-                  max={LORA_STRENGTH_MAX}
-                  step={0.05}
-                  value={l.weight}
-                  onChange={(e) => onWeight(l.versionId, Number(e.target.value))}
-                  aria-label={`${l.label} weight`}
-                  data-testid="pm-lora-weight"
-                  style={loraRangeStyle}
-                />
-                <span style={loraWeightValueStyle}>{l.weight.toFixed(2)}</span>
-              </label>
+              {/* The pack's own Slider. It wraps a native range input, so it stays
+                  keyboard-operable (arrows / Home / End / PageUp / PageDown) and
+                  carries role="slider" + aria-valuemin/max/now for free, and it
+                  wires the label to the input itself — that is the whole reason to
+                  reach for it instead of hand-rolling. `onChange` hands back the
+                  NUMBER, so there is no `Number(e.target.value)` parse here.
+                  `showValue` renders the current weight at the end of the label
+                  row; setLoraWeight rounds to 2dp, so no float noise reaches it.
+                  `aria-label` names the row's LoRA, because the visible label is
+                  just "weight" and repeats down the list — it CONTAINS that visible
+                  text, so the accessible name still satisfies WCAG 2.5.3 (Label in
+                  Name). Extra props (aria-label, data-testid) pass through to the
+                  input. */}
+              <Slider
+                label="weight"
+                showValue
+                min={LORA_STRENGTH_MIN}
+                max={LORA_STRENGTH_MAX}
+                step={0.05}
+                value={l.weight}
+                onChange={(w) => onWeight(l.versionId, w)}
+                aria-label={`${l.label} weight`}
+                data-testid="pm-lora-weight"
+              />
             </div>
           ))}
         </Stack>
@@ -973,8 +983,9 @@ function pickerBtnStyle(selected: boolean, disabled: boolean): React.CSSProperti
   };
 }
 
-// The W6 pack ships no Slider, so each LoRA's weight uses a themed native range
-// input. These read the same pack CSS vars so the LoRA list matches the surface.
+// LoRA row chrome. These read the same pack CSS vars so the list matches the
+// surface the pack paints. The weight control itself is NOT styled here — it is
+// the pack's own `Slider` (see LoraSelector), which themes itself.
 const loraListStyle: React.CSSProperties = { marginTop: 4 };
 const loraRowStyle: React.CSSProperties = {
   display: 'grid',
@@ -996,15 +1007,6 @@ const loraNameStyle: React.CSSProperties = {
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
-};
-const loraWeightRowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8 };
-const loraWeightLabelStyle: React.CSSProperties = { fontSize: 12, opacity: 0.8, minWidth: 44 };
-const loraRangeStyle: React.CSSProperties = { flex: 1, accentColor: 'var(--civitai-color-primary)' };
-const loraWeightValueStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontVariantNumeric: 'tabular-nums',
-  minWidth: 36,
-  textAlign: 'right',
 };
 const loraAddWrapStyle: React.CSSProperties = {
   display: 'flex',

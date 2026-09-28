@@ -25,8 +25,11 @@ scope is host-mediated (the host resolves the viewer from your block token).
 
 A sandboxed static web app served in an iframe by the Civitai host. Its UI is
 built from the **`@civitai/blocks-react/ui`** W6 component pack (Button, Textarea,
-Card, Stack, Group, Alert, Badge) — the one exception is each LoRA's weight
-control (a themed native range `<input>`, since the pack ships no Slider yet).
+Card, Stack, Group, Alert, Badge, SegmentedControl, Slider) — nothing here is a
+hand-rolled input. Each LoRA's weight is the pack's own `Slider`: a labeled,
+keyboard-operable range whose accent tracks `--civitai-color-primary` and whose
+label / value / description / error are ARIA-wired for you. Reach for a native
+`<input>` only for something the pack genuinely has no primitive for.
 The model + LoRA pickers are the HOST's own — the app never browses a catalog;
 it calls the SDK's `useCheckpointPicker` / `useResourcePicker` hooks and the host
 opens its native resource modal. The pack ships its own theme-aware styles;
