@@ -593,33 +593,12 @@ them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed.
   were caught by an agent declining to repeat my claim, which is the reason to keep asking
   subagents to verify rather than to comply.
 
-### Added 2026-09-28 — process traps hit while investigating traps of the same class
+### Evicted 2026-09-28 (close) — the 2026-09-28 process-traps block
 
-- 🔴 **A BACKTICK INSIDE A DOUBLE-QUOTED `echo` EXECUTED `civitai login`** and hung for two
-  minutes — while I was investigating whether `civitai login` destroys credentials. Single-quote it,
-  or use `git commit -F <file>`.
-- 🔴 **`pkill -f "civitai login"` KILLED ITS OWN REPORTING SHELL**, producing an empty probe I
-  nearly read as a result.
-- 🔴 **`docker exec -d sh -c 'civitai …'` HAS NO LOGIN PATH** — `civitai: not found`. A probe that
-  cannot run the binary returns a zero about itself.
-- 🔴 **`gofmt -l` REPORTS NOTHING ABOUT A FILE THAT DOES NOT PARSE** — it lists *misformatted*
-  files. I read a clean `gofmt -l` over an uncompilable file because I had sent stderr to
-  `/dev/null`. Use `gofmt -e <file>` and read stderr.
-- 🔴 **`git rev-parse --git-common-dir` RETURNS A RELATIVE `.git`**, so a `find` over it searched
-  the WRONG repo from this dispatch hub — the 71-entry `rr-cache` listing I quoted was
-  `datapacket-talos`'s; `cli` has 49. Use `--absolute-git-dir`.
-- 🔴 **A BROKEN CONFLICT RESOLUTION IS CACHED BY `git rerere` IN THE COMMON GIT DIR AND REPLAYED
-  WITH NO MARKERS.** `rerere.enabled` is **global** on this host. `git merge` returned rc 1 and
-  `UU` while the file had zero markers and would not compile. `git rerere forget` REFUSES from that
-  state; the remedy was `rm -rf` of the cache entry, and **`git -c rerere.enabled=false merge` is
-  the one-command discriminator** between "rerere resolved it" and "no conflict". Full record in
-  the `devrc` store's `rules` entry.
-- 🔴 **I DISPATCHED TWO AGENTS INTO ONE SCRATCHPAD TWICE**, after being bitten by it earlier the
-  same day. They collided on `pristine/`, `mutate.py` and `commitmsg.txt`. **Name every scratch
-  path per-agent in the brief** — the agents cannot know about each other.
-- ⚠ **#733 and #734 conflicted in one add/add hunk** whose two sides each end mid-function around a
-  **shared closing brace**, so concatenating both sides — the obvious resolution — yields an
-  unterminated function. Keep both and give the first its own `}`.
+Verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md). Its tells,
+so you know whether to open it: a backtick inside a double-quoted `echo` EXECUTED `civitai login`;
+`pkill -f` killed its own reporting shell and produced an empty probe that read as a result; and
+`docker exec -d sh -c` had no login path, so the probe returned a zero about itself.
 
 ### Added 2026-09-28 — a guard over a mirror could not accept the mirror's own update
 
