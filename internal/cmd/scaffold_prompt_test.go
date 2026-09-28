@@ -13,8 +13,27 @@ import (
 // accidentally launch the huh scaffold form (which would block on terminal
 // input when `go test` inherits a real TTY). Interactive-path tests opt back in
 // explicitly by overriding stdinIsTTY + scaffoldPromptFn.
+//
+// 🔴 IT ALSO POINTS THE RELEASE ENDPOINT AT A DEAD LOOPBACK ADDRESS, for the same
+// reason and with the same escape hatch. `civitai agent-setup --check` now resolves
+// the newest published release to grade its `cli-version` row, and dozens of
+// `--check` tests in this package drive the real command — so on the shipped
+// default every one of them would make an unauthenticated call to api.github.com:
+// a rate limit waiting to be hit and a source of flakes nobody could attribute.
+//
+// A refused connection is the FAIL-SOFT arm, which the row is REQUIRED to report as
+// "could not check / ok: true", so the default here exercises that arm across the
+// whole package rather than skipping the feature. Tests that need the stale,
+// current or ahead arms call `pointAtServer` — the helper that already existed for
+// `version` and `upgrade` — and TestAgentSetupCheckReadsTheRealReleaseEndpoint
+// proves the production path really is wired to this var, so overriding it here
+// cannot hide an unwired feature.
+//
+// Port 1 on loopback: privileged, nothing listens, and the refusal is immediate —
+// no timeout is spent.
 func TestMain(m *testing.M) {
 	stdinIsTTY = func() bool { return false }
+	latestReleaseURL = "http://127.0.0.1:1/no-release-endpoint-in-tests"
 	os.Exit(m.Run())
 }
 

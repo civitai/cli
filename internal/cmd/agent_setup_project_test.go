@@ -105,6 +105,18 @@ func allProjectShapesForTest() []projectShape {
 		Scripts:   knownDevScripts,
 		Templates: scaffoldTemplateRows(),
 	})
+	// 🔴 AND A THIRD npm RENDERING: THE AUTO-SETUP WIZARD BRANCH. `HasSetupWizard`
+	// gates a whole paragraph of the npm arm, so without a shape carrying it every
+	// per-shape guard in this package — the marker pin, the Docs golden, the
+	// command-resolution walk — is silent about that text. It is set on the
+	// with-scripts shape because a project that ships the wizard is a page-money
+	// project, which defines the scripts too.
+	shapes = append(shapes, projectShape{
+		Kind:           projectNPM,
+		Scripts:        knownDevScripts,
+		Templates:      scaffoldTemplateRows(),
+		HasSetupWizard: true,
+	})
 	return shapes
 }
 
