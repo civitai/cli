@@ -59,48 +59,68 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-🔴 **RANKS 20, 21 AND 22 ARE MERGED TO `main`, ON A DATED OPERATOR INSTRUCTION ("merge and
-proceed", 2026-09-27).** `$0` of model spend across the whole session. **Verified BY CONTENT on
-`origin/main`, never by ancestry** — a squash merge never makes the branch head an ancestor:
+🔴 **`schema-drift` IS FIXED AND THE FIX IS GREEN IN CI — as `civitai/cli#745`, NOT YET MERGED.**
+All **13** checks success on SHA-pinned `ee45282a1661eb70a031b38f10b95b9680cc971f`, which equals the
+branch tip, so the rollup is not the stale-head kind. `$0` of model spend this round.
 
-| PR | rank | squash sha | content check that proved it landed |
-|---|---|---|---|
-| `#735` | 20 docs-link corpus | `6b5e381c7` | 0 `apps/responsive` left under `internal/scaffold/templates`, **4** `apps/guide/responsive`; `.github/workflows/docs-links.yml` + `internal/cmd/docs_links_corpus_test.go` present |
-| `#733` | 21 grader path reads | `cf80b1d32` | live code is `MANIFEST_FIND` + `pathdec`, **no `xargs` in any code path** |
-| `#734` | 22 post-path arm | see below | the arm seam + `post_ceiling` token, off-arm shim byte-identical |
+**IN FLIGHT:** `#745` is unmerged by a deliberate operator choice — asked directly, the operator chose
+**audit before merge** over merging on green.
 
-🔴 **THE `#733` CONTENT CHECK IS A TRAP WORTH REPEATING: `git grep 'xargs dirname'` on `main`
-returns SEVEN hits and every one is a DOCBLOCK explaining the defect.** Reading that as "the fix
-did not land" is this arc's own *"pick a string the NEW content introduces, never the identifier the
-work has been discussing"* gotcha. The discriminating check strips comments and reads the live
-assignment lines: `git show origin/main:scripts/dogfood/oracle.sh | grep -vE '^\s*#' | grep -nE
-'APP_DIR=|MANIFESTS=|pathdec'`.
+✅ **ROUND 0 REPORTED: `proceed to the checklist` · requirements: 7 (unattributed: 0) · deletion
+candidates: 2.** It confirmed the change should exist AND should exist as ONE PR — and the part I was
+least sure of, `SENSITIVE_BLOCK_SCOPES`, it justified better than I had: with that **single map entry**
+isolated as the only mutation, `main` gives 1 error, **this PR's schema WITHOUT the entry gives 0 —
+a false PASS** the server 400s, and the full PR gives 1 error byte-identical to the server's. **So the
+schema half of this PR is what OPENS that false pass**; splitting the entry out would ship a regression
+the CLI does not have today. Precedent `#606` shipped the same three-part shape in one commit.
+🔴 **Round 0 does NOT move the ladder — the nine axes have NOT been run. `#745` is green and
+round-0-cleared, NOT audited for correctness.**
 
-🔴 **`#734` NEEDED A REAL MERGE-RESOLUTION COMMIT (`61b4aef`), AND THE RESOLUTION IS THE DURABLE
-PART.** `#733` landed first and added `joinContinuations` to
-`dogfood_ship_verdict_injection_test.go`; `#734` had added `assertEscapedAtAssignment` at the same
-anchor. An **add/add** conflict (base side **0 bytes**) in which BOTH sides end **mid-function around
-a SHARED closing brace** — so concatenating the two sides, which is the obvious resolution, yields an
-**unterminated function**. Kept both, gave the first its own `}`. Resolved on meaning, not on a side:
-`--ours` drops `#733`'s continuation folding, `--theirs` drops `#734`'s assignment check, and both
-are load-bearing.
+🔴 **It found TWO overstated claims of mine, both fixed in `6ccab59` and corrected publicly on the PR**
+(`#745#issuecomment-5864806691`) rather than by a silent body edit — recorded in the ✅ RESOLVED block
+below, NOT in *Defects*, because that section REPLACES wholesale and restating it to append four lines
+would have cost the size ratchet ~2.6 KB of duplicated text.
 
-**Verified on the resolved branch before merging:** `gofmt -e` silent · `go vet` clean · both
-functions present · the four guards spanning both PRs **6 `=== RUN`, all PASS** · full suite with
-Chromium **21 `ok`, 0 `FAIL`, 0 `--- SKIP`, root browser package `ok 239.167s`** (a skipped suite
-returns in ~0 s, so the duration is the control that the real-browser tests RAN) · and the escaper
-guard's own premise survives the merge — `oracle.sh` still carries
-`CEIL_FIELD=" post_ceiling=$(tok "$ACEIL")"`, so round 1's assignment check still has a
-`tok`-wrapped assignment to find.
+**What `#745` contains** (branch `zach/schema-drift-unblock`, `ee45282` + `6ccab59`, 5 files):
+- `schema/app-block.manifest.schema.json` re-vendored — `cmp`-identical to the live canonical,
+  re-fetched and re-checked **immediately before** the commit, and to the preserved
+  `~/.cache/schema-revendor-2026-09-28/` copy, so the canonical did not move in between. **Zero
+  hand-authored bytes**, hence no discretion to review in it.
+- `internal/validate/pattern_test.go` — `TestEnumFindingsKeepTheirExactWording` now pins the message
+  **SHAPE** and derives the **CONTENT** from the vendored schema (new `schemaEnum(t, path...)`).
+  🔴 **NOT loosened, and the distinction is the whole fix:** the template is *anchored* — it must
+  first reproduce, byte for byte, a hand-written `contentRating` message, which is *also* asserted
+  against real validator output, so template + schema + validator agree three ways. `contentRating`
+  is the anchor because it is a site-wide rating system, not a capability list, so it is not expected
+  to grow.
+- `internal/validate/pattern.go` — a gloss for `^[a-z0-9][a-z0-9_-]*$` (`goods[].id`), plus its
+  fixture and ledger row; both parent tests **fatal** on a row-count mismatch, so the gloss could not
+  be added alone.
+- `internal/validate/semantic.go` + `semantic_test.go` — see the `SENSITIVE_BLOCK_SCOPES` block below.
 
-⚠ **STILL OWED, and it cannot be done before the merge:** dispatch `docs-links` once with
-`drill: true`. The workflow did not exist upstream until `#735` landed, so its issue-filing path
-ships **unrehearsed**; the drill appends a known-404 URL to the runner's ephemeral checkout and
-files a REAL issue (close it afterwards).
+**Verification actually performed** (not inferred): both failures reproduced first; **8 mutants, each
+killed by its own named test with its own message** — a field-prefix reword and a simulated library
+lead-in reword (both kill the enum guard, which is what proves the SHAPE half still bites now that
+content is derived), dropping the gloss, the gloss stating `blockId`'s rule, dropping
+`goods:purchase:self` graded twice (membership *and* behavioural seam), wrongly promoting
+`goods:read:self`, and removing a scope from the vendored enum. Green in **both** tiers: 20 packages
+plus the root real-browser package under Chromium (**342 s**) — red on this host without it (`no
+Chromium on PATH`, an env gap, **not** the `dbus` flake recorded elsewhere here).
+`TestExampleManifestsValidateClean` confirmed to have **RUN** (3 `=== RUN` lines). `gofmt`/`vet` clean.
+
+⚠ **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` exited **5** — `NOTHING RESOLVED — 0
+tasks`. An unknown session id answers 200 with an empty array, so that zero cannot distinguish
+"touched no task" from "wrong id". Not a clean bill of health.
+
+⚠ **This round was written into `#744`'s own branch, not as a third version of this doc** — `main` is
+still at `#732` and `#744` was open on the same file, so a separate PR would have hit the hazard this
+doc records as *"rebasing yourself proves nothing about the other open PRs on the same file"*. `#744`'s
+scope now includes this round. **`#744` (doc) and `#745` (fix) touch disjoint files and can land in
+either order; `#742` follows `#745`.**
 
 ## Open investigations — live diagnosis state
 
-🔴 **9 CLOSED blocks were EVICTED, not deleted — they are verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md).** The size ratchet refuses a doc that is over budget and growing; eviction is how a round lands without losing the eliminations a future session would otherwise re-derive. **Read the archive before re-running any probe this arc already ran** — every one of these is a resolved elimination, not current state:
+🔴 **11 CLOSED blocks were EVICTED, not deleted — they are verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md).** The size ratchet refuses a doc that is over budget and growing; eviction is how a round lands without losing the eliminations a future session would otherwise re-derive. **Read the archive before re-running any probe this arc already ran** — every one of these is a resolved elimination, not current state:
 
 - ✅ EXPLAINED 2026-09-21 — glm never wrote code, and "finished" was a truncation
 - ✅ SHIPPED 2026-09-21 — `cli#690` seeds the manifest's scopes; the cheap arm is 2 of 3
@@ -111,6 +131,8 @@ files a REAL issue (close it afterwards).
 - ✅ FIXED 2026-09-25 — the oracle graded only the consented viewer; a live app broken for every new user shipped green
 - ✅ MEASURED 2026-09-26 — rank 15's premise was backwards, and so was my first account of why
 - ✅ MEASURED 2026-09-27 — what `v0.1.2` actually changed, and the control that refuted my first answer
+- ✅ RESOLVED 2026-09-28 — a BROKEN conflict resolution cached in `cli`'s rerere and replayed silently
+- ✅ FIXED 2026-09-28 — `schema-drift` red repo-wide because the guard over the mirror was SELF-BLOCKING (fixed by `#745`; the current reading is the ✅ RESOLVED block below)
 
 ### ⚠ OPEN — the documentation stack is a measured cost problem
 - as-of: 2026-09-21
@@ -172,76 +194,187 @@ same mechanism: it is neither free nor possible.
   same model and diff carry cost. Until then the doc-stack block's figures are a claim
   about `0.1.106` and nothing newer.
 
-### 🔴 RESOLVED but RECORD IT — a BROKEN conflict resolution was cached in `cli`'s rerere and replayed SILENTLY
-- as-of: 2026-09-27
+### 🔴 OPEN — rank 14's third T1 cell is blocked on a credential shape, not on code
+- as-of: 2026-09-28
 
-- **Symptom + exact repro:** merging `origin/zach/dogfood-path-reads` then
-  `origin/zach/dogfood-post-arm` reported `rc=1` and `UU`, but the working-tree file contained
-  **no conflict markers** and failed to parse:
-  `dogfood_ship_verdict_injection_test.go:741:6: expected '(', found assertEscapedAtAssignment`.
-- **Observed (with values):** `git config --global --get rerere.enabled` → **`true`** (global, so
-  every repo on this host). `cli`'s rr-cache held
-  `05f1bf1575478c8235348926cc2e81756fb8a39e/postimage.1` — 41,073 B, **mtime 04:17–04:18**, both
-  functions present, and `gofmt -e` on it reproduces the identical error. Diffed against a correct
-  resolution, the only difference is a missing `}` and a blank line. `via: measurement`
-- **Ruled out — that this was the auditing session's own hand-resolution.** The entry predates it
-  by ~5 h; it was written by an earlier fix agent in the same session. `via: measurement`
-- 🔴 **Why it matters beyond this PR:** `rr-cache` lives in the **common** git dir, so it is
-  repo-global, shared by every worktree, and outlives the worktree that made it — the same hazard
-  class as `refs/stash`. A person merging these two PRs on this machine would have been handed an
-  uncompilable file with **no markers and no warning**; `git status` says `UU`, so one `git add` +
-  commit lands it.
-- **Fix applied + positive control:** the entry was deleted, and a fresh merge then produced real
-  markers at **697/715/816** again. That control is the only thing distinguishing "fixed" from
-  "still silently resolving".
-- **Next probe:** none needed here. The durable question — whether a global `rerere.enabled` is
-  wanted on a host that runs many agents through the same clones — is a devrc/tooling decision,
-  recorded in the `devrc` store scope, not this repo's.
+- **Symptom + exact repro:** two credentialed T1 cells ran; neither reached the publish floor, and
+  **neither failed for a reason about the model or the product**. `$0.031` total model spend,
+  **zero Buzz spent by the trial, zero account mutation attributable to it**.
+- **Observed (with values):** cell `at1` — `stop: max-steps` at **40** steps, `generations: 0`,
+  `submissions: 0`, `$0.0113`, last three calls `npx tsc --noEmit` / `npm run build` /
+  `civitai app validate` (it had BUILT the app and was cut off before the submit-and-media phase).
+  Cause: `driver.sh` had no `--max-steps` pass-through, so every trial was pinned to `runner.py`'s
+  default 40 while a build-only `celsius` cell takes **65** — fixed and merged as `#738`.
+  Cell `at2` — `--max-steps 140`, died `rc=124` (wall-clock timeout) at step **74**, having spent
+  steps **56–74** (18 of 23 minutes) on `civitai login` attempts with 5-minute hangs.
+  `via: measurement`
+- 🔴 **Ruled out — that the credential was MISSING.** Step 60's `cat ~/.config/civitai/config.yaml`
+  recorded `result: "exit code: 0\n[REDACTED:480d887c]\n"` — the read SUCCEEDED and printed the
+  credential. The string *"No config file found"* is in the COMMAND (`… || echo "No config file
+  found"`), never in the output. **I reported the fallback string as the result; that was wrong.**
+  `via: measurement`
+- 🔴 **CAUSE ESTABLISHED — the credential was EXPIRED, not absent.** Steps 55 and 62 both returned
+  `device login failed: Invalid grant: refresh token is invalid (invalid_grant)`. The operator's
+  credential is an **OAuth login** whose `config.yaml` carries `refresh_token` / `token_expiry`;
+  **OAuth refresh is stateful, so a copy inside a container cannot refresh.** `via: measurement`
+- **Ruled out — that `civitai login` destroyed the installed credential.** A cancelled/timed-out
+  `civitai login` leaves an existing stored credential intact, measured directly on the host.
+  `via: measurement`
+- **Ruled out — that the install path is broken.** A control in a FRESH container reproduced the
+  installer exactly: 232 bytes, mode `600`, readable as the trial user. `via: measurement`
+- **Next probe — needs the operator.** Mint a **full-scope personal API key** at
+  `https://civitai.com/user/account` → API Keys (a personal key has no refresh to invalidate), put
+  it in a file (`install -m600 /dev/stdin /tmp/t1-key`), and build an ISOLATED trial credential
+  without touching the live login — `os.UserConfigDir()` honours `XDG_CONFIG_HOME`, verified:
+  `XDG_CONFIG_HOME=/tmp/t1cfg civitai whoami` reports *no token configured* while the real login
+  still works. Then:
+  ```bash
+  XDG_CONFIG_HOME=/tmp/t1cfg civitai login --token "$(cat /tmp/t1-key)"
+  cd /home/zach/workspace/civit/cli/scripts/dogfood   # a worktree off origin/main
+  OPENROUTER_API_KEY="$(tr -d '\r\n' < ~/.config/openrouter/key)" \
+  DOGFOOD_CREDENTIAL_FILE=/tmp/t1cfg/civitai/config.yaml \
+  DOGFOOD_APP_PREFIX=ab-t1- DOGFOOD_TRIAL_PREFIX=at3 DOGFOOD_BRIEF_NAME=t1 \
+  DOGFOOD_MAX_STEPS=140 DOGFOOD_MAX_GENERATIONS=4 DOGFOOD_MAX_SUBMISSIONS=1 \
+  DOGFOOD_MODELS='xiaomi/mimo-v2.5|mimo' DOGFOOD_ENVS='df-node-root|noderoot|root' \
+  DOGFOOD_IDENTITIES='claudeid|CLAUDECODE=1' bash driver.sh
+  ```
+  ⚠ `DOGFOOD_TRIAL_PREFIX` must be NEW (`at3`) or the resume guard skips the cell as complete.
+  ⚠ `runner.py` increments the generation counter for **any** `generate` — **`--dry-run` is NOT
+  exempt** (`runner.py:942`), so a price-check costs a slot; 4 buys 2 images.
+  ⚠ `--max-cost` defaults to **$1.00** and the driver has no pass-through.
+
+### 🔴 OPEN — spend can no longer be graded by balance delta, because the operator uses the same account
+- as-of: 2026-09-28
+
+- **Observed (with values):** during cell `at2`'s window (21:52–22:15) Buzz moved
+  **4,074,007 → 4,073,892 (−115)** in two steps at ~22:11 and ~22:12, and a new submission
+  `yt-thumbnail` v0.1.0 appeared at `22:01:19Z`. **None of it was the trial's.** `via: measurement`
+- **Ruled out — that the trial spent it**, on three independent lines: the trial invoked
+  `civitai generate` **zero** times; **zero** image files exist anywhere under `/work` in its
+  container; and at 22:11–22:12 it was provably inside step 71's five-minute sleep loop. It also
+  created no `ab-t1-*` app on the account at all. `via: measurement`
+- 🔴 **Consequence:** the `dogfood-3`-era method of grading spend as a balance delta is **void**
+  while the operator works the same account. **Attribute by blockId** — which
+  `ship.verdict.sh` already does, reading the trial's own manifests out of the container.
+  Reporting that delta as trial spend would have been a false claim about the operator's money.
+
+### ✅ RESOLVED 2026-09-28 — `schema-drift` was self-blocking, and the automation can now succeed unaided
+- as-of: 2026-09-28
+
+**This supersedes the OPEN block *"`schema-drift` is red repo-wide, and the automation that exists to
+fix it CANNOT"*, which was EVICTED VERBATIM to the ARCHIVE in the commit before this one** (the size
+ratchet needed the room, and retiring a superseded heading is the half of an append that otherwise
+goes undone). That block's diagnosis was correct in full and its instructions were followed; what
+follows is only what it could not yet know.
+
+- **Fixed by:** `#745` (`ee45282`), green on all 13 checks. Retire that block's *"Next probe / the
+  actual work"* — it is done.
+- 🔴 **The stated closing condition's THIRD half is UNREACHABLE AS WORDED, and that is a defect in
+  the condition, not in the fix.** It asks that *"one manual `gh workflow run
+  revendor-canonical-schema` completes **and opens a PR** unaided"*. Once the mirror is in sync the
+  re-vendor script correctly reports *"already current — nothing to do"*, `changed=false`, and the
+  workflow **skips both the validate step and the PR-creation step**. So a post-merge dispatch can
+  never open a PR, for the correct reason. 🔴 **Do NOT read a PR-less run as a failure, and do not
+  "fix" the workflow to force one.** `via: code` (`.github/workflows/revendor-canonical-schema.yml`,
+  the `detect changes` / `if: steps.changed.outputs.changed == 'true'` gates).
+- ✅ **So the failing path was REHEARSED end-to-end instead, which is the stronger claim** — measured
+  in a worktree at `#745`'s tip: restore the pre-`goods` schema from `origin/main` (`goods:` count
+  **0**) → run the automation's own `scripts/revendor-canonical-schema.sh` → `goods:` count **4**,
+  and its output is **`cmp`-identical** to what `#745` commits → `git status --porcelain` non-empty,
+  i.e. `changed=true`, so the validate step **would** run → the two tests that killed run
+  `36379098603` both **PASS** on that output, and `internal/validate` + `internal/cmd` + the root
+  examples test are green. `via: measurement`
+- ⚠ **Do NOT dispatch the workflow while the mirror is still stale to "get a control"** — a failing
+  run **files its own GitHub issue** (`signal` job → `failure-issue.yml`). The pre-fix control already
+  exists on the record as run `36379098603`; do not manufacture a second.
+- **Next probe:** after `#745` merges, dispatch it **once** to confirm it completes green and files no
+  failure issue, and report the no-PR outcome as correct-by-design rather than as a pass.
+
+**Round 0's four items** (the ladder's own findings, kept here rather than in *Defects* — that section
+replaces wholesale):
+- ✅ **FIXED `6ccab59`** — my mutant table claimed *"remove a scope from the vendored enum → killed by
+  the content control"*. It names **two** members and guards only those. **Independently re-measured,
+  not taken from the report:** dropping `collections:write:self` or `apps:storage:read` leaves
+  `internal/validate` **`ok`**. The shrink direction belongs to `schema-drift` (`jq -S` against the
+  LIVE canonical) — stronger than a hand-typed list, so the list is deliberately NOT grown to fifteen.
+- ✅ **FIXED `6ccab59`** — 🔴 **carry this one forward:** *"the guard was the one thing stopping the
+  mirror from being updated"* is **half true.** There are **TWO** guards; `#745` fixes one. A canonical
+  adding a `pattern` still reds `TestPatternRulesCoverTheVendoredSchema` until a human writes the
+  gloss, **so the bot could not have self-landed even the `goods` change** — it added the `goods[].id`
+  pattern as well as two scopes. Deliberate: a gloss is prose about what a regex MEANS. **Expect
+  enum-only canonical changes to land unaided and pattern-adding ones to need a human** — which
+  narrows rank 25's third closing condition to the enum-only case on top of it being unreachable as
+  worded.
+- ⚠ **OPEN, operator's call — D1:** the ~80 lines of `schemaEnum` + the derived `scopes[1]` row could be
+  a prefix + membership assertion instead, keeping the anchor literal — ~75 lines cheaper, equally
+  un-self-blocking. What the derived form buys, and nothing else checks, is **render order == schema
+  order**. Left in; say the word to cut it.
+- ⚠ **OPEN, cosmetic — D2:** `semantic_test.go`'s *"goods:purchase:self unjustified"* row is
+  duplicative (`unjustifiedSensitiveScopes` loops the map generically and the `posts:write:self` row
+  already exercises that seam). The `goods:read:self` near-miss row earns its place — keep that one.
+
+### 🔴 OPEN — the CLI's sensitive-scope mirror is not derived from anything, and it was already wrong
+- as-of: 2026-09-28
+
+- **Symptom:** `civitai app validate` accepted a manifest declaring `goods:purchase:self` with **no**
+  `scopeJustifications` entry; the server rejects it at submit, so the author ate a 400 after a full
+  package+submit round trip. Fixed in `#745`; the *class* is what stays open.
+- **Observed (with values):** `SENSITIVE_BLOCK_SCOPES` in `internal/validate/semantic.go` held **6**
+  entries; the authoritative constant `SENSITIVE_BLOCK_SCOPES` in
+  `<civitai>/src/shared/constants/block-scope.constants.ts` holds **7** on **`origin/release`** —
+  `ai:write:budgeted`, `social:tip:self`, `buzz:read:self`, `collections:read:private`,
+  `apps:storage:shared:write`, `posts:write:self`, `goods:purchase:self`. `via: measurement`
+- 🔴 **Read `origin/release`, NOT `origin/main`** — the site serves `release`, and this doc's own
+  `revendor` notes record that a canonical change can sit on `main` unpublished for days. Both
+  branches happened to agree here; that is luck, not method.
+- 🔴 **Ruled out — that `goods:read:self` is also sensitive.** It is deliberately absent upstream: the
+  server scopes that reply to `claims.appBlockId`, so an app sees only what it itself sold to that
+  viewer. Adding it would demand a justification the server never asks for. A test row in `#745` now
+  fails if anyone adds it. `via: code`
+- 🔴 **Why nothing caught it, and this is the durable half:** every guard in `internal/validate` keys
+  on the **vendored schema**, and this set mirrors a **separate server constant** that is in no schema
+  — so `schema-drift` going red over `goods:` said nothing about it, and the re-vendor automation
+  would have landed the schema with the mirror still wrong. **A hand-kept mirror with no drift-guard
+  is invisible to a drift-guard suite.**
+- **Next probe:** decide whether this set can be machine-checked at all. It is cross-repo, so the
+  options are a generated fixture or a scheduled check that reads the deployed constant — both
+  bigger than `#745`. Until then, the rule is in `semantic_test.go`'s docstring: when the schema
+  gains a scope, re-read the deployed constant by hand.
 
 ## Next steps (ranked)
 
-🔴 **Numbering frozen and cumulative.** 1–11 settled; 13, 15–22 closed; **12 and 14 are the only
-live ranks.** The audit ladder on `#734` is CLOSED — 3 rounds, ended on the rule, not on a verdict.
+🔴 **Numbering frozen and cumulative.** 1–11 settled; 13, 15–22 closed; **12, 14, 25, 26 live.**
 
 1–11. ✅ **DONE** — the arc through build-and-ship. forcing: user/gate — satisfied
-12. **RE-SCOPED 2026-09-27, ready to implement — do NOT work it as originally written.**
-    `CIVITAI_SCAFFOLD_TYPECHECK` is set by **ZERO** workflows (only
-    `internal/scaffold/page_money_typecheck_test.go:54`/`:136`). 🔴 Do **not** wire it into
-    `ci.yml`'s `scaffold-currency` job — that is REQUIRED + `enforce_admins`, and a
-    network-dependent assertion there has frozen every open PR **twice** (`pins-vs-published`; npm
-    10's arborist crash on `vitest@5.0.0`). Wire it into the **daily `bump-scaffold-pins.yml`**,
-    which already installs a page-money app on node 24; marginal cost ~6.5 s. Copy the neighbouring
-    positive-control shape (`-count=1`, grep the log for the test's own `--- (PASS|SKIP|FAIL):`
-    line, a distinct `guard-did-not-run` state). ⚠ Bound the claim: *"every scaffolded page-money
-    app fails its own build"* was **overstated and install-shape-dependent**, so this is regression
-    protection, not a live break. **Closing condition:** the env var is set by ≥1 scheduled
-    non-required job whose log is asserted to contain the typecheck's own result line, shown red by
-    breaking the template's types once and green after; checked by the workflow run.
+12. **RE-SCOPED 2026-09-27, ready to implement.** `CIVITAI_SCAFFOLD_TYPECHECK` is set by **ZERO**
+    workflows. 🔴 Wire it into the **daily `bump-scaffold-pins.yml`**, NOT `ci.yml`'s
+    `scaffold-currency` job — that one is REQUIRED + `enforce_admins`, and a network-dependent
+    assertion there has frozen every open PR **twice**.
     forcing: regression — the defect shipped once and CI still cannot see it
-13. ✅ **CLOSED 2026-09-25** — `v0.1.1` approved; superseded by `v0.1.2`. forcing: user — satisfied
-14. 🔴 **THE ONLY SUBSTANTIVE WORK LEFT IN THIS ARC, AND IT IS NOW UNBLOCKED.** T1 "ship-ready".
-    The operator selected *spend Buzz on a generated cover* from a four-option question on
-    2026-09-27 — **a SELECTION, not a quote; do not attribute words to them** (this arc shipped one
-    fabricated *"the operator decided X"* that survived five days). Measured the same day: **no
-    image tooling is needed** — icon aspect 0.9–1.1 and cover 1.3–2.4 are hit directly by
-    `--aspect-ratio 1:1` (=1.0) and `16:9` (=1.78); `civitai generate` has no `--width`/`--height`,
-    the bucket→pixel mapping is a SERVER-side fact, and the CLI reads geometry with the Go stdlib
-    (`internal/appapi/imageinfo.go`) while ATTACH refuses a bad shape "in seconds" with a legible
-    message — so the retry loop closes with no local measurement capability.
-    **Guardrails that already exist:** `civitai generate --dry-run` spends nothing; `--max-cost`
-    bounds one generation; `--out-dir`/`--out-name` place the file for `listing set-icon|set-cover`;
-    and `runner.py` enforces the `generations`/`submissions` counters **before** `docker exec` —
-    that is the authoritative bound, not a transcript grep (a watchdog matching whole records fires
-    on the CLI's own help text). 🔴 **Hazards that stand:** a moderator **REJECTION deletes the
-    listing and every attached asset**; and a run including `submit` **cannot be
-    credential-bounded** — `app create`/`submit`/`listing` need the account token, only generation
-    can be scoped via `app dev-token`. **Operator present; re-read the Buzz baseline immediately
-    before spending, not when planning.** **Closing condition:** one blind cheap-model trial reaches
-    `approved`/live with an icon AND a cover it generated itself, per `app status --json`; the
-    operator confirms the spend was theirs.
-    forcing: user — asked about "complete working apps" 2026-09-25, decided 2026-09-27
-15–22. ✅ **CLOSED** — 15/16/17/18/19 earlier; **20/21/22 merged 2026-09-27** (`#735`/`#733`/`#734`).
+13, 15–22. ✅ **CLOSED** — 20/21/22 merged 2026-09-27 (`#735`/`#733`/`#734`).
     forcing: gate/user/security/regression — satisfied
+14. 🔴 **BLOCKED ON THE OPERATOR — one action, then it runs.** T1 "ship-ready". Unchanged this round.
+    The operator selected *spend Buzz on a generated cover* from a four-option question on
+    2026-09-27 — **a SELECTION, not a quote; do not attribute words to them.** Measured: **no image
+    tooling is needed** (icon aspect 0.9–1.1 ← `--aspect-ratio 1:1`; cover 1.3–2.4 ← `16:9`; the CLI
+    reads geometry with the Go stdlib in `internal/appapi/imageinfo.go` and ATTACH refuses a bad
+    shape in seconds with a legible message, so the retry loop closes with no local measurement
+    capability). The brief and floor grader are MERGED (`#737`). What is left is a **personal API
+    key** (see the credential-shape block) plus the run. 🔴 A moderator **REJECTION deletes the
+    listing and every attached asset**, and a run including `submit` **cannot be
+    credential-bounded**. ⚠ Do **not** grade on reaching `approved` inside the trial — measured
+    review latency over 8 submissions is median ~5.6 min with a tail to **741 min**.
+    forcing: user — asked about "complete working apps" 2026-09-25, decided 2026-09-27
+25. 🔴 **IN FLIGHT: `civitai/cli#745`** — implemented, all 13 checks green, **unmerged pending a round-0
+    audit** the operator asked for. Claimed as `app-build-dogfood-25`; **release the claim when it
+    merges** (`claim-work --release app-build-dogfood-25`). Two of the three closing-condition halves
+    are met (`schema-drift` green on `#745`; the third is unreachable as worded — see *Open
+    investigations* — and was rehearsed instead). Remaining: land it, confirm `schema-drift` green on
+    `origin/main`, dispatch the re-vendor workflow once.
+    forcing: gate — a required check is red on every open PR in the repo
+26. **MERGE `#742` once 25 lands.** `MERGEABLE`/`UNSTABLE`; its only non-success is the inherited
+    `schema-drift`, which `#745` fixes. It adds `post_link=` to the post arm.
+    forcing: gate — the instrument is blind on the path that produced both live defects
 
 ## Gotchas / decisions / dead-ends
 
@@ -278,47 +411,6 @@ live ranks.** The audit ladder on `#734` is CLOSED — 3 rounds, ended on the ru
   building and none has a render oracle. Checked before minting this slug, so a future
   session does not re-litigate whether this was a duplicate.
 
-### Added 2026-09-21 — the instrument was wrong more often than the models were
-
-- 🔴 **I GRADED AN APP AGAINST THE WRONG ASSERTION AND NEARLY REPORTED IT AS THE RESULT.**
-  `oracle.sh` took the brief as an **optional third positional arg defaulting to `celsius`**.
-  Run against a genpost trial without that arg, it ran the celsius assertion, timed out on
-  `[data-testid="celsius"]`, and printed `RENDER=no`. The app was correct the whole time.
-  **Fixed in `cli#686`:** the brief is now derived from the trial's own transcript, and an
-  argument that DISAGREES with it is refused rather than silently preferred — a disagreement
-  means someone is confused and a verdict either way is worthless.
-- 🔴 **A NEGATIVE CONTROL WAS PASSING VACUOUSLY, AND THE MECHANISM IS REUSABLE.** In the
-  oracle's own tests, `stubOracleEnv` built fixtures under `t.TempDir()`, whose path carries
-  the **test name**, which was spliced into an unquoted `find /work …`. A subtest name with a
-  shell metacharacter produced a syntax error → `manifests=0` → `RENDER=no` — **the expected
-  value of every negative case**. So the control passed for entirely the wrong reason. Found
-  and fixed inside `cli#686`. **Ask what value a broken harness returns; if it equals your
-  expected failure value, the control proves nothing.**
-- 🔴 **AN ORACLE'S ENVIRONMENT IS PART OF ITS VERDICT.** Seeding no signed-in viewer made
-  every auth-gated app fail on a branch production never exhibits — civitai's block-scope
-  middleware **hard-rejects** `posts:write:self` for an anonymous subject, so the brief's
-  behaviour cannot exist there. `cli#686` seeds a viewer shaped byte-for-byte like
-  production's `withSignedInFlag()`, while the stub transport still rejects every request —
-  asserted from inside the page, not by reading source, so "nothing can complete here"
-  remains true.
-- 🔴 **A ROUTINE WORKTREE CLEANUP DESTROYED THE CONTROL RUN'S TRANSCRIPT.** `runs/` lived
-  inside the worktree; `git worktree remove` took it. Two separate analyses then had no
-  per-step data for the one successful run they most needed to compare against. **Copy
-  `runs/<trial>/` out before removing a worktree** — the container survives a cleanup, the
-  transcript does not.
-- ⚠ **A WATCHDOG GREP OVER A WHOLE JSON RECORD RAISES FALSE ALARMS FROM DOCUMENTATION.** My
-  spend monitor matched `civitai generate|app submit` anywhere in a record, and fired four
-  times on the CLI's **own help text and an `AGENTS.md` table** appearing in tool *results*.
-  The authoritative signal is the runner's own `generations`/`submissions` counters, which
-  are enforced before `docker exec`. **Match the command field, not the record.**
-- ⚠ **`main` is intermittently red on a Chromium launch flake** (`dbus` address failure →
-  `browser never printed a DevTools endpoint`). The oracle correctly reports `exit 2 —
-  nothing was measured (this is NOT a failing trial)`, and `build-test` fails anyway because
-  the tests refuse to skip under CI. Seen on at least three runs; clears on re-run. The CI
-  config asks for the fix by name (*"Add a browser install step here (the tests themselves
-  must NOT be loosened into a skip)"*). **Unfixed, and it will keep training people to merge
-  through a required check.**
-
 ### Evicted 2026-09-27 (resume) — four closed 2026-09-21 blocks
 
 🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md) under *Evicted
@@ -337,98 +429,32 @@ conclusions survive in **Added 2026-09-21 (close) — what this arc actually tau
 - the merge round, and a verdict that was about the instrument (the third instrument defect; a
   probe's zero needs the arm that makes it non-zero; a merged fix is not a shipped fix)
 
-### Added 2026-09-21 (close) — what this arc actually taught
+### Evicted 2026-09-28 — five blocks whose lessons this session's entries carry forward
 
-- 🔴 **THE INSTRUMENT WAS WRONG MORE OFTEN THAN THE MODELS WERE — four times, and every
-  time it produced a confident, plausible verdict.** A brief defaulting to `celsius`; an
-  anonymous viewer; a vacuous negative control passing off a shell metacharacter; and an
-  inert token. **Three of the four would have been reported as a model failure.** The
-  working discipline that caught the fourth: *before recording a `RENDER=no` as a result,
-  find the BRANCH the app actually took.* Three source reads did it.
-- 🔴 **A GRADER CAN PENALISE THE MORE CORRECT IMPLEMENTATION, AND NOTHING ABOUT THE VERDICT
-  SAYS SO.** mimo set its status optimistically and passed; deepseek verified it held a
-  budgeted scope before claiming to generate, and failed. **Ask what an app must do to
-  satisfy your assertion, and whether that is the behaviour you actually want to reward.**
-- 🔴 **A PROBE'S ZERO NEEDS THE ARM THAT MAKES IT NON-ZERO.** The old-value harvest returned
-  `[]` on deepseek — indistinguishable from a probe wired to nothing. The same probe on the
-  passing cell returned non-empty, and only then was the zero evidence.
-- 🔴 **RUN THE CONTROL ARM BEFORE THE ARM YOU WANT TO BELIEVE.** The scope experiment ran
-  patched-file-with-the-knob-OFF first. Had that flipped the verdict on its own, the
-  headline arm would have meant nothing — and it is the arm nobody thinks to run.
-- 🔴 **A MERGED FIX IS NOT A SHIPPED FIX when the harness installs from npm.** Pricing
-  `cli#685` was recorded as *"free if folded into rank 6"* and is impossible until a
-  release. **Check the fix is in the ARTEFACT the measurement loads.**
-- ⚠ **A SUBAGENT'S SELF-REPORT WAS ACCURATE AND STILL WORTH RE-DERIVING.** `#690`'s three
-  live verdicts were re-run from a clean checkout of the merge SHA rather than the agent's
-  tree; they matched. The point is not that it lied — it did not, and it volunteered its own
-  coverage gap — but that "verified in the tree that built it" is a different claim.
-- ⚠ **`runner.py --out` defaults to `.`; only `driver.sh` passes `--out runs`.** A
-  hand-rolled trial lands outside where the graders look and is ungradeable until moved or
-  `DOGFOOD_RUNS` names its parent. Nothing errors.
+🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
+under *Evicted 2026-09-28*.** The size ratchet refuses a doc that is over budget and growing; this
+round needed 14,853 B. Each of these is either superseded by an entry added below it or already
+generalised elsewhere — **read the archive before re-running any probe from those phases:**
 
-### Added 2026-09-25 — the instrument, the brief, and three of my own claims that did not survive
+- *the instrument was wrong more often than the models were* (2026-09-21) — summarised by
+  **Added 2026-09-21 (close)**, which is kept
+- *the instrument, the brief, and three of my own claims* + *(ship) what shipping taught*
+  (2026-09-25) — the cost-instrument death and the brief-can-ship-a-bypass rule are restated in
+  the 2026-09-28 blocks
+- *what merging a doc can break* (2026-09-27) — the test-merge-before-landing rule
+- *four cwd-resolution hits, and a tool's verdict read as a fact* (2026-09-27) — **superseded by
+  *Added 2026-09-28 — process traps hit while investigating traps of the same class***, which
+  carries the same traps plus rerere and the scratchpad collisions. The `audit-dispatch --repo`
+  lesson from it also lives in the `devrc` store's `scripts` entry.
 
-- 🔴 **A BRIEF CAN SHIP A BYPASS. Mine nearly did.** I specified the slug-flag allowlist as
-  `{--slug}` on the strength of a literal grep for `"slug"`, which finds three `StringVar`
-  sites and misses `--from` (takes a published app slug), `--name` (slugified into the
-  blockId) and `--dir`. Implemented literally, `--from=some-other-app` would have become an
-  unguarded path to a foreign published app. **When briefing a change to a security check,
-  require the implementer to DERIVE the set from source and guard it — do not hand them a
-  set you grepped.** The seam guard is what makes this survivable; the fix alone would not.
-- 🔴 **I OVERSTATED THE SCAFFOLD DEFECT AS UNIVERSAL AND IT IS INSTALL-SHAPE-DEPENDENT.**
-  "Every scaffolded page-money app fails its own build out of the box" is false under plain
-  `npm install`. **State the install shape, or any "it's broken for everyone" claim is
-  unfalsifiable.**
-- 🔴 **I PASSED ALONG A FALSE CLAIM FROM A CODE COMMENT** — that `c=civitai; $c app submit`
-  is refused. It never was. **A comment asserting a guard is not evidence the guard exists,
-  and quoting one into a brief launders it into a requirement.**
-- 🔴 **COST DIED AS AN INSTRUMENT AND NOTHING WARNED US.** Two runs of the same model on the
-  same task four days apart differed **2.15× in $/1k** with cached share nearly unchanged.
-  Any cross-day dollar comparison in this family confounds provider pricing with the thing
-  under test. **Grade on steps, tokens and behavioural signals.**
-- 🔴 **THE FIX WORKED THROUGH A HALF NOBODY WAS MEASURING.** `#685`'s headline was a local
-  36-hook index; the index was never read. Its *docs-links promotion* is what drove the agent
-  to the hosted reference (1 → 5 HTTP requests). **Ask which half of a two-part change did the
-  work before crediting either.**
-- ⚠ **A `-run` FILTER THAT MATCHES NOTHING PRINTS `ok`.** A scoped `go test -run '<pattern>'`
-  returned `ok` with no test names — indistinguishable from a vacuous pass. Re-running with
-  `-v` and counting `=== RUN` lines showed 7 tests / 38 lines. **Count what ran.**
-- ⚠ **`tail -20` ON EXACTLY 20 LINES SILENTLY DROPPED THE PACKAGE THAT MATTERED.** A merged-tree
-  suite read as "all green" had the root package — the real-browser oracle suite, 133 s — cut
-  off the top of the window. **Grep for the package by name and count `FAIL`.**
-- ⚠ **A SUBAGENT STOPPED WITHOUT REPORTING, TWICE, AND THE WORK WAS FINE.** Both times the
-  final message was a status line, not the report; the PR and tests existed. **A missing report
-  is not a missing result — ask for the report rather than re-deriving the work.**
-- ⚠ **REBASE BEFORE MERGING IN THIS REPO, ALWAYS.** Three PRs this session were green on a base
-  that had moved (`#687` on stale pins, `#691` 3 commits behind, `#702` 2 commits behind while
-  another session released `v0.1.108`). File overlap was zero for `#702`, which is not safety —
-  the merged-tree suite is. It was green; the check is what makes that a fact.
+### Evicted 2026-09-28 (schema-drift round) — the 2026-09-21 "what this arc actually taught" block
 
-### Added 2026-09-25 (ship) — what shipping taught that building did not
+Verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md). Five
+lessons, every one still live and each restated at its own site in the sections below: the instrument
+was wrong more often than the models; a grader can penalise the MORE correct implementation; a
+probe's zero needs the arm that makes it non-zero; run the control arm BEFORE the arm you want to
+believe; a merged fix is not a shipped fix when the harness installs from npm.
 
-⚠ **Four bullets were DEDUPED out of this block on 2026-09-27** — they were near-verbatim
-repeats of bullets in the block immediately above (*a brief can ship a bypass*; *a `-run`
-filter that matches nothing prints `ok`* + `tail -20`; *a subagent stopped without
-reporting*; *rebase before merging*). Nothing was lost: read them there.
-
-- 🔴 **A CAP'S FAILURE DIRECTION IS THE WHOLE DESIGN.** The intuitive submission-cap fix
-  fails OPEN on a live publishing path. Ask *"if the thing I depend on changes, do I
-  over-refuse or under-refuse?"* before choosing the mechanism.
-- 🔴 **`go test ./...` GREEN IS NOT `gofmt` GREEN.** `#708` was reported locally green and CI
-  reddened on one unformatted file, taking `build-test` **and** `lint` with it. Two
-  different claims, reported as though one covered the other.
-- 🔴 **THE FIX WORKED THROUGH A HALF NOBODY MEASURED.** `#685`'s headline was a local 36-hook
-  index; **the index was never read in either run**. Its *docs-links promotion* is what drove
-  the agent to the hosted reference (1 → 5 HTTP requests). **Ask which half of a two-part
-  change did the work before crediting either.** Operator decision 2026-09-25: hosted is
-  canonical, the local index was drift — retired in `#702`.
-- 🔴 **A MERGED FIX IS NOT A SHIPPED FIX when the harness installs from npm.** Nearly ran the
-  ship cell against a CLI missing `#702`; cut `v0.1.109` first and verified the fix in a
-  **generated scaffold** (`tsc --noEmit` exit 0 under `--legacy-peer-deps`, the exact shape
-  that had cost 11 steps).
-- ⚠ **RE-READ A BASELINE IMMEDIATELY BEFORE SPENDING, NOT WHEN YOU PLANNED THE RUN.** Doing
-  so caught `oauth-probe` appearing mid-setup and killed a shortcut ("0 pending ⇒ any pending
-  row is ours") I would otherwise have graded against.
 ### Added 2026-09-25 (feedback) — the instrument was too LENIENT, for the first time
 
 - 🔴 **EVERY PRIOR INSTRUMENT FINDING WAS THE ORACLE BEING TOO HARSH. THIS ONE WAS THE
@@ -500,25 +526,6 @@ reporting*; *rebase before merging*). Nothing was lost: read them there.
   walk exits **5 (named but NOT measured**, explicitly not "empty"). The chain resolves only
   with `CIVITAI=<this repo> python3 …`. The next close-check here hits the same wall.
 
-### Added 2026-09-27 — what merging a doc can break
-
-- 🔴 **REBASING YOURSELF PROVES NOTHING ABOUT THE OTHER OPEN PRs ON THE SAME FILE.** I rebased
-  `#724`, merged it, and put `#717` and `#718` into conflict — both clean minutes earlier. **The
-  check is one command BEFORE merging:** `gh pr list --state open --json number,files` filtered
-  to the path you are landing. This doc already said *"two changes touching one file: TEST-MERGE
-  them"*; it does not say "your own branch", and I read it as if it did.
-- 🔴 **A DOC-ONLY MERGE CAN MAKE THE CANONICAL DOC WRONG ABOUT PRODUCTION.** While `#717` sat
-  conflicted, `main` asserted `v0.1.1` was *"pending operator review"* and *"`v0.1.0` is live and
-  broken"* — both false since `2026-09-25T23:30Z`. **Delaying a doc PR is a correctness change.**
-- 🔴 **RESOLVE A DOC CONFLICT ON MEANING, NOT ON SIDES** — here `--ours` wholesale would have
-  resurrected a retracted falsehood. Verify with a per-claim grep of BOTH sides; absent conflict
-  markers prove only that git is satisfied. **Never rebase a branch another worktree holds** —
-  detached-worktree recipe in the `cli` store scope (`cairn recall --ref dogfood`).
-- ⚠ **The close-check's own coverage is a FLOOR, not an enumeration:** the arc walk reported **4
-  sessions** and its own gaps — **3 of 11** commits on this doc carry no session id, and the
-  opencode corpus was not searched. (`--arc` cannot resolve a doc in this repo at all; that is a
-  devrc tooling gap, recorded in the `devrc` store scope, not here.)
-
 ### Added 2026-09-27 (resume) — durable facts RELOCATED here out of `State now`
 
 🔴 **These were living under a REPLACE heading, where every future update deletes them.** The write
@@ -572,52 +579,12 @@ gate flagged 18 such lines; these are the ones worth keeping, moved to an APPEND
   the 2026-09-26 operator drop supersedes. **Do not re-import it, and do not read its survival
   there as a second open question.**
 
-### Added 2026-09-27 (resume) — a stale local CLI, a reconciliation that was not one, and my own recommendation refuted
+### Evicted 2026-09-28 (schema-drift round) — the 2026-09-27 stale-CLI / reconciliation block
 
-- 🔴 **I NEARLY REPORTED DOC-ROT THAT WAS MY OWN STALE INSTALL. `civitai --help` IS NOT `main`.**
-  Reading `civitai app listing set-icon --help` showed *"See 'Listing media requirements' in the
-  README"* — a section deliberately relocated to the published docs
-  (`claudedocs/decisions/25-listing-media-bounds.md`), with guards asserting it is gone. That reads
-  as live rot in a shipped help string. It is not: `main` already says *"Platform bounds:
-  https://developer.civitai.com/apps/guide/store-listing"*. My installed CLI was **0.1.105** against
-  npm's **0.1.109** and `git describe origin/main` = `v0.1.109-25-gb408912`. **This is the MIRROR of
-  the arc's own "a merged fix is not a shipped fix": a locally-installed CLI is not `main` either,
-  and a trial installs npm `latest`, so NEITHER is what a cell runs — three artefacts, not two.**
-  Check `civitai --version` against `npm view @civitai/cli version` before quoting any help text.
-- 🔴 **A "DOES NOT RECONCILE" NOTE KEPT AN OPEN QUESTION ALIVE FOR A MISSING COLUMN.** This doc
-  recorded that `civitai buzz`'s per-pool output does not reconcile with the single total older
-  entries carry. It reconciles exactly — the earlier read omitted the **Yellow** pool
-  (1,305,224 + 919,796 + 1,848,987 = 4,074,007, and the CLI prints that Total). **Before recording
-  two numbers as irreconcilable, check you read all the ROWS** — a missing column looks identical to
-  a discrepancy, and the note outlived the mistake by days.
-- 🔴 **THE OPTION I RECOMMENDED TO THE OPERATOR WAS REFUTED BY A MEASUREMENT I COULD HAVE TAKEN
-  FIRST.** I offered "bake ImageMagick into the trial image" as *(Recommended)* for rank 14's media
-  problem. Reading the platform's actual bounds afterwards showed generation's own `--aspect-ratio`
-  buckets land inside both bands (`1:1`→1.0 for the icon, `16:9`→1.78 for the cover), so no resize
-  step exists to tool for. **A recommendation attached to an operator question is a claim; take the
-  cheap measurement BEFORE putting a recommendation in front of someone**, or the question is
-  shaped by the least-measured option.
-- 🔴 **A GUARD'S OWN COMMENT SAYING "NO CI JOB RUNS THIS" NEEDED CHECKING, AND THE ANSWER CHANGED
-  THE TASK.** I briefed rank 20 on the strength of `TestBlockDocsLinksResolve`'s comment. The
-  comment is TRUE — but the repo also has a fully-wired sibling, `readme-links.yml`, running the
-  README link test weekly with a positive control (grep the log for the test's own
-  `--- (PASS|SKIP|FAIL):` line), `-count=1` (Go's test cache tracks env vars but **not** what a
-  remote host answered, so a cached run replays a PASS over a link that has since died), four
-  distinct states, issue filing, and a `drill` input that appends a known-404 URL to rehearse the
-  failing path. Its header states the principle: *"a guard nobody runs reads as coverage while
-  providing none — the worst of the three states, because it stops the next person looking."*
-  **Widening an unwired corpus reproduces exactly that, so the deliverable is a corpus something
-  actually RUNS** — amended mid-flight. **Look for the sibling that already works before designing
-  the mechanism.**
-- ⚠ **`developer.civitai.com` answers a real 404 for an unknown path** (verified: a nonsense path
-  → 404, `apps` → 301, `apps/guide/responsive` → 200), which is what makes a liveness probe against
-  this host meaningful at all. An SPA answering 200 for everything would make the whole guard
-  vacuous — that is why the negative control exists, and it passed.
-- ⚠ **Three agents on one repo is fine; three agents on one FILE is not.** 21 and 22 both touch
-  `scripts/dogfood/oracle.sh`, so each was told the other's region by name and to rebase before
-  reporting. **A clean git merge is not a clean merge** — read the merged result of `oracle.sh`
-  rather than trusting the absence of conflict markers, and re-run the merged-tree suite once the
-  base moves.
+Verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md). Its
+reusable tells, so you know whether you need it: a LOCAL `civitai` binary can be older than npm
+`latest` and silently answer a version question wrongly; a "reconciliation" that reads only one side
+is not one; and a recommendation of mine was refuted by measuring it.
 
 ### Added 2026-09-27 (ladder) — the CARRIED-FORWARD durable values, RELOCATED here for good
 
@@ -665,133 +632,190 @@ them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed.
   submission destroys captioned media permanently; and `civitai app listing status` has left a
   shadow revision open on **`panorama-360`**, operator-only to clear.
 
-### Added 2026-09-27 (ladder) — four cwd-resolution hits, and a tool's verdict read as a fact about the world
+### Added 2026-09-28 — a real user's session is worth more than the whole synthetic rig
 
-- 🔴 **`audit-dispatch.py 734` ASSEMBLED A BRIEF FOR `civitai/talos-infra` #734 — A MERGED,
-  UNRELATED PR — BECAUSE IT RESOLVES THE NUMBER AGAINST THE CWD'S REPO.** Both repos have a #734,
-  so instead of erroring it produced a coherent, authoritative-looking brief (its own header says
-  `PR #734 in civitai/talos-infra`), and the round-0 auditor's `THE OPERATOR'S OWN ASKS` section
-  was therefore evidence about a different change. **The flag exists and was omitted:
-  `--repo owner/name`.** The auditor caught it and correctly recorded every requirement as
-  `UNATTRIBUTED-UNKNOWN` rather than `unattributed`. ⚠ Re-running with `--repo civitai/cli` still
-  reports **0 asks** (no `Claude-Session-Id:` trailer on the PR's commit, no PR comments), so the
-  attribution gap was not caused by the flag error alone — but the **strongest** requirement IS
-  attributable: the operator asked for rank 22 by name and identified the mechanism themselves.
-  🔴 **Do not publish a quoted ask** — this repo is public.
-- 🔴 **FOUR cwd-resolution hits in one session, same class, three of them mine:** the brief above;
-  `git rev-parse --git-common-dir` returning a **relative** `.git` so a `find` searched
-  `datapacket-talos`'s rr-cache instead of `cli`'s (the 71-entry listing was the wrong repo's —
-  `cli` has 49); and two greps. **Use `--absolute-git-dir`, and pass the repo explicitly to every
-  tool that takes one.** This directory is a dispatch hub and CLAUDE.md gotchas #20/#25 describe
-  exactly this; reading them is not the same as applying them.
-- 🔴 **`gofmt -l` REPORTED CLEAN OVER A FILE THAT DOES NOT PARSE, because the parse error is on
-  STDERR and I had redirected it away.** `gofmt -l` lists *misformatted* files; a syntax error is
-  not in that list. **Use `gofmt -e <file>` and read stderr** — and never fold a tool's stderr into
-  `/dev/null` while treating its silence as a pass.
-- 🔴 **`grep -c '<<<<<<<'` RETURNED 0 ON A FILE `git status` CALLED `UU`.** Checking the same file
-  with python found the truth (there were no markers — rerere had resolved it), which is what
-  located the real cause. The lesson is not "grep lied": it is that **a zero from one tool over a
-  file another tool calls conflicted is a contradiction to investigate, not a reading to accept.**
-- ⚠ **A SUBAGENT'S REPORTED GREP COUNTS DID NOT REPRODUCE.** A fix agent reported 17 and 13 hits
-  for `read`; the next auditor measured **20 and 17** at the same head. The conclusion built on them
-  (every real `read` is a `while IFS= read -r` loop variable) held, so it was a reporting
-  discrepancy — but the figures were relayed onward before being checked. **Re-derive a number
-  before passing it on.**
-- ⚠ **The audit ladder ended on the RULE, not on a verdict.** Round 0: 2 🟡, 0 deletion candidates.
-  Round 1: 4 🟡 + 5 🟢 → its fix moved **29 executable payload lines, all from the single
-  lowest-priority finding**; the other seven moved zero. Round 2: one low docblock gap, and its own
-  reasoning for stopping was that the finding is about prose that round wrote. Rounds 5, 6 and 7 of
-  a past ladder each returned "safe to merge" and still found real defects, so the verdict is never
-  the stop signal — the findings are.
-- ⚠ **THREE OF THE THREE BRIEFS I WROTE NEEDED CORRECTING BY THE AGENT EXECUTING THEM**, and two in
-  the load-bearing direction: rank 22's premise (an empty `sources` array) was **wrong** — `v0.1.1`
-  sends `sources:[{kind:'workflow',workflowId}]`, so `createMockHost`'s array gate never fires and
-  an arm built to the brief would have graded the live defect **green**; and rank 20's amendment
-  recommended folding into a prober that follows redirects and has no negative control. **The
-  standing rule — require the implementer to DERIVE the set from source, never hand them one you
-  grepped — was written in this very doc and violated again.** Third instance.
+- 🔴 **THE OPERATOR'S OWN opencode SESSION FOUND MORE THAN EVERY DOGFOOD CELL COMBINED, AND IT
+  SUCCEEDED.** `ses_f1b9a7d40ffeqlEuYZlMEN0U2L` ("Civitai YouTube thumbnail generator"), model
+  `z-ai/glm-5.3-flash`, **$0.18**, 110 messages / 3 user turns / 115 tool calls. It shipped
+  `yt-thumbnail` v0.1.0 (submitted `22:01:19Z`, pending). Span 2 h 17 m but **agent working time
+  was 45.6 min** — 67% was operator-idle, so ranking time sinks against the span understates every
+  one by ~3×. Store: `~/.local/share/opencode/opencode-stable.db`, `data` is a JSON blob in
+  `message`/`part`. ⚠ **`find-session.py` cannot find a session by id** — ids live in
+  `session.id`, that tool searches message CONTENT; it returned only THIS session, because the id
+  appeared in the prompt. Query the DB directly.
+- 🔴 **THE 110-MINUTE BLOCKER WAS A FALSE PREREQUISITE, AND THE TOOLING MANUFACTURED IT.**
+  `agent-setup` printed *"export CIVITAI_TOKEN=…"*; `prompt.md` §5 requires the agent to relay it
+  **verbatim without explaining it**; the operator could not find the credential and returned 110
+  minutes later. **`CIVITAI_TOKEN` appears in 24 parts of discussion and 0 of the 50 bash
+  commands** — the app scaffolded, built, tested, validated and **submitted** without it. That
+  block is about the MCP servers, which the session never touched (0 MCP calls). Compounding it,
+  `--check` reported `"ok": true` on a row whose own detail said *"CIVITAI_TOKEN is NOT set … 401s
+  until you export"*, under an instruction to read `ok` alone. Fixed in `#740`.
+- 🔴 **THE SCAFFOLD SHIPPED THE ANSWER AND NOTHING POINTED AT IT.** `vite-plugin-civitai-setup.ts`
+  (5,547 B) + `src/setup-dev-live.ts` (15,666 B) implement a **"Set up automatically"** button that
+  mints the token, merges `.env.development.local` in place, and takes a pasted key — *never asking
+  anyone to export anything*. The generated README mentioned `dev-token` **7 times** and the wizard
+  **0**: it documented the harder path seven times over. Fixed in `#740`.
+- ⚠ **Docs-vs-`node_modules` is still 1:1, and this CORROBORATES the synthetic measurement.** 4
+  `webfetch` calls versus 4 `node_modules` reverse-engineering probes, and **all four doc fetches
+  land in the first 44 seconds** — zero during the 14.7-min stall or the 15.8-min fix phase, the
+  two windows where it was guessing at SDK surface. `apps/examples` and `llms.txt`, which
+  `AGENTS.md` advertises, were never fetched.
+- ⚠ **67% of agent working time was ONE FILE.** Six aborted 12.5k-token `App.tsx` writes (880 s)
+  plus the fallout (951 s). Provider-side, but the monolithic `page-money` `App.tsx` is why a UI
+  change reads as "rewrite the file".
+
+### Added 2026-09-28 — four of my own claims that did not survive, and the pattern in them
+
+- 🔴 **I SAID A BLOCK CANNOT LEARN THE HOST ORIGIN. `useHostOrigin()` IS A FIRST-CLASS EXPORT**
+  (`@civitai/blocks-react/dist/index.d.ts:25`, *"the validated host origin, or `undefined` before
+  `BLOCK_INIT` lands"*), present since 0.20.0 and already in the live bundle. My search pattern was
+  `(baseUrl|origin)\??:` — it can only match **field declarations**, and this is a **hook**. I then
+  called that *"I checked the whole SDK surface"*. **Sampling reported as enumeration**, and it was
+  the load-bearing claim in a brief; the agent refused to assert it and filed on the contract
+  mismatch instead. It is also why v0.1.3's fix needs no hardcoded domain.
+- 🔴 **I READ A COMMAND AS ITS OUTPUT.** *"No config file found"* was the `||` fallback in step 60's
+  command line; the recorded result was `exit code: 0` plus the credential. That single misreading
+  sent the whole credential diagnosis at the wrong fix — `#739`'s read-back would have PASSED that
+  run. **The `part` JSON carries both; read the result field.**
+- 🔴 **I PRESENTED AN INFERENCE AS A MEASUREMENT AND BLAMED THE WRONG AGENT.** I said a sibling had
+  deleted `scratchpad/pristine/`; it had `rm -rf`'d it itself after its PR opened, and its battery
+  ran **nine minutes before** the sibling's write. Two agents corrected me independently and
+  consistently. The warning I sent was still right to send — but it should have named the
+  alternative explanation instead of asserting a cause.
+- 🔴 **I BRIEFED THE WRONG CLI VERSION** (`0.1.109`) for the opencode session after measuring
+  `0.1.105` myself earlier the same day. The agent caught it from the transcript.
+- **The pattern, stated once:** every one was a narrow probe reported in the register of a
+  measurement. The cure that worked each time was a **positive control** — and three of the four
+  were caught by an agent declining to repeat my claim, which is the reason to keep asking
+  subagents to verify rather than to comply.
+
+### Added 2026-09-28 — process traps hit while investigating traps of the same class
+
+- 🔴 **A BACKTICK INSIDE A DOUBLE-QUOTED `echo` EXECUTED `civitai login`** and hung for two
+  minutes — while I was investigating whether `civitai login` destroys credentials. Single-quote it,
+  or use `git commit -F <file>`.
+- 🔴 **`pkill -f "civitai login"` KILLED ITS OWN REPORTING SHELL**, producing an empty probe I
+  nearly read as a result.
+- 🔴 **`docker exec -d sh -c 'civitai …'` HAS NO LOGIN PATH** — `civitai: not found`. A probe that
+  cannot run the binary returns a zero about itself.
+- 🔴 **`gofmt -l` REPORTS NOTHING ABOUT A FILE THAT DOES NOT PARSE** — it lists *misformatted*
+  files. I read a clean `gofmt -l` over an uncompilable file because I had sent stderr to
+  `/dev/null`. Use `gofmt -e <file>` and read stderr.
+- 🔴 **`git rev-parse --git-common-dir` RETURNS A RELATIVE `.git`**, so a `find` over it searched
+  the WRONG repo from this dispatch hub — the 71-entry `rr-cache` listing I quoted was
+  `datapacket-talos`'s; `cli` has 49. Use `--absolute-git-dir`.
+- 🔴 **A BROKEN CONFLICT RESOLUTION IS CACHED BY `git rerere` IN THE COMMON GIT DIR AND REPLAYED
+  WITH NO MARKERS.** `rerere.enabled` is **global** on this host. `git merge` returned rc 1 and
+  `UU` while the file had zero markers and would not compile. `git rerere forget` REFUSES from that
+  state; the remedy was `rm -rf` of the cache entry, and **`git -c rerere.enabled=false merge` is
+  the one-command discriminator** between "rerere resolved it" and "no conflict". Full record in
+  the `devrc` store's `rules` entry.
+- 🔴 **I DISPATCHED TWO AGENTS INTO ONE SCRATCHPAD TWICE**, after being bitten by it earlier the
+  same day. They collided on `pristine/`, `mutate.py` and `commitmsg.txt`. **Name every scratch
+  path per-agent in the brief** — the agents cannot know about each other.
+- ⚠ **#733 and #734 conflicted in one add/add hunk** whose two sides each end mid-function around a
+  **shared closing brace**, so concatenating both sides — the obvious resolution — yields an
+  unterminated function. Keep both and give the first its own `}`.
+
+### Added 2026-09-28 — a guard over a mirror could not accept the mirror's own update
+
+- 🔴 **A DRIFT-GUARD THAT PINS CONTENT CANNOT EVER ACCEPT AN ADDITIVE UPSTREAM CHANGE, AND THE
+  AUTOMATION THAT EXISTS TO LAND THAT CHANGE IS WHAT IT BLOCKS.** `TestEnumFindingsKeepTheirExactWording`
+  spelled out all thirteen scopes; the canonical added two; `revendor-canonical-schema.yml` runs the
+  suite on its own output, so it failed and opened no PR. **The cure is to split the claim: pin the
+  SHAPE, derive the CONTENT.** Same shape as the base-clone refresh hook that worked exactly once per
+  file and then silently stopped.
+- 🔴 **BUT DERIVING BOTH HALVES IS THE TRAP ON THE OTHER SIDE, AND IT IS SILENT.** If the expected
+  message is built entirely from the schema, a reword of the library's lead-in moves `want` and `got`
+  together and **nothing fails**. **Anchor the template against a hand-written literal over the one
+  enum that is not expected to grow**, and assert that literal against real output too. The mutant
+  that proves it is a reword injected where the code CONSUMES the library message — not a change to
+  the test.
+- 🔴 **A HAND-KEPT MIRROR OF A CONSTANT IN ANOTHER REPO IS INVISIBLE TO A DRIFT-GUARD SUITE THAT KEYS
+  ON THE SCHEMA.** `SENSITIVE_BLOCK_SCOPES` was one entry behind production and no gate could see it,
+  because it mirrors a TypeScript constant and every guard reads the vendored JSON. **When a
+  re-vendor adds a capability, ask what ELSE mirrors that capability by hand.**
+- 🔴 **`CDPATH` IS EXPORTED ON THIS HOST, SO `$(cd "$(dirname "$0")/.." && pwd)` RETURNS TWO LINES.**
+  bash's `cd` echoes its target when it resolves via `CDPATH`, so `check-canonical-schema.sh` and
+  `revendor-canonical-schema.sh` build a `$VENDORED` with an embedded newline. `jq -S . "$VENDORED"`
+  then fails **inside a process substitution**, which `set -euo pipefail` does not catch, so
+  `diff <(empty) <(canonical)` prints the whole canonical as `>` lines and the script announces
+  **`FAIL: … has DRIFTED`** for a file `cmp` calls identical. **The tell is that EVERY diff line is
+  `>` — one operand is empty, not different.** CI has no `CDPATH` and is unaffected, which is worse:
+  it contradicts a green CI for reasons unrelated to the code. **Run repo scripts with
+  `env -u CDPATH`; do NOT "fix" the scripts — the idiom is correct and the host is the anomaly.**
+- ⚠ **A CLOSING CONDITION CAN NAME AN OUTCOME THE SYSTEM CORRECTLY REFUSES TO PRODUCE.** Rank 25's
+  *"…and opens a PR unaided"* is unreachable once the thing it would PR is already in sync. **A
+  condition that only holds while the bug is still present is not a closing condition** — rehearse the
+  failing path instead, and say which half you rehearsed.
+- ⚠ **`gh run view --log-failed` was the fastest route to the real cause** — the check-run's
+  `output.summary` was **empty**, so the SHA-pinned `check-runs` API said only `failure`. The diff and
+  the two test names were in the job log.
 
 ## How to verify
 
 Every check reports a CONTROL beside its result; a bare count or zero is not a measurement.
 
-**That all three ranks are on `main`** — the discriminating checks, not the discussed identifiers:
-```bash
-CLI=/home/zach/workspace/civit/cli; git -C "$CLI" fetch origin main -q
-git -C "$CLI" show origin/main:scripts/dogfood/oracle.sh | grep -vE '^\s*#' \
-  | grep -nE 'MANIFESTS=|pathdec APP_DIR'                 # rank 21: the live transport
-git -C "$CLI" grep -c 'apps/guide/responsive' origin/main -- internal/scaffold/templates  # rank 20: 4
-git -C "$CLI" grep -n 'CIVITAI_ASSERT_POST_PATH' origin/main -- scripts/dogfood/oracle.sh # rank 22
-git -C "$CLI" ls-tree origin/main --name-only -- .github/workflows/docs-links.yml
-```
-⚠ **`git grep 'xargs dirname' origin/main` returns SEVEN hits and all are docblocks** — that string
-is not a check.
+🔴 **Run every repo script below with `env -u CDPATH`** — see *Gotchas*, added 2026-09-28. Without it
+`check-canonical-schema.sh` reports a confident `FAIL: … has DRIFTED` over a **byte-identical** file.
 
-**The post arm end to end, on the two real bundles** — expect `no` on `v0.1.1` and `yes` on
-`v0.1.2`; the two other arms grade both bundles IDENTICALLY, which is the blindness stated as a
-measurement:
+**Rank 25 — the mirror matches the canonical** (expect `OK`, control: a one-byte edit must give
+`FAIL`):
 ```bash
-docker exec dogfood-ab-imgposter-fixed bash -lc \
-  'md5sum /work/ab-img-poster/dist/assets/index-*.js'   # c603fa854eba4d5206b73e04c14a1f3c
-docker images --format '{{.Repository}}:{{.Tag}}' | grep 'ab-imgposter:v0.1.1-pre-post-fix'
+CLI=/home/zach/workspace/civit/cli
+git -C "$CLI" worktree add --detach /tmp/wt-sd origin/main
+(cd /tmp/wt-sd && env -u CDPATH bash scripts/check-canonical-schema.sh); echo "rc=$?"   # want 0 + OK
+(cd /tmp/wt-sd && sed -i 's/"maxItems": 32/"maxItems": 33/' schema/app-block.manifest.schema.json \
+  && env -u CDPATH bash scripts/check-canonical-schema.sh >/dev/null 2>&1; echo "CONTROL rc=$?")  # want 1
+git -C "$CLI" worktree remove --force /tmp/wt-sd
 ```
 
-**The owed fire drill** (files a REAL issue — close it after):
+**The two guards that were self-blocking** (expect both PASS; control: they were RED at `origin/main`
+with the new schema in place). Run inside the same `/tmp/wt-sd` worktree:
+`go test ./internal/validate/ -count=1 -v -run 'TestEnumFindingsKeepTheirExactWording|TestPatternRulesCoverTheVendoredSchema'`
+
+**The sensitive set matches the DEPLOYED server constant** (expect the same 7; `origin/release`, not
+`main`):
 ```bash
-gh workflow run docs-links --repo civitai/cli -f drill=true
-gh run list --workflow docs-links --repo civitai/cli --limit 1
+git -C $CIVITAI fetch origin release
+git -C $CIVITAI show origin/release:src/shared/constants/block-scope.constants.ts \
+  | sed -n '/^export const SENSITIVE_BLOCK_SCOPES/,/^]);/p' | grep -o "'[a-z:]*'"
+grep -c '": {},' /home/zach/workspace/civit/cli/internal/validate/semantic.go   # the Go mirror
 ```
 
-**The account** — re-read immediately before any spend, never when planning:
-```bash
-civitai app status --json   # ab-img-poster v0.1.2 approved/live; 100 rows AT the cap; pending 0
-civitai buzz               # Blue+Green+Yellow SUM to Total; 4,074,007 on 2026-09-27 — it drifts
-```
-⚠ The submissions listing is **AT its 100-row cap with no cursor**, so a blockId absent from
-`app status --json` is not evidence it has no submission — look it up with
-`civitai app status <blockId>`.
+⚠ **The root Go package needs a browser** — `go test ./...` fails on this host with `no Chromium on
+PATH`, which is an ENV gap and not a failing trial. Run it as
+`nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) go test . -count=1'` (~342 s).
 
 ## Defects (batched)
 
-🔴 **Three entries added 2026-09-27 from the CLOSED audit ladder. They are batched here, NOT minted
-as ranks, because an audit finding is a defect and this doc carries no `forcing: none` item.**
+🔴 **Added 2026-09-28 — from the live-app feedback and the onboarding diagnosis.**
 
-- **The assignment guard's ⚠ block omits one invisible route** —
-  `dogfood_ship_verdict_injection_test.go:553-567`. A **backtick command substitution containing no
-  `$`** satisfies `assertEscapedAtAssignment` while routing nothing through `tok`; measured red as a
-  mutant. **Zero** live instances in either grader and no repo guard bans backticks, so the fix is
-  one clause in that enumeration, not code.
-- **`grade.sh`'s unwrapped `CEIL_FIELD=" post_ceiling=$R_CEIL"` is DELIBERATELY not covered, and
-  that decline is CORRECT on stronger grounds than were first given.** `esc tok` percent-encodes
-  `=` as well as whitespace, so a forged `KEY=` in that field is structurally impossible; and
-  `grade.sh:148` always computes `ORACLE_OUT` itself — no env fallback, no cache, no alternate
-  oracle path — so no un-`tok`'d value can reach `$R_CEIL`. Recorded so nobody "fixes" it by
-  widening the ledger. The ledger's own grow-check is the right review trigger if `grade.sh` ever
-  sources `_esc.sh`.
-- **Arm selection is by ambient env var, and that is a design call worth taking before arm #4.**
-  The post arm pays **five** separate defences for one choice (`ARM_CONFLICT` + its 2-case guard,
-  the `post)` seam, the `stubOracleEnv` clear, the `grade-controls.sh` clear, `arm=` on the summary
-  line). Three arms is 3 conflict pairs; four is 6, and each new arm must remember all five sites.
-  `oracle.sh:437-441` already argues exactly this reasoning for `scopes` being an ARGUMENT rather
-  than an env var. An explicit `--arm=<name>` collapses the whole ambient-staleness class.
-
-- ✅ **RESOLVED 2026-09-25, AND SUPERSEDED 2026-09-27** — this entry read *"`ab-img-poster
-  v0.1.0` is live and broken for first-time viewers until `v0.1.1` is approved"*. `v0.1.1` was
-  approved `23:30:15Z`; **`v0.1.2` has been the serving revision since `2026-09-27T03:15:10Z`**,
-  fixing a second user-reported path (*"Posting failed. Please try again."*). ⚠ Kept rather than
-  deleted because rank 13's closure and this line were written in different sessions and the
-  line was missed — the tell is a *Defects* entry whose condition a *Next steps* rank already
-  reports closed. **When you close a rank, grep this section for the same claim.** 🔴 **This
-  entry has now gone stale TWICE the same way — a version number written here is a claim about
-  the day it was written. Name the date beside it or read the API.**
+- **`ab-img-poster`'s metadata gap is NOT fixable in the app.** `BlockCreatePostRequest` is exactly
+  `{sources, title?, detail?, tags?, modelVersionId?}` — no metadata field — and
+  `BlockPostSource` (workflow) is `{kind, workflowId, imageIndexes?}` — no flag. The host creates
+  the `Image` rows for a workflow source, so only the host can attach generation metadata. Tracked
+  as `civitai/civitai#5182`; nothing to do in this repo or the app.
+- **v0.1.3's URL fix is verified in the bundle, NOT against the real host.** `new URL(` goes 1 → 2
+  versus the live v0.1.2 bundle, the minified call reads `new URL(i,r||void 0)`, and all six helper
+  cases were unit-tested in node — but no live post has exercised it. The first post through v0.1.3
+  after approval is the real test.
+- **The post arm still cannot see a block that faithfully renders a malformed host URL** on the
+  ordinary arm — deliberate, since defaulting the mock to the platform's relative shape would move
+  every recorded verdict. `#742` catches an app that MANGLES the url; the malformed-host case needs
+  `CIVITAI_ASSERT_POST_MALFORMED_URL=1`.
+- **`#742`'s arm reads only `a[href]`** — a button calling `location.assign`, a copy-to-clipboard
+  control, or a link in a shadow root is invisible; no navigation is attempted, so an absolute href
+  pointing at the WRONG post passes.
+- **`agent-setup --check`'s stale-CLI row is verdict-EXEMPT by decision**, so an agent that reads
+  only `ok` — which the hosted prompt instructs — still will not notice a stale CLI. Fixing that
+  means changing `prompt.md`'s *"read `ok`, not the rows"* instruction, which lives outside this
+  repo. Recorded in `#740`'s own output and pinned by a test.
 - `pickerBlind` and `consentBlind` have never been tested together on one doubly-blind bundle.
-- `CONSENT_SETTLE_MS = 1200` is a judgement; every observed ask was synchronous, but there is
-  no measured bound for an app that asks after an `await`.
+- `CONSENT_SETTLE_MS = 1200` is a judgement; every observed ask was synchronous.
 - Nothing is known about the **iframe** transport; all of this is the inline path.
-- `c=civitai; $c app submit` is not refused, at base or HEAD (pre-existing; the false comment
-  was corrected in `#702`).
 - `civitai app listing status` opens a shadow revision on a LIVE listing and there is no
   `discard-revision`. One is **still open on `panorama-360`** — operator-only to clear.
 - The submissions listing caps at 100 rows with no cursor, and the account is AT the cap.
-- `civitai app submit` **exits 0 when it did not submit** (no token) — it warns loudly
-  (*"⚠ NOT SUBMITTED"*), but an exit-code-only reader would score it as success.
+- `civitai app submit` **exits 0 when it did not submit** (no token) — it warns `⚠ NOT SUBMITTED`.
