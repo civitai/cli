@@ -382,6 +382,8 @@ ADECL=
 # arm, which is what keeps a non-post summary line byte-identical — see
 # `POST_ARM_CEILING_TOKEN` in briefs/_cdp.mjs.
 ACEIL=
+# The post-link sub-check's outcome, same terms as `ACEIL` above.
+ALINK=
 
 if [ -z "$APP_DIR" ]; then
   REASON="no block.manifest.json under /work — no app was created"
@@ -487,6 +489,11 @@ if [ -n "$SERVED" ]; then
   # degree louder because a reader who misses it misreads the invariant, not just the
   # predicate.
   [ "${CIVITAI_ASSERT_POST_PATH:-}" = "1" ] && printf '⚠ POST-PATH ARM: the in-page host shim ANSWERS ESTIMATE_WORKFLOW, SUBMIT_WORKFLOW, POLL_WORKFLOW and CREATE_POST_FROM_APP, so a canned generation completes and a canned post is created here. The verdict is "does the Post gate hold for a workflow with no images, and does a postable one actually post", NOT "did it reach generating". It proves the block PAYLOAD satisfies the mock host gate; it does NOT prove the real host accepts it. See briefs/genpost.md.\n'
+  # 🔴 AND ITS SELF-TEST SHAPE GETS ITS OWN LINE, because a run under it is not an
+  # ordinary post-arm verdict: the canned post is served with a RELATIVE url, which is
+  # the shape the post-link sub-check FAILS on. The row says so too (the ceiling token
+  # carries `:malformed-url-fixture`); this is the half a human scrolling the run sees.
+  [ "${CIVITAI_ASSERT_POST_MALFORMED_URL:-}" = "1" ] && printf '⚠ MALFORMED-URL SELF-TEST: the canned post result is served with a RELATIVE url (the shape the real platform returns) instead of the absolute one createMockHost returns. This run grades the INSTRUMENT'"'"'S OWN post-link check — a block that renders the url verbatim is graded post_link=relative here and post_link=absolute on the ordinary arm. It is NOT comparable with an ordinary post-arm cell. See briefs/genpost.md.\n'
   # 🔴 THE SCOPE LIST IS AN ARGUMENT, NOT AN ENVIRONMENT VARIABLE. It is data
   # about THIS block, derived from THIS container's manifest, so it belongs on
   # the call that grades that block — an env var would be ambient state a
@@ -562,6 +569,28 @@ if [ -n "$SERVED" ]; then
   if [ "$AARM" != "post" ] && [ -n "$ACEIL" ]; then
     fatal "the assertion reports arm='$AARM' but sent a postCeiling token '$ACEIL' — only the post arm may add a field to the summary line"
   fi
+  # 🔴 THE POST-LINK SUB-CHECK, AND THE SAME TWO-DIRECTION SEAM. It grades what the
+  # block RENDERED from the post result — the half every other phase of this arm is
+  # blind to, because they all stop at the request leaving the block. It rides on the
+  # cell rather than only in the JSON for one specific reason: `none` and `absolute`
+  # BOTH pass, and they mean completely different things ("the block rendered no link"
+  # vs "the block rendered one that works"), so a green post-arm cell without this
+  # field cannot say whether the sub-check measured anything at all. Read back from the
+  # assertion, never derived here, exactly like `arm=` and `post_ceiling=`.
+  ALINK=$(printf '%s' "$JSON" | jq -r '.postLink // empty' 2>/dev/null)
+  if [ "$AARM" = "post" ] && [ -z "$ALINK" ]; then
+    fatal "the assertion reports arm=post but no postLink outcome — the cell could not say whether the rendered-link sub-check measured anything"
+  fi
+  if [ "$AARM" != "post" ] && [ -n "$ALINK" ]; then
+    fatal "the assertion reports arm='$AARM' but sent a postLink outcome '$ALINK' — only the post arm may add a field to the summary line"
+  fi
+  case "$ALINK" in
+    ''|absolute|relative|none|unmeasured) : ;;
+    # A fifth value would ride onto every matrix row unread. The four are the
+    # assertion's whole vocabulary (see `gradeTheRenderedPostLink`), and collapsing an
+    # unknown one into a verdict is how a reader stops being able to trust the column.
+    *) fatal "the assertion reported an unknown postLink outcome '$ALINK'" ;;
+  esac
   AREASON=$(printf '%s' "$JSON" | jq -r '.reason // empty' 2>/dev/null)
   APASS=$(printf '%s' "$JSON" | jq -r 'if has("pass") then (.pass|tostring) else "absent" end' 2>/dev/null)
   [ "$APASS" = "true" ] && RENDER_PASS=yes
@@ -611,9 +640,13 @@ OBS_FIELD="''"
 # `TestANonPostSummaryLineIsByteIdentical` pins the non-post format byte for byte.
 CEIL_FIELD=
 [ -n "$ACEIL" ] && CEIL_FIELD=" post_ceiling=$(tok "$ACEIL")"
-printf 'brief=%s brief_source=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s scopes=%s viewer=%s arm=%s served=%s observed=%s RENDER=%s%s\n' \
+# The post-link sub-check's outcome, appended on the same terms and for the same
+# reason: empty on every arm but `post`, so a non-post line stays byte-identical.
+LINK_FIELD=
+[ -n "$ALINK" ] && LINK_FIELD=" post_link=$(tok "$ALINK")"
+printf 'brief=%s brief_source=%s app_dirs=%s app_dir=%s gate=%s gate_rc=%s scopes=%s viewer=%s arm=%s served=%s observed=%s RENDER=%s%s%s\n' \
   "$(tok "$BRIEF")" "$BRIEF_SOURCE" "$APP_COUNT" "$(tok "${APP_DIR:-none}")" \
   "$GATE" "${GATE_RC:-none}" "$(tok "${SCOPES:-none}")" \
   "$(tok "${AVIEWER:-unmeasured}")" "$(tok "${AARM:-unmeasured}")" "$(tok "${SERVED:-none}")" \
-  "$OBS_FIELD" "$RENDER_PASS" "$CEIL_FIELD"
+  "$OBS_FIELD" "$RENDER_PASS" "$CEIL_FIELD" "$LINK_FIELD"
 exit 0

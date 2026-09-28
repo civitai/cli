@@ -93,7 +93,23 @@
 // arm existed (measured, and pinned by the unit driver). `arm=post` on the cell is
 // what stops the two being confused. See `POST_PATH` in `_cdp.mjs` for the full
 // statement, including what a green here does NOT prove.
-import { launch, cdp, openPage, parseScopes, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, HOST_PICKS_LABEL, HOST_ARM, UNCONSENTED, POST_PATH, ARM_CONFLICT, CONSENT_MESSAGE, POST_ARM_PLAN, POST_ARM_NO_IMAGES_ERROR, POST_ARM_CREATE_POST_RESULT, POST_ARM_GLOBAL, POST_ARM_CEILING_TOKEN, seededScopes, CLICKABLES, labelExpr, sleep } from './_cdp.mjs';
+// 🔴 AND A FOURTH THING THE ARM GRADES, BECAUSE THE SAME APP SHIPPED A THIRD
+// USER-FOUND DEFECT — THIS TIME ON WHAT THE BLOCK RENDERS FROM THE ANSWER.
+// The three phases above all grade the REQUEST leaving the block. `ab-img-poster@0.1.2`
+// — the version that FIXED the gate and passes every check above — renders the post
+// link as `<a href={postResult.url}>`, the host's value verbatim; the real platform
+// returns a RELATIVE url, so the link resolves against the block's own `*.civit.ai`
+// subdomain and cannot reach the post. The arm was blind to it BY CONSTRUCTION: the
+// canned `DEFAULT_CREATE_POST_RESULT` is better behaved than production — its `url`
+// is absolute — so every cell was handed a well-formed answer and no cell had ever
+// seen a malformed one. `postLink` is the sub-check, with FOUR outcomes and no
+// collapsing: `absolute` (a link that reaches the post), `relative` (the defect),
+// `none` (the block rendered no link — not a failure; nothing in the brief asks for
+// one) and `unmeasured` (the arm never reached a successful post, so nothing was
+// looked at). `POST_MALFORMED_URL` is how a fixture can produce the `relative`
+// outcome at all, and it says on the cell that it did. See `POST_MALFORMED_URL` and
+// `POST_ARM_POST_PATHNAME` in `_cdp.mjs`.
+import { launch, cdp, openPage, parseScopes, resolveTarget, SEND_HOST_INIT, HOST_VIEWER_LABEL, HOST_PICKS_LABEL, HOST_ARM, UNCONSENTED, POST_PATH, ARM_CONFLICT, CONSENT_MESSAGE, POST_ARM_PLAN, POST_ARM_NO_IMAGES_ERROR, POST_ARM_RESULT, POST_ARM_POST_PATHNAME, POST_MALFORMED_URL, POST_ARM_GLOBAL, POST_ARM_CEILING_TOKEN, seededScopes, CLICKABLES, labelExpr, sleep } from './_cdp.mjs';
 
 const TARGET = process.argv[2];
 if (!TARGET) {
@@ -212,6 +228,75 @@ const GENERATE_RECOVERY_MS = 3000;
  * it is talking about. Read off the plan rather than retyped, so the labels on a
  * cell and the outcomes the shim serves cannot drift. */
 const PHASE_LABELS = POST_ARM_PLAN.map((p) => p.label);
+
+/**
+ * How long the arm waits for a link to the new post to APPEAR after the host
+ * answered the post, before concluding the block renders none.
+ *
+ * 🔴 A BOUNDED POLL THAT BREAKS EARLY, FOR THE SAME REASON `POST_SETTLE_MS` IS A
+ * SETTLE AND NOT A `waitFor`: the `none` outcome is an ABSENCE, and you cannot wait
+ * for one. A `waitFor` would burn its whole budget on every block that legitimately
+ * renders no link — which is a PASSING case here, so the common path would be the
+ * slow one — while returning instantly proves nothing about a block that renders the
+ * link one commit later. So it polls, returns the moment a candidate exists, and only
+ * a block with no link pays the full window.
+ *
+ * ⚠ SAY WHAT THAT DOES NOT COVER: a block that renders its link LATER than this is
+ * graded `none`, i.e. `unmeasured` for the sub-check and never a failure. The window
+ * is sized against the measured shape (React commits in one tick after the awaited
+ * post resolves, and {@link POST_SETTLE_MS} has already elapsed), not against an
+ * adversary — and erring toward `none` errs toward not grading, which is the safe
+ * direction for a sub-check whose absence is legitimate.
+ */
+const POST_LINK_RENDER_MS = 1500;
+
+/**
+ * Every anchor on the page whose href — WHATEVER ITS SHAPE — points at the canned
+ * post's path, with the RAW attribute and where it actually resolves to.
+ *
+ * 🔴 `getAttribute('href')`, NEVER THE `.href` PROPERTY, AND THE REASON IS THE
+ * REPORTED VALUE RATHER THAN THE CLASSIFICATION. ⚠ The obvious claim — "`.href` is
+ * already resolved, so a check reading it would call every link absolute" — is FALSE
+ * here, and it was written that way until a mutation proved otherwise: because the
+ * classification below is HOST-based, `<a href="/posts/4242">` read through `.href`
+ * comes back as `http://<the block's own origin>/posts/4242`, whose host is still the
+ * block's, so it is still graded `relative`. What `.href` destroys is the EVIDENCE:
+ * `postLinkHref` would report this harness's own `http://172.x.x.x:PORT/…` address
+ * instead of the `/posts/4242` the block's source actually wrote, and a reader could
+ * not see the defect on the cell. It is also the only form that stays correct if the
+ * classification is ever tightened to look at the attribute's own shape.
+ * `M3-read-resolved-href` in the mutation battery is killed by the href assertion in
+ * `TestTheMalformedUrlShapeIsOptInAndVisible`, not by a verdict — which is exactly
+ * this paragraph, measured.
+ *
+ * 🔴 CANDIDATES ARE SELECTED BY PATHNAME, NOT BY THE URL STRING. Both canned shapes
+ * resolve to {@link POST_ARM_POST_PATHNAME}, so the same selector finds the block's
+ * link under either — where a string match would find it under one shape and report
+ * `none` under the other, which would make the instrument's own self-test read as
+ * "this block renders no link".
+ *
+ * 🔴 AND THE CLASSIFICATION IS THE CONSEQUENCE, NOT THE SPELLING. `sameOrigin` asks
+ * whether the href resolves to the HOST THE BLOCK IS SERVED FROM — which is exactly
+ * the user-visible defect ("cannot reach the post") — rather than pattern-matching
+ * for a scheme. So a protocol-relative `//civitai.com/posts/4242`, which does reach
+ * the post, is correctly NOT a finding, and an app that builds its own
+ * `/posts/${postId}` path instead of using the host's url IS one, on the ordinary arm
+ * with no self-test flag involved.
+ */
+const READ_POST_LINKS = `(() => {
+  const want = ${JSON.stringify(POST_ARM_POST_PATHNAME)};
+  const out = [];
+  const anchors = Array.prototype.slice.call(document.querySelectorAll('a[href]'));
+  for (let i = 0; i < anchors.length; i++) {
+    const raw = anchors[i].getAttribute('href');
+    if (raw === null) continue;
+    let u = null;
+    try { u = new URL(raw, document.baseURI); } catch (e) { continue; }
+    if (u.pathname !== want) continue;
+    out.push({ raw: raw, host: u.host, sameOrigin: u.host === location.host });
+  }
+  return JSON.stringify(out);
+})()`;
 
 // A recorder for every value `[data-testid="status"]` ever holds, installed
 // BEFORE the click. 🔴 Polling cannot do this job: the machine may pass through
@@ -483,6 +568,73 @@ async function main() {
     await sleep(POST_SETTLE_MS);
   };
 
+  /**
+   * The arm's phase-3: grade what the block RENDERED from the post the host just
+   * answered. Sets `evidence.postLink` to one of four values and fails `pass` on
+   * exactly one of them.
+   *
+   * 🔴 FOUR OUTCOMES AND NONE OF THEM COLLAPSES INTO ANOTHER — the honest shape of a
+   * sub-check whose ABSENCE is legitimate:
+   *
+   *   `absolute`   a link to the post that resolves off this block's own origin. Pass.
+   *   `relative`   a link that resolves back onto the block's own host, so a viewer
+   *                who clicks it does not reach the post. THE FINDING, and the only
+   *                value that fails.
+   *   `none`       the block rendered no link to the post at all. NOT a failure: the
+   *                brief never asked for one, and an app that shows the post id, or
+   *                nothing, is not wrong. Reported so a reader can see this
+   *                sub-check did not run rather than assuming it passed.
+   *   `unmeasured` the arm never reached a successful post, so nothing was looked at.
+   *                Distinct from `none` on purpose: `none` is a fact about the block,
+   *                this is a fact about how far the run got.
+   *
+   * 🔴 IT RUNS ONLY AFTER THE HOST ANSWERED THE POST, WHICH IS WHAT MAKES IT
+   * ATTRIBUTABLE. A block whose post was refused has no result to render a link from,
+   * so grading its DOM here would report a `relative`/`none` about a post that never
+   * existed — and the refusal is already the right finding for that cell.
+   */
+  const gradeTheRenderedPostLink = async () => {
+    const deadline = Date.now() + POST_LINK_RENDER_MS;
+    let found = [];
+    for (;;) {
+      found = JSON.parse(await page.evalJs(READ_POST_LINKS));
+      if (found.length > 0 || Date.now() > deadline) break;
+      await sleep(100);
+    }
+    evidence.postLinkCandidates = found.length;
+    if (found.length === 0) {
+      evidence.postLink = 'none';
+      return;
+    }
+    // 🔴 THE WORST CANDIDATE DECIDES. A block that renders one reachable link and one
+    // broken one has shipped a broken link; picking the first, or requiring all of
+    // them to be broken, would let the defect hide behind a sibling that works.
+    const bad = found.find((l) => l.sameOrigin);
+    const chosen = bad || found[0];
+    evidence.postLinkHref = chosen.raw;
+    evidence.postLinkResolvesTo = chosen.host;
+    if (!bad) {
+      evidence.postLink = 'absolute';
+      return;
+    }
+    evidence.postLink = 'relative';
+    pass = false;
+    reason = `the post was created, and then the block rendered its link to it as ` +
+      `${JSON.stringify(chosen.raw)} — a RELATIVE href. It resolves against the block's ` +
+      `OWN origin (${chosen.host}), not the post's, so a viewer who clicks it does not ` +
+      `reach the post: on the platform a block is served from its own ` +
+      `<slug>.civit.ai subdomain. The host answered this post with ` +
+      `url=${JSON.stringify(POST_ARM_RESULT.url)}` +
+      `${POST_MALFORMED_URL
+        ? ' (the deliberately malformed self-test shape — the real platform returns a ' +
+          'relative url exactly like this, which is why the harness can serve one)'
+        : ''}. ` +
+      `That is the live defect ab-img-poster@0.1.2 shipped after its Post gate was fixed. ` +
+      `A correct app renders an href that carries a scheme and host — resolve the host's ` +
+      `url against https://civitai.com before putting it in an \`href\`, or render it as ` +
+      `text instead of a link.`;
+  };
+
   /** Click a label that must be live, returning `true` if it was clicked. */
   const clickLive = async (label) => !!(await page.evalJs(`(() => {
     const hit = ${labelExpr(label)};
@@ -614,8 +766,15 @@ async function main() {
     } else {
       // Reported on a PASS too, because "the post was created" is the one fact this
       // arm exists to establish and a reader must be able to see it without
-      // re-deriving it from a boolean.
-      evidence.postCreated = POST_ARM_CREATE_POST_RESULT.postId;
+      // re-deriving it from a boolean. `POST_ARM_RESULT`, not the absolute constant:
+      // this is the post the block was actually handed.
+      evidence.postCreated = POST_ARM_RESULT.postId;
+      // ── phase 3: what the block RENDERED from that answer ──────────────────
+      // 🔴 EVERY PHASE ABOVE GRADES THE REQUEST LEAVING THE BLOCK. This one grades
+      // the response coming back, which is the half `ab-img-poster@0.1.2` got wrong
+      // while passing all three. It can turn a pass into a fail, so it is INSIDE the
+      // success branch rather than after the verdict.
+      await gradeTheRenderedPostLink();
     }
   };
 
@@ -786,12 +945,28 @@ async function main() {
   // `_cdp.mjs` for why it is a token and why it is appended only on this arm.
   if (POST_PATH) {
     evidence.postCeiling = POST_ARM_CEILING_TOKEN;
+    // 🔴 PRESENT ON EVERY POST-ARM CELL, DEFAULTING TO `unmeasured`, AND THAT IS WHY
+    // IT IS SET HERE RATHER THAN ONLY WHERE IT IS DECIDED. A field that appeared only
+    // on the cells that reached phase 3 would change the summary line's shape from one
+    // cell to the next, and `TestANonPostSummaryLineIsByteIdentical` pins that shape;
+    // worse, a reader could not tell "this run never got that far" from "this field
+    // does not exist on this arm". `gradeTheRenderedPostLink` overwrites it when it
+    // ran, so `unmeasured` surviving to here means the run failed before the post.
+    if (evidence.postLink === undefined) evidence.postLink = 'unmeasured';
     evidence.postArmCeiling = 'proves the block\'s post BRANCH exists and its payload satisfies '
       + 'the host payload gate as the SDK\'s own mock host implements it (non-empty `sources`, and '
       + 'a `workflow` source that actually produced images). Does NOT prove the real host accepts '
       + 'it: the platform re-resolves every source server-side, re-checks the posts:write:self '
       + 'grant, opens a viewer confirm and moderates the outputs. No credential was used and '
-      + 'nothing left the page.';
+      + 'nothing left the page. `postLink` additionally grades what the block RENDERED from '
+      + 'the answer — a link that cannot reach the post fails — and `none` there means the '
+      + 'block rendered no link, which is not a defect and not a pass of anything.'
+      + (POST_MALFORMED_URL
+        ? ' 🔴 THIS RUN USED THE MALFORMED-URL SELF-TEST SHAPE: the canned post was served '
+          + 'with a RELATIVE url instead of the absolute one createMockHost returns, so this '
+          + 'cell grades the instrument\'s own link check and is NOT comparable with an '
+          + 'ordinary post-arm verdict.'
+        : '');
   }
   console.log(JSON.stringify({ assertion: 'genpost', pass, unmeasured, reason, ...evidence }));
   process.exit(unmeasured ? 2 : (pass ? 0 : 1));

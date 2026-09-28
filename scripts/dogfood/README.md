@@ -396,6 +396,17 @@ agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius brief_sou
   exactly. `TestANonPostSummaryLineIsByteIdentical` pins the field sequence on all
   three arms, and `TestThePostArmsCeilingReachesTheGradeRow` pins both directions of
   this row.
+- 🔴 **`post_link=` rides beside it, on POST-ARM cells only, and it is the one field
+  where a PASS is ambiguous without it.** It grades what the block RENDERED from the
+  post it created — `absolute` (a link that reaches the post), `relative` (**the
+  defect**: an href that resolves back onto the block's own subdomain), `none` (the
+  block rendered no link — legitimate, and never a failure) or `unmeasured` (the run
+  never reached a successful post). `absolute` and `none` **both** pass and mean
+  completely different things, so a row carrying only `RENDER=yes` cannot say whether
+  this sub-check measured anything. Appended after `post_ceiling`, so the post-arm
+  sequence is the historical one plus two fields and every other arm's line is
+  untouched. Why it exists, and how its failing branch is made reachable:
+  `briefs/genpost.md` → **Phase 3**.
 - 🔴 **`RENDER=unmeasured` is a third state, and it is not `no`.** `oracle.sh`
   exits **2** when it measured nothing at all (no browser, no such container, a
   stopped container, a server the host could not reach, an assertion that could
@@ -538,9 +549,21 @@ bind a debugging port, instead of that surfacing eighty lines into a Go test.
   post BRANCH and that its payload
   satisfies the mock host's gate — **not** that the real host accepts it, which
   re-resolves every source server-side, re-checks the grant, opens a viewer confirm
-  and moderates the outputs. Full statement, the real-artifact matrix and the
-  two-phase design: `briefs/genpost.md`; pinned by
-  `TestThePostArmSeparatesTheGateFromTheWorkflowResult` and friends in
+  and moderates the outputs. 🔴 **And a THIRD phase, because the same app shipped a
+  third user-found defect on the same path: what the block RENDERS from the answer.**
+  `v0.1.2` — the version that fixed the gate and grades green on all three arms —
+  rendered `<a href={postResult.url}>`, the host's value verbatim, and the platform
+  returns a **relative** url, so the link resolved against the block's own
+  `<slug>.civit.ai` subdomain. The arm was blind **by construction**: `createMockHost`'s
+  canned `url` is absolute, i.e. the harness's data was better behaved than
+  production, so no cell had ever seen a malformed one. `post_link=` is the sub-check,
+  and `CIVITAI_ASSERT_POST_MALFORMED_URL=1` — refused off the post arm, and visible on
+  the row as `post_ceiling=mock-host-gate-only:malformed-url-fixture` — is how its
+  failing branch is reachable at all. Full statement, the real-artifact matrix and the
+  three-phase design: `briefs/genpost.md`; pinned by
+  `TestThePostArmSeparatesTheGateFromTheWorkflowResult`,
+  `TestThePostArmGradesTheLinkTheBlockRendersFromTheResult`,
+  `TestTheMalformedUrlShapeIsOptInAndVisible` and friends in
   `dogfood_oracle_post_test.go`.
 
 ## The ship verdict — the account arm, and the one thing the browser cannot see
