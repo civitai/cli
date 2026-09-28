@@ -70,6 +70,16 @@ var patternRules = map[string]patternRule{
 		rule:    "must be lowercase letters, digits and hyphens only, starting with a letter and ending with a letter or digit",
 		example: "my-first-app",
 	},
+	// goods[].id — the entitlement key. A DIFFERENT alphabet from blockId on
+	// purpose, and the gloss has to say so or an author reads the two failures
+	// as the same rule: underscores are legal here, and there is no
+	// last-character restriction, because a good id is private to one manifest
+	// rather than a public URL segment. What it shares with blockId is that it
+	// is permanent — a purchase and an entitlement are keyed by it.
+	`^[a-z0-9][a-z0-9_-]*$`: {
+		rule:    "must be lowercase letters, digits, underscores and hyphens only, starting with a letter or digit",
+		example: "extra-credits",
+	},
 	// version
 	`^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`: {
 		rule:    "must be a semantic version — three dot-separated numbers, with an optional -prerelease suffix",
