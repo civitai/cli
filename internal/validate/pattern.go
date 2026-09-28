@@ -47,9 +47,18 @@ import (
 //     That is what lets `revendor-canonical-schema.yml` land a pattern-adding
 //     canonical change unaided — it runs the suite on its own output before
 //     opening a PR, so an unconditional failure here made the automation whose
-//     job is to land that change unable to land it (issues #323, #486, #607,
-//     #695, #743). A human is still told: the debt row is in the bot's PR diff,
-//     and the workflow keeps a `gloss-owed` issue open until it is cleared.
+//     job is to land that change unable to land it (#486 and #743). The cost was
+//     not the stalled bot: `ci.yml`'s `schema-drift` job runs on every PR in this
+//     repo with no path filter and stays red while the vendored mirror is stale,
+//     so a blockage here reddens a check on unrelated human PRs until someone
+//     writes a gloss. A human is still told: the debt row is in the bot's PR
+//     diff, and the workflow keeps a `gloss-owed` issue open until it is cleared.
+//     (⚠️ An earlier revision listed "#323, #486, #607, #695, #743" as five
+//     monthly blockages of this guard. Retracted — #323 was a hand-dispatched
+//     fire drill under a different title, #607 was the enum half alone, and #695
+//     was an `internal/pkgzip` test that files under the same headline because
+//     the bot's gate is `go test ./...`. The full table is above the `owed` step
+//     in `.github/workflows/revendor-canonical-schema.yml`.)
 //   - A pattern the schema DROPS while a gloss survives is NOT mechanically
 //     clearable and still fails the suite. A row claiming to explain a rule that
 //     no longer exists reads as coverage, and deleting prose is a human call.

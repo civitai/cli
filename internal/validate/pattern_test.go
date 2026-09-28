@@ -598,9 +598,30 @@ const glossOwedWhy = "Schema `pattern`s that have NO author-facing gloss in " +
 // `.github/workflows/revendor-canonical-schema.yml`, which runs `go test ./...`
 // on its own output BEFORE opening a PR. The growth half of this ledger used to
 // be an unconditional failure, so a canonical that added a `pattern` made the
-// automation whose entire job is to land that change unable to land it — five
-// times, issues #323 #486 #607 #695 #743, roughly monthly, each one auto-closed
-// by a later green run so the history looked like a string of one-offs.
+// automation whose entire job is to land that change unable to land it — twice,
+// issues #486 and #743.
+//
+// 🔴 THE COST WAS NEVER "THE BOT STALLED", which is why two instances are worth
+// a redesign. `ci.yml`'s `schema-drift` job runs on `pull_request:` with no path
+// filter — every PR in this repo — and it compares the vendored mirror against
+// the live canonical, so it stays RED for as long as the mirror is stale. A
+// blockage here therefore reddens a check on every unrelated human PR, and the
+// only thing that clears it is a human writing a gloss. Both instances were TRUE
+// POSITIVES and both were cleared fast — measured from the issues, #486 was open
+// 31 minutes (2026-08-24 18:45→19:15Z) and #743 eleven hours (2026-09-28
+// 04:51→15:51Z). Zero false positives.
+//
+// ⚠️ RETRACTED, and recorded rather than quietly dropped: an earlier revision of
+// this comment said "five times, issues #323 #486 #607 #695 #743, roughly
+// monthly", implying one recurring class under one title. Measured from the
+// issues and their run logs, that is wrong in the direction that inflates the
+// case. #323 was a HAND-DISPATCHED FIRE DRILL whose own body says "NOT a real
+// failure of the bot", filed under the different title "could not re-vendor";
+// #607 was `TestEnumFindingsKeepTheirExactWording` alone (the enum half, fixed
+// by #745); #695 was `TestBuildExcludesGitFileInSubmodule` in `internal/pkgzip`,
+// unrelated to the schema, which files under the same headline only because the
+// bot's validate gate is `go test ./...`. So: three schema-shape blockages
+// (#486, #607, #743), of which two were this guard.
 //
 // A gloss is English prose about what a regex MEANS and cannot be derived, so
 // the bot cannot WRITE one. What it can do is RECORD that one is owed, which is
