@@ -1,0 +1,4 @@
+{
+  "_why": "Schema `pattern`s that have NO author-facing gloss in internal/validate/pattern.go, and whose absence has been ACKNOWLEDGED. A row here is a DEBT, not a decision: an author who trips this pattern gets the bare regex back. Clear a row by writing its gloss in patternRules. See the header of internal/validate/pattern.go and TestPatternRulesCoverTheVendoredSchema.",
+  "owed": []
+}

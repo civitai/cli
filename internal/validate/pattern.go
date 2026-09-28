@@ -34,10 +34,30 @@ import (
 // emits today — terse, never wrong. That is what makes this safe to sit in
 // front of a VENDORED mirror (AGENTS.md item 1): a schema update that adds a
 // pattern degrades to the old output rather than to a stale English claim about
-// a rule that changed. `TestPatternRulesCoverTheVendoredSchema` is the
-// bidirectional ledger that keeps the two in step anyway — it fails when the
-// schema grows a pattern with no gloss AND when a gloss names a pattern the
-// schema no longer has.
+// a rule that changed.
+//
+// So the coverage of this table is a NOTIFICATION concern, not a correctness
+// one, and `TestPatternRulesCoverTheVendoredSchema` is shaped accordingly. It is
+// a TOTAL ledger: every pattern the vendored schema can surface must be either
+// glossed here or recorded as an acknowledged debt in `pattern_gloss_owed.json`.
+//
+//   - A pattern the schema GAINS can be cleared mechanically, by recording the
+//     debt (`go test ./internal/validate -run
+//     TestPatternRulesCoverTheVendoredSchema -update-gloss-ledger -count=1`).
+//     That is what lets `revendor-canonical-schema.yml` land a pattern-adding
+//     canonical change unaided — it runs the suite on its own output before
+//     opening a PR, so an unconditional failure here made the automation whose
+//     job is to land that change unable to land it (issues #323, #486, #607,
+//     #695, #743). A human is still told: the debt row is in the bot's PR diff,
+//     and the workflow keeps a `gloss-owed` issue open until it is cleared.
+//   - A pattern the schema DROPS while a gloss survives is NOT mechanically
+//     clearable and still fails the suite. A row claiming to explain a rule that
+//     no longer exists reads as coverage, and deleting prose is a human call.
+//
+// 🔴 A ROW IN `pattern_gloss_owed.json` IS A DEBT, NOT A DECISION. Clearing it
+// means writing the gloss here — plus its ledger row in
+// TestPatternGlossesAreTheRightWayRound and its tripping fixture in
+// patternFixtures, both of which are total against this table.
 //
 // The four `not: {"pattern": …}` sub-schemas under `outputDir` are deliberately
 // NOT in this table and cannot be: a failing `not` surfaces as `kind.Not`,
