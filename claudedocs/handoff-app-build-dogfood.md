@@ -281,6 +281,18 @@ replaces wholesale):
   enum-only canonical changes to land unaided and pattern-adding ones to need a human** — which
   narrows rank 25's third closing condition to the enum-only case on top of it being unreachable as
   worded.
+  - 🔴 **SUPERSEDED by `#749` — the last sentence above is no longer true, and it is the sentence a
+    future session would act on.** A **pattern-adding** canonical change now lands unaided too.
+    `TestPatternRulesCoverTheVendoredSchema` became a TOTAL ledger: each schema `pattern` is either
+    glossed in `patternRules` or recorded as an acknowledged DEBT in
+    `internal/validate/pattern_gloss_owed.json`, and the workflow reconciles that file with
+    `-update-gloss-ledger` before it validates. The notification did not go away — the debt row lands
+    in the bot's PR diff and a `gloss-owed` issue stays open until a human writes the gloss. What
+    still needs a human, and still blocks the bot, is the **SHRINK** direction: a gloss for a pattern
+    the canonical DROPPED. **Restated: expect enum-only and pattern-ADDING canonical changes to land
+    unaided; expect a pattern-REMOVING one to need a human.** The count of blocked runs was also
+    higher than this doc implies — five (#323, #486, #607, #695, #743), monthly, each auto-closed by a
+    later green run, which is why it read as a string of one-offs.
 - ⚠ **OPEN, operator's call — D1:** the ~80 lines of `schemaEnum` + the derived `scopes[1]` row could be
   a prefix + membership assertion instead, keeping the anchor literal — ~75 lines cheaper, equally
   un-self-blocking. What the derived form buys, and nothing else checks, is **render order == schema
@@ -773,6 +785,12 @@ git -C "$CLI" worktree remove --force /tmp/wt-sd
 **The two guards that were self-blocking** (expect both PASS; control: they were RED at `origin/main`
 with the new schema in place). Run inside the same `/tmp/wt-sd` worktree:
 `go test ./internal/validate/ -count=1 -v -run 'TestEnumFindingsKeepTheirExactWording|TestPatternRulesCoverTheVendoredSchema'`
+
+Since `#749` that `-run` filter is **no longer total over the pattern half** — the reconciliation moved
+into `glossLedgerProblems` with its own guards, and one of them
+(`TestGlossLedgerUpdateFlagDefaultsOff`) is the only thing that sees the mutation which disarms the
+whole ledger. Widen it to `'TestEnumFindingsKeepTheirExactWording|TestPatternRulesCoverTheVendoredSchema|TestGloss|TestUnglossed'`,
+and **count the `=== RUN` lines** — a `-run` filter matching nothing prints `ok`.
 
 **The sensitive set matches the DEPLOYED server constant** (expect the same 7; `origin/release`, not
 `main`):
