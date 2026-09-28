@@ -278,47 +278,6 @@ live ranks.** The audit ladder on `#734` is CLOSED — 3 rounds, ended on the ru
   building and none has a render oracle. Checked before minting this slug, so a future
   session does not re-litigate whether this was a duplicate.
 
-### Added 2026-09-21 — the instrument was wrong more often than the models were
-
-- 🔴 **I GRADED AN APP AGAINST THE WRONG ASSERTION AND NEARLY REPORTED IT AS THE RESULT.**
-  `oracle.sh` took the brief as an **optional third positional arg defaulting to `celsius`**.
-  Run against a genpost trial without that arg, it ran the celsius assertion, timed out on
-  `[data-testid="celsius"]`, and printed `RENDER=no`. The app was correct the whole time.
-  **Fixed in `cli#686`:** the brief is now derived from the trial's own transcript, and an
-  argument that DISAGREES with it is refused rather than silently preferred — a disagreement
-  means someone is confused and a verdict either way is worthless.
-- 🔴 **A NEGATIVE CONTROL WAS PASSING VACUOUSLY, AND THE MECHANISM IS REUSABLE.** In the
-  oracle's own tests, `stubOracleEnv` built fixtures under `t.TempDir()`, whose path carries
-  the **test name**, which was spliced into an unquoted `find /work …`. A subtest name with a
-  shell metacharacter produced a syntax error → `manifests=0` → `RENDER=no` — **the expected
-  value of every negative case**. So the control passed for entirely the wrong reason. Found
-  and fixed inside `cli#686`. **Ask what value a broken harness returns; if it equals your
-  expected failure value, the control proves nothing.**
-- 🔴 **AN ORACLE'S ENVIRONMENT IS PART OF ITS VERDICT.** Seeding no signed-in viewer made
-  every auth-gated app fail on a branch production never exhibits — civitai's block-scope
-  middleware **hard-rejects** `posts:write:self` for an anonymous subject, so the brief's
-  behaviour cannot exist there. `cli#686` seeds a viewer shaped byte-for-byte like
-  production's `withSignedInFlag()`, while the stub transport still rejects every request —
-  asserted from inside the page, not by reading source, so "nothing can complete here"
-  remains true.
-- 🔴 **A ROUTINE WORKTREE CLEANUP DESTROYED THE CONTROL RUN'S TRANSCRIPT.** `runs/` lived
-  inside the worktree; `git worktree remove` took it. Two separate analyses then had no
-  per-step data for the one successful run they most needed to compare against. **Copy
-  `runs/<trial>/` out before removing a worktree** — the container survives a cleanup, the
-  transcript does not.
-- ⚠ **A WATCHDOG GREP OVER A WHOLE JSON RECORD RAISES FALSE ALARMS FROM DOCUMENTATION.** My
-  spend monitor matched `civitai generate|app submit` anywhere in a record, and fired four
-  times on the CLI's **own help text and an `AGENTS.md` table** appearing in tool *results*.
-  The authoritative signal is the runner's own `generations`/`submissions` counters, which
-  are enforced before `docker exec`. **Match the command field, not the record.**
-- ⚠ **`main` is intermittently red on a Chromium launch flake** (`dbus` address failure →
-  `browser never printed a DevTools endpoint`). The oracle correctly reports `exit 2 —
-  nothing was measured (this is NOT a failing trial)`, and `build-test` fails anyway because
-  the tests refuse to skip under CI. Seen on at least three runs; clears on re-run. The CI
-  config asks for the fix by name (*"Add a browser install step here (the tests themselves
-  must NOT be loosened into a skip)"*). **Unfixed, and it will keep training people to merge
-  through a required check.**
-
 ### Evicted 2026-09-27 (resume) — four closed 2026-09-21 blocks
 
 🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md) under *Evicted
@@ -336,6 +295,24 @@ conclusions survive in **Added 2026-09-21 (close) — what this arc actually tau
   a discriminating string the NEW content introduces)
 - the merge round, and a verdict that was about the instrument (the third instrument defect; a
   probe's zero needs the arm that makes it non-zero; a merged fix is not a shipped fix)
+
+### Evicted 2026-09-28 — five blocks whose lessons this session's entries carry forward
+
+🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
+under *Evicted 2026-09-28*.** The size ratchet refuses a doc that is over budget and growing; this
+round needed 14,853 B. Each of these is either superseded by an entry added below it or already
+generalised elsewhere — **read the archive before re-running any probe from those phases:**
+
+- *the instrument was wrong more often than the models were* (2026-09-21) — summarised by
+  **Added 2026-09-21 (close)**, which is kept
+- *the instrument, the brief, and three of my own claims* + *(ship) what shipping taught*
+  (2026-09-25) — the cost-instrument death and the brief-can-ship-a-bypass rule are restated in
+  the 2026-09-28 blocks
+- *what merging a doc can break* (2026-09-27) — the test-merge-before-landing rule
+- *four cwd-resolution hits, and a tool's verdict read as a fact* (2026-09-27) — **superseded by
+  *Added 2026-09-28 — process traps hit while investigating traps of the same class***, which
+  carries the same traps plus rerere and the scratchpad collisions. The `audit-dispatch --repo`
+  lesson from it also lives in the `devrc` store's `scripts` entry.
 
 ### Added 2026-09-21 (close) — what this arc actually taught
 
@@ -366,69 +343,6 @@ conclusions survive in **Added 2026-09-21 (close) — what this arc actually tau
   hand-rolled trial lands outside where the graders look and is ungradeable until moved or
   `DOGFOOD_RUNS` names its parent. Nothing errors.
 
-### Added 2026-09-25 — the instrument, the brief, and three of my own claims that did not survive
-
-- 🔴 **A BRIEF CAN SHIP A BYPASS. Mine nearly did.** I specified the slug-flag allowlist as
-  `{--slug}` on the strength of a literal grep for `"slug"`, which finds three `StringVar`
-  sites and misses `--from` (takes a published app slug), `--name` (slugified into the
-  blockId) and `--dir`. Implemented literally, `--from=some-other-app` would have become an
-  unguarded path to a foreign published app. **When briefing a change to a security check,
-  require the implementer to DERIVE the set from source and guard it — do not hand them a
-  set you grepped.** The seam guard is what makes this survivable; the fix alone would not.
-- 🔴 **I OVERSTATED THE SCAFFOLD DEFECT AS UNIVERSAL AND IT IS INSTALL-SHAPE-DEPENDENT.**
-  "Every scaffolded page-money app fails its own build out of the box" is false under plain
-  `npm install`. **State the install shape, or any "it's broken for everyone" claim is
-  unfalsifiable.**
-- 🔴 **I PASSED ALONG A FALSE CLAIM FROM A CODE COMMENT** — that `c=civitai; $c app submit`
-  is refused. It never was. **A comment asserting a guard is not evidence the guard exists,
-  and quoting one into a brief launders it into a requirement.**
-- 🔴 **COST DIED AS AN INSTRUMENT AND NOTHING WARNED US.** Two runs of the same model on the
-  same task four days apart differed **2.15× in $/1k** with cached share nearly unchanged.
-  Any cross-day dollar comparison in this family confounds provider pricing with the thing
-  under test. **Grade on steps, tokens and behavioural signals.**
-- 🔴 **THE FIX WORKED THROUGH A HALF NOBODY WAS MEASURING.** `#685`'s headline was a local
-  36-hook index; the index was never read. Its *docs-links promotion* is what drove the agent
-  to the hosted reference (1 → 5 HTTP requests). **Ask which half of a two-part change did the
-  work before crediting either.**
-- ⚠ **A `-run` FILTER THAT MATCHES NOTHING PRINTS `ok`.** A scoped `go test -run '<pattern>'`
-  returned `ok` with no test names — indistinguishable from a vacuous pass. Re-running with
-  `-v` and counting `=== RUN` lines showed 7 tests / 38 lines. **Count what ran.**
-- ⚠ **`tail -20` ON EXACTLY 20 LINES SILENTLY DROPPED THE PACKAGE THAT MATTERED.** A merged-tree
-  suite read as "all green" had the root package — the real-browser oracle suite, 133 s — cut
-  off the top of the window. **Grep for the package by name and count `FAIL`.**
-- ⚠ **A SUBAGENT STOPPED WITHOUT REPORTING, TWICE, AND THE WORK WAS FINE.** Both times the
-  final message was a status line, not the report; the PR and tests existed. **A missing report
-  is not a missing result — ask for the report rather than re-deriving the work.**
-- ⚠ **REBASE BEFORE MERGING IN THIS REPO, ALWAYS.** Three PRs this session were green on a base
-  that had moved (`#687` on stale pins, `#691` 3 commits behind, `#702` 2 commits behind while
-  another session released `v0.1.108`). File overlap was zero for `#702`, which is not safety —
-  the merged-tree suite is. It was green; the check is what makes that a fact.
-
-### Added 2026-09-25 (ship) — what shipping taught that building did not
-
-⚠ **Four bullets were DEDUPED out of this block on 2026-09-27** — they were near-verbatim
-repeats of bullets in the block immediately above (*a brief can ship a bypass*; *a `-run`
-filter that matches nothing prints `ok`* + `tail -20`; *a subagent stopped without
-reporting*; *rebase before merging*). Nothing was lost: read them there.
-
-- 🔴 **A CAP'S FAILURE DIRECTION IS THE WHOLE DESIGN.** The intuitive submission-cap fix
-  fails OPEN on a live publishing path. Ask *"if the thing I depend on changes, do I
-  over-refuse or under-refuse?"* before choosing the mechanism.
-- 🔴 **`go test ./...` GREEN IS NOT `gofmt` GREEN.** `#708` was reported locally green and CI
-  reddened on one unformatted file, taking `build-test` **and** `lint` with it. Two
-  different claims, reported as though one covered the other.
-- 🔴 **THE FIX WORKED THROUGH A HALF NOBODY MEASURED.** `#685`'s headline was a local 36-hook
-  index; **the index was never read in either run**. Its *docs-links promotion* is what drove
-  the agent to the hosted reference (1 → 5 HTTP requests). **Ask which half of a two-part
-  change did the work before crediting either.** Operator decision 2026-09-25: hosted is
-  canonical, the local index was drift — retired in `#702`.
-- 🔴 **A MERGED FIX IS NOT A SHIPPED FIX when the harness installs from npm.** Nearly ran the
-  ship cell against a CLI missing `#702`; cut `v0.1.109` first and verified the fix in a
-  **generated scaffold** (`tsc --noEmit` exit 0 under `--legacy-peer-deps`, the exact shape
-  that had cost 11 steps).
-- ⚠ **RE-READ A BASELINE IMMEDIATELY BEFORE SPENDING, NOT WHEN YOU PLANNED THE RUN.** Doing
-  so caught `oauth-probe` appearing mid-setup and killed a shortcut ("0 pending ⇒ any pending
-  row is ours") I would otherwise have graded against.
 ### Added 2026-09-25 (feedback) — the instrument was too LENIENT, for the first time
 
 - 🔴 **EVERY PRIOR INSTRUMENT FINDING WAS THE ORACLE BEING TOO HARSH. THIS ONE WAS THE
@@ -499,25 +413,6 @@ reporting*; *rebase before merging*). Nothing was lost: read them there.
   `$DEVRC`/`$HOMELAB`/`$DATAPACKET`/`$CIVITAI`, and `$CIVITAI` is the app repo — so the arc
   walk exits **5 (named but NOT measured**, explicitly not "empty"). The chain resolves only
   with `CIVITAI=<this repo> python3 …`. The next close-check here hits the same wall.
-
-### Added 2026-09-27 — what merging a doc can break
-
-- 🔴 **REBASING YOURSELF PROVES NOTHING ABOUT THE OTHER OPEN PRs ON THE SAME FILE.** I rebased
-  `#724`, merged it, and put `#717` and `#718` into conflict — both clean minutes earlier. **The
-  check is one command BEFORE merging:** `gh pr list --state open --json number,files` filtered
-  to the path you are landing. This doc already said *"two changes touching one file: TEST-MERGE
-  them"*; it does not say "your own branch", and I read it as if it did.
-- 🔴 **A DOC-ONLY MERGE CAN MAKE THE CANONICAL DOC WRONG ABOUT PRODUCTION.** While `#717` sat
-  conflicted, `main` asserted `v0.1.1` was *"pending operator review"* and *"`v0.1.0` is live and
-  broken"* — both false since `2026-09-25T23:30Z`. **Delaying a doc PR is a correctness change.**
-- 🔴 **RESOLVE A DOC CONFLICT ON MEANING, NOT ON SIDES** — here `--ours` wholesale would have
-  resurrected a retracted falsehood. Verify with a per-claim grep of BOTH sides; absent conflict
-  markers prove only that git is satisfied. **Never rebase a branch another worktree holds** —
-  detached-worktree recipe in the `cli` store scope (`cairn recall --ref dogfood`).
-- ⚠ **The close-check's own coverage is a FLOOR, not an enumeration:** the arc walk reported **4
-  sessions** and its own gaps — **3 of 11** commits on this doc carry no session id, and the
-  opencode corpus was not searched. (`--arc` cannot resolve a doc in this repo at all; that is a
-  devrc tooling gap, recorded in the `devrc` store scope, not here.)
 
 ### Added 2026-09-27 (resume) — durable facts RELOCATED here out of `State now`
 
@@ -664,52 +559,6 @@ them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed.
 - **The credentialed precedent:** `claudedocs/handoff-dogfood-3.md` — withdrawing a **first-version**
   submission destroys captioned media permanently; and `civitai app listing status` has left a
   shadow revision open on **`panorama-360`**, operator-only to clear.
-
-### Added 2026-09-27 (ladder) — four cwd-resolution hits, and a tool's verdict read as a fact about the world
-
-- 🔴 **`audit-dispatch.py 734` ASSEMBLED A BRIEF FOR `civitai/talos-infra` #734 — A MERGED,
-  UNRELATED PR — BECAUSE IT RESOLVES THE NUMBER AGAINST THE CWD'S REPO.** Both repos have a #734,
-  so instead of erroring it produced a coherent, authoritative-looking brief (its own header says
-  `PR #734 in civitai/talos-infra`), and the round-0 auditor's `THE OPERATOR'S OWN ASKS` section
-  was therefore evidence about a different change. **The flag exists and was omitted:
-  `--repo owner/name`.** The auditor caught it and correctly recorded every requirement as
-  `UNATTRIBUTED-UNKNOWN` rather than `unattributed`. ⚠ Re-running with `--repo civitai/cli` still
-  reports **0 asks** (no `Claude-Session-Id:` trailer on the PR's commit, no PR comments), so the
-  attribution gap was not caused by the flag error alone — but the **strongest** requirement IS
-  attributable: the operator asked for rank 22 by name and identified the mechanism themselves.
-  🔴 **Do not publish a quoted ask** — this repo is public.
-- 🔴 **FOUR cwd-resolution hits in one session, same class, three of them mine:** the brief above;
-  `git rev-parse --git-common-dir` returning a **relative** `.git` so a `find` searched
-  `datapacket-talos`'s rr-cache instead of `cli`'s (the 71-entry listing was the wrong repo's —
-  `cli` has 49); and two greps. **Use `--absolute-git-dir`, and pass the repo explicitly to every
-  tool that takes one.** This directory is a dispatch hub and CLAUDE.md gotchas #20/#25 describe
-  exactly this; reading them is not the same as applying them.
-- 🔴 **`gofmt -l` REPORTED CLEAN OVER A FILE THAT DOES NOT PARSE, because the parse error is on
-  STDERR and I had redirected it away.** `gofmt -l` lists *misformatted* files; a syntax error is
-  not in that list. **Use `gofmt -e <file>` and read stderr** — and never fold a tool's stderr into
-  `/dev/null` while treating its silence as a pass.
-- 🔴 **`grep -c '<<<<<<<'` RETURNED 0 ON A FILE `git status` CALLED `UU`.** Checking the same file
-  with python found the truth (there were no markers — rerere had resolved it), which is what
-  located the real cause. The lesson is not "grep lied": it is that **a zero from one tool over a
-  file another tool calls conflicted is a contradiction to investigate, not a reading to accept.**
-- ⚠ **A SUBAGENT'S REPORTED GREP COUNTS DID NOT REPRODUCE.** A fix agent reported 17 and 13 hits
-  for `read`; the next auditor measured **20 and 17** at the same head. The conclusion built on them
-  (every real `read` is a `while IFS= read -r` loop variable) held, so it was a reporting
-  discrepancy — but the figures were relayed onward before being checked. **Re-derive a number
-  before passing it on.**
-- ⚠ **The audit ladder ended on the RULE, not on a verdict.** Round 0: 2 🟡, 0 deletion candidates.
-  Round 1: 4 🟡 + 5 🟢 → its fix moved **29 executable payload lines, all from the single
-  lowest-priority finding**; the other seven moved zero. Round 2: one low docblock gap, and its own
-  reasoning for stopping was that the finding is about prose that round wrote. Rounds 5, 6 and 7 of
-  a past ladder each returned "safe to merge" and still found real defects, so the verdict is never
-  the stop signal — the findings are.
-- ⚠ **THREE OF THE THREE BRIEFS I WROTE NEEDED CORRECTING BY THE AGENT EXECUTING THEM**, and two in
-  the load-bearing direction: rank 22's premise (an empty `sources` array) was **wrong** — `v0.1.1`
-  sends `sources:[{kind:'workflow',workflowId}]`, so `createMockHost`'s array gate never fires and
-  an arm built to the brief would have graded the live defect **green**; and rank 20's amendment
-  recommended folding into a prober that follows redirects and has no negative control. **The
-  standing rule — require the implementer to DERIVE the set from source, never hand them one you
-  grepped — was written in this very doc and violated again.** Third instance.
 
 ## How to verify
 
