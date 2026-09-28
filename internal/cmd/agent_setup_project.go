@@ -83,7 +83,37 @@ type projectShape struct {
 	Kind      projectKind
 	Scripts   []devScriptRow
 	Templates []templateRow
+	// HasSetupWizard reports whether THIS project ships the dev-only auto-setup
+	// wizard — see setupWizardMarker.
+	HasSetupWizard bool
 }
+
+// setupWizardMarker is the file whose presence means this project can mint its
+// own live-dev token from the browser, with no `export` and no hand-run command.
+//
+// 🔴 IT IS A FILE CHECK FOR THE SAME REASON THE SCRIPT TABLE IS A FILE READ. The
+// wizard is a `page-money` artefact: `vite-plugin-civitai-setup.ts` registers the
+// dev-only `/__civitai/setup-dev-live` endpoint that `src/setup-dev-live.ts`
+// serves, and `src/main.tsx`'s "Set up automatically" button posts to it. A
+// `static` or `page-vite` project has none of the three, so a block that named
+// the button unconditionally would send that author looking for a screen their
+// project cannot render — the same defect shape item 36 records for npm scripts.
+//
+// 🔴 AND THE PLUGIN IS THE RIGHT MARKER OF THE THREE. `src/main.tsx` renders the
+// button but the POST 404s without the plugin; `src/setup-dev-live.ts` is the
+// handler the plugin mounts. The plugin is the file that makes the endpoint
+// exist, so it is the one whose absence means the path is genuinely unavailable.
+const setupWizardMarker = "vite-plugin-civitai-setup.ts"
+
+// WHY THE MANAGED BLOCK NAMES THE WIZARD AT ALL — measured discoverability, not
+// a preference. The scaffold ships a complete one-click answer to "where does the
+// dev token come from", and no document an agent reads mentioned it: the
+// generated `README.md` names `dev-token` 7 times and `setup-dev-live` /
+// "Set up automatically" 0 times, this block named `dev-token` 0 times and
+// carried no auth section at all, and `civitai app create`'s next-steps output
+// names neither. A real operator lost 110 minutes to that gap (session
+// ses_f1b9a7d40ffeqlEuYZlMEN0U2L) looking for a credential the app build never
+// needed.
 
 // knownDevScripts is the ORDER and the WORDING for the script names the shipped
 // scaffolds use. A row is emitted only when the project's own package.json
@@ -130,6 +160,14 @@ func scaffoldTemplateRows() []templateRow {
 // classify every npm template as no-build.
 func detectProjectShape(dir string) projectShape {
 	shape := projectShape{Templates: scaffoldTemplateRows()}
+
+	// 🔴 READ BEFORE THE KIND BRANCH, BECAUSE EVERY BRANCH RETURNS EARLY. Put
+	// this inside the npm arm and a later reordering silently drops it; the
+	// template gates on the field, so a false value is a section that vanishes
+	// rather than an error anybody sees.
+	if _, err := os.Stat(filepath.Join(dir, setupWizardMarker)); err == nil {
+		shape.HasSetupWizard = true
+	}
 
 	pkgPath := filepath.Join(dir, "package.json")
 	if _, err := os.Stat(pkgPath); err == nil {

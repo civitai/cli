@@ -17,6 +17,7 @@ package main
 // check fails — would report a failure for a run that did everything right.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -27,6 +28,37 @@ import (
 	"github.com/civitai/cli/internal/cmd"
 	"github.com/civitai/cli/pkg/civitai"
 )
+
+// jsonCheckRowIsFalse decodes an `agent-setup --check --json` payload and reports
+// whether the row called name is present AND `ok: false`.
+//
+// 🔴 A MISSING ROW IS NOT A FALSE ONE. It returns false for both, and the caller's
+// message covers both, because the two are the same finding here: either way the
+// payload does not say what the premise needs it to say. Decoding rather than
+// grepping is the point — see the call site.
+func jsonCheckRowIsFalse(t *testing.T, stdout, name string) bool {
+	t.Helper()
+	var payload struct {
+		Checks []struct {
+			Name string `json:"name"`
+			OK   bool   `json:"ok"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("PREMISE BROKEN: `--check --json` stdout does not decode: %v\n%s", err, stdout)
+	}
+	// A payload with no rows at all would make every lookup below return false for
+	// the wrong reason — that is a broken run, not a finding about one row.
+	if len(payload.Checks) == 0 {
+		t.Fatalf("PREMISE BROKEN: the payload carries no check rows:\n%s", stdout)
+	}
+	for _, c := range payload.Checks {
+		if c.Name == name {
+			return !c.OK
+		}
+	}
+	return false
+}
 
 func TestAgentSetupCheckFailureExitsGeneric(t *testing.T) {
 	err := fmt.Errorf("%w: 3 check(s) failed — the report above lists them", cmd.ErrAgentSetupIncomplete)
@@ -137,8 +169,16 @@ func TestAgentSetupProcessExitStatusEndToEnd(t *testing.T) {
 		}
 		// PREMISE: the run really was unauthenticated, or this row is the
 		// authenticated case wearing the unauthenticated one's name.
-		if !strings.Contains(stdout, "no token") {
-			t.Errorf("PREMISE BROKEN: the payload does not report a missing token, so this row is not "+
+		//
+		// 🔴 IT ASSERTS THE ROW'S STATE, NOT A PHRASE IN ITS DETAIL. This used to
+		// grep for the substring "no token", which is a guard on WORDING: the
+		// `authenticated` row's detail was reworded (it now says "no credential for
+		// this CLI", because the row stopped describing two stores at once) and the
+		// premise failed over a setup that was still perfectly unauthenticated. The
+		// row NAME is a published contract and the `ok` field is the state, so both
+		// are fair to assert; the sentence around them is not.
+		if !jsonCheckRowIsFalse(t, stdout, "authenticated") {
+			t.Errorf("PREMISE BROKEN: the `authenticated` row is not `ok: false`, so this row is not "+
 				"exercising the unauthenticated path:\n%s", stdout)
 		}
 		if !strings.Contains(stdout, `"ok": true`) {

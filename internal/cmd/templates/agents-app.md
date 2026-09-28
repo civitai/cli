@@ -91,6 +91,28 @@ Run `npm run` to list what this project does define.
 - **Do not hand-edit the `@civitai/*` versions.** `civitai app create` carries
   the pins that are known to work together; a hand-picked version is how the
   money path breaks silently.
+{{ if .HasSetupWizard }}
+**The dev token for live mode: click the button. Nothing needs exporting.** This
+project ships the dev-only auto-setup wizard, so `npm run dev:live` serves it on
+`http://localhost:5186` and — with no token set yet — shows a "Live mode setup"
+card. Paste a personal API key, press **Set up automatically**, and the dev server
+mints the block token from this project's own `block.manifest.json` scopes and
+merges `.env.development.local` in place, replacing only the
+`VITE_LIVE_BLOCK_TOKEN` / `CIVITAI_HOST_KEY` lines rather than rewriting the file.
+No shell variable is involved at any point.
+
+Headless, when you cannot open that page: `civitai app dev-token <slug> --spend
+--budget <n> --env`. Two things about it defy assumption.
+
+- **`--spend` is not optional.** Without it `ai:write:budgeted` is filtered out of
+  the mint request — deliberately, so nothing asks for spend implicitly — and
+  `dev:live` will refuse to generate with `block lacks ai:write:budgeted scope`,
+  even though `block.manifest.json` declares that scope.
+- **`--budget` is a per-generation Buzz ceiling, and the default is the SERVER's,
+  not your manifest's.** Omit it and an unsubmitted app gets 50 (the range is
+  1–250). A recipe that costs more than the ceiling is refused, so pass the number
+  your recipe actually needs.
+{{- end }}
 {{- else if eq .Kind "no-build" }}
 **This project has no `package.json`.** `civitai agent-setup` looked: this
 directory holds a `block.manifest.json` and no `package.json`, which is the

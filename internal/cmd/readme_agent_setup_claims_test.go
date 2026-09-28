@@ -35,6 +35,25 @@ import (
 // the RELATIONSHIP between the sentence and the thing it describes, and fails
 // when that relationship changes in EITHER direction.
 
+// exemptRowsClause renders the always-exempt row names as the README's own
+// phrasing, so the expected sentence is DERIVED from the code rather than typed
+// out. One name keeps the original "…row is `x` alone" wording; more than one
+// becomes "…rows are `a` and `b`".
+//
+// 🔴 IT IS A RENDERER, NOT A MATCHER. The caller compares the whole constructed
+// string against the section, which is what stops a reword from satisfying the
+// guard — see the comment at the call site.
+func exemptRowsClause(names []string) string {
+	quoted := make([]string, 0, len(names))
+	for _, n := range names {
+		quoted = append(quoted, "`"+n+"`")
+	}
+	if len(quoted) == 1 {
+		return "exempt row is " + quoted[0] + " alone"
+	}
+	return "exempt rows are " + strings.Join(quoted[:len(quoted)-1], ", ") + " and " + quoted[len(quoted)-1]
+}
+
 func readmeAgentSetupSection(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(repoRootDir(t), "README.md"))
@@ -83,13 +102,13 @@ func TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode(t *testing.T) {
 	// exempting `mcp-orch` from the verdict SURVIVED this guard while the
 	// equivalent mutant on `agents-md` was killed. Derive the server rows from
 	// the table so a third server is covered the moment it is added.
-	all := []string{checkCLIVersion, checkAgentsMD, checkClaudeMD, checkAuthenticated}
+	all := []string{checkCLIVersion, checkAgentsMD, checkClaudeMD, checkAuthenticated, checkAgentToken}
 	for _, s := range civitaiMCPServers {
 		all = append(all, s.Check)
 	}
 	// Positive control on the derivation: the table must actually have
-	// contributed, or this guard silently narrows back to the four constants.
-	if len(all) <= 4 {
+	// contributed, or this guard silently narrows back to the named constants.
+	if len(all) <= 5 {
 		t.Fatalf("derived only %d check name(s) — civitaiMCPServers contributed none, so "+
 			"the `mcp-*` rows are unguarded again", len(all))
 	}
@@ -283,13 +302,24 @@ func TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode(t *testing.T) {
 			conditional = append(conditional, name)
 		}
 	}
-	if len(exemptForClaude) != 1 || len(conditional) != 1 {
-		t.Fatalf("PREMISE BROKEN: this guard builds a one-exempt-row sentence, but the code "+
-			"now exempts %v on claude and makes %v conditional. Rewrite the README clause "+
-			"and this construction together.", exemptForClaude, conditional)
+	// 🔴 THE CONSTRUCTION NOW HANDLES N ALWAYS-EXEMPT ROWS, AND THAT IS A WIDENING
+	// OF THE BUILDER, NOT A LOOSENING OF THE ASSERTION. It used to require EXACTLY
+	// one and hard-code the word "row … alone"; splitting `authenticated` into
+	// `authenticated` + `agent-token` made that premise fire, correctly, because
+	// the sentence it built was no longer expressible. The clause is still built
+	// from `exemptForClaude` and still compared WHOLE, so a reworded falsehood
+	// carrying the same backticked names fails exactly as before — what changed is
+	// only how many names the builder can render.
+	if len(exemptForClaude) < 1 || len(conditional) != 1 {
+		t.Fatalf("PREMISE BROKEN: this guard builds a sentence naming the always-exempt rows plus "+
+			"exactly one conditional one, but the code now exempts %v on claude and makes %v "+
+			"conditional. Rewrite the README clause and this construction together.",
+			exemptForClaude, conditional)
 	}
-	wantClause := "on a `" + agentClaude + "` project the exempt row is `" +
-		exemptForClaude[0] + "` alone, because `" + conditional[0] + "` counts there."
+	// NOT sorted: `exemptForClaude` is built in `all` order, which is the order
+	// `--check` emits the rows in, so the sentence reads the way the report does.
+	wantClause := "on a `" + agentClaude + "` project the " + exemptRowsClause(exemptForClaude) +
+		", because `" + conditional[0] + "` counts there."
 	got := strings.Join(strings.Fields(sec), " ")
 	if !strings.Contains(got, wantClause) {
 		t.Errorf("the agent-setup section does not state what the code computes about a "+
@@ -370,7 +400,7 @@ func TestCheckEmitsNoRowAboutAnAbsentHeader(t *testing.T) {
 	// here, and whoever adds one must decide what the README should say.
 	want := map[string]bool{
 		checkCLIVersion: true, checkAgentsMD: true, checkClaudeMD: true,
-		checkAuthenticated: true,
+		checkAuthenticated: true, checkAgentToken: true,
 	}
 	for _, s := range civitaiMCPServers {
 		want[s.Check] = true

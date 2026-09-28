@@ -385,18 +385,42 @@ nothing on it is reachable until you add a header. A header-less setup still
 reaches models, images and articles through the `civitai` server, and
 `civitai-orchestration` answers it `401`.
 
-**`--check` contacts nothing** and reports six rows — `cli-version`,
-`agents-md`, `claude-md`, `mcp-site`, `mcp-orch`, `authenticated`. **Every row
-reports PRESENCE, never acceptance.**
+**`--check` writes nothing** and reports seven rows — `cli-version`,
+`agents-md`, `claude-md`, `mcp-site`, `mcp-orch`, `authenticated`,
+`agent-token`. **Every filesystem row reports PRESENCE, never acceptance.**
 
-🔴 **`ok` is the AND of every check except `authenticated`, — for any agent
-other than `claude` — `claude-md`, and — for an agent this CLI has no config
-target for — `mcp-site` and `mcp-orch`.** An unauthenticated setup is a
-success, not a failure, and every other agent reads `AGENTS.md` directly so the
-`CLAUDE.md` shim is inert for it. So on a `claude` project the exempt row is
-`authenticated` alone, because `claude-md` counts there. That last exemption is
-conditional and narrow: for a **known** agent a missing entry still fails, and
-the rows stay in the report and stay `false`.
+**`cli-version` is the one row that contacts anything**: one unauthenticated GET
+to GitHub's public releases endpoint, bounded at 2.5s, comparing this build
+against the newest published release. It **fails soft** — unreachable, timed
+out, non-200 or an unparseable tag all report `ok: true` with a detail saying the
+comparison did not happen, so only a *successful* comparison showing this build
+to be older returns `ok: false`. `--no-update-check` / `CIVITAI_NO_UPDATE_CHECK`
+skip it, the same controls `version` and `upgrade` honour.
+
+🔴 **It does not fail the verdict either.** Releases land days apart, so a counted
+freshness row would be red for a large share of ordinary runs over a state that is
+usually harmless — a permanently-red gate people learn to click through. **Read the
+row**: a consumer that reads only `ok` will not see a stale CLI. That gap is real,
+and closing it means changing the hosted setup prompt's "read `ok`, not the rows"
+instruction, which does not live in this repository.
+
+**The two auth rows are about two different stores.** `authenticated` is *this
+CLI's* credential — `civitai login`'s config file, or `CIVITAI_TOKEN` — which is
+what `civitai app dev-token`, `civitai app validate` and `civitai app submit`
+read. `agent-token` is whether `CIVITAI_TOKEN` is set in the **process
+environment**, which is the only place your agent can resolve the reference in
+its MCP config from. 🔴 **You do not need `CIVITAI_TOKEN` to scaffold, build,
+dev-run or submit an App — it is only for the MCP servers.**
+
+🔴 **`ok` is the AND of every check except `cli-version`, `authenticated` and
+`agent-token`, — for any agent other than `claude` — `claude-md`, and — for an
+agent this CLI has no config target for — `mcp-site` and `mcp-orch`.** An
+unauthenticated setup is a success, not a failure; a stale CLI is worth upgrading
+rather than a broken setup; and every other agent reads `AGENTS.md` directly so the
+`CLAUDE.md` shim is inert for it. So on a `claude` project the exempt rows are
+`cli-version`, `authenticated` and `agent-token`, because `claude-md` counts there.
+That last exemption is conditional and narrow: for a **known** agent a missing entry
+still fails, and the rows stay in the report and stay `false`.
 
 `civitai agent-setup --help` carries the per-vendor header spellings, the merge
 rules and the JSONC re-encoding caveat in full.
