@@ -250,6 +250,20 @@ def reasoning_echo(msg: dict) -> dict:
 # CLI must be able to authenticate. The guarantee is about what LEAVES the
 # container and lands in the artifacts an operator keeps — not about hiding the
 # credential from the trial.
+#
+# ⚠ AND IT DOES NOT CHECK THAT THE CREDENTIAL WORKS. install_credential proves
+# the file is installed and readable BY THE TRIAL; nothing here proves the token
+# inside it is still valid. An expired credential installs, reads back clean, and
+# then fails every authenticated command with `invalid_grant` — which is what
+# actually happened on trial `at2-mimo-noderoot-claudeid` (2026-09-27). Declared
+# gap, not a solved one.
+#
+# ⚠ ONE MORE PLACE THE VALUE EXISTS, AND IT IS IN THIS PROCESS. The install's
+# read-back (install_credential) `cat`s the file back as the trial user, so the
+# bytes are in this process's memory for as long as it takes to digest them.
+# They are never written, logged, raised or returned: what leaves that function
+# is a sentence naming the path and the user. The surfaces above are unchanged,
+# and the redactor still sits at every write in case they ever are not.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # The config.yaml keys whose values are secret. `scope`, `auth_kind`, `base_url`
@@ -262,20 +276,26 @@ MIN_SECRET_LEN = 8
 # Where the credential lands inside the container, and the staging path it
 # passes through. Neither carries a value.
 CRED_STAGE = "/tmp/.dogfood-credential"
-INSTALL_SH = r"""
-set -e
-u="$1"
-# 🔴 RESOLVE THE TRIAL USER'S HOME, AND FAIL IF IT CANNOT BE RESOLVED. This runs
-# as root (docker cp writes the staging file as root, and a non-root trial user
-# could neither chown it nor remove it from a sticky /tmp), so `$HOME` here is
-# ROOT'S home, not the trial user's. Falling back to it would install the
-# credential where the trial cannot read it — and the trial would then grade as
-# an ordinary "not authenticated" failure, which is the confound this whole
-# harness exists not to introduce. Refuse instead; the caller turns a non-zero
-# exit into a recorded `credential install failed`.
+# 🔴 RESOLVE THE TRIAL USER'S HOME, AND FAIL IF IT CANNOT BE RESOLVED. The
+# installer runs as root (docker cp writes the staging file as root, and a
+# non-root trial user could neither chown it nor remove it from a sticky /tmp),
+# so `$HOME` there is ROOT'S home, not the trial user's. Falling back to it would
+# install the credential where the trial cannot read it — and the trial would
+# then grade as an ordinary "not authenticated" failure, which is the confound
+# this whole harness exists not to introduce. Refuse instead; the caller turns a
+# non-zero exit into a recorded `credential install failed`.
+#
 # ⚠ `if`, not `[ … ] || { … && … ; }`. Under `set -e` that idiom EXITS when the
 # inner `&&` is false — so a missing /home/<u> would kill the script at the
 # first fallback and the message below would never print.
+#
+# 🔴 SHARED BY THE INSTALLER AND THE READ-BACK, AND THAT SHARING IS THE POINT. A
+# read-back that resolved the path its OWN way would be verifying a different
+# file from the one just written, and would then report on it — which is the
+# exact class of defect the read-back exists to close. One derivation, two
+# readers.
+RESOLVE_HOME_SH = r"""
+u="$1"
 h=$(getent passwd "$u" 2>/dev/null | cut -d: -f6)
 if [ -z "$h" ] && [ -d "/home/$u" ]; then h="/home/$u"; fi
 if [ -z "$h" ] && [ "$u" = "root" ] && [ -d /root ]; then h=/root; fi
@@ -283,6 +303,10 @@ if [ -z "$h" ]; then
   echo "cannot resolve a home directory for container user '$u'" >&2
   exit 1
 fi
+"""
+INSTALL_SH = r"""
+set -e
+""" + RESOLVE_HOME_SH + r"""
 d="$h/.config/civitai"
 mkdir -p "$d"
 cp """ + CRED_STAGE + r""" "$d/config.yaml"
@@ -291,6 +315,31 @@ chown "$u" "$h/.config" "$d" "$d/config.yaml" 2>/dev/null || true
 rm -f """ + CRED_STAGE + r"""
 test -s "$d/config.yaml"
 printf 'installed %s\n' "$d/config.yaml"
+"""
+
+# 🔴 THE READ-BACK. Run as the TRIAL USER — never as root — because the only
+# question that matters is what the trial can see, and root can read a file the
+# trial cannot. It resolves the path with RESOLVE_HOME_SH above, i.e. exactly the
+# derivation the installer wrote to.
+#
+# The two fds carry different things on purpose: the PATH goes to stderr and the
+# CONTENT to stdout, so stdout is precisely the bytes the caller digests while
+# the caller can still name the file in its report. On a non-zero exit stderr
+# carries the diagnosis instead, and there is no content.
+VERIFY_SH = r"""
+set -e
+""" + RESOLVE_HOME_SH + r"""
+p="$h/.config/civitai/config.yaml"
+if [ ! -f "$p" ]; then
+  echo "there is no credential at $p" >&2
+  exit 3
+fi
+if [ ! -r "$p" ]; then
+  echo "the credential at $p is not readable by '$u'" >&2
+  exit 4
+fi
+printf '%s\n' "$p" >&2
+cat "$p"
 """
 
 
@@ -356,9 +405,41 @@ class Redactor:
         return value
 
 
-def install_credential(container: str, user: str, path: str) -> str:
+def install_credential(container: str, user: str, path: str, expect: bytes) -> str:
     """Put the operator's credential inside the container without it ever
-    appearing in an argument, and return the installer's own report line."""
+    appearing in an argument, then READ IT BACK as the trial user and report on
+    the read.
+
+    🔴 THE RETURN VALUE IS A STATEMENT ABOUT A READ, NOT ABOUT A WRITE, AND THAT
+    IS THE WHOLE POINT OF THIS FUNCTION'S SHAPE. It used to return the
+    installer's own stdout — `installed /root/.config/civitai/config.yaml` — so
+    the transcript's `credential_install` field was the INSTALLER'S CLAIM about a
+    WRITE, and a claimed install was indistinguishable from a credential the trial
+    cannot read. An operator reading `jq .credential_install` got a sentence
+    either way.
+
+    🔴 WHAT THIS DOES **NOT** DO, STATED HERE BECAUSE THE INCIDENT THAT PROMPTED
+    IT IS EXACTLY THIS CASE: it does not check that the credential WORKS. Trial
+    `at2-mimo-noderoot-claudeid` (2026-09-27) died at `rc=124` with
+    `generations: 0` after spending 18 of its 23 minutes on `civitai login`, and
+    the first reading of it — that the installed credential was ABSENT — is
+    REFUTED by its own transcript: at step 60 `cat ~/.config/civitai/config.yaml`
+    exited **0** and printed the file (redacted). What actually failed was the
+    credential's VALIDITY — steps 55 and 62 both returned
+    `device login failed: Invalid grant: refresh token is invalid
+    (invalid_grant)`. The container's `~/.config/civitai` is empty **today**
+    because the trial's own `rm -f` at step 68 removed the file, and the
+    directory's mtime (22:04) matches that step, not the install.
+    So this read-back would have PASSED on that run. It closes the
+    report-vs-read gap and nothing else; an EXPIRED credential is still detected
+    by nothing in this harness, and that is a declared gap, not a solved one.
+
+    🔴 NOTHING SECRET OR DIGEST-SHAPED IS RETURNED OR RAISED. The bytes come back
+    into this process to be digested and are then dropped: the report line names
+    the path and the user, the mismatch error names two byte COUNTS, and neither
+    carries the value or a digest of it. (The only digest that reaches an artifact
+    is `credential_sha256`, a 12-hex prefix, exactly as before.)
+    """
     cp = subprocess.run(["docker", "cp", path, f"{container}:{CRED_STAGE}"],
                         capture_output=True, text=True)
     if cp.returncode != 0:
@@ -370,7 +451,29 @@ def install_credential(container: str, user: str, path: str) -> str:
         capture_output=True, text=True)
     if inst.returncode != 0:
         raise RuntimeError(f"installing the credential failed: {inst.stderr.strip()}")
-    return inst.stdout.strip()
+    # 🔴 AS `user`, NOT AS ROOT. Root can read a file the trial cannot, so a
+    # root read-back would confirm the wrong claim. Bytes, not text=True: the
+    # comparison below is over the file's bytes and a decode would make it a
+    # comparison over a lossy transcription of them.
+    back = subprocess.run(
+        ["docker", "exec", "-u", user, container, "sh", "-c", VERIFY_SH, "sh", user],
+        capture_output=True)
+    if back.returncode != 0:
+        raise RuntimeError(
+            "the credential is not readable by container user %r after install: %s"
+            % (user, back.stderr.decode("utf-8", "replace").strip()))
+    if _digest(back.stdout) != _digest(expect):
+        # Counts, never content: enough to tell a truncated copy from a wholly
+        # different file, and not a piece of either.
+        raise RuntimeError(
+            "the credential read back by container user %r is not the file that was "
+            "copied in (%d bytes read back, %d expected)"
+            % (user, len(back.stdout), len(expect)))
+    # Built HERE, after both gates, and out of the read's own output — so there is
+    # no variable holding the success text that an early return could emit.
+    where = back.stderr.decode("utf-8", "replace").strip().splitlines()
+    return ("read back as %s from %s: present, readable, and byte-identical to the "
+            "file that was copied in" % (user, where[-1] if where else "an unreported path"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -451,6 +554,18 @@ APP_LISTING_DESTRUCTIVE = ("set-text",)
 # cannot parse an invocation out of the segment.
 DANGEROUS_VERBS = ("generate", "submit", "withdraw", "listing")
 # Wrappers to step over when looking for the executable.
+#
+# 🔴 `timeout` IS DELIBERATELY NOT HERE, AND THE REASON IS MEASURED — see
+# login_refusal / bare_segment. Adding it (with its DURATION) plus stripping a
+# subshell's parens makes `invocation()` parse two shapes it used to reject, which
+# moves them out from under the fail-closed rule and into the precise gates — and
+# the precise gates are token-fragile at that boundary:
+# `(civitai app listing set-icon ./i.png --slug sensei)` then yields the candidate
+# `sensei)`, which does not match the slug shape `[a-z0-9][a-z0-9-]*`, so
+# `_prefix_ok` finds no offender and ALLOWS a command aimed at a real listing on
+# the account. Measured while writing this change: refused before, allowed after.
+# So the normalisation lives in the login check, which has no fail-open of its own,
+# and the caps keep their conservative fall-through.
 WRAPPERS = ("env", "sudo", "nice", "ionice", "stdbuf", "nohup", "command", "exec", "builtin")
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -712,6 +827,56 @@ def invocation(segment: str):
     return [t for t in toks[i + 1:]]
 
 
+# `timeout`'s mandatory DURATION: a number with an optional s/m/h/d suffix. Narrow
+# enough that no command name can match it, so the skip below cannot swallow the
+# thing it is looking for.
+_DURATION = re.compile(r"^\d+(\.\d+)?[smhd]?$")
+
+
+def bare_segment(segment: str) -> str:
+    """A segment with shell packaging that hides the command word removed, so
+    `invocation()` can read it.
+
+    🔴 TWO SHAPES WERE MISSED AND BOTH WERE FOUND BY REPLAYING REAL BYTES, NOT BY
+    IMAGINING COMMANDS. Steps 70 and 71 of trial `at2-mimo-noderoot-claudeid` are
+    `timeout 10 civitai login --no-browser 2>&1 || true` and
+    `(civitai login --no-browser 2>&1) &`. `invocation()` tested `10` against
+    "civitai" for the first, and `(civitai` for the second — a subshell's opening
+    paren glues itself to the command word under shlex. A hand-written table of
+    eight login spellings was entirely green while two of the four shapes that
+    actually burned that run's budget walked straight through; see
+    TestDogfoodTheMeasuredRunsLoginCommandsAreRefused.
+
+    🔴 APPLIED ONLY BY THE LOGIN CHECK, AND THAT IS THE WHOLE DESIGN DECISION.
+    Doing it inside `invocation()` would be one predicate in one place, which is
+    the right instinct and is WRONG here: it moves these shapes out from under the
+    fail-closed rule and into the precise gates, and the precise gates are
+    token-fragile at exactly that boundary. Measured, not theorised —
+    `(civitai app listing set-icon ./i.png --slug sensei)` normalises to the
+    candidate `sensei)`, which fails the slug shape test `[a-z0-9][a-z0-9-]*`, so
+    `_prefix_ok` sees no offender and ALLOWS a command aimed at a real listing on
+    the operator's account. It was REFUSED before the widening and ALLOWED after.
+    A refusal that fires for a blunt reason beats a gate that fails open, so the
+    caps keep reading the raw segment and the login check gets this instead. The
+    login check has no fail-open half: it either finds `login` as argv[0] or it
+    does not.
+
+    ⚠ STILL NOT NORMALISED, same class as `eval`: `$(civitai login)`, backticks,
+    and `c=civitai; $c login`. This reads command text.
+    """
+    # A subshell's or group's punctuation cannot change what the segment invokes —
+    # a leading `(` in shell is always a subshell — so both halves come off.
+    toks = segment.strip("(){} \t").split()
+    # `timeout [OPTION]… DURATION COMMAND` puts its own options and its duration
+    # between the wrapper word and the command.
+    if toks and toks[0] == "timeout":
+        i = 1
+        while i < len(toks) and (toks[i].startswith("-") or _DURATION.match(toks[i])):
+            i += 1
+        toks = toks[i:]
+    return " ".join(toks)
+
+
 ARG_ORIGIN = "argument"
 
 
@@ -838,6 +1003,103 @@ def origin_phrase(origin: str) -> str:
     if origin == ARG_ORIGIN:
         return "the app-name argument"
     return "the value of `%s`" % origin
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# `civitai login` — REFUSED IN EVERY TRIAL, CREDENTIALED OR NOT.
+#
+# 🔴 IT CANNOT SUCCEED HERE, SO ITS ONLY POSSIBLE OUTCOMES ARE WASTE AND HARM.
+# Both of the CLI's login paths need a human: the browser device flow needs
+# someone to approve the request at a URL, and `--token <key>` needs a personal
+# API key minted in the web UI. A blind trial in a container has neither. What it
+# does instead, measured on trial `at2-mimo-noderoot-claudeid` (2026-09-27): steps
+# 56–74, 18 of the run's 23 minutes, were `civitai login` attempts — several
+# backed by five-minute `sleep` loops waiting for an approval that could never
+# arrive — and the run died at `rc=124`, a wall-clock timeout, with
+# `generations: 0`. FOUR of those attempts deleted the stored credential first
+# (`rm -f ~/.config/civitai/config.yaml && civitai login …`, steps 63/66/68/70),
+# reaching for a login that cannot replace it. Refusing the whole tool call is
+# what stops that `rm` too.
+#
+# 🔴 AND THE TRIAL WAS NOT BEING STUPID — READ THIS BEFORE WEAKENING THE MESSAGE.
+# Its credential was installed and readable (step 60's `cat` exited 0) but
+# EXPIRED: steps 55 and 62 both returned `device login failed: Invalid grant:
+# refresh token is invalid (invalid_grant)`. A genuine auth failure with no way
+# to tell that re-authenticating was impossible is exactly the situation that
+# produces 18 minutes of login attempts. The refusal has to answer THAT — which
+# is why the credentialed text says the credential is installed and readable (the
+# two things the harness actually verified) rather than that the trial is
+# authenticated (which nothing here checks), and tells it what to do when a
+# command reports otherwise.
+#
+# 🔴 REFUSED IN THE UNCREDENTIALED CASE AS WELL, AND THAT IS A DELIBERATE CHOICE
+# RATHER THAN A SIDE EFFECT. The device flow is no more approvable without a
+# credential than with one, so an uncredentialed trial that tries to log in burns
+# exactly the same budget on exactly the same impossibility. The two messages
+# differ because the ACCURATE thing to say differs — "one is installed" vs
+# "there is none and there will not be one".
+#
+# ⚠ THE DIFFERENCE LEAKS THAT A CREDENTIAL EXISTS, AND THAT IS FINE HERE. It
+# leaks nothing `ls ~/.config/civitai` does not already answer — the module
+# docstring's guarantee is about what leaves the container, explicitly NOT about
+# hiding the credential from the trial. And the byte-identity contract it might
+# look like it violates is about the TASK (`task()` / `--print-task`), which this
+# does not touch: a refusal is a tool result, not the task text. Withholding the
+# fact is what cost the 18 minutes above.
+#
+# ⚠ NOT A CAP, AND FILED APART FROM THEM ON PURPOSE. There is no counter, no
+# flag and no arming condition: `Caps.judge` only runs when the caps are armed,
+# and an uncredentialed setup trial arms nothing, so a login gate living inside
+# `Caps` would be inert in exactly half the cases it is for.
+#
+# ⚠ LIMIT, STATED RATHER THAN IMPLIED. Like every other classifier here this
+# reads COMMAND TEXT, so `eval "civitai login"` and `c=civitai; $c login` are not
+# caught. `login` is deliberately NOT added to DANGEROUS_VERBS (which would catch
+# the `eval` form under the fail-closed rule) because that rule's refusal says
+# "a spending or publishing verb", and login is neither — a message that
+# misnames what it caught is the defect `_prefix_ok`'s remedy line was fixed for.
+LOGIN_VERB = "login"
+LOGIN_REFUSAL_CREDENTIALED = (
+    "refused by the run harness: `civitai login` cannot succeed inside a trial and is "
+    "disabled. A CIVITAI CREDENTIAL IS ALREADY INSTALLED at "
+    "~/.config/civitai/config.yaml and was verified readable by this user before the "
+    "run started. Use it as it is: do not run `civitai login`, and do not delete, move "
+    "or overwrite that file. If a command reports that you are NOT authenticated, then "
+    "the stored credential is installed but not working — it can be expired — and "
+    "logging in cannot fix that from inside this trial: say so explicitly in your "
+    "report and carry on with the parts of the task that do not need an account.")
+LOGIN_REFUSAL_UNCREDENTIALED = (
+    "refused by the run harness: `civitai login` cannot succeed inside a trial and is "
+    "disabled. The browser device flow needs a human to approve the request in a "
+    "browser and there is nobody at this container, and `--token` needs a personal API "
+    "key minted in the Civitai web UI, which this trial does not have. No Civitai "
+    "credential is available to this run at all, so any command that needs one will "
+    "fail: record that in your report and carry on with the parts of the task that do "
+    "not need an account.")
+
+
+def login_refusal(command: str, credentialed: bool):
+    """Refusal string if this command tries to authenticate, else None.
+
+    Pure: no counter, no state, and no dependence on whether the caps are armed —
+    see the section comment above for why that matters.
+
+    🔴 EVERY `login` FORM, `--help` INCLUDED. The point is to end the whole
+    line of attack in one reply rather than let the model read the flags and try
+    the next spelling, which is the sequence the measured run actually walked
+    (`login --help` at step 56, then `--no-browser`, then `--token`, then
+    `--no-browser` again, five more times). The refusal text carries more of what
+    the trial needs than `--help` does.
+    """
+    for seg in segments(strip_heredoc_bodies(command)):
+        # `bare_segment` and not the raw segment: two of the four login commands
+        # the measured run actually issued are invisible without it, and it is
+        # applied HERE rather than inside `invocation()` for the measured reason in
+        # its own docstring.
+        argv = invocation(bare_segment(seg))
+        if argv and argv[0] == LOGIN_VERB:
+            return LOGIN_REFUSAL_CREDENTIALED if credentialed else LOGIN_REFUSAL_UNCREDENTIALED
+    return None
 
 
 class Caps:
@@ -1339,7 +1601,11 @@ def main() -> int:
         # and so "which credential was this?" is answerable without holding one.
         start.update(credentialed=True, credential_sha256=cred_sha)
         try:
-            start["credential_install"] = install_credential(container, a.user, a.credential_file)
+            # `cred_bytes` rather than a second read of the path: the expectation
+            # the read-back is compared against must be the bytes that were
+            # digested into `credential_sha256`, not whatever the file says now.
+            start["credential_install"] = install_credential(
+                container, a.user, a.credential_file, cred_bytes)
         except RuntimeError as e:
             rec("start", **start)
             rec("end", stop=f"credential install failed: {e}", steps=0,
@@ -1480,7 +1746,16 @@ def main() -> int:
             # container: the refusal is what the model is handed back, so the cap
             # is a property of this process and not of anything the trial can
             # reach.
-            refusal = caps.judge(cmd) if armed else None
+            # 🔴 THE LOGIN GATE RUNS FIRST, AND UNCONDITIONALLY. First because
+            # `Caps.judge` CHARGES a submit attempt before the command runs and
+            # the refund only fires on a command that ran — so judging a
+            # `civitai login && civitai app submit --yes` before refusing it
+            # would take a submission out of the budget for a command that never
+            # executed. Unconditionally because `armed` is false for an
+            # uncredentialed setup trial, and login is impossible there too.
+            refusal = login_refusal(cmd, bool(a.credential_file))
+            if refusal is None and armed:
+                refusal = caps.judge(cmd)
             if refusal:
                 logcmd("refused", steps, cmd, caps)
                 rec("refused", step=steps, command=cmd, reason=refusal)

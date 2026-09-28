@@ -156,11 +156,50 @@ authenticate. The guarantee is about what leaves the container and lands in the
 artifacts you keep, not about hiding the credential from the trial.
 
 **Prove it rather than trusting this table:**
-`go test . -run TestDogfoodCredential -v`. `TestDogfoodCredentialNeverLeaks`
+`go test . -run 'TestDogfoodCredential|TestDogfoodLogin' -v`. `TestDogfoodCredentialNeverLeaks`
 plants a canary, runs a trial that `cat`s the config, greps all three surfaces
 for zero hits — and runs the same grep over the un-redacted file first, because a
 grep that finds nothing because its PATTERN is wrong is indistinguishable from
 one that finds nothing because there is nothing there.
+
+### 🔴 The install is VERIFIED, not reported
+
+`credential_install` in the `start` record is a statement about a **read**:
+`read back as <user> from <path>: present, readable, and byte-identical to the
+file that was copied in`. After `docker cp` + the installer, runner.py runs the
+file back out **as the trial's own user** — not as root, because root can read a
+file the trial cannot — and compares its digest to the bytes that were copied in.
+Either check failing **raises**, so the trial dies before its first provider call
+with `stop: "credential install failed: …"` and the `credential_install` key is
+absent entirely rather than carrying a sentence.
+
+It used to return the installer's own stdout — `installed
+/root/.config/civitai/config.yaml` — which was the installer's **claim about a
+write**, so `jq .credential_install` returned a sentence whether or not the trial
+could read the file. The install path is where a capability confound enters
+unseen: a credential the trial cannot read grades as an ordinary "not
+authenticated" failure.
+
+🔴 **What it does NOT check is that the credential WORKS, and that is the gap the
+incident behind it actually sits in.** Trial `at2-mimo-noderoot-claudeid`
+(2026-09-27) died at `rc=124` with `generations: 0` after spending 18 of its 23
+minutes on `civitai login`. The first reading — that its installed credential was
+absent — is **refuted by its own transcript**: step 60's
+`cat ~/.config/civitai/config.yaml` exited **0** and printed the file (redacted).
+What failed was **validity** — steps 55 and 62 both returned `device login
+failed: Invalid grant: refresh token is invalid (invalid_grant)`. The container's
+`~/.config/civitai` is empty *today* because the trial's own `rm -f` at step 68
+removed the file; the directory's mtime (22:04) matches that step, not the
+install, and both directories are mode 0777, which the installer never sets.
+**So this read-back would have PASSED on that run.** An EXPIRED credential is
+still detected by nothing in this harness — declared gap, not a solved one. The
+thing that would have saved that run is the login gate below.
+
+⚠ One more place the value exists, and it is in the runner process: the read-back
+`cat`s the file back, so the bytes are in memory for as long as it takes to
+digest them. They are never written, logged, raised or returned — what leaves
+that function is a sentence naming the path and the user, and the mismatch error
+carries two byte COUNTS and nothing else.
 
 ### The caps — what is mechanical and what is not
 
@@ -171,6 +210,7 @@ one that finds nothing because there is nothing there.
 | submission cap | `--max-submissions N` | **yes** — same, for `civitai app submit`, and it counts SUBMISSIONS rather than attempts. Each attempt is charged before it runs and **refunded** when its own result proves nothing was contacted: it exited non-zero *and* carried the CLI's pre-flight refusal for lack of `--yes`. `--package-only` contacts nothing by construction and is never charged. 🔴 **The refund direction is deliberate and it is the fail-CLOSED one.** Deciding up front — "only charge a submit carrying `--yes`" — makes the harness depend on the CLI continuing to refuse, so the day that stops it silently under-counts and permits unlimited real submissions; a refund that stops firing merely over-refuses. Both facts live in Go and are pinned by the seam guards in `dogfood_submission_cap_seam_test.go`, which run the real CLI against a recording server. Measured defect: trial `ab-ship-mimo-01` charged a refused submit, then blocked the `--yes` retry the model reached for on its very next step, and graded `SHIP=no` for an app that was never submitted |
 | `app withdraw` | `--allow-withdraw` to permit | **yes** — refused by default. It permanently destroys a listing's captioned screenshots and names a publication-request id no prefix check can resolve to an app |
 | `app listing set-text` | `--allow-listing-text` to permit | **yes** — refused by default. It rewrites the listing's public tagline/description/category **in place on every listing status** — not a "material" change, so no revision and no moderator review — and this CLI has no command that restores the previous value. Neither flag is threaded through `driver.sh`, so a matrix run cannot reach either |
+| `civitai login` | none — **always refused, credential or not** | **yes** — refused before the `docker exec`, in *every* trial. Neither login path can complete here: the browser device flow needs a human to approve the request, and `--token <key>` needs a personal API key minted in the web UI. See below |
 | command log | always on | **yes** — `runs/<trial>/commands.log`, one line per command with its verdict and the counters |
 
 🔴 **They classify COMMAND TEXT, and that is the boundary.** A model that writes
@@ -221,10 +261,77 @@ gate. A report written off that comment asserted the opposite of what the code
 does; `TestDogfoodAppStatusAndAppListingStatusAreGatedDifferently` pins the two
 behaviours so the next reader does not have to trust the prose.
 
+🔴 **`civitai login` is refused in every trial, and it is deliberately NOT a
+cap.** It has no flag, no counter and no arming condition, because both of its
+paths need a human and neither can complete in a container: the device flow needs
+someone to approve the request in a browser, and `--token <key>` needs a personal
+API key minted in the web UI. What it does instead is burn the wall clock —
+measured on `at2-mimo-noderoot-claudeid`, steps 56–74 were login attempts,
+several backed by five-minute `sleep` loops, and **four of them deleted the stored
+credential first** (`rm -f ~/.config/civitai/config.yaml && civitai login …`,
+steps 63/66/68/70), reaching for a login that cannot replace it. Refusing the
+whole tool call is what stops that `rm` too. **This is the fix that would have
+saved that run**, not the read-back above.
+
+🔴 **And the trial was not being stupid — read this before weakening the
+message.** Its credential was installed and readable; it was **expired**
+(`invalid_grant` at steps 55 and 62). A genuine auth failure with no way to tell
+that re-authenticating is impossible is exactly what produces 18 minutes of login
+attempts.
+
+So the refusal carries what the trial needs, and that differs by case: a
+credentialed trial is told a credential **is installed** and readable — the two
+things the harness actually verified, deliberately *not* that it is
+authenticated, which nothing here checks — where the file is, not to delete it,
+and **what to do if a command reports it is not authenticated anyway** (the
+credential is installed but not working, possibly expired; say so and carry on).
+An uncredentialed one is told no credential exists and to report that and carry
+on. ⚠ The difference does reveal that a credential exists —
+which leaks nothing `ls ~/.config/civitai` does not already answer (the guarantee
+above is about what leaves the container, explicitly not about hiding the
+credential from the trial), and withholding it is what cost the 18 minutes. The
+**task** is untouched and still byte-identical in both cases: a refusal is a tool
+result, not the task text.
+
+🔴 **The gate reads the segment through `bare_segment`, and two of the four real
+commands are invisible without it.** Steps 70 and 71 were
+`timeout 10 civitai login --no-browser` and `(civitai login --no-browser 2>&1) &`;
+`invocation()` tested `10` against "civitai" for the first and `(civitai` for the
+second, because a subshell's paren glues itself to the command word under shlex.
+A hand-written table of eight login spellings was entirely green while those two
+walked through — which is why
+`TestDogfoodTheMeasuredRunsLoginCommandsAreRefused` feeds the **literal bytes**
+out of the transcript, through `FAKE_TOOL_COMMANDS_JSON` (the newline-separated
+knob would turn one multi-line command into several turns and the classifier would
+never see the shape).
+
+🔴 **That normalisation is deliberately NOT inside `invocation()`, and the reason
+is measured.** One predicate in one place is the right instinct and it is wrong
+here: `invocation()` is the parser `Caps.judge` reads the **spend** caps through,
+and widening it moves these shapes out from under the fail-closed rule into the
+precise gates — which are token-fragile at that boundary.
+`(civitai app listing set-icon ./i.png --slug sensei)` then yields the candidate
+`sensei)`, which fails the slug shape test, so `_prefix_ok` finds no offender and
+**allows** a command aimed at a real listing on the account: refused before,
+allowed after. A refusal that fires for a blunt reason beats a gate that fails
+open, so the caps keep reading the raw segment and
+`TestDogfoodTheCapsStillReadTheRawSegment` fails if anyone consolidates it.
+
+⚠ Three stated limits. It reads COMMAND TEXT like every other classifier here, so
+`eval "civitai login"`, `$(civitai login)` and `c=civitai; $c login` are not
+caught. `login` is deliberately **not** added to `DANGEROUS_VERBS` — that rule's
+refusal says "a spending or publishing verb", and a message that misnames what it
+caught is the defect `_prefix_ok`'s remedy line was fixed for. And
+`civitai login --help` is refused along with the rest: the point is to end the
+whole line of attack in one reply rather than let the model read the flags and try
+the next spelling, which is the sequence the measured run actually walked.
+
 **The caps arm themselves when a credential is present**, so an operator does not
 have to remember three flags for the bound to exist. With no credential and no
-cap flag nothing is judged at all, and the transcript is byte-for-byte what it
-has always been — pinned by `TestDogfoodUncredentialedRunIsUnchanged`.
+cap flag **no cap is judged** — the login gate above is the one refusal that
+still applies, and it is why it lives outside `Caps` — and the transcript is
+otherwise byte-for-byte what it has always been, pinned by
+`TestDogfoodUncredentialedRunIsUnchanged`.
 
 ## The render oracle — the verdict for an app-build trial
 
