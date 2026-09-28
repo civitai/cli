@@ -8,7 +8,8 @@
 # PR when the schema changed — so the hand-resync never recurs. Sibling of the
 # `bump-scaffold-pins` workflow (the pin-drift automation).
 #
-# A RED RUN OF THIS WORKFLOW NOW FILES ITS OWN ISSUE — see the `signal` job.
+# A RED RUN OF THIS WORKFLOW FILES ITS OWN ISSUE — and so do two verdicts
+# reached on a GREEN one (`canonical-unreachable`, `gloss-owed`). See `signal`.
 # A failing SCHEDULED run notifies almost nobody (GitHub mails only whoever last
 # edited the `cron` line, through that person's own per-user Actions setting),
 # which is how `bump-flake-vendorhash.yml` failed every run for three weeks with
@@ -158,6 +159,173 @@ jobs:
           fi
           ./scripts/revendor-canonical-schema.sh
 
+      # Record any author-facing pattern gloss the newly-vendored schema now
+      # owes. THIS IS THE STEP THAT LETS THIS BOT LAND A PATTERN-ADDING CANONICAL
+      # CHANGE AT ALL — read `internal/validate/pattern.go`'s header before
+      # deleting it.
+      #
+      # `internal/validate` glosses each schema `pattern` in English so an author
+      # sees "must be lowercase letters, digits and hyphens only" and not just the
+      # regex. `TestPatternRulesCoverTheVendoredSchema` keeps that table total
+      # against the schema, and until now it FAILED outright on a pattern with no
+      # gloss — which meant the `validate` step below reddened and this bot opened
+      # no PR.
+      #
+      # 🔴 WHY THAT IS WORTH FIXING — the reason is `ci.yml`, not this file.
+      # `schema-drift` runs on `pull_request:` with NO path filter, so it runs on
+      # EVERY PR in this repo, and it stays red until the vendored mirror matches
+      # the live canonical. While this bot is blocked the mirror stays stale, so
+      # the visible symptom is not "the bot stalled" — it is a red check on every
+      # unrelated human PR, cleared only by a human writing a gloss. That is the
+      # cost this step removes.
+      #
+      # ⚠️ RETRACTED — an earlier revision of this comment said "issues #323,
+      # #486, #607, #695 and #743: five blocked runs, roughly monthly", all under
+      # one title. That was WRONG in the direction that inflates the case, and it
+      # is corrected here rather than quietly dropped. Measured from the issues
+      # and their run logs:
+      #
+      #   #323  a HAND-DISPATCHED FIRE DRILL (`drill=true`). Its own body says
+      #         "NOT a real failure of the bot", and its title is "could not
+      #         re-vendor" — the `revendor-failed` arm, a different title.
+      #   #486  TestPatternRulesCoverTheVendoredSchema — this guard, on the
+      #         `repository` regex.
+      #   #607  TestEnumFindingsKeepTheirExactWording only — the enum half,
+      #         fixed by #745.
+      #   #695  TestBuildExcludesGitFileInSubmodule, in `internal/pkgzip` —
+      #         nothing to do with the schema. It files under the same headline
+      #         because the `validate` gate is `go test ./...`.
+      #   #743  both halves.
+      #
+      # So: THREE schema-shape blockages (#486, #607, #743), of which TWO were
+      # this guard — both true positives, both cleared inside a day, zero false
+      # positives. The "five, monthly, one recurring class" reading counted a
+      # drill and an unrelated packaging test.
+      #
+      # A gloss is prose about what a regex MEANS and cannot be derived, so the
+      # bot cannot write one. It CAN record that one is owed, which is what this
+      # does: the debt lands in the PR diff a human is already reviewing, and the
+      # `gloss-owed` verdict in `classify` keeps an issue open until the row is
+      # cleared. Author-facing output is unchanged meanwhile — an unglossed
+      # pattern emits exactly the base library message (fail-soft, terse, never
+      # wrong), so this was never a correctness gate.
+      #
+      # It runs UNCONDITIONALLY, before `detect changes`, for two reasons. (1) The
+      # ledger it writes must be part of the same commit as the schema that made
+      # it owed. (2) The report below must describe the CANONICAL, not whatever is
+      # committed on `main` — while the bot's PR sits unmerged, every later run
+      # re-vendors again, so reconciling here is what keeps the `gloss-owed` issue
+      # open instead of a checkout of un-merged `main` closing it as "nothing
+      # owed". If the schema and the ledger were already in step this writes the
+      # identical bytes and `detect changes` sees nothing.
+      #
+      # This step must not be the one that JUDGES: in `-update-gloss-ledger` mode
+      # the test regenerates and returns without asserting, so a shrink (a gloss
+      # for a pattern the canonical dropped) is left for `go test ./...` below to
+      # red on, where it belongs. That case still needs a human and still blocks —
+      # deliberately.
+      - name: reconcile the pattern-gloss ledger against the vendored schema
+        id: ledger
+        run: |
+          set -u
+          go test ./internal/validate \
+            -run TestPatternRulesCoverTheVendoredSchema \
+            -update-gloss-ledger -count=1 -v
+          git diff --stat -- internal/validate/pattern_gloss_owed.json
+
+      # Is a gloss owed? Read from the ledger the step above just reconciled, so
+      # this describes the live canonical rather than the committed mirror.
+      #
+      # The values are derived from REMOTE content (the canonical schema's own
+      # regex strings), so they are passed onward through step outputs and `env:`
+      # and never interpolated into a `run:` script. `tr -d '\n'` is not cosmetic:
+      # a newline inside a value would let it forge a second `GITHUB_OUTPUT` line.
+      #
+      # 🔴 THE `count` ASSERTION BELOW IS LOAD-BEARING — this step is the ONLY
+      # producer of the gloss-owed debt signal, and without it the step can fail
+      # SILENTLY GREEN. `jq` is the thing that reads the ledger, and it does NOT
+      # always signal failure by its exit status. Measured with jq 1.8.1, driving
+      # this exact script under `bash -e` (GitHub's own invocation, see the ERREXIT
+      # NOTE at the top of this file):
+      #
+      #   ledger body          jq '.owed | length'    step exit   count published
+      #   {"owed":[]}          rc 0, "0"              0           0        (valid)
+      #   {"owed":["a","b"]}   rc 0, "2"              0           2        (valid)
+      #   (absent file)        rc 2                   2           none     errexit
+      #   not JSON             rc 5                   5           none     errexit
+      #   {"_why":"x"}         rc 0 "0"; list rc 5    5           none     errexit
+      #   🔴 (zero bytes)      rc 0, ""               0           ""       NOTHING
+      #   🔴 "   " (spaces)    rc 0, ""               0           ""       NOTHING
+      #
+      # The last two are the hole. `jq` exits **0** printing **nothing** on empty
+      # input, so errexit has nothing to trip on, and the `list` expression is
+      # empty-and-clean on the same input — a truncated or interrupted write by the
+      # `-update-gloss-ledger` step above produces exactly that file. Downstream,
+      # `classify` read `${R_OWED_COUNT:-0}`, and `:-` substitutes on EMPTY as well
+      # as on unset, so an UNPRODUCED count became the string "0" → `state=green` →
+      # `failing=false` → `failure-issue.yml` CLOSED the open `gloss-owed` issue
+      # while the debt row was still committed in the repo, with `prnote` empty so
+      # the PR carried no note either. That is the one path by which a gloss debt
+      # goes permanently silent with every check green — precisely what this ledger
+      # exists to prevent. The `case` is the only thing standing in front of it.
+      #
+      # ⚠ RETRACTION, recorded because the wrong version of this note was written
+      # first and it is the kind of claim a future reader would build on. This was
+      # originally diagnosed as "the step runs under `set -uo pipefail` with no
+      # `-e`, so ANY failed `jq` leaves count empty and the step still exits 0".
+      # That is FALSE on a real runner: GitHub runs every `run:` block as
+      # `bash -e {0}`, so errexit is on before the first line and `set -uo pipefail`
+      # does not clear it — which is exactly why the `probe` step above needs its
+      # `|| true`. Measured: the absent-file and not-JSON cases DO fail the step,
+      # and only the empty-input cases slip through. `set -euo pipefail` is
+      # nonetheless spelled out below so this script's contract does not depend on
+      # the platform's default shell flags — a `shell:` override on this step, or a
+      # `defaults.run.shell`, would silently remove errexit otherwise. Do not
+      # re-derive the "no `-e`" reading; it inflates the trigger and would send the
+      # next reader looking for a bug that is not there.
+      #
+      # ⚠ Honest labelling of the `*[!0-9]*` half: it is the EMPTY alternative
+      # that carries the work here. `jq '.owed | length'` returns a number or
+      # fails, so no ledger this step can be handed makes it emit something
+      # non-empty and non-numeric — measured by mutation, deleting `*[!0-9]*`
+      # from THIS `case` leaves the suite green. It is kept because it costs
+      # nothing and because the same predicate in `classify` IS reachable (the
+      # value crosses a step-output boundary jq does not control, where a mutant
+      # deleting it dies on
+      # `TestRevendorClassifyArmLadder/unproduced count, non-numeric`). Do not
+      # read this half as tested coverage at this site.
+      #
+      # 🔴 `jq` is a NEW dependency of this notification path — this workflow is
+      # where it enters the repo, and it is UNPINNED (whatever the
+      # `ubuntu-latest` image ships). It is pre-installed on GitHub-hosted
+      # runners and is not vendored or version-checked anywhere here, so a runner
+      # image that drops or breaks it takes the debt signal with it. `set -e`
+      # plus the assertion is what makes that failure LOUD instead of a green run
+      # that closes the issue; if this ever needs to be hermetic, parse the
+      # ledger with `go run` against the same struct `internal/validate` uses
+      # rather than adding a pin here.
+      - name: report — is an author-facing pattern gloss owed
+        id: owed
+        run: |
+          set -euo pipefail
+          ledger=internal/validate/pattern_gloss_owed.json
+          count="$(jq '.owed | length' "$ledger")"
+          case "$count" in
+            ''|*[!0-9]*)
+              echo "::error::could not read the owed count from $ledger — jq produced '${count}', which is not a number. Refusing to continue: an unproduced count is read downstream as \"0 owed\", which CLOSES the gloss-owed issue while the debt row is still in the repo." >&2
+              exit 1
+              ;;
+          esac
+          list="$(jq -r '[.owed[] | "`" + . + "`"] | join(", ")' "$ledger" | tr -d '\n')"
+          prnote=""
+          if [ "$count" != "0" ]; then
+            prnote="⚠️ **$count schema pattern(s) now have no author-facing gloss** ($list). An author who trips one gets the bare regex back — correct but terse. The debt is recorded in \`$ledger\`; clear it by writing the gloss in \`internal/validate/pattern.go\`. This PR is still safe to merge as-is."
+          fi
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+          echo "prnote=$prnote" >> "$GITHUB_OUTPUT"
+          echo "$count pattern(s) owed a gloss: ${list:-none}"
+
       # Only validate + open a PR when the re-vendor actually changed the file —
       # a no-op run (already in sync) skips everything downstream.
       - name: detect changes
@@ -190,12 +358,14 @@ jobs:
       # symlink into /nix/store (#450, green on all 13 checks); it now pins
       # `add-paths: flake.nix`.
       #
-      # This job was audited against that failure and does not have it: the only
-      # step that writes into the repo is the re-vendor script, which `cp`s to a
-      # single path it computes from its own location
+      # This job was audited against that failure and does not have it. TWO steps
+      # write into the repo, both to a single known path: the re-vendor script,
+      # which `cp`s to a path it computes from its own location
       # (`schema/app-block.manifest.schema.json`) and downloads via `mktemp`
-      # outside the tree; `go test ./...` writes nothing. Measured, not just
-      # read: `git status --porcelain` is clean of artifacts after the suite.
+      # outside the tree; and the ledger reconcile, which rewrites
+      # `internal/validate/pattern_gloss_owed.json` and nothing else. `go test
+      # ./...` writes nothing. Measured, not just read: `git status --porcelain`
+      # is clean of artifacts after the suite.
       #
       # 🔴 If you add a step that builds/installs/generates INTO the workspace,
       # add `add-paths` naming the complete set of files this bot may commit.
@@ -230,11 +400,14 @@ jobs:
             under the CLI's jsonschema engine and the bundled example manifests
             still validate against it (`go test ./...`).
 
-            **Reviewer heads-up:** this bot only re-vendors the schema *bytes*.
-            If the canonical change added a field with author-facing semantics
+            **Reviewer heads-up:** this bot only re-vendors the schema *bytes*
+            and records which author-facing pattern glosses that leaves owed. If
+            the canonical change added a field with author-facing semantics
             (e.g. a new manifest key), consider whether `internal/validate/` (the
             Go semantic checks / friendly messages) should track it too — that
             part is a deliberate human call.
+
+            ${{ steps.owed.outputs.prnote }}
 
       # Name WHICH step failed, for the issue the `signal` job files. `always()`
       # so it still runs after a failed step — without it this is skipped
@@ -250,12 +423,42 @@ jobs:
           R_PROBE: ${{ steps.probe.outcome }}
           R_PROBE_CODE: ${{ steps.probe.outputs.code }}
           R_REVENDOR: ${{ steps.revendor.outcome }}
+          R_LEDGER: ${{ steps.ledger.outcome }}
+          # `owed`'s OUTCOME, not just its outputs. Every other step's outcome is
+          # here; this one was missing, and the gap was not cosmetic — a failed
+          # `owed` skips `detect changes`, so `R_CHANGED` came back `skipped` and
+          # the `detect-failed` arm fired with text reading "which is unusual — it
+          # only runs `git status`". The report named the wrong step.
+          R_OWED: ${{ steps.owed.outcome }}
+          R_OWED_COUNT: ${{ steps.owed.outputs.count }}
+          R_OWED_LIST: ${{ steps.owed.outputs.list }}
           R_CHANGED: ${{ steps.changed.outcome }}
           R_VALIDATE: ${{ steps.validate.outcome }}
           R_PR: ${{ steps.pr.outcome }}
           DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || false }}
         run: |
           set -uo pipefail
+
+          # The two closing paragraphs below say the remediation is DOWN and the
+          # mirror is stale. That is true of every arm that reports a breakage and
+          # FALSE of `gloss-owed`, where the schema was mirrored and the PR opened.
+          # An issue body is a claim like any other, so the arm turns them off
+          # rather than shipping a paragraph its own headline contradicts.
+          footer=yes
+
+          # 🔴 The owed COUNT is the one input here a reader can silently DEFAULT,
+          # so it is validated once, structurally, before the chain — and the
+          # `${R_OWED_COUNT:-0}` that used to appear in the `gloss-owed` arm is
+          # gone. `:-` substitutes on EMPTY as well as unset, so it turned an
+          # unproduced count into the string "0", i.e. "no debt", i.e. a green run
+          # that CLOSED the gloss-owed issue over a debt row still in the repo.
+          # Keying the guard on this value rather than only on `$R_OWED` is
+          # deliberate: it holds for ANY shape that leaves the count unwritten,
+          # not just the one where the step also reports failure.
+          owed_count_ok=yes
+          case "${R_OWED_COUNT-}" in
+            ''|*[!0-9]*) owed_count_ok=no ;;
+          esac
 
           # The probe arm is FIRST and is not decoration: if the probe step
           # itself dies, every later step is `skipped`, and without this arm a
@@ -269,6 +472,27 @@ jobs:
             state=revendor-failed
             title="the canonical-schema re-vendor bot could not re-vendor"
             detail="The \`re-vendor embedded schema from the live canonical\` step failed. The script fails loudly for exactly two reasons: the canonical URL answered **404/410** (it moved — a real contract break), or it served a body that is empty or not a JSON object. **The step's output is in the run log and names which.**"
+          # Placed with the other HARD failures and above every green-job state:
+          # this step only runs one `go test` in -update mode, so a failure here
+          # means the vendored schema will not parse or the ledger file cannot be
+          # written — the repo is broken, which outranks "we could not check".
+          elif [ "$R_LEDGER" != "success" ]; then
+            state=ledger-failed
+            title="the canonical-schema re-vendor bot could not reconcile the pattern-gloss ledger"
+            detail="The \`reconcile the pattern-gloss ledger against the vendored schema\` step failed. It runs \`go test ./internal/validate -run TestPatternRulesCoverTheVendoredSchema -update-gloss-ledger\`, which only regenerates \`internal/validate/pattern_gloss_owed.json\` — it asserts nothing. So this is a re-vendored schema that does not decode, or a walker control that stopped observing the schema (both are fatals inside that test and name themselves in the run log), or a write failure. **No PR was opened.**"
+          # Same placement rationale as `ledger-failed` above, and the same as the
+          # probe arm: a dead step makes every LATER step `skipped`, so without
+          # this arm a failed `owed` fell through to `detect-failed` — a verdict
+          # whose own text says the step it names "only runs `git status`". It also
+          # has to sit ABOVE `gloss-owed`, because the thing that failed IS the
+          # producer of `R_OWED_COUNT`: judging the debt from a count this step
+          # never wrote is the defect, not a fallback for it.
+          elif [ "$R_OWED" != "success" ] || [ "$owed_count_ok" != "yes" ]; then
+            state=owed-failed
+            title="the canonical-schema re-vendor bot could not read how many pattern glosses are owed"
+            detail="The \`report — is an author-facing pattern gloss owed\` step failed. It only reads \`internal/validate/pattern_gloss_owed.json\` with \`jq\` and writes three step outputs, so this is the ledger file being missing or unparseable after the step above reconciled it, or \`jq\` being absent or broken on the runner (it is pre-installed on GitHub-hosted runners and pinned nowhere). **The run log names which.**
+
+          **Why this is its own verdict rather than a green run:** the owed count is the ONLY signal that a gloss debt exists, and the downstream reader defaults an empty one to \`0\`. So a silent failure here does not merely lose a notification — it reports \`0 owed\`, which CLOSES this bot's \`gloss-owed\` issue while the debt row is still committed in the repo, and leaves the PR note empty too. The step therefore asserts its own output and fails loudly instead. **No PR was opened.**"
           elif [ "$R_PROBE_CODE" != "200" ]; then
             state=canonical-unreachable
             title="the canonical-schema re-vendor bot could not reach the canonical schema"
@@ -287,6 +511,30 @@ jobs:
             state=pr-failed
             title="the canonical-schema re-vendor bot could not open its PR"
             detail="The schema was re-vendored and validated, but opening the PR failed — usually \`secrets.BUMP_SCAFFOLD_PINS_TOKEN\` being expired or missing. **The re-vendor is still un-merged**, so the embedded mirror stays stale and \`schema-drift\` stays red until someone re-vendors by hand or repairs the token."
+          # LAST, because it is the only arm reached on a job that did everything
+          # it was asked to. The bot is NOT broken here — it is reporting a debt it
+          # deliberately took on so that a pattern-adding canonical change could
+          # land at all, instead of reddening and leaving the mirror stale — which
+          # reds `ci.yml`'s `schema-drift` on every unrelated PR in the repo until
+          # a human writes the gloss. Twice: #486 and #743. (Do not restate the
+          # old "#323, #486, #607, #695, #743" list — see the retraction above the
+          # `owed` step; #323 was a fire drill and #695 was an `internal/pkgzip`
+          # test.)
+          #
+          # It is a STATE, not an event: it is recomputed from the live canonical
+          # on every run, so the issue stays open while the debt stands and closes
+          # by itself the moment a human writes the gloss. Do not "fix" it by
+          # firing only on the run that discovered the pattern — that would close
+          # the issue on the next run and lose the only durable notification.
+          elif [ "$R_OWED_COUNT" != "0" ]; then
+            state=gloss-owed
+            footer=no
+            title="an author-facing gloss is owed for a canonical schema pattern"
+            detail="The canonical manifest schema contains **${R_OWED_COUNT}** \`pattern\` rule(s) that \`internal/validate\` does not explain in English: ${R_OWED_LIST:-(see the ledger)}.
+
+          **Nothing is broken and no CI is red.** An author who trips one of these gets the base library message — \`blockId: 'My First App!' does not match pattern '^[a-z][a-z0-9-]*[a-z0-9]\$'\` — which is correct but terse, where every other finding in the same command names the rule and shows a value that satisfies it. The re-vendor bot recorded the debt in \`internal/validate/pattern_gloss_owed.json\` and landed the schema, rather than failing and leaving the mirror stale; a gloss is prose about what a regex MEANS and is the one part of this it cannot write.
+
+          To clear it: add the regex to \`patternRules\` in \`internal/validate/pattern.go\` with a rule sentence and a satisfying example, plus its row in \`TestPatternGlossesAreTheRightWayRound\` and a tripping fixture in \`patternFixtures\` (both tables are total against \`patternRules\`, so the suite tells you if you miss one). Then re-run \`go test ./internal/validate -run TestPatternRulesCoverTheVendoredSchema -update-gloss-ledger -count=1\` to empty the ledger. **This issue closes itself on the next scheduled run once the ledger is empty.**"
           else
             state=green
             title=""
@@ -308,10 +556,12 @@ jobs:
               echo
             fi
             echo "$detail"
-            echo
-            echo "While this is failing, a canonical schema change will NOT be mirrored into the CLI's \`go:embed\`ed copy automatically. The \`schema-drift\` CI job still DETECTS the drift on every PR — only the remediation is down — so the visible symptom is a red \`schema-drift\` that nothing clears."
-            echo
-            echo "To re-vendor by hand: run \`./scripts/revendor-canonical-schema.sh\`, then \`go test ./...\`, and open the PR yourself."
+            if [ "$footer" = "yes" ]; then
+              echo
+              echo "While this is failing, a canonical schema change will NOT be mirrored into the CLI's \`go:embed\`ed copy automatically. The \`schema-drift\` CI job still DETECTS the drift on every PR — only the remediation is down — so the visible symptom is a red \`schema-drift\` that nothing clears."
+              echo
+              echo "To re-vendor by hand: run \`./scripts/revendor-canonical-schema.sh\`, then \`go test ./...\`, and open the PR yourself."
+            fi
             echo "REVENDOR_BODY_EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -322,10 +572,17 @@ jobs:
   # `always()` so a red `revendor` job still reports; `!= 'cancelled'` so a hand
   # cancellation is not filed as a defect.
   #
-  # `failing` is deliberately NOT just `result != 'success'`: the
-  # `canonical-unreachable` verdict is reached on a job that SUCCEEDED, because
-  # "the check could not run" and "the check failed" are different facts and
-  # only one of them is visible in the job's own colour.
+  # `failing` is deliberately NOT just `result != 'success'`: THREE verdicts are
+  # reached on a job that SUCCEEDED. `canonical-unreachable`, because "the check
+  # could not run" and "the check failed" are different facts and only one of them
+  # is visible in the job's own colour; `gloss-owed`, because the bot
+  # deliberately LANDS a pattern-adding canonical change and records the
+  # author-facing debt rather than failing and leaving the mirror stale — so the
+  # issue is the only thing that stops that debt being silent; and `owed-failed`,
+  # which `classify` can reach on a green job whenever the owed count came back
+  # empty or non-numeric while the step itself reported success. Listing it here is
+  # what stops the ONE state that means "I could not tell whether a debt exists"
+  # from resolving to `failing=false` and CLOSING the debt's own issue.
   signal:
     needs: [revendor]
     if: always() && needs.revendor.result != 'cancelled'
@@ -335,7 +592,7 @@ jobs:
       issues: write
     with:
       marker: "[schema-revendor-bot]"
-      failing: ${{ needs.revendor.result != 'success' || needs.revendor.outputs.state == 'canonical-unreachable' }}
+      failing: ${{ needs.revendor.result != 'success' || needs.revendor.outputs.state == 'canonical-unreachable' || needs.revendor.outputs.state == 'gloss-owed' || needs.revendor.outputs.state == 'owed-failed' }}
       # Empty when `revendor` died before the classifier ran — a runner failure
       # or a failed checkout. That is its own state and must not borrow the
       # wording of a verdict this job never reached.
