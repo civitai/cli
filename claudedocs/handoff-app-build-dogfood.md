@@ -364,34 +364,13 @@ generalised elsewhere — **read the archive before re-running any probe from th
   carries the same traps plus rerere and the scratchpad collisions. The `audit-dispatch --repo`
   lesson from it also lives in the `devrc` store's `scripts` entry.
 
-### Added 2026-09-21 (close) — what this arc actually taught
+### Evicted 2026-09-28 (schema-drift round) — the 2026-09-21 "what this arc actually taught" block
 
-- 🔴 **THE INSTRUMENT WAS WRONG MORE OFTEN THAN THE MODELS WERE — four times, and every
-  time it produced a confident, plausible verdict.** A brief defaulting to `celsius`; an
-  anonymous viewer; a vacuous negative control passing off a shell metacharacter; and an
-  inert token. **Three of the four would have been reported as a model failure.** The
-  working discipline that caught the fourth: *before recording a `RENDER=no` as a result,
-  find the BRANCH the app actually took.* Three source reads did it.
-- 🔴 **A GRADER CAN PENALISE THE MORE CORRECT IMPLEMENTATION, AND NOTHING ABOUT THE VERDICT
-  SAYS SO.** mimo set its status optimistically and passed; deepseek verified it held a
-  budgeted scope before claiming to generate, and failed. **Ask what an app must do to
-  satisfy your assertion, and whether that is the behaviour you actually want to reward.**
-- 🔴 **A PROBE'S ZERO NEEDS THE ARM THAT MAKES IT NON-ZERO.** The old-value harvest returned
-  `[]` on deepseek — indistinguishable from a probe wired to nothing. The same probe on the
-  passing cell returned non-empty, and only then was the zero evidence.
-- 🔴 **RUN THE CONTROL ARM BEFORE THE ARM YOU WANT TO BELIEVE.** The scope experiment ran
-  patched-file-with-the-knob-OFF first. Had that flipped the verdict on its own, the
-  headline arm would have meant nothing — and it is the arm nobody thinks to run.
-- 🔴 **A MERGED FIX IS NOT A SHIPPED FIX when the harness installs from npm.** Pricing
-  `cli#685` was recorded as *"free if folded into rank 6"* and is impossible until a
-  release. **Check the fix is in the ARTEFACT the measurement loads.**
-- ⚠ **A SUBAGENT'S SELF-REPORT WAS ACCURATE AND STILL WORTH RE-DERIVING.** `#690`'s three
-  live verdicts were re-run from a clean checkout of the merge SHA rather than the agent's
-  tree; they matched. The point is not that it lied — it did not, and it volunteered its own
-  coverage gap — but that "verified in the tree that built it" is a different claim.
-- ⚠ **`runner.py --out` defaults to `.`; only `driver.sh` passes `--out runs`.** A
-  hand-rolled trial lands outside where the graders look and is ungradeable until moved or
-  `DOGFOOD_RUNS` names its parent. Nothing errors.
+Verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md). Five
+lessons, every one still live and each restated at its own site in the sections below: the instrument
+was wrong more often than the models; a grader can penalise the MORE correct implementation; a
+probe's zero needs the arm that makes it non-zero; run the control arm BEFORE the arm you want to
+believe; a merged fix is not a shipped fix when the harness installs from npm.
 
 ### Added 2026-09-25 (feedback) — the instrument was too LENIENT, for the first time
 
