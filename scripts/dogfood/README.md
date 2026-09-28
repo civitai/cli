@@ -293,14 +293,38 @@ credential from the trial), and withholding it is what cost the 18 minutes. The
 **task** is untouched and still byte-identical in both cases: a refusal is a tool
 result, not the task text.
 
-⚠ Two stated limits. It reads COMMAND TEXT like every other classifier here, so
-`eval "civitai login"` and `c=civitai; $c login` are not caught, and `login` is
-deliberately **not** added to `DANGEROUS_VERBS` — that rule's refusal says "a
-spending or publishing verb", and a message that misnames what it caught is the
-defect `_prefix_ok`'s remedy line was fixed for. And `civitai login --help` is
-refused along with the rest: the point is to end the whole line of attack in one
-reply rather than let the model read the flags and try the next spelling, which is
-the sequence the measured run actually walked.
+🔴 **The gate reads the segment through `bare_segment`, and two of the four real
+commands are invisible without it.** Steps 70 and 71 were
+`timeout 10 civitai login --no-browser` and `(civitai login --no-browser 2>&1) &`;
+`invocation()` tested `10` against "civitai" for the first and `(civitai` for the
+second, because a subshell's paren glues itself to the command word under shlex.
+A hand-written table of eight login spellings was entirely green while those two
+walked through — which is why
+`TestDogfoodTheMeasuredRunsLoginCommandsAreRefused` feeds the **literal bytes**
+out of the transcript, through `FAKE_TOOL_COMMANDS_JSON` (the newline-separated
+knob would turn one multi-line command into several turns and the classifier would
+never see the shape).
+
+🔴 **That normalisation is deliberately NOT inside `invocation()`, and the reason
+is measured.** One predicate in one place is the right instinct and it is wrong
+here: `invocation()` is the parser `Caps.judge` reads the **spend** caps through,
+and widening it moves these shapes out from under the fail-closed rule into the
+precise gates — which are token-fragile at that boundary.
+`(civitai app listing set-icon ./i.png --slug sensei)` then yields the candidate
+`sensei)`, which fails the slug shape test, so `_prefix_ok` finds no offender and
+**allows** a command aimed at a real listing on the account: refused before,
+allowed after. A refusal that fires for a blunt reason beats a gate that fails
+open, so the caps keep reading the raw segment and
+`TestDogfoodTheCapsStillReadTheRawSegment` fails if anyone consolidates it.
+
+⚠ Three stated limits. It reads COMMAND TEXT like every other classifier here, so
+`eval "civitai login"`, `$(civitai login)` and `c=civitai; $c login` are not
+caught. `login` is deliberately **not** added to `DANGEROUS_VERBS` — that rule's
+refusal says "a spending or publishing verb", and a message that misnames what it
+caught is the defect `_prefix_ok`'s remedy line was fixed for. And
+`civitai login --help` is refused along with the rest: the point is to end the
+whole line of attack in one reply rather than let the model read the flags and try
+the next spelling, which is the sequence the measured run actually walked.
 
 **The caps arm themselves when a credential is present**, so an operator does not
 have to remember three flags for the bound to exist. With no credential and no
