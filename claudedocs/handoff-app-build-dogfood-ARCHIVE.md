@@ -793,3 +793,54 @@ in the live doc, and this is the consolidated form.
 - ⚠ **`runner.py --out` defaults to `.`; only `driver.sh` passes `--out runs`.** A
   hand-rolled trial lands outside where the graders look and is ungradeable until moved or
   `DOGFOOD_RUNS` names its parent. Nothing errors.
+
+### Evicted 2026-09-28 (schema-drift round) — the 2026-09-27 stale-CLI block, verbatim
+
+Moved for the size ratchet. A completed incident; nothing in it was retracted.
+
+### Added 2026-09-27 (resume) — a stale local CLI, a reconciliation that was not one, and my own recommendation refuted
+
+- 🔴 **I NEARLY REPORTED DOC-ROT THAT WAS MY OWN STALE INSTALL. `civitai --help` IS NOT `main`.**
+  Reading `civitai app listing set-icon --help` showed *"See 'Listing media requirements' in the
+  README"* — a section deliberately relocated to the published docs
+  (`claudedocs/decisions/25-listing-media-bounds.md`), with guards asserting it is gone. That reads
+  as live rot in a shipped help string. It is not: `main` already says *"Platform bounds:
+  https://developer.civitai.com/apps/guide/store-listing"*. My installed CLI was **0.1.105** against
+  npm's **0.1.109** and `git describe origin/main` = `v0.1.109-25-gb408912`. **This is the MIRROR of
+  the arc's own "a merged fix is not a shipped fix": a locally-installed CLI is not `main` either,
+  and a trial installs npm `latest`, so NEITHER is what a cell runs — three artefacts, not two.**
+  Check `civitai --version` against `npm view @civitai/cli version` before quoting any help text.
+- 🔴 **A "DOES NOT RECONCILE" NOTE KEPT AN OPEN QUESTION ALIVE FOR A MISSING COLUMN.** This doc
+  recorded that `civitai buzz`'s per-pool output does not reconcile with the single total older
+  entries carry. It reconciles exactly — the earlier read omitted the **Yellow** pool
+  (1,305,224 + 919,796 + 1,848,987 = 4,074,007, and the CLI prints that Total). **Before recording
+  two numbers as irreconcilable, check you read all the ROWS** — a missing column looks identical to
+  a discrepancy, and the note outlived the mistake by days.
+- 🔴 **THE OPTION I RECOMMENDED TO THE OPERATOR WAS REFUTED BY A MEASUREMENT I COULD HAVE TAKEN
+  FIRST.** I offered "bake ImageMagick into the trial image" as *(Recommended)* for rank 14's media
+  problem. Reading the platform's actual bounds afterwards showed generation's own `--aspect-ratio`
+  buckets land inside both bands (`1:1`→1.0 for the icon, `16:9`→1.78 for the cover), so no resize
+  step exists to tool for. **A recommendation attached to an operator question is a claim; take the
+  cheap measurement BEFORE putting a recommendation in front of someone**, or the question is
+  shaped by the least-measured option.
+- 🔴 **A GUARD'S OWN COMMENT SAYING "NO CI JOB RUNS THIS" NEEDED CHECKING, AND THE ANSWER CHANGED
+  THE TASK.** I briefed rank 20 on the strength of `TestBlockDocsLinksResolve`'s comment. The
+  comment is TRUE — but the repo also has a fully-wired sibling, `readme-links.yml`, running the
+  README link test weekly with a positive control (grep the log for the test's own
+  `--- (PASS|SKIP|FAIL):` line), `-count=1` (Go's test cache tracks env vars but **not** what a
+  remote host answered, so a cached run replays a PASS over a link that has since died), four
+  distinct states, issue filing, and a `drill` input that appends a known-404 URL to rehearse the
+  failing path. Its header states the principle: *"a guard nobody runs reads as coverage while
+  providing none — the worst of the three states, because it stops the next person looking."*
+  **Widening an unwired corpus reproduces exactly that, so the deliverable is a corpus something
+  actually RUNS** — amended mid-flight. **Look for the sibling that already works before designing
+  the mechanism.**
+- ⚠ **`developer.civitai.com` answers a real 404 for an unknown path** (verified: a nonsense path
+  → 404, `apps` → 301, `apps/guide/responsive` → 200), which is what makes a liveness probe against
+  this host meaningful at all. An SPA answering 200 for everything would make the whole guard
+  vacuous — that is why the negative control exists, and it passed.
+- ⚠ **Three agents on one repo is fine; three agents on one FILE is not.** 21 and 22 both touch
+  `scripts/dogfood/oracle.sh`, so each was told the other's region by name and to rebase before
+  reporting. **A clean git merge is not a clean merge** — read the merged result of `oracle.sh`
+  rather than trusting the absence of conflict markers, and re-run the merged-tree suite once the
+  base moves.
