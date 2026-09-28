@@ -104,7 +104,7 @@ that zero cannot distinguish "touched no task" from "wrong id". Not a clean bill
 
 ## Open investigations — live diagnosis state
 
-🔴 **9 CLOSED blocks were EVICTED, not deleted — they are verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md).** The size ratchet refuses a doc that is over budget and growing; eviction is how a round lands without losing the eliminations a future session would otherwise re-derive. **Read the archive before re-running any probe this arc already ran** — every one of these is a resolved elimination, not current state:
+🔴 **11 CLOSED blocks were EVICTED, not deleted — they are verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md).** The size ratchet refuses a doc that is over budget and growing; eviction is how a round lands without losing the eliminations a future session would otherwise re-derive. **Read the archive before re-running any probe this arc already ran** — every one of these is a resolved elimination, not current state:
 
 - ✅ EXPLAINED 2026-09-21 — glm never wrote code, and "finished" was a truncation
 - ✅ SHIPPED 2026-09-21 — `cli#690` seeds the manifest's scopes; the cheap arm is 2 of 3
@@ -115,6 +115,8 @@ that zero cannot distinguish "touched no task" from "wrong id". Not a clean bill
 - ✅ FIXED 2026-09-25 — the oracle graded only the consented viewer; a live app broken for every new user shipped green
 - ✅ MEASURED 2026-09-26 — rank 15's premise was backwards, and so was my first account of why
 - ✅ MEASURED 2026-09-27 — what `v0.1.2` actually changed, and the control that refuted my first answer
+- ✅ RESOLVED 2026-09-28 — a BROKEN conflict resolution cached in `cli`'s rerere and replayed silently
+- ✅ FIXED 2026-09-28 — `schema-drift` red repo-wide because the guard over the mirror was SELF-BLOCKING (fixed by `#745`; the current reading is the ✅ RESOLVED block below)
 
 ### ⚠ OPEN — the documentation stack is a measured cost problem
 - as-of: 2026-09-21
@@ -175,77 +177,6 @@ same mechanism: it is neither free nor possible.
 - **Next probe:** cut a release containing `bdeddef`, then re-run ONE genpost cell on the
   same model and diff carry cost. Until then the doc-stack block's figures are a claim
   about `0.1.106` and nothing newer.
-
-### 🔴 RESOLVED but RECORD IT — a BROKEN conflict resolution was cached in `cli`'s rerere and replayed SILENTLY
-- as-of: 2026-09-27
-
-- **Symptom + exact repro:** merging `origin/zach/dogfood-path-reads` then
-  `origin/zach/dogfood-post-arm` reported `rc=1` and `UU`, but the working-tree file contained
-  **no conflict markers** and failed to parse:
-  `dogfood_ship_verdict_injection_test.go:741:6: expected '(', found assertEscapedAtAssignment`.
-- **Observed (with values):** `git config --global --get rerere.enabled` → **`true`** (global, so
-  every repo on this host). `cli`'s rr-cache held
-  `05f1bf1575478c8235348926cc2e81756fb8a39e/postimage.1` — 41,073 B, **mtime 04:17–04:18**, both
-  functions present, and `gofmt -e` on it reproduces the identical error. Diffed against a correct
-  resolution, the only difference is a missing `}` and a blank line. `via: measurement`
-- **Ruled out — that this was the auditing session's own hand-resolution.** The entry predates it
-  by ~5 h; it was written by an earlier fix agent in the same session. `via: measurement`
-- 🔴 **Why it matters beyond this PR:** `rr-cache` lives in the **common** git dir, so it is
-  repo-global, shared by every worktree, and outlives the worktree that made it — the same hazard
-  class as `refs/stash`. A person merging these two PRs on this machine would have been handed an
-  uncompilable file with **no markers and no warning**; `git status` says `UU`, so one `git add` +
-  commit lands it.
-- **Fix applied + positive control:** the entry was deleted, and a fresh merge then produced real
-  markers at **697/715/816** again. That control is the only thing distinguishing "fixed" from
-  "still silently resolving".
-- **Next probe:** none needed here. The durable question — whether a global `rerere.enabled` is
-  wanted on a host that runs many agents through the same clones — is a devrc/tooling decision,
-  recorded in the `devrc` store scope, not this repo's.
-
-### 🔴 OPEN AND BLOCKING EVERYTHING — `schema-drift` is red repo-wide, and the automation that exists to fix it CANNOT
-- as-of: 2026-09-28
-
-- **Symptom + exact repro:** `schema-drift` fails on every open PR, including `#742`.
-  `scripts/check-canonical-schema.sh` byte-compares the go:embedded mirror
-  `schema/app-block.manifest.schema.json` against the schema published live at
-  `https://civitai.com/schemas/app-block/v1.json`.
-- **Observed (with values):** canonical now carries **4** `goods:` occurrences
-  (`goods:read:self`, `goods:purchase:self`); `origin/main`'s vendored copy carries **0**.
-  `via: measurement`
-- **Ruled out — that this is `#742`'s defect.** `main`'s own `schema-drift` reads `success` at
-  `2026-09-28T03:34:44Z`, i.e. BEFORE the upstream publish, so its green is stale rather than
-  contradictory; `#742` touches no schema file and `check-canonical-schema.sh` gives byte-identical
-  output at `#742`'s HEAD and at its base. `via: measurement`
-- 🔴 **Ruled out — that the 6-hourly automation will heal it.** `revendor-canonical-schema.yml`
-  (00:37/06:37/12:37/18:37 UTC, whose own header says that cadence *is* the bound on how long CI
-  stays red) was dispatched manually as run **`36379098603`**: it **FAILED and opened no PR**. Its
-  `validate — schema compiles + examples validate` step died on two tests in `internal/validate`:
-  `--- FAIL: TestEnumFindingsKeepTheirExactWording` (`pattern_test.go:350`,
-  *"enum finding on \"scopes[1]\" changed"* — it hardcodes the enum error message listing the
-  allowed scopes, and the new schema legitimately adds two) and
-  `--- FAIL: TestPatternRulesCoverTheVendoredSchema` (`pattern_test.go:449`,
-  *"schema pattern \"^[a-z0-9][a-z0-9_-]*$\" has no glos…"*). `via: measurement`
-- 🔴 **Leading hypothesis — it is SELF-BLOCKING, and that is the finding.** The guard that keeps
-  the mirror in step is what prevents the mirror from ever being updated: it can never accept a
-  canonical schema that adds a scope, an enum member or a pattern. Same shape as the base-clone
-  refresh hook that worked exactly once per file and then silently stopped. So this does **not**
-  self-heal at 06:37 — it stays red until a human fixes the two pins.
-- ⚠ **`origin/automation/revendor-canonical-schema` is STALE, not the fix** — it sits on `4dd98b9`
-  over `7c57d3a` and its vendored schema has **0** `goods:`. Do not merge it expecting a fix.
-- ✅ **THE RE-VENDOR ITSELF IS ALREADY DONE AND PRESERVED.** A stopped agent left it uncommitted;
-  I verified and saved it: **`~/.cache/schema-revendor-2026-09-28/app-block.manifest.schema.json.revendored`**
-  is **byte-identical (`cmp`) to the live canonical** and carries the 4 `goods:` entries, alongside
-  `canonical-as-fetched.json`. Both sha256'd. ⚠ The canonical URL is live and can move again —
-  re-`cmp` before trusting the copy.
-- **Next probe / the actual work:** fix the two pins, then commit the preserved schema.
-  `TestEnumFindingsKeepTheirExactWording` is a legitimate user-facing **message-stability** guard —
-  do not delete or loosen it; **derive the enum CONTENT from the vendored schema while pinning the
-  message SHAPE**, and prove the shape half still bites by rewording the finding template and
-  watching it fail. `TestPatternRulesCoverTheVendoredSchema` is **not** a test defect — it requires
-  a human-readable gloss per pattern, so **add the gloss** for `^[a-z0-9][a-z0-9_-]*$` after
-  finding which fields use it. Then sweep `internal/validate` for other hardcoded schema content
-  and say whether the automation can now succeed unaided.
-  🔴 **Do not merge anything through a red `schema-drift`** — that trains everyone to click through.
 
 ### 🔴 OPEN — rank 14's third T1 cell is blocked on a credential shape, not on code
 - as-of: 2026-09-28
