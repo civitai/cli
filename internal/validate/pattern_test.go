@@ -441,30 +441,31 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	// paper that over is to edit the template to match — which reds this.
 	//
 	// ⚠ What it STOPPED catching, and where that went: as a schema-vs-frozen-string
-	// comparison it also detected a rating being RETIRED or REORDERED upstream.
-	// Making both operands hand-written gave that up, so it is restored explicitly
-	// as the subset assertion further down — do not assume this anchor still covers
-	// it.
-	// frozenRatings is that specimen, named because it has TWO jobs: anchoring the
-	// template here, and the subset assertion below. It is deliberately the only
-	// hand-typed rating list in this file besides the constant — a third spelling
-	// would trip `content_rating_literal_ledger_test.go`'s per-file count.
+	// comparison it also detected a rating being RETIRED upstream. Making both
+	// operands hand-written gives that up, and that gap is ACCEPTED — deliberately,
+	// after measurement. Do not "restore" it without reading the rest of this note.
 	//
-	// 🔴 BUT THAT COUNT CANNOT SEE WHICH CALL SITE USES IT, and hoisting this into a
-	// variable is what created the gap: with two consumers, re-deriving the anchor's
-	// operand below leaves the spelling count unchanged, so the ledger stayed green
-	// on the one edit it exists to catch (measured — caught before the hoist, silent
-	// after). So the specimen's PROVENANCE is pinned separately, by
-	// `assertFrozenRatingsIsHandWritten` in that ledger, which reads THIS function's
-	// syntax tree: this must be declared inline from a literal, never reassigned, and
-	// ranged by the subset guard below. **Renaming this variable, or moving that loop
-	// into a helper, reds that check** — both are false reds, but they are reds;
-	// update `anchorRatingsVar`/`anchorFunc` if you mean it. Wrapping the argument at
-	// the anchor call is fine: an earlier regex forbade that, and it no longer exists.
-	frozenRatings := []string{"g", "pg", "pg13", "r", "x"}
-
+	// 🔴 A SHRINK GUARD WAS BUILT HERE AND THEN REMOVED, BECAUSE IT WAS A SELF-BLOCK
+	// IN THE OTHER DIRECTION. It iterated a frozen specimen and asserted each value
+	// was still in the schema. Measured: retiring a rating then reds `go test ./...`,
+	// so `revendor-canonical-schema.yml` — which runs the suite before opening its
+	// PR — opens NO PR, the vendored mirror stays stale, and `schema-drift` reds
+	// until a human intervenes. Its own failure message asked for FOUR hand edits
+	// producing ZERO behaviour change, because a resynced mirror already rejects a
+	// retired value correctly. Upstream retirement is a demonstrated event class
+	// here (four scopes have been retired), so that was a real cost paid against a
+	// hazard with no recorded instance.
+	//
+	// ⚠ WHAT IS ACTUALLY UNCOVERED, stated plainly: a `contentRating` value retired
+	// or renamed upstream reaches the CLI with no test reddening. `schema-drift`
+	// cannot see it either — it diffs the mirror against the live canonical, so once
+	// the mirror resyncs both agree. The judgement is that this needs no local guard:
+	// the resynced mirror rejects the retired value on its own, and `contentRating`
+	// has not changed in any commit that has ever touched the schema. If you want it
+	// covered, cover it WITHOUT gating the re-vendor bot's own suite — a scheduled
+	// probe, not an assertion inside `go test`.
 	const wantContentRating = "contentRating: value must be one of 'g', 'pg', 'pg13', 'r', 'x'"
-	if tmpl := enumMessage("contentRating", frozenRatings); tmpl != wantContentRating {
+	if tmpl := enumMessage("contentRating", []string{"g", "pg", "pg13", "r", "x"}); tmpl != wantContentRating {
 		t.Fatalf("the enum message TEMPLATE no longer reproduces a hand-written message, so every "+
 			"expectation derived from it below is meaningless — this is about `enumMessage` in this "+
 			"file, NOT about the schema's contentRating enum, which this comparison does not read\n"+
@@ -512,62 +513,6 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	// used to be pinned to the literal above; that is what blocked an additive
 	// canonical, so it derives here like `scopes` always has.
 	ratings := schemaEnum(t, "properties", "contentRating", "enum")
-
-	// 🔴 SHRINK GUARD ON `contentRating`, AND IT EXISTS BECAUSE THIS CHANGE TOOK
-	// THE OLD ONE AWAY. Before, the anchor compared the SCHEMA's ratings against a
-	// frozen string, so it doubled as a content guard: a rating retired or
-	// reordered upstream reddened it. Now both anchor operands are hand-written and
-	// the `want` row derives, so schema and expectation move together in EVERY
-	// direction — measured, dropping `"x"` or reordering the list left this whole
-	// package green where it used to fail. `schema-drift` cannot cover that: it
-	// diffs the mirror against the live canonical, so an upstream retirement is
-	// invisible to it once the mirror resyncs (see the `scopes` note above).
-	//
-	// A SUBSET assertion restores the direction WITHOUT self-blocking, which is the
-	// distinction that matters: growth adds values and a superset still contains
-	// the specimen, so an additive canonical stays green — while retiring or
-	// renaming ONE OF THE VALUES `frozenRatings` NAMES reds here. It reuses
-	// `frozenRatings` rather than typing the list a third time.
-	//
-	// 🔴 THE BOUND IN THAT SENTENCE IS LOAD-BEARING, and an earlier version dropped
-	// it. This can only ever assert what is hand-typed above, so its coverage DECAYS
-	// as the canonical grows: measured, add `"nc17"` upstream (green, correct — that
-	// is this PR's purpose) and then RETIRE `"nc17"` again, and nothing in this repo
-	// reds. **When a re-vendor adds a rating, extend `frozenRatings` and
-	// `wantContentRating` in the same commit** or the new value is permanently
-	// outside this guard. Nothing enforces that — it is a reviewer instruction, and
-	// saying so is the honest alternative to a message that claims the whole
-	// retirement direction is covered.
-	//
-	// ⚠ IT COVERS RETIREMENT AND RENAME, NOT REORDER — measured, both ways, so this
-	// is a scope statement and not an aspiration: dropping `"x"` reds this loop,
-	// reordering to `["pg","g","pg13","r","x"]` leaves the whole package green.
-	// That is deliberate. A JSON Schema `enum` is a SET, so a reorder changes no
-	// manifest's validity — only the order values are rendered in — and the one
-	// guard that would catch it (assert the specimen is an ordered PREFIX) would
-	// red on a legitimate mid-list insert, which is the self-block this whole
-	// change exists to remove. Cosmetic order is the acceptable blind spot; a
-	// value disappearing is not.
-	for _, must := range frozenRatings {
-		if !slices.Contains(ratings, must) {
-			t.Errorf("the schema's contentRating enum no longer offers %q — %d values read: %v.\n"+
-				"  A rating this test names was RETIRED or RENAMED upstream. That is a real contract "+
-				"change and nothing else in this repo can see it: `schema-drift` compares the mirror "+
-				"against the live canonical, so once the mirror resyncs both sides agree.\n"+
-				"  If the removal is intended, drop it from `frozenRatings` AND from the "+
-				"`wantContentRating` constant in the same commit. ⚠ If it is one of `g`, `pg` or `pg13` "+
-				"TWO more edits are needed or you will just move the red: hand-edit "+
-				"`ratingListNeedle` in content_rating_literal_ledger_test.go (frozen on those three), "+
-				"and update the specimen in `internal/validate/pattern.go`'s package doc comment, which "+
-				"that same needle must keep matching. Measured: stopping after `frozenRatings` and the "+
-				"constant lands you on a SHRANK naming THIS file; doing the needle too lands you on a "+
-				"SHRANK naming pattern.go. All four edits together are green. That is the one case where "+
-				"editing the needle is correct; deriving it never is.\n"+
-				"  ⚠ This loop only covers the values named in `frozenRatings`; a rating the canonical "+
-				"added later and then retired is invisible to it.",
-				must, len(ratings), ratings)
-		}
-	}
 
 	want := map[string]string{
 		"contentRating": enumMessage("contentRating", ratings),
