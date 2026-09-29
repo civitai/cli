@@ -75,7 +75,19 @@ func TestValidateEnumFindingWordingIsUnchanged(t *testing.T) {
 	if err == nil {
 		t.Fatal("PREMISE BROKEN: the fixture validated clean")
 	}
-	const want = "contentRating: value must be one of 'g', 'pg', 'pg13', 'r', 'x'"
+	// 🔴 THE VALUES ARE DERIVED, THE WORDING IS SPELLED. This used to be a
+	// hand-typed copy of the whole rating set, which made an additive canonical
+	// red a check on every PR in the repo — the second copy of the self-block
+	// `internal/validate/pattern_test.go` was rewritten to remove.
+	// The lead-in and the quoting are still written out here, so a reword of the
+	// library's rendering still fails; only the SET moves with the schema.
+	//
+	// ⚠ MEASURED, and it is why this site needed its own mutant: the old literal
+	// was checked with `strings.Contains`, so APPENDING a rating left it GREEN
+	// (the literal is a prefix of the longer message) while `internal/validate`
+	// went red. Only an INSERT or reorder reddened it. A one-site fix verified
+	// with an append-only mutant therefore READS complete and is not.
+	want := schemaEnumFindingMessage(t, "contentRating", "properties", "contentRating", "enum")
 	if !strings.Contains(unwrapped(stderr), want) {
 		t.Errorf("the enum finding's wording changed\n  want: %s\n  got:\n%s", want, stderr)
 	}
