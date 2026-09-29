@@ -448,8 +448,15 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	// frozenRatings is that specimen, named because it has TWO jobs: anchoring the
 	// template here, and the subset assertion below. It is deliberately the only
 	// hand-typed rating list in this file besides the constant — a third spelling
-	// would trip `content_rating_literal_ledger_test.go`'s per-file count, which is
-	// how that ledger notices a new mirror.
+	// would trip `content_rating_literal_ledger_test.go`'s per-file count.
+	//
+	// 🔴 BUT THAT COUNT CANNOT SEE WHICH CALL SITE USES IT, and hoisting this into a
+	// variable is what created the gap: with two consumers, re-deriving the anchor's
+	// operand below leaves the spelling count unchanged, so the ledger stayed green
+	// on the one edit it exists to catch (measured — caught before the hoist, silent
+	// after). The call site is therefore pinned separately, by `anchorCallNeedle` in
+	// that ledger. **Do not rename this variable or wrap it at the call site without
+	// updating that needle** — both are false reds, but they are reds.
 	frozenRatings := []string{"g", "pg", "pg13", "r", "x"}
 
 	const wantContentRating = "contentRating: value must be one of 'g', 'pg', 'pg13', 'r', 'x'"
@@ -514,9 +521,19 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	//
 	// A SUBSET assertion restores the direction WITHOUT self-blocking, which is the
 	// distinction that matters: growth adds values and a superset still contains
-	// the specimen, so an additive canonical stays green — while a retirement or a
-	// rename reds here. It reuses `frozenRatings` rather than typing the list a
-	// third time.
+	// the specimen, so an additive canonical stays green — while retiring or
+	// renaming ONE OF THE VALUES `frozenRatings` NAMES reds here. It reuses
+	// `frozenRatings` rather than typing the list a third time.
+	//
+	// 🔴 THE BOUND IN THAT SENTENCE IS LOAD-BEARING, and an earlier version dropped
+	// it. This can only ever assert what is hand-typed above, so its coverage DECAYS
+	// as the canonical grows: measured, add `"nc17"` upstream (green, correct — that
+	// is this PR's purpose) and then RETIRE `"nc17"` again, and nothing in this repo
+	// reds. **When a re-vendor adds a rating, extend `frozenRatings` and
+	// `wantContentRating` in the same commit** or the new value is permanently
+	// outside this guard. Nothing enforces that — it is a reviewer instruction, and
+	// saying so is the honest alternative to a message that claims the whole
+	// retirement direction is covered.
 	//
 	// ⚠ IT COVERS RETIREMENT AND RENAME, NOT REORDER — measured, both ways, so this
 	// is a scope statement and not an aspiration: dropping `"x"` reds this loop,
@@ -530,10 +547,17 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	for _, must := range frozenRatings {
 		if !slices.Contains(ratings, must) {
 			t.Errorf("the schema's contentRating enum no longer offers %q — %d values read: %v.\n"+
-				"  A rating was RETIRED or RENAMED upstream. That is a real contract change and nothing "+
-				"else in this repo can see it: `schema-drift` compares the mirror against the live "+
-				"canonical, so once the mirror resyncs both sides agree. If the removal is intended, "+
-				"drop it from `frozenRatings` and from the expected-message constant in the same commit.",
+				"  A rating this test names was RETIRED or RENAMED upstream. That is a real contract "+
+				"change and nothing else in this repo can see it: `schema-drift` compares the mirror "+
+				"against the live canonical, so once the mirror resyncs both sides agree.\n"+
+				"  If the removal is intended, drop it from `frozenRatings` AND from the "+
+				"`wantContentRating` constant in the same commit. ⚠ If it is one of `g`, `pg` or `pg13` "+
+				"you must also hand-edit `ratingListNeedle` in content_rating_literal_ledger_test.go, "+
+				"which is frozen on those three — otherwise that ledger reds claiming the shape anchor "+
+				"is gone while the anchor is intact. That is the one case where editing the needle is "+
+				"correct.\n"+
+				"  ⚠ This loop only covers the values named in `frozenRatings`; a rating the canonical "+
+				"added later and then retired is invisible to it.",
 				must, len(ratings), ratings)
 		}
 	}

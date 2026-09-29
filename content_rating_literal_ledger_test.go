@@ -44,6 +44,15 @@ import (
 // anchor's own comment in `pattern_test.go` states that correctly; this one used
 // to promise more than the code delivers.
 //
+// ⚠ AND THEN TOO LITTLE — the narrowing above was itself incomplete, because the
+// same commit that wrote it gave the anchor a SECOND job. It is the only thing
+// pinning `frozenRatings`, the specimen the subset shrink guard in
+// `pattern_test.go` iterates. Measured: delete the anchor and trim `frozenRatings`
+// to one value and both this ledger and `internal/validate` stay green, with the
+// shrink guard asserting almost nothing. Both jobs are now named in the SHRANK
+// message. Recorded as a pair because the correction went too wide, then too
+// narrow, and the next reader should not have to rediscover either direction.
+//
 // The file SET and the per-file COUNT are both asserted, so a spelling added
 // inside a file that is already ledgered is caught too — for every ledgered file,
 // not just the anchor.
@@ -78,6 +87,26 @@ import (
 //	"g", "pg", "pg13"     — as a Go string slice
 var ratingListNeedle = regexp.MustCompile(`['"]g['"]\s*,\s*['"]pg['"]\s*,\s*['"]pg13['"]`)
 
+// anchorCallNeedle pins the anchor's CALL SITE, which the rating-list count above
+// structurally cannot see.
+//
+// 🔴 WHY IT EXISTS, AND IT IS A REGRESSION THIS LADDER INTRODUCED. The anchor's
+// hand-written list was hoisted into a `frozenRatings` variable so the subset
+// shrink guard could reuse it instead of the ratings being typed a third time.
+// That gave the literal a SECOND consumer — and the count pin counts SPELLINGS, so
+// re-deriving the anchor's operand (`enumMessage("contentRating", schemaEnum(…))`)
+// while leaving `frozenRatings` alive for the subset loop keeps the count at 2 and
+// the ledger GREEN. Measured: that exact edit was caught before the hoist and was
+// silent after it, and an additive canonical then restores the self-block in full —
+// which on `ci.yml`'s path-filter-free `schema-drift` is a red check on every
+// unrelated PR in the repo. So the call site is pinned as well as the spelling.
+//
+// ⚠ It is a SPELLING, and it fails toward RED. Renaming `frozenRatings`, or wrapping
+// it (`append([]string{}, frozenRatings...)`), reds this without the hazard being
+// present. That is the safe direction and it is deliberate: a false red costs a
+// reader one minute, while the false green this replaces costs the whole repo's CI.
+var anchorCallNeedle = regexp.MustCompile(`enumMessage\("contentRating",\s*frozenRatings\)`)
+
 // ratingLedgerEntry is one permitted writer: why it may spell the list, and HOW
 // MANY times. The count is per entry rather than a single constant for one file —
 // an earlier version pinned only the anchor, so a second spelling added to
@@ -89,7 +118,22 @@ type ratingLedgerEntry struct {
 	// want is the exact number of needle matches permitted in this file. Every
 	// ledgered file carries one, so the pin is as wide as the sentence above it.
 	want int
+	// remedy names WHAT to restore when this entry's count drops, in this file's
+	// own terms.
+	//
+	// 🔴 IT IS PER-ENTRY BECAUSE A SHARED REMEDY WAS MEASURED WRONG. The shrink arm
+	// used to print the anchor's remedy — "the expected-message constant AND the
+	// list handed to enumMessage" — for EVERY ledgered file. Mistyping
+	// `pattern.go`'s want as 2 fired it against a file that contains no constant,
+	// no `enumMessage` and no anchor, telling the reader to restore things that
+	// were never there. That is the same defect the arm itself was created to fix,
+	// reproduced one level up.
+	remedy string
 }
+
+// anchorFile is the file whose enumMessage call site is pinned by
+// anchorCallNeedle. Named once so the ledger entry and the check cannot drift.
+const anchorFile = "internal/validate/pattern_test.go"
 
 // ratingLiteralLedger is the EXACT set of Go files permitted to spell the rating
 // list by hand. Anything else is a regression, in either direction.
@@ -100,15 +144,17 @@ var ratingLiteralLedger = map[string]ratingLedgerEntry{
 	"internal/validate/pattern.go": {
 		reason: "doc comment showing a specimen enum finding",
 		want:   1,
+		remedy: "the specimen enum finding in the package doc comment — prose, asserted by nothing",
 	},
 
-	// The SHAPE ANCHOR, twice: once in the expected-message constant, once in the
-	// hand-written list fed to the template. Both operands of that comparison are
-	// hand-written and neither reads the schema, so it is a frozen specimen rather
-	// than a mirror and an additive canonical cannot reach it.
-	"internal/validate/pattern_test.go": {
-		reason: "the frozen shape anchor for enumMessage (const + hand-written list)",
+	// The SHAPE ANCHOR, twice: once in the expected-message constant, once in
+	// `frozenRatings`. Both operands of that comparison are hand-written and neither
+	// reads the schema, so it is a frozen specimen rather than a mirror and an
+	// additive canonical cannot reach it.
+	anchorFile: {
+		reason: "the frozen shape anchor for enumMessage (const + frozenRatings)",
 		want:   2,
+		remedy: "the `wantContentRating` constant and the `frozenRatings` slice — both hand-written",
 	},
 }
 
@@ -179,11 +225,19 @@ func TestContentRatingLiteralHasExactlyTheLedgeredWriters(t *testing.T) {
 		for _, p := range want {
 			if _, ok := found[p]; !ok {
 				t.Errorf("SHRANK: %s no longer spells the contentRating list (%s).\n"+
-					"  If the shape anchor is gone, a reword of the validation library's lead-in can be\n"+
-					"  PAPERED OVER by editing enumMessage to match it, and nothing would object. (It does\n"+
-					"  NOT mean nothing can fail — a reword still reds the want-map comparison against real\n"+
-					"  output; that wider claim was measured false.) Restore a hand-written specimen, or\n"+
-					"  delete this ledger entry and say in its place what now pins the wording.",
+					"  The anchor has TWO jobs and losing it costs both.\n"+
+					"  (1) WORDING: a reword of the validation library's lead-in can then be PAPERED OVER\n"+
+					"      by editing enumMessage to match it, and nothing would object. (It does NOT mean\n"+
+					"      nothing can fail — a reword still reds the want-map comparison against real\n"+
+					"      output; that wider claim was measured false.)\n"+
+					"  (2) SPECIMEN: the anchor is the only thing pinning `frozenRatings`, which is the\n"+
+					"      subset shrink guard's specimen. Measured: with the anchor deleted, trimming\n"+
+					"      `frozenRatings` to one value leaves this package AND this ledger green, and the\n"+
+					"      shrink guard then asserts almost nothing.\n"+
+					"  Restore a hand-written specimen, or delete this ledger entry and say in its place\n"+
+					"  what now pins the WORDING *and* what pins `frozenRatings`. An earlier version of\n"+
+					"  this message asked only about the wording, so a reader who followed it exactly\n"+
+					"  destroyed the shrink guard and saw nothing red.",
 					p, ratingLiteralLedger[p].reason)
 			}
 		}
@@ -216,9 +270,36 @@ func TestContentRatingLiteralHasExactlyTheLedgeredWriters(t *testing.T) {
 		case n < e.want:
 			t.Errorf("A FROZEN SPECIMEN WENT MISSING: %s spells the rating list %d times, want %d (%s).\n"+
 				"  🔴 DO NOT 'fix' this by deriving the values — deriving is what makes the guard\n"+
-				"  self-blocking, and it is the exact edit this whole change exists to undo. The anchor\n"+
-				"  needs BOTH operands hand-written: the expected-message constant AND the list handed\n"+
-				"  to enumMessage. Restore the hand-written one.", p, n, e.want, e.reason)
+				"  self-blocking, and it is the exact edit this whole change exists to undo. Restore the\n"+
+				"  hand-written spelling this entry is for: %s\n"+
+				"  OR, if the removal was deliberate and this entry's number is simply now wrong, lower\n"+
+				"  its `want` and say why. A mis-typed want and a real regression print the same thing,\n"+
+				"  so that branch has to be offered explicitly.\n"+
+				"  ⚠ If one of the FIRST THREE ratings was retired upstream, this arm can fire even\n"+
+				"  though the anchor is intact — `ratingListNeedle` is frozen on `g, pg, pg13`, so the\n"+
+				"  needle itself must be hand-edited too. That is the one case where editing the needle\n"+
+				"  is correct; deriving it from the schema never is.",
+				p, n, e.want, e.reason, e.remedy)
+		}
+	}
+
+	// 🔴 THE ANCHOR'S CALL SITE, pinned separately because the count above counts
+	// SPELLINGS and cannot see which call consumes them. See anchorCallNeedle.
+	if _, ok := ratingLiteralLedger[anchorFile]; ok {
+		b, err := os.ReadFile(anchorFile)
+		if err != nil {
+			t.Fatalf("reading the anchor file %s: %v", anchorFile, err)
+		}
+		if n := len(anchorCallNeedle.FindAll(b, -1)); n != 1 {
+			t.Errorf("the anchor no longer hands its HAND-WRITTEN list to enumMessage: %s matches "+
+				"`enumMessage(\"contentRating\", frozenRatings)` %d times, want 1.\n"+
+				"  🔴 If the operand was replaced with a schema read, THE SELF-BLOCK IS BACK and the\n"+
+				"  rating-list count cannot see it: `frozenRatings` still exists for the subset guard,\n"+
+				"  so the spelling count is unchanged and every other test here stays green until a\n"+
+				"  canonical adds a rating — at which point `schema-drift` reds on every unrelated PR\n"+
+				"  in this repo. Both anchor operands must be hand-written.\n"+
+				"  If you renamed `frozenRatings` or wrapped the argument, this is a false red: update\n"+
+				"  anchorCallNeedle to the new spelling.", anchorFile, n)
 		}
 	}
 }

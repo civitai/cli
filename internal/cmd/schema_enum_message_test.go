@@ -135,6 +135,14 @@ func TestEnumFindingMessageIsAFormatterNotACopyOfTheRatings(t *testing.T) {
 	// `if len(allowed) > 3 { allowed = allowed[:len(allowed)-1] }`, which left this
 	// test green. Five is the live rating count, so this also exercises the length
 	// the real message is rendered at.
+	//
+	// ⚠ IT BUYS ATTRIBUTION, NOT A KILL, and the commit that added it claimed
+	// otherwise. That same truncation mutant was ALREADY dead at the pre-fix tip —
+	// `TestSchemaEnumValuesReadsTheLiveVendoredRatings` catches it, because the
+	// derived message then omits a rating the schema declares. So the suite did not
+	// gain coverage here; what it gained is a failure that names the FORMATTER
+	// instead of the schema read, which is the difference between a five-minute
+	// diagnosis and a wrong one. Worth keeping, worth not overstating.
 	if got, want := enumFindingMessage("five", []string{"a", "b", "c", "d", "e"}),
 		"five: value must be one of 'a', 'b', 'c', 'd', 'e'"; got != want {
 		t.Errorf("multi-value wording moved\n  want: %s\n  got:  %s", want, got)
