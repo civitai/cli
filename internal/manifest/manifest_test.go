@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"testing"
 
 	cli "github.com/civitai/cli"
@@ -165,34 +167,33 @@ func TestLoadAuth(t *testing.T) {
 	}
 }
 
-// TestAuthKindsComeFromTheVendoredSchema is the both-directions guard on the
-// single-sourcing. It fails when the derivation BREAKS (an empty or short set,
-// which would make LoadAuth reject everything and silently stop declaring auth)
-// and equally when the vendored schema's enum GROWS or SHRINKS under it.
+// TestAuthKindsComeFromTheVendoredSchema pins the SINGLE-SOURCING: AuthKinds()
+// must return exactly what the embedded schema's `auth` enum declares, in order.
 //
-// 🔴 A RED HERE IS NOT A BUG, IT IS THE SIGNAL THIS TEST EXISTS FOR. The schema
-// is re-vendored from the live canonical URL by scripts/check-canonical-schema.sh,
-// so the enum changes without anyone editing Go — and LoadAuth then forwards the
-// new kind automatically, which is correct but undocumented. Update the want list
-// below AND the README's "What the tunnel declares" paragraph, which names the
-// kinds in prose.
+// 🔴 THE `want` LIST IS DERIVED, AND IT USED TO BE HAND-TYPED — which made this a
+// SELF-BLOCK on the most volatile enum in the schema. It read
+// `want := []string{"block-token", "oauth"}`, so the canonical adding an auth kind
+// reddened it, which reds `go test ./...`, which is what
+// `revendor-canonical-schema.yml` runs BEFORE opening its resync PR. So the bot
+// would have opened no PR, the vendored mirror would have stayed stale, and
+// `schema-drift` would have gone red until a human hand-edited this list. `auth`
+// landed 2026-09-24 and its description was already revised once by 2026-09-26; it
+// is exactly the field where that was most likely to fire.
+//
+// The comment here used to say "A RED HERE IS NOT A BUG, IT IS THE SIGNAL THIS TEST
+// EXISTS FOR", asking the reader to update this list AND the README's "What the
+// tunnel declares" paragraph. The documentation intent was right; gating the
+// re-vendor bot's own suite on it was not, because the cost of the signal is paid by
+// every unrelated PR in the repo and the bot cannot deliver it to anyone.
+//
+// ⚠ WHAT IS NO LONGER ENFORCED, so it is not silently lost: nothing now reds when a
+// new auth kind lands and the README's prose does not mention it. `LoadAuth` forwards
+// the new kind correctly either way — this was always a docs-freshness signal, never
+// a correctness one. If it is worth enforcing, it must live OUTSIDE `go test` (a
+// scheduled job, or a line in the re-vendor PR's body), for the reason above.
 func TestAuthKindsComeFromTheVendoredSchema(t *testing.T) {
-	want := []string{"block-token", "oauth"}
-	got := AuthKinds()
-	if len(got) != len(want) {
-		t.Fatalf("AuthKinds() = %v (%d kinds), want %v (%d).\n"+
-			"An EMPTY/short set means the derivation broke — LoadAuth now admits nothing and the\n"+
-			"tunnel silently stops declaring auth. A LONGER one means the vendored schema's `auth`\n"+
-			"enum grew: LoadAuth already forwards the new kind, so update this want list and the\n"+
-			"README's \"What the tunnel declares\" paragraph.", got, len(got), want, len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("AuthKinds()[%d] = %q, want %q", i, got[i], want[i])
-		}
-	}
-	// Positive control: prove the set really came from the embedded schema rather
-	// than from a literal in this package, by reading the schema independently.
+	// The schema, read independently of the production derivation. This is the
+	// authority; AuthKinds() is the thing under test.
 	var doc struct {
 		Properties struct {
 			Auth struct {
@@ -203,9 +204,37 @@ func TestAuthKindsComeFromTheVendoredSchema(t *testing.T) {
 	if err := json.Unmarshal(cli.SchemaJSON, &doc); err != nil {
 		t.Fatalf("the embedded schema must parse: %v", err)
 	}
-	if len(doc.Properties.Auth.Enum) != len(want) {
-		t.Errorf("schema /properties/auth/enum = %v, want %d entries — the schema and AuthKinds() must be the SAME list",
-			doc.Properties.Auth.Enum, len(want))
+
+	want := append([]string(nil), doc.Properties.Auth.Enum...)
+	sort.Strings(want) // AuthKinds() sorts; compare like for like
+
+	// 🔴 POSITIVE CONTROL FIRST. Deriving both sides makes the comparison vacuous if
+	// the enum is missing or empty — `[] == []` agrees and the test passes while
+	// LoadAuth admits nothing and the tunnel silently stops declaring auth. That is
+	// the failure this guard exists for, so the floor is asserted before the match.
+	if len(want) < 2 {
+		t.Fatalf("schema /properties/auth/enum = %v (%d entries) — want at least 2. An empty or "+
+			"missing enum makes this test vacuous AND makes LoadAuth reject everything, so the "+
+			"tunnel stops declaring auth with nothing reporting it.", want, len(want))
+	}
+
+	got := AuthKinds()
+	if !slices.Equal(got, want) {
+		t.Errorf("AuthKinds() = %v, want %v (the schema's own enum, sorted).\n"+
+			"AuthKinds() must be single-sourced from the embedded schema — a difference here means "+
+			"the derivation broke or a literal crept back in.", got, want)
+	}
+
+	// And every kind the schema admits must actually be accepted by LoadAuth, or the
+	// derivation is right while the behaviour is not.
+	for _, kind := range want {
+		dir := t.TempDir()
+		write(t, dir, `{"blockId":"x","auth":"`+kind+`"}`)
+		auth, unrecognised := LoadAuth(dir)
+		if auth != kind || unrecognised {
+			t.Errorf("LoadAuth with auth=%q = (%q, unrecognised=%v), want (%q, false) — the schema "+
+				"admits this kind but LoadAuth does not forward it.", kind, auth, unrecognised, kind)
+		}
 	}
 }
 
