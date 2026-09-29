@@ -19,7 +19,7 @@
 ## Using an AI coding agent? Paste this
 
 ```text
-Fetch and execute the appropriate instructions to set me up for Civitai from https://developer.civitai.com/agent-setup/prompt.md
+Fetch and execute the appropriate instructions to set me up for Civitai from https://civitai.com/agent-onboarding
 ```
 
 Your agent installs the CLI, configures itself for App development (an
@@ -27,7 +27,9 @@ Your agent installs the CLI, configures itself for App development (an
 result. It stops before authenticating and hands `civitai login` back to you —
 it will not log in on your behalf.
 
-Prefer to read it first? The whole prompt is rendered at
+That address is a short alias and redirects to the instruction file on
+`developer.civitai.com`, which is its canonical home. Prefer to read it first?
+The whole prompt is rendered at
 [developer.civitai.com/agent-setup](https://developer.civitai.com/agent-setup/).
 If a step is refused or an agent goes off-script, the rest of this README is the
 manual path — nothing below depends on having used the prompt.
