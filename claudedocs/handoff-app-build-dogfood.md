@@ -108,34 +108,15 @@ clean bill of health.
 - ✅ FIXED 2026-09-28 — `schema-drift` red repo-wide because the guard over the mirror was SELF-BLOCKING (fixed by `#745`; the current reading is the ✅ RESOLVED block below)
 - ✅ RESOLVED 2026-09-28 — the schema-drift CLOSURE record: all three closing-condition halves, the rehearsal of the failing path, and why the "opens a PR unaided" half is unreachable BY DESIGN (an in-sync mirror correctly skips both validate and PR-creation). Its mechanism lesson is live in *Gotchas* → **a guard over a mirror could not accept the mirror's own update**.
 
-### ⚠ OPEN — the documentation stack is a measured cost problem
-- as-of: 2026-09-21
+### Evicted 2026-09-29 (rank 27 close) — two closed rank-27 blocks and the docs-cost block
 
-- **Observed (with values):** carry cost = bytes × steps remaining, because the harness
-  resends the whole history each turn. Ranked that way over glm's run: scaffold source
-  **40.7%**, `node_modules` **28.2%**, scaffold README **12.8%**, the hosted prompt **5.1%**
-  (4th-highest single read, because it is first and is resent 66 times).
-- **The single largest attributable waste:** `useCreatePostFromApp` was documented **nowhere**
-  in the local stack — not the 40 KB scaffold README, not `AGENTS.md`, not the hosted prompt,
-  not 5,908 lines of scaffold source. Reverse-engineering it from `node_modules` cost
-  **706,371 carry tokens, 28.2% of the run**. **Fixed in `cli#685`** — a complete 36-hook
-  index now lands at byte 388 of the README, single-sourced from `internal/scaffold/hooks.go`
-  with a guard that fails in both directions.
-- **Also fixed in `cli#685`:** `AGENTS.md` was stale for **58 of 66 steps** (`app create`
-  never re-ran `agent-setup`, so it said "No Civitai App has been scaffolded"); the docs
-  links sat at 90% depth as a bare list and the agent made **exactly one HTTP request in 66
-  steps**; `--template` was absent from the commands table while the default is the 37-file
-  `page-money`.
-- 🔴 **A briefing error of mine, corrected by measurement:** I named
-  `hostHandlerParity.ts` as the source for the mock-host capability table. It covers the
-  three REAL hosts, not `createMockHost`. The published SDK answers directly — and
-  `CREATE_POST_FROM_APP` **is** mocked, which is what glm spent ~380,000 carry tokens
-  discovering by reading `mockHost.js` line by line.
-- **Still open:** 96.3% of glm's prompt tokens were **cache reads**, so quoting 2.5M as
-  fresh overstates it; and ~4 of the 6.3× cost gap between the runs is **model price**, not
-  tokens. The doc stack owns the 1.6× volume difference, not the 6.3×.
-- **Next probe:** re-measure carry cost on a post-`cli#685` trial to price the fix. Free if
-  folded into rank 6.
+🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
+under *Evicted 2026-09-29 (rank 27 close)*.** Rank 27 is merged as `cli#752`, so both of its
+blocks are spent; the docs-cost block is 2026-09-21 measurement from a phase that has closed,
+and its own next probe was superseded by the stale-CLI finding. **Read them there before
+re-running any probe from those phases** — each is a resolved elimination. ⚠ One of the
+rank-27 blocks contains a claim that was later REFUTED (its append-only repro cannot red the
+`internal/cmd` site); the correction is in the ✅ RESOLVED 2026-09-29 block above.
 
 ### 🔴 OPEN — pricing `cli#685` CANNOT ride along with rank 6; it is blocked on a release
 - as-of: 2026-09-21
@@ -259,33 +240,6 @@ same mechanism: it is neither free nor possible.
   options are a generated fixture or a scheduled check that reads the deployed constant — both
   bigger than `#745`. Until then, the rule is in `semantic_test.go`'s docstring: when the schema
   gains a scope, re-read the deployed constant by hand.
-
-### ✅ CLOSED 2026-09-28 (rank 27) — `#745`'s own fix MOVED the self-block one field over
-
-🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
-under *Evicted 2026-09-28 (rank 27 close)*.** Shipped as `civitai/cli` **#752**; one of its claims was
-REFUTED — the ✅ RESOLVED block below has the correction and both mutants you need.
-
-### ✅ RESOLVED 2026-09-28 — rank 27 shipped, and its own stated repro was REFUTED
-- as-of: 2026-09-28
-
-🔴 **SUPERSEDES the evicted block *`#745`'s own fix MOVED the self-block one field over…*** (ARCHIVE,
-*Evicted 2026-09-28 (rank 27 close)*). Its *"Next probe / the work"* is SPENT — both fixes landed in
-#752 with the asymmetric remedy it designed, unchanged. It was right about the remedy and **wrong
-about the control**: do not re-run its repro as written and conclude anything from a green.
-
-- 🔴 **REFUTED — that the append repro reds the second site.** The evicted block gave the mutant as
-  `append ", \"nc17\""` and asserted *"Fixing only `internal/validate` leaves the second red"*. **It
-  does not.** `internal/cmd/message_quality_test.go` asserted with `strings.Contains`, and the
-  five-value literal is a **PREFIX** of the longer message, so appending left `internal/cmd` **GREEN**
-  while `internal/validate` went RED. Measured at base `2105a33`, with a positive control that the
-  mutant reached the output — the built CLI printed `…'pg13', 'r', 'x', 'nc17'`. Only an **INSERT or
-  reorder** reds both. The general rule is in *Gotchas*. `via: measurement`
-- **Still open, deliberately NOT built:** a growth-tolerant **SHRINK ledger**. `schema-drift` is NOT
-  "strictly stronger than a hand-typed list" as the old comment claimed — it diffs mirror against LIVE
-  canonical, so it is **blind to a value the canonical ITSELF retires**. #752 fixes the comment, not
-  the direction. Reasoning in `pattern_test.go`. **Not a to-do.** `via: code`
-- **Next probe:** confirm #752's checks, merge, verify by content on `main`, release the claim.
 
 ## Next steps (ranked)
 
