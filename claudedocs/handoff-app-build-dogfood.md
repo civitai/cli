@@ -383,13 +383,9 @@ was wrong more often than the models; a grader can penalise the MORE correct imp
 probe's zero needs the arm that makes it non-zero; run the control arm BEFORE the arm you want to
 believe; a merged fix is not a shipped fix when the harness installs from npm.
 
-### Evicted 2026-09-28 (audit batch) — Added 2026-09-25 (feedback) — the instrument was too LENIENT
+### Evicted 2026-09-28 (audit batch) — two blocks: *the instrument was too LENIENT* (2026-09-25) and *a handoff doc is not evidence about its own arc* (2026-09-26)
 
-Verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md).
-
-### Evicted 2026-09-28 (audit batch) — Added 2026-09-26 — a handoff doc is not evidence about its own arc
-
-Verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md).
+Both verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md).
 
 ### Added 2026-09-27 (resume) — durable facts RELOCATED here out of `State now`
 
