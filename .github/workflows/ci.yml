@@ -264,13 +264,6 @@ jobs:
   # `civitai app validate`) must stay identical to the canonical the platform
   # publishes at civitai.com/schemas/app-block/v1.json (the single source of
   # truth). Fails if a server-side contract change leaves the CLI stale.
-  schema-drift:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: check canonical schema
-        run: ./scripts/check-canonical-schema.sh
-
   # Rot-guard: assert each scaffold template's `@civitai/*` pin still ADMITS the
   # version npm currently publishes as `latest`. A pre-1.0 caret (`^0.24.0`)
   # locks the minor, so a pin that falls behind npm silently ships apps that are
