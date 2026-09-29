@@ -1143,3 +1143,36 @@ about the control**: do not re-run its repro as written and conclude anything fr
   tokens. The doc stack owns the 1.6× volume difference, not the 6.3×.
 - **Next probe:** re-measure carry cost on a post-`cli#685` trial to price the fix. Free if
   folded into rank 6.
+
+#### cli#685 pricing — blocked on a release
+
+### 🔴 OPEN — pricing `cli#685` CANNOT ride along with rank 6; it is blocked on a release
+- as-of: 2026-09-21
+
+🔴 **This CORRECTS rank 6's own instruction** (*"⚠ Re-measure carry cost while running, to
+price `cli#685`"*) **and the doc-cost block's** *"Next probe: re-measure carry cost on a
+post-`cli#685` trial … **Free if folded into rank 6.**" Both sentences are wrong about the
+same mechanism: it is neither free nor possible.
+
+- **Symptom + exact repro:** step 5 of every trial is `npm install -g @civitai/cli`. A
+  trial runs the **published** CLI, never this repo's tree, so a merged-but-unreleased doc
+  fix is invisible to every cell.
+- **Observed (with values), three agreeing reads:** `npm view @civitai/cli version` →
+  **`0.1.106`** (`time.modified` 2026-09-19T19:41Z); `git tag --contains bdeddef` →
+  **empty**, `git describe origin/main` → **`v0.1.106`**; and the running container's own
+  artefact, `head -c 600 /work/ab-prompt-to-post/README.md | grep -c useCreatePostFromApp`
+  → **0**, at the byte offset (388) where `#685` places the 36-hook index.
+  `via: measurement`
+- **Ruled out — that the deepseek cell prices the fix.** `civitai --version` inside its
+  container reads **0.1.106**. `via: measurement`
+- 🔴 **The consequence is load-bearing for the matrix, and it is favourable:** glm, mimo and
+  deepseek all ran the **same pre-`#685` doc stack**, so the three cheap cells differ on the
+  **model axis alone**. A release landing mid-matrix would have confounded exactly the
+  comparison the frozen condition asks for.
+- **Observed — the cost is still being paid:** the deepseek trial spent steps 26–31
+  grepping `node_modules` for `useCreatePostFromApp` / `BlockCreatePostRequest` /
+  `firstImageUrl`, the same reverse-engineering that cost glm **706,371 carry tokens,
+  28.2% of its run**. `via: measurement`
+- **Next probe:** cut a release containing `bdeddef`, then re-run ONE genpost cell on the
+  same model and diff carry cost. Until then the doc-stack block's figures are a claim
+  about `0.1.106` and nothing newer.
