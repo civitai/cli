@@ -757,6 +757,12 @@ so you know whether to open it: a backtick inside a double-quoted `echo` EXECUTE
 - ⚠ **`#675`/`#602` were never red on `schema-drift`** — their green dates from **2026-09-20**, before
   the canonical change, so they never re-ran. **A stale green is not a pass, nor a red.**
 
+- 🔴 **TWO `handoff_doc.py` CEILING TRAPS. (a) AN EVICTION IS TWO FILES; `--confirm` COMMITS ONE PATH** —
+  the archive half dies with the worktree, and a dead stub reads like a clean eviction. Commit the archive
+  side separately BEFORE the confirm, then `grep -c` the stub's section title in BOTH files on the pushed
+  ref (want 1 and 1) — `dd1de77`. **(b) The ceiling is BYTES**: `len(open(p).read())` counts characters,
+  and `🔴 ⚠ ✅ —` made that gap 890 B — it read 64,728 for 65,618 B. **`wc -c`.**
+
 ## How to verify
 
 🔴 **Run every repo script with `env -u CDPATH`** — else `check-canonical-schema.sh` reports a confident
