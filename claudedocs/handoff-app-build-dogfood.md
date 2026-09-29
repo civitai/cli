@@ -59,24 +59,28 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-✅ **EVERYTHING FROM THIS ARC IS MERGED. Nothing is in flight.** Eight PRs landed, each verified by
-content on `origin/main` (never by ancestry — a squash merge makes that permanently false):
+✅ **THE ARC'S FROZEN CONDITION REMAINS CLOSED (2026-09-21).** Eight PRs merged, nothing in flight in
+git, each verified by content on `origin/main` (never by ancestry — a squash merge makes that false
+forever): `cli#752` `0f0777c4` (rank 27, both sites, claim released) · `cli#753` `e602b3a` (README
+paste block → `civitai.com/agent-onboarding` + the cross-repo mirror guard) · `docs#127` `6339220`
+(`SETUP_PROMPT` derives from `SHORT_PROMPT_URL`) · `cli#754` `ac840b6` (scaffold pins — **the repo's
+own automation had opened it**; merged rather than duplicated) · `cli#755` `0bb7793` (the auth
+self-block five audit rounds walked past) · `cli#756` `94cad83` (`schema-drift` off `pull_request`,
+**observed firing and passing on the merge to `main`**) · `cli#751` `4e3570f4` + `cli#757` `8d53fc58`
+(this doc consolidated, arc closed).
 
-| PR | commit | what |
-|---|---|---|
-| `cli#752` | `0f0777c4` | **rank 27** — the moved `contentRating` self-block, both sites. Claim released. |
-| `cli#753` | `e602b3a` | README paste block → `civitai.com/agent-onboarding`, + a guard on the cross-repo mirror |
-| `docs#127` | `6339220` | `SETUP_PROMPT` derives from `SHORT_PROMPT_URL`; `PROMPT_URL`/`PROMPT_PATH` stay canonical |
-| `cli#754` | `ac840b6` | scaffold pin bump — **the repo's own automation had opened it**; I merged rather than duplicate |
-| `cli#755` | `0bb7793` | the auth self-block five audit rounds walked past |
-| `cli#756` | `94cad83` | `schema-drift` off `pull_request` — **observed firing and passing on the merge to `main`** |
-| `cli#751` | `4e3570f4` | this doc consolidated onto `main`; the two-version split is over |
+✅ **RANK 14 IS CLOSED — the operator delivered the key 2026-09-29 and the cell PASSED.**
+`at3-mimo-noderoot-claudeid` (`xiaomi/mimo-v2.5`), `stop: finished`, 60 steps, **518 s**, $0.0196,
+3 generations, 1 submission. `ship.verdict.sh` → **`SHIP=yes FLOOR=yes T1=yes`**,
+`sub_block=ab-t1-generate-post`, `sub_id=pubreq_01M3QKMS3RF1399NQSW3ZGYEQ8` — the first T1 cell ever
+to meet the publish floor, and graded by the ORACLE, not by the model's own summary or `app validate`.
 
-🔴 **THE ARC'S FROZEN CONDITION REMAINS CLOSED (2026-09-21) AND NO CODE ITEM REMAINS.** The only
-live rank is **14**, which is blocked on the operator's API key and nothing else.
+⚠ **Loose end, not a rank:** `origin/zach/handoff-arc-close` still exists at `ad65a42` though `#751`
+merged; its copy (821 lines) is now BEHIND `origin/main`'s, so the two-ref contention is still live
+in the branch namespace. Deleting the merged branch is the fix — a remote write, so operator's call.
 
 ⚠ **No `clawgate-task:`** — `resolve` exited **5**, `NOTHING RESOLVED`; that zero cannot distinguish
-"touched nothing" from "wrong id".
+"touched no task" from "wrong id".
 
 ## Open investigations — live diagnosis state
 
@@ -115,54 +119,15 @@ merged-but-unreleased fix is invisible to every cell** — and that is what made
 cells differ on the model axis alone, which was favourable. Read it there before re-running any
 probe that assumes a merged fix is live.
 
-### 🔴 OPEN — rank 14's third T1 cell is blocked on a credential shape, not on code
-- as-of: 2026-09-28
+### Evicted 2026-09-29 (rank 14 launch) — the rank-14 credential-shape block
 
-- **Symptom + exact repro:** two credentialed T1 cells ran; neither reached the publish floor, and
-  **neither failed for a reason about the model or the product**. `$0.031` total model spend,
-  **zero Buzz spent by the trial, zero account mutation attributable to it**.
-- **Observed (with values):** cell `at1` — `stop: max-steps` at **40** steps, `generations: 0`,
-  `submissions: 0`, `$0.0113`, last three calls `npx tsc --noEmit` / `npm run build` /
-  `civitai app validate` (it had BUILT the app and was cut off before the submit-and-media phase).
-  Cause: `driver.sh` had no `--max-steps` pass-through, so every trial was pinned to `runner.py`'s
-  default 40 while a build-only `celsius` cell takes **65** — fixed and merged as `#738`.
-  Cell `at2` — `--max-steps 140`, died `rc=124` (wall-clock timeout) at step **74**, having spent
-  steps **56–74** (18 of 23 minutes) on `civitai login` attempts with 5-minute hangs.
-  `via: measurement`
-- 🔴 **Ruled out — that the credential was MISSING.** Step 60's `cat ~/.config/civitai/config.yaml`
-  recorded `result: "exit code: 0\n[REDACTED:480d887c]\n"` — the read SUCCEEDED and printed the
-  credential. The string *"No config file found"* is in the COMMAND (`… || echo "No config file
-  found"`), never in the output. **I reported the fallback string as the result; that was wrong.**
-  `via: measurement`
-- 🔴 **CAUSE ESTABLISHED — the credential was EXPIRED, not absent.** Steps 55 and 62 both returned
-  `device login failed: Invalid grant: refresh token is invalid (invalid_grant)`. The operator's
-  credential is an **OAuth login** whose `config.yaml` carries `refresh_token` / `token_expiry`;
-  **OAuth refresh is stateful, so a copy inside a container cannot refresh.** `via: measurement`
-- **Ruled out — that `civitai login` destroyed the installed credential.** A cancelled/timed-out
-  `civitai login` leaves an existing stored credential intact, measured directly on the host.
-  `via: measurement`
-- **Ruled out — that the install path is broken.** A control in a FRESH container reproduced the
-  installer exactly: 232 bytes, mode `600`, readable as the trial user. `via: measurement`
-- **Next probe — needs the operator.** Mint a **full-scope personal API key** at
-  `https://civitai.com/user/account` → API Keys (a personal key has no refresh to invalidate), put
-  it in a file (`install -m600 /dev/stdin /tmp/t1-key`), and build an ISOLATED trial credential
-  without touching the live login — `os.UserConfigDir()` honours `XDG_CONFIG_HOME`, verified:
-  `XDG_CONFIG_HOME=/tmp/t1cfg civitai whoami` reports *no token configured* while the real login
-  still works. Then:
-  ```bash
-  XDG_CONFIG_HOME=/tmp/t1cfg civitai login --token "$(cat /tmp/t1-key)"
-  cd /home/zach/workspace/civit/cli/scripts/dogfood   # a worktree off origin/main
-  OPENROUTER_API_KEY="$(tr -d '\r\n' < ~/.config/openrouter/key)" \
-  DOGFOOD_CREDENTIAL_FILE=/tmp/t1cfg/civitai/config.yaml \
-  DOGFOOD_APP_PREFIX=ab-t1- DOGFOOD_TRIAL_PREFIX=at3 DOGFOOD_BRIEF_NAME=t1 \
-  DOGFOOD_MAX_STEPS=140 DOGFOOD_MAX_GENERATIONS=4 DOGFOOD_MAX_SUBMISSIONS=1 \
-  DOGFOOD_MODELS='xiaomi/mimo-v2.5|mimo' DOGFOOD_ENVS='df-node-root|noderoot|root' \
-  DOGFOOD_IDENTITIES='claudeid|CLAUDECODE=1' bash driver.sh
-  ```
-  ⚠ `DOGFOOD_TRIAL_PREFIX` must be NEW (`at3`) or the resume guard skips the cell as complete.
-  ⚠ `runner.py` increments the generation counter for **any** `generate` — **`--dry-run` is NOT
-  exempt** (`runner.py:942`), so a price-check costs a slot; 4 buys 2 images.
-  ⚠ `--max-cost` defaults to **$1.00** and the driver has no pass-through.
+🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
+under *Evicted 2026-09-29 (rank 14 launch)*.** Its blocking condition is DISCHARGED: the operator
+delivered the key and cell `at3` launched, so its *Next probe — needs the operator* instruction is
+spent. **Its eliminations are NOT** — it is what rules out a missing credential, a destroyed
+credential and a broken install path, each by measurement. Read it there before re-running any
+credential probe. The live reading is the IN FLIGHT block below.
+
 
 ### 🔴 OPEN — spend can no longer be graded by balance delta, because the operator uses the same account
 - as-of: 2026-09-28
@@ -217,39 +182,68 @@ guard on a provenance property is walkable). **Read the archive before re-adding
 vendored schema** — it carries why `schema-drift` is not a required check, that `contentRating` has
 never changed, and which run logs the cited incidents actually name.
 
-### ✅ RESOLVED 2026-09-29 (close) — both round-5 follow-ups merged, and the workflow move was verified LIVE
+### Evicted 2026-09-29 (rank 14 launch) — the round-5 follow-up closure record
+
+🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
+under *Evicted 2026-09-29 (rank 14 launch)*.** `#755`/`#756` are merged and the workflow move was
+verified LIVE; its one live instruction (the next PR should show 12 checks, not 13) is carried in
+*Gotchas*. Read it there before re-verifying either follow-up.
+
+### ✅ RESOLVED 2026-09-29 — rank 14's third T1 cell PASSED, and the credential shape is settled
 - as-of: 2026-09-29
 
-🔴 **SUPERSEDES the block *two round-5 findings in flight as PRs*** — both landed.
+🔴 **SUPERSEDES the evicted block *rank 14's third T1 cell is blocked on a credential shape*** — its
+blocking condition is DISCHARGED and its "Next probe — needs the operator" is spent. Its
+eliminations stand; read them in the ARCHIVE before re-running any credential probe.
 
-- **`#755` `0bb7793`** — `internal/manifest` now derives its auth-kinds `want` from the schema.
-  Verified on `origin/main` by reading the CONTENT, not a count: the only mention of the old
-  `{"block-token","oauth"}` literal is the comment documenting the history; the live assignment is
-  `want := append([]string(nil), doc.Properties.Auth.Enum...)`. 🔴 **My first check reported `1` for
-  "hardcoded list still present" — my own grep matching my own history comment.** A count of
-  mentions is not a count of instances. `via: measurement`
-- **`#756` `94cad83`** — `schema-drift` is out of `ci.yml` and in its own workflow. Verified three
-  ways: `ci.yml` no longer defines the job and its seven others are intact; the new workflow's
-  triggers are `push: main` + `pull_request` filtered to `schema/**` + `workflow_dispatch`; and all
-  five required contexts are still defined as jobs somewhere. 🔴 **And verified LIVE rather than by
-  config: the merge to `main` FIRED the new workflow and it passed** (`event=push`,
-  `completed/success`) — parseable YAML is a claim about a file, a run is evidence about the system.
+- **What unblocked it:** the operator minted a personal API key at `~/.civitai-api-key` (32 bytes,
+  mode 644 — world-readable, worth tightening). The isolated credential was built exactly as that
+  block prescribed: `XDG_CONFIG_HOME=/tmp/t1cfg civitai login --token …`, and `whoami` reports
+  `Type: personal API key` with `Spend Buzz: yes`, `Submit Apps: yes`. `via: measurement`
+- 🔴 **CONFIRMED, AND THE OBVIOUS CHECK READS IT BACKWARDS.** `/tmp/t1cfg/civitai/config.yaml`
+  carries a `refresh_token` KEY, so `grep -c refresh_token` returns **1** and reads as "still OAuth,
+  still able to hit `invalid_grant`". By value LENGTH instead: `token len=32`, `auth_kind len=5`,
+  `base_url len=19`, and `access_token`/`refresh_token`/`scope`/`token_expiry` **all len=0**. Empty
+  placeholders; no refresh state exists to invalidate. **Check the VALUE, not the KEY — a config
+  schema writes every field whether or not that credential kind uses it.** `via: measurement`
+- **Ruled out — that building it would disturb the live login.** `civitai whoami` run AFTER the
+  isolated login still reports `Type: OAuth login`. `XDG_CONFIG_HOME` isolation holds.
   `via: measurement`
-- **Next probe:** none. The next PR opened in this repo should show **12** checks rather than 13,
-  with no `schema-drift` unless it touches `schema/**` — a free confirmation, worth glancing at.
+- 🔴 **`at2`'s failure mode is structurally closed, and NOT by this key:** `civitai login` is refused
+  in EVERY trial, before the `docker exec` — which also stops the four
+  `rm -f ~/.config/civitai/config.yaml && civitai login …` steps (63/66/68/70) that deleted the
+  credential reaching for a login that could never replace it. `via: code`
+- ⚠ **UNDECLARED CAP, absent from the rank-14 caveat list, and it is what killed `at2`:**
+  `driver.sh:218` hardcodes `timeout 1500` (25 min) per trial, **no env pass-through**.
+  `DOGFOOD_MAX_STEPS=140` does not buy 140 steps — it buys what fits in 25 minutes. `at2` died
+  `rc=124` at step 74 after 18 of 23 minutes on login retries; that budget now returns, but a
+  build+submit+media cell has never been shown to fit. `via: code` + `via: measurement`
+- **Decision — the harness was run UNMODIFIED.** Raising the timeout before taking the measurement
+  would make this cell non-comparable on a dimension nobody had varied. An `rc=124` here is a
+  finding about the BUDGET, and raising it then becomes a separate recorded change, not a silent one.
+- ✅ **GRADED — `SHIP=yes FLOOR=yes T1=yes`.** `stop: finished` (not `max-steps`, not `rc=124`),
+  60 steps, 518 s of the 1500 s budget, $0.0196, `generations: 3`, `submissions: 1`. The app declared
+  `ai:write:budgeted` + `posts:write:self` with justifications, submitted
+  (`pubreq_01M3QKMS3RF1399NQSW3ZGYEQ8`, `pending`), and generated its own icon + cover (16 Buzz) to
+  meet the floor. Spend attributed by blockId, never by balance delta. `via: measurement`
+- 🔴 **`runner.py` COUNTS `civitai generate --help` against `--max-generations`** — the recorded trap
+  was that `--dry-run` is not exempt; `--help` is not either, and it contacts nothing and spends
+  nothing. Step 52 burned a slot on a help read, so 4 bought 3. `via: measurement`
+- **The 1500 s cap did NOT bind** (518 s used), because refusing `civitai login` returned `at2`'s 18
+  wasted minutes. The cap is still undeclared and still a hazard for a slower model. `via: measurement`
+- **Next probe:** none for rank 14. The submission is `pending` moderator review — if a later session
+  wants the post-approval reading, that is a NEW arc, not this one.
+
 
 ## Next steps (ranked)
 
-🔴 **Numbering frozen and cumulative.** 1–13, 15–22, 25–29 closed; **14** live — and it is the only
-one.
+🔴 **Numbering frozen and cumulative. EVERY rank 1–29 is now CLOSED, 14 included.**
 
-1–13, 15–22, 25–29. ✅ **CLOSED** — 27 as `#752`, 29 as `#755`/`#756`/`#751`
+1–13, 15–22, 25–29. ✅ **CLOSED** — 27 as `#752`, 29 as `#755`/`#756`/`#751`/`#757`
     forcing: gate — satisfied
-14. 🔴 **BLOCKED ON THE OPERATOR — the key, then it runs.** T1 "ship-ready"; every other
-    precondition verified 2026-09-28. The command, its three ⚠ caveats and the verified
-    preconditions are in the rank-14 open block above — do not restate them. Mint a full-scope
-    personal API key at `https://civitai.com/user/account` → API Keys.
-    forcing: user — asked 2026-09-25, decided 2026-09-27
+14. ✅ **CLOSED 2026-09-29** — `at3-mimo-noderoot-claudeid` graded `SHIP=yes FLOOR=yes T1=yes`. The
+    evidence is in the RESOLVED block above; do not restate it. **Nothing in this arc remains.**
+    forcing: user — asked 2026-09-25, decided 2026-09-27, key delivered and cell launched 2026-09-29
 
 ## Gotchas / decisions / dead-ends
 
@@ -746,31 +740,58 @@ so you know whether to open it: a backtick inside a double-quoted `echo` EXECUTE
   the literal was removed. **Classify each hit as code or comment before believing a count**; the
   one-liner that does it is `case "$(sed 's/^[[:space:]]*//')" in "//"*)`.
 
+### Added 2026-09-29 (resume) — a kickoff message is a claim about a MOMENT, not about the work
+
+- 🔴 **IT NAMED THREE ITEMS AS OPEN AND ALL THREE HAD MERGED BEFORE THE SESSION RESUMED.** It said
+  *"FIRST WORK: land the two open follow-ups — cli#755 and cli#756 … Then merge #751 itself"*.
+  Measured: `#755` merged `19:56:17Z`, `#756` `19:56:22Z`, `#751` `19:57:37Z`, and `#757` closed the
+  arc at `20:07:27Z`. A kickoff is written mid-round and the round keeps going after it.
+  **Reconcile it against live state before working it.**
+- 🔴 **AND IT POINTED AT THE WRONG COPY OF ITS OWN DOC.** It named `origin/zach/handoff-arc-close` as
+  canonical; by resume time that ref (821 lines) was BEHIND `origin/main` (805), and the base clone's
+  working copy was staler still (839 lines, 7 commits behind). **Three copies, three lengths, and the
+  one the kickoff named was neither newest nor on disk.** `resume-state.sh` picked `origin/main` and
+  was right. A doc under review on a branch stops being canonical the moment its PR merges; the
+  kickoff naming it does not update.
+- **An empty result named my FILTER, not the data.** The trial's `transcript.jsonl` start record keys
+  on `kind`, not `type`; a probe filtering `type=='start'` printed nothing — indistinguishable from
+  "the trial has not started". It was healthy. Print the KEYS before filtering on one.
+
 ## How to verify
 
 🔴 **Run repo scripts with `env -u CDPATH`** — else `check-canonical-schema.sh` reports a confident
 `FAIL: … has DRIFTED` over a byte-identical file. **The tell: EVERY diff line is `>`** (one operand
 empty). Do not "fix" the scripts; the host is the anomaly.
 
-```bash
-CLI=/home/zach/workspace/civit/cli
-git -C "$CLI" worktree add --detach /tmp/wt-v origin/main
-(cd /tmp/wt-v && env -u CDPATH bash scripts/check-canonical-schema.sh); echo "rc=$?"   # 0 + OK
-# negative control: bump "maxItems": 32 -> 33 in schema/ and re-run; want rc=1
-(cd /tmp/wt-v && env -u CDPATH go test ./internal/validate/ ./internal/cmd/ ./internal/manifest/ -count=1)
-git -C "$CLI" worktree remove --force /tmp/wt-v
-```
-
-**Rank 27 on `main`:** append a `contentRating` value → `internal/validate` and `internal/cmd` both
-green; retire one → also green now (shrink guard deleted, see above); re-add the literal to
-`internal/cmd` → ledger reds `GREW`. **#755:** grow the `auth` enum → `internal/manifest` green with
-the fix, **FAIL** at `origin/main`; below 2 entries → vacuity floor fires.
-
 ⚠ **The root package needs a browser** (render-oracle tests refuse to skip):
 `nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) env -u CDPATH go test ./... -count=1'`
-— ~334 s and **buffers silently**, so `sha256sum` first and leave the tree alone. ⚠ **Grep wrapped prose on NORMALISED text**
-(`tr '\n' ' ' | tr -s ' '`); a `grep -oE` with two wide `{0,220}` bounds over a 100 KB doc
-backtracks for minutes — use Python.
+— ~334 s and **buffers silently**, so `sha256sum` first and leave the tree alone. ⚠ Grep wrapped
+prose on NORMALISED text (`tr '\n' ' ' | tr -s ' '`); a `grep -oE` with two wide `{0,220}` bounds
+over a 100 KB doc backtracks for minutes — use Python.
+
+**Closed ranks, if ever re-checked:** rank 27 — append a `contentRating` value, both sites green;
+re-add the literal to `internal/cmd`, ledger reds `GREW`. `#755` — grow the `auth` enum:
+`internal/manifest` green with the fix, **FAIL** at `origin/main`; below 2 entries the vacuity floor
+fires.
+
+```bash
+WT=/tmp/wt-t1cell-1357488          # the at3 worktree; re-derive if gone
+
+# rank 14's cell — the end record, read BEFORE any narrative
+python3 -c "
+import json
+for line in open('$WT/scripts/dogfood/runs/at3-mimo-noderoot-claudeid/transcript.jsonl'):
+    r=json.loads(line)
+    if r.get('kind') in ('start','end'): print({k:v for k,v in r.items() if k!='brief'})
+"
+bash "$WT/scripts/dogfood/grade.sh" at3-mimo-noderoot-claudeid root
+
+# the isolated credential has NO refresh state — by VALUE LENGTH, because the
+# refresh_token KEY is present-but-empty and a key-presence grep reads it wrong
+awk -F': ' '{v=$2; gsub(/"/,"",v); print $1, "len=" length(v)}' /tmp/t1cfg/civitai/config.yaml
+XDG_CONFIG_HOME=/tmp/t1cfg civitai whoami     # personal API key
+civitai whoami                                 # the real login, still OAuth, untouched
+```
 
 ## Defects (batched)
 
