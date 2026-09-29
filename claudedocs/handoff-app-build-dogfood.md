@@ -69,12 +69,11 @@ self-block five audit rounds walked past) · `cli#756` `94cad83` (`schema-drift`
 **observed firing and passing on the merge to `main`**) · `cli#751` `4e3570f4` + `cli#757` `8d53fc58`
 (this doc consolidated, arc closed).
 
-🔴 **RANK 14 IS UNBLOCKED AND RUNNING — the operator delivered the key 2026-09-29.** Cell
-`at3-mimo-noderoot-claudeid`, started `22:08:04Z`, worktree `/tmp/wt-t1cell-1357488`, driver log
-`/tmp/at3-driver.log`. FIRST T1 cell past the credential: `credential_install` read back as root,
-present, readable, byte-identical; `credential_sha256 f13ae2d58b30`. By step 24 it had taken the
-prefix cap's refusal on `app create generate-and-post` and corrected to `ab-t1-generate-post` in ONE
-step — the cap works and is recoverable-from.
+✅ **RANK 14 IS CLOSED — the operator delivered the key 2026-09-29 and the cell PASSED.**
+`at3-mimo-noderoot-claudeid` (`xiaomi/mimo-v2.5`), `stop: finished`, 60 steps, **518 s**, $0.0196,
+3 generations, 1 submission. `ship.verdict.sh` → **`SHIP=yes FLOOR=yes T1=yes`**,
+`sub_block=ab-t1-generate-post`, `sub_id=pubreq_01M3QKMS3RF1399NQSW3ZGYEQ8` — the first T1 cell ever
+to meet the publish floor, and graded by the ORACLE, not by the model's own summary or `app validate`.
 
 ⚠ **Loose end, not a rank:** `origin/zach/handoff-arc-close` still exists at `ad65a42` though `#751`
 merged; its copy (821 lines) is now BEHIND `origin/main`'s, so the two-ref contention is still live
@@ -190,7 +189,7 @@ under *Evicted 2026-09-29 (rank 14 launch)*.** `#755`/`#756` are merged and the 
 verified LIVE; its one live instruction (the next PR should show 12 checks, not 13) is carried in
 *Gotchas*. Read it there before re-verifying either follow-up.
 
-### 🔴 IN FLIGHT 2026-09-29 — rank 14's third T1 cell is RUNNING, and the credential shape is settled
+### ✅ RESOLVED 2026-09-29 — rank 14's third T1 cell PASSED, and the credential shape is settled
 - as-of: 2026-09-29
 
 🔴 **SUPERSEDES the evicted block *rank 14's third T1 cell is blocked on a credential shape*** — its
@@ -222,20 +221,28 @@ eliminations stand; read them in the ARCHIVE before re-running any credential pr
 - **Decision — the harness was run UNMODIFIED.** Raising the timeout before taking the measurement
   would make this cell non-comparable on a dimension nobody had varied. An `rc=124` here is a
   finding about the BUDGET, and raising it then becomes a separate recorded change, not a silent one.
-- **Next probe:** `bash scripts/dogfood/grade.sh at3-mimo-noderoot-claudeid root`, then
-  `ship.verdict.sh` (attributes spend by blockId, not by balance delta). Read `stop`, `steps`,
-  `generations`, `submissions`, `cost` from the transcript's `end` record before any narrative.
+- ✅ **GRADED — `SHIP=yes FLOOR=yes T1=yes`.** `stop: finished` (not `max-steps`, not `rc=124`),
+  60 steps, 518 s of the 1500 s budget, $0.0196, `generations: 3`, `submissions: 1`. The app declared
+  `ai:write:budgeted` + `posts:write:self` with justifications, submitted
+  (`pubreq_01M3QKMS3RF1399NQSW3ZGYEQ8`, `pending`), and generated its own icon + cover (16 Buzz) to
+  meet the floor. Spend attributed by blockId, never by balance delta. `via: measurement`
+- 🔴 **`runner.py` COUNTS `civitai generate --help` against `--max-generations`** — the recorded trap
+  was that `--dry-run` is not exempt; `--help` is not either, and it contacts nothing and spends
+  nothing. Step 52 burned a slot on a help read, so 4 bought 3. `via: measurement`
+- **The 1500 s cap did NOT bind** (518 s used), because refusing `civitai login` returned `at2`'s 18
+  wasted minutes. The cap is still undeclared and still a hazard for a slower model. `via: measurement`
+- **Next probe:** none for rank 14. The submission is `pending` moderator review — if a later session
+  wants the post-approval reading, that is a NEW arc, not this one.
 
 
 ## Next steps (ranked)
 
-🔴 **Numbering frozen and cumulative.** 1–13, 15–22, 25–29 closed; **14** live — and it is the only one.
+🔴 **Numbering frozen and cumulative. EVERY rank 1–29 is now CLOSED, 14 included.**
 
 1–13, 15–22, 25–29. ✅ **CLOSED** — 27 as `#752`, 29 as `#755`/`#756`/`#751`/`#757`
     forcing: gate — satisfied
-14. 🔴 **RUNNING, not blocked** — cell `at3-mimo-noderoot-claudeid`, launched 2026-09-29T22:08:04Z.
-    Grade it when the driver exits; the command and the caveats are in the IN FLIGHT block above —
-    do not restate them. An `rc=124` points at `driver.sh`'s hardcoded `timeout 1500`, not the model.
+14. ✅ **CLOSED 2026-09-29** — `at3-mimo-noderoot-claudeid` graded `SHIP=yes FLOOR=yes T1=yes`. The
+    evidence is in the RESOLVED block above; do not restate it. **Nothing in this arc remains.**
     forcing: user — asked 2026-09-25, decided 2026-09-27, key delivered and cell launched 2026-09-29
 
 ## Gotchas / decisions / dead-ends
