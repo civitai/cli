@@ -48,8 +48,10 @@ on:
     # civitai, no repository_dispatch, nothing to subscribe to. So the ONLY
     # thing that closes the gap between "the canonical changed" and "the mirror
     # was re-vendored" is this cron firing. Until it does, `schema-drift` is red
-    # on every PR in this repo and nothing clears it but a human noticing and
-    # dispatching this workflow by hand.
+    # on PUSHES TO MAIN and nothing clears it but a human noticing and dispatching
+    # this workflow by hand. (It used to red on every PR in the repo; it was moved
+    # to its own path-filtered workflow so an upstream publish stops being
+    # attributed to whichever author pushed next.)
     #
     # The concrete case this was raised for: civitai PR #4314 added an optional
     # `repository` property to the canonical manifest schema and merged to
@@ -121,8 +123,8 @@ jobs:
       # cadence above that is at most ~6 hours, where on the old weekly cron it
       # was up to 7 days. That is one issue and zero comments
       # (failure-issue.yml's rules), and the
-      # backstop for the underlying risk is the `schema-drift` CI job, which
-      # reds on every PR once the mirror actually drifts. If the false alarms
+      # backstop for the underlying risk is the `schema-drift` workflow, which
+      # reds on pushes to main once the mirror actually drifts. If the false alarms
       # outweigh that, delete the `canonical-unreachable` arm in `classify` —
       # it is one `elif`, and nothing else depends on it.
       - name: probe — is the canonical schema reachable
@@ -171,12 +173,15 @@ jobs:
       # gloss — which meant the `validate` step below reddened and this bot opened
       # no PR.
       #
-      # 🔴 WHY THAT IS WORTH FIXING — the reason is `ci.yml`, not this file.
-      # `schema-drift` runs on `pull_request:` with NO path filter, so it runs on
-      # EVERY PR in this repo, and it stays red until the vendored mirror matches
-      # the live canonical. While this bot is blocked the mirror stays stale, so
-      # the visible symptom is not "the bot stalled" — it is a red check on every
-      # unrelated human PR, cleared only by a human writing a gloss. That is the
+      # 🔴 WHY THAT IS WORTH FIXING. While this bot is blocked the mirror stays
+      # stale, so `schema-drift` reds on every push to main until a human writes the
+      # gloss. ⚠ THIS USED TO BE MUCH WORSE and the old wording is kept so the
+      # change is legible: `schema-drift` ran on `pull_request:` with no path
+      # filter, so a blocked bot reddened a check on EVERY unrelated human PR in
+      # the repo — an upstream publish attributed to whoever pushed next. It now
+      # lives in `.github/workflows/schema-drift.yml`, filtered to `schema/**` on
+      # PRs, so the blast radius is main plus any PR that actually touches the
+      # mirror. The bot being blocked is still worth fixing, but that is the
       # cost this step removes.
       #
       # ⚠️ RETRACTED — an earlier revision of this comment said "issues #323,
@@ -515,8 +520,9 @@ jobs:
           # it was asked to. The bot is NOT broken here — it is reporting a debt it
           # deliberately took on so that a pattern-adding canonical change could
           # land at all, instead of reddening and leaving the mirror stale — which
-          # reds `ci.yml`'s `schema-drift` on every unrelated PR in the repo until
-          # a human writes the gloss. Twice: #486 and #743. (Do not restate the
+          # reds `schema-drift` on pushes to main until a human writes the gloss
+          # (and, before that check was moved out of `ci.yml`, on every unrelated
+          # PR in the repo). Twice: #486 and #743. (Do not restate the
           # old "#323, #486, #607, #695, #743" list — see the retraction above the
           # `owed` step; #323 was a fire drill and #695 was an `internal/pkgzip`
           # test.)
@@ -558,7 +564,7 @@ jobs:
             echo "$detail"
             if [ "$footer" = "yes" ]; then
               echo
-              echo "While this is failing, a canonical schema change will NOT be mirrored into the CLI's \`go:embed\`ed copy automatically. The \`schema-drift\` CI job still DETECTS the drift on every PR — only the remediation is down — so the visible symptom is a red \`schema-drift\` that nothing clears."
+              echo "While this is failing, a canonical schema change will NOT be mirrored into the CLI's \`go:embed\`ed copy automatically. The \`schema-drift\` workflow still DETECTS the drift on pushes to main — only the remediation is down — so the visible symptom is a red \`schema-drift\` on main that nothing clears."
               echo
               echo "To re-vendor by hand: run \`./scripts/revendor-canonical-schema.sh\`, then \`go test ./...\`, and open the PR yourself."
             fi
