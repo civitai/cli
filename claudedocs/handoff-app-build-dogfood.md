@@ -59,23 +59,24 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-✅ **RANK 27 CLOSED AND MERGED — `civitai/cli` #752, `0f0777c4`.** Claim released. **The arc has NO
-code item left.** Verified by content on `origin/main`: ledger and `internal/cmd` derivation present;
-subset guard and AST guard gone.
+✅ **EVERYTHING FROM THIS ARC IS MERGED. Nothing is in flight.** Eight PRs landed, each verified by
+content on `origin/main` (never by ancestry — a squash merge makes that permanently false):
 
-✅ **FOUR MORE MERGED**, verified by content: **#753** `e602b3a` README paste block →
-`civitai.com/agent-onboarding` + a guard on the mirror it always was · **docs #127** `6339220`
-`SETUP_PROMPT` derives from a new `SHORT_PROMPT_URL`, `PROMPT_URL`/`PROMPT_PATH` stay canonical ·
-**#754** `ac840b6` pin bump. 🔴 **#754 was NOT mine** — a branch-name collision surfaced that the
-repo's automation had opened it hours earlier, already green; I merged that rather than race a
-duplicate against a required check.
+| PR | commit | what |
+|---|---|---|
+| `cli#752` | `0f0777c4` | **rank 27** — the moved `contentRating` self-block, both sites. Claim released. |
+| `cli#753` | `e602b3a` | README paste block → `civitai.com/agent-onboarding`, + a guard on the cross-repo mirror |
+| `docs#127` | `6339220` | `SETUP_PROMPT` derives from `SHORT_PROMPT_URL`; `PROMPT_URL`/`PROMPT_PATH` stay canonical |
+| `cli#754` | `ac840b6` | scaffold pin bump — **the repo's own automation had opened it**; I merged rather than duplicate |
+| `cli#755` | `0bb7793` | the auth self-block five audit rounds walked past |
+| `cli#756` | `94cad83` | `schema-drift` off `pull_request` — **observed firing and passing on the merge to `main`** |
+| `cli#751` | `4e3570f4` | this doc consolidated onto `main`; the two-version split is over |
 
-🟡 **OPEN, neither audited:** **#755** the auth self-block · **#756** `schema-drift` off
-`pull_request`. ⚠ **#751 still open, so this doc exists in two versions** (`origin/main` is the older,
-larger one) — **read the PR ref**; merging #751 early next session ends the split.
+🔴 **THE ARC'S FROZEN CONDITION REMAINS CLOSED (2026-09-21) AND NO CODE ITEM REMAINS.** The only
+live rank is **14**, which is blocked on the operator's API key and nothing else.
 
 ⚠ **No `clawgate-task:`** — `resolve` exited **5**, `NOTHING RESOLVED`; that zero cannot distinguish
-"touched nothing" from "wrong id". (My first read said `rc=0` — `| head` ate the status.)
+"touched nothing" from "wrong id".
 
 ## Open investigations — live diagnosis state
 
@@ -206,76 +207,49 @@ probe that assumes a merged fix is live.
   bigger than `#745`. Until then, the rule is in `semantic_test.go`'s docstring: when the schema
   gains a scope, re-read the deployed constant by hand.
 
-### ✅ RESOLVED 2026-09-29 — five correctness rounds hardened a guard whose premise was measurably wrong
+### Evicted 2026-09-29 (close) — the round-5 record and the two follow-ups
+
+🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
+under *Evicted 2026-09-29 (close)*.** Both are closed: the follow-ups merged as `#755`/`#756`, and
+the round-5 record's DISTILLED lessons are kept live in *Gotchas* (ask whether the work should
+exist before auditing whether it is correct; measure a guard's own failure cost first; a spelling
+guard on a provenance property is walkable). **Read the archive before re-adding any guard over the
+vendored schema** — it carries why `schema-drift` is not a required check, that `contentRating` has
+never changed, and which run logs the cited incidents actually name.
+
+### ✅ RESOLVED 2026-09-29 (close) — both round-5 follow-ups merged, and the workflow move was verified LIVE
 - as-of: 2026-09-29
 
-🔴 **SUPERSEDES every rank-27 block** (evicted). Rank 27 shipped, but the durable finding is what
-round 5 produced when it finally asked whether the work should exist. Rounds 0–4 audited for
-CORRECTNESS and each found real defects; **every one was in the guards, none in the product.**
+🔴 **SUPERSEDES the block *two round-5 findings in flight as PRs*** — both landed.
 
-- 🔴 **`schema-drift` IS NOT A REQUIRED CHECK.** Required: `pins-vs-published, scaffold-currency,
-  build-test, ready-ack-runtime, template-page-vite`. So the "reds every PR" blast radius the whole
-  edifice was sized against is **cosmetic, not a merge block**. 🔴 **I measured this myself early in
-  the session and wrote it into this doc as an open item, then argued ~15 times as if the opposite
-  were true.** `via: measurement`
-- 🔴 **`contentRating` HAS NEVER GROWN** — identical across all 18 commits that touched the schema.
-  The volatile enums are `scopes` (grew 4×, 4 retired) and `auth` (new 09-24, already revised). I
-  hardened the one stable field. `via: measurement`
-- 🔴 **THE INCIDENTS I CITED WERE MISATTRIBUTED — the repeat offence.** Run-log attributed: **#486**
-  (31 min) was *pattern-gloss debt*; **#695** was `internal/pkgzip`. Only **#607** was a literal
-  self-block, on `scopes`, already fixed by `#745`. **I quoted "31 min / 11 h" as instances of the
-  literal class without opening one run log** — the exact error this doc already records as a
-  retraction, repeated while that correction sat in the document I was reading. `via: measurement`
-- 🔴 **MY ROUND-1 FIX WAS NET-NEGATIVE.** Verified: retiring a rating reds `internal/validate`, so
-  `go test ./...` fails, so `revendor-canonical-schema.yml` (which runs the suite *before* opening
-  its PR) opens none, the mirror stays stale, `schema-drift` reds. Its message demanded four hand
-  edits for zero behaviour change; retirement is a demonstrated class (4 scopes). Deleted in
-  `76a80b9`, **−270 lines**. `via: measurement`
-- **Kept on measurement:** the two-site derive/freeze fix; the ledger's file SET + per-file COUNT;
-  both `internal/cmd` controls. ⚠ **NOW UNCOVERED:** a retired/renamed `contentRating` reaches the
-  CLI with nothing reddening, and `schema-drift` cannot see it either. Judgement: no local guard —
-  the resynced mirror rejects it. If ever covered, **outside `go test`**, or the bot blocks again.
-- **Next probe:** none. Closed.
-
-### 🟡 OPEN — two round-5 findings in flight as PRs, neither audited
-- as-of: 2026-09-29
-
-- **#755 — the auth self-block five rounds walked past.** `internal/manifest/manifest_test.go`
-  compared schema-derived `AuthKinds()` against hand-typed `{"block-token","oauth"}`, so a new auth
-  kind reds `go test ./...` and blocks the bot — on the schema's most volatile field. **Both arms:**
-  grow the enum at `origin/main` → `FAIL`; with the fix → `ok`; below 2 entries → the new vacuity
-  floor fires (deriving both sides otherwise lets `[] == []` agree while `LoadAuth` admits nothing).
-  ⚠ Residues in the PR: the README-prose sync is no longer enforced (a docs signal; gating the bot
-  on it was the wrong instrument), and `TestLoadAuth`'s rows still red on a RETIREMENT.
+- **`#755` `0bb7793`** — `internal/manifest` now derives its auth-kinds `want` from the schema.
+  Verified on `origin/main` by reading the CONTENT, not a count: the only mention of the old
+  `{"block-token","oauth"}` literal is the comment documenting the history; the live assignment is
+  `want := append([]string(nil), doc.Properties.Auth.Enum...)`. 🔴 **My first check reported `1` for
+  "hardcoded list still present" — my own grep matching my own history comment.** A count of
+  mentions is not a count of instances. `via: measurement`
+- **`#756` `94cad83`** — `schema-drift` is out of `ci.yml` and in its own workflow. Verified three
+  ways: `ci.yml` no longer defines the job and its seven others are intact; the new workflow's
+  triggers are `push: main` + `pull_request` filtered to `schema/**` + `workflow_dispatch`; and all
+  five required contexts are still defined as jobs somewhere. 🔴 **And verified LIVE rather than by
+  config: the merge to `main` FIRED the new workflow and it passed** (`event=push`,
+  `completed/success`) — parseable YAML is a claim about a file, a run is evidence about the system.
   `via: measurement`
-- **#756 — `schema-drift` off `pull_request`.** It asks about an EXTERNAL resource, so a stale mirror
-  reddened every open PR and blamed whoever pushed next (measured: five). Now its own workflow:
-  `push: main` + `pull_request` filtered to `schema/**` + `workflow_dispatch`. 🔴 **A path filter
-  ALONE would be wrong** — an upstream publish touches no file, so a filtered PR run never fires;
-  `push: main` preserves detection. No cron (the re-vendor workflow already fetches every 6 h *and*
-  remediates). Five stale comments in that workflow updated in the same commit. Verified: all three
-  workflows parse, all five required contexts still defined, script green at rest / `rc=1` mutated.
-  `via: measurement`
-- ⚠ **Round 5's third recommendation was DECLINED** and is recorded here, not as a rank, because
-  nothing external asks for it: one ~12-line CI job growing every string enum and requiring the
-  suite green — **38.9 s**, all 8 enums, every construction shape, cannot self-block, and **reds on
-  `auth` today** so it could only land after #755. It tests the PROPERTY rather than policing
-  spellings, and is strictly stronger than what shipped. `via: measurement`
-- **Next probe:** `gh pr checks 755`/`756`, merge, verify by content. `/audit-pr` round 0 only.
+- **Next probe:** none. The next PR opened in this repo should show **12** checks rather than 13,
+  with no `schema-drift` unless it touches `schema/**` — a free confirmation, worth glancing at.
 
 ## Next steps (ranked)
 
-🔴 **Numbering frozen and cumulative.** 1–13, 15–22, 25–28 closed; **14, 29** live
+🔴 **Numbering frozen and cumulative.** 1–13, 15–22, 25–29 closed; **14** live — and it is the only
+one.
 
-1–13, 15–22, 25–28. ✅ **CLOSED** — 27 merged as `#752` `0f0777c4`
+1–13, 15–22, 25–29. ✅ **CLOSED** — 27 as `#752`, 29 as `#755`/`#756`/`#751`
     forcing: gate — satisfied
 14. 🔴 **BLOCKED ON THE OPERATOR — the key, then it runs.** T1 "ship-ready"; every other
-    precondition verified 2026-09-28. Command, caveats and preconditions are in the rank-14 open
-    block above — do not restate. Mint a full-scope personal API key at
-    `https://civitai.com/user/account` → API Keys.
+    precondition verified 2026-09-28. The command, its three ⚠ caveats and the verified
+    preconditions are in the rank-14 open block above — do not restate them. Mint a full-scope
+    personal API key at `https://civitai.com/user/account` → API Keys.
     forcing: user — asked 2026-09-25, decided 2026-09-27
-29. 🟡 **LAND #755 AND #756**, then merge **#751** to end this doc's two-version split.
-    forcing: regression — #755 closes a live self-block on the schema's most volatile enum
 
 ## Gotchas / decisions / dead-ends
 
@@ -761,6 +735,16 @@ so you know whether to open it: a backtick inside a double-quoted `echo` EXECUTE
 - ⚠ **AN EVICTION IS TWO FILES AND `handoff_doc.py --confirm` COMMITS ONE PATH.** Commit the archive
   side yourself, in the same commit as the doc stub, BEFORE the confirm run — the reverse order
   destroyed an eviction here and left the doc pointing at a section that did not exist.
+
+- 🔴 **VERIFY A WORKFLOW CHANGE BY WATCHING IT RUN, NOT BY PARSING IT.** `#756` moved a check
+  between workflows; the YAML parsing, the trigger shape and the required-context set were all
+  confirmed statically — and none of that would have caught a trigger that never fires. The merge to
+  `main` firing the new workflow, and passing, is the only evidence that mattered, and it was one
+  `gh run list --workflow` away.
+- 🔴 **A GREP FOR A LITERAL MATCHES THE COMMENT THAT RETIRES IT.** Checking `#755` landed, my own
+  grep for the hardcoded auth list returned `1` — it had matched the comment I wrote explaining that
+  the literal was removed. **Classify each hit as code or comment before believing a count**; the
+  one-liner that does it is `case "$(sed 's/^[[:space:]]*//')" in "//"*)`.
 
 ## How to verify
 
