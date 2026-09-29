@@ -263,11 +263,8 @@ same mechanism: it is neither free nor possible.
 ### ✅ CLOSED 2026-09-28 (rank 27) — `#745`'s own fix MOVED the self-block one field over
 
 🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
-under *Evicted 2026-09-28 (rank 27 close)*.** Shipped as `civitai/cli` **#752**. Read it there before
-re-running any probe from it — and note that **one of its claims was REFUTED by measurement**: its
-stated repro (append a rating) cannot red the `internal/cmd` site, because that site asserted with a
-prefix `strings.Contains`. The correction, and both mutants you actually need, are in the ✅ RESOLVED
-block below.
+under *Evicted 2026-09-28 (rank 27 close)*.** Shipped as `civitai/cli` **#752**; one of its claims was
+REFUTED — the ✅ RESOLVED block below has the correction and both mutants you need.
 
 ### ✅ RESOLVED 2026-09-28 — rank 27 shipped, and its own stated repro was REFUTED
 - as-of: 2026-09-28
