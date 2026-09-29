@@ -26,13 +26,27 @@ import (
 // independent spelling in `internal/cmd/message_quality_test.go`.
 //
 // 🔴 IT FAILS IN BOTH DIRECTIONS, which is the whole point of a ledger. A GROW
-// means a third site now spells the ratings by hand — the most likely shape of
-// that is a new assertion comparing the literal against real validator output,
-// i.e. the self-block re-created somewhere new. A SHRINK means the shape anchor
-// in `pattern_test.go` was deleted, and with it the only thing standing between a
-// fully-derived expectation and a test that cannot fail: if both the template and
-// the message are read out of the schema, a reword of the library's lead-in moves
-// `want` and `got` together and nothing reds.
+// means a site now spells the ratings by hand that did not before — the most
+// likely shape of that is a new assertion comparing the literal against real
+// validator output, i.e. the self-block re-created somewhere new. A SHRINK means
+// the shape anchor in `pattern_test.go` was deleted or re-derived.
+//
+// ⚠ WHAT A SHRINK COSTS — stated NARROWLY, because an earlier version of this
+// comment overstated it and the overstatement was measured false. It said that
+// with the anchor gone "a reword of the library's lead-in moves `want` and `got`
+// together and nothing reds". It does NOT: derive BOTH of the anchor's operands
+// from the schema, then reword the lead-in where the code consumes the library
+// message, and `TestEnumFindingsKeepTheirExactWording` still fails — because the
+// wording lives in `enumMessage`'s own hand-written source text, not in the
+// schema, so "read out of the schema" is unsatisfiable for the wording half.
+// What the anchor actually buys is narrower and real: it stops a reword from
+// being PAPERED OVER by editing `enumMessage` to match the new wording. The
+// anchor's own comment in `pattern_test.go` states that correctly; this one used
+// to promise more than the code delivers.
+//
+// The file SET and the per-file COUNT are both asserted, so a spelling added
+// inside a file that is already ledgered is caught too — for every ledgered file,
+// not just the anchor.
 //
 // 🔴 WHAT IT DOES NOT CATCH, stated so the comment is not wider than the code.
 // The needle is a SPELLING — the first three ratings in order, in either Go-string
@@ -40,9 +54,15 @@ import (
 // list a different way (`strings.Split("g,pg,pg13,r,x", ",")`, a subset, a
 // different order) is invisible to it. It is a regression guard on the shape that
 // has actually shipped twice, not a proof that no hand-typed rating set exists.
-// The claims that the surviving derivations are real derivations live where they
-// can be exercised: `internal/cmd`'s `TestEnumFindingMessageIsAFormatterNotACopyOfTheRatings`
-// and `TestSchemaEnumValuesReadsTheLiveVendoredRatings`.
+//
+// ⚠ AND THE ATTRIBUTION HERE USED TO BE CIRCULAR. This comment pointed at
+// `internal/cmd`'s two controls as where "the surviving derivations are real
+// derivations" is exercised, while those controls' own comments pointed back here.
+// Measured, neither delivers it: a hardcode conditional on the real field name,
+// and a frozen read half, both leave `internal/cmd` green — this ledger is what
+// reds, and only when the literal is SPELLED. So the honest statement is that
+// between them they cover a spelled re-mirror and nothing else; a list built by
+// `strings.Split` evades all three. Each file now states its own scope.
 //
 // 🔴 THE NEEDLE IS A FROZEN LITERAL ON PURPOSE AND MUST NOT BE DERIVED FROM THE
 // SCHEMA. Deriving it would re-create the very bug: a canonical that grows the
@@ -58,26 +78,39 @@ import (
 //	"g", "pg", "pg13"     — as a Go string slice
 var ratingListNeedle = regexp.MustCompile(`['"]g['"]\s*,\s*['"]pg['"]\s*,\s*['"]pg13['"]`)
 
+// ratingLedgerEntry is one permitted writer: why it may spell the list, and HOW
+// MANY times. The count is per entry rather than a single constant for one file —
+// an earlier version pinned only the anchor, so a second spelling added to
+// `pattern.go` (the other ledgered file) left this test PASSING while its own
+// comment claimed a file-set check "cannot see that" and implied the count closed
+// it. Measured: needle count there went 1 → 2 and the ledger stayed green.
+type ratingLedgerEntry struct {
+	reason string
+	// want is the exact number of needle matches permitted in this file. Every
+	// ledgered file carries one, so the pin is as wide as the sentence above it.
+	want int
+}
+
 // ratingLiteralLedger is the EXACT set of Go files permitted to spell the rating
-// list by hand, with the reason each is allowed. Anything else is a regression.
-var ratingLiteralLedger = map[string]string{
+// list by hand. Anything else is a regression, in either direction.
+var ratingLiteralLedger = map[string]ratingLedgerEntry{
 	// The illustrative example in pattern.go's package doc: it explains what an
 	// enum finding looks like, to justify why a `pattern` finding gains a gloss.
 	// Prose about a specimen message, asserted by nothing.
-	"internal/validate/pattern.go": "doc comment showing a specimen enum finding",
+	"internal/validate/pattern.go": {
+		reason: "doc comment showing a specimen enum finding",
+		want:   1,
+	},
 
-	// The SHAPE ANCHOR. Both operands of that comparison are hand-written and
-	// neither reads the schema, so it is a frozen specimen rather than a mirror
-	// and an additive canonical cannot reach it. It is what makes a reword of the
-	// library's lead-in impossible to paper over by editing the template.
-	"internal/validate/pattern_test.go": "the frozen shape anchor for enumMessage",
+	// The SHAPE ANCHOR, twice: once in the expected-message constant, once in the
+	// hand-written list fed to the template. Both operands of that comparison are
+	// hand-written and neither reads the schema, so it is a frozen specimen rather
+	// than a mirror and an additive canonical cannot reach it.
+	"internal/validate/pattern_test.go": {
+		reason: "the frozen shape anchor for enumMessage (const + hand-written list)",
+		want:   2,
+	},
 }
-
-// wantAnchorOccurrences is how many times the needle may appear in the anchor
-// file: once in the expected-message constant, once in the hand-written list fed
-// to the template. Pinning the COUNT is what catches a literal re-added inside a
-// file that is already on the ledger — a file-set check alone cannot see that.
-const wantAnchorOccurrences = 2
 
 func TestContentRatingLiteralHasExactlyTheLedgeredWriters(t *testing.T) {
 	self := "content_rating_literal_ledger_test.go"
@@ -146,18 +179,46 @@ func TestContentRatingLiteralHasExactlyTheLedgeredWriters(t *testing.T) {
 		for _, p := range want {
 			if _, ok := found[p]; !ok {
 				t.Errorf("SHRANK: %s no longer spells the contentRating list (%s).\n"+
-					"  If the shape anchor is gone, the enum expectations are derived on BOTH sides and a\n"+
-					"  reword of the validation library's lead-in moves want and got together — nothing\n"+
-					"  can fail. Restore a hand-written specimen, or delete this ledger entry and say in\n"+
-					"  its place what now pins the wording.", p, ratingLiteralLedger[p])
+					"  If the shape anchor is gone, a reword of the validation library's lead-in can be\n"+
+					"  PAPERED OVER by editing enumMessage to match it, and nothing would object. (It does\n"+
+					"  NOT mean nothing can fail — a reword still reds the want-map comparison against real\n"+
+					"  output; that wider claim was measured false.) Restore a hand-written specimen, or\n"+
+					"  delete this ledger entry and say in its place what now pins the wording.",
+					p, ratingLiteralLedger[p].reason)
 			}
 		}
 	}
 
-	if n := found["internal/validate/pattern_test.go"]; n != 0 && n != wantAnchorOccurrences {
-		t.Errorf("the shape anchor file spells the rating list %d times, want %d — a third spelling in "+
-			"this file is how the self-block came back last time. The anchor is the constant and the "+
-			"hand-written list fed to enumMessage; an expectation compared against real output must "+
-			"DERIVE its values instead.", n, wantAnchorOccurrences)
+	// PER-ENTRY COUNTS, and the two directions get DIFFERENT advice — which is the
+	// whole point, because they have opposite remedies and an earlier version gave
+	// the GROW remedy to both.
+	//
+	// 🔴 THAT WAS ACTIVELY HARMFUL, MEASURED. The old message said "a third
+	// spelling in this file is how the self-block came back last time … an
+	// expectation compared against real output must DERIVE its values instead."
+	// At the base commit the anchor file held ONE spelling, not three: the block
+	// existed because the anchor's OTHER operand read the schema. So the fired-on
+	// case is n BELOW want, and the reader was told it was a third spelling
+	// (false) and instructed to derive (the edit that re-creates the block).
+	for _, p := range want {
+		n, present := found[p]
+		if !present {
+			continue // already reported as SHRANK above
+		}
+		e := ratingLiteralLedger[p]
+		switch {
+		case n > e.want:
+			t.Errorf("GREW WITHIN A LEDGERED FILE: %s spells the rating list %d times, want %d (%s).\n"+
+				"  An extra hand-typed spelling here is a new mirror. If it is compared against the\n"+
+				"  schema's enum or against real validator output it is the self-block again — DERIVE\n"+
+				"  those values from cli.SchemaJSON and spell only the wording. If it is genuinely a\n"+
+				"  second frozen specimen, raise this entry's want and say why.", p, n, e.want, e.reason)
+		case n < e.want:
+			t.Errorf("A FROZEN SPECIMEN WENT MISSING: %s spells the rating list %d times, want %d (%s).\n"+
+				"  🔴 DO NOT 'fix' this by deriving the values — deriving is what makes the guard\n"+
+				"  self-blocking, and it is the exact edit this whole change exists to undo. The anchor\n"+
+				"  needs BOTH operands hand-written: the expected-message constant AND the list handed\n"+
+				"  to enumMessage. Restore the hand-written one.", p, n, e.want, e.reason)
+		}
 	}
 }

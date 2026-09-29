@@ -439,8 +439,21 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	// `enumMessage` itself. A reword of the library's lead-in shows up in the
 	// `want` comparison below (template vs REAL output), and the obvious way to
 	// paper that over is to edit the template to match — which reds this.
+	//
+	// ⚠ What it STOPPED catching, and where that went: as a schema-vs-frozen-string
+	// comparison it also detected a rating being RETIRED or REORDERED upstream.
+	// Making both operands hand-written gave that up, so it is restored explicitly
+	// as the subset assertion further down — do not assume this anchor still covers
+	// it.
+	// frozenRatings is that specimen, named because it has TWO jobs: anchoring the
+	// template here, and the subset assertion below. It is deliberately the only
+	// hand-typed rating list in this file besides the constant — a third spelling
+	// would trip `content_rating_literal_ledger_test.go`'s per-file count, which is
+	// how that ledger notices a new mirror.
+	frozenRatings := []string{"g", "pg", "pg13", "r", "x"}
+
 	const wantContentRating = "contentRating: value must be one of 'g', 'pg', 'pg13', 'r', 'x'"
-	if tmpl := enumMessage("contentRating", []string{"g", "pg", "pg13", "r", "x"}); tmpl != wantContentRating {
+	if tmpl := enumMessage("contentRating", frozenRatings); tmpl != wantContentRating {
 		t.Fatalf("the enum message TEMPLATE no longer reproduces a hand-written message, so every "+
 			"expectation derived from it below is meaningless — this is about `enumMessage` in this "+
 			"file, NOT about the schema's contentRating enum, which this comparison does not read\n"+
@@ -488,6 +501,43 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	// used to be pinned to the literal above; that is what blocked an additive
 	// canonical, so it derives here like `scopes` always has.
 	ratings := schemaEnum(t, "properties", "contentRating", "enum")
+
+	// 🔴 SHRINK GUARD ON `contentRating`, AND IT EXISTS BECAUSE THIS CHANGE TOOK
+	// THE OLD ONE AWAY. Before, the anchor compared the SCHEMA's ratings against a
+	// frozen string, so it doubled as a content guard: a rating retired or
+	// reordered upstream reddened it. Now both anchor operands are hand-written and
+	// the `want` row derives, so schema and expectation move together in EVERY
+	// direction — measured, dropping `"x"` or reordering the list left this whole
+	// package green where it used to fail. `schema-drift` cannot cover that: it
+	// diffs the mirror against the live canonical, so an upstream retirement is
+	// invisible to it once the mirror resyncs (see the `scopes` note above).
+	//
+	// A SUBSET assertion restores the direction WITHOUT self-blocking, which is the
+	// distinction that matters: growth adds values and a superset still contains
+	// the specimen, so an additive canonical stays green — while a retirement or a
+	// rename reds here. It reuses `frozenRatings` rather than typing the list a
+	// third time.
+	//
+	// ⚠ IT COVERS RETIREMENT AND RENAME, NOT REORDER — measured, both ways, so this
+	// is a scope statement and not an aspiration: dropping `"x"` reds this loop,
+	// reordering to `["pg","g","pg13","r","x"]` leaves the whole package green.
+	// That is deliberate. A JSON Schema `enum` is a SET, so a reorder changes no
+	// manifest's validity — only the order values are rendered in — and the one
+	// guard that would catch it (assert the specimen is an ordered PREFIX) would
+	// red on a legitimate mid-list insert, which is the self-block this whole
+	// change exists to remove. Cosmetic order is the acceptable blind spot; a
+	// value disappearing is not.
+	for _, must := range frozenRatings {
+		if !slices.Contains(ratings, must) {
+			t.Errorf("the schema's contentRating enum no longer offers %q — %d values read: %v.\n"+
+				"  A rating was RETIRED or RENAMED upstream. That is a real contract change and nothing "+
+				"else in this repo can see it: `schema-drift` compares the mirror against the live "+
+				"canonical, so once the mirror resyncs both sides agree. If the removal is intended, "+
+				"drop it from `frozenRatings` and from the expected-message constant in the same commit.",
+				must, len(ratings), ratings)
+		}
+	}
+
 	want := map[string]string{
 		"contentRating": enumMessage("contentRating", ratings),
 		"scopes[1]":     enumMessage("scopes[1]", scopes),

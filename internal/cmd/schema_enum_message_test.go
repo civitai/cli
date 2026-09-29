@@ -105,11 +105,19 @@ func schemaEnumValues(t *testing.T, path ...string) []string {
 // TestEnumFindingMessageIsAFormatterNotACopyOfTheRatings is the POSITIVE CONTROL
 // on the derivation, and it is what makes the derived expectation worth trusting.
 //
-// A helper that ignored its argument and returned the real ratings string would
-// satisfy `TestValidateEnumFindingWordingIsUnchanged` perfectly — it would just be
-// the hand-typed literal again, one call deep. So the formatter is fed a set the
-// `contentRating` enum CANNOT contain, and the whole message is pinned: any
-// hardcoding, and any drift in the lead-in or the separator, fails here.
+// It feeds the formatter a set the `contentRating` enum cannot contain and pins the
+// whole message, so a formatter that reorders its values, changes the separator or
+// drifts the lead-in fails here.
+//
+// ⚠ WHAT IT DOES NOT CATCH — narrowed after measurement, because the earlier
+// wording ("any hardcoding … fails here") was FALSE. This test only ever passes the
+// field names it spells below, so a hardcode CONDITIONAL on the real field —
+// `if field == "contentRating" { return <the literal> }` — leaves this test, and all
+// of `internal/cmd`, GREEN. Read it as proving the FORMATTER is a formatter, not as
+// proving the derivation is real. The no-re-spelling claim is carried by
+// `content_rating_literal_ledger_test.go`, and that keys on a SPELLING, so a list
+// built another way (`strings.Split("g,pg,pg13,r,x", ",")`) evades both. That
+// residue is known and unguarded; it is recorded rather than implied away.
 func TestEnumFindingMessageIsAFormatterNotACopyOfTheRatings(t *testing.T) {
 	// 'aa'/'bb' are not ratings and never will be, so this expectation cannot be
 	// satisfied by a function that returns the real set.
@@ -122,15 +130,31 @@ func TestEnumFindingMessageIsAFormatterNotACopyOfTheRatings(t *testing.T) {
 	if got, want := enumFindingMessage("f", []string{"only"}), "f: value must be one of 'only'"; got != want {
 		t.Errorf("single-value wording moved\n  want: %s\n  got:  %s", want, got)
 	}
+	// FIVE values, because the rows above are 1- and 2-element and a formatter that
+	// truncates only a LONGER list escapes both — measured with
+	// `if len(allowed) > 3 { allowed = allowed[:len(allowed)-1] }`, which left this
+	// test green. Five is the live rating count, so this also exercises the length
+	// the real message is rendered at.
+	if got, want := enumFindingMessage("five", []string{"a", "b", "c", "d", "e"}),
+		"five: value must be one of 'a', 'b', 'c', 'd', 'e'"; got != want {
+		t.Errorf("multi-value wording moved\n  want: %s\n  got:  %s", want, got)
+	}
 }
 
 // TestSchemaEnumValuesReadsTheLiveVendoredRatings proves the READ half reaches the
 // schema, which the formatter test above cannot see.
 //
-// Without it, `schemaEnumValues` could return a frozen slice and every derived
-// expectation would silently be a literal again. It asserts against the schema's
-// own parsed content rather than against a copied list, so it grows with the
-// canonical instead of blocking it.
+// It asserts against the schema's own parsed content rather than against a copied
+// list, so it grows with the canonical instead of blocking it.
+//
+// ⚠ NARROWED AFTER MEASUREMENT. This used to claim that without it
+// `schemaEnumValues` "could return a frozen slice and every derived expectation
+// would silently be a literal again", implying this test is what stops that. It is
+// not: a `schemaEnumValues` returning a frozen 5-value slice leaves `internal/cmd`
+// GREEN while the schema is unchanged, because the frozen values and the live ones
+// coincide. What reds is the CANONICAL MOVING — the helper then disagrees with the
+// independent re-decode below. So this guards a frozen read that SURVIVES an
+// additive canonical, which is the case that matters, not freezing as such.
 func TestSchemaEnumValuesReadsTheLiveVendoredRatings(t *testing.T) {
 	ratings := schemaEnumValues(t, "properties", "contentRating", "enum")
 
