@@ -369,6 +369,25 @@ func TestPatternFindingsCarryTheRuleAndAnExample(t *testing.T) {
 // WHICH values are allowed now comes from the vendored schema, and the sentence
 // they are rendered into is spelled here.
 //
+// 🔴 AND THAT FIX MOVED THE SELF-BLOCK ONE FIELD OVER RATHER THAN REMOVING IT,
+// which is why this paragraph must not be read as "resolved". The rewrite freed
+// `scopes` and then fed the SCHEMA's `contentRating` enum into the shape anchor
+// below, so a canonical growing the RATINGS reddened this test exactly as an
+// added scope used to — and `ci.yml` runs `schema-drift` on every PR in the repo
+// with no path filter, so that reds an unrelated human's check until someone
+// hand-edits a literal. The anchor now compares two hand-written operands and
+// reads no schema at all.
+//
+// ⚠ IT ALSO HAD A SECOND, INDEPENDENT SPELLING in
+// `internal/cmd/message_quality_test.go`, which is the part that makes a one-site
+// fix read as complete when it is not. Measured there, and the asymmetry is the
+// reusable half: that site compared with `strings.Contains`, so APPENDING a
+// rating left it GREEN — the literal is a prefix of the longer message — while
+// this file went red. Only an INSERT or a reorder reddened both. A fix verified
+// with an append-only mutant therefore looks finished and is not.
+// `content_rating_literal_ledger_test.go` is what now fails if either literal
+// comes back.
+//
 // 🔴 THIS UNBLOCKS ENUM GROWTH ONLY — IT DOES NOT MAKE THE RE-VENDOR BOT
 // SELF-SUFFICIENT, and do not read it as doing so. There are TWO guards over the
 // mirror and this is one of them: a canonical that adds a `pattern` still reds
@@ -404,15 +423,28 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	// shape claim would rest on this file's own template and nothing could fail:
 	// reword the library's lead-in and `want` moves with `got`. So the template
 	// must first REPRODUCE, byte for byte, a message a human wrote out in full.
-	// contentRating is the anchor because it is the site-wide rating system
-	// rather than an app-blocks capability list, so unlike `scopes` it is not
-	// expected to grow — and it is asserted against the real output below too,
-	// making template, schema and validator agree three ways.
+	//
+	// 🔴 BOTH OPERANDS ARE HAND-WRITTEN AND NEITHER READS THE SCHEMA. That is
+	// the whole point of this anchor and it is why it cannot self-block: the
+	// list below is a FROZEN SPECIMEN of an enum, not a mirror of the live
+	// `contentRating` set, so a canonical that grows the ratings cannot reach
+	// this comparison. The previous version fed `schemaEnum(…"contentRating"…)`
+	// into the template and compared it against this literal, which made the
+	// anchor red on exactly the additive canonical change the re-vendor bot
+	// exists to land — the same self-block this guard was rewritten to remove,
+	// moved one field over rather than removed. Do NOT re-derive either side
+	// here; the schema-sensitive claim is the `want` map below.
+	//
+	// What this still catches, which is the only thing it claims: a change to
+	// `enumMessage` itself. A reword of the library's lead-in shows up in the
+	// `want` comparison below (template vs REAL output), and the obvious way to
+	// paper that over is to edit the template to match — which reds this.
 	const wantContentRating = "contentRating: value must be one of 'g', 'pg', 'pg13', 'r', 'x'"
-	if tmpl := enumMessage("contentRating", schemaEnum(t, "properties", "contentRating", "enum")); tmpl != wantContentRating {
-		t.Fatalf("the enum message SHAPE moved — every expectation derived from it below is "+
-			"now meaningless, so this is fatal rather than an error\n  want: %s\n  got:  %s",
-			wantContentRating, tmpl)
+	if tmpl := enumMessage("contentRating", []string{"g", "pg", "pg13", "r", "x"}); tmpl != wantContentRating {
+		t.Fatalf("the enum message TEMPLATE no longer reproduces a hand-written message, so every "+
+			"expectation derived from it below is meaningless — this is about `enumMessage` in this "+
+			"file, NOT about the schema's contentRating enum, which this comparison does not read\n"+
+			"  want: %s\n  got:  %s", wantContentRating, tmpl)
 	}
 
 	scopes := schemaEnum(t, "properties", "scopes", "items", "enum")
@@ -424,11 +456,25 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	// 🔴 IT NAMES TWO MEMBERS AND GUARDS ONLY THOSE TWO — it is NOT a shrink
 	// detector for the enum as a whole, and must not be quoted as one. Measured:
 	// dropping `apps:storage:read` or `collections:write:self` from the vendored
-	// enum leaves this whole package GREEN. The shrink direction is owned by
-	// `schema-drift` (`scripts/check-canonical-schema.sh`), which normalises with
-	// `jq -S` and compares against the LIVE canonical, so it reds on any dropped
-	// value — a strictly stronger instrument than a hand-typed list here, which
-	// is why this list is deliberately not grown to all fifteen.
+	// enum leaves this whole package GREEN.
+	//
+	// 🔴 AND `schema-drift` DOES NOT COVER THAT GAP — an earlier version of this
+	// comment called it "a strictly stronger instrument than a hand-typed list
+	// here", and that was FALSE. `scripts/check-canonical-schema.sh` runs
+	// `diff <(jq -S . "$VENDORED") <(jq -S . "$tmp")`: it compares the mirror
+	// against the LIVE canonical, so it only ever sees the two DISAGREEING. It
+	// reds on a value dropped from the mirror alone — and is blind to a value the
+	// CANONICAL itself retires, because once the mirror resyncs both sides agree
+	// and the diff is empty. A hand-typed list here is the only thing that could
+	// see an upstream retirement, and this list does not attempt it: it guards
+	// two members, not the set.
+	//
+	// So the shrink direction is covered for mirror-only drops and UNCOVERED for
+	// upstream retirements. Closing it properly means a growth-tolerant SHRINK
+	// ledger (assert a known set is a SUBSET of the schema's, so growth passes
+	// and a retirement reds) — deliberately not built here, because it is a new
+	// guard rather than the removal of a self-block, and a ledger written wrong
+	// re-creates exactly the block this file was rewritten to remove.
 	for _, must := range []string{"models:read:self", "posts:write:self"} {
 		if !slices.Contains(scopes, must) {
 			t.Fatalf("the schema's scope enum does not contain %q — %d values read, so this "+
@@ -436,8 +482,14 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 		}
 	}
 
+	// Both rows DERIVE their values from the schema and spell the lead-in by
+	// hand, so an enum that grows moves `want` and `got` together (green) while a
+	// reword of the library's rendering moves only `got` (red). `contentRating`
+	// used to be pinned to the literal above; that is what blocked an additive
+	// canonical, so it derives here like `scopes` always has.
+	ratings := schemaEnum(t, "properties", "contentRating", "enum")
 	want := map[string]string{
-		"contentRating": wantContentRating,
+		"contentRating": enumMessage("contentRating", ratings),
 		"scopes[1]":     enumMessage("scopes[1]", scopes),
 	}
 	for field, wantMsg := range want {
