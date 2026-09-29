@@ -115,54 +115,15 @@ merged-but-unreleased fix is invisible to every cell** — and that is what made
 cells differ on the model axis alone, which was favourable. Read it there before re-running any
 probe that assumes a merged fix is live.
 
-### 🔴 OPEN — rank 14's third T1 cell is blocked on a credential shape, not on code
-- as-of: 2026-09-28
+### Evicted 2026-09-29 (rank 14 launch) — the rank-14 credential-shape block
 
-- **Symptom + exact repro:** two credentialed T1 cells ran; neither reached the publish floor, and
-  **neither failed for a reason about the model or the product**. `$0.031` total model spend,
-  **zero Buzz spent by the trial, zero account mutation attributable to it**.
-- **Observed (with values):** cell `at1` — `stop: max-steps` at **40** steps, `generations: 0`,
-  `submissions: 0`, `$0.0113`, last three calls `npx tsc --noEmit` / `npm run build` /
-  `civitai app validate` (it had BUILT the app and was cut off before the submit-and-media phase).
-  Cause: `driver.sh` had no `--max-steps` pass-through, so every trial was pinned to `runner.py`'s
-  default 40 while a build-only `celsius` cell takes **65** — fixed and merged as `#738`.
-  Cell `at2` — `--max-steps 140`, died `rc=124` (wall-clock timeout) at step **74**, having spent
-  steps **56–74** (18 of 23 minutes) on `civitai login` attempts with 5-minute hangs.
-  `via: measurement`
-- 🔴 **Ruled out — that the credential was MISSING.** Step 60's `cat ~/.config/civitai/config.yaml`
-  recorded `result: "exit code: 0\n[REDACTED:480d887c]\n"` — the read SUCCEEDED and printed the
-  credential. The string *"No config file found"* is in the COMMAND (`… || echo "No config file
-  found"`), never in the output. **I reported the fallback string as the result; that was wrong.**
-  `via: measurement`
-- 🔴 **CAUSE ESTABLISHED — the credential was EXPIRED, not absent.** Steps 55 and 62 both returned
-  `device login failed: Invalid grant: refresh token is invalid (invalid_grant)`. The operator's
-  credential is an **OAuth login** whose `config.yaml` carries `refresh_token` / `token_expiry`;
-  **OAuth refresh is stateful, so a copy inside a container cannot refresh.** `via: measurement`
-- **Ruled out — that `civitai login` destroyed the installed credential.** A cancelled/timed-out
-  `civitai login` leaves an existing stored credential intact, measured directly on the host.
-  `via: measurement`
-- **Ruled out — that the install path is broken.** A control in a FRESH container reproduced the
-  installer exactly: 232 bytes, mode `600`, readable as the trial user. `via: measurement`
-- **Next probe — needs the operator.** Mint a **full-scope personal API key** at
-  `https://civitai.com/user/account` → API Keys (a personal key has no refresh to invalidate), put
-  it in a file (`install -m600 /dev/stdin /tmp/t1-key`), and build an ISOLATED trial credential
-  without touching the live login — `os.UserConfigDir()` honours `XDG_CONFIG_HOME`, verified:
-  `XDG_CONFIG_HOME=/tmp/t1cfg civitai whoami` reports *no token configured* while the real login
-  still works. Then:
-  ```bash
-  XDG_CONFIG_HOME=/tmp/t1cfg civitai login --token "$(cat /tmp/t1-key)"
-  cd /home/zach/workspace/civit/cli/scripts/dogfood   # a worktree off origin/main
-  OPENROUTER_API_KEY="$(tr -d '\r\n' < ~/.config/openrouter/key)" \
-  DOGFOOD_CREDENTIAL_FILE=/tmp/t1cfg/civitai/config.yaml \
-  DOGFOOD_APP_PREFIX=ab-t1- DOGFOOD_TRIAL_PREFIX=at3 DOGFOOD_BRIEF_NAME=t1 \
-  DOGFOOD_MAX_STEPS=140 DOGFOOD_MAX_GENERATIONS=4 DOGFOOD_MAX_SUBMISSIONS=1 \
-  DOGFOOD_MODELS='xiaomi/mimo-v2.5|mimo' DOGFOOD_ENVS='df-node-root|noderoot|root' \
-  DOGFOOD_IDENTITIES='claudeid|CLAUDECODE=1' bash driver.sh
-  ```
-  ⚠ `DOGFOOD_TRIAL_PREFIX` must be NEW (`at3`) or the resume guard skips the cell as complete.
-  ⚠ `runner.py` increments the generation counter for **any** `generate` — **`--dry-run` is NOT
-  exempt** (`runner.py:942`), so a price-check costs a slot; 4 buys 2 images.
-  ⚠ `--max-cost` defaults to **$1.00** and the driver has no pass-through.
+🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
+under *Evicted 2026-09-29 (rank 14 launch)*.** Its blocking condition is DISCHARGED: the operator
+delivered the key and cell `at3` launched, so its *Next probe — needs the operator* instruction is
+spent. **Its eliminations are NOT** — it is what rules out a missing credential, a destroyed
+credential and a broken install path, each by measurement. Read it there before re-running any
+credential probe. The live reading is the IN FLIGHT block below.
+
 
 ### 🔴 OPEN — spend can no longer be graded by balance delta, because the operator uses the same account
 - as-of: 2026-09-28
@@ -217,26 +178,13 @@ guard on a provenance property is walkable). **Read the archive before re-adding
 vendored schema** — it carries why `schema-drift` is not a required check, that `contentRating` has
 never changed, and which run logs the cited incidents actually name.
 
-### ✅ RESOLVED 2026-09-29 (close) — both round-5 follow-ups merged, and the workflow move was verified LIVE
-- as-of: 2026-09-29
+### Evicted 2026-09-29 (rank 14 launch) — the round-5 follow-up closure record
 
-🔴 **SUPERSEDES the block *two round-5 findings in flight as PRs*** — both landed.
+🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
+under *Evicted 2026-09-29 (rank 14 launch)*.** `#755`/`#756` are merged and the workflow move was
+verified LIVE; its one live instruction (the next PR should show 12 checks, not 13) is carried in
+*Gotchas*. Read it there before re-verifying either follow-up.
 
-- **`#755` `0bb7793`** — `internal/manifest` now derives its auth-kinds `want` from the schema.
-  Verified on `origin/main` by reading the CONTENT, not a count: the only mention of the old
-  `{"block-token","oauth"}` literal is the comment documenting the history; the live assignment is
-  `want := append([]string(nil), doc.Properties.Auth.Enum...)`. 🔴 **My first check reported `1` for
-  "hardcoded list still present" — my own grep matching my own history comment.** A count of
-  mentions is not a count of instances. `via: measurement`
-- **`#756` `94cad83`** — `schema-drift` is out of `ci.yml` and in its own workflow. Verified three
-  ways: `ci.yml` no longer defines the job and its seven others are intact; the new workflow's
-  triggers are `push: main` + `pull_request` filtered to `schema/**` + `workflow_dispatch`; and all
-  five required contexts are still defined as jobs somewhere. 🔴 **And verified LIVE rather than by
-  config: the merge to `main` FIRED the new workflow and it passed** (`event=push`,
-  `completed/success`) — parseable YAML is a claim about a file, a run is evidence about the system.
-  `via: measurement`
-- **Next probe:** none. The next PR opened in this repo should show **12** checks rather than 13,
-  with no `schema-drift` unless it touches `schema/**` — a free confirmation, worth glancing at.
 
 ## Next steps (ranked)
 
