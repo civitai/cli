@@ -59,40 +59,23 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-✅ **SIX PRs MERGED 2026-09-28, each verified BY CONTENT on `origin/main`** (never by ancestry — a
-squash merge makes that permanently false). Tip `b98585f`. **Ranks 12, 25, 26 CLOSED**; claims
-`app-build-dogfood-12` and `-25` released; base clone synced.
+✅ **RANK 27 CLOSED AND MERGED — `civitai/cli` #752, `0f0777c4`.** Claim released. **The arc has NO
+code item left.** Verified by content on `origin/main`: ledger and `internal/cmd` derivation present;
+subset guard and AST guard gone.
 
-| PR | what | sha |
-|---|---|---|
-| `#745` | schema re-vendor + the SHAPE/CONTENT split + `goods[].id` gloss + `goods:purchase:self` | `a8a1338` |
-| `#742` | rank 26 — the post arm's `post_link=` | `f4958df` |
-| `#744` `#746` | the two handoff rounds | `64426e8` `9052238` |
-| `#748` | the three `goods` rules JSON Schema cannot express | `8d1733e` |
-| `#747` | rank 12 — the daily `scaffold-typecheck` job | `b98585f` |
+✅ **FOUR MORE MERGED**, verified by content: **#753** `e602b3a` README paste block →
+`civitai.com/agent-onboarding` + a guard on the mirror it always was · **docs #127** `6339220`
+`SETUP_PROMPT` derives from a new `SHORT_PROMPT_URL`, `PROMPT_URL`/`PROMPT_PATH` stay canonical ·
+**#754** `ac840b6` pin bump. 🔴 **#754 was NOT mine** — a branch-name collision surfaced that the
+repo's automation had opened it hours earlier, already green; I merged that rather than race a
+duplicate against a required check.
 
-**OPEN: `#749`** — the durable fix for the OTHER half (patterns). 13/13 green on `f436709`, **round-0
-audit running, NOT merged.** It makes `TestPatternRulesCoverTheVendoredSchema` a total ledger: every
-schema `pattern` is either glossed or recorded as acknowledged debt in a new
-`internal/validate/pattern_gloss_owed.json` **that CI writes**, clearable by a `-update-gloss-ledger`
-flag. Shrink still blocks, deliberately.
+🟡 **OPEN, neither audited:** **#755** the auth self-block · **#756** `schema-drift` off
+`pull_request`. ⚠ **#751 still open, so this doc exists in two versions** (`origin/main` is the older,
+larger one) — **read the PR ref**; merging #751 early next session ends the split.
 
-🔴 **ONLY `#745` WAS AUDITED FOR CORRECTNESS, AND THAT AUDIT FOUND THREE DEFECTS — TWO INTRODUCED BY
-THE FIX ITSELF.** `#748` is **payload** (it changes what `app validate` rejects) and merged on a
-mutation battery plus CI alone, by a dated operator decision. **Do not read "green and
-mutation-tested" as "audited".**
-
-⚠ **`schema-drift` is NOT a required status check** and the operator has the exact `gh api` command
-to add it (handed over 2026-09-28, not yet applied). Until then the enum's CONTENT is guarded by
-nothing that can block a merge — **measured: injecting `evil:total:takeover` into the vendored scope
-enum leaves `internal/validate` and `internal/manifest` GREEN.** Required contexts are
-`pins-vs-published, scaffold-currency, build-test, ready-ack-runtime, template-page-vite`;
-`enforce_admins: true`. The cost of adding it is stated in *Gotchas*.
-
-⚠ **Carried forward — a correction this doc made about itself:** `schema-drift` was NOT "red
-repo-wide". It was red on every PR whose checks **ran** after the canonical changed. `#675` and
-`#602` were never red — their green dates from **2026-09-20** and predates the change. **A stale
-green is not a pass, and it is not a red either.**
+⚠ **No `clawgate-task:`** — `resolve` exited **5**, `NOTHING RESOLVED`; that zero cannot distinguish
+"touched nothing" from "wrong id". (My first read said `rc=0` — `| head` ate the status.)
 
 ## Open investigations — live diagnosis state
 
@@ -111,65 +94,25 @@ green is not a pass, and it is not a red either.**
 - ✅ FIXED 2026-09-28 — `schema-drift` red repo-wide because the guard over the mirror was SELF-BLOCKING (fixed by `#745`; the current reading is the ✅ RESOLVED block below)
 - ✅ RESOLVED 2026-09-28 — the schema-drift CLOSURE record: all three closing-condition halves, the rehearsal of the failing path, and why the "opens a PR unaided" half is unreachable BY DESIGN (an in-sync mirror correctly skips both validate and PR-creation). Its mechanism lesson is live in *Gotchas* → **a guard over a mirror could not accept the mirror's own update**.
 
-### ⚠ OPEN — the documentation stack is a measured cost problem
-- as-of: 2026-09-21
+### Evicted 2026-09-29 (rank 27 close) — two closed rank-27 blocks and the docs-cost block
 
-- **Observed (with values):** carry cost = bytes × steps remaining, because the harness
-  resends the whole history each turn. Ranked that way over glm's run: scaffold source
-  **40.7%**, `node_modules` **28.2%**, scaffold README **12.8%**, the hosted prompt **5.1%**
-  (4th-highest single read, because it is first and is resent 66 times).
-- **The single largest attributable waste:** `useCreatePostFromApp` was documented **nowhere**
-  in the local stack — not the 40 KB scaffold README, not `AGENTS.md`, not the hosted prompt,
-  not 5,908 lines of scaffold source. Reverse-engineering it from `node_modules` cost
-  **706,371 carry tokens, 28.2% of the run**. **Fixed in `cli#685`** — a complete 36-hook
-  index now lands at byte 388 of the README, single-sourced from `internal/scaffold/hooks.go`
-  with a guard that fails in both directions.
-- **Also fixed in `cli#685`:** `AGENTS.md` was stale for **58 of 66 steps** (`app create`
-  never re-ran `agent-setup`, so it said "No Civitai App has been scaffolded"); the docs
-  links sat at 90% depth as a bare list and the agent made **exactly one HTTP request in 66
-  steps**; `--template` was absent from the commands table while the default is the 37-file
-  `page-money`.
-- 🔴 **A briefing error of mine, corrected by measurement:** I named
-  `hostHandlerParity.ts` as the source for the mock-host capability table. It covers the
-  three REAL hosts, not `createMockHost`. The published SDK answers directly — and
-  `CREATE_POST_FROM_APP` **is** mocked, which is what glm spent ~380,000 carry tokens
-  discovering by reading `mockHost.js` line by line.
-- **Still open:** 96.3% of glm's prompt tokens were **cache reads**, so quoting 2.5M as
-  fresh overstates it; and ~4 of the 6.3× cost gap between the runs is **model price**, not
-  tokens. The doc stack owns the 1.6× volume difference, not the 6.3×.
-- **Next probe:** re-measure carry cost on a post-`cli#685` trial to price the fix. Free if
-  folded into rank 6.
+🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
+under *Evicted 2026-09-29 (rank 27 close)*.** Rank 27 is merged as `cli#752`, so both of its
+blocks are spent; the docs-cost block is 2026-09-21 measurement from a phase that has closed,
+and its own next probe was superseded by the stale-CLI finding. **Read them there before
+re-running any probe from those phases** — each is a resolved elimination. ⚠ One of the
+rank-27 blocks contains a claim that was later REFUTED (its append-only repro cannot red the
+`internal/cmd` site); the correction is in the ✅ RESOLVED 2026-09-29 block above.
 
-### 🔴 OPEN — pricing `cli#685` CANNOT ride along with rank 6; it is blocked on a release
-- as-of: 2026-09-21
+### Evicted 2026-09-29 (rank 27 close) — the `cli#685` pricing block
 
-🔴 **This CORRECTS rank 6's own instruction** (*"⚠ Re-measure carry cost while running, to
-price `cli#685`"*) **and the doc-cost block's** *"Next probe: re-measure carry cost on a
-post-`cli#685` trial … **Free if folded into rank 6.**" Both sentences are wrong about the
-same mechanism: it is neither free nor possible.
-
-- **Symptom + exact repro:** step 5 of every trial is `npm install -g @civitai/cli`. A
-  trial runs the **published** CLI, never this repo's tree, so a merged-but-unreleased doc
-  fix is invisible to every cell.
-- **Observed (with values), three agreeing reads:** `npm view @civitai/cli version` →
-  **`0.1.106`** (`time.modified` 2026-09-19T19:41Z); `git tag --contains bdeddef` →
-  **empty**, `git describe origin/main` → **`v0.1.106`**; and the running container's own
-  artefact, `head -c 600 /work/ab-prompt-to-post/README.md | grep -c useCreatePostFromApp`
-  → **0**, at the byte offset (388) where `#685` places the 36-hook index.
-  `via: measurement`
-- **Ruled out — that the deepseek cell prices the fix.** `civitai --version` inside its
-  container reads **0.1.106**. `via: measurement`
-- 🔴 **The consequence is load-bearing for the matrix, and it is favourable:** glm, mimo and
-  deepseek all ran the **same pre-`#685` doc stack**, so the three cheap cells differ on the
-  **model axis alone**. A release landing mid-matrix would have confounded exactly the
-  comparison the frozen condition asks for.
-- **Observed — the cost is still being paid:** the deepseek trial spent steps 26–31
-  grepping `node_modules` for `useCreatePostFromApp` / `BlockCreatePostRequest` /
-  `firstImageUrl`, the same reverse-engineering that cost glm **706,371 carry tokens,
-  28.2% of its run**. `via: measurement`
-- **Next probe:** cut a release containing `bdeddef`, then re-run ONE genpost cell on the
-  same model and diff carry cost. Until then the doc-stack block's figures are a claim
-  about `0.1.106` and nothing newer.
+🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
+under *Evicted 2026-09-29 (rank 27 close)*.** Its partner, the docs-stack carry-cost block, was
+evicted in the same round; both belong to the phase that closed with the frozen condition on
+2026-09-21. Its reusable half: **a trial installs the PUBLISHED CLI (`npm install -g`), so a
+merged-but-unreleased fix is invisible to every cell** — and that is what made the three cheap
+cells differ on the model axis alone, which was favourable. Read it there before re-running any
+probe that assumes a merged fix is live.
 
 ### 🔴 OPEN — rank 14's third T1 cell is blocked on a credential shape, not on code
 - as-of: 2026-09-28
@@ -263,84 +206,76 @@ same mechanism: it is neither free nor possible.
   bigger than `#745`. Until then, the rule is in `semantic_test.go`'s docstring: when the schema
   gains a scope, re-read the deployed constant by hand.
 
-### 🔴 OPEN — `#745`'s own fix MOVED the self-block one field over, and a second copy of the literal makes the obvious fix incomplete
-- as-of: 2026-09-28
+### ✅ RESOLVED 2026-09-29 — five correctness rounds hardened a guard whose premise was measurably wrong
+- as-of: 2026-09-29
 
-Found by the nine-axis audit of `#745`, and **independently re-derived by the `#749` agent's own
-enumeration** — two sources, different methods, same conclusion. All of it re-verified by hand here.
+🔴 **SUPERSEDES every rank-27 block** (evicted). Rank 27 shipped, but the durable finding is what
+round 5 produced when it finally asked whether the work should exist. Rounds 0–4 audited for
+CORRECTNESS and each found real defects; **every one was in the guards, none in the product.**
 
-- **Symptom + exact repro:** add a value to the canonical's `contentRating` enum → `#745`'s anchor
-  `t.Fatalf`s at `internal/validate/pattern_test.go:405`, so `go test ./...` reds inside
-  `revendor-canonical-schema.yml`'s `validate` step, no PR opens, `schema-drift` stays red
-  repo-wide. **That is the same mechanism `#745` exists to remove.** `via: measurement` (mutated the
-  one-line `"enum": ["g", "pg", "pg13", "r", "x"]` and watched it fire).
-- 🔴 **And the message misattributes:** it says *"the enum message SHAPE moved"*. The shape did not
-  move; the rating list grew. A reader is sent to `schemaErrors` instead of to `contentRating`.
-- 🔴 **THE OBVIOUS ONE-SITE FIX IS INCOMPLETE — this is the part to carry forward.** The same
-  literal is spelled in **two independent places**: `internal/validate/pattern_test.go:403` and
-  `internal/cmd/message_quality_test.go:78`. Fixing only `internal/validate` leaves the second red,
-  so the bot stays blocked and the fix READS complete. (A third spelling is a comment,
-  `internal/validate/pattern.go:19` — illustrative, not a gate.) `via: measurement`
-- 🔴 **Ruled out — that the remedy is "consolidate them into one place".** It is NOT: what is
-  duplicated is a LITERAL, not a predicate, and collapsing both onto one source either re-creates
-  the self-block (if the source is the schema) or merely moves it (if it is a literal). The fix is
-  **asymmetric** — exactly ONE site keeps the literal, as the shape anchor, and the other derives:
-  - `pattern_test.go` → compare the template against a literal list, no schema involved. Shape
-    pinned; cannot self-block.
-  - `message_quality_test.go` → derive the expected message from `cli.SchemaJSON` the way the
-    `scopes` leg already does. Content moves with the schema; a wording change still fails because
-    the lead-in is spelled in the derivation. `internal/cmd` need not import `internal/validate`.
-    `via: code` — ⚠ and the KIND matters here: the two-literals FACT is measured, but this remedy is
-    reasoning over what each site asserts, **not yet built or run**. Treat it as the design to
-    attack, not a result.
-- ⚠ **A SECOND audit finding is open with it:** the comment at `pattern_test.go:416-423` calls
-  `schema-drift` *"strictly stronger"* than a hand-typed list. It is not — it compares the mirror
-  against the LIVE canonical, so a canonical that ITSELF drops a scope is invisible to it (four
-  scopes have already been retired upstream: `catalog:read`, `media:read:owned`,
-  `block:settings:read`, `block:settings:write`). A growth-tolerant SHRINK ledger would restore that
-  direction without self-blocking; additions need the required-check change instead.
-- **Next probe / the work:** both fixes in ONE PR, **based on `#749`** (it rewrites 482 lines of
-  `pattern_test.go`, so anything landing first conflicts), with the `contentRating`-grows mutant as
-  the red-at-base proof and a test that FAILS if either literal reappears.
+- 🔴 **`schema-drift` IS NOT A REQUIRED CHECK.** Required: `pins-vs-published, scaffold-currency,
+  build-test, ready-ack-runtime, template-page-vite`. So the "reds every PR" blast radius the whole
+  edifice was sized against is **cosmetic, not a merge block**. 🔴 **I measured this myself early in
+  the session and wrote it into this doc as an open item, then argued ~15 times as if the opposite
+  were true.** `via: measurement`
+- 🔴 **`contentRating` HAS NEVER GROWN** — identical across all 18 commits that touched the schema.
+  The volatile enums are `scopes` (grew 4×, 4 retired) and `auth` (new 09-24, already revised). I
+  hardened the one stable field. `via: measurement`
+- 🔴 **THE INCIDENTS I CITED WERE MISATTRIBUTED — the repeat offence.** Run-log attributed: **#486**
+  (31 min) was *pattern-gloss debt*; **#695** was `internal/pkgzip`. Only **#607** was a literal
+  self-block, on `scopes`, already fixed by `#745`. **I quoted "31 min / 11 h" as instances of the
+  literal class without opening one run log** — the exact error this doc already records as a
+  retraction, repeated while that correction sat in the document I was reading. `via: measurement`
+- 🔴 **MY ROUND-1 FIX WAS NET-NEGATIVE.** Verified: retiring a rating reds `internal/validate`, so
+  `go test ./...` fails, so `revendor-canonical-schema.yml` (which runs the suite *before* opening
+  its PR) opens none, the mirror stays stale, `schema-drift` reds. Its message demanded four hand
+  edits for zero behaviour change; retirement is a demonstrated class (4 scopes). Deleted in
+  `76a80b9`, **−270 lines**. `via: measurement`
+- **Kept on measurement:** the two-site derive/freeze fix; the ledger's file SET + per-file COUNT;
+  both `internal/cmd` controls. ⚠ **NOW UNCOVERED:** a retired/renamed `contentRating` reaches the
+  CLI with nothing reddening, and `schema-drift` cannot see it either. Judgement: no local guard —
+  the resynced mirror rejects it. If ever covered, **outside `go test`**, or the bot blocks again.
+- **Next probe:** none. Closed.
+
+### 🟡 OPEN — two round-5 findings in flight as PRs, neither audited
+- as-of: 2026-09-29
+
+- **#755 — the auth self-block five rounds walked past.** `internal/manifest/manifest_test.go`
+  compared schema-derived `AuthKinds()` against hand-typed `{"block-token","oauth"}`, so a new auth
+  kind reds `go test ./...` and blocks the bot — on the schema's most volatile field. **Both arms:**
+  grow the enum at `origin/main` → `FAIL`; with the fix → `ok`; below 2 entries → the new vacuity
+  floor fires (deriving both sides otherwise lets `[] == []` agree while `LoadAuth` admits nothing).
+  ⚠ Residues in the PR: the README-prose sync is no longer enforced (a docs signal; gating the bot
+  on it was the wrong instrument), and `TestLoadAuth`'s rows still red on a RETIREMENT.
+  `via: measurement`
+- **#756 — `schema-drift` off `pull_request`.** It asks about an EXTERNAL resource, so a stale mirror
+  reddened every open PR and blamed whoever pushed next (measured: five). Now its own workflow:
+  `push: main` + `pull_request` filtered to `schema/**` + `workflow_dispatch`. 🔴 **A path filter
+  ALONE would be wrong** — an upstream publish touches no file, so a filtered PR run never fires;
+  `push: main` preserves detection. No cron (the re-vendor workflow already fetches every 6 h *and*
+  remediates). Five stale comments in that workflow updated in the same commit. Verified: all three
+  workflows parse, all five required contexts still defined, script green at rest / `rc=1` mutated.
+  `via: measurement`
+- ⚠ **Round 5's third recommendation was DECLINED** and is recorded here, not as a rank, because
+  nothing external asks for it: one ~12-line CI job growing every string enum and requiring the
+  suite green — **38.9 s**, all 8 enums, every construction shape, cannot self-block, and **reds on
+  `auth` today** so it could only land after #755. It tests the PROPERTY rather than policing
+  spellings, and is strictly stronger than what shipped. `via: measurement`
+- **Next probe:** `gh pr checks 755`/`756`, merge, verify by content. `/audit-pr` round 0 only.
 
 ## Next steps (ranked)
 
-🔴 **Numbering frozen and cumulative.** 1–11 settled; 13, 15–22, 25, 26, **12** closed; **14, 27, 28**
-live.
+🔴 **Numbering frozen and cumulative.** 1–13, 15–22, 25–28 closed; **14, 29** live
 
-1–11. ✅ **DONE** — the arc through build-and-ship. forcing: user/gate — satisfied
-12. ✅ **CLOSED 2026-09-28** — `#747`. The rank's premise held and grew: the `bump` job's
-    `validate — scaffold builds against the bumped SDK` step LOOKS equivalent and provably is not —
-    plain `npm install` auto-installs peers and repairs the defect (measured both ways, npm 11.19.0).
-    forcing: regression — satisfied
-13, 15–22, 25, 26. ✅ **CLOSED** earlier — 20/21/22 as `#735`/`#733`/`#734` (2026-09-27), 25/26 as
-    `#745`/`#742`. forcing: gate/user/security/regression — satisfied
-14. 🔴 **BLOCKED ON THE OPERATOR — one action, then it runs.** T1 "ship-ready". **Every other
-    precondition is now verified live** (2026-09-28): XDG isolation works
-    (`XDG_CONFIG_HOME=/tmp/t1cfg civitai whoami` → no token, while the real login stays intact), all
-    10 driver env vars exist, the `t1` brief + `ship.verdict.sh` floor grader are on `main`, and
-    `--max-cost`'s $1.00 default binds mimo near **~375** steps so a 140-step cell will not hit it.
-    Baseline for blockId attribution: 100 submissions (AT the cap), 13 distinct blockIds, **no
-    `ab-t1-*`**. ⚠ **Two figures this doc carried are WRONG and were corrected by measurement:** the
-    OpenRouter key limit is **$20**, not "$48.97 of $50" (usage $0.0313), and `pending` is **5**, not
-    0 — so a T1 submission queues behind them. What is left is the key plus the run.
-    **Carried forward, do not lose again:** the operator selected *spend Buzz on a generated cover*
-    from a four-option question on 2026-09-27 — **a SELECTION, not a quote; do not attribute words to
-    them**; **no image tooling is needed** (icon aspect 0.9–1.1 ← `1:1`, cover 1.3–2.4 ← `16:9`,
-    geometry read by `internal/appapi/imageinfo.go` and ATTACH refuses a bad shape legibly); 🔴 a
-    moderator **REJECTION deletes the listing and every attached asset**, and a run including
-    `submit` **cannot be credential-bounded**; ⚠ do **not** grade on reaching `approved` inside the
-    trial — measured review latency is median ~5.6 min with a tail to **741 min**.
+1–13, 15–22, 25–28. ✅ **CLOSED** — 27 merged as `#752` `0f0777c4`
+    forcing: gate — satisfied
+14. 🔴 **BLOCKED ON THE OPERATOR — the key, then it runs.** T1 "ship-ready"; every other
+    precondition verified 2026-09-28. Command, caveats and preconditions are in the rank-14 open
+    block above — do not restate. Mint a full-scope personal API key at
+    `https://civitai.com/user/account` → API Keys.
     forcing: user — asked 2026-09-25, decided 2026-09-27
-27. 🔴 **FIX THE MOVED SELF-BLOCK — both sites, one PR, based on `#749`.** Full diagnosis, the
-    asymmetric remedy and the two-literal trap are in *Open investigations*. **Closing condition:**
-    adding a value to the canonical's `contentRating` enum leaves `go test ./...` GREEN, shown red at
-    the PR's own base, AND a guard fails if either literal reappears.
-    forcing: regression — the fix for a self-blocking guard reintroduced one
-28. **MERGE `#749` once its audit ladder ends.** 13/13 green; round 0 dispatched 2026-09-28. Rank 27
-    is based on it, so it lands first. ⚠ Its own agent reported two things UNEXERCISED — the
-    `signal` job and the `prnote` interpolation are YAML-parsed, not run.
-    forcing: gate — the other half of a guard that has blocked the bot 5 times
+29. 🟡 **LAND #755 AND #756**, then merge **#751** to end this doc's two-version split.
+    forcing: regression — #755 closes a live self-block on the schema's most volatile enum
 
 ## Gotchas / decisions / dead-ends
 
@@ -421,13 +356,9 @@ was wrong more often than the models; a grader can penalise the MORE correct imp
 probe's zero needs the arm that makes it non-zero; run the control arm BEFORE the arm you want to
 believe; a merged fix is not a shipped fix when the harness installs from npm.
 
-### Evicted 2026-09-28 (audit batch) — Added 2026-09-25 (feedback) — the instrument was too LENIENT
+### Evicted 2026-09-28 (audit batch) — two blocks: *the instrument was too LENIENT* (2026-09-25) and *a handoff doc is not evidence about its own arc* (2026-09-26)
 
-Verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md).
-
-### Evicted 2026-09-28 (audit batch) — Added 2026-09-26 — a handoff doc is not evidence about its own arc
-
-Verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md).
+Both verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md).
 
 ### Added 2026-09-27 (resume) — durable facts RELOCATED here out of `State now`
 
@@ -593,33 +524,12 @@ them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed.
   were caught by an agent declining to repeat my claim, which is the reason to keep asking
   subagents to verify rather than to comply.
 
-### Added 2026-09-28 — process traps hit while investigating traps of the same class
+### Evicted 2026-09-28 (close) — the 2026-09-28 process-traps block
 
-- 🔴 **A BACKTICK INSIDE A DOUBLE-QUOTED `echo` EXECUTED `civitai login`** and hung for two
-  minutes — while I was investigating whether `civitai login` destroys credentials. Single-quote it,
-  or use `git commit -F <file>`.
-- 🔴 **`pkill -f "civitai login"` KILLED ITS OWN REPORTING SHELL**, producing an empty probe I
-  nearly read as a result.
-- 🔴 **`docker exec -d sh -c 'civitai …'` HAS NO LOGIN PATH** — `civitai: not found`. A probe that
-  cannot run the binary returns a zero about itself.
-- 🔴 **`gofmt -l` REPORTS NOTHING ABOUT A FILE THAT DOES NOT PARSE** — it lists *misformatted*
-  files. I read a clean `gofmt -l` over an uncompilable file because I had sent stderr to
-  `/dev/null`. Use `gofmt -e <file>` and read stderr.
-- 🔴 **`git rev-parse --git-common-dir` RETURNS A RELATIVE `.git`**, so a `find` over it searched
-  the WRONG repo from this dispatch hub — the 71-entry `rr-cache` listing I quoted was
-  `datapacket-talos`'s; `cli` has 49. Use `--absolute-git-dir`.
-- 🔴 **A BROKEN CONFLICT RESOLUTION IS CACHED BY `git rerere` IN THE COMMON GIT DIR AND REPLAYED
-  WITH NO MARKERS.** `rerere.enabled` is **global** on this host. `git merge` returned rc 1 and
-  `UU` while the file had zero markers and would not compile. `git rerere forget` REFUSES from that
-  state; the remedy was `rm -rf` of the cache entry, and **`git -c rerere.enabled=false merge` is
-  the one-command discriminator** between "rerere resolved it" and "no conflict". Full record in
-  the `devrc` store's `rules` entry.
-- 🔴 **I DISPATCHED TWO AGENTS INTO ONE SCRATCHPAD TWICE**, after being bitten by it earlier the
-  same day. They collided on `pristine/`, `mutate.py` and `commitmsg.txt`. **Name every scratch
-  path per-agent in the brief** — the agents cannot know about each other.
-- ⚠ **#733 and #734 conflicted in one add/add hunk** whose two sides each end mid-function around a
-  **shared closing brace**, so concatenating both sides — the obvious resolution — yields an
-  unterminated function. Keep both and give the first its own `}`.
+Verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md). Its tells,
+so you know whether to open it: a backtick inside a double-quoted `echo` EXECUTED `civitai login`;
+`pkill -f` killed its own reporting shell and produced an empty probe that read as a result; and
+`docker exec -d sh -c` had no login path, so the probe returned a zero about itself.
 
 ### Added 2026-09-28 — a guard over a mirror could not accept the mirror's own update
 
@@ -703,13 +613,10 @@ them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed.
 - ⚠ **Two GitHub API lags misread as state, both in one minute:** `gh pr view --json headRefOid`
   served the **pre-update** head right after `update-branch` reported success, and `mergeStateStatus`
   returned `UNKNOWN`. Neither is evidence; re-read, or `git fetch` the branch and compare.
-- 🔴 **`CDPATH` IS EXPORTED ON THIS HOST, SO `$(cd "$(dirname "$0")/.." && pwd)` RETURNS TWO LINES**
-  and `scripts/check-canonical-schema.sh` reports a confident **`FAIL: … has DRIFTED`** over a file
-  `cmp` calls identical. `jq` then fails inside a process substitution, which `set -euo pipefail` does
-  NOT catch, so `diff <(empty) <(canonical)` prints the whole canonical as `>` lines. **The tell is
-  that EVERY diff line is `>` — one operand is empty, not different.** Run repo scripts with
-  `env -u CDPATH`; do **not** "fix" the scripts — the idiom is correct and the host is the anomaly.
-  CI is unaffected, which is worse: it contradicts a green CI for reasons unrelated to the code.
+- ⚠ **The `CDPATH` two-line-path lesson was stated TWICE in this section; the duplicate is evicted**
+  to [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md) under *Evicted
+  2026-09-28 (rank 27 close) — duplicate CDPATH bullet*. The surviving statement is above, and
+  `## How to verify` carries the operational form. Nothing was lost.
 - ⚠ **A zsh monitor printed `PR7 PR7` instead of a check tally** — `PR$n[$term/$tot]` is ARRAY
   SUBSCRIPTING in zsh, so the display was garbage while the arithmetic was fine. The verdict happened
   to be right; it was re-read directly before acting, because a mangled instrument does not get
@@ -765,46 +672,121 @@ them.** Nothing here is new; it is the arc's accumulated ground truth, re-homed.
   hand-edited mirror — because a canonical-side change is caught by the daily bot regardless. The
   `gh api` call REPLACES the context list, so all six must be spelled or one is silently un-required.
 
+### Added 2026-09-28 (close) — every mistake I made had ONE cause: I asserted where I should have derived
+
+- 🔴 **FIVE FALSE ZEROS AND ONE FALSE PREMISE, ONE ROOT CAUSE.** (a) "blocked five times" — counted
+  issues by TITLE, never opened one. (b) "2 sites" for a retraction sweep — it was **6**; I used one
+  pattern shape, the agent used three plus a positive control. (c)/(d) two greps that reported a
+  present claim MISSING because the phrase **wraps** and the grep is line-based. (e) a guessed path
+  (`internal/validate/revendor_owed_signal_test.go`) when the file is at the repo ROOT — the diffstat
+  one line above already said so. (f) `len(open(p).read())` = CHARACTERS against a BYTE ceiling, an
+  890 B gap. **Every one was caught by a subagent or by reading CONTENT. Derive the path, vary the
+  pattern shape, and use a positive control — then the count is worth quoting.**
+- 🔴 **AN AUDIT'S REPRODUCTION CAN BE MECHANICALLY WRONG WHILE ITS FINDING IS RIGHT.** The `owed`
+  defect was reported as *"`set -uo pipefail` with no `-e`, so any `jq` failure goes silent"*. GitHub
+  runs every `run:` block as **`bash -e {0}`** — errexit IS on, and **that workflow's own header says
+  so, citing two prior incidents**. The defect is real with a NARROWER trigger: `jq` exits **0
+  printing nothing** on EMPTY input, which is what a truncated ledger write produces. **Re-derive a
+  mechanism before relaying it; the file often already contains the answer.** `via: measurement`
+- ⚠ **`rerere` is ENABLED here and CACHED my conflict resolution** (`Recorded resolution for …`). Mine
+  was verified per-claim on both sides, so replay is safe — but anyone re-doing that merge gets my
+  answer without being asked. This arc has already been bitten by a cached BAD resolution.
+- ⚠ **`gh pr merge` can report `already merged` for a merge it just performed.** Confirmed benign:
+  `mergedBy` was this account and `autoMergeRequest` was null. Read those two fields before treating
+  it as a third party.
+
+- 🔴 **A `Contains` ASSERTION AND AN `==` ASSERTION NEED THEIR MUTANTS IN DIFFERENT PLACES, AND THE
+  DIFFERENCE IS INVISIBLE IN THE SOURCE.** Two guards spelled the same literal; the `==` one reddened on
+  any change to the enum, the `Contains` one only on a change landing inside the matched prefix. So the
+  documented repro for a defect at BOTH sites demonstrated only ONE, and a fix verified with it would
+  have shipped half-done reading as complete. **Ask what SHAPE of assertion each site uses before
+  choosing where to mutate; for an ordered list, vary POSITION, not presence.**
+- 🔴 **A GUARD OVER A SELF-BLOCK CAN ITSELF SELF-BLOCK, AND THE CURE IS TO FREEZE ITS NEEDLE.**
+  `content_rating_literal_ledger_test.go` searches for a hand-typed rating list. Deriving that needle
+  from the schema would have been the obvious "DRY" choice and would have re-created the bug one level
+  up: a canonical that grows the ratings moves the needle, it stops matching the frozen anchor, and the
+  ledger reports a SHRINK. **A guard over a frozen specimen must itself be frozen** — and it then
+  matches its own source file, so exclude that file by path. ⚠ It instantly caught two rating literals
+  in my own COMMENTS — prose quoting a set looks identical to an assertion. **Describe, don't quote.**
+- ⚠ **`go test ./...` buffers per package, so a long root package looks hung for ~6 min**; two runs here
+  were killed only because the tree changed under them after launch. **`sha256sum` before a long run,
+  then leave the tree alone.** `golangci-lint` is absent here (`nix-shell -p golangci-lint`) and its
+  `0 issues` means nothing until an unused func in your new file is seen to red it.
+
+### Carried forward 2026-09-28 (rank 27) — durable lines rescued from `State now` / `Next steps`
+
+🔴 **These sat under REPLACE headings; this round's rewrite would have deleted them.** Re-homed, not new.
+
+- **The eight PRs of 2026-09-28, verified on `origin/main` BY CONTENT** (never by ancestry): `#745`
+  `a8a1338` · `#742` `f4958df` · `#744` `64426e8` · `#746` `9052238` · `#750` `7d333a2` · `#748`
+  `8d1733e` · `#747` `b98585f` · `#749` `2105a33`. Ranks 12/25/26/28 closed, claims `-12`/`-25`
+  released. Earlier: 20/21/22 as `#735`/`#733`/`#734` (2026-09-27).
+- 🔴 **AUDIT PROVENANCE — "merged" ≠ "audited", and only ONE was.** `#745` is the only PR ever audited
+  for CORRECTNESS (it found three defects, **two introduced by the fix itself**). `#749` had round 0
+  only; `#748`/`#747` merged on mutation batteries plus CI by dated operator decision; **`#752` none.**
+- 🔴 **MEASURED — the vendored enum's CONTENT is guarded by nothing that can block a merge:** injecting
+  `evil:total:takeover` into the scope enum leaves `internal/validate` and `internal/manifest` **GREEN**.
+  The gap the `schema-drift` required-check would close.
+- ⚠ **`#675`/`#602` were never red on `schema-drift`** — their green dates from **2026-09-20**, before
+  the canonical change, so they never re-ran. **A stale green is not a pass, nor a red.**
+
+- 🔴 **TWO `handoff_doc.py` CEILING TRAPS. (a) AN EVICTION IS TWO FILES; `--confirm` COMMITS ONE PATH** —
+  the archive half dies with the worktree, and a dead stub reads like a clean eviction. Commit the archive
+  side separately BEFORE the confirm, then `grep -c` the stub's section title in BOTH files on the pushed
+  ref (want 1 and 1) — `dd1de77`. **(b) The ceiling is BYTES**: `len(open(p).read())` counts characters,
+  and `🔴 ⚠ ✅ —` made that gap 890 B — it read 64,728 for 65,618 B. **`wc -c`.**
+
+- 🔴 **ASK WHETHER THE WORK SHOULD EXIST BEFORE AUDITING WHETHER IT IS CORRECT.** Rounds 0–4 found
+  23 real defects, every one in the guards the ladder was itself writing; round 5, run as a
+  REQUIREMENT round, refuted the premise and ended in a −270-line deletion. **The tell it was time:
+  each round's fix was the next round's finding, three times running.** One requirement round was
+  worth more than four correctness rounds.
+- 🔴 **MEASURE A GUARD'S OWN FAILURE COST BEFORE HARDENING IT — three one-command checks.** Is the
+  check REQUIRED (`gh api repos/<r>/branches/main/protection`), has the guarded thing ever MOVED
+  (`git log -p -- <file>`), which run log actually failed (`gh run view <id> --log-failed`)? All
+  three would have stopped this at round 0.
+- 🔴 **A SPELLING GUARD ON A PROVENANCE PROPERTY IS WALKABLE, AND VALUE CHECKS CANNOT HELP** —
+  "hand-written" and "schema-derived" are EQUAL at rest, which is why the original defect shipped
+  unseen; only a syntax-tree check sees it. The AST version worked and was deleted anyway, because
+  **a guard whose sole purpose is guarding a deleted guard goes with it.**
+- 🔴 **SWEEP FOR IN-FLIGHT WORK BEFORE OPENING A PR, EVEN WHEN AUTHORISED TO CREATE ONE.** A branch
+  name collision was the only thing that stopped a duplicate pin-bump PR racing the repo's own
+  automation against a REQUIRED check. `gh pr list --state open` is the cheap half.
+- ⚠ **`git checkout -- <file>` reverts a mutant AND your uncommitted edits in it, together** — cost a
+  round here. Restore from `cp -a` and `cmp`. ⚠ **A pipe eats the exit status**; capture
+  `out=$(cmd 2>&1); rc=$?`. ⚠ **`grep -E -- '--- …'`** needs the `--`. ⚠ **`gh pr update-branch`
+  reports success while the API serves the PRE-update head**, and after the base moves every prior
+  green is stale — confirm git and the API agree, then require every check TERMINAL plus a minimum
+  count (13 here).
+- ⚠ **AN EVICTION IS TWO FILES AND `handoff_doc.py --confirm` COMMITS ONE PATH.** Commit the archive
+  side yourself, in the same commit as the doc stub, BEFORE the confirm run — the reverse order
+  destroyed an eviction here and left the doc pointing at a section that did not exist.
+
 ## How to verify
 
-Every check reports a CONTROL beside its result; a bare count or zero is not a measurement.
+🔴 **Run repo scripts with `env -u CDPATH`** — else `check-canonical-schema.sh` reports a confident
+`FAIL: … has DRIFTED` over a byte-identical file. **The tell: EVERY diff line is `>`** (one operand
+empty). Do not "fix" the scripts; the host is the anomaly.
 
-🔴 **Run every repo script below with `env -u CDPATH`** — see *Gotchas*, added 2026-09-28. Without it
-`check-canonical-schema.sh` reports a confident `FAIL: … has DRIFTED` over a **byte-identical** file.
-
-**Rank 25 — the mirror matches the canonical** (expect `OK`, control: a one-byte edit must give
-`FAIL`):
 ```bash
 CLI=/home/zach/workspace/civit/cli
-git -C "$CLI" worktree add --detach /tmp/wt-sd origin/main
-(cd /tmp/wt-sd && env -u CDPATH bash scripts/check-canonical-schema.sh); echo "rc=$?"   # want 0 + OK
-(cd /tmp/wt-sd && sed -i 's/"maxItems": 32/"maxItems": 33/' schema/app-block.manifest.schema.json \
-  && env -u CDPATH bash scripts/check-canonical-schema.sh >/dev/null 2>&1; echo "CONTROL rc=$?")  # want 1
-git -C "$CLI" worktree remove --force /tmp/wt-sd
+git -C "$CLI" worktree add --detach /tmp/wt-v origin/main
+(cd /tmp/wt-v && env -u CDPATH bash scripts/check-canonical-schema.sh); echo "rc=$?"   # 0 + OK
+# negative control: bump "maxItems": 32 -> 33 in schema/ and re-run; want rc=1
+(cd /tmp/wt-v && env -u CDPATH go test ./internal/validate/ ./internal/cmd/ ./internal/manifest/ -count=1)
+git -C "$CLI" worktree remove --force /tmp/wt-v
 ```
 
-**The two guards that were self-blocking** (expect both PASS; control: they were RED at `origin/main`
-with the new schema in place). Run inside the same `/tmp/wt-sd` worktree:
-`go test ./internal/validate/ -count=1 -v -run 'TestEnumFindingsKeepTheirExactWording|TestPatternRulesCoverTheVendoredSchema'`
+**Rank 27 on `main`:** append a `contentRating` value → `internal/validate` and `internal/cmd` both
+green; retire one → also green now (shrink guard deleted, see above); re-add the literal to
+`internal/cmd` → ledger reds `GREW`. **#755:** grow the `auth` enum → `internal/manifest` green with
+the fix, **FAIL** at `origin/main`; below 2 entries → vacuity floor fires.
 
-Since `#749` that `-run` filter is **no longer total over the pattern half** — the reconciliation moved
-into `glossLedgerProblems` with its own guards, and one of them
-(`TestGlossLedgerUpdateFlagDefaultsOff`) is the only thing that sees the mutation which disarms the
-whole ledger. Widen it to `'TestEnumFindingsKeepTheirExactWording|TestPatternRulesCoverTheVendoredSchema|TestGloss|TestUnglossed'`,
-and **count the `=== RUN` lines** — a `-run` filter matching nothing prints `ok`.
-
-**The sensitive set matches the DEPLOYED server constant** (expect the same 7; `origin/release`, not
-`main`):
-```bash
-git -C $CIVITAI fetch origin release
-git -C $CIVITAI show origin/release:src/shared/constants/block-scope.constants.ts \
-  | sed -n '/^export const SENSITIVE_BLOCK_SCOPES/,/^]);/p' | grep -o "'[a-z:]*'"
-grep -c '": {},' /home/zach/workspace/civit/cli/internal/validate/semantic.go   # the Go mirror
-```
-
-⚠ **The root Go package needs a browser** — `go test ./...` fails on this host with `no Chromium on
-PATH`, which is an ENV gap and not a failing trial. Run it as
-`nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) go test . -count=1'` (~342 s).
+⚠ **The root package needs a browser** (render-oracle tests refuse to skip):
+`nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) env -u CDPATH go test ./... -count=1'`
+— ~334 s and **buffers silently**, so `sha256sum` first and leave the tree alone. ⚠ **Grep wrapped prose on NORMALISED text**
+(`tr '\n' ' ' | tr -s ' '`); a `grep -oE` with two wide `{0,220}` bounds over a 100 KB doc
+backtracks for minutes — use Python.
 
 ## Defects (batched)
 

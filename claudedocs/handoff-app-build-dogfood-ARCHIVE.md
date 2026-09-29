@@ -981,3 +981,198 @@ Moved for the size ratchet. Both are closed incidents whose lessons are not cont
 - ⚠ **Snapshot a fixture before editing the app inside it** — `docker commit` to an image
   first. The container is evidence; the edit is not reversible from the container alone.
 
+
+### Evicted 2026-09-28 (close) — the process-traps block, verbatim
+
+Moved for the size ratchet. Nothing here is stale; all three are live shell traps.
+
+### Added 2026-09-28 — process traps hit while investigating traps of the same class
+
+- 🔴 **A BACKTICK INSIDE A DOUBLE-QUOTED `echo` EXECUTED `civitai login`** and hung for two
+  minutes — while I was investigating whether `civitai login` destroys credentials. Single-quote it,
+  or use `git commit -F <file>`.
+- 🔴 **`pkill -f "civitai login"` KILLED ITS OWN REPORTING SHELL**, producing an empty probe I
+  nearly read as a result.
+- 🔴 **`docker exec -d sh -c 'civitai …'` HAS NO LOGIN PATH** — `civitai: not found`. A probe that
+  cannot run the binary returns a zero about itself.
+- 🔴 **`gofmt -l` REPORTS NOTHING ABOUT A FILE THAT DOES NOT PARSE** — it lists *misformatted*
+  files. I read a clean `gofmt -l` over an uncompilable file because I had sent stderr to
+  `/dev/null`. Use `gofmt -e <file>` and read stderr.
+- 🔴 **`git rev-parse --git-common-dir` RETURNS A RELATIVE `.git`**, so a `find` over it searched
+  the WRONG repo from this dispatch hub — the 71-entry `rr-cache` listing I quoted was
+  `datapacket-talos`'s; `cli` has 49. Use `--absolute-git-dir`.
+- 🔴 **A BROKEN CONFLICT RESOLUTION IS CACHED BY `git rerere` IN THE COMMON GIT DIR AND REPLAYED
+  WITH NO MARKERS.** `rerere.enabled` is **global** on this host. `git merge` returned rc 1 and
+  `UU` while the file had zero markers and would not compile. `git rerere forget` REFUSES from that
+  state; the remedy was `rm -rf` of the cache entry, and **`git -c rerere.enabled=false merge` is
+  the one-command discriminator** between "rerere resolved it" and "no conflict". Full record in
+  the `devrc` store's `rules` entry.
+- 🔴 **I DISPATCHED TWO AGENTS INTO ONE SCRATCHPAD TWICE**, after being bitten by it earlier the
+  same day. They collided on `pristine/`, `mutate.py` and `commitmsg.txt`. **Name every scratch
+  path per-agent in the brief** — the agents cannot know about each other.
+- ⚠ **#733 and #734 conflicted in one add/add hunk** whose two sides each end mid-function around a
+  **shared closing brace**, so concatenating both sides — the obvious resolution — yields an
+  unterminated function. Keep both and give the first its own `}`.
+
+
+### Evicted 2026-09-28 (rank 27 close) — the rank-27 self-block investigation, verbatim
+
+Closed by `civitai/cli` **#752**. ⚠ Its *"Fixing only `internal/validate` leaves the second
+red"* claim is REFUTED — see the doc's ✅ RESOLVED rank-27 block for the measurement.
+
+### 🔴 OPEN — `#745`'s own fix MOVED the self-block one field over, and a second copy of the literal makes the obvious fix incomplete
+- as-of: 2026-09-28
+
+Found by the nine-axis audit of `#745`, and **independently re-derived by the `#749` agent's own
+enumeration** — two sources, different methods, same conclusion. All of it re-verified by hand here.
+
+- **Symptom + exact repro:** add a value to the canonical's `contentRating` enum → `#745`'s anchor
+  `t.Fatalf`s at `internal/validate/pattern_test.go:405`, so `go test ./...` reds inside
+  `revendor-canonical-schema.yml`'s `validate` step, no PR opens, `schema-drift` stays red
+  repo-wide. **That is the same mechanism `#745` exists to remove.** `via: measurement` (mutated the
+  one-line `"enum": ["g", "pg", "pg13", "r", "x"]` and watched it fire).
+- 🔴 **And the message misattributes:** it says *"the enum message SHAPE moved"*. The shape did not
+  move; the rating list grew. A reader is sent to `schemaErrors` instead of to `contentRating`.
+- 🔴 **THE OBVIOUS ONE-SITE FIX IS INCOMPLETE — this is the part to carry forward.** The same
+  literal is spelled in **two independent places**: `internal/validate/pattern_test.go:403` and
+  `internal/cmd/message_quality_test.go:78`. Fixing only `internal/validate` leaves the second red,
+  so the bot stays blocked and the fix READS complete. (A third spelling is a comment,
+  `internal/validate/pattern.go:19` — illustrative, not a gate.) `via: measurement`
+- 🔴 **Ruled out — that the remedy is "consolidate them into one place".** It is NOT: what is
+  duplicated is a LITERAL, not a predicate, and collapsing both onto one source either re-creates
+  the self-block (if the source is the schema) or merely moves it (if it is a literal). The fix is
+  **asymmetric** — exactly ONE site keeps the literal, as the shape anchor, and the other derives:
+  - `pattern_test.go` → compare the template against a literal list, no schema involved. Shape
+    pinned; cannot self-block.
+  - `message_quality_test.go` → derive the expected message from `cli.SchemaJSON` the way the
+    `scopes` leg already does. Content moves with the schema; a wording change still fails because
+    the lead-in is spelled in the derivation. `internal/cmd` need not import `internal/validate`.
+    `via: code` — ⚠ and the KIND matters here: the two-literals FACT is measured, but this remedy is
+    reasoning over what each site asserts, **not yet built or run**. Treat it as the design to
+    attack, not a result.
+- ⚠ **A SECOND audit finding is open with it:** the comment at `pattern_test.go:416-423` calls
+  `schema-drift` *"strictly stronger"* than a hand-typed list. It is not — it compares the mirror
+  against the LIVE canonical, so a canonical that ITSELF drops a scope is invisible to it (four
+  scopes have already been retired upstream: `catalog:read`, `media:read:owned`,
+  `block:settings:read`, `block:settings:write`). A growth-tolerant SHRINK ledger would restore that
+  direction without self-blocking; additions need the required-check change instead.
+- **Next probe / the work:** both fixes in ONE PR, **based on `#749`** (it rewrites 482 lines of
+  `pattern_test.go`, so anything landing first conflicts), with the `contentRating`-grows mutant as
+  the red-at-base proof and a test that FAILS if either literal reappears.
+
+
+### Evicted 2026-09-28 (rank 27 close) — duplicate CDPATH bullet
+
+The SECOND of two near-identical statements of the same lesson in the doc's Gotchas section.
+The first survives in the doc; this copy is kept here so the eviction is a MOVE, not a loss.
+
+- 🔴 **`CDPATH` IS EXPORTED ON THIS HOST, SO `$(cd "$(dirname "$0")/.." && pwd)` RETURNS TWO LINES**
+  and `scripts/check-canonical-schema.sh` reports a confident **`FAIL: … has DRIFTED`** over a file
+  `cmp` calls identical. `jq` then fails inside a process substitution, which `set -euo pipefail` does
+  NOT catch, so `diff <(empty) <(canonical)` prints the whole canonical as `>` lines. **The tell is
+  that EVERY diff line is `>` — one operand is empty, not different.** Run repo scripts with
+  `env -u CDPATH`; do **not** "fix" the scripts — the idiom is correct and the host is the anomaly.
+  CI is unaffected, which is worse: it contradicts a green CI for reasons unrelated to the code.
+
+
+### Evicted 2026-09-29 (rank 27 close)
+
+Rank 27 merged as `civitai/cli#752` (`0f0777c4`). ⚠ The second block below asserts that
+fixing only `internal/validate` leaves the other site red; that was REFUTED by measurement
+(the site asserted with a prefix `strings.Contains`). See the doc's ✅ RESOLVED 2026-09-29
+block for the correction and for why the guard stack it produced was largely deleted.
+
+#### rank-27 eviction stub
+
+### ✅ CLOSED 2026-09-28 (rank 27) — `#745`'s own fix MOVED the self-block one field over
+
+🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
+under *Evicted 2026-09-28 (rank 27 close)*.** Shipped as `civitai/cli` **#752**; one of its claims was
+REFUTED — the ✅ RESOLVED block below has the correction and both mutants you need.
+
+#### rank-27 shipped / repro refuted
+
+### ✅ RESOLVED 2026-09-28 — rank 27 shipped, and its own stated repro was REFUTED
+- as-of: 2026-09-28
+
+🔴 **SUPERSEDES the evicted block *`#745`'s own fix MOVED the self-block one field over…*** (ARCHIVE,
+*Evicted 2026-09-28 (rank 27 close)*). Its *"Next probe / the work"* is SPENT — both fixes landed in
+#752 with the asymmetric remedy it designed, unchanged. It was right about the remedy and **wrong
+about the control**: do not re-run its repro as written and conclude anything from a green.
+
+- 🔴 **REFUTED — that the append repro reds the second site.** The evicted block gave the mutant as
+  `append ", \"nc17\""` and asserted *"Fixing only `internal/validate` leaves the second red"*. **It
+  does not.** `internal/cmd/message_quality_test.go` asserted with `strings.Contains`, and the
+  five-value literal is a **PREFIX** of the longer message, so appending left `internal/cmd` **GREEN**
+  while `internal/validate` went RED. Measured at base `2105a33`, with a positive control that the
+  mutant reached the output — the built CLI printed `…'pg13', 'r', 'x', 'nc17'`. Only an **INSERT or
+  reorder** reds both. The general rule is in *Gotchas*. `via: measurement`
+- **Still open, deliberately NOT built:** a growth-tolerant **SHRINK ledger**. `schema-drift` is NOT
+  "strictly stronger than a hand-typed list" as the old comment claimed — it diffs mirror against LIVE
+  canonical, so it is **blind to a value the canonical ITSELF retires**. #752 fixes the comment, not
+  the direction. Reasoning in `pattern_test.go`. **Not a to-do.** `via: code`
+- **Next probe:** confirm #752's checks, merge, verify by content on `main`, release the claim.
+
+#### docs-stack carry cost
+
+### ⚠ OPEN — the documentation stack is a measured cost problem
+- as-of: 2026-09-21
+
+- **Observed (with values):** carry cost = bytes × steps remaining, because the harness
+  resends the whole history each turn. Ranked that way over glm's run: scaffold source
+  **40.7%**, `node_modules` **28.2%**, scaffold README **12.8%**, the hosted prompt **5.1%**
+  (4th-highest single read, because it is first and is resent 66 times).
+- **The single largest attributable waste:** `useCreatePostFromApp` was documented **nowhere**
+  in the local stack — not the 40 KB scaffold README, not `AGENTS.md`, not the hosted prompt,
+  not 5,908 lines of scaffold source. Reverse-engineering it from `node_modules` cost
+  **706,371 carry tokens, 28.2% of the run**. **Fixed in `cli#685`** — a complete 36-hook
+  index now lands at byte 388 of the README, single-sourced from `internal/scaffold/hooks.go`
+  with a guard that fails in both directions.
+- **Also fixed in `cli#685`:** `AGENTS.md` was stale for **58 of 66 steps** (`app create`
+  never re-ran `agent-setup`, so it said "No Civitai App has been scaffolded"); the docs
+  links sat at 90% depth as a bare list and the agent made **exactly one HTTP request in 66
+  steps**; `--template` was absent from the commands table while the default is the 37-file
+  `page-money`.
+- 🔴 **A briefing error of mine, corrected by measurement:** I named
+  `hostHandlerParity.ts` as the source for the mock-host capability table. It covers the
+  three REAL hosts, not `createMockHost`. The published SDK answers directly — and
+  `CREATE_POST_FROM_APP` **is** mocked, which is what glm spent ~380,000 carry tokens
+  discovering by reading `mockHost.js` line by line.
+- **Still open:** 96.3% of glm's prompt tokens were **cache reads**, so quoting 2.5M as
+  fresh overstates it; and ~4 of the 6.3× cost gap between the runs is **model price**, not
+  tokens. The doc stack owns the 1.6× volume difference, not the 6.3×.
+- **Next probe:** re-measure carry cost on a post-`cli#685` trial to price the fix. Free if
+  folded into rank 6.
+
+#### cli#685 pricing — blocked on a release
+
+### 🔴 OPEN — pricing `cli#685` CANNOT ride along with rank 6; it is blocked on a release
+- as-of: 2026-09-21
+
+🔴 **This CORRECTS rank 6's own instruction** (*"⚠ Re-measure carry cost while running, to
+price `cli#685`"*) **and the doc-cost block's** *"Next probe: re-measure carry cost on a
+post-`cli#685` trial … **Free if folded into rank 6.**" Both sentences are wrong about the
+same mechanism: it is neither free nor possible.
+
+- **Symptom + exact repro:** step 5 of every trial is `npm install -g @civitai/cli`. A
+  trial runs the **published** CLI, never this repo's tree, so a merged-but-unreleased doc
+  fix is invisible to every cell.
+- **Observed (with values), three agreeing reads:** `npm view @civitai/cli version` →
+  **`0.1.106`** (`time.modified` 2026-09-19T19:41Z); `git tag --contains bdeddef` →
+  **empty**, `git describe origin/main` → **`v0.1.106`**; and the running container's own
+  artefact, `head -c 600 /work/ab-prompt-to-post/README.md | grep -c useCreatePostFromApp`
+  → **0**, at the byte offset (388) where `#685` places the 36-hook index.
+  `via: measurement`
+- **Ruled out — that the deepseek cell prices the fix.** `civitai --version` inside its
+  container reads **0.1.106**. `via: measurement`
+- 🔴 **The consequence is load-bearing for the matrix, and it is favourable:** glm, mimo and
+  deepseek all ran the **same pre-`#685` doc stack**, so the three cheap cells differ on the
+  **model axis alone**. A release landing mid-matrix would have confounded exactly the
+  comparison the frozen condition asks for.
+- **Observed — the cost is still being paid:** the deepseek trial spent steps 26–31
+  grepping `node_modules` for `useCreatePostFromApp` / `BlockCreatePostRequest` /
+  `firstImageUrl`, the same reverse-engineering that cost glm **706,371 carry tokens,
+  28.2% of its run**. `via: measurement`
+- **Next probe:** cut a release containing `bdeddef`, then re-run ONE genpost cell on the
+  same model and diff carry cost. Until then the doc-stack block's figures are a claim
+  about `0.1.106` and nothing newer.
