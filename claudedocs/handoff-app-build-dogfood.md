@@ -755,8 +755,6 @@ so you know whether to open it: a backtick inside a double-quoted `echo` EXECUTE
 - 🔴 **AUDIT PROVENANCE — "merged" ≠ "audited", and only ONE was.** `#745` is the only PR ever audited
   for CORRECTNESS (it found three defects, **two introduced by the fix itself**). `#749` had round 0
   only; `#748`/`#747` merged on mutation batteries plus CI by dated operator decision; **`#752` none.**
-- ⚠ **THE DOC CEILING IS BYTES, NOT CHARACTERS.** `len(open(p).read())` counts characters and this doc
-  is dense with `🔴 ⚠ ✅ —` — an 890 B gap that once made a 65,618 B file report 64,728. **Use `wc -c`.**
 - 🔴 **MEASURED — the vendored enum's CONTENT is guarded by nothing that can block a merge:** injecting
   `evil:total:takeover` into the scope enum leaves `internal/validate` and `internal/manifest` **GREEN**.
   The gap the `schema-drift` required-check would close.
