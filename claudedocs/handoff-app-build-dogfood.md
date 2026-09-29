@@ -206,62 +206,15 @@ probe that assumes a merged fix is live.
   bigger than `#745`. Until then, the rule is in `semantic_test.go`'s docstring: when the schema
   gains a scope, re-read the deployed constant by hand.
 
-### ✅ RESOLVED 2026-09-29 — five correctness rounds hardened a guard whose premise was measurably wrong
-- as-of: 2026-09-29
+### Evicted 2026-09-29 (close) — the round-5 record and the two follow-ups
 
-🔴 **SUPERSEDES every rank-27 block** (evicted). Rank 27 shipped, but the durable finding is what
-round 5 produced when it finally asked whether the work should exist. Rounds 0–4 audited for
-CORRECTNESS and each found real defects; **every one was in the guards, none in the product.**
-
-- 🔴 **`schema-drift` IS NOT A REQUIRED CHECK.** Required: `pins-vs-published, scaffold-currency,
-  build-test, ready-ack-runtime, template-page-vite`. So the "reds every PR" blast radius the whole
-  edifice was sized against is **cosmetic, not a merge block**. 🔴 **I measured this myself early in
-  the session and wrote it into this doc as an open item, then argued ~15 times as if the opposite
-  were true.** `via: measurement`
-- 🔴 **`contentRating` HAS NEVER GROWN** — identical across all 18 commits that touched the schema.
-  The volatile enums are `scopes` (grew 4×, 4 retired) and `auth` (new 09-24, already revised). I
-  hardened the one stable field. `via: measurement`
-- 🔴 **THE INCIDENTS I CITED WERE MISATTRIBUTED — the repeat offence.** Run-log attributed: **#486**
-  (31 min) was *pattern-gloss debt*; **#695** was `internal/pkgzip`. Only **#607** was a literal
-  self-block, on `scopes`, already fixed by `#745`. **I quoted "31 min / 11 h" as instances of the
-  literal class without opening one run log** — the exact error this doc already records as a
-  retraction, repeated while that correction sat in the document I was reading. `via: measurement`
-- 🔴 **MY ROUND-1 FIX WAS NET-NEGATIVE.** Verified: retiring a rating reds `internal/validate`, so
-  `go test ./...` fails, so `revendor-canonical-schema.yml` (which runs the suite *before* opening
-  its PR) opens none, the mirror stays stale, `schema-drift` reds. Its message demanded four hand
-  edits for zero behaviour change; retirement is a demonstrated class (4 scopes). Deleted in
-  `76a80b9`, **−270 lines**. `via: measurement`
-- **Kept on measurement:** the two-site derive/freeze fix; the ledger's file SET + per-file COUNT;
-  both `internal/cmd` controls. ⚠ **NOW UNCOVERED:** a retired/renamed `contentRating` reaches the
-  CLI with nothing reddening, and `schema-drift` cannot see it either. Judgement: no local guard —
-  the resynced mirror rejects it. If ever covered, **outside `go test`**, or the bot blocks again.
-- **Next probe:** none. Closed.
-
-### 🟡 OPEN — two round-5 findings in flight as PRs, neither audited
-- as-of: 2026-09-29
-
-- **#755 — the auth self-block five rounds walked past.** `internal/manifest/manifest_test.go`
-  compared schema-derived `AuthKinds()` against hand-typed `{"block-token","oauth"}`, so a new auth
-  kind reds `go test ./...` and blocks the bot — on the schema's most volatile field. **Both arms:**
-  grow the enum at `origin/main` → `FAIL`; with the fix → `ok`; below 2 entries → the new vacuity
-  floor fires (deriving both sides otherwise lets `[] == []` agree while `LoadAuth` admits nothing).
-  ⚠ Residues in the PR: the README-prose sync is no longer enforced (a docs signal; gating the bot
-  on it was the wrong instrument), and `TestLoadAuth`'s rows still red on a RETIREMENT.
-  `via: measurement`
-- **#756 — `schema-drift` off `pull_request`.** It asks about an EXTERNAL resource, so a stale mirror
-  reddened every open PR and blamed whoever pushed next (measured: five). Now its own workflow:
-  `push: main` + `pull_request` filtered to `schema/**` + `workflow_dispatch`. 🔴 **A path filter
-  ALONE would be wrong** — an upstream publish touches no file, so a filtered PR run never fires;
-  `push: main` preserves detection. No cron (the re-vendor workflow already fetches every 6 h *and*
-  remediates). Five stale comments in that workflow updated in the same commit. Verified: all three
-  workflows parse, all five required contexts still defined, script green at rest / `rc=1` mutated.
-  `via: measurement`
-- ⚠ **Round 5's third recommendation was DECLINED** and is recorded here, not as a rank, because
-  nothing external asks for it: one ~12-line CI job growing every string enum and requiring the
-  suite green — **38.9 s**, all 8 enums, every construction shape, cannot self-block, and **reds on
-  `auth` today** so it could only land after #755. It tests the PROPERTY rather than policing
-  spellings, and is strictly stronger than what shipped. `via: measurement`
-- **Next probe:** `gh pr checks 755`/`756`, merge, verify by content. `/audit-pr` round 0 only.
+🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
+under *Evicted 2026-09-29 (close)*.** Both are closed: the follow-ups merged as `#755`/`#756`, and
+the round-5 record's DISTILLED lessons are kept live in *Gotchas* (ask whether the work should
+exist before auditing whether it is correct; measure a guard's own failure cost first; a spelling
+guard on a provenance property is walkable). **Read the archive before re-adding any guard over the
+vendored schema** — it carries why `schema-drift` is not a required check, that `contentRating` has
+never changed, and which run logs the cited incidents actually name.
 
 ## Next steps (ranked)
 
