@@ -264,45 +264,14 @@ same mechanism: it is neither free nor possible.
   bigger than `#745`. Until then, the rule is in `semantic_test.go`'s docstring: when the schema
   gains a scope, re-read the deployed constant by hand.
 
-### 🔴 OPEN — `#745`'s own fix MOVED the self-block one field over, and a second copy of the literal makes the obvious fix incomplete
-- as-of: 2026-09-28
+### ✅ CLOSED 2026-09-28 (rank 27) — `#745`'s own fix MOVED the self-block one field over
 
-Found by the nine-axis audit of `#745`, and **independently re-derived by the `#749` agent's own
-enumeration** — two sources, different methods, same conclusion. All of it re-verified by hand here.
-
-- **Symptom + exact repro:** add a value to the canonical's `contentRating` enum → `#745`'s anchor
-  `t.Fatalf`s at `internal/validate/pattern_test.go:405`, so `go test ./...` reds inside
-  `revendor-canonical-schema.yml`'s `validate` step, no PR opens, `schema-drift` stays red
-  repo-wide. **That is the same mechanism `#745` exists to remove.** `via: measurement` (mutated the
-  one-line `"enum": ["g", "pg", "pg13", "r", "x"]` and watched it fire).
-- 🔴 **And the message misattributes:** it says *"the enum message SHAPE moved"*. The shape did not
-  move; the rating list grew. A reader is sent to `schemaErrors` instead of to `contentRating`.
-- 🔴 **THE OBVIOUS ONE-SITE FIX IS INCOMPLETE — this is the part to carry forward.** The same
-  literal is spelled in **two independent places**: `internal/validate/pattern_test.go:403` and
-  `internal/cmd/message_quality_test.go:78`. Fixing only `internal/validate` leaves the second red,
-  so the bot stays blocked and the fix READS complete. (A third spelling is a comment,
-  `internal/validate/pattern.go:19` — illustrative, not a gate.) `via: measurement`
-- 🔴 **Ruled out — that the remedy is "consolidate them into one place".** It is NOT: what is
-  duplicated is a LITERAL, not a predicate, and collapsing both onto one source either re-creates
-  the self-block (if the source is the schema) or merely moves it (if it is a literal). The fix is
-  **asymmetric** — exactly ONE site keeps the literal, as the shape anchor, and the other derives:
-  - `pattern_test.go` → compare the template against a literal list, no schema involved. Shape
-    pinned; cannot self-block.
-  - `message_quality_test.go` → derive the expected message from `cli.SchemaJSON` the way the
-    `scopes` leg already does. Content moves with the schema; a wording change still fails because
-    the lead-in is spelled in the derivation. `internal/cmd` need not import `internal/validate`.
-    `via: code` — ⚠ and the KIND matters here: the two-literals FACT is measured, but this remedy is
-    reasoning over what each site asserts, **not yet built or run**. Treat it as the design to
-    attack, not a result.
-- ⚠ **A SECOND audit finding is open with it:** the comment at `pattern_test.go:416-423` calls
-  `schema-drift` *"strictly stronger"* than a hand-typed list. It is not — it compares the mirror
-  against the LIVE canonical, so a canonical that ITSELF drops a scope is invisible to it (four
-  scopes have already been retired upstream: `catalog:read`, `media:read:owned`,
-  `block:settings:read`, `block:settings:write`). A growth-tolerant SHRINK ledger would restore that
-  direction without self-blocking; additions need the required-check change instead.
-- **Next probe / the work:** both fixes in ONE PR, **based on `#749`** (it rewrites 482 lines of
-  `pattern_test.go`, so anything landing first conflicts), with the `contentRating`-grows mutant as
-  the red-at-base proof and a test that FAILS if either literal reappears.
+🔴 **MOVED, NOT DELETED — verbatim in [`handoff-app-build-dogfood-ARCHIVE.md`](handoff-app-build-dogfood-ARCHIVE.md)
+under *Evicted 2026-09-28 (rank 27 close)*.** Shipped as `civitai/cli` **#752**. Read it there before
+re-running any probe from it — and note that **one of its claims was REFUTED by measurement**: its
+stated repro (append a rating) cannot red the `internal/cmd` site, because that site asserted with a
+prefix `strings.Contains`. The correction, and both mutants you actually need, are in the ✅ RESOLVED
+block below.
 
 ## Next steps (ranked)
 
