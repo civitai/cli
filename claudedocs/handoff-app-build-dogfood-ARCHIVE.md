@@ -1059,3 +1059,17 @@ enumeration** — two sources, different methods, same conclusion. All of it re-
 - **Next probe / the work:** both fixes in ONE PR, **based on `#749`** (it rewrites 482 lines of
   `pattern_test.go`, so anything landing first conflicts), with the `contentRating`-grows mutant as
   the red-at-base proof and a test that FAILS if either literal reappears.
+
+
+### Evicted 2026-09-28 (rank 27 close) — duplicate CDPATH bullet
+
+The SECOND of two near-identical statements of the same lesson in the doc's Gotchas section.
+The first survives in the doc; this copy is kept here so the eviction is a MOVE, not a loss.
+
+- 🔴 **`CDPATH` IS EXPORTED ON THIS HOST, SO `$(cd "$(dirname "$0")/.." && pwd)` RETURNS TWO LINES**
+  and `scripts/check-canonical-schema.sh` reports a confident **`FAIL: … has DRIFTED`** over a file
+  `cmp` calls identical. `jq` then fails inside a process substitution, which `set -euo pipefail` does
+  NOT catch, so `diff <(empty) <(canonical)` prints the whole canonical as `>` lines. **The tell is
+  that EVERY diff line is `>` — one operand is empty, not different.** Run repo scripts with
+  `env -u CDPATH`; do **not** "fix" the scripts — the idiom is correct and the host is the anomaly.
+  CI is unaffected, which is worse: it contradicts a green CI for reasons unrelated to the code.
