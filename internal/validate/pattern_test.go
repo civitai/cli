@@ -552,10 +552,12 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 				"against the live canonical, so once the mirror resyncs both sides agree.\n"+
 				"  If the removal is intended, drop it from `frozenRatings` AND from the "+
 				"`wantContentRating` constant in the same commit. ⚠ If it is one of `g`, `pg` or `pg13` "+
-				"you must also hand-edit `ratingListNeedle` in content_rating_literal_ledger_test.go, "+
-				"which is frozen on those three — otherwise that ledger reds claiming the shape anchor "+
-				"is gone while the anchor is intact. That is the one case where editing the needle is "+
-				"correct.\n"+
+				"THREE more edits are needed or you will just move the red: hand-edit "+
+				"`ratingListNeedle` in content_rating_literal_ledger_test.go (frozen on those three), "+
+				"and update the specimen in `internal/validate/pattern.go`'s package doc comment, which "+
+				"that same needle must keep matching. Measured: doing only the first two lands you on "+
+				"a SHRANK failure naming pattern.go. That is the one case where editing the needle is "+
+				"correct; deriving it never is.\n"+
 				"  ⚠ This loop only covers the values named in `frozenRatings`; a rating the canonical "+
 				"added later and then retired is invisible to it.",
 				must, len(ratings), ratings)

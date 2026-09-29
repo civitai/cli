@@ -1,6 +1,9 @@
 package cli_test
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -53,9 +56,10 @@ import (
 // message. Recorded as a pair because the correction went too wide, then too
 // narrow, and the next reader should not have to rediscover either direction.
 //
-// The file SET and the per-file COUNT are both asserted, so a spelling added
-// inside a file that is already ledgered is caught too — for every ledgered file,
-// not just the anchor.
+// THREE things are asserted, and the third is not a spelling: the file SET, the
+// per-file COUNT (so a spelling added inside an already-ledgered file is caught, for
+// every entry and not just the anchor), and the anchor specimen's PROVENANCE against
+// the syntax tree — see `assertFrozenRatingsIsHandWritten`.
 //
 // 🔴 WHAT IT DOES NOT CATCH, stated so the comment is not wider than the code.
 // The needle is a SPELLING — the first three ratings in order, in either Go-string
@@ -87,25 +91,36 @@ import (
 //	"g", "pg", "pg13"     — as a Go string slice
 var ratingListNeedle = regexp.MustCompile(`['"]g['"]\s*,\s*['"]pg['"]\s*,\s*['"]pg13['"]`)
 
-// anchorCallNeedle pins the anchor's CALL SITE, which the rating-list count above
-// structurally cannot see.
+// anchorRatingsVar names the anchor's specimen variable in
+// `internal/validate/pattern_test.go`. Its PROVENANCE is asserted against that
+// file's syntax tree by `assertFrozenRatingsIsHandWritten` below.
 //
-// 🔴 WHY IT EXISTS, AND IT IS A REGRESSION THIS LADDER INTRODUCED. The anchor's
-// hand-written list was hoisted into a `frozenRatings` variable so the subset
-// shrink guard could reuse it instead of the ratings being typed a third time.
-// That gave the literal a SECOND consumer — and the count pin counts SPELLINGS, so
-// re-deriving the anchor's operand (`enumMessage("contentRating", schemaEnum(…))`)
-// while leaving `frozenRatings` alive for the subset loop keeps the count at 2 and
-// the ledger GREEN. Measured: that exact edit was caught before the hoist and was
-// silent after it, and an additive canonical then restores the self-block in full —
-// which on `ci.yml`'s path-filter-free `schema-drift` is a red check on every
-// unrelated PR in the repo. So the call site is pinned as well as the spelling.
+// 🔴 A REGRESSION THIS LADDER INTRODUCED, AND THEN GUARDED TWICE BADLY BEFORE
+// GUARDING IT STRUCTURALLY — the history is kept because each step was measured.
+// The anchor's hand-written list was hoisted into this variable so the subset shrink
+// guard could reuse it rather than the ratings being typed a third time. That gave
+// the literal a SECOND consumer, and the count pin above counts SPELLINGS: so
+// re-deriving the anchor's operand while leaving the variable alive for the subset
+// loop kept the count at 2 and the ledger GREEN, with the self-block returning the
+// moment a canonical added a rating — on `ci.yml`'s path-filter-free `schema-drift`,
+// a red check on every unrelated PR in the repo.
 //
-// ⚠ It is a SPELLING, and it fails toward RED. Renaming `frozenRatings`, or wrapping
-// it (`append([]string{}, frozenRatings...)`), reds this without the hazard being
-// present. That is the safe direction and it is deliberate: a false red costs a
-// reader one minute, while the false green this replaces costs the whole repo's CI.
-var anchorCallNeedle = regexp.MustCompile(`enumMessage\("contentRating",\s*frozenRatings\)`)
+// The first repair pinned the CALL SITE TEXT with a regex. That had its own measured
+// false green: a REASSIGNMENT after the declaration —
+//
+//	frozenRatings := []string{"g", "pg", "pg13", "r", "x"}
+//	frozenRatings = schemaEnum(t, "properties", "contentRating", "enum")  // hazard
+//
+// left the pinned text matching, the spelling count at 2, every guard green, and the
+// self-block fully restored on the next additive canonical.
+//
+// 🔴 THE LESSON, AFTER THREE SPELLING-BASED GUARDS IN THIS FILE WERE WALKED: the
+// property is PROVENANCE — hand-written or schema-derived — and no comparison of
+// VALUES can see it, because at rest the two are EQUAL. That equality is the whole
+// reason the original defect shipped unnoticed. Provenance is a fact about the
+// SOURCE, so it is asserted against the syntax tree, which also retires the regex's
+// false reds: a rename or a wrapped argument no longer matters.
+const anchorRatingsVar = "frozenRatings"
 
 // ratingLedgerEntry is one permitted writer: why it may spell the list, and HOW
 // MANY times. The count is per entry rather than a single constant for one file —
@@ -224,21 +239,39 @@ func TestContentRatingLiteralHasExactlyTheLedgeredWriters(t *testing.T) {
 		}
 		for _, p := range want {
 			if _, ok := found[p]; !ok {
-				t.Errorf("SHRANK: %s no longer spells the contentRating list (%s).\n"+
-					"  The anchor has TWO jobs and losing it costs both.\n"+
-					"  (1) WORDING: a reword of the validation library's lead-in can then be PAPERED OVER\n"+
-					"      by editing enumMessage to match it, and nothing would object. (It does NOT mean\n"+
-					"      nothing can fail — a reword still reds the want-map comparison against real\n"+
-					"      output; that wider claim was measured false.)\n"+
-					"  (2) SPECIMEN: the anchor is the only thing pinning `frozenRatings`, which is the\n"+
-					"      subset shrink guard's specimen. Measured: with the anchor deleted, trimming\n"+
-					"      `frozenRatings` to one value leaves this package AND this ledger green, and the\n"+
-					"      shrink guard then asserts almost nothing.\n"+
-					"  Restore a hand-written specimen, or delete this ledger entry and say in its place\n"+
-					"  what now pins the WORDING *and* what pins `frozenRatings`. An earlier version of\n"+
-					"  this message asked only about the wording, so a reader who followed it exactly\n"+
-					"  destroyed the shrink guard and saw nothing red.",
-					p, ratingLiteralLedger[p].reason)
+				// 🔴 THE ANCHOR-SPECIFIC PARAGRAPHS ARE GATED ON THE FILE, and an earlier
+				// version printed them for EVERY ledgered file. Trimming the prose specimen
+				// in `internal/validate/pattern.go` — an ordinary comment edit — fired a
+				// fourteen-line lecture about an anchor, a constant and `frozenRatings`, none
+				// of which that file contains, while the real anchor sat intact in another
+				// file. The per-entry `remedy` existed and went unprinted. Same defect the
+				// `n<want` arm was split to fix, in the arm that round did not touch.
+				e := ratingLiteralLedger[p]
+				msg := "SHRANK: %s no longer spells the contentRating list (%s).\n" +
+					"  Restore the hand-written spelling this entry is for: " + e.remedy + "\n"
+				if p == anchorFile {
+					msg += "  🔴 The anchor has TWO jobs and losing it costs both.\n" +
+						"  (1) WORDING: a reword of the validation library's lead-in can then be PAPERED\n" +
+						"      OVER by editing enumMessage to match it, and nothing would object. (It does\n" +
+						"      NOT mean nothing can fail — a reword still reds the want-map comparison\n" +
+						"      against real output; that wider claim was measured false.)\n" +
+						"  (2) SPECIMEN: the anchor is what keeps `" + anchorRatingsVar + "` a hand-written\n" +
+						"      value at all — it is the subset shrink guard's specimen. Measured: with the\n" +
+						"      anchor deleted, trimming it to one value leaves this package AND this ledger\n" +
+						"      green, and the shrink guard then asserts almost nothing.\n" +
+						"      ⚠ The anchor pins the value's EXISTENCE, not the shrink guard's USE of it —\n" +
+						"      swapping that loop to range the schema's own values is a separate hazard, and\n" +
+						"      `assertFrozenRatingsIsHandWritten` is what catches that one.\n" +
+						"  So: restore it, or delete this ledger entry and say in its place what now pins\n" +
+						"  the WORDING *and* what pins `" + anchorRatingsVar + "`. An earlier version asked\n" +
+						"  only about the wording, so a reader who followed it exactly destroyed the shrink\n" +
+						"  guard and saw nothing red.\n" +
+						"  ⚠ If one of the FIRST THREE ratings was retired upstream this arm fires even\n" +
+						"  though the anchor is INTACT — `ratingListNeedle` is frozen on `g, pg, pg13`, so\n" +
+						"  a consistent retirement drops BOTH spellings and the file leaves the walk\n" +
+						"  entirely. In that one case hand-edit the needle; deriving it never is correct."
+				}
+				t.Errorf(msg, p, e.reason)
 			}
 		}
 	}
@@ -275,31 +308,109 @@ func TestContentRatingLiteralHasExactlyTheLedgeredWriters(t *testing.T) {
 				"  OR, if the removal was deliberate and this entry's number is simply now wrong, lower\n"+
 				"  its `want` and say why. A mis-typed want and a real regression print the same thing,\n"+
 				"  so that branch has to be offered explicitly.\n"+
-				"  ⚠ If one of the FIRST THREE ratings was retired upstream, this arm can fire even\n"+
-				"  though the anchor is intact — `ratingListNeedle` is frozen on `g, pg, pg13`, so the\n"+
-				"  needle itself must be hand-edited too. That is the one case where editing the needle\n"+
-				"  is correct; deriving it from the schema never is.",
+				"  (The upstream-retirement case does NOT reach this arm — a consistent retirement of\n"+
+				"  one of the first three ratings drops every spelling in the file, so it routes to\n"+
+				"  SHRANK above. That note lived here and was measured unreachable.)",
 				p, n, e.want, e.reason, e.remedy)
 		}
 	}
 
-	// 🔴 THE ANCHOR'S CALL SITE, pinned separately because the count above counts
-	// SPELLINGS and cannot see which call consumes them. See anchorCallNeedle.
 	if _, ok := ratingLiteralLedger[anchorFile]; ok {
-		b, err := os.ReadFile(anchorFile)
-		if err != nil {
-			t.Fatalf("reading the anchor file %s: %v", anchorFile, err)
+		assertFrozenRatingsIsHandWritten(t)
+	}
+}
+
+// assertFrozenRatingsIsHandWritten pins the PROVENANCE of the anchor's specimen
+// against the anchor file's syntax tree: it must be declared once from a literal,
+// never reassigned, and it must be the thing the subset shrink guard ranges over.
+//
+// 🔴 EACH OF THE THREE CLAUSES CLOSES A MEASURED FALSE GREEN, and all three were
+// invisible to the spelling counts above — which is the reason this is an AST check
+// and not a fourth regex:
+//
+//	declared-from-a-literal   `frozenRatings := schemaEnum(…)` makes the anchor a
+//	                          mirror again. Caught before the specimen was hoisted
+//	                          into a variable; silent afterwards.
+//	never-reassigned          `frozenRatings = schemaEnum(…)` on a later line keeps
+//	                          the declaration, the spelling count AND the call-site
+//	                          text intact while the value becomes schema-derived.
+//	ranged-by-the-subset-loop `range frozenRatings` -> `range ratings` compiles, is
+//	                          green everywhere, and makes the subset assertion
+//	                          tautological — so the retirement coverage this PR
+//	                          added to replace what it removed silently disappears.
+//
+// All three share one shape: the guarded property is whether a value is HAND-WRITTEN
+// or SCHEMA-DERIVED, and at rest those two are equal, so no comparison of values can
+// tell them apart. That equality is exactly why the original defect shipped unseen.
+//
+// ⚠ Scope, so this comment is not wider than its code: it reads ONE function in ONE
+// file and asserts three syntactic facts about one identifier. It does not prove the
+// anchor is correct, and a rename of the identifier reds it — update
+// `anchorRatingsVar`. It cannot see a hazard routed through a helper that returns a
+// schema read while looking literal at this call depth; that residue is unguarded and
+// is recorded here rather than implied away.
+func assertFrozenRatingsIsHandWritten(t *testing.T) {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, anchorFile, nil, 0)
+	if err != nil {
+		t.Fatalf("parsing the anchor file %s: %v", anchorFile, err)
+	}
+
+	var decls, reassigns, rangedBy int
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.AssignStmt:
+			for i, lhs := range node.Lhs {
+				id, ok := lhs.(*ast.Ident)
+				if !ok || id.Name != anchorRatingsVar {
+					continue
+				}
+				if node.Tok == token.DEFINE {
+					decls++
+					// The RHS must be a literal, not a call. A call here is the
+					// mirror the whole change exists to remove.
+					if i < len(node.Rhs) {
+						if _, isLit := node.Rhs[i].(*ast.CompositeLit); !isLit {
+							t.Errorf("%s declares %s from something other than a composite literal.\n"+
+								"  🔴 If that is a schema read, THE SELF-BLOCK IS BACK: the anchor becomes a\n"+
+								"  mirror of the live enum, and an additive canonical reds it — and with it\n"+
+								"  `schema-drift` on every unrelated PR in this repo. The specimen must be\n"+
+								"  hand-written.", anchorFile, anchorRatingsVar)
+						}
+					}
+				} else {
+					reassigns++
+				}
+			}
+		case *ast.RangeStmt:
+			if id, ok := node.X.(*ast.Ident); ok && id.Name == anchorRatingsVar {
+				rangedBy++
+			}
 		}
-		if n := len(anchorCallNeedle.FindAll(b, -1)); n != 1 {
-			t.Errorf("the anchor no longer hands its HAND-WRITTEN list to enumMessage: %s matches "+
-				"`enumMessage(\"contentRating\", frozenRatings)` %d times, want 1.\n"+
-				"  🔴 If the operand was replaced with a schema read, THE SELF-BLOCK IS BACK and the\n"+
-				"  rating-list count cannot see it: `frozenRatings` still exists for the subset guard,\n"+
-				"  so the spelling count is unchanged and every other test here stays green until a\n"+
-				"  canonical adds a rating — at which point `schema-drift` reds on every unrelated PR\n"+
-				"  in this repo. Both anchor operands must be hand-written.\n"+
-				"  If you renamed `frozenRatings` or wrapped the argument, this is a false red: update\n"+
-				"  anchorCallNeedle to the new spelling.", anchorFile, n)
-		}
+		return true
+	})
+
+	if decls != 1 {
+		t.Errorf("%s declares %s %d times, want exactly 1 — this check reads the wrong thing "+
+			"if the identifier moved or was renamed; update anchorRatingsVar.",
+			anchorFile, anchorRatingsVar, decls)
+	}
+	if reassigns != 0 {
+		t.Errorf("%s REASSIGNS %s %d time(s) after declaring it.\n"+
+			"  🔴 A reassignment is how the specimen becomes schema-derived while every textual\n"+
+			"  guard stays green: the declaration, the spelling count and the call site are all\n"+
+			"  unchanged, and the self-block returns the moment a canonical adds a rating.\n"+
+			"  If the reassignment is genuinely hand-written data, inline it into the declaration.",
+			anchorFile, anchorRatingsVar, reassigns)
+	}
+	if rangedBy != 1 {
+		t.Errorf("%s ranges over %s %d times, want exactly 1 — the subset shrink guard.\n"+
+			"  🔴 If that loop now ranges the SCHEMA's values instead, the assertion is tautological\n"+
+			"  and green forever: the retirement coverage this PR added to replace the coverage it\n"+
+			"  removed is gone, and an upstream retirement becomes invisible repo-wide. The loop must\n"+
+			"  range the hand-written specimen and compare it AGAINST the schema.",
+			anchorFile, anchorRatingsVar, rangedBy)
 	}
 }
