@@ -122,6 +122,11 @@ var ratingListNeedle = regexp.MustCompile(`['"]g['"]\s*,\s*['"]pg['"]\s*,\s*['"]
 // false reds: a rename or a wrapped argument no longer matters.
 const anchorRatingsVar = "frozenRatings"
 
+// anchorFunc is the function whose body `assertFrozenRatingsIsHandWritten` reads.
+// The walk is scoped to it, not to the whole file: a file-wide walk was measured
+// evadable by a helper whose PARAMETER carried the same name.
+const anchorFunc = "TestEnumFindingsKeepTheirExactWording"
+
 // ratingLedgerEntry is one permitted writer: why it may spell the list, and HOW
 // MANY times. The count is per entry rather than a single constant for one file —
 // an earlier version pinned only the anchor, so a second spelling added to
@@ -146,8 +151,8 @@ type ratingLedgerEntry struct {
 	remedy string
 }
 
-// anchorFile is the file whose enumMessage call site is pinned by
-// anchorCallNeedle. Named once so the ledger entry and the check cannot drift.
+// anchorFile is the file holding the shape anchor. Named once so the ledger entry,
+// the SHRANK arm's anchor-specific branch and the provenance check cannot drift apart.
 const anchorFile = "internal/validate/pattern_test.go"
 
 // ratingLiteralLedger is the EXACT set of Go files permitted to spell the rating
@@ -247,8 +252,16 @@ func TestContentRatingLiteralHasExactlyTheLedgeredWriters(t *testing.T) {
 				// file. The per-entry `remedy` existed and went unprinted. Same defect the
 				// `n<want` arm was split to fix, in the arm that round did not touch.
 				e := ratingLiteralLedger[p]
+				// 🔴 `remedy` is passed as an ARGUMENT, never spliced into the format
+				// string. Concatenating it made any future `%` in that data corrupt the
+				// message — measured, `"… 100% prose …"` rendered as
+				// `100%!p(MISSING)rose` — and `go vet` is SILENT on it, because a
+				// non-constant format with args disables the printf check.
 				msg := "SHRANK: %s no longer spells the contentRating list (%s).\n" +
-					"  Restore the hand-written spelling this entry is for: " + e.remedy + "\n"
+					"  Restore the hand-written spelling this entry is for: %s\n" +
+					"  OR, if that spelling was deliberately rewritten away, delete this ledger entry and\n" +
+					"  say in its place what now covers what it covered. For a prose-only entry that is a\n" +
+					"  legitimate change and de-ledgering is the right answer.\n"
 				if p == anchorFile {
 					msg += "  🔴 The anchor has TWO jobs and losing it costs both.\n" +
 						"  (1) WORDING: a reword of the validation library's lead-in can then be PAPERED\n" +
@@ -271,7 +284,7 @@ func TestContentRatingLiteralHasExactlyTheLedgeredWriters(t *testing.T) {
 						"  a consistent retirement drops BOTH spellings and the file leaves the walk\n" +
 						"  entirely. In that one case hand-edit the needle; deriving it never is correct."
 				}
-				t.Errorf(msg, p, e.reason)
+				t.Errorf(msg, p, e.reason, e.remedy)
 			}
 		}
 	}
@@ -358,8 +371,25 @@ func assertFrozenRatingsIsHandWritten(t *testing.T) {
 		t.Fatalf("parsing the anchor file %s: %v", anchorFile, err)
 	}
 
+	// 🔴 SCOPED TO ONE FUNCTION'S BODY, not the file. An earlier version walked the
+	// whole file, which made the doc above ("ONE function in ONE file") FALSE and was
+	// measured evadable: a helper whose PARAMETER is named `frozenRatings` satisfied
+	// the range clause from a different function while the real subset loop compared
+	// the schema against itself, and retiring a rating went invisible.
+	var body *ast.BlockStmt
+	for _, d := range f.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == anchorFunc && fn.Recv == nil {
+			body = fn.Body
+			break
+		}
+	}
+	if body == nil {
+		t.Fatalf("%s declares no func %s — this check cannot read what it is for, so a PASS "+
+			"would be vacuous. If the anchor moved, update anchorFunc.", anchorFile, anchorFunc)
+	}
+
 	var decls, reassigns, rangedBy int
-	ast.Inspect(f, func(n ast.Node) bool {
+	ast.Inspect(body, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.AssignStmt:
 			for i, lhs := range node.Lhs {
@@ -367,21 +397,49 @@ func assertFrozenRatingsIsHandWritten(t *testing.T) {
 				if !ok || id.Name != anchorRatingsVar {
 					continue
 				}
-				if node.Tok == token.DEFINE {
-					decls++
-					// The RHS must be a literal, not a call. A call here is the
-					// mirror the whole change exists to remove.
-					if i < len(node.Rhs) {
-						if _, isLit := node.Rhs[i].(*ast.CompositeLit); !isLit {
-							t.Errorf("%s declares %s from something other than a composite literal.\n"+
-								"  🔴 If that is a schema read, THE SELF-BLOCK IS BACK: the anchor becomes a\n"+
-								"  mirror of the live enum, and an additive canonical reds it — and with it\n"+
-								"  `schema-drift` on every unrelated PR in this repo. The specimen must be\n"+
-								"  hand-written.", anchorFile, anchorRatingsVar)
-						}
-					}
-				} else {
+				if node.Tok != token.DEFINE {
 					reassigns++
+					continue
+				}
+				decls++
+				// 🔴 THE RHS MUST BE A LITERAL, AND THE SHAPE MATTERS. An earlier
+				// version indexed `node.Rhs[i]` behind `if i < len(node.Rhs)`, which
+				// turned the one case that evades it into a SILENT SKIP: for a
+				// multi-value assignment from a single call, `len(Rhs)` is 1 while the
+				// identifier sits at i==1, so the clause never ran while `decls` still
+				// counted. Measured — `_, frozenRatings := ratingsPair(t)` was GREEN at
+				// index 1 and RED at index 0.
+				var rhs ast.Expr
+				switch {
+				case len(node.Rhs) == len(node.Lhs):
+					rhs = node.Rhs[i] // parallel assignment
+				case len(node.Rhs) == 1:
+					rhs = node.Rhs[0] // one multi-value call feeding every LHS
+				}
+				if _, isLit := rhs.(*ast.CompositeLit); !isLit {
+					t.Errorf("%s declares %s from something other than a composite literal.\n"+
+						"  🔴 If that is a schema read, THE SELF-BLOCK IS BACK: the anchor becomes a\n"+
+						"  mirror of the live enum, and an additive canonical reds it — and with it\n"+
+						"  `schema-drift` on every unrelated PR in this repo. The specimen must be\n"+
+						"  hand-written, and it must be written INLINE — a multi-value call assigning\n"+
+						"  it is this same hazard and is refused here too.",
+						anchorFile, anchorRatingsVar)
+				}
+			}
+		case *ast.ValueSpec:
+			// The `var x = []string{…}` form. Matched because omitting it made a fully
+			// hand-written declaration red with `decls == 0` and rename advice.
+			for i, name := range node.Names {
+				if name.Name != anchorRatingsVar {
+					continue
+				}
+				decls++
+				if i < len(node.Values) {
+					if _, isLit := node.Values[i].(*ast.CompositeLit); !isLit {
+						t.Errorf("%s declares %s (var form) from something other than a composite "+
+							"literal — see above; the specimen must be hand-written.",
+							anchorFile, anchorRatingsVar)
+					}
 				}
 			}
 		case *ast.RangeStmt:
@@ -392,10 +450,20 @@ func assertFrozenRatingsIsHandWritten(t *testing.T) {
 		return true
 	})
 
-	if decls != 1 {
-		t.Errorf("%s declares %s %d times, want exactly 1 — this check reads the wrong thing "+
-			"if the identifier moved or was renamed; update anchorRatingsVar.",
-			anchorFile, anchorRatingsVar, decls)
+	// 🔴 EVERY CLAUSE BELOW IS BIDIRECTIONAL AND EACH DIRECTION GETS ITS OWN REMEDY.
+	// The `n<want`/`n>want` split above exists because one shared remedy was measured
+	// wrong; these three clauses shipped with the same defect and are corrected here.
+	switch {
+	case decls == 0:
+		t.Errorf("%s: func %s declares no %s at all.\n"+
+			"  Either the specimen was deleted — restore a hand-written one — or it was renamed or\n"+
+			"  moved, in which case update anchorRatingsVar/anchorFunc. This check cannot tell those\n"+
+			"  apart, so both are named.", anchorFile, anchorFunc, anchorRatingsVar)
+	case decls > 1:
+		t.Errorf("%s: func %s declares %s %d times, want 1.\n"+
+			"  A second declaration means this check may be reading the wrong one. Remove the\n"+
+			"  duplicate; do NOT raise an expected count to accommodate it.",
+			anchorFile, anchorFunc, anchorRatingsVar, decls)
 	}
 	if reassigns != 0 {
 		t.Errorf("%s REASSIGNS %s %d time(s) after declaring it.\n"+
@@ -405,12 +473,20 @@ func assertFrozenRatingsIsHandWritten(t *testing.T) {
 			"  If the reassignment is genuinely hand-written data, inline it into the declaration.",
 			anchorFile, anchorRatingsVar, reassigns)
 	}
-	if rangedBy != 1 {
-		t.Errorf("%s ranges over %s %d times, want exactly 1 — the subset shrink guard.\n"+
-			"  🔴 If that loop now ranges the SCHEMA's values instead, the assertion is tautological\n"+
-			"  and green forever: the retirement coverage this PR added to replace the coverage it\n"+
-			"  removed is gone, and an upstream retirement becomes invisible repo-wide. The loop must\n"+
-			"  range the hand-written specimen and compare it AGAINST the schema.",
-			anchorFile, anchorRatingsVar, rangedBy)
+	switch {
+	case rangedBy == 0:
+		t.Errorf("%s: func %s never ranges over %s — the subset shrink guard is gone or now ranges\n"+
+			"  something else.\n"+
+			"  🔴 If that loop ranges the SCHEMA's values instead, the assertion is TAUTOLOGICAL and\n"+
+			"  green forever: the retirement coverage this PR added to replace the coverage it removed\n"+
+			"  is gone, and an upstream retirement becomes invisible repo-wide. The loop must range the\n"+
+			"  hand-written specimen and compare it AGAINST the schema, and it must do so in this\n"+
+			"  function — a helper taking a same-named parameter is exactly how this was evaded before.",
+			anchorFile, anchorFunc, anchorRatingsVar)
+	case rangedBy > 1:
+		t.Errorf("%s: func %s ranges over %s %d times, want 1.\n"+
+			"  If you added a second, legitimate consumer of the specimen, this clause needs widening\n"+
+			"  deliberately — say which loop is the shrink guard. It is NOT evidence of the\n"+
+			"  tautology hazard by itself.", anchorFile, anchorFunc, anchorRatingsVar, rangedBy)
 	}
 }

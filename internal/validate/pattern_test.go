@@ -454,9 +454,13 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	// variable is what created the gap: with two consumers, re-deriving the anchor's
 	// operand below leaves the spelling count unchanged, so the ledger stayed green
 	// on the one edit it exists to catch (measured — caught before the hoist, silent
-	// after). The call site is therefore pinned separately, by `anchorCallNeedle` in
-	// that ledger. **Do not rename this variable or wrap it at the call site without
-	// updating that needle** — both are false reds, but they are reds.
+	// after). So the specimen's PROVENANCE is pinned separately, by
+	// `assertFrozenRatingsIsHandWritten` in that ledger, which reads THIS function's
+	// syntax tree: this must be declared inline from a literal, never reassigned, and
+	// ranged by the subset guard below. **Renaming this variable, or moving that loop
+	// into a helper, reds that check** — both are false reds, but they are reds;
+	// update `anchorRatingsVar`/`anchorFunc` if you mean it. Wrapping the argument at
+	// the anchor call is fine: an earlier regex forbade that, and it no longer exists.
 	frozenRatings := []string{"g", "pg", "pg13", "r", "x"}
 
 	const wantContentRating = "contentRating: value must be one of 'g', 'pg', 'pg13', 'r', 'x'"
@@ -552,12 +556,13 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 				"against the live canonical, so once the mirror resyncs both sides agree.\n"+
 				"  If the removal is intended, drop it from `frozenRatings` AND from the "+
 				"`wantContentRating` constant in the same commit. ⚠ If it is one of `g`, `pg` or `pg13` "+
-				"THREE more edits are needed or you will just move the red: hand-edit "+
+				"TWO more edits are needed or you will just move the red: hand-edit "+
 				"`ratingListNeedle` in content_rating_literal_ledger_test.go (frozen on those three), "+
 				"and update the specimen in `internal/validate/pattern.go`'s package doc comment, which "+
-				"that same needle must keep matching. Measured: doing only the first two lands you on "+
-				"a SHRANK failure naming pattern.go. That is the one case where editing the needle is "+
-				"correct; deriving it never is.\n"+
+				"that same needle must keep matching. Measured: stopping after `frozenRatings` and the "+
+				"constant lands you on a SHRANK naming THIS file; doing the needle too lands you on a "+
+				"SHRANK naming pattern.go. All four edits together are green. That is the one case where "+
+				"editing the needle is correct; deriving it never is.\n"+
 				"  ⚠ This loop only covers the values named in `frozenRatings`; a rating the canonical "+
 				"added later and then retired is invisible to it.",
 				must, len(ratings), ratings)
