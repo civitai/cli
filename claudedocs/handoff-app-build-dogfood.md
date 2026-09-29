@@ -59,37 +59,23 @@ decision, 2026-09-20, chosen over a build-only oracle for exactly this reason.
 
 ## State now
 
-✅ **RANK 27 IMPLEMENTED AND PUSHED — `civitai/cli` PR #752**, branch
-`zach/rank27-contentrating-selfblock`, commit `5b09a8e`, on `origin/main` `2105a33`. 4 files, +408/−15.
-**The arc now has NO open code item.** 🔴 **#752's commit message and body carry the full rationale and
-the results table — read them rather than re-deriving.**
+✅ **RANK 27 CLOSED AND MERGED — `civitai/cli` #752, `0f0777c4`.** Claim released. **The arc has NO
+code item left.** Verified by content on `origin/main`: ledger and `internal/cmd` derivation present;
+subset guard and AST guard gone.
 
-✅ **Full local `go test ./...` GREEN on the committed tree** — 21 packages `ok`, 0 `FAIL`, no panic or
-timeout, under `nix-shell -p chromium` so the root package's render-oracle tests actually ran
-(`ok github.com/civitai/cli 334.013s`). 🔴 **Evidence about `5b09a8e`, not a dirty tree:** the files
-were `sha256sum`-fingerprinted before the run and `git diff HEAD` was empty after it.
+✅ **FOUR MORE MERGED**, verified by content: **#753** `e602b3a` README paste block →
+`civitai.com/agent-onboarding` + a guard on the mirror it always was · **docs #127** `6339220`
+`SETUP_PROMPT` derives from a new `SHORT_PROMPT_URL`, `PROMPT_URL`/`PROMPT_PATH` stay canonical ·
+**#754** `ac840b6` pin bump. 🔴 **#754 was NOT mine** — a branch-name collision surfaced that the
+repo's automation had opened it hours earlier, already green; I merged that rather than race a
+duplicate against a required check.
 
-⚠ **NOT MERGED, NOT AUDITED.** Do not record rank 27 as closed until its checks are green and it is
-verified BY CONTENT on `main` (a squash merge never makes the branch an ancestor). The claim is held.
+🟡 **OPEN, neither audited:** **#755** the auth self-block · **#756** `schema-drift` off
+`pull_request`. ⚠ **#751 still open, so this doc exists in two versions** (`origin/main` is the older,
+larger one) — **read the PR ref**; merging #751 early next session ends the split.
 
-**Six mutation arms were run, not reasoned** — two schema mutants × base/fixed, a reword, and the
-ledger's GROW and SHRINK. **The runnable form is in `## How to verify`**; the results table is in
-#752's body. The load-bearing one is the **reword**: it separates "fixed the guards" from "deleted
-them", and it reds at the `want`-map / `Contains` assertions rather than the anchor.
-**Vendored schema byte-unchanged.**
-
-🔴 **THIS DOC IS CONTENDED ACROSS TWO REFS AND THE OLDER ONE IS THE BIGGER ONE** (2026-09-28):
-`origin/main` holds **65,618 B**, 82 B OVER the ceiling; open PR **#751** holds a smaller, newer copy.
-**Read the PR ref until #751 lands, and do not open a third PR touching this file** — two open PRs
-editing one doc is the mis-merge class rule 9 and *what merging a doc can break* both name.
-
-⚠ **NOT DONE, both the operator's** (re-read 2026-09-28, unchanged): `schema-drift` is still **NOT** a
-required check (`pins-vs-published, scaffold-currency, build-test, ready-ack-runtime,
-template-page-vite`; `enforce_admins: true`), and rank 14's API key. 🔴 Until the first lands the
-vendored enum's CONTENT is guarded by nothing that can block a merge; the `gh api` call REPLACES the
-context list, so all six must be spelled. ⚠ **No `clawgate-task:`** — `resolve` exited **5**,
-`NOTHING RESOLVED`, and an unknown session id answers 200 with an empty array, so that zero is not a
-clean bill of health.
+⚠ **No `clawgate-task:`** — `resolve` exited **5**, `NOTHING RESOLVED`; that zero cannot distinguish
+"touched nothing" from "wrong id". (My first read said `rc=0` — `| head` ate the status.)
 
 ## Open investigations — live diagnosis state
 
@@ -220,22 +206,76 @@ probe that assumes a merged fix is live.
   bigger than `#745`. Until then, the rule is in `semantic_test.go`'s docstring: when the schema
   gains a scope, re-read the deployed constant by hand.
 
+### ✅ RESOLVED 2026-09-29 — five correctness rounds hardened a guard whose premise was measurably wrong
+- as-of: 2026-09-29
+
+🔴 **SUPERSEDES every rank-27 block** (evicted). Rank 27 shipped, but the durable finding is what
+round 5 produced when it finally asked whether the work should exist. Rounds 0–4 audited for
+CORRECTNESS and each found real defects; **every one was in the guards, none in the product.**
+
+- 🔴 **`schema-drift` IS NOT A REQUIRED CHECK.** Required: `pins-vs-published, scaffold-currency,
+  build-test, ready-ack-runtime, template-page-vite`. So the "reds every PR" blast radius the whole
+  edifice was sized against is **cosmetic, not a merge block**. 🔴 **I measured this myself early in
+  the session and wrote it into this doc as an open item, then argued ~15 times as if the opposite
+  were true.** `via: measurement`
+- 🔴 **`contentRating` HAS NEVER GROWN** — identical across all 18 commits that touched the schema.
+  The volatile enums are `scopes` (grew 4×, 4 retired) and `auth` (new 09-24, already revised). I
+  hardened the one stable field. `via: measurement`
+- 🔴 **THE INCIDENTS I CITED WERE MISATTRIBUTED — the repeat offence.** Run-log attributed: **#486**
+  (31 min) was *pattern-gloss debt*; **#695** was `internal/pkgzip`. Only **#607** was a literal
+  self-block, on `scopes`, already fixed by `#745`. **I quoted "31 min / 11 h" as instances of the
+  literal class without opening one run log** — the exact error this doc already records as a
+  retraction, repeated while that correction sat in the document I was reading. `via: measurement`
+- 🔴 **MY ROUND-1 FIX WAS NET-NEGATIVE.** Verified: retiring a rating reds `internal/validate`, so
+  `go test ./...` fails, so `revendor-canonical-schema.yml` (which runs the suite *before* opening
+  its PR) opens none, the mirror stays stale, `schema-drift` reds. Its message demanded four hand
+  edits for zero behaviour change; retirement is a demonstrated class (4 scopes). Deleted in
+  `76a80b9`, **−270 lines**. `via: measurement`
+- **Kept on measurement:** the two-site derive/freeze fix; the ledger's file SET + per-file COUNT;
+  both `internal/cmd` controls. ⚠ **NOW UNCOVERED:** a retired/renamed `contentRating` reaches the
+  CLI with nothing reddening, and `schema-drift` cannot see it either. Judgement: no local guard —
+  the resynced mirror rejects it. If ever covered, **outside `go test`**, or the bot blocks again.
+- **Next probe:** none. Closed.
+
+### 🟡 OPEN — two round-5 findings in flight as PRs, neither audited
+- as-of: 2026-09-29
+
+- **#755 — the auth self-block five rounds walked past.** `internal/manifest/manifest_test.go`
+  compared schema-derived `AuthKinds()` against hand-typed `{"block-token","oauth"}`, so a new auth
+  kind reds `go test ./...` and blocks the bot — on the schema's most volatile field. **Both arms:**
+  grow the enum at `origin/main` → `FAIL`; with the fix → `ok`; below 2 entries → the new vacuity
+  floor fires (deriving both sides otherwise lets `[] == []` agree while `LoadAuth` admits nothing).
+  ⚠ Residues in the PR: the README-prose sync is no longer enforced (a docs signal; gating the bot
+  on it was the wrong instrument), and `TestLoadAuth`'s rows still red on a RETIREMENT.
+  `via: measurement`
+- **#756 — `schema-drift` off `pull_request`.** It asks about an EXTERNAL resource, so a stale mirror
+  reddened every open PR and blamed whoever pushed next (measured: five). Now its own workflow:
+  `push: main` + `pull_request` filtered to `schema/**` + `workflow_dispatch`. 🔴 **A path filter
+  ALONE would be wrong** — an upstream publish touches no file, so a filtered PR run never fires;
+  `push: main` preserves detection. No cron (the re-vendor workflow already fetches every 6 h *and*
+  remediates). Five stale comments in that workflow updated in the same commit. Verified: all three
+  workflows parse, all five required contexts still defined, script green at rest / `rc=1` mutated.
+  `via: measurement`
+- ⚠ **Round 5's third recommendation was DECLINED** and is recorded here, not as a rank, because
+  nothing external asks for it: one ~12-line CI job growing every string enum and requiring the
+  suite green — **38.9 s**, all 8 enums, every construction shape, cannot self-block, and **reds on
+  `auth` today** so it could only land after #755. It tests the PROPERTY rather than policing
+  spellings, and is strictly stronger than what shipped. `via: measurement`
+- **Next probe:** `gh pr checks 755`/`756`, merge, verify by content. `/audit-pr` round 0 only.
+
 ## Next steps (ranked)
 
-🔴 **Numbering frozen and cumulative.** 1–13, 15–22, 25, 26, 28 closed; **14, 27** live.
+🔴 **Numbering frozen and cumulative.** 1–13, 15–22, 25–28 closed; **14, 29** live
 
-1–13, 15–22, 25, 26, 28. ✅ **CLOSED** — see the archive and the blocks above.
+1–13, 15–22, 25–28. ✅ **CLOSED** — 27 merged as `#752` `0f0777c4`
     forcing: gate — satisfied
-14. 🔴 **BLOCKED ON THE OPERATOR — the key, then it runs.** T1 "ship-ready"; every other precondition
-    was verified live 2026-09-28. **The command, its three ⚠ caveats and the verified preconditions
-    are all in the rank-14 open block above** — do not restate them here. Mint a full-scope personal
-    API key at `https://civitai.com/user/account` → API Keys.
+14. 🔴 **BLOCKED ON THE OPERATOR — the key, then it runs.** T1 "ship-ready"; every other
+    precondition verified 2026-09-28. Command, caveats and preconditions are in the rank-14 open
+    block above — do not restate. Mint a full-scope personal API key at
+    `https://civitai.com/user/account` → API Keys.
     forcing: user — asked 2026-09-25, decided 2026-09-27
-27. 🟡 **IMPLEMENTED, FULL SUITE GREEN LOCALLY, AWAITING CI + MERGE — `civitai/cli` #752.** Not closed
-    until its checks are green and it is verified BY CONTENT on `main`; then release the claim.
-    ⚠ **NO correctness audit yet** — `/audit-pr 752` round 0 first, then the nine axes. **"Green and
-    mutation-tested" is not "audited"**, and an audit FIX resets the gate.
-    forcing: regression — the fix for a self-blocking guard reintroduced one
+29. 🟡 **LAND #755 AND #756**, then merge **#751** to end this doc's two-version split.
+    forcing: regression — #755 closes a live self-block on the schema's most volatile enum
 
 ## Gotchas / decisions / dead-ends
 
@@ -696,38 +736,57 @@ so you know whether to open it: a backtick inside a double-quoted `echo` EXECUTE
   ref (want 1 and 1) — `dd1de77`. **(b) The ceiling is BYTES**: `len(open(p).read())` counts characters,
   and `🔴 ⚠ ✅ —` made that gap 890 B — it read 64,728 for 65,618 B. **`wc -c`.**
 
+- 🔴 **ASK WHETHER THE WORK SHOULD EXIST BEFORE AUDITING WHETHER IT IS CORRECT.** Rounds 0–4 found
+  23 real defects, every one in the guards the ladder was itself writing; round 5, run as a
+  REQUIREMENT round, refuted the premise and ended in a −270-line deletion. **The tell it was time:
+  each round's fix was the next round's finding, three times running.** One requirement round was
+  worth more than four correctness rounds.
+- 🔴 **MEASURE A GUARD'S OWN FAILURE COST BEFORE HARDENING IT — three one-command checks.** Is the
+  check REQUIRED (`gh api repos/<r>/branches/main/protection`), has the guarded thing ever MOVED
+  (`git log -p -- <file>`), which run log actually failed (`gh run view <id> --log-failed`)? All
+  three would have stopped this at round 0.
+- 🔴 **A SPELLING GUARD ON A PROVENANCE PROPERTY IS WALKABLE, AND VALUE CHECKS CANNOT HELP** —
+  "hand-written" and "schema-derived" are EQUAL at rest, which is why the original defect shipped
+  unseen; only a syntax-tree check sees it. The AST version worked and was deleted anyway, because
+  **a guard whose sole purpose is guarding a deleted guard goes with it.**
+- 🔴 **SWEEP FOR IN-FLIGHT WORK BEFORE OPENING A PR, EVEN WHEN AUTHORISED TO CREATE ONE.** A branch
+  name collision was the only thing that stopped a duplicate pin-bump PR racing the repo's own
+  automation against a REQUIRED check. `gh pr list --state open` is the cheap half.
+- ⚠ **`git checkout -- <file>` reverts a mutant AND your uncommitted edits in it, together** — cost a
+  round here. Restore from `cp -a` and `cmp`. ⚠ **A pipe eats the exit status**; capture
+  `out=$(cmd 2>&1); rc=$?`. ⚠ **`grep -E -- '--- …'`** needs the `--`. ⚠ **`gh pr update-branch`
+  reports success while the API serves the PRE-update head**, and after the base moves every prior
+  green is stale — confirm git and the API agree, then require every check TERMINAL plus a minimum
+  count (13 here).
+- ⚠ **AN EVICTION IS TWO FILES AND `handoff_doc.py --confirm` COMMITS ONE PATH.** Commit the archive
+  side yourself, in the same commit as the doc stub, BEFORE the confirm run — the reverse order
+  destroyed an eviction here and left the doc pointing at a section that did not exist.
+
 ## How to verify
 
-🔴 **Run every repo script with `env -u CDPATH`** — else `check-canonical-schema.sh` reports a confident
-`FAIL: … has DRIFTED` over a byte-identical file. **The tell is that EVERY diff line is `>`** (one
-operand is empty, not different). Mechanism in *Gotchas*; do **not** "fix" the scripts.
+🔴 **Run repo scripts with `env -u CDPATH`** — else `check-canonical-schema.sh` reports a confident
+`FAIL: … has DRIFTED` over a byte-identical file. **The tell: EVERY diff line is `>`** (one operand
+empty). Do not "fix" the scripts; the host is the anomaly.
 
 ```bash
 CLI=/home/zach/workspace/civit/cli
 git -C "$CLI" worktree add --detach /tmp/wt-v origin/main
 (cd /tmp/wt-v && env -u CDPATH bash scripts/check-canonical-schema.sh); echo "rc=$?"   # 0 + OK
-(cd /tmp/wt-v && sed -i 's/"maxItems": 32/"maxItems": 33/' schema/app-block.manifest.schema.json \
-  && env -u CDPATH bash scripts/check-canonical-schema.sh >/dev/null 2>&1; echo "CONTROL rc=$?")  # 1
-(cd /tmp/wt-v && env -u CDPATH go test ./internal/validate/ ./internal/cmd/ -count=1)   # both ok
+# negative control: bump "maxItems": 32 -> 33 in schema/ and re-run; want rc=1
+(cd /tmp/wt-v && env -u CDPATH go test ./internal/validate/ ./internal/cmd/ ./internal/manifest/ -count=1)
 git -C "$CLI" worktree remove --force /tmp/wt-v
 ```
 
-**Rank 27's controls — BOTH mutants are needed.** In `schema/app-block.manifest.schema.json`, the
-`contentRating` enum line: append `, "nc17"` → at base `internal/validate` reds and `internal/cmd`
-does **NOT** (prefix `Contains`); insert `"nc17"` before `"r"` → at base **both** red. With #752 both
-arms are green; revert after. The guard-still-works control is a reword at
-`internal/validate/validate.go:273` —
-`reason = strings.Replace(reason, "value must be one of", "value must be one of the following", 1)`
-→ both sites must red, at the `want`-map / `Contains` assertions rather than the anchor.
+**Rank 27 on `main`:** append a `contentRating` value → `internal/validate` and `internal/cmd` both
+green; retire one → also green now (shrink guard deleted, see above); re-add the literal to
+`internal/cmd` → ledger reds `GREW`. **#755:** grow the `auth` enum → `internal/manifest` green with
+the fix, **FAIL** at `origin/main`; below 2 entries → vacuity floor fires.
 
-⚠ **The root Go package needs a browser** — the render-oracle tests refuse to skip, so `go test .` fails
-`no Chromium on PATH` as an env gap. Run
+⚠ **The root package needs a browser** (render-oracle tests refuse to skip):
 `nix-shell -p chromium --run 'CIVITAI_CHROME=$(command -v chromium) env -u CDPATH go test ./... -count=1'`
-(~334 s; **it buffers, so expect no output until it finishes**).
-
-⚠ **Read wrapped prose on NORMALISED text** (`tr '\n' ' ' | tr -s ' '`) or a line-based grep calls a
-present phrase MISSING — but a `grep -oE` with two wide `{0,220}` bounds over a 100 KB doc
-**backtracks for minutes**; use Python.
+— ~334 s and **buffers silently**, so `sha256sum` first and leave the tree alone. ⚠ **Grep wrapped prose on NORMALISED text**
+(`tr '\n' ' ' | tr -s ' '`); a `grep -oE` with two wide `{0,220}` bounds over a 100 KB doc
+backtracks for minutes — use Python.
 
 ## Defects (batched)
 
