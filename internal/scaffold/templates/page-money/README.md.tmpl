@@ -135,6 +135,28 @@ at estimate/submit with nothing on screen explaining why. The **Add LoRA** picke
 is the opposite case and stays CONSTRAINED to the current checkpoint's family — a
 LoRA only works with a checkpoint in its own ecosystem.
 
+That drop compares the family the LoRA was **picked under**, not the base-model
+name the pick came back with, and the difference is not cosmetic: the host
+collapses the `baseModelGroup` you send to an ecosystem and offers every member,
+so asking for `SDXL 1.0` returns six names (`SDXL 0.9` / `1.0` / `1.0 LCM` /
+`Lightning` / `Hyper` / `Turbo`) and each pick reports its own. Each LoRA
+therefore records `requestedFamily` — the group the picker was opened with — and
+that is what a later checkpoint is compared against, with the exact `baseModel`
+match kept as a fallback. Comparing only `baseModel` silently deleted usable
+LoRAs.
+
+**The pick is also filtered for MEDIA TYPE, by the block.** The host's picker
+gates on generation *coverage*, not media type, and exposes no image-only option —
+so an unconstrained pick legitimately offers video and audio checkpoints (31 of
+the host's 109 base-model families). This app builds a `kind: 'textToImage'` body
+and reads `imageUrls`, and the host does **not** refuse the mismatch (the
+generation graph silently rewrites the ecosystem and keeps the version id), so
+`checkpointRejectionReason` (`src/models.ts`) refuses a non-image pick, keeps the
+previous checkpoint and its LoRAs, and shows the viewer why. It is a **deny list**
+and therefore FAILS OPEN: an unrecognised base model is treated as usable, so a
+new image ecosystem works the day it ships. If your app generates video, delete
+the guard rather than inverting it.
+
 The HOST opens its own native checkpoint picker (in
 `dev:live` the SDK live host serves a protocol-identical in-harness catalog
 overlay; on the real platform it's civitai's own modal); the app never sees a
@@ -708,9 +730,13 @@ npm run build         # what the platform produces (tsc typecheck + vite build)
 - **`src/App.picker.test.tsx`** — what the app ASKS the host for. The checkpoint
   pick is unconstrained (no `baseModelGroup`, so the viewer can reach every
   ecosystem) while the LoRA pick stays constrained to the current checkpoint's
-  family, and a checkpoint change that switches family drops the stranded LoRAs.
-  Keep this if you customize either picker call — the mock host ignores
-  `baseModelGroup`, so only an argument assertion can see a regression here.
+  family, a checkpoint change that switches family drops the stranded LoRAs, and a
+  video checkpoint is refused with a visible notice. Keep this if you customize
+  either picker call — the mock host ignores `baseModelGroup`, so only an argument
+  assertion can see a regression here. Its LoRA fixture deliberately carries a
+  base model (`SDXL Turbo`) DIFFERENT from the checkpoint that requested it
+  (`SDXL 1.0`); making those two strings equal is what hid the family bug, so
+  don't "tidy" them into a match.
 
 ## Allowed parent origins
 

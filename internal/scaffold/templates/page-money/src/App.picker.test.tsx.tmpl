@@ -58,13 +58,34 @@ const FLUX_PICK = {
   baseModel: 'Flux.1 D',
 };
 
-/** A LoRA pick in the DEFAULT checkpoint's family (SDXL 1.0). */
+/**
+ * A LoRA pick from the DEFAULT checkpoint's ECOSYSTEM — and deliberately NOT
+ * carrying the default's exact `baseModel`.
+ *
+ * 🔴 THIS IS THE FIXTURE THAT MAKES THE FAMILY TESTS REAL. App opens the LoRA
+ * picker with `baseModelGroup: 'SDXL 1.0'`; the host collapses that to the SDXL
+ * ecosystem and offers six names (SDXL 0.9 / 1.0 / 1.0 LCM / Lightning / Hyper /
+ * Turbo), so a pick made there routinely reports a DIFFERENT `baseModel` than the
+ * checkpoint that asked for it. This fixture used to say 'SDXL 1.0' — identical
+ * to the checkpoint fixture below — which made the "same family" test pin string
+ * identity while claiming family coverage, and is why the exact-match defect
+ * shipped green.
+ */
 const SDXL_LORA = {
   versionId: 447501,
   modelId: 400236,
   modelName: 'Sinfully Stylish',
   versionName: 'v1',
-  baseModel: 'SDXL 1.0',
+  baseModel: 'SDXL Turbo',
+};
+
+/** A VIDEO checkpoint — the unconstrained picker offers these, and this app can't use one. */
+const VIDEO_PICK = {
+  versionId: 1701407,
+  modelId: 1301668,
+  modelName: 'Wan 2.2',
+  versionName: 'T2V A14B',
+  baseModel: 'Wan Video 2.2 T2V-A14B',
 };
 
 describe('App — host picker call sites', () => {
@@ -132,10 +153,16 @@ describe('App — host picker call sites', () => {
     expect(screen.queryAllByTestId('pm-lora-row')).toHaveLength(0);
   });
 
-  it('KEEPS LoRAs when the new checkpoint is in the same family', async () => {
+  // 🔴 THE REGRESSION, end to end. The LoRA is picked under
+  // `baseModelGroup: 'SDXL 1.0'` but reports its own `baseModel: 'SDXL Turbo'`,
+  // which is what the host really hands back. Choosing another SDXL 1.0
+  // checkpoint used to compare 'SDXL Turbo' !== 'SDXL 1.0' and delete it with no
+  // notice. Five of the SDXL ecosystem's six names dropped that way.
+  it('KEEPS LoRAs when the new checkpoint is in the family they were PICKED UNDER', async () => {
     const user = userEvent.setup();
     resourceOpen.mockResolvedValue(SDXL_LORA);
-    // A different checkpoint, same baseModel as the default.
+    // A different checkpoint, same baseModel as the default — and DIFFERENT from
+    // the LoRA's own baseModel, which is the whole point of the case.
     checkpointOpen.mockResolvedValue({
       selected: {
         versionId: 128713,
@@ -155,6 +182,31 @@ describe('App — host picker call sites', () => {
       expect(screen.getByTestId('pm-model-label')).toHaveTextContent(/DreamShaper XL/),
     );
     // A same-family swap must NOT cost the user their LoRA stack.
+    expect(screen.getAllByTestId('pm-lora-row')).toHaveLength(1);
+  });
+
+  // 🔴 THE OTHER COST OF UNCONSTRAINING THE PICK. The picker gates on generation
+  // coverage, not media type, so it offers video checkpoints — and the host does
+  // NOT refuse a video checkpoint on a textToImage body, it silently rewrites the
+  // ecosystem and keeps the version id. So the block refuses it, keeps the
+  // previous checkpoint AND the LoRA stack, and says why on screen.
+  it('REFUSES a video checkpoint: keeps the current model + LoRAs and shows a notice', async () => {
+    const user = userEvent.setup();
+    resourceOpen.mockResolvedValue(SDXL_LORA);
+    checkpointOpen.mockResolvedValue({ selected: VIDEO_PICK });
+    render(<App />);
+
+    await user.click(await screen.findByTestId('pm-lora-add'));
+    await waitFor(() => expect(screen.getAllByTestId('pm-lora-row')).toHaveLength(1));
+
+    await user.click(screen.getByTestId('pm-change-model'));
+
+    const notice = await screen.findByTestId('pm-model-notice');
+    expect(notice).toHaveTextContent(/Wan 2\.2/);
+    expect(notice).toHaveTextContent(/doesn't generate images/i);
+    // The model label still shows the DEFAULT checkpoint, and the LoRA survived.
+    expect(screen.getByTestId('pm-model-label')).toHaveTextContent(/SD XL 1\.0/);
+    expect(screen.queryByTestId('pm-model-label')).not.toHaveTextContent(/Wan 2\.2/);
     expect(screen.getAllByTestId('pm-lora-row')).toHaveLength(1);
   });
 });

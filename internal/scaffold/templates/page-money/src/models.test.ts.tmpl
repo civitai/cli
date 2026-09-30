@@ -5,8 +5,10 @@ import {
   MAX_LORAS,
   addLora,
   checkpointFromPick,
+  checkpointRejectionReason,
   clampLoraWeight,
   dropIncompatibleLoras,
+  isImageCapableBaseModel,
   loraFromPick,
   loraOption,
   pickedCheckpointLabel,
@@ -109,6 +111,22 @@ describe('loraFromPick (BlockResourceInfo → LoraOption)', () => {
       weight: 0.5,
     });
   });
+  // 🔴 The two values are DIFFERENT and both are needed. `baseModel` is what the
+  // user picked; `requestedFamily` is the group the picker was opened with. The
+  // host collapses the group to an ecosystem and offers every member, so a pick
+  // made under 'SDXL 1.0' routinely comes back as 'SDXL Turbo'.
+  it('records the family the picker was opened with, alongside the pick own baseModel', () => {
+    expect(
+      loraFromPick({ versionId: 42, modelId: 7, baseModel: 'SDXL Turbo' }, undefined, 'SDXL 1.0'),
+    ).toEqual({
+      versionId: 42,
+      modelId: 7,
+      label: 'LoRA #42 (SDXL Turbo)',
+      baseModel: 'SDXL Turbo',
+      weight: 1,
+      requestedFamily: 'SDXL 1.0',
+    });
+  });
 });
 
 describe('addLora / removeLora / setLoraWeight', () => {
@@ -146,8 +164,21 @@ describe('addLora / removeLora / setLoraWeight', () => {
 // it — otherwise the block builds a body the server rejects at estimate/submit,
 // and the user sees a failed generation with no explanation.
 
-const loraIn = (versionId: number, baseModel: string): LoraOption =>
-  loraOption({ versionId, modelId: versionId * 10, label: `L${versionId}`, baseModel });
+// 🔴 EVERY FIXTURE BELOW USES TWO DISTINCT NAMES FROM ONE ECOSYSTEM, DELIBERATELY.
+// The earlier version of this block used 'Pony' for both the LoRA and the new
+// checkpoint, and 'SDXL 1.0' for both in App.picker.test.tsx — identical strings,
+// so it asserted STRING IDENTITY while its name claimed FAMILY coverage. No test
+// anywhere used two different names from one ecosystem, which is exactly why the
+// exact-match defect shipped green. `SDXL 1.0` and `SDXL Turbo` are one family;
+// `Flux.1 D` is a different one.
+const loraIn = (versionId: number, baseModel: string, requestedFamily?: string): LoraOption =>
+  loraOption({
+    versionId,
+    modelId: versionId * 10,
+    label: `L${versionId}`,
+    baseModel,
+    ...(requestedFamily ? { requestedFamily } : {}),
+  });
 
 describe('dropIncompatibleLoras (checkpoint family change)', () => {
   it('keeps LoRAs matching the new checkpoint and drops the rest', () => {
@@ -158,6 +189,33 @@ describe('dropIncompatibleLoras (checkpoint family change)', () => {
   it('drops EVERY LoRA when the checkpoint moves to a family none of them match', () => {
     const sel = [loraIn(11, 'Flux.1 D'), loraIn(22, 'Flux.1 D')];
     expect(dropIncompatibleLoras(sel, 'Pony')).toEqual([]);
+  });
+
+  // 🔴 THE REGRESSION. Both LoRAs were added while the checkpoint was 'SDXL 1.0',
+  // so the picker was opened with baseModelGroup 'SDXL 1.0' and the host offered
+  // the whole SDXL ecosystem — six names, of which these are two. Moving to
+  // another 'SDXL 1.0' checkpoint must keep them. The exact-`baseModel` match
+  // deleted both, silently and with no UI notice.
+  it('KEEPS a same-family LoRA whose OWN baseModel differs from the new checkpoint', () => {
+    const sel = [loraIn(11, 'SDXL Turbo', 'SDXL 1.0'), loraIn(22, 'SDXL Lightning', 'SDXL 1.0')];
+    expect(dropIncompatibleLoras(sel, 'SDXL 1.0').map((l) => l.versionId)).toEqual([11, 22]);
+  });
+
+  // INVARIANT GUARD (green before the fix too): the widened rule must not become
+  // "keep everything". A LoRA requested under SDXL still goes when the checkpoint
+  // leaves the ecosystem, even though its own name looks unrelated to the target.
+  it('still drops a same-ecosystem LoRA when the checkpoint leaves the family entirely', () => {
+    const sel = [loraIn(11, 'SDXL Turbo', 'SDXL 1.0'), loraIn(22, 'SDXL 1.0', 'SDXL 1.0')];
+    expect(dropIncompatibleLoras(sel, 'Flux.1 D')).toEqual([]);
+  });
+
+  // INVARIANT GUARD (green before the fix too): a LoRA carrying no
+  // requestedFamily — a hand-made fixture, or a list persisted before the field
+  // existed — degrades to exactly the old exact-`baseModel` comparison.
+  it('falls back to the exact baseModel match when a LoRA has no requestedFamily', () => {
+    const sel = [loraIn(11, 'SDXL Turbo')];
+    expect(dropIncompatibleLoras(sel, 'SDXL 1.0')).toEqual([]);
+    expect(dropIncompatibleLoras(sel, 'SDXL Turbo').map((l) => l.versionId)).toEqual([11]);
   });
 
   it('is a no-op when every LoRA already matches (a same-family checkpoint swap)', () => {
@@ -179,5 +237,61 @@ describe('dropIncompatibleLoras (checkpoint family change)', () => {
 
   it('returns an empty list for an empty selection (total, never throws)', () => {
     expect(dropIncompatibleLoras([], 'Pony')).toEqual([]);
+  });
+});
+
+// --- Media-type guard on the UNCONSTRAINED checkpoint pick ---
+//
+// The host picker gates on generation COVERAGE, not media type, and exposes no
+// image-only option — so an unconstrained pick offers video/audio checkpoints.
+// This app builds a `kind: 'textToImage'` body and the host does NOT refuse the
+// mismatch, so the block has to. Deny list ⇒ fails OPEN on an unknown name.
+
+describe('isImageCapableBaseModel', () => {
+  it('rejects video families', () => {
+    expect(isImageCapableBaseModel('Wan Video 14B t2v')).toBe(false);
+    expect(isImageCapableBaseModel('Hunyuan Video')).toBe(false);
+    expect(isImageCapableBaseModel('LTXV 2.5')).toBe(false);
+    expect(isImageCapableBaseModel('Veo 3')).toBe(false);
+    expect(isImageCapableBaseModel('Sora 2')).toBe(false);
+  });
+  it('rejects audio families', () => {
+    expect(isImageCapableBaseModel('ACE Audio')).toBe(false);
+    expect(isImageCapableBaseModel('MiniMax Music 3')).toBe(false);
+  });
+  it('accepts image families', () => {
+    expect(isImageCapableBaseModel('SDXL 1.0')).toBe(true);
+    expect(isImageCapableBaseModel('SDXL Turbo')).toBe(true);
+    expect(isImageCapableBaseModel('Flux.1 D')).toBe(true);
+    expect(isImageCapableBaseModel('Pony')).toBe(true);
+  });
+  it('FAILS OPEN on an unknown, empty or nullish name — a new image ecosystem is never blocked', () => {
+    expect(isImageCapableBaseModel('Some Future Image Model v9')).toBe(true);
+    expect(isImageCapableBaseModel('')).toBe(true);
+    expect(isImageCapableBaseModel(null)).toBe(true);
+    expect(isImageCapableBaseModel(undefined)).toBe(true);
+  });
+  it('trims, so a padded name still matches the deny list', () => {
+    expect(isImageCapableBaseModel('  Wan Video 14B t2v  ')).toBe(false);
+  });
+});
+
+describe('checkpointRejectionReason', () => {
+  const ck = (label: string, baseModel: string) => ({
+    versionId: 1,
+    modelId: 2,
+    label,
+    baseModel,
+  });
+
+  it('returns null for an image checkpoint (nothing to say)', () => {
+    expect(checkpointRejectionReason(ck('DreamShaper XL', 'SDXL 1.0'))).toBeNull();
+  });
+
+  it('names the model, names the family, and says the previous pick is kept', () => {
+    const msg = checkpointRejectionReason(ck('Wan 2.2', 'Wan Video 2.2 T2V-A14B'));
+    expect(msg).toContain('Wan 2.2');
+    expect(msg).toContain('Wan Video 2.2 T2V-A14B');
+    expect(msg).toContain('still selected');
   });
 });

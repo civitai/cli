@@ -50,6 +50,7 @@ import {
   MAX_LORAS,
   addLora,
   checkpointFromPick,
+  checkpointRejectionReason,
   dropIncompatibleLoras,
   loraFromPick,
   removeLora,
@@ -198,6 +199,10 @@ export function App() {
   // True while a host picker modal is open, so the trigger button shows progress
   // and we don't fire a second open over the first.
   const [pickerBusy, setPickerBusy] = useState(false);
+  // Set when a pick was REFUSED by the block (today: a non-image checkpoint from
+  // the unconstrained picker) so the viewer is told why nothing changed. Null
+  // whenever the last pick was accepted.
+  const [modelNotice, setModelNotice] = useState<string | null>(null);
 
   // True once the user clicked Generate while the scope was missing — so when
   // the consent grant lands (granted flips true) we auto-resume the submit.
@@ -485,6 +490,14 @@ export function App() {
   // belonging to the old family — hence dropIncompatibleLoras. Leaving those on
   // the body would make the server reject the next generation at estimate/submit
   // with nothing on screen explaining why.
+  //
+  // 🔴 AND THE SECOND COST OF UNCONSTRAINING: the picker gates on generation
+  // COVERAGE, not media type, so it legitimately offers VIDEO and AUDIO
+  // checkpoints (31 of the host's 109 base-model families). This app builds a
+  // `kind: 'textToImage'` body, and the host does NOT refuse the mismatch — it
+  // silently rewrites the ecosystem and keeps the video version id — so the block
+  // has to refuse it here, visibly, and keep the previous checkpoint. Same
+  // principle as the LoRA drop: never let a pick become an unexplained failure.
   const onChangeModel = useCallback(async () => {
     setPickerBusy(true);
     try {
@@ -493,6 +506,14 @@ export function App() {
       });
       if (selected) {
         const next = checkpointFromPick(selected);
+        const rejection = checkpointRejectionReason(next);
+        if (rejection) {
+          // Refused: keep the current checkpoint AND the current LoRA stack —
+          // nothing about the body changes — and say so on screen.
+          setModelNotice(rejection);
+          return;
+        }
+        setModelNotice(null);
         setCheckpoint(next);
         setLoras((cur) => dropIncompatibleLoras(cur, next.baseModel));
       }
@@ -504,14 +525,22 @@ export function App() {
   // Open the host's resource picker filtered to LoRAs, in the checkpoint's
   // base-model family. Append the pick (deduped + MAX_LORAS-capped via addLora).
   // A dismissal (`null`) is a no-op.
+  //
+  // The family we ask for is recorded ON the resulting LoRA (`requestedFamily`),
+  // because the host collapses this group to an ecosystem and hands back picks
+  // carrying their OWN base-model name — so the group is the only value that can
+  // later be compared against a new checkpoint. See dropIncompatibleLoras.
   const onAddLora = useCallback(async () => {
     setPickerBusy(true);
+    const requestedFamily = checkpoint.baseModel;
     try {
       const picked = await openResourcePicker({
         resourceType: 'LORA',
-        baseModelGroup: checkpoint.baseModel,
+        baseModelGroup: requestedFamily,
       });
-      if (picked) setLoras((cur) => addLora(cur, loraFromPick(picked)));
+      if (picked) {
+        setLoras((cur) => addLora(cur, loraFromPick(picked, undefined, requestedFamily)));
+      }
     } finally {
       setPickerBusy(false);
     }
@@ -663,6 +692,15 @@ export function App() {
                   >
                     {modelRow}
                   </Group>
+                )}
+                {/* Why a pick did not take effect. Only ever set by a REFUSED
+                    pick (a non-image checkpoint) — the block cannot use it and
+                    the host will not refuse it, so this is the viewer's only
+                    signal. Cleared by the next accepted pick. */}
+                {modelNotice && (
+                  <Alert color="warning" title="Model not changed" data-testid="pm-model-notice">
+                    {modelNotice}
+                  </Alert>
                 )}
               </div>
 
