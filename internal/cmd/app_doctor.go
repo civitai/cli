@@ -67,6 +67,28 @@ const (
 	problemScanningMedia    = "scanning-media"
 )
 
+// generateAnImageClause is appended to the two MISSING-media remedies.
+//
+// 🔴 IT CLOSES A GAP BETWEEN "WHERE TO PUT AN IMAGE" AND "HOW TO GET ONE". The
+// remedies named only `set-icon` / `set-cover`, which take a file the author is
+// assumed to already have — and the measured agent trial (`at3`, 2026-09-29) did
+// in fact reach `civitai generate` for exactly this, two steps after submitting,
+// having been told nowhere that it could. This CLI ships an image generator; the
+// advice may as well say so.
+//
+// 🔴 THE BACKTICK IS LOAD-BEARING, NOT DECORATION. The fix-line ledger
+// (TestDoctorFixAdviceNamesOnlyCommandsThatExist) matches `civitai` followed by
+// lowercase words and resolves the whole run against the command tree, so
+// "civitai generate can produce one" would parse as a command with three
+// unresolvable arguments and be refused — which is the same rule the
+// `blocked-media` arm's own comment states: a command reference has to be
+// TERMINATED by punctuation, or the prose after it reads as arguments.
+//
+// It is a clause rather than a second line: this string is printed under a
+// finding the author is already reading, and `app doctor`'s output is one
+// `Fix:` line per problem.
+const generateAnImageClause = " — no image to hand? `civitai generate` can produce one"
+
 // doctorRemedy renders the FIX line for one problem code.
 //
 // 🔴 EVERY ROUTE NAMED HERE IS ONE THIS CREDENTIAL CAN ACTUALLY TAKE, and that
@@ -103,9 +125,9 @@ const (
 func doctorRemedy(p appapi.ListingProblem, slug, editURL, kind string) string {
 	switch p.Code {
 	case problemMissingIcon:
-		return "civitai app listing set-icon <file> --slug " + slug
+		return "civitai app listing set-icon <file> --slug " + slug + generateAnImageClause
 	case problemMissingCover:
-		return "civitai app listing set-cover <file> --slug " + slug
+		return "civitai app listing set-cover <file> --slug " + slug + generateAnImageClause
 	case problemNoScreenshots:
 		return "civitai app listing add-screenshot <file> --slug " + slug
 	case problemBlockedMedia:

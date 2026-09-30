@@ -159,6 +159,44 @@ MAX_TOKENS="${DOGFOOD_MAX_TOKENS:-}"
 # for most of the matrix while --max-cost is right for all of it. Enforcement
 # stays in runner.py.
 MAX_STEPS="${DOGFOOD_MAX_STEPS:-}"
+
+# ── `app listing set-text`: OFF by default, and the opt-in is loud ───────────
+# runner.py refuses `civitai app listing set-text` under a credential unless
+# --allow-listing-text is passed, and until now that flag was reachable only by
+# invoking runner.py directly. So the one instrument that drives real agents end
+# to end could not reach the command that sets a listing DESCRIPTION, which made
+# it blind to exactly the defect `civitai app submit`'s listing-completeness gate
+# was added for: a matrix trial physically could not have fixed an
+# `empty-description`, so its leaving one behind measured the harness, not the
+# product.
+#
+# 🔴 THE DEFAULT STAYS OFF, AND THAT IS NOT CAUTION FOR ITS OWN SAKE. `set-text`
+# rewrites a listing's public tagline/description/category IN PLACE on every
+# listing status — not a "material" change, so no revision and no moderator
+# review — it is public the moment it returns, and this CLI ships NO command that
+# restores the previous value. The account a credentialed matrix runs against owns
+# real published listings. runner.py's own comment at APP_LISTING_DESTRUCTIVE
+# carries the rest.
+#
+# 🔴 ONLY THE LITERAL `1` ARMS IT, AND ANYTHING ELSE IS A HARD REFUSAL RATHER THAN
+# A SILENT OFF. The obvious `[ -n "$X" ]` test arms on `0`, on `false` and on `no`
+# — three spellings an operator reaching for OFF would plausibly type — and for a
+# write with no undo, guessing in either direction is wrong. An unset variable is
+# the only quiet default.
+ALLOW_LISTING_TEXT="${DOGFOOD_ALLOW_LISTING_TEXT:-}"
+case "$ALLOW_LISTING_TEXT" in
+  ""|1) ;;
+  *)
+    cat >&2 <<MSG
+refusing to run: DOGFOOD_ALLOW_LISTING_TEXT=$ALLOW_LISTING_TEXT is not a value
+this script will act on. It permits \`civitai app listing set-text\`, which
+rewrites a listing's PUBLIC tagline/description/category in place with no undo,
+so it is armed by the literal 1 and by nothing else. Unset it to leave the
+default refusal in place.
+MSG
+    exit 1 ;;
+esac
+
 if [ -n "$CREDENTIAL" ]; then
   # 🔴 SAME RESUME-GUARD TRAP AS THE BRIEF, AND WORSE. A credentialed cell run
   # under the setup matrix's namespace is skipped as "complete" by an
@@ -185,6 +223,24 @@ MSG
     echo "  account's existing apps and what makes its own apps identifiable." >&2
     exit 1
   }
+  # 🔴 ANNOUNCED ONCE, BEFORE ANY CELL STARTS, AND ONLY WHERE IT CAN BITE. The
+  # flag is inert without a credential (runner.py's refusals are conditional on
+  # `armed`), so a banner on an uncredentialed run would teach the operator to
+  # skip the one they need to read. The prefix is quoted because it is the only
+  # thing keeping the writes off the account's own listings.
+  if [ "$ALLOW_LISTING_TEXT" = "1" ]; then
+    echo "🔴 DOGFOOD_ALLOW_LISTING_TEXT=1 — every cell of this matrix may run" >&2
+    echo "   \`civitai app listing set-text\` against the REAL account. It rewrites a" >&2
+    echo "   listing's public tagline/description/category IN PLACE, on any listing" >&2
+    echo "   status, with no revision, no moderator review and NO undo in this CLI." >&2
+    echo "   Only listings under DOGFOOD_APP_PREFIX=$APP_PREFIX should be reachable." >&2
+  fi
+elif [ "$ALLOW_LISTING_TEXT" = "1" ]; then
+  # Not fatal: an uncredentialed matrix reaches no account, so the flag changes
+  # nothing. Said out loud anyway, because an operator who set it meant to arm
+  # something and is entitled to know it did not.
+  echo "note: DOGFOOD_ALLOW_LISTING_TEXT=1 is inert without DOGFOOD_CREDENTIAL_FILE" >&2
+  echo "      — an uncredentialed trial reaches no listing to rewrite." >&2
 fi
 
 run_one() {  # model short image ienv trial user
@@ -215,6 +271,9 @@ run_one() {  # model short image ienv trial user
   [ -n "$MAX_SUBMISSIONS" ] && args+=(--max-submissions "$MAX_SUBMISSIONS")
   [ -n "$MAX_TOKENS" ] && args+=(--max-tokens "$MAX_TOKENS")
   [ -n "$MAX_STEPS" ] && args+=(--max-steps "$MAX_STEPS")
+  # Passed only on the literal 1 — see the ALLOW_LISTING_TEXT block above. Omitted
+  # otherwise, so runner.py's own default refusal is what applies.
+  [ "$ALLOW_LISTING_TEXT" = "1" ] && args+=(--allow-listing-text)
   ( timeout 1500 python3 runner.py "${args[@]}" >"logs/$trial.out" 2>"logs/$trial.err"
     echo "done $trial rc=$?" ) &
 }

@@ -436,6 +436,20 @@ func submitGuardServer(t *testing.T, rows []appapi.Submission) (*httptest.Server
 			_ = json.NewEncoder(w).Encode(map[string]any{"submissions": rows})
 			return
 		}
+		// 🔴 `listMine` IS ANSWERED EXPLICITLY, OR `submitted` STOPS MEANING WHAT
+		// ITS NAME SAYS. This handler treats every unrecognised path as the submit
+		// route, and the listing-completeness gate (issue #762) added a second
+		// read to this code path — so without this arm a run that never uploaded
+		// anything would still set the flag, and `if *submitted` below would pass
+		// on the gate's read. An empty list is "no listing for this app yet", the
+		// first-submit case, which is what these fixtures are.
+		if strings.HasPrefix(r.URL.Path, listMineTestPath) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"result": map[string]any{"data": map[string]any{"json": []any{}}},
+			})
+			return
+		}
 		submitted = true
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{

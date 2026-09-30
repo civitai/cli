@@ -1,5 +1,5 @@
 // Package manifest holds the App manifest filename constant and a
-// lightweight reader for the fields the CLI needs (slug/version/name).
+// lightweight reader for the fields the CLI needs (slug/version/name/tagline).
 package manifest
 
 import (
@@ -28,9 +28,19 @@ const Filename = "block.manifest.json"
 // reads directly. Full validation is done against the JSON Schema, not this
 // struct, so unknown fields are intentionally ignored here.
 type Manifest struct {
-	BlockID      string   `json:"blockId"`
-	Version      string   `json:"version"`
-	Name         string   `json:"name"`
+	BlockID string `json:"blockId"`
+	Version string `json:"version"`
+	Name    string `json:"name"`
+	// Tagline is the store listing's one-line pitch.
+	//
+	// 🔴 IT IS DECODED BECAUSE A GATE BRANCHES ON IT, not for completeness. On an
+	// ON-SITE app this key is the ONLY author surface for the listing's tagline
+	// (the server re-derives the column from it on every approve), and it is read
+	// only at approve time — so `civitai app submit`'s listing-completeness gate
+	// has to ask whether the tagline is already fixed HERE before it refuses a
+	// submit for an `empty-tagline` on the live listing. Without that it would
+	// refuse the only act that fixes the problem. See checkListingComplete.
+	Tagline      string   `json:"tagline"`
 	BuildCommand string   `json:"buildCommand"`
 	OutputDir    string   `json:"outputDir"`
 	Scopes       []string `json:"scopes"`

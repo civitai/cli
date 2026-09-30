@@ -348,7 +348,7 @@ func TestDoctorJSONShapeIsPinnedWhole(t *testing.T) {
           "code": "missing-icon",
           "label": "Missing icon (required before publishing)",
           "severity": "blocking",
-          "fix": "civitai app listing set-icon \u003cfile\u003e --slug ` + docSlugA + `"
+          "fix": "civitai app listing set-icon \u003cfile\u003e --slug ` + docSlugA + ` — no image to hand? ` + "`" + `civitai generate` + "`" + ` can produce one"
         }
       ],
       "advisory": [
@@ -386,7 +386,7 @@ func TestDoctorJSONShapeIsPinnedWhole(t *testing.T) {
           "code": "missing-icon",
           "label": "Missing icon (required before publishing)",
           "severity": "blocking",
-          "fix": "civitai app listing set-icon \u003cfile\u003e --slug ` + docSlugC + `"
+          "fix": "civitai app listing set-icon \u003cfile\u003e --slug ` + docSlugC + ` — no image to hand? ` + "`" + `civitai generate` + "`" + ` can produce one"
         }
       ],
       "advisory": []
@@ -505,12 +505,14 @@ func TestDoctorFixAdviceNamesOnlyCommandsThatExist(t *testing.T) {
 	// commands and this control would still pass — a positive control with two
 	// references of slack is a control for a scan that has half stopped working.
 	// 🔴 THE FLOOR IS THE MEASURED COUNT, NOT A SAFE-LOOKING SMALLER ONE.
-	// Measured by arming it at 999 and reading the test's own message: 14. It sat
+	// Measured by arming it at 999 and reading the test's own message: 16. It sat
 	// at 12, so the blocked-media arms could lose two commands and this control
 	// would still pass — a positive control with slack is a control for a scan
 	// that has half stopped working, which is the exact criticism this floor was
-	// raised from 5 to answer in the first place.
-	if seen < 14 {
+	// raised from 5 to answer in the first place. It went 14 -> 16 when the two
+	// MISSING-media remedies gained generateAnImageClause, and the floor was
+	// re-measured the same way rather than left at a number that still passed.
+	if seen < 16 {
 		t.Fatalf("the fix-line scan found only %d command references across the eight codes — "+
 			"the regex is not reading what it thinks it is, so the resolutions above prove nothing", seen)
 	}
