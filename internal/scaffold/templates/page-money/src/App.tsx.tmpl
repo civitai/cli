@@ -50,6 +50,7 @@ import {
   MAX_LORAS,
   addLora,
   checkpointFromPick,
+  dropIncompatibleLoras,
   loraFromPick,
   removeLora,
   setLoraWeight,
@@ -467,21 +468,38 @@ export function App() {
   // pick is DISCOVERY ONLY — the server re-validates + re-prices the id at
   // estimate/submit, so threading a pick into the body is money-safe.
 
-  // Open the host's Checkpoint picker, pre-filtered to the current base-model
-  // family + pre-highlighting the current pick. On a selection, map it into the
-  // checkpoint state. A dismissal (`selected` undefined) leaves the pick as-is.
+  // Open the host's Checkpoint picker, pre-highlighting the current pick. On a
+  // selection, map it into the checkpoint state. A dismissal (`selected`
+  // undefined) leaves the pick as-is.
+  //
+  // 🔴 NO `baseModelGroup` — the pick is UNCONSTRAINED, and that is the point.
+  // `baseModelGroup` is a FILTER: the host hides every checkpoint outside the
+  // family it is given. Passing `checkpoint.baseModel` here — the family the
+  // user is already in — means the picker offers only the ecosystem they are
+  // trying to leave, so no viewer could ever reach another family. Omitting it
+  // makes the host apply no base-model narrowing and offer every checkpoint the
+  // viewer can generate with. Omit the key; never send '' (on the host an empty
+  // string resolves to the real ecosystem key 'Other' and would narrow instead).
+  //
+  // Changing the checkpoint can change the ECOSYSTEM, which strands any LoRA
+  // belonging to the old family — hence dropIncompatibleLoras. Leaving those on
+  // the body would make the server reject the next generation at estimate/submit
+  // with nothing on screen explaining why.
   const onChangeModel = useCallback(async () => {
     setPickerBusy(true);
     try {
       const { selected } = await openCheckpointPicker({
-        baseModelGroup: checkpoint.baseModel,
         currentVersionId: checkpoint.versionId,
       });
-      if (selected) setCheckpoint(checkpointFromPick(selected));
+      if (selected) {
+        const next = checkpointFromPick(selected);
+        setCheckpoint(next);
+        setLoras((cur) => dropIncompatibleLoras(cur, next.baseModel));
+      }
     } finally {
       setPickerBusy(false);
     }
-  }, [openCheckpointPicker, checkpoint.baseModel, checkpoint.versionId]);
+  }, [openCheckpointPicker, checkpoint.versionId]);
 
   // Open the host's resource picker filtered to LoRAs, in the checkpoint's
   // base-model family. Append the pick (deduped + MAX_LORAS-capped via addLora).

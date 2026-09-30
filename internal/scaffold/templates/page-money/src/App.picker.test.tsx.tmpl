@@ -1,0 +1,160 @@
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+// The host picker CALL SITES — what App actually asks the host for.
+//
+// 🔴 THE DEFECT THIS PINS. "Change model" used to pass
+// `baseModelGroup: checkpoint.baseModel`, i.e. the family the user is ALREADY
+// in. `baseModelGroup` is a FILTER — the host hides every checkpoint outside the
+// family it is given — so the picker could only ever offer the ecosystem the
+// user was trying to leave, and no viewer of a scaffolded app could reach any
+// other family for the life of the session. The checkpoint pick must be
+// UNCONSTRAINED: the key ABSENT, not empty. (On the host,
+// `getBaseModelGroup('')` resolves to the real ecosystem key 'Other', so an
+// empty string narrows rather than widens.)
+//
+// The LoRA pick is the OPPOSITE case and is pinned here too, so nobody
+// "fixes" it by symmetry: a LoRA only works with a checkpoint in its own
+// family, so that pick stays constrained to the current checkpoint's family.
+//
+// These are assertions about the ARGUMENTS App sends, which is why the SDK is
+// mocked wholesale rather than driven through the mock host — the mock host
+// ignores `baseModelGroup` entirely, so it cannot see this defect at all.
+
+const checkpointOpen = vi.fn();
+const resourceOpen = vi.fn();
+const persistFn = vi.fn().mockResolvedValue(undefined);
+
+vi.mock('@civitai/blocks-react', () => ({
+  useBlockContext: () => ({ ready: true, viewer: { id: 2, username: 'dev' }, theme: 'dark' }),
+  useBlockResize: () => {},
+  // Full shape — App calls `.below()` on this, so a partial stub throws. This
+  // `vi.mock` is WHOLESALE: every hook App imports must be listed here.
+  useBlockBreakpoint: () => ({
+    tier: 'base',
+    measured: false,
+    atLeast: () => false,
+    below: () => true,
+  }),
+  useBlockToken: () => ({ scopes: ['ai:write:budgeted'], raw: 't', expiresAt: '' }),
+  useBuzzWorkflow: () => ({ estimate: vi.fn(), submit: vi.fn(), poll: vi.fn() }),
+  useBuzzBalance: () => ({ balance: null, loading: false, error: null, refetch: vi.fn() }),
+  useRequestConsent: () => ({ requestConsent: vi.fn() }),
+  useRequestSignIn: () => ({ requestSignIn: vi.fn() }),
+  useCheckpointPicker: () => ({ open: checkpointOpen, persist: persistFn }),
+  useResourcePicker: () => ({ open: resourceOpen }),
+}));
+
+// Imported AFTER the mock is registered.
+const { App } = await import('./App.js');
+
+/** A checkpoint pick in a DIFFERENT family from the SDXL 1.0 default. */
+const FLUX_PICK = {
+  versionId: 691639,
+  modelId: 618692,
+  modelName: 'FLUX.1',
+  versionName: 'dev',
+  baseModel: 'Flux.1 D',
+};
+
+/** A LoRA pick in the DEFAULT checkpoint's family (SDXL 1.0). */
+const SDXL_LORA = {
+  versionId: 447501,
+  modelId: 400236,
+  modelName: 'Sinfully Stylish',
+  versionName: 'v1',
+  baseModel: 'SDXL 1.0',
+};
+
+describe('App — host picker call sites', () => {
+  afterEach(() => {
+    checkpointOpen.mockReset();
+    resourceOpen.mockReset();
+  });
+
+  it('opens the CHECKPOINT picker UNCONSTRAINED — no baseModelGroup on the request', async () => {
+    const user = userEvent.setup();
+    checkpointOpen.mockResolvedValue({ selected: undefined });
+    render(<App />);
+
+    await user.click(await screen.findByTestId('pm-change-model'));
+
+    expect(checkpointOpen).toHaveBeenCalledTimes(1);
+    const opts = checkpointOpen.mock.calls[0][0] ?? {};
+    // ABSENT, not present-and-undefined, and never ''.
+    expect(opts).not.toHaveProperty('baseModelGroup');
+  });
+
+  it('still pre-highlights the current pick via currentVersionId', async () => {
+    const user = userEvent.setup();
+    checkpointOpen.mockResolvedValue({ selected: undefined });
+    render(<App />);
+
+    await user.click(await screen.findByTestId('pm-change-model'));
+
+    // The DEFAULT_CHECKPOINT's versionId — unconstraining the family must not
+    // cost the picker its pre-selection.
+    expect(checkpointOpen.mock.calls[0][0]?.currentVersionId).toBe(128078);
+  });
+
+  it('keeps the LoRA pick CONSTRAINED to the current checkpoint family', async () => {
+    const user = userEvent.setup();
+    resourceOpen.mockResolvedValue(null);
+    render(<App />);
+
+    await user.click(await screen.findByTestId('pm-lora-add'));
+
+    expect(resourceOpen).toHaveBeenCalledTimes(1);
+    expect(resourceOpen.mock.calls[0][0]).toMatchObject({
+      resourceType: 'LORA',
+      baseModelGroup: 'SDXL 1.0',
+    });
+  });
+
+  it('drops LoRAs from the old family when the checkpoint changes ecosystem', async () => {
+    const user = userEvent.setup();
+    resourceOpen.mockResolvedValue(SDXL_LORA);
+    checkpointOpen.mockResolvedValue({ selected: FLUX_PICK });
+    render(<App />);
+
+    // Add an SDXL LoRA on the SDXL default checkpoint.
+    await user.click(await screen.findByTestId('pm-lora-add'));
+    await waitFor(() => expect(screen.getAllByTestId('pm-lora-row')).toHaveLength(1));
+
+    // Move to a Flux checkpoint. The SDXL LoRA cannot work with it, so it must
+    // not survive onto the body — the server would reject the whole generation
+    // at estimate/submit and the user would see an unexplained failure.
+    await user.click(screen.getByTestId('pm-change-model'));
+    await waitFor(() =>
+      expect(screen.getByTestId('pm-model-label')).toHaveTextContent(/FLUX\.1/),
+    );
+    expect(screen.queryAllByTestId('pm-lora-row')).toHaveLength(0);
+  });
+
+  it('KEEPS LoRAs when the new checkpoint is in the same family', async () => {
+    const user = userEvent.setup();
+    resourceOpen.mockResolvedValue(SDXL_LORA);
+    // A different checkpoint, same baseModel as the default.
+    checkpointOpen.mockResolvedValue({
+      selected: {
+        versionId: 128713,
+        modelId: 112902,
+        modelName: 'DreamShaper XL',
+        versionName: 'v2',
+        baseModel: 'SDXL 1.0',
+      },
+    });
+    render(<App />);
+
+    await user.click(await screen.findByTestId('pm-lora-add'));
+    await waitFor(() => expect(screen.getAllByTestId('pm-lora-row')).toHaveLength(1));
+
+    await user.click(screen.getByTestId('pm-change-model'));
+    await waitFor(() =>
+      expect(screen.getByTestId('pm-model-label')).toHaveTextContent(/DreamShaper XL/),
+    );
+    // A same-family swap must NOT cost the user their LoRA stack.
+    expect(screen.getAllByTestId('pm-lora-row')).toHaveLength(1);
+  });
+});

@@ -119,8 +119,23 @@ Full guide: <https://developer.civitai.com/apps/guide/responsive>
 
 ### Model picker (host-served, server-revalidated)
 
-The **Change model** button calls `useCheckpointPicker().open({ baseModelGroup,
-currentVersionId })`. The HOST opens its own native checkpoint picker (in
+The **Change model** button calls `useCheckpointPicker().open({ currentVersionId
+})` — deliberately with **no `baseModelGroup`**. That argument is an
+ecosystem-family FILTER: the host hides every checkpoint outside the family it is
+given, so passing the family the user is already in would make the picker offer
+only the ecosystem they are trying to leave. Omitting it lets the viewer reach
+every checkpoint they can generate with. (Omit the key — never pass `''`, which
+the host resolves to the real ecosystem key `Other` and which would narrow the
+picker rather than widen it.)
+
+Changing the checkpoint can change the ecosystem, which strands any LoRA from the
+old family, so `dropIncompatibleLoras` (`src/models.ts`) clears those in the same
+update. Leaving them on the body would make the server reject the next generation
+at estimate/submit with nothing on screen explaining why. The **Add LoRA** picker
+is the opposite case and stays CONSTRAINED to the current checkpoint's family — a
+LoRA only works with a checkpoint in its own ecosystem.
+
+The HOST opens its own native checkpoint picker (in
 `dev:live` the SDK live host serves a protocol-identical in-harness catalog
 overlay; on the real platform it's civitai's own modal); the app never sees a
 catalog, a list, or any resource the user didn't pick. The picker resolves with a
@@ -690,6 +705,12 @@ npm run build         # what the platform produces (tsc typecheck + vite build)
   error (a transport blip, e.g. a not-yet-rolled-out pod) is retried, not turned
   into a terminal failure, while a genuine `failed` status stays terminal. Keep
   this if you customize `runPollLoop`.
+- **`src/App.picker.test.tsx`** — what the app ASKS the host for. The checkpoint
+  pick is unconstrained (no `baseModelGroup`, so the viewer can reach every
+  ecosystem) while the LoRA pick stays constrained to the current checkpoint's
+  family, and a checkpoint change that switches family drops the stranded LoRAs.
+  Keep this if you customize either picker call — the mock host ignores
+  `baseModelGroup`, so only an argument assertion can see a regression here.
 
 ## Allowed parent origins
 

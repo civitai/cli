@@ -6,6 +6,7 @@ import {
   addLora,
   checkpointFromPick,
   clampLoraWeight,
+  dropIncompatibleLoras,
   loraFromPick,
   loraOption,
   pickedCheckpointLabel,
@@ -134,5 +135,49 @@ describe('addLora / removeLora / setLoraWeight', () => {
     expect(setLoraWeight(sel, 1, 9)[0].weight).toBe(2); // clamped
     expect(setLoraWeight(sel, 1, 0.333333)[0].weight).toBe(0.33); // rounded
     expect(setLoraWeight(sel, 2, 0.5)).toEqual(sel); // no match → unchanged
+  });
+});
+
+// --- Family coherence when the checkpoint changes ---
+//
+// The checkpoint picker is UNCONSTRAINED (App.tsx passes no baseModelGroup), so
+// the user can move between ecosystems. A LoRA only works with a checkpoint in
+// its own family, so a family switch has to take the now-incompatible LoRAs with
+// it — otherwise the block builds a body the server rejects at estimate/submit,
+// and the user sees a failed generation with no explanation.
+
+const loraIn = (versionId: number, baseModel: string): LoraOption =>
+  loraOption({ versionId, modelId: versionId * 10, label: `L${versionId}`, baseModel });
+
+describe('dropIncompatibleLoras (checkpoint family change)', () => {
+  it('keeps LoRAs matching the new checkpoint and drops the rest', () => {
+    const sel = [loraIn(11, 'Flux.1 D'), loraIn(22, 'Pony'), loraIn(33, 'Flux.1 D')];
+    expect(dropIncompatibleLoras(sel, 'Flux.1 D').map((l) => l.versionId)).toEqual([11, 33]);
+  });
+
+  it('drops EVERY LoRA when the checkpoint moves to a family none of them match', () => {
+    const sel = [loraIn(11, 'Flux.1 D'), loraIn(22, 'Flux.1 D')];
+    expect(dropIncompatibleLoras(sel, 'Pony')).toEqual([]);
+  });
+
+  it('is a no-op when every LoRA already matches (a same-family checkpoint swap)', () => {
+    const sel = [loraIn(11, 'Pony'), loraIn(22, 'Pony')];
+    expect(dropIncompatibleLoras(sel, 'Pony').map((l) => l.versionId)).toEqual([11, 22]);
+  });
+
+  it('preserves each kept LoRA whole — weight included, not just its id', () => {
+    const sel = [loraOption({ versionId: 11, modelId: 110, label: 'L11', baseModel: 'Pony' }, 0.4)];
+    expect(dropIncompatibleLoras(sel, 'Pony')).toEqual(sel);
+    expect(dropIncompatibleLoras(sel, 'Pony')[0].weight).toBe(0.4);
+  });
+
+  it('does not mutate the input array', () => {
+    const sel = [loraIn(11, 'Flux.1 D'), loraIn(22, 'Pony')];
+    dropIncompatibleLoras(sel, 'Pony');
+    expect(sel.map((l) => l.versionId)).toEqual([11, 22]);
+  });
+
+  it('returns an empty list for an empty selection (total, never throws)', () => {
+    expect(dropIncompatibleLoras([], 'Pony')).toEqual([]);
   });
 });

@@ -212,6 +212,35 @@ export function setLoraWeight(
   return selected.map((l) => (l.versionId === versionId ? { ...l, weight: w } : l));
 }
 
+/**
+ * Drop the LoRAs that cannot work with a newly-chosen checkpoint.
+ *
+ * The checkpoint picker is UNCONSTRAINED (App passes no `baseModelGroup`), so
+ * the user can move between ecosystems. A LoRA is only valid against a
+ * checkpoint in its own family, so a family switch has to take the stranded
+ * LoRAs with it — otherwise the block builds a body carrying incompatible
+ * resources, the server rejects the whole generation at estimate/submit, and the
+ * user sees a failure with nothing on screen explaining it.
+ *
+ * 🔴 The match is EXACT on `baseModel`, and it is deliberately CONSERVATIVE.
+ * The block cannot compute family compatibility: the ecosystem mapping that
+ * knows 'SDXL 1.0' and 'SDXL Turbo' are one family lives on the host, not here,
+ * and nothing in the pick payload exposes it. The two ways to be wrong are not
+ * symmetric — wrongly KEEPING a LoRA costs a rejected generation the user
+ * cannot diagnose, while wrongly DROPPING one costs a single click to re-add it
+ * from the picker. So this keeps only what it can prove compatible. A same-family
+ * checkpoint swap (the common case — a different SDXL checkpoint) keeps the
+ * whole stack, because those picks carry the same `baseModel` string.
+ *
+ * Pure + total: returns a new array and never mutates the input.
+ */
+export function dropIncompatibleLoras(
+  selected: readonly LoraOption[],
+  baseModel: string,
+): LoraOption[] {
+  return selected.filter((l) => l.baseModel === baseModel);
+}
+
 /** versionIds already selected — drives dedup at the picker callback. */
 export function selectedLoraIds(selected: readonly LoraOption[]): Set<number> {
   return new Set(selected.map((l) => l.versionId));
