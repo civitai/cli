@@ -438,7 +438,7 @@ func submitGuardServer(t *testing.T, rows []appapi.Submission) (*httptest.Server
 		}
 		// 🔴 `listMine` IS ANSWERED EXPLICITLY, OR `submitted` STOPS MEANING WHAT
 		// ITS NAME SAYS. This handler treats every unrecognised path as the submit
-		// route, and the listing-completeness gate (issue #762) added a second
+		// route, and the listing-completeness gate (civitai/cli#762) added a second
 		// read to this code path — so without this arm a run that never uploaded
 		// anything would still set the flag, and `if *submitted` below would pass
 		// on the gate's read. An empty list is "no listing for this app yet", the

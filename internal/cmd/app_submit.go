@@ -546,7 +546,7 @@ Defaults to the current directory.`,
 					return err
 				}
 
-				// 2c. LISTING-COMPLETENESS GATE (issue #762), after the version
+				// 2c. LISTING-COMPLETENESS GATE (civitai/cli#762), after the version
 				// guard and before any packaging.
 				//
 				// 🔴 AFTER confirmSubmit, FOR THE SAME REASON THE VERSION GUARD

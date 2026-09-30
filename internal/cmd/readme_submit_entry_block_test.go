@@ -318,7 +318,7 @@ var readmeEntryBlockClaims = []struct {
 		claim: "R1b — the pre-upload refusals print nothing, named so a reader can tell which case they are in",
 		want: "A refusal that stops the submit **before** the upload step prints nothing at all: no `--yes`, " +
 			"a dirty work tree, the version guard, the listing-completeness gate, a validation failure.",
-		verifyAt: "internal/cmd/app_submit.go — those FIVE all return before doUpload. The listing-completeness gate (issue #762) joined the list as a fifth pre-upload refusal; it is step 2c, above `pkgzip.Build`, so like the other four it cannot reach printSubmitSizeDiagnosis",
+		verifyAt: "internal/cmd/app_submit.go — those FIVE all return before doUpload. The listing-completeness gate (civitai/cli#762) joined the list as a fifth pre-upload refusal; it is step 2c, above `pkgzip.Build`, so like the other four it cannot reach printSubmitSizeDiagnosis",
 	},
 	// 🔴 THERE IS NO R3 OR R3b HERE, AND THE ABSENCE IS THE DECISION.
 	//

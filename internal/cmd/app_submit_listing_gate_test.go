@@ -13,7 +13,7 @@ import (
 	"github.com/civitai/cli/internal/appapi"
 )
 
-// TESTS FOR THE LISTING-COMPLETENESS GATE ON `civitai app submit` (issue #762).
+// TESTS FOR THE LISTING-COMPLETENESS GATE ON `civitai app submit` (civitai/cli#762).
 //
 // 🔴 EVERY TEST IN THE FIRST HALF OF THIS FILE DRIVES THE REAL COMMAND, NOT THE
 // PREDICATE. The defect is a SEQUENCING one — nothing was missing from the CLI's

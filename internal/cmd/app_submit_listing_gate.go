@@ -13,7 +13,7 @@ import (
 	"github.com/civitai/cli/pkg/civitai"
 )
 
-// THE LISTING-COMPLETENESS GATE on `civitai app submit` (issue #762).
+// THE LISTING-COMPLETENESS GATE on `civitai app submit` (civitai/cli#762).
 //
 // MEASURED CAUSE. A credentialed agent trial (`at3`, 2026-09-29) submitted an
 // app at step 48, generated an icon and a cover at steps 54–55, attached them at
