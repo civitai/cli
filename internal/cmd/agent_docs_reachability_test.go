@@ -394,6 +394,22 @@ type templateBullet struct{ name, text string }
 // `no project scaffolded here` branch renders its own per-template bullets, so a
 // map keyed by name silently keeps whichever came last and a claim made in the
 // first list disappears.
+//
+// 🔴 A BULLET'S TEXT ENDS AT THE NEXT LIST ITEM OR HEADING, NOT AT THE NEXT
+// TEMPLATE BULLET — and the difference is not cosmetic. The scan used to close a
+// bullet only on the next "\n- `", i.e. on the next entry that opens with a
+// backticked name, so the LAST template bullet in a list absorbed every
+// remaining byte of the document: the gotchas, the local-dev section, the end
+// marker. That made the caller's question ("WHICH bullet carries this claim")
+// unanswerable for the last bullet, which the doc comment above says is the
+// whole point of parsing rather than grepping.
+//
+// Measured: adding an unrelated gotcha bullet whose prose contained the word
+// "default" made TestTheDocumentedDefaultTemplateIsTheRealOne report
+// `[page-money page-money]` for kind "none", because the second list's trailing
+// `page-money` bullet had swallowed the gotchas. Nothing about the template
+// list had changed. Bounding the text on "\n- " (any bullet) or "\n#" (the next
+// heading) is what makes the parse mean what it claims.
 func templateBulletsIn(block string) []templateBullet {
 	known := map[string]bool{}
 	for _, t := range scaffold.AllTemplates() {
@@ -413,8 +429,10 @@ func templateBulletsIn(block string) []templateBullet {
 		}
 		name := block[start : start+end]
 		rest := block[start+end:]
-		if k := strings.Index(rest, open); k >= 0 {
-			rest = rest[:k]
+		for _, stop := range []string{"\n- ", "\n#"} {
+			if k := strings.Index(rest, stop); k >= 0 {
+				rest = rest[:k]
+			}
 		}
 		if known[name] {
 			out = append(out, templateBullet{name: name, text: rest})
