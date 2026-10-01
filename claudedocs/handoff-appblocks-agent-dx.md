@@ -26,10 +26,11 @@ defects, not missing capability.
 
 ## State now
 
-- Branch / PR: **`starters#505` OPEN** (`zach/components-chat-registry-drift`, commit `fe50b77`) —
-  the release-pipeline fix. **`starters#502` OPEN and READY** (all 20 checks green at
-  `acde776e`, `CLEAN`/`MERGEABLE`). **`cli#760` OPEN, still a DRAFT.** This doc rides
-  `cli` branch `zach/handoff-appblocks-agent-dx` → **`cli#763`**.
+- Branch / PR: **`starters#505` OPEN** (`zach/components-chat-registry-drift`, commit
+  **`ab23b80`** — rebased onto `d1a4d12` after main moved; the pre-rebase `fe50b77` was green
+  20/20 and the guard re-passed on the moved base) — the release-pipeline fix.
+  **`starters#502` OPEN and READY**, head **`35057f5c`**. **`cli#760` OPEN, still a DRAFT.**
+  This doc rides `cli` branch `zach/handoff-appblocks-agent-dx` → **`cli#763`**.
 - ✅ **7 of 8 PRs MERGED**, each verified by CONTENT on the target `main` (never by ancestry — a
   squash merge makes `git merge-base --is-ancestor` permanently false). Carried forward
   verbatim from the previous round, NOT re-derived this session:
@@ -50,12 +51,22 @@ defects, not missing capability.
   `0.1.1`, so `pnpm assert:published` correctly failed `PUBLISH DID NOT HAPPEN` on every push
   since 2026-09-30T16:50Z. `#505` records `0.1.1`. Full mechanism in the new investigation
   block below.
-- ✅ **`cli#760`'s pin re-derived from the registry, not from either PR's text.** It needs
-  **`^1.0.0`** (+ `app-sdk ^0.54.0`). Evidence: the published `0.60.0` tarball's
-  `dist/hooks/useCheckpointPicker.d.ts` still declares `open: (opts: { baseModelGroup: string; … })`
+- 🔴 **`cli#760`'s pin is `^0.61.0`, NOT `^1.0.0` — and this line was corrected mid-session
+  because the BASE MOVED under the measurement.** `starters#504`
+  (*"release blocks-react consent-retry as a minor, not a major"*) merged at
+  **2026-10-01T02:35:38Z**, downgrading `#500`'s changeset from `major` to `minor`. `#502` was
+  recomputed and at head `35057f5c` now proposes `blocks-react 0.60.0 → **0.61.0**`,
+  `app-sdk → 0.54.0`, `sdk → 0.10.0`. **So `cli#760`'s PR body (`0.61.0`) is now RIGHT, and
+  both this doc's earlier `^1.0.0` and the kickoff that asserted it are WRONG.** Neither was
+  wrong when written — a human re-graded the changeset in between.
+- ✅ **What survives that correction, because it is a property of the published artifact
+  rather than of a changeset grade:** the published `0.60.0` tarball's
+  `dist/hooks/useCheckpointPicker.d.ts` declares `open: (opts: { baseModelGroup: string; … })`
   — required, and `opts` itself required — so the optional signature is unreleased and
-  `^0.60.0` cannot typecheck the scaffold. `#502` proposes `blocks-react 1.0.0`,
-  `app-sdk 0.54.0` and **`sdk 0.10.0`** (that third bump was missed last round).
+  `^0.60.0` cannot typecheck the scaffold. **Whatever the next version NUMBER is, the pin must
+  be the version that first carries the optional signature.** 🔴 Re-derive it from
+  `npm view @civitai/blocks-react version` AFTER the publish lands — never from a changeset
+  grade, a Version PR diff, or any number written in this doc.
 - 🔴 **`cli#760`'s branch is BEHIND `cli` main** and needs a rebase, not a hand-edit: its
   `internal/scaffold/templates/page-money/package.json.tmpl` still reads `^0.52.0`/`^0.59.0`
   where main (post-`#761`) reads `^0.53.0`/`^0.60.0`.
@@ -208,9 +219,13 @@ session back down the refuted path.
    IN FLIGHT: civitai/civitai-app-starters#505
    forcing: gate — `starters` main is red on this and nothing can publish until it is fixed
 2. **Merge `starters#502`,** then verify at the **REGISTRY**, never the PR:
-   `npm view @civitai/blocks-react version` → `1.0.0`, `npm view @civitai/app-sdk version` →
+   `npm view @civitai/blocks-react version` → `0.61.0`, `npm view @civitai/app-sdk version` →
    `0.54.0`, `npm view @civitai/sdk version` → `0.10.0`. 🔴 A merged Version PR is not a
-   publish. IN FLIGHT: civitai/civitai-app-starters#502
+   publish. 🔴 **Re-read `#502`'s own diff first rather than trusting those three numbers** —
+   they changed once already this arc (`#504`), and a later changeset re-grade moves them
+   again. ⚠ This is the step that puts packages on the PUBLIC registry and moves `latest`;
+   an unpublish is impossible after 72 h, and this repo has twice stranded consumers on a
+   PARTIAL publish (`ETARGET` on install). IN FLIGHT: civitai/civitai-app-starters#502
    forcing: gate — `cli#760` cannot merge until `blocks-react` publishes
 3. **Configure the npm trusted publisher for `@civitai/components-chat`** on npmjs.com (owner
    `civitai`, repo `civitai-app-starters`, workflow `release.yml`, environment blank).
@@ -218,9 +233,11 @@ session back down the refuted path.
    forcing: gate — without it the next `components-chat` changeset fails to publish with the
    same E404 that caused this whole arc
 4. **Then land `cli#760`.** REBASE onto `cli` main first (the branch is behind: its
-   `package.json.tmpl` still reads `^0.52.0`/`^0.59.0`), then set `@civitai/blocks-react`
-   `^1.0.0` and `@civitai/app-sdk` `^0.54.0` — re-derived from `npm view`, not from either
-   PR's body, which says `0.61.0`. Re-run
+   `package.json.tmpl` still reads `^0.52.0`/`^0.59.0`), then set `@civitai/blocks-react` and
+   `@civitai/app-sdk` to the versions `npm view` reports **after step 2's publish** — expected
+   `^0.61.0` / `^0.54.0` as of `#502`@`35057f5c`, but 🔴 **derive, do not copy these**: they
+   were `^1.0.0` / `^0.54.0` earlier in this same arc until `#504` re-graded the changeset.
+   Re-run
    `CIVITAI_SCAFFOLD_TYPECHECK=1 go test ./internal/scaffold -run TestPageMoneyScaffoldTypechecksItsOwnShippedTests`
    and watch the FAIL→PASS inversion; undraft; merge. Files: `package.json.tmpl`,
    `App.tsx.tmpl`, `models.ts.tmpl`. IN FLIGHT: civitai/cli#760
@@ -334,6 +351,29 @@ session back down the refuted path.
   version the tree declares** — not at the next one — and commit that bump, or the registry
   and the tree diverge and the whole monorepo's release goes red.
 
+### 🔴 A CHANGESET GRADE IS NOT A FACT ABOUT THE CODE — it is a line in a file a human can edit, and one did, mid-session
+
+- The kickoff for this round said, in bold: *"cli#760's own PR body names the WRONG
+  precondition: it says 0.61.0, but #500 is a major so it needs `^1.0.0`."* That was true when
+  written. **`starters#504` then merged at 2026-10-01T02:35:38Z** — *"release blocks-react
+  consent-retry as a minor, not a major"* — and `#502` recomputed to `blocks-react 0.61.0`.
+  So the PR body became right, and both the kickoff and this doc's own first correction became
+  wrong, **without anybody being wrong at the time**.
+- 🔴 **The reusable shape: "re-derive it" is only safe advice if you also say WHICH SOURCE.**
+  Both readings obeyed "don't trust the PR body" and still landed on a number that moved,
+  because the source they re-derived from — a `.changeset/*.md` grade, then a Version PR diff
+  — is *upstream of a human decision*. The only source no re-grade can move is the **published
+  artifact**: `npm view <pkg> version`, and the shipped `.d.ts` for the signature itself. The
+  property that actually gates `cli#760` is *"the first version whose `useCheckpointPicker`
+  declares `opts?:` / `baseModelGroup?:`"* — version-number-free, and checkable in one command.
+- ⚠ **It was caught by accident, which is the part to fix.** `main` moving showed up only
+  because a pre-merge `git log origin/main` for an unrelated reason (confirming the repo's
+  squash-merge style) printed `#504` at the top. Nothing in the flow asks "has the base moved
+  since I measured?" — `RULES.md` says to re-run a merged-tree test when the base moves, and
+  this is the same rule applied to a *claim* rather than a test. `starters#505` was rebased
+  onto the new `main` (`fe50b77` → `ab23b80`) and its guard re-run green there rather than
+  assuming disjoint files made it safe.
+
 ## How to verify
 
 ```bash
@@ -345,8 +385,10 @@ git -C $ST worktree remove --force /tmp/vap
 #   RED  until #505 lands:  @civitai/components-chat@0.1.0 -> HTTP 404 ... RC=1
 #   GREEN once it has:      OK: 7/7 publishable package version(s) confirmed ... RC=0
 
-# 2. the publish actually happened — ask the REGISTRY, never the PR
-npm view @civitai/blocks-react version   # 1.0.0
+# 2. the publish actually happened — ask the REGISTRY, never the PR.
+#    🔴 The expected numbers come from `gh pr diff 502`, NOT from this comment: #504 moved
+#    blocks-react from 1.0.0 to 0.61.0 mid-arc, and another re-grade moves it again.
+npm view @civitai/blocks-react version   # 0.61.0 as of #502@35057f5c — re-derive
 npm view @civitai/app-sdk version        # 0.54.0
 npm view @civitai/sdk version            # 0.10.0
 
@@ -355,9 +397,12 @@ curl -sS https://registry.npmjs.org/@civitai%2Fcomponents-chat \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); l=d["dist-tags"]["latest"]; v=d["versions"][l]; print(l, v["_npmUser"]["name"], bool(v["dist"].get("attestations")))'
 #   want: <next version> "GitHub Actions" True   (0.1.1 devzacx False = still the hand publish)
 
-# 4. cli#760's pin is right — read the PUBLISHED type, not either PR's body
-npm pack @civitai/blocks-react@1.0.0 --pack-destination /tmp >/dev/null && tar -xzf /tmp/civitai-blocks-react-1.0.0.tgz -C /tmp
+# 4. cli#760's pin is right — read the PUBLISHED TYPE, which no changeset re-grade can move
+V=$(npm view @civitai/blocks-react version)     # whatever actually published
+npm pack "@civitai/blocks-react@$V" --pack-destination /tmp >/dev/null
+tar -xzf "/tmp/civitai-blocks-react-$V.tgz" -C /tmp
 grep -n -A3 'open:' /tmp/package/dist/hooks/useCheckpointPicker.d.ts   # want `opts?:` and `baseModelGroup?:`
+#   0.60.0 has `opts:` + `baseModelGroup: string` (both REQUIRED) — that is the control
 
 # 5. the scaffold gate — it SELF-SKIPS without the env var, and `make ci` never sets it
 (cd $CLI && CIVITAI_SCAFFOLD_TYPECHECK=1 go test ./internal/scaffold \
