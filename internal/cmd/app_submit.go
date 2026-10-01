@@ -296,6 +296,7 @@ func newAppSubmitCmd() *cobra.Command {
 	var allowDowngrade bool
 	var allowDirty bool
 	var allowOversize bool
+	var allowIncompleteListing bool
 
 	cmd := &cobra.Command{
 		Use:   "submit [dir]",
@@ -368,6 +369,26 @@ Build provenance:
   all rather than a guess — and --allow-dirty still stamps, marking the
   submission dirty, because that is the case worth being able to look up.
 
+Listing-completeness gate:
+  A submit that would really upload also checks the app's STORE LISTING and
+  REFUSES while it is missing something you can fix now: a missing icon or
+  cover, and — on an off-site listing, whose copy you own — an empty tagline or
+  description. Each refusal names the command that fixes it. --yes does NOT
+  waive this; --allow-incomplete-listing does, for submitting on purpose before
+  the listing is finished.
+
+  It is deliberately narrower than ` + "`civitai app doctor`" + `. No screenshots, an
+  empty category, a still-scanning asset and a BLOCKED asset are reported and
+  NOT refused — a blocked screenshot's remedy ends at a moderator approval, and
+  a category on an on-site app is a moderator's to set, so refusing either would
+  block your submit on somebody else's queue. An on-site app's tagline and
+  description come from block.manifest.json and are re-read when a version is
+  approved, so a tagline already in your manifest is reported as fixed rather
+  than refused.
+
+  Your FIRST submit is what creates the store listing, so there is nothing to
+  check yet and nothing is refused; the gate applies from the second one on.
+
 Defaults to the current directory.`,
 		Example: `  civitai app submit                    # validate + package + confirm + submit
   civitai app submit --yes              # skip the confirmation prompt (scripts/CI)
@@ -375,6 +396,7 @@ Defaults to the current directory.`,
   civitai app submit --allow-downgrade  # deliberate rollback below the approved version
   civitai app submit --allow-dirty      # submit uncommitted working-tree changes on purpose
   civitai app submit --allow-oversize   # submit past the vendored body-size ceiling
+  civitai app submit --allow-incomplete-listing  # submit before the store listing is finished
   civitai app submit -o my-block.zip ./my-block`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -523,6 +545,36 @@ Defaults to the current directory.`,
 				if err := checkVersionNotRegression(ctx, client.ListSubmissions, cmd.ErrOrStderr(), m.BlockID, m.Version, allowDowngrade); err != nil {
 					return err
 				}
+
+				// 2c. LISTING-COMPLETENESS GATE (civitai/cli#762), after the version
+				// guard and before any packaging.
+				//
+				// 🔴 AFTER confirmSubmit, FOR THE SAME REASON THE VERSION GUARD
+				// IS: it reads the API, and
+				// TestAppSubmit_NonTTYRefusesWithoutYes_NoNetworkCall pins a bare
+				// non-TTY `civitai app submit` as touching no network. Moving it
+				// above the prompt would acquire a network dependency for the
+				// accidental-footgun invocation.
+				//
+				// 🔴 AFTER THE VERSION GUARD, NOT BEFORE. Both are one network
+				// read, so the order is about which answer is worth having first:
+				// a version regression means this bundle must not be submitted AT
+				// ALL under this version, which is true whatever the listing
+				// looks like. Reporting incomplete listing work first would send
+				// the author off to spend an afternoon on artwork for a submit
+				// that is going to be refused anyway.
+				//
+				// It runs only on the canUpload path, like both guards above:
+				// --package-only and the no-token fallback never reach the
+				// server, so neither can carry an incomplete listing forward.
+				//
+				// 🔴 THE WARNINGS GO TO STDERR, THE REFUSAL IS THE RETURN. Same
+				// split as the version guard — stdout stays the submit's own
+				// report.
+				if err := checkListingComplete(ctx, client.ListMyListings, cmd.ErrOrStderr(),
+					m.BlockID, m.Tagline, cfg.BaseURL(), allowIncompleteListing); err != nil {
+					return err
+				}
 			}
 
 			// 3. Package the canonical source tree.
@@ -599,6 +651,12 @@ Defaults to the current directory.`,
 	cmd.Flags().BoolVar(&allowDowngrade, "allow-downgrade", false, "submit even when the version is not above the highest approved one (deliberate rollback)")
 	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "submit even when the packaged directory has uncommitted git changes")
 	cmd.Flags().BoolVar(&allowOversize, "allow-oversize", false, "submit even when the body exceeds the size the server is expected to accept")
+	// 🔴 NOT COVERED BY --yes, AND THE USAGE STRING SAYS SO. --yes is the flag a
+	// script or an agent already passes, so an author reading only the flag list
+	// has to be told here that it is not the waiver — otherwise the first attempt
+	// to get past this gate is a retry that cannot work.
+	cmd.Flags().BoolVar(&allowIncompleteListing, "allow-incomplete-listing", false,
+		"submit even when the app's store listing is missing media or copy (--yes does NOT waive that gate)")
 	return cmd
 }
 

@@ -643,6 +643,9 @@ GATED_FLAGS = {
     "allow-downgrade": "bool",
     "allow-dirty": "bool",
     "allow-oversize": "bool",
+    # `app submit`'s waiver for the listing-completeness gate. It consumes
+    # nothing, so it can never hide an app name from the prefix cap.
+    "allow-incomplete-listing": "bool",
     "json": "bool",
     # root's persistent flags, which every gated command also accepts.
     "no-update-check": "bool",

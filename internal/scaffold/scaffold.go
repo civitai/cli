@@ -93,6 +93,12 @@ type Data struct {
 	Slug string
 	// Name is the human-readable display name.
 	Name string
+	// Tagline is the manifest's store tagline. Leave it EMPTY and Render derives
+	// one from Name (TaglineFromName) — that is the normal path and the only one
+	// `civitai app init` takes, so a caller never has to know this field exists.
+	// Setting it explicitly overrides the derivation; it is not validated here,
+	// because `app init` validates the manifest it writes.
+	Tagline string
 }
 
 // outputName maps an embedded template filename to its on-disk name.
@@ -133,8 +139,8 @@ func Render(tmpl Template, destDir string, data Data) ([]string, error) {
 		return nil, err
 	}
 
-	// 🔴 THE TEMPLATES SEE `Data` AND NOTHING ELSE, and that is now the whole
-	// story. There used to be an unexported `renderData` wrapper carrying a
+	// 🔴 THE TEMPLATES SEE `Data` AND NOTHING ELSE, and that is still the whole
+	// story. There used to be an unexported `renderData` WRAPPER carrying a
 	// derived `HookIndex` — a 36-row markdown table of every
 	// `@civitai/blocks-react` hook, generated from a Go table (`hooks.go`) and
 	// rendered into the page-money README. It was retired: the hosted developer
@@ -145,7 +151,20 @@ func Render(tmpl Template, destDir string, data Data) ([]string, error) {
 	// `Data` is a struct, so a template still referencing `{{ .HookIndex }}`
 	// fails execution with `can't evaluate field HookIndex` rather than rendering
 	// a blank — the removal cannot be half-done.
+	//
+	// 🔴 `Tagline` IS DERIVED HERE AND IS NOT A RETURN OF THAT WRAPPER. It fills a
+	// FIELD ON `Data` rather than a wrapper around it, so the sentence above stays
+	// literally true and every caller keeps working unchanged. And it is not the
+	// thing the wrapper was retired for: `HookIndex` duplicated a document that
+	// lives somewhere else, so the two could drift; nothing anywhere else holds a
+	// copy of a scaffolded app's tagline. Deriving it in Render rather than at the
+	// call site is what makes it ONE rule — every entry point, including the tests
+	// that render a template directly, gets a schema-valid tagline without
+	// knowing it has to ask for one.
 	view := data
+	if strings.TrimSpace(view.Tagline) == "" {
+		view.Tagline = TaglineFromName(view.Name)
+	}
 
 	var written []string
 	err := fs.WalkDir(templatesFS, root, func(p string, d fs.DirEntry, err error) error {

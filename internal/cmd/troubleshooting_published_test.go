@@ -244,8 +244,8 @@ var publishedTroubleshootingRows = []publishedTroubleshootingRow{
 			"an unwritable config and a connection that never opened print neither block. `What this CLI " +
 			"**would have** sent` is the ceiling refusal alone — it sends nothing either, and says so — " +
 			"and that one is exact too: nothing was uploaded. A refusal that stops the submit before the " +
-			"upload step (no `--yes`, a dirty tree, the version guard, a validation failure) prints " +
-			"neither.",
+			"upload step (no `--yes`, a dirty tree, the version guard, the listing-completeness gate, a " +
+			"validation failure) prints neither.",
 		readMore: "https://developer.civitai.com/apps/guide/packaging",
 	},
 }
