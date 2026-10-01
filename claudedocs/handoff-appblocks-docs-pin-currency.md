@@ -17,9 +17,8 @@ unblocked by the 2026-10-01 publish of `blocks-react@0.61.0` / `app-sdk@0.54.0`:
 generated hooks reference still taught a hardcoded `baseModelGroup: 'SDXL'`, and the
 published CLI troubleshooting page contradicted the shipped CLI's refusal list.
 
-🔴 **This is a NEW arc.** `appblocks-agent-dx` CLOSED 2026-10-01 (its
-`closing-condition` ADDRESSED; `cli#764` merged `3c7366404` at 22:06Z as its last PR).
-These were its leftovers, not a continuation of it — see
+🔴 **This is a NEW arc.** `appblocks-agent-dx` CLOSED 2026-10-01 (`cli#764` merged
+`3c7366404` as its last PR). These were its leftovers — see
 `claudedocs/handoff-appblocks-agent-dx.md` in this same repo for that arc.
 
 - **closing-condition:** `check` — both asks are LIVE on the public site, with a control
@@ -29,48 +28,46 @@ These were its leftovers, not a continuation of it — see
   curl -sS https://developer.civitai.com/site/guide/cli-troubleshooting.md | grep -c 'listing-completeness gate'  # >= 1
   curl -sS https://developer.civitai.com/apps/reference/hooks.md | wc -c                                   # CONTROL: ~45k, not ~200
   ```
-  🔴 Merged is NOT live — this repo is branch-tracked (`ref: branch: main`) so a merge
-  triggers a deploy that takes minutes. The predecessor arc measured twins still at
-  21 B / 30 B ninety seconds after merge. FROZEN at round 1: the upstream README fix
-  and the `@civitai/sdk` bump below are NEW items, not extensions of this line.
+  🔴 Merged is NOT live. FROZEN at round 1: the upstream README fix and the `@civitai/sdk`
+  bump are NEW items, not extensions of this line.
+
+🔴 **VERDICT: ADDRESSED — ARC CLOSED 2026-10-01T23:31Z.** `#136` merged (`cbfab1e3`,
+23:23:38Z) on 16/16 terminal-green checks, deployed, and verified LIVE by polling:
+`hooks.md` 42,265 B / sdxl=**2** → 46,590 B / sdxl=**0**, `cli-troubleshooting.md`
+21,192 B / gate=**0** → 21,223 B / gate=**1**, control `messages.md` answering at
+17,377 B. Independently re-read after the poll loop exited. **Anything outstanding below
+is a NEW arc, not another round of this one.**
 
 ## State now
 
-- **Branch / PR:** `civitai-developer-docs` `zach/docs-pin-bump-0610-and-cli-troubleshooting`
-  → **#136**, head `09867e7`, `mergeable=MERGEABLE mergeState=CLEAN` (re-read after `#135`
-  merged 22:26Z and moved the base). NOT merged, NOT deployed.
-- **Upstream PR:** `civitai-app-starters` `zach/blocks-react-readme-retract-required` →
-  **#508**, head `9fcb0c4`-era commit, patch changeset included. NOT merged.
-- **DONE — `cli#764` merged** (`3c7366404`, 22:06:44Z), closing out the predecessor arc.
-  It had read BLOCKED only because `build-test` was still `in_progress`; SHA-pinned, all
-  12 checks were terminal `success`.
-- **DONE — #136 commit 1 (`ecd284b`):** pins `blocks-react 0.59.0→0.61.0`,
-  `app-sdk 0.52.0→0.54.0` + lock; regenerated `apps/reference/{hooks,messages,generation}.md`;
-  added a `useCivitaiRoute` row to `apps/guide/porting.md`; applied `cli#762`'s one-clause
-  listing-completeness-gate edit to `site/guide/cli-troubleshooting.md`.
-- **DONE — #136 commit 2 (`09867e7`):** re-stamped **23** pin literals across 12 files
-  that commit 1 staled. See the `check:ds-pins` gotcha below — this is the one real defect
-  of the session and CI caught it, not me.
-- **DONE — `starters#508`:** retracted `packages/civitai-blocks-react/README.md`'s
-  `useCheckpointPicker` "currently **required**" clause AND restored its missing
-  "omit the key" advice, + a patch changeset.
-- **DONE — public correction posted** on #136
-  (`#issuecomment-5942203718`): the commit message and PR body both called
-  `apps/reference/generation.md` "bridge-table prose rewording only", which is FALSE.
-- **IN FLIGHT — the nine-axes audit of #136 had NOT reported when this was written.**
-  Round 0 DID report, twice (it re-ran at `09867e7` after being told the head moved). Verdict:
-  `deletion candidate — D4 + D7`, 7 candidates, `requirements: 5 (unattributed: 0)`. It
-  independently reproduced the stale-stamp regression with a **pin-revert control** — PR pins →
-  exit 1 / 23 violations, base pins with nothing else changed → exit 0 — so the diff, not the
-  base, staled them. All candidates are in `## Defects (batched)` and ranks 3–5.
-- **CI at `09867e7`: 16/16 success**, all terminal, `completed_at` 22:44–22:46Z, same check count
-  as `ecd284b` so nothing is unregistered. `mergeable=MERGEABLE mergeState=CLEAN` re-read after
-  `#135` moved the base. 🔴 `CLEAN` is a conflict verdict, NOT a CI-settle signal.
-- **Deploy/verify status:** nothing merged, nothing deployed, **nothing verified against the live
-  site.** Every green is a LOCAL run plus CI; the closing condition is unrun by construction.
-- **No `clawgate-task:` field:** `clawgate_handoff.sh resolve` exited **5** (nothing
-  resolved). That cannot distinguish "touched no task" from "wrong session id", so no field
-  was written — it is not a clean bill of health.
+- 🔴 **ARC CLOSED.** `civitai-developer-docs#136` **MERGED** `cbfab1e3` 23:23:38Z,
+  squash, branch deleted; **DEPLOYED AND VERIFIED LIVE** (numbers in `## Goal`).
+  Both closing-condition halves measured on the public site, with a size control and a
+  pre-merge positive control (`sdxl=2, gate=0`) proving the probe could see the defect.
+- 🔴 **THE DEPLOY LAG IS MEASURED, NOT ASSUMED: ~8 MINUTES.** 23 consecutive polls at
+  20 s intervals returned the OLD page unchanged after the merge; `hooks.md` flipped on
+  poll 24 and `cli-troubleshooting.md` on poll 25, ~20 s apart. A session reporting this
+  closed off the merge alone would have been wrong for that whole window.
+- **`civitai-app-starters#508` — STILL OPEN**, now two commits: `6cea118` (prose
+  retraction) and **`9f1bd12`** (the EXAMPLE, which the audit caught). Patch changeset
+  included. `claim-work` slug `appblocks-agent-dx-5` is still HELD for it.
+- **`cli#765` — STILL OPEN**, carries this handoff doc.
+- **`cli#764` merged** `3c7366404` 22:06:44Z; `main`'s copy of the predecessor handoff is
+  now the authoritative 519 lines (it was a stale 455 before).
+- **Claims released:** `appblocks-agent-dx-2` and `-3` (both landed in `#136`).
+- **Two audits ran on `#136`** — round 0 (requirements/deletion, reported twice, re-run at
+  `09867e7`) and the nine axes. Round 0 verdict `deletion candidate — D4 + D7`, 7
+  candidates, `requirements: 5 (unattributed: 0)`. Nine-axes verdict **merge after fixing
+  🔴 1**, which was the upstream example — fixed in `#508` `9f1bd12` before the merge.
+- **Two public corrections posted on `#136`** (`#issuecomment-5942203718`,
+  `#issuecomment-5942313185`) for false claims in my own commit messages. Neither is
+  amendable in place — that would force-push and void a green 16/16 CI run.
+- **No `clawgate-task:` field:** `clawgate_handoff.sh resolve` exited 5. That cannot
+  distinguish "touched no task" from "wrong session id"; it is not a clean bill of health.
+- ⚠ **`cairn.civitai.com` is returning HTTP 503 (no available server)**, served from an
+  18-minute-old cache. Both store writes LANDED on the `personal` instance (verified by
+  reading the synced cache) but their automated post-write validation was UNCONFIRMED
+  twice. Not this arc's problem; recorded because the next writer will hit it.
 
 ## Open investigations — live diagnosis state
 
@@ -98,80 +95,107 @@ These were its leftovers, not a continuation of it — see
 
 ## Next steps (ranked)
 
-1. **Read the nine-axes audit of #136, fix what it finds, then merge and verify live.**
-   Repo `civitai-developer-docs`, PR **#136**. The audit was dispatched against `ecd284b`
-   and told that the head moved to `09867e7`. After merging, the closing condition above is
-   the gate — and merged is not live.
-   IN FLIGHT: civitai-developer-docs#136
-   forcing: gate — the hardcoded-`SDXL` defect is live on developer.civitai.com until this merges and deploys
+🔴 **Rank 1 is CLOSED and is kept in place so the numbering stays stable** — a rank is
+half a `claim-work` claim's identity, so renumbering re-points every live claim.
+
+1. ✅ **CLOSED 2026-10-01T23:31Z — `#136` merged, deployed and verified live.** Evidence
+   in `## Goal` and `## State now`. Re-check with `## How to verify` §0 if ever in doubt.
+   forcing: gate — the hardcoded-`SDXL` defect was live on developer.civitai.com until this merged and deployed; it is now measured gone
 2. **Merge `starters#508`, confirm the Release run publishes `blocks-react@0.61.1`, then
-   re-bump the docs pin and regenerate.** Until that round-trip completes, #136 publishes a
-   `useCheckpointPicker` description that (a) falsely says `baseModelGroup` is required and
-   (b) never tells the reader it can be omitted. Operator decided 2026-10-01 to ship #136
-   anyway and fix upstream after; this is the "after".
-   Repo `civitai-app-starters` → then `civitai-developer-docs`.
-   Closing condition: `npm view @civitai/blocks-react version` ≥ `0.61.1`, and
-   `curl -sS https://developer.civitai.com/apps/reference/hooks.md | grep -c 'currently \*\*required\*\*'` → 0.
+   re-bump the docs pin and regenerate.** 🔴 The live page TODAY still carries the false
+   "currently **required**" sentence AND an example that always passes the filter — the
+   operator shipped `#136` knowing this, on the measured grounds that it is strictly
+   better than the hardcoded `'SDXL'` it replaced. This is the other half.
+   Closing condition: `npm view @civitai/blocks-react version` ≥ `0.61.1`, AND
+   `curl -sS https://developer.civitai.com/apps/reference/hooks.md | grep -c 'currently \*\*required\*\*'` → 0,
+   AND that page's checkpoint example no longer passes `baseModelGroup` unconditionally.
    IN FLIGHT: civitai-app-starters#508
-   forcing: regression — #136 knowingly publishes a false claim about a parameter's optionality until this lands
+   forcing: regression — the published page teaches a filter trap the hook's own `.d.ts` names as a trap
 3. **`@civitai/sdk` 0.7.0 → 0.10.0 in `civitai-developer-docs`.** 🔴 NOT a number bump:
-   `scripts/check-appblocks-pins.mjs`'s own header says a lagging pin here is the signal to
-   RE-READ the release-scoped prose in `apps/guide/porting.md`, which asserts things like
-   *"That is new in 0.5.0. `0.4.0` threw from `initialize()` instead"*. Compounding it,
+   `scripts/check-appblocks-pins.mjs`'s header says a lagging pin here is the signal to
+   RE-READ `apps/guide/porting.md`'s release-scoped prose. And
    `scripts/check-design-system-pins.mjs:212` scopes `SDK_PACKAGES` to `app-sdk` +
-   `blocks-react` only, so **`@civitai/sdk` literals are UNGUARDED** — `porting.md:6` stamps
-   `npm:@civitai/sdk@0.5.0` against a 0.7.0 pin today and nothing flags it.
+   `blocks-react` only, so **`@civitai/sdk` literals are UNGUARDED** — `porting.md:6`
+   stamps `npm:@civitai/sdk@0.5.0` against a 0.7.0 pin and nothing flags it, while `:33`
+   and `:361` are changelog prose needing `HISTORICAL_LITERALS` rows.
    Closing condition: `npm run check:pins` reports 0 lagging, AND every `@civitai/sdk`
    version claim in `apps/guide/porting.md` re-read against the 0.10.0 `.d.ts`.
    forcing: gate — `check:pins` is red on this and the scheduled drift sweep (issue #130) cannot go green until it lands
-4. **Make `gen-appblocks-md.mjs` own the `sources:` stamp for the pages it generates.**
-   Round 0's D3, and the root cause of this session's only real defect: for a page whose body
-   is generated from the pin, the stamp IS the pin and carries no human judgement, yet only a
-   maintainer's memory keeps it current. Keep `check:ds-pins` for hand-authored pages, where a
-   stamp is a real provenance claim.
-   Closing condition: a pin bump + `npm run gen:appblocks:md` leaves `check:ds-pins --offline` rc 0 with no hand edit.
-   forcing: regression — the next pin bump reddens `typecheck-snippets` exactly as this one did
-5. **Correct the stale `check:ds-pins` claim in the talos-infra skill.**
+4. **Fix the generator truncation that drops most of every hook's safety caveats.**
+   🔴 The nine-axes audit's highest-leverage structural finding, and it is NOT this PR's
+   regression: `scripts/gen-appblocks-hooks.mjs:37` takes
+   `prose = text.slice(0, text.indexOf('```tsx'))`, so everything after a README section's
+   FIRST fence is discarded — measured **~65,327 chars and 31 🔴 markers across 20 of 33
+   hook sections** at 0.61.0 (worst: `useDomainMaturity`, 3,628 B published against a
+   29,261 B section). `useCivitaiRoute` now publishes with 4 of its 5 caveats gone,
+   including "PAGE SLOT ONLY" and the `''`-is-both-a-route-and-the-pre-init-sentinel trap.
+   Closing condition: `curl -sS https://developer.civitai.com/apps/reference/hooks.md | grep -c 'Page slot only'` ≥ 1.
+   forcing: regression — the published reference omits documented footguns the `.d.ts` carries, on 20 of 33 hooks
+5. **Give the new consent-retry text a field table and a live `{@link}` target.**
+   `ConsentRetryOptions` occurs EXACTLY ONCE in the whole docs corpus — the `{@link}` that
+   names it — and `SubmitWorkflowOptions extends ConsentRetryOptions` while the generated
+   table lists only `idempotencyKey?`, because `describeType` collects own members, not
+   inherited ones. So `submit(body, { autoRequestConsent: false })` appears NOWHERE on the
+   site, and the exclusion contract (one retry never a loop; a timeout with no idempotency
+   key is NOT retried because that would be a real second write) is dropped. MONEY PATH.
+   Fix is not one line: `REACT_TYPES` in `scripts/gen-appblocks-bridge.mjs` resolves
+   against `dist/hooks/useBuzzWorkflow.d.ts` only (`:158`, `:187`) and
+   `ConsentRetryOptions` lives in `dist/hooks/consentRetryOptions.d.ts`, so the source file
+   must widen too. That generator's own comment at `:69-75` states the rule being broken.
+   Closing condition: `curl -sS https://developer.civitai.com/apps/reference/generation.md | grep -c autoRequestConsent` ≥ 1 with a field row, not only a `{@link}`.
+   forcing: regression — a documented money-path opt-out is unreachable from the published docs
+6. **Correct the stale `check:ds-pins` claim in the talos-infra skill.**
    `<talos-infra>/.claude/skills/manage-appblocks-docs/reference/doc-audit-lessons.md:170`
    asserts the `--offline` variant "is the PR-gating one and **is green**" — true of `main`,
-   false of any pin-bump branch, and it reads as licence not to run the gate this session
-   broke. Also add the missing `sources:`-stamp step to that skill's pin-bump recipe at
-   `SKILL.md:142`.
-   Closing condition: `git grep -n 'is green' <talos-infra>/.claude/skills/manage-appblocks-docs/reference/doc-audit-lessons.md` returns nothing for that claim.
+   false of any pin-bump branch, and it reads as licence not to run the gate that caught
+   this session. Also add the missing `sources:`-stamp step to `SKILL.md:142`.
+   Closing condition: that sentence no longer asserts the gate is green.
    forcing: regression — the doc actively mis-routes the next agent doing this exact task
 
 ## Defects (batched)
 
-- **Round 0's D3** — the 20 hand-maintained `sources:` stamps on the three GENERATED pages are
-  duplicated state; generator should own them. (Promoted to rank 4 because it is the root cause
-  of the session's defect, not a nit.)
-- **Round 0's D4** — `@civitai/sdk` in `TRACKED_PACKAGES` is a permanently-red gate shape: its
-  red cannot be cleared by a pin bump (its header says the lag is a signal to re-read prose), so
-  the scheduled sweep and its aggregate issue **#130** stay red until rank 3 lands. Consider an
-  explicit dated deferral, the pattern `check-design-system-pins.mjs` already ships as
-  `HISTORICAL_LITERALS`.
-- **Round 0's D5** — the stale "is green" sentence (rank 5).
-- **`cli-troubleshooting.md` ↔ `publishedTroubleshootingRows` is unguarded on BOTH sides.** Zero
-  scripts/workflows in `civitai-developer-docs` reference either name, and the cli-side ledger's
-  own header says *"Nothing in this repository can prove the ledger still matches the live page."*
-  The hand sync in #136 is the only option today but it is UNGUARDED, not guarded elsewhere — it
-  will desynchronise again silently.
-- **`apps/reference/hooks.md`'s nested ```` ```md ```` fences went 2 → 3.** Pre-existing generator
-  shape, NOT introduced here (2 at the merge-base, 3 at head, same shape). Unjudged: whether the
-  published page renders the `useCivitaiNavigate` description as prose or as a code block.
-- **Round 0's D6** — the pin-bump recipe lives in TWO places and both are wrong: fold the
-  `sources:`-stamp step into `<talos-infra>/.claude/skills/manage-appblocks-docs/SKILL.md:142` and
-  correct `reference/doc-audit-lessons.md:170`. Rank 4 (D3/D4) makes both unnecessary.
-- **Round 0's D7** — `check-design-system-pins.mjs:212` `SDK_PACKAGES` omits `@civitai/sdk`, so
-  `apps/guide/porting.md:6` stamps 0.5.0 against a 0.7.0 pin and three body claims scoped to
-  0.5.0/0.4.0 are pinned by nothing. This is the deferred sdk work's actual content (rank 3).
-- 🔴 **Two false claims in my own commit messages, both now public and unfixable in place**
-  (amending would force-push and void a green 16/16 CI run): `ecd284b` called
-  `apps/reference/generation.md` "bridge-table prose rewording only" when the regeneration added
-  three substantive consent/money claim blocks; and `09867e7` says the generated region is
-  "lines 61-832" — **832 is the region's LINE COUNT, as printed by `gen:appblocks:md`, not its end
-  line**, so that figure is true at no ref. Both are corrected in the PR comment thread. The
-  substantive claim 832 supported (that `:906` sits outside the region) is correct at both refs.
+- 🔴 **The nine-axes audit's 🔴: the disclosed residual was NARROWER than the defect, and
+  my `#508` fix initially missed the half that matters.** `#508` corrected the README prose
+  and left the section's sole EXAMPLE unconditionally passing
+  `baseModelGroup: context.checkpoint.baseModel` under the comment *"Derive the family …
+  never a literal"* — precisely the trap `useCheckpointPicker.d.ts:6-11` names (*"Passing
+  the family you are already in is therefore a trap — it makes the picker offer only the
+  ecosystem the user is trying to leave"*). The `.d.ts`'s FIRST `@example` is the
+  unconstrained default; the derived form is its SECOND, conditional one. Fixed in
+  `9f1bd12`. 🔴 **The lesson: in an arc whose finding is "a weak model copies the nearest
+  example", fixing the prose and leaving the example is fixing the wrong half.**
+- 🔴 **Two false claims in my own `#136` commit messages**, both corrected publicly and
+  both unfixable in place: `ecd284b` called `apps/reference/generation.md` "bridge-table
+  prose rewording only" when the regeneration added THREE substantive consent/money claim
+  blocks (1,205 chars of pure insertion, 0 removals); `09867e7` wrote the generated
+  region's LINE COUNT (832, as printed by `gen:appblocks:md`) as its END LINE — the region
+  is 61–896 at that head and 61–825 at the merge-base, so 832 is true at no ref.
+- 🔴 **Round 0's D4 + D7** (its verdict): the 20 hand-maintained `sources:` stamps on the
+  three GENERATED pages are duplicated state the generator should own (ranks 4/6 territory
+  — it is the root cause of this session's only real defect), and `SDK_PACKAGES` omits
+  `@civitai/sdk` entirely (rank 3).
+- **Round 0's D5/D6** — the pin-bump recipe lives in two places and both are wrong
+  (rank 6).
+- **`cli-troubleshooting.md` ↔ `publishedTroubleshootingRows` is unguarded on BOTH sides.**
+  Zero scripts/workflows in `civitai-developer-docs` reference either name, and the
+  cli-side ledger's own header says *"Nothing in this repository can prove the ledger still
+  matches the live page."* The hand sync is the only option today but it will desynchronise
+  again silently. ⚠ And it is currently **AHEAD of every shipped CLI** — see Gotchas.
+- 🟢 **`test:snippets:appblocks`'s 44/44 is not coverage of this change** and I quoted it
+  without that qualifier. Fences inside `<!-- BEGIN GENERATED -->` are deliberately
+  excluded (`scripts/typecheck-appblocks-snippets.mjs:213-240`); the two covered `hooks.md`
+  snippets are at `:930` and `:946`, outside the region. The count is true and says nothing
+  about the regenerated examples.
+- 🟢 **`blocks-react@0.61.0` wants `@civitai/components ^0.9.0` against the repo's `0.8.1`
+  pin**, so `npm ci` installs a nested duplicate. Probed and benign: `styles.css` is
+  byte-identical between 0.8.1 and 0.9.0, the `data-civitai-ui` selector set is identical,
+  and the site imports only `@civitai/components/styles.css`. Noted because `check:ds-pins`
+  grades literals against `package.json` and is structurally blind to a transitive
+  requirement the pin no longer satisfies.
+- 🟢 **`apps/reference/hooks.md:716` ships a markdown link as literal syntax.** The island
+  interpolates `{{ h.description }}`, so the first hook description to carry a link renders
+  as visible `[...](...)` in the built HTML — and it is the only cross-reference between
+  the two halves of the new routing pair.
 
 ## Gotchas / decisions / dead-ends
 
@@ -227,30 +251,76 @@ These were its leftovers, not a continuation of it — see
   `isolation: "worktree"`** — the cwd is `datapacket-talos`, a different repo, so that flag would
   have worktreed the wrong one.
 
+- 🔴 **THE DEPLOY LAG IS ~8 MINUTES AND IT IS MEASURED.** 23 polls at 20 s after the
+  `#136` merge returned the old page byte-for-byte unchanged; `hooks.md` flipped on poll 24
+  and `cli-troubleshooting.md` on poll 25. **Take a PRE-merge baseline as the positive
+  control** — here `sdxl=2, gate=0` — so the later zero is a measurement rather than a
+  hope, and **gate on page SIZE too**, or an error page reads as success.
+- 🔴 **THE TROUBLESHOOTING PAGE IS NOW AHEAD OF EVERY SHIPPED CLI, and the PR body said the
+  opposite.** `cli#762`'s merge `a355137` is **not** an ancestor of `v0.1.111`
+  (`git describe` → `v0.1.111-11-ga355137`, i.e. 11 commits past the tag), so the
+  listing-completeness gate the clause documents is UNRELEASED. Compounding it,
+  `apps/reference/cli.md` is generated from a **0.1.109** snapshot and
+  `git grep allow-incomplete-listing -- '*.md'` returns **0**, so a reader following the
+  clause to the `app submit` reference finds neither the gate nor its opt-out flag.
+  Operator decision 2026-10-01: ship as-is — the clause is true about the code and keeps
+  the page in sync with the vendored mirror. 🔴 **"The mirror already carried it" is NOT
+  evidence the behaviour shipped** — that was the reasoning error.
+- 🔴 **A README's PROSE and its EXAMPLE are two separate artifacts and a fix to one is not
+  a fix to the other.** See Defects. The generated public page takes the DESCRIPTION from
+  the README and the EXAMPLE from the README, independently; correcting one leaves the
+  other teaching the old thing, and the example is what gets copied.
+- 🔴 **`grep -oE '\{\+[^}]*\+\}'` over `git diff --word-diff` UNDER-COUNTS when the inserted
+  text contains `}`** — the character class terminates on it. Reported **1** addition in
+  `generation.md` where there were **3**, and that wrong count nearly shipped as a public
+  correction. Use `difflib` over the two blobs, or isolate each changed row's common
+  prefix/suffix.
+- 🔴 **`${PIPESTATUS[0]}` IS EMPTY IN zsh** — it is `$pipestatus` (lowercase array) here. A
+  gate's rc read that way comes back blank, which reads as neither pass nor fail.
+- 🔴 **A `cairn append` can LAND while its post-write validation is UNCONFIRMED, and the
+  cause can be an unrelated instance.** `hygiene.sh` refuses to check when its pre-check
+  `cairn sync` exits 4, and the aggregate sync exits 4 if ANY configured instance fails —
+  here `cairn.civitai.com` answered HTTP 503 while `personal` (the instance actually
+  written) was live and current. **Confirm by reading the synced cache for the bullet's own
+  text; do NOT retry the write.**
+- 🔴 **A store bullet asserting a fix "retracted in #N" when #N is UNMERGED reads as done
+  forever.** Caught on my own append and corrected with a `cairn put` adding `OPEN:` — the
+  measured failure is an entry serving a remedy as current for 22 days.
+- **Decision: ship `#136` with two known-stale upstream claims, fix upstream after.**
+  Operator's call, re-confirmed 2026-10-01 AFTER the audit widened the residual from "one
+  false sentence" to "the headline instruction plus the committed example". The measured
+  grounds: every step strictly improves the page — hardcoded `'SDXL'` (pins every viewer to
+  one family regardless of context) → derived-from-context (the milder trap) → omit-by-
+  default once rank 2 lands.
+- **Both audits were dispatched WITHOUT `isolation: "worktree"`**, deliberately: the cwd is
+  `datapacket-talos`, a different repo, so that flag would have worktreed the wrong one.
+  Each agent ran the cross-repo recipe itself against a `refs/audit/` ref.
+
 ## How to verify
 
 ```bash
 D=~/workspace/civit/civitai-developer-docs; ST=~/workspace/civit/civitai-app-starters
 
-# 0. THE ARC'S CLOSING CONDITION — only meaningful AFTER #136 merges AND deploys
+# 0. THE ARC'S CLOSING CONDITION — MET 2026-10-01T23:31Z, re-runnable any time
 curl -sS https://developer.civitai.com/apps/reference/hooks.md | grep -c "baseModelGroup: 'SDXL'"               # 0
-curl -sS https://developer.civitai.com/site/guide/cli-troubleshooting.md | grep -c 'listing-completeness gate'   # >= 1
-curl -sS https://developer.civitai.com/apps/reference/hooks.md | wc -c                                          # CONTROL ~45k
+curl -sS https://developer.civitai.com/site/guide/cli-troubleshooting.md | grep -c 'listing-completeness gate'   # 1
+curl -sS https://developer.civitai.com/apps/reference/messages.md | wc -c                                       # CONTROL ~17k
 
-# 1. the repo-local half, in a CLEAN worktree off the PR head (not the primary clone)
-WT=/tmp/v136; git -C $D worktree add --detach $WT origin/zach/docs-pin-bump-0610-and-cli-troubleshooting
+# 1. the repo-local half, in a CLEAN worktree off the merge commit
+WT=/tmp/v136; git -C $D worktree add --detach $WT cbfab1e3
 (cd $WT && npm ci && npm run build)
 (cd $WT && npm run check:ds-pins -- --offline)     # rc 0 — the gate that caught this session
 (cd $WT && npm run check:md-regions && npm run check:porting-hooks && npm run test:snippets:appblocks)
-(cd $WT && npm run check:agent-md && npm run check:built-site)
 git -C $D worktree remove --force $WT
 
 # 2. the premise, measured on the PUBLISHED tarball rather than inferred
 cd /tmp && npm pack @civitai/blocks-react@0.61.0 >/dev/null 2>&1 && tar xzf civitai-blocks-react-0.61.0.tgz
-find package -type f -print0 | xargs -0 grep -ac "baseModelGroup: 'SDXL'" | grep -v ':0$' | wc -l   # 0
-find package -type f -print0 | xargs -0 grep -ao 'baseModelGroup' | wc -l                          # 39 — CONTROL
+find package -type f -print0 | xargs -0 grep -ao "baseModelGroup: 'SDXL'" | wc -l   # 0
+find package -type f -print0 | xargs -0 grep -ao 'baseModelGroup' | wc -l           # 39 — CONTROL
 
-# 3. the upstream retraction (normalised — the claim WRAPS, a line grep lies)
+# 3. rank 2's state (normalised — the claim WRAPS, a line grep lies)
 git -C $ST show origin/zach/blocks-react-readme-retract-required:packages/civitai-blocks-react/README.md \
-  | perl -0777 -ne 's/\s+/ /g; print scalar(()=/omit the key, or pass a family/g), "\n"'            # 1
+  | perl -0777 -ne 's/\s+/ /g; print scalar(()=/omit the key, or pass a family/g), "\n"'   # 1
+git -C $ST show origin/zach/blocks-react-readme-retract-required:packages/civitai-blocks-react/README.md \
+  | grep -c 'DEFAULT — pass no baseModelGroup'                                              # 1
 ```
