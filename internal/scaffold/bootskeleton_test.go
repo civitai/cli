@@ -355,20 +355,33 @@ var (
 // TestBootSkeletonPaintsDarkByDefault pins the theme rule STRUCTURALLY.
 //
 // The rule is not "the CSS mentions a dark colour somewhere" — that is a word a
-// reword walks past. It is a relationship between where values live:
+// reword walks past. It is a relationship between where values live, and it
+// follows the platform's theme contract: Civitai apps default to DARK and never
+// consult the OS/browser preference; light engages only when the HOST says the
+// viewer chose it (the #civitai-block=v1 fragment pre-paint, then BLOCK_INIT,
+// then THEME_CHANGE):
 //
 //  1. the BASE (unconditioned) rules carry the dark values, specifically an
 //     `html { background: <dark> }`;
-//  2. there is NO `@media (prefers-color-scheme: dark)` block anywhere in the
-//     inline style. That block is the actual defect this guards: it looks
-//     correct and inverts the default, because a UA reporting `no-preference`
-//     — or one without the query at all — matches neither branch and falls
-//     through to the base rules;
-//  3. light IS present, and only inside `@media (prefers-color-scheme: light)`;
-//  4. `<meta name="color-scheme">` reads `dark light`, dark FIRST.
+//  2. there is NO `@media (prefers-color-scheme: …)` block anywhere in the
+//     inline style — dark OR light. An OS-preference query hands the theme
+//     decision to a surface that knows nothing about the viewer's site choice;
+//     OS-light + site-dark painted dark components on a light page. (This
+//     test used to REQUIRE the light block — that requirement pinned the
+//     defect and is deliberately inverted here.)
+//  3. light IS present, and only behind `html[data-theme='light']` — the
+//     attribute the template's inline fragment script sets;
+//  4. `<meta name="color-scheme">` reads `dark light`, dark FIRST;
+//  5. the rendered index.html carries an inline CLASSIC script that reads the
+//     `civitai-block=v1` fragment pre-paint, and neither CSS nor JS anywhere
+//     in the document consults the OS preference (matchMedia included);
+//  6. the page-money App keeps documentElement's data-theme in step with the
+//     host theme (gated on ready), so BLOCK_INIT can correct a stale fragment
+//     and THEME_CHANGE repaints the page behind the app.
 //
 // Point 4 is asserted for ALL THREE templates. The static one has no inline
-// style, so points 1–3 apply to the two React templates.
+// style, so points 1–3 apply to the two React templates; point 5 applies to
+// the two React templates.
 func TestBootSkeletonPaintsDarkByDefault(t *testing.T) {
 	// A colour is "dark" here if every channel is below this. Both palettes in
 	// the templates sit far from the boundary in both directions, so this
@@ -417,17 +430,19 @@ func TestBootSkeletonPaintsDarkByDefault(t *testing.T) {
 					"skeleton's stylesheet", tmpl, BootSkeletonMarkerAttr)
 			}
 
-			// (2) — the inverting block must not exist.
+			// (2) — NO OS-preference query may exist, in either direction.
 			if loc := prefersDarkRe.FindString(css); loc != "" {
 				t.Errorf("template %q: the inline style contains %q.\n"+
 					"  DARK MUST BE THE BASE, not a media query. A UA reporting `no-preference`, or one\n"+
 					"  without the query, matches neither branch and falls through to the base rules —\n"+
 					"  so putting the dark values behind this block inverts the default.", tmpl, loc)
 			}
-			// (3) — light must be present, and behind the light query.
-			if !prefersLightRe.MatchString(css) {
-				t.Errorf("template %q: no `@media (prefers-color-scheme: light)` block — light is the "+
-					"only theme that belongs behind a query", tmpl)
+			if loc := prefersLightRe.FindString(css); loc != "" {
+				t.Errorf("template %q: the inline style contains %q.\n"+
+					"  LIGHT MUST NOT live behind an OS-preference query — the browser must never decide\n"+
+					"  this app's theme. An OS-light viewer whose site theme is dark would get a light\n"+
+					"  page under dark components. Light engages only when the HOST says so: behind\n"+
+					"  html[data-theme='light'], set by the template's inline fragment script.", tmpl, loc)
 			}
 
 			// (1) — the base `html { … }` rule carries a dark background. "Base"
@@ -456,24 +471,67 @@ func TestBootSkeletonPaintsDarkByDefault(t *testing.T) {
 					"rules are what a `no-preference` UA gets.", tmpl, hex)
 			}
 
-			// And the LIGHT override must genuinely be lighter, or the "light
-			// lives behind the query" structure would be decorative.
-			lightIdx := prefersLightRe.FindStringIndex(css)
-			lightCSS := css[lightIdx[0]:]
-			lm := htmlRuleRe.FindStringSubmatch(lightCSS)
+			// (3) — the light override must exist behind the fragment-gated
+			// attribute, and genuinely be lighter, or the structure would be
+			// decorative.
+			lightRuleRe := regexp.MustCompile(`(?s)html\[data-theme='light'\]\s*\{([^}]*)\}`)
+			lm := lightRuleRe.FindStringSubmatch(css)
 			if lm == nil {
-				t.Fatalf("template %q: the light media block has no `html { … }` override, so the base "+
-					"dark background survives in light mode", tmpl)
+				t.Fatalf("template %q: no `html[data-theme='light'] { … }` override — a host that says "+
+					`"light" has no way to repaint the page`, tmpl)
 			}
-			lightHex := hexColourRe.FindString(lm[2])
+			lightHex := hexColourRe.FindString(lm[1])
 			if lightHex == "" || isDarkHex(t, lightHex, darkChannelMax) {
 				t.Errorf("template %q: the light override sets `html` background to %q, which is not "+
 					"lighter than the dark base", tmpl, lightHex)
+			}
+			// The boot skeleton flips with the same attribute — a light page with
+			// dark skeleton cards is the mismatch all over again.
+			if !regexp.MustCompile(`html\[data-theme='light'\][^{]*` + regexp.QuoteMeta(BootSkeletonMarkerAttr)).MatchString(css) {
+				t.Errorf("template %q: the skeleton shapes have no html[data-theme='light'] variant — "+
+					"a host-declared light page would show dark skeleton cards", tmpl)
+			}
+
+			// (5) — the fragment fast path: an inline CLASSIC script reading the
+			// marker pre-paint, and no OS-preference consultation anywhere in the
+			// rendered document (CSS comments included — a comment normalising the
+			// old mechanism is how the media query came back).
+			fastPathRe := regexp.MustCompile(`(?s)<script>\s*/\*.*?civitai-block.*?theme.*?'light'.*?</script>`)
+			if !fastPathRe.MatchString(doc) {
+				t.Errorf("template %q: no inline classic script reading the #civitai-block=v1 fragment "+
+					"pre-paint — without it the host theme arrives only with BLOCK_INIT, after first "+
+					"paint, and a site-light viewer gets a dark flash on every load", tmpl)
+			}
+			for _, banned := range []string{"prefers-color-scheme", "matchMedia"} {
+				if strings.Contains(doc, banned) {
+					t.Errorf("template %q: rendered index.html mentions %q — the OS preference is not an "+
+						"input to this app's theme. Point comments at this guard instead of restating "+
+						"the mechanism.", tmpl, banned)
+				}
 			}
 		})
 	}
 	if examined != len(reactTemplates) || examined < 2 {
 		t.Fatalf("examined only %d template(s), expected %d", examined, len(reactTemplates))
+	}
+}
+
+// TestPageMoneyAppKeepsThePageInStepWithTheHostTheme pins point 6 for the one
+// React template that consumes the theme.
+func TestPageMoneyAppKeepsThePageInStepWithTheHostTheme(t *testing.T) {
+	dest := renderTemplate(t, PageMoney)
+	src := string(readRendered(t, dest, "src/App.tsx"))
+	if !strings.Contains(src, "document.documentElement") {
+		t.Error("page-money App.tsx never touches document.documentElement — the page background " +
+			"lives on <html>, so a THEME_CHANGE mid-session would flip the components but leave " +
+			"the page behind them in the old theme")
+	}
+	if !strings.Contains(src, "dataset.theme") && !strings.Contains(src, `setAttribute("data-theme"`) {
+		t.Error("page-money App.tsx must set the same data-theme attribute the boot CSS keys on")
+	}
+	if !regexp.MustCompile(`if \(!ready\)\s*return`).MatchString(src) {
+		t.Error("the documentElement sync must be gated on ready — before BLOCK_INIT `theme` is the " +
+			"transport's 'light' sentinel, which would clobber the fragment seed of a dark host")
 	}
 }
 

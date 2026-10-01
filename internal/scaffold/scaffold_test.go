@@ -108,8 +108,9 @@ func TestRenderPageVite(t *testing.T) {
 	mustContain(t, css, ".app-actions")
 	// A VIEWPORT media query is the wrong question inside a block iframe (slot
 	// width is not monotonic in viewport width), so the responsive rule must not
-	// be one. The boot skeleton's prefers-color-scheme block lives in index.html,
-	// not here, so this file legitimately has no @media at all.
+	// be one. The boot skeleton's theme rules live in index.html (and consult
+	// no media query at all — see bootskeleton_test.go), so this file
+	// legitimately has no @media at all.
 	mustNotContain(t, css, "@media")
 	// And the markup must actually use it — a container query over a class
 	// nothing renders is inert.

@@ -4,11 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- DARK FIRST, deliberately. The first thing an iframe paints is the UA
-         canvas, and the host sends this block no theme hint before it boots, so
-         the boot theme is a GUESS and the platform's guess is dark. `light dark`
-         here would default the canvas to LIGHT and flash white. `style.css`
-         re-states the same order in its `color-scheme` property, so the two
-         cannot disagree once the stylesheet lands. -->
+         canvas, and this template paints no background of its own, so the
+         canvas colour is decided by `color-scheme` until the app styles the
+         page. Civitai apps default to dark and never consult the OS/browser
+         preference: the host delivers the viewer's site theme via the
+         `#civitai-block=v1&theme=…` URL fragment (both host surfaces append
+         it) — read it with the SDK's initFragment helpers if this app grows
+         theme-aware styling. `light dark` here would default the canvas to
+         LIGHT and flash white. `style.css` re-states the same order in its
+         `color-scheme` property, so the two cannot disagree once the
+         stylesheet lands. -->
     <meta name="color-scheme" content="dark light" />
     <title>{{ .Name }}</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%231971c2'/></svg>" />
