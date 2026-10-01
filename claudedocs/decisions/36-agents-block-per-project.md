@@ -251,6 +251,18 @@ docs-site page is corrected once, for every reader, by the people who own the
 list. That asymmetry is the whole argument: **the CLI ships the address, the
 docs repo ships the contents.**
 
+#### 🔴 NAMED EXCEPTION — the picker-ecosystem gotcha (cli#759, Zach, 2026-09-30)
+
+One bullet puts CONTENTS in this block, knowingly and over this rule: *"Open the
+resource picker with NO base-model ecosystem by default."* The rule above does
+not dispose of it, because the block is read on **every agent turn** whether or
+not the hosted reference is ever fetched, and the unconstrained resource pick is
+precisely what weaker models get wrong. **Measured cost, paid every turn in a
+file nothing can recall: +347 bytes on every rendered block** — smallest shape
+5,163 → 5,510 B, **+6.7%**, ~85 tokens. The rule stands for URLs and lists; this
+is one exception, recorded so the next addition has to argue for itself rather
+than cite this one.
+
 ### The measurements behind it
 
 Taken 2026-09-10/11 from this host, anonymously, over real HTTP.

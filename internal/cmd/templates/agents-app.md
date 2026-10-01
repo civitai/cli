@@ -157,6 +157,11 @@ fixed list. As of this CLI version:
   exactly like a broken component. Check the host side before rewriting yours.
 - **`useSharedStorage()` is postMessage-only.** There is no REST route for it —
   it cannot be scripted, seeded or written from a server.
+- **Open the resource picker with NO base-model ecosystem by default.**
+  `baseModelGroup` is a filter, so a hardcoded one hides every resource outside
+  that family and the picker looks empty to the viewer. Pass it only when the
+  app already holds a chosen checkpoint the pick must match, and derive it from
+  that checkpoint's own `baseModel`.
 - **`civitai app validate` is a local mirror. The server is authoritative.** A
   clean local validate is necessary, never sufficient.
 
