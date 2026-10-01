@@ -281,6 +281,28 @@ func TestTheBlockNamesEveryScaffoldTemplateAndTheFlagThatPicksOne(t *testing.T) 
 	}
 }
 
+// defaultTemplateMarker is how the block MARKS its default template: the bolded
+// literal `agents-app.md` writes into that bullet, not the word "default".
+//
+// 🔴 A SPELLED GUARD IS WALKABLE BY ANOTHER FEATURE SPELLING THE SAME WORD, and
+// this one already was. The scan below used to be
+// `strings.Contains(strings.ToLower(b.text), "default")`, and "default" now
+// appears FOUR times in `internal/cmd/templates/agents-app.md`: the template
+// paragraph's own lead ("`create` defaults to the biggest one"), this marker,
+// the `--budget` gotcha ("the default is the SERVER's"), and the
+// picker-ecosystem gotcha ("with NO base-model ecosystem by default"). Exactly
+// one of the four is the marker. The only thing keeping the other three out of
+// `marked` is the bullet-boundary repair in templateBulletsIn — a keyword scan
+// saved by an unrelated parser fix is not a guard, it is a coincidence that has
+// already lapsed once.
+//
+// So the claim is pinned STRUCTURALLY: the exact bolded literal, in the bullet
+// whose name is the flag's default. The template wraps the literal across two
+// source lines, so the bullet text is whitespace-normalised before the match —
+// and a reword of the marker is a NAMED edit that fails here, which is the
+// point.
+const defaultTemplateMarker = "**The default.**"
+
 // TestTheDocumentedDefaultTemplateIsTheRealOne ties the sentence to the flag.
 //
 // The block tells a reader which template `create` picks when they do not
@@ -312,7 +334,7 @@ func TestTheDocumentedDefaultTemplateIsTheRealOne(t *testing.T) {
 		var marked []string
 		for _, b := range bullets {
 			named[b.name] = true
-			if strings.Contains(strings.ToLower(b.text), "default") {
+			if strings.Contains(normaliseMessage(b.text), defaultTemplateMarker) {
 				marked = append(marked, b.name)
 			}
 		}
@@ -323,10 +345,13 @@ func TestTheDocumentedDefaultTemplateIsTheRealOne(t *testing.T) {
 		}
 		sort.Strings(marked)
 		if len(marked) != 1 || marked[0] != actual {
-			t.Errorf("kind %q: `civitai app create --template` defaults to %q, but the block's template "+
-				"list marks %v as the default. A reader budgets their context from this sentence; when the "+
-				"flag and the sentence disagree, the sentence is the one that gets believed.",
-				shape.Kind, actual, marked)
+			t.Errorf("kind %q: `civitai app create --template` defaults to %q, but the %q marker appears "+
+				"in %v. A reader budgets their context from this sentence; when the flag and the sentence "+
+				"disagree, the sentence is the one that gets believed.\n\n"+
+				"An EMPTY list here usually means the marker was reworded rather than moved — it is pinned "+
+				"as a literal on purpose (a scan for the word \"default\" matches three other lines of "+
+				"this template), so re-pin it in %s and say which bullet is the default.",
+				shape.Kind, actual, defaultTemplateMarker, marked, "internal/cmd/templates/agents-app.md")
 		}
 	}
 }
@@ -394,6 +419,22 @@ type templateBullet struct{ name, text string }
 // `no project scaffolded here` branch renders its own per-template bullets, so a
 // map keyed by name silently keeps whichever came last and a claim made in the
 // first list disappears.
+//
+// 🔴 A BULLET'S TEXT ENDS AT THE NEXT LIST ITEM OR HEADING, NOT AT THE NEXT
+// TEMPLATE BULLET — and the difference is not cosmetic. The scan used to close a
+// bullet only on the next "\n- `", i.e. on the next entry that opens with a
+// backticked name, so the LAST template bullet in a list absorbed every
+// remaining byte of the document: the gotchas, the local-dev section, the end
+// marker. That made the caller's question ("WHICH bullet carries this claim")
+// unanswerable for the last bullet, which the doc comment above says is the
+// whole point of parsing rather than grepping.
+//
+// Measured: adding an unrelated gotcha bullet whose prose contained the word
+// "default" made TestTheDocumentedDefaultTemplateIsTheRealOne report
+// `[page-money page-money]` for kind "none", because the second list's trailing
+// `page-money` bullet had swallowed the gotchas. Nothing about the template
+// list had changed. Bounding the text on "\n- " (any bullet) or "\n#" (the next
+// heading) is what makes the parse mean what it claims.
 func templateBulletsIn(block string) []templateBullet {
 	known := map[string]bool{}
 	for _, t := range scaffold.AllTemplates() {
@@ -413,13 +454,122 @@ func templateBulletsIn(block string) []templateBullet {
 		}
 		name := block[start : start+end]
 		rest := block[start+end:]
-		if k := strings.Index(rest, open); k >= 0 {
-			rest = rest[:k]
+		for _, stop := range []string{"\n- ", "\n#"} {
+			if k := strings.Index(rest, stop); k >= 0 {
+				rest = rest[:k]
+			}
 		}
 		if known[name] {
 			out = append(out, templateBullet{name: name, text: rest})
 		}
 		i = start + end
+	}
+}
+
+// TestTemplateBulletsInBoundsEachBulletsText is the boundary control for
+// templateBulletsIn, and it is the test the boundary repair above shipped
+// without.
+//
+// 🔴 THE REPAIR WAS MEASURED ON REAL BLOCKS AND UNTESTED AS A RULE. The rule is
+// "a bullet's text ends at the next list item or the next heading, whichever
+// comes first, and at EOF when neither does" — three cases, none of which the
+// per-shape guards exercise deliberately: they assert what the CURRENT template
+// happens to produce, so the day the template's bullet order changes they stop
+// covering the case they used to cover by accident. This file already sets the
+// opposite precedent one extractor over, in TestBlockSectionOrderExtractorCanFail.
+//
+// 🔴 WATCHED FAIL against the PRE-REPAIR helper body — the version that closed a
+// bullet only on the next "\n- `". THREE of the six cases went red, and the
+// three that did are exactly the HEADING cases:
+//
+//	a bullet ends at the next heading      text "` — first.\n\n### Gotchas\n\nprose
+//	                                            about the default.\n"
+//	a heading … before the next bullet wins text "` — first.\n\n## Section\n\n- not a
+//	                                            template bullet\n"
+//	two lists are not deduplicated          text "` — in the first list.\n\n# Heading\n"
+//
+// 🔴 AND THE OTHER THREE ARE GREEN IN BOTH — say so rather than counting them as
+// coverage. "ends at the next bullet" passes against the old body because the
+// next entry opens with "\n- `" too, which is the one stop the old bound had;
+// "ends at EOF" and the unknown-name case never reach a bound at all. They are
+// here as the controls that say the new stop-set did not simply truncate
+// everything, not as regression coverage of the repair.
+func TestTemplateBulletsInBoundsEachBulletsText(t *testing.T) {
+	all := scaffold.AllTemplates()
+	if len(all) < 2 {
+		t.Fatalf("CONTROL failure, not a finding: scaffold.AllTemplates() returned %d template(s) — "+
+			"this table needs two distinct known names to tell a boundary from a merge", len(all))
+	}
+	first, second := string(all[0]), string(all[1])
+
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want []templateBullet
+	}{
+		{
+			name: "a bullet ends at the next bullet",
+			doc:  "\n- `" + first + "` — first.\n- `" + second + "` — second.",
+			want: []templateBullet{
+				{name: first, text: "` — first."},
+				{name: second, text: "` — second."},
+			},
+		},
+		{
+			name: "a bullet ends at the next heading",
+			doc:  "\n- `" + first + "` — first.\n\n### Gotchas\n\nprose about the default.\n",
+			want: []templateBullet{
+				{name: first, text: "` — first.\n"},
+			},
+		},
+		{
+			name: "a bullet ends at EOF",
+			doc:  "\n- `" + first + "` — only, and nothing follows.",
+			want: []templateBullet{
+				{name: first, text: "` — only, and nothing follows."},
+			},
+		},
+		{
+			name: "a heading that arrives before the next bullet wins",
+			doc:  "\n- `" + first + "` — first.\n\n## Section\n\n- not a template bullet\n",
+			want: []templateBullet{
+				{name: first, text: "` — first.\n"},
+			},
+		},
+		{
+			name: "two lists are not deduplicated",
+			doc:  "\n- `" + first + "` — in the first list.\n\n# Heading\n\n- `" + first + "` — in the second.",
+			want: []templateBullet{
+				{name: first, text: "` — in the first list.\n"},
+				{name: first, text: "` — in the second."},
+			},
+		},
+		{
+			name: "a bullet whose name is not a shipped template is skipped",
+			doc:  "\n- `not-a-template` — ignored.\n- `" + first + "` — kept.",
+			want: []templateBullet{
+				{name: first, text: "` — kept."},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := templateBulletsIn(tc.doc)
+			if len(got) != len(tc.want) {
+				t.Fatalf("parsed %d bullet(s), want %d: %#v", len(got), len(tc.want), got)
+			}
+			for i := range tc.want {
+				if got[i].name != tc.want[i].name {
+					t.Errorf("bullet %d: name %q, want %q", i, got[i].name, tc.want[i].name)
+				}
+				if got[i].text != tc.want[i].text {
+					t.Errorf("bullet %d (%s): text is %q\n                     want %q\n\n"+
+						"A text longer than the want is the over-run this bound exists to stop: the bullet "+
+						"has absorbed what follows it, and every caller asking WHICH bullet carries a claim "+
+						"then gets the wrong answer for the last bullet in a list.",
+						i, got[i].name, got[i].text, tc.want[i].text)
+				}
+			}
+		})
 	}
 }
 
