@@ -261,6 +261,14 @@ export function clampPrompt(raw: string): string {
  * client can't force a non-generatable / incompatible / mis-priced resource
  * through here.
  *
+ * 🔴 PRECONDITION: `kind` is hardcoded `'textToImage'` and {@link firstImageUrl}
+ * reads `snapshot.imageUrls`, so this body only makes sense for an IMAGE
+ * checkpoint. The host's picker gates on generation coverage, not media type, and
+ * does NOT refuse a video checkpoint on a textToImage body — it silently rewrites
+ * the ecosystem and keeps the version id. The block therefore refuses a non-image
+ * pick at the picker callback (`checkpointRejectionReason` in models.ts) so one
+ * can never reach here. If you change `kind`, revisit that guard.
+ *
  * `accountType` is the OPTIONAL preferred Buzz pool. `'auto'` (or omitted) =
  * today's behavior BYTE-FOR-BYTE: the body carries NO `accountType`, so the host
  * drains its default domain-allowed order. A real pool ('blue'|'green'|'yellow')

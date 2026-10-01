@@ -124,10 +124,23 @@ func TestTheManagedBlockTeachesTheUnconstrainedResourcePick(t *testing.T) {
 // scaffold ships, mapped to whether the guidance REQUIRES that site to carry a
 // derived `baseModelGroup`.
 //
-// Both of these open a picker from a component that already holds a chosen
-// checkpoint, which is the one exception the guidance names ("Pass it only when
-// the app already holds a chosen checkpoint the pick must match"), so both must
-// pass it and both must derive it from that checkpoint.
+// 🔴 HOLDING A CHECKPOINT IS NOT THE EXCEPTION — NEEDING TO STAY INSIDE ITS
+// FAMILY IS. This comment and the `openCheckpointPicker: true` below said the
+// opposite, and that was the defect the whole arc exists to correct: both sites
+// hold a chosen checkpoint, and only ONE of them must match it.
+//
+//   - openResourcePicker (the LoRA pick) must stay in the checkpoint's family,
+//     because a LoRA from another ecosystem cannot be applied to it. `true`.
+//   - openCheckpointPicker is the "Change model" button. Passing the family it
+//     already holds makes the picker offer ONLY the ecosystem the viewer is
+//     trying to leave, so every other family is unreachable for the life of the
+//     session. `false` — an unconstrained pick.
+//
+// `@civitai/blocks-react@0.61.0`'s own published JSDoc for the field states the
+// same test in the same direction: "Passing the family you are already in is
+// therefore a trap … Pass it ONLY when the block must stay inside a family it
+// already holds — a regenerate/variation flow pinned to one checkpoint's
+// ecosystem, say". A model-swap is the opposite of that flow.
 //
 // 🔴 IT FAILS WHEN THE SET SHRINKS *OR* GROWS, and the shrink half is the one
 // that was missing. A call site DELETED is how a narrower version of this guard
@@ -138,8 +151,56 @@ func TestTheManagedBlockTeachesTheUnconstrainedResourcePick(t *testing.T) {
 // picker opened where NO checkpoint is held must pass nothing at all, and
 // recording it here with `false` is that decision being written down.
 var wantPickerCallSites = map[string]bool{
-	"openCheckpointPicker": true,
+	"openCheckpointPicker": false,
 	"openResourcePicker":   true,
+}
+
+// derivesFromChosenCheckpoint answers whether a `baseModelGroup:` value is
+// derived from the chosen checkpoint, following ONE level of local binding.
+//
+// 🔴 It exists because the per-line `strings.Contains(value, "checkpoint.baseModel")`
+// it replaces was SPELLING-dependent, and the scaffold legitimately changed
+// spelling: `page-money` now writes
+//
+//	const requestedFamily = checkpoint.baseModel;
+//	...
+//	baseModelGroup: requestedFamily,
+//
+// because the family asked for has to be recorded ON the resulting LoRA. The
+// value IS `checkpoint.baseModel`, one line up — so the old check reported a
+// template that follows the guidance exactly as violating it. A guard that
+// cannot be satisfied by correct code is worse than none: the obvious way to
+// green it is to inline the expression and lose the recorded family.
+//
+// What it deliberately does NOT do: resolve a chain (`a = checkpoint.baseModel;
+// b = a; baseModelGroup: b`), or anything needing real scope analysis. One hop
+// covers the shape the scaffold ships; a deeper chain reports as underived,
+// which errs toward refusing rather than passing. The ESCAPE it opens is
+// narrow and stated so nobody reads more into this: a local assigned from
+// something else and merely NAMED like the field would still have to carry
+// `checkpoint.baseModel` on its own declaration line to pass.
+func derivesFromChosenCheckpoint(app, value string) bool {
+	const want = "checkpoint.baseModel"
+	if strings.Contains(value, want) {
+		return true
+	}
+	// A bare identifier (optionally trailing comma/semicolon) may be a local.
+	ident := strings.TrimRight(strings.TrimSpace(value), ",;")
+	if ident == "" || strings.ContainsAny(ident, " \t.([{'\"`") {
+		return false
+	}
+	for _, kw := range []string{"const", "let", "var"} {
+		if idx := strings.Index(app, kw+" "+ident+" ="); idx >= 0 {
+			decl := app[idx:]
+			if nl := strings.IndexByte(decl, '\n'); nl >= 0 {
+				decl = decl[:nl]
+			}
+			if strings.Contains(decl, want) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // pickerCall is one host-picker invocation in the rendered app.
@@ -387,7 +448,7 @@ func TestThePickerGuidanceMatchesWhatTheScaffoldActuallyDoes(t *testing.T) {
 				"advice and ships an app whose picker hides every other family from the viewer.",
 				i+1, strings.TrimSpace(line))
 		}
-		if !strings.Contains(value, "checkpoint.baseModel") {
+		if !derivesFromChosenCheckpoint(app, value) {
 			t.Errorf("src/App.tsx:%d derives baseModelGroup from something other than the chosen "+
 				"checkpoint (%s). The guidance names `checkpoint.baseModel`; if the template moved "+
 				"to another source, update the guidance in the same change.", i+1, value)
