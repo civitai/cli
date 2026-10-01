@@ -59,11 +59,20 @@ registered MECHANICAL test is the grep, and it passes. Nobody clicked the button
   and not claimed as verified** — the registry doc exposes no trusted-publisher field
   (`[k for k in doc if 'trust' in k]` → `[]`) and `npm access` has no such subcommand. It
   resolves on the NEXT `components-chat` publish; see `## Next steps`.
-- 🔴 **`#131` is MERGED but NOT LIVE.** Measured 05:04Z, ~90 s after the merge:
-  `developer.civitai.com/apps.md` = **21 B**, `orchestration.md` = **30 B**, against a control
-  `apps/reference/hooks.md` = **42,265 B**. `civitai-developer-docs` is branch-tracked
-  (`ref: branch: main`), so the merge triggers the deploy; it had not landed yet. **Merged ≠
-  live** — the harm is still on the public site until the twins pass the guard's 200-char floor.
+- ✅ **`#131` IS LIVE — the harm ask #6 identified is gone from the public site.** Measured by
+  the guard's own rule (non-whitespace chars AFTER frontmatter, floor 200), not by byte count:
+
+  | | total | body non-ws | verdict | first body line |
+  |---|---|---|---|---|
+  | `developer.civitai.com/apps.md` | 1,082 B | **889** | PASS | `## Where to start` |
+  | `developer.civitai.com/orchestration.md` | 848 B | **699** | PASS | `## Where to start` |
+  | `apps/reference/hooks.md` (control) | 42,527 B | — | — | — |
+
+  🔴 **Merged ≠ live, and the gap was real: at merge + 90 s these were still 21 B / 30 B.**
+  `civitai-developer-docs` is branch-tracked (`ref: branch: main`), so the merge triggers the
+  deploy and the deploy takes minutes. Anyone reporting this closed off the merge alone would
+  have been wrong for that window. The first body line is checked too — a non-empty twin
+  carrying the wrong body would pass a byte test and fail the reader.
 
 ### `#131` was gated on the MERGED tree, not its own branch
 
@@ -220,13 +229,13 @@ session back down the refuted path.
 `civitai-developer-docs` and want their own `closing-condition`. All premises re-verified on
 `origin/main` at 2026-10-01T05:0xZ, after `#131`/`#132` moved the tree twice.
 
-1. **Confirm `#131` actually went live.** One command, and it is the only thing that closes the
-   harm this arc's ask #6 identified:
-   `curl -sS https://developer.civitai.com/apps.md | wc -c` → must exceed the guard's 200-char
-   body floor (it was 21 B at merge+90 s). A watch was armed in-session; if it never fired,
-   check the deploy rather than assuming.
-   forcing: regression — an agent following `llms.txt` to `/apps.md` gets a blank page until
-   this deploys, which is the defect the merged PR exists to fix
+1. ✅ **CLOSED 2026-10-01T05:1xZ — `#131` deployed and verified live.** Kept in place rather
+   than deleted, so the rank numbering below stays stable (a rank is half a `claim-work`
+   claim's identity). Evidence in `## State now`: `apps.md` 889 body chars, `orchestration.md`
+   699, both past the guard's 200 floor, both opening `## Where to start`, control 42,527 B.
+   Re-check with the `## How to verify` block §2 if ever in doubt.
+   forcing: regression — an agent following `llms.txt` to `/apps.md` got a blank page; that is
+   the defect the merged PR fixed, and it is now measured gone
 2. **Make `#499`'s fix reach actual readers.** RE-VERIFIED on current `origin/main`:
    `package.json:57` pins `"@civitai/blocks-react": "0.59.0"` EXACT (line moved from 56 — `#132`
    shifted the file, so read the grep not the number), and `apps/reference/hooks.md` still
