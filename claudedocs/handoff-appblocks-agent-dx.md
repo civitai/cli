@@ -26,60 +26,61 @@ defects, not missing capability.
 
 ## State now
 
-- Branch / PR: **`starters#505` OPEN** (`zach/components-chat-registry-drift`, commit
-  **`ab23b80`** — rebased onto `d1a4d12` after main moved; the pre-rebase `fe50b77` was green
-  20/20 and the guard re-passed on the moved base) — the release-pipeline fix.
-  **`starters#502` OPEN and READY**, head **`35057f5c`**. **`cli#760` OPEN, still a DRAFT.**
-  This doc rides `cli` branch `zach/handoff-appblocks-agent-dx` → **`cli#763`**.
-- ✅ **7 of 8 PRs MERGED**, each verified by CONTENT on the target `main` (never by ancestry — a
-  squash merge makes `git merge-base --is-ancestor` permanently false). Carried forward
-  verbatim from the previous round, NOT re-derived this session:
+🔴 **ARC CLOSED — the `closing-condition` in `## Goal` is ADDRESSED.** Verdict, not an
+inventory, evaluated 2026-10-01T03:29Z:
 
-  | PR | repo | sha | content check that passed |
-  |---|---|---|---|
-  | `#761` | cli | `d8e5fc0f` | scaffold pins `^0.53.0` / `^0.60.0` |
-  | `#499` | starters | `1bad5de4` | guard present; 0 hardcoded `'SDXL'` in picker examples |
-  | `#5262` | civitai | `e432c508` | comment reads "NOT a subset and NOT none" |
-  | `#501` | starters | `08318a6c` | optional signature ×2; 0 × "currently REQUIRED"; host split ×5 |
-  | `#759` | cli | `69f9c00d` | picker gotcha in the managed block; decision-36 exception recorded |
-  | `#500` | starters | `55bc9aa4` | `withConsentRetry` present; `estimate()` NOT routed; changeset `major` |
-  | `#762` | cli | `a355137b` | submit listing gate; `TaglineFromName`; `DOGFOOD_ALLOW_LISTING_TEXT` ×4 |
+- `gh pr view 760 --repo civitai/cli --json state` → **`MERGED`** (`03:29:19Z`, squash `67112782`)
+- `git -C <cli> show origin/main:internal/scaffold/templates/page-money/src/App.tsx.tmpl | grep -c 'baseModelGroup: checkpoint.baseModel'`
+  → **`0`**
+- and the LoRA site still carries its filter deliberately (`App.tsx.tmpl:535` `const
+  requestedFamily = checkpoint.baseModel;` → `:539` `baseModelGroup: requestedFamily,`), so the
+  zero is the intended change and not collateral damage.
 
-  **`cli` main: 12/12 green** at `a355137b`.
-- ✅ **The release blocker is DIAGNOSED and the fix is up.** It was never npm auth. The tree on
-  `starters` main carried `@civitai/components-chat@0.1.0` while the registry held only
-  `0.1.1`, so `pnpm assert:published` correctly failed `PUBLISH DID NOT HAPPEN` on every push
-  since 2026-09-30T16:50Z. `#505` records `0.1.1`. Full mechanism in the new investigation
-  block below.
-- 🔴 **`cli#760`'s pin is `^0.61.0`, NOT `^1.0.0` — and this line was corrected mid-session
-  because the BASE MOVED under the measurement.** `starters#504`
-  (*"release blocks-react consent-retry as a minor, not a major"*) merged at
-  **2026-10-01T02:35:38Z**, downgrading `#500`'s changeset from `major` to `minor`. `#502` was
-  recomputed and at head `35057f5c` now proposes `blocks-react 0.60.0 → **0.61.0**`,
-  `app-sdk → 0.54.0`, `sdk → 0.10.0`. **So `cli#760`'s PR body (`0.61.0`) is now RIGHT, and
-  both this doc's earlier `^1.0.0` and the kickoff that asserted it are WRONG.** Neither was
-  wrong when written — a human re-graded the changeset in between.
-- ✅ **What survives that correction, because it is a property of the published artifact
-  rather than of a changeset grade:** the published `0.60.0` tarball's
-  `dist/hooks/useCheckpointPicker.d.ts` declares `open: (opts: { baseModelGroup: string; … })`
-  — required, and `opts` itself required — so the optional signature is unreleased and
-  `^0.60.0` cannot typecheck the scaffold. **Whatever the next version NUMBER is, the pin must
-  be the version that first carries the optional signature.** 🔴 Re-derive it from
-  `npm view @civitai/blocks-react version` AFTER the publish lands — never from a changeset
-  grade, a Version PR diff, or any number written in this doc.
-- 🔴 **`cli#760`'s branch is BEHIND `cli` main** and needs a rebase, not a hand-edit: its
-  `internal/scaffold/templates/page-money/package.json.tmpl` still reads `^0.52.0`/`^0.59.0`
-  where main (post-`#761`) reads `^0.53.0`/`^0.60.0`.
-- Deploy/verify status: **nothing is published yet.** `npm view @civitai/blocks-react version`
-  → `0.60.0`. `#505` is verified only against the guard it fixes (red at `origin/main`, green
-  at `fe50b77`) and its own CI — not against a completed release.
-- ⚠ **No `clawgate-task:`** — `resolve` reported `NOTHING RESOLVED` (rc 5) again. An unknown
+⚠ **The condition's PROSE half was not driven live.** "A freshly scaffolded `page-money` app
+can reach every checkpoint ecosystem from its Change-model button" rests on the rendered
+scaffold typechecking against `0.61.0`'s optional signature plus the host's own documented
+behaviour (`baseModels: []` ⇒ no narrowing). The doc's registered MECHANICAL test is the grep
+above, and that passes. Nobody clicked the button.
+
+**All 8 PRs are now merged.** The 7 from the previous round (table below, carried forward, not
+re-derived) plus **`cli#760`**.
+
+### What this session landed
+
+| PR | repo | merged | what |
+|---|---|---|---|
+| **`#505`** | starters | `a560b3dc` `03:20:05Z` | the release-pipeline fix — `components-chat` `0.1.0`→`0.1.1` |
+| **`#760`** | cli | `67112782` `03:29:19Z` | scaffold pin `^0.61.0`/`^0.54.0` + two guard fixes |
+| **`#763`** | cli | OPEN | this handoff doc |
+
+- ✅ **`starters` main's Release run is GREEN** — run `36810029698` at `a560b3dc`, the first
+  success since `38d09078` (`2026-09-30T16:38:35Z`). Its own assert step: `OK: 7/7 publishable
+  package version(s) confirmed on the registry, 0 missing` — a COUNT of 7, so not a vacuous
+  pass — and the publish step correctly logged `No unpublished projects to publish`.
+  Failure→success sequence: `2895c67b` ✗, `d1a4d122` ✗, `942b54bf` ✗ (the `#502` publish: the
+  packages landed, the assert was still red), **`a560b3dc` ✓**.
+- ✅ **`#502` was merged by an operator mid-session and the publish SUCCEEDED.** Verified by
+  RESOLVING, not by reading version strings: `blocks-react@0.61.0` (11 pkgs),
+  `app-sdk@0.54.0`, `sdk@0.10.0` all install under `npm install --dry-run`, with `0.60.0` as
+  the control proving the probe can pass. All three carry `_npmUser = GitHub Actions` +
+  attestations, i.e. the OIDC path. **No partial publish.**
+- ✅ **`cli` main: 12/12 green** at `a9fb966` before the merge, every `completed_at` AFTER the
+  push (03:22–03:28 vs a 03:21 push), so not a stale rollup. `pins-vs-published` among them.
+- ⚠ **No `clawgate-task:`** — `resolve` returned rc 5 `NOTHING RESOLVED` again. An unknown
   session id answers 200 with an empty array, so that zero cannot distinguish "touched no
-  task" from "wrong id". It is not a clean bill of health.
-- ⚠ **An uncommitted `0.1.1` bump is sitting in the `starters` PRIMARY clone**
-  (`packages/civitai-components-chat/package.json`) — the residue of the by-hand publish.
-  `#505` supersedes it. That clone is also mid-conflict on
-  `packages/civitai-components/src/version.generated.ts` (`UU`); left untouched.
+  task" from "wrong id". Not a clean bill of health.
+
+### The 7 carried forward (previous round's content checks, NOT re-derived)
+
+| PR | repo | sha | content check that passed |
+|---|---|---|---|
+| `#761` | cli | `d8e5fc0f` | scaffold pins `^0.53.0` / `^0.60.0` |
+| `#499` | starters | `1bad5de4` | guard present; 0 hardcoded `'SDXL'` in picker examples |
+| `#5262` | civitai | `e432c508` | comment reads "NOT a subset and NOT none" |
+| `#501` | starters | `08318a6c` | optional signature ×2; 0 × "currently REQUIRED"; host split ×5 |
+| `#759` | cli | `69f9c00d` | picker gotcha in the managed block; decision-36 exception recorded |
+| `#500` | starters | `55bc9aa4` | `withConsentRetry` present; `estimate()` NOT routed; changeset `major` |
+| `#762` | cli | `a355137b` | submit listing gate; `TaglineFromName`; `DOGFOOD_ALLOW_LISTING_TEXT` ×4 |
 
 ## Open investigations — live diagnosis state
 
@@ -214,52 +215,55 @@ session back down the refuted path.
 
 ## Next steps (ranked)
 
-1. **Merge `starters#505`** (`zach/components-chat-registry-drift`). Then confirm main's
-   Release run goes green, and that `#502` has been recomputed off the fixed main.
-   IN FLIGHT: civitai/civitai-app-starters#505
-   forcing: gate — `starters` main is red on this and nothing can publish until it is fixed
-2. **Merge `starters#502`,** then verify at the **REGISTRY**, never the PR:
-   `npm view @civitai/blocks-react version` → `0.61.0`, `npm view @civitai/app-sdk version` →
-   `0.54.0`, `npm view @civitai/sdk version` → `0.10.0`. 🔴 A merged Version PR is not a
-   publish. 🔴 **Re-read `#502`'s own diff first rather than trusting those three numbers** —
-   they changed once already this arc (`#504`), and a later changeset re-grade moves them
-   again. ⚠ This is the step that puts packages on the PUBLIC registry and moves `latest`;
-   an unpublish is impossible after 72 h, and this repo has twice stranded consumers on a
-   PARTIAL publish (`ETARGET` on install). IN FLIGHT: civitai/civitai-app-starters#502
-   forcing: gate — `cli#760` cannot merge until `blocks-react` publishes
-3. **Configure the npm trusted publisher for `@civitai/components-chat`** on npmjs.com (owner
-   `civitai`, repo `civitai-app-starters`, workflow `release.yml`, environment blank).
-   🔴 **OPERATOR-ONLY** — npmjs.com UI behind 2FA; no agent can do it.
-   forcing: gate — without it the next `components-chat` changeset fails to publish with the
-   same E404 that caused this whole arc
-4. **Then land `cli#760`.** REBASE onto `cli` main first (the branch is behind: its
-   `package.json.tmpl` still reads `^0.52.0`/`^0.59.0`), then set `@civitai/blocks-react` and
-   `@civitai/app-sdk` to the versions `npm view` reports **after step 2's publish** — expected
-   `^0.61.0` / `^0.54.0` as of `#502`@`35057f5c`, but 🔴 **derive, do not copy these**: they
-   were `^1.0.0` / `^0.54.0` earlier in this same arc until `#504` re-graded the changeset.
-   Re-run
-   `CIVITAI_SCAFFOLD_TYPECHECK=1 go test ./internal/scaffold -run TestPageMoneyScaffoldTypechecksItsOwnShippedTests`
-   and watch the FAIL→PASS inversion; undraft; merge. Files: `package.json.tmpl`,
-   `App.tsx.tmpl`, `models.ts.tmpl`. IN FLIGHT: civitai/cli#760
-   forcing: gate — the arc's closing condition names this PR
-5. **Fix the published CLI troubleshooting page.** `cli#762` updated the vendored mirror in
-   `publishedTroubleshootingRows`; the live page needs the same one-clause edit in
-   `civitai/civitai-developer-docs` (`site/guide/cli-troubleshooting`).
-   forcing: regression — the published page contradicts the shipped CLI's refusal list
-6. **Make `#499`'s fix reach actual readers.** `civitai-developer-docs` pins
-   `@civitai/blocks-react` EXACT at `0.59.0`, the generator reads the PUBLISHED tarball, and
-   `apps/reference/hooks.md:583,597` is a committed generated region still carrying both
-   `baseModelGroup: 'SDXL'` literals. Chain: publish → bump that pin → `npm run
-   gen:appblocks:md` → commit → deploy. Closing condition:
-   `git grep "baseModelGroup: 'SDXL'" -- apps/reference/hooks.md` in
+🔴 **These are LEFTOVERS, not a continuation — the arc above is closed. Items 2 and 3 are a
+NEW arc in `civitai-developer-docs` and want their own `closing-condition` when someone opens
+one.** Premises re-verified live 2026-10-01T03:2xZ rather than trusted, because one claim in
+this doc already went stale tonight.
+
+1. **Configure the npm trusted publisher for `@civitai/components-chat`** on npmjs.com —
+   owner `civitai`, repo `civitai-app-starters`, workflow `release.yml`, environment blank,
+   matching the six packages that already work. 🔴 **OPERATOR-ONLY**: npmjs.com UI behind 2FA,
+   no agent can do it. `#505` cleared the symptom; the cause is untouched. Closing condition:
+   a `components-chat` changeset publishes from CI with `dist.attestations` present.
+   Also recorded as `OPEN:` on the `civitai-app-starters/release-pipeline` index entry.
+   forcing: gate — the next changeset bumping that package fails with the same
+   `E404 Not Found - PUT` that caused this whole arc
+2. **Make `#499`'s fix reach actual readers.** VERIFIED STILL TRUE: `civitai-developer-docs`
+   `package.json:56` pins `"@civitai/blocks-react": "0.59.0"` EXACT, and
+   `apps/reference/hooks.md` still carries **2** × `baseModelGroup: 'SDXL'` in a committed
+   generated region. 🔴 **Now UNBLOCKED** — it was waiting on a publish, and `0.61.0` shipped
+   tonight. Chain: bump that pin → `npm run gen:appblocks:md` → commit → deploy. Closing
+   condition: `git grep "baseModelGroup: 'SDXL'" -- apps/reference/hooks.md` in
    `civitai-developer-docs@origin/main` returns nothing.
    forcing: gate — the defect is live on developer.civitai.com until this completes
+3. **Fix the published CLI troubleshooting page.** `cli#762` updated the vendored mirror in
+   `publishedTroubleshootingRows`; the live page needs the same one-clause edit in
+   `civitai-developer-docs`. VERIFIED: `site/guide/cli-troubleshooting.md` exists on
+   `origin/main`. Same repo as item 2 — one PR covers both.
+   forcing: regression — the published page contradicts the shipped CLI's refusal list
 
 ## Defects (batched)
 
-- `cli#759`'s picker-call ledger growth half is SPELLING-dependent: a picker reached through an
-  alias not ending in `Picker`, or a call whose argument object starts on the next line, both
-  survive a full `go test ./internal/cmd/`. The shrink half is sound.
+- 🔴 **`#759`'s picker-call-ledger GROWTH half is still spelling-dependent.** This session
+  fixed the sibling DERIVATION half (`derivesFromChosenCheckpoint`, one hop through a local);
+  the growth half still misses a picker reached through an alias not ending in `Picker`, and a
+  call whose argument object opens on the next line. Deliberately not fixed in `#760` —
+  touching it again would have reset a green 12/12 CI run. Same one-hop treatment applies.
+- 🔴 **The `page-money` scaffold pin lives at SEVEN literal sites across FOUR files** and only
+  `TestDesignTokenLedgerMatchesTemplatePin` notices when they diverge. `bump-pins` owns all
+  seven; a hand-edit of `package.json.tmpl` leaves six stale. There is also a
+  `.github/workflows/bump-scaffold-pins.yml` that presumably automates this — nobody checked
+  tonight whether it would have done the job unaided.
+- ⚠ **`cli`'s browser-driving Oracle tier is red on `main` under `CIVITAI_CHROME`** — and
+  differently red than on a feature branch (1 failure on main vs 10 on `#760`'s branch, with
+  `TestOnlyTheGenerateClickCanEarnTheVerdict` only appearing on main). Without the env var the
+  three `TestOracle*` tests fail everywhere with `no Chromium on PATH`. Nobody owns this; it is
+  recorded because the tier's state is currently unknowable from CI.
+
+**Carried forward from the previous round — NOT re-verified this session.** `Defects` is a
+REPLACE heading, so these would have been silently deleted by this update; none of them was
+looked at tonight, so treat each as a claim to re-check rather than a current reading:
+
 - Nothing ratchets the size of the generated `AGENTS.md` block. The repo owns the mechanism
   (`agents_size_test.go`, with a ceiling AND a can-still-fire test) and points it at its own
   `AGENTS.md`, not at the block written into every user's project. `AGENTS.md` item 36's trigger
@@ -271,7 +275,8 @@ session back down the refuted path.
   so every test file in `civitai-blocks-react` is only syntax-checked.
 - `packages/civitai-components/src/version.generated.ts` is stale in git on `starters` main
   (committed `0.8.1`, its `package.json` says `0.9.0`), so any `pnpm build` dirties the tree.
-  Three independent agents hit it.
+  Three independent agents hit it. ⚠ Seen again tonight as a `UU` conflict in the `starters`
+  PRIMARY clone, left untouched.
 - `cli#762`'s `dropIncompatibleLoras` family comparison is a SNAPSHOT deny-list; the SDK/host
   affords no media-type filter (pinned by the host's own ledger test).
 
@@ -374,42 +379,77 @@ session back down the refuted path.
   onto the new `main` (`fe50b77` → `ab23b80`) and its guard re-run green there rather than
   assuming disjoint files made it safe.
 
+### 🔴 THE MERGED-TREE BREAK IS NOT HYPOTHETICAL — `#759` + `#760` hit it exactly
+
+- `#759` added `TestThePickerGuidanceMatchesWhatTheScaffoldActuallyDoes` to `main`; `#760`
+  changed the scaffold the guard inspects. **Disjoint files, no textual conflict, both green on
+  their own branches, red the moment `#760` was rebased onto `main`.** Nothing but running the
+  suite on the MERGED tree could have seen it — and `#760` would have merged red had the rebase
+  not been done first.
+- Two fixes, both in the guard rather than the template, because the template was right:
+  - `wantPickerCallSites["openCheckpointPicker"]` was `true`, **encoding the belief this whole
+    arc exists to refute.** Holding a chosen checkpoint is NOT the exception; needing to STAY
+    INSIDE its family is. LoRA keeps `true`; the Change-model button becomes `false`.
+  - The "must be DERIVED" half was a per-line `strings.Contains(value, "checkpoint.baseModel")`
+    and the scaffold legitimately derives through a named local (the family asked for has to be
+    recorded on the resulting LoRA). **The guard failed code that follows its own guidance
+    exactly, and the obvious way to green it was to inline the expression and lose the recorded
+    family** — a guard correct code cannot satisfy is worse than none.
+- Mutation-tested, each mutant killed by **its own** error rather than another assertion, with
+  the template restored byte-identical afterwards: `'SDXL'` → "hardcoded ecosystem";
+  `const requestedFamily = someOtherState.family` → "derives … from something other than" (this
+  one proves the one-hop resolution does not blindly accept any identifier);
+  `openCheckpointPicker({ baseModelGroup: … })` → "records that this call site holds no chosen
+  checkpoint" (proves the flipped ledger entry is REACHABLE, not just changed).
+
+### ⚠ A browser-driving test tier is not a harness to widen casually
+
+- Chasing a fully-green suite, this session set `CIVITAI_CHROME` to the operator's own Brave
+  binary and ran `go test ./...`. That **widened the harness into a tier that launches a real
+  browser**: failures went 3 → 10, `main` fails *differently* under the same variable, and the
+  runs left **637 orphaned Brave processes** across two worktrees. SIGTERM did not take;
+  SIGKILL on a freshly re-resolved PID list did.
+- 🔴 **The cleanup rule that made this safe to undo: resolve PIDs and verify `/proc/<pid>/cwd`
+  against the EXACT worktree paths plus `/proc/<pid>/exe`, never a `pkill -f` pattern.** 32
+  Brave processes belonging to another session (`/tmp/wt-rank21`, Sept 27) were present
+  throughout and had to survive — a pattern kill would have taken them.
+- **The correct comparison was the one already in hand.** Without the env var the suite matched
+  `origin/main` exactly: three `TestOracle*` failures, every one `no Chromium on PATH`. A change
+  that touches none of the browser machinery is not answerable for that tier, and on an
+  operator's workstation it should not be run at all.
+
 ## How to verify
 
 ```bash
-CLI=~/workspace/civit/cli; ST=~/workspace/civit/civitai-app-starters; CIV=~/workspace/civit/civitai
+CLI=~/workspace/civit/cli; ST=~/workspace/civit/civitai-app-starters
 
-# 1. the release blocker — the guard itself, from a CLEAN worktree (it reads HEAD, not the tree)
-git -C $ST worktree add --detach /tmp/vap origin/main && (cd /tmp/vap && node scripts/assert-published-versions.mjs)
-git -C $ST worktree remove --force /tmp/vap
-#   RED  until #505 lands:  @civitai/components-chat@0.1.0 -> HTTP 404 ... RC=1
-#   GREEN once it has:      OK: 7/7 publishable package version(s) confirmed ... RC=0
+# 1. THE ARC'S CLOSING CONDITION (both halves)
+gh pr view 760 --repo civitai/cli --json state --jq .state          # MERGED
+git -C $CLI show origin/main:internal/scaffold/templates/page-money/src/App.tsx.tmpl \
+  | grep -c 'baseModelGroup: checkpoint.baseModel'                  # 0
+# and the LoRA filter must SURVIVE — a 0 achieved by deleting it is the wrong 0:
+git -C $CLI show origin/main:internal/scaffold/templates/page-money/src/App.tsx.tmpl \
+  | grep -nE 'const requestedFamily|baseModelGroup:'                # :535 and :539
 
-# 2. the publish actually happened — ask the REGISTRY, never the PR.
-#    🔴 The expected numbers come from `gh pr diff 502`, NOT from this comment: #504 moved
-#    blocks-react from 1.0.0 to 0.61.0 mid-arc, and another re-grade moves it again.
-npm view @civitai/blocks-react version   # 0.61.0 as of #502@35057f5c — re-derive
-npm view @civitai/app-sdk version        # 0.54.0
-npm view @civitai/sdk version            # 0.10.0
+# 2. the release pipeline is healthy — ask the RUN, then the REGISTRY
+gh run list --repo civitai/civitai-app-starters --workflow release.yml -L 1 \
+  --json headSha,conclusion --jq '.[]|"\(.headSha[0:8]) \(.conclusion)"'    # success
+for p in blocks-react app-sdk sdk components-chat; do
+  printf '%-16s %s\n' "$p" "$(npm view @civitai/$p version)"
+done                                        # 0.61.0 / 0.54.0 / 0.10.0 / 0.1.1
 
-# 3. the trusted publisher for components-chat exists (proxy: a CI publish, not a laptop one)
+# 3. 🔴 the OPEN item: has components-chat been given a trusted publisher yet?
 curl -sS https://registry.npmjs.org/@civitai%2Fcomponents-chat \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); l=d["dist-tags"]["latest"]; v=d["versions"][l]; print(l, v["_npmUser"]["name"], bool(v["dist"].get("attestations")))'
-#   want: <next version> "GitHub Actions" True   (0.1.1 devzacx False = still the hand publish)
+#   0.1.1 devzacx False   = STILL the by-hand bootstrap, publisher NOT configured
+#   <newer> "GitHub Actions" True = done
 
-# 4. cli#760's pin is right — read the PUBLISHED TYPE, which no changeset re-grade can move
-V=$(npm view @civitai/blocks-react version)     # whatever actually published
-npm pack "@civitai/blocks-react@$V" --pack-destination /tmp >/dev/null
-tar -xzf "/tmp/civitai-blocks-react-$V.tgz" -C /tmp
-grep -n -A3 'open:' /tmp/package/dist/hooks/useCheckpointPicker.d.ts   # want `opts?:` and `baseModelGroup?:`
-#   0.60.0 has `opts:` + `baseModelGroup: string` (both REQUIRED) — that is the control
-
-# 5. the scaffold gate — it SELF-SKIPS without the env var, and `make ci` never sets it
+# 4. the scaffold gate — SELF-SKIPS without the env var, and `make ci` never sets it,
+#    so a green suite does NOT prove the rendered scaffold builds. Use -v: PASS, never SKIP.
 (cd $CLI && CIVITAI_SCAFFOLD_TYPECHECK=1 go test ./internal/scaffold \
-  -run TestPageMoneyScaffoldTypechecksItsOwnShippedTests -v)   # PASS, never SKIP
+  -run TestPageMoneyScaffoldTypechecksItsOwnShippedTests -v)
 
-# 6. check rollups — SHA-PINNED, never seconds after a push (a 0 or a stale green both lie)
-SHA=$(gh pr view 502 --repo civitai/civitai-app-starters --json headRefOid --jq .headRefOid)
-gh api "repos/civitai/civitai-app-starters/commits/$SHA/check-runs" \
-  --jq '"total=\(.total_count)", (.check_runs[]|"\(.name) \(.status) \(.conclusion) \(.completed_at)")'
+# 5. ⚠ do NOT set CIVITAI_CHROME to run the suite on a workstation — see the gotcha above.
+#    Baseline without it: 3 TestOracle* failures, all `no Chromium on PATH`, same as main.
+(cd $CLI && go test ./... -count=1 2>&1 | grep -c 'no Chromium on PATH')   # 5 lines / 3 tests
 ```
