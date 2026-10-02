@@ -33,63 +33,66 @@ production, surfaced to the viewer as *"Saving failed for an unknown reason… t
 
 ## State now
 
-🔴 **ARC CLOSED 2026-10-02, VERDICT RE-CONFIRMED BY A FULL CLOSE-CHECK.** The frozen
-closing condition (both fixes MERGED, each demonstrably refusing the defect) was met, and
-the follow-on release, the fleet rollout and the teaching layer all shipped on top of it.
-**26 PRs merged, every one verified by CONTENT on its default branch, not by ancestry.**
+🔴 **ARC CLOSED 2026-10-02 AND NOTHING IS LIVE-BROKEN. Rank 1 is DONE** — the
+previous revision of this section said `devrc#1987` was "correct in the repo and INERT on
+this machine"; that is no longer true and the switch + prune have both run.
 
-- **The three deterministic fixes:** `starters#511` (`b4e3f00`, mock host gates storage on
-  manifest-declared scopes) · `cli#767` (`87ba43b`, `validate` warns on an undeclared
-  scope) · `starters#517` (`c13383d`, the idempotency-key rule vendored once and enforced
-  at the hook boundary AND in the mock host).
-- **Published and verified independently of CI** — resolvable, `_npmUser = GitHub Actions
-  <npm-oidc-no-reply@github.com>`, `dist.attestations` present, never a version string:
-  `@civitai/blocks-react` **0.62.0** (`starters#514`) then **0.63.0** (`starters#515`,
-  `70ec100`), `@civitai/app-sdk` **0.55.0**.
-- **The scaffold admits it** (`cli#769`, `60e0b31`) so a new app is born WITH the gate —
-  without it every future `civitai app init` reproduced the original defect.
-- **All 7 fleet consumers on `^0.63.0` + `^0.55.0`**, verified by reading each default
-  branch: gen-matrix#29, model-benchmarking#81, playable-collections#52, sensei#88 (on
-  `trunk`), yt-thumbnail#40, panorama-360#17, developer-docs#142.
-- **The docs no longer teach the defect** (`developer-docs#141`, `#142`): the three
-  colon-bearing examples are gone (colon-keys **0**, hyphen-keys **1** per file), and
-  `generation.md`'s generated `idempotencyKey?` row went **1007 → 2425 chars**, gaining the
-  charset, the 400 shape and why colons are banned. That row is inside a generated region
-  and was structurally unable to carry the constraint until `#517` put it in the JSDoc.
-- **THREE live production defects closed, only ONE of which was reported:** the storage
-  403 (operator's report), the `idempotencyKey` 400 (the docs taught it), and 🔴
-  **`TipButton`'s every-tip 400** — publicly exported, always supplied a 5-segment colon
-  key, measured `_r_0_:123:50:Image:99` → `keyClears: false`. Nobody had reported it.
-- **The predecessor session's three asks are all accounted for** (they were in
-  `9a8d045a`'s kickoff, never handed to this session — recovered with
-  `extract_user_msgs.py --arc`): (a) docs pin + `baseModelGroup: 'SDXL'` in a generated
-  region → **CLOSED**, grep returns **0** on `origin/main` with a positive control of 3
-  `baseModelGroup` matches in that same file, pin now `0.63.0` (was `0.59.0`); (b)
-  `site/guide/cli-troubleshooting.md` one-clause edit → **CLOSED** in `cbfab1e`
-  (developer-docs#136); (c) `@civitai/components-chat` trusted publisher → **still
-  `0.1.1 / devzacx / attestations False`, published 2026-09-30**, in-tree also `0.1.1`, so
-  no changeset touched it. Its closing condition is that package's NEXT publish, which has
-  not happened. 🔴 **NOT a work item — there is no action, only an event to wait for**;
-  the operator's own framing is *"unconfirmed, not wrong"*.
-- **Index hygiene:** both `OPEN:` bullets this arc wrote on
-  `civitai-app-starters/blocks-react` are now `RESOLVED` with shas (`c13383d`,
-  `9edaf20`); that entry is at **0 OPEN**. The 4 remaining opens in that scope are dated
-  2026-09-03/04 and 10-01 — predecessor arcs. Claims `appblocks-scope-enforcement-1`,
-  `-pinbump`, `-idempotency-key-guard` and `appblocks-fleet-bump-063` all released.
-- **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` exits **5** and
-  `field <doc>` exits **1**. A 0-task answer cannot distinguish "touched no task" from
-  "wrong session id", so none was written — not a clean bill of health.
-- **Sibling arcs:** `appblocks-docs-pin-currency` is CLOSED and verified live
-  (`claudedocs/handoff-appblocks-docs-pin-currency.md`; `cli#765` still OPEN carrying it).
-  `appblocks-agent-dx` is CLOSED — do not re-open it; its own doc's authoritative copy is
-  the one `cli#764` merged.
-- 🔴 **ONE THING IS LIVE-BROKEN AND IT IS MINE: `devrc#1987` is correct in the repo and
-  INERT on this machine.** The handle still resolves to the dormant clone until a
-  `home-manager switch`, and the `20:19:19Z` sync tick wrote ~25 docs / 277 sections under
-  the now-orphaned label `civitai-cli`. **I armed that** — my `git merge --ff-only` on the
-  devrc base clone (run to prove the index behaviour) put the five-handle tuple into the
-  exact working-tree file the timer executes, while the unit env still pointed elsewhere.
-  Rank 1 closes it.
+- **The switch ran:** `home-manager switch --flake . --impure` from `$DEVRC` →
+  **generation 865**, and the behaviour check confirms it rather than the config:
+  `systemctl --user show handoff-index-sync.service -p Environment` now reads
+  `CIVITAI_CLI=/home/zach/workspace/civit/cli` (was `.../civitai-cli`).
+  ⚠ Two units reported degraded in that run — `drift-check`, `main-green-check` — were
+  **already failing before it**, are devrc monitoring units, and are unrelated.
+- **The orphan is pruned.** The `20:19:19Z` tick had run at `15:19 CDT` with the OLD env
+  (before the 18:12 switch), so it wrote the `civitai-cli` label as predicted.
+  🔴 **I read the stored labels BEFORE deleting, because the dry-run says outright it
+  CANNOT show the orphan set** — that lives in the table, not the derivation. Measured
+  `ORPHANED: ['civitai-cli']`, exactly one. Then
+  `handoff_index.py --rebuild --prune --write` → *"wrote 7733 section row(s) … after DELETE
+  of 6 repo label(s): civitai, civitai-cli, cli, datapacket-talos, devrc, homelab-talos —
+  one transaction"*.
+- ✅ **RANK 1'S CLOSING CONDITION IS MET, verified:** `PostgresSectionStore.repos()` returns
+  exactly `civitai, cli, datapacket-talos, devrc, homelab-talos`; `IndexStats(indexed_docs=564,
+  indexed_sections=7733)`. The `cli` corpus derives at `docs=27 sections=297` with
+  `warnings: none`.
+- 🔴 **A GAP I MISSED AND CI CAUGHT: the SCAFFOLD was never bumped** (`cli#771`,
+  `8abf185`). I bumped the seven fleet CONSUMERS to `^0.63.0` and forgot the template,
+  which is the surface deciding what FUTURE apps get — both pins were stale
+  (`blocks-react ^0.62.0`, `app-sdk ^0.54.0`), so `civitai app init` was writing apps that
+  cannot resolve the version carrying the idempotency guard. `pins-vs-published` went red
+  on this doc's own PR naming both. Now `^0.63.0` / `^0.55.0`, verified by reading the
+  template off `origin/main`. **So the earlier claim that the gate "reaches every app in
+  the fleet" was incomplete** — it reached the seven existing consumers, not new ones.
+- **This doc landed** as `cli#770` (`521b7f1`), 549 lines on `origin/main`, after an
+  `update-branch` onto the scaffold fix — its red was INHERITED from a base that lacked
+  `#771`, which a rerun cannot clear.
+- **28 PRs merged this arc.** Still open and NOT part of it: `cli#765` (carrying the
+  closed `appblocks-docs-pin-currency` doc).
+- **`@civitai/components-chat` remains `0.1.1 / devzacx / attestations False`** — its
+  closing condition is that package's NEXT publish, which has not happened and which
+  nothing here triggers. Not a work item.
+- **CARRIED FORWARD — the close-check verdict, which is the answer to "is everything
+  addressed":** the arc's own frozen closing condition was ADDRESSED, and the predecessor
+  session's three asks (recovered with `extract_user_msgs.py --arc`, 2 sessions / 10 genuine
+  operator messages) resolve as: (a) docs pin + `baseModelGroup: 'SDXL'` in a generated
+  region → **CLOSED**, grep **0** on `origin/main` with a positive control of **3**
+  `baseModelGroup` matches in that same file proving the zero is measurable, pin now
+  `0.63.0` (was `0.59.0`); (b) `site/guide/cli-troubleshooting.md` one-clause edit →
+  **CLOSED** in `cbfab1e` (developer-docs#136); (c) `components-chat` publisher → still
+  waiting on a publish, above. **Sibling arcs:** `appblocks-docs-pin-currency` CLOSED and
+  verified live (`cli#765` still OPEN carrying its doc); `appblocks-agent-dx` CLOSED — do
+  not re-open it. **Index hygiene:** `civitai-app-starters/blocks-react` at **0 OPEN** (both
+  bullets closed with shas `c13383d` / `9edaf20`); new lessons in `cli/scaffold` and
+  `devrc/handoff-index`; the 4 remaining opens in the starters scope are dated 2026-09-03/04
+  and 10-01, i.e. predecessor arcs. **All four claims released**
+  (`appblocks-scope-enforcement-1`, `-pinbump`, `-idempotency-key-guard`,
+  `appblocks-fleet-bump-063`).
+- **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` exits **5** and `field`
+  exits **1** — a 0-task answer cannot distinguish "touched no task" from "wrong session
+  id", so none was written. Not a clean bill of health.
+- ⚠ **The leak scanner does not exist in this repo** (`tests/leakscan.py` absent), so every
+  handoff delta here is a **PASS BY ABSENCE**, never a clean scan. Content vouched for by
+  hand: PR numbers, shas, file paths, public package versions — no credentials, no infra.
 
 ## Open investigations — live diagnosis state
 
@@ -187,33 +190,24 @@ the follow-on release, the fleet rollout and the teaching layer all shipped on t
 
 ## Next steps (ranked)
 
-1. **`home-manager switch`, then prune the orphaned index label.** Operator's call: a
-   switch activates EVERY devrc change merged since generation 864 (2026-10-02 13:34), not
-   just the handle. Until then `devrc#1987` (`46e8dbc`) is inert and the index reads 25
-   docs from the dormant clone instead of 27. Then the prune — proven available, all five
-   `REPO_ENV_HANDLES` entries resolve and a real `--rebuild --prune` **dry-run returned
-   rc 0 with no refusal**. 🔴 The prune cannot meaningfully run BEFORE the switch: pre-switch
-   the unit still NAMES `civitai-cli`, so there is no orphan from its perspective.
-   Closing condition: `PostgresSectionStore.repos()` returns labels exactly
-   `civitai, cli, datapacket-talos, devrc, homelab-talos`.
-   forcing: regression — the index now serves ~25 stale docs under a label no config names, created by this arc
-2. **Fix `find-session.py`'s hardcoded handle list.** `scripts/find-session.py:1148` loops
-   `("DEVRC","HOMELAB","DATAPACKET","CIVITAI")` while its own docstring at `:1139` says it
-   *"Searches every repo in `handoff_index.REPO_ENV_HANDLES`"*. `devrc#1982` widened that
-   tuple to five and this tool silently did not follow — a description wider than its
-   implementation. It is why `extract_user_msgs.py --arc` exited **3 (nothing measured)**
-   on this very doc and needed a `CIVITAI=<cli-path>` override to answer the operator's
-   question. Make it read `REPO_ENV_HANDLES` (one rule, one place) and correct `:255`'s
-   error text, which also enumerates the four.
+1. **Fix `find-session.py`'s hardcoded handle list.** `scripts/find-session.py:1148` loops
+   `("DEVRC","HOMELAB","DATAPACKET","CIVITAI")` while its docstring at `:1139` says it
+   *"Searches every repo in `handoff_index.REPO_ENV_HANDLES`"* — now five. A description
+   wider than its implementation. It is why `extract_user_msgs.py --arc` on THIS doc exits
+   **3 (NOTHING MEASURED)** and needed a hand `CIVITAI=<cli-path>` override to answer the
+   operator's own "find all sessions for this arc". Make it read `REPO_ENV_HANDLES` (one
+   rule, one place) and fix `:255`'s error text, which enumerates the same four.
+   ⚠ Note the switch did NOT fix this — `$CIVITAI_CLI` now resolves correctly and the tool
+   still ignores it, because the list is hardcoded rather than derived.
    Closing condition: `python3 $DEVRC/scripts/session-analysis/extract_user_msgs.py --arc handoff-appblocks-scope-enforcement` exits 0 with NO env override.
    forcing: user — the operator asked for this arc's sessions and the tool could not answer without a hand override
-3. **Teach the storage scopes in the generated `AGENTS.md`.** `civitai/cli`,
+2. **Teach the storage scopes in the generated `AGENTS.md`.** `civitai/cli`,
    `internal/cmd/templates/agents-app.md` — name `apps:storage:read`/`write` beside the
    existing `ai:write:budgeted`, keyed on the persistence trigger. The only surface an
    agent is routed to. 🔴 `agents_size_test.go` ratchets that file's size.
    Closing condition: `grep -c apps:storage internal/cmd/templates/agents-app.md` ≥ 1 on origin/main.
    forcing: none
-4. **Classify authorization failures in the SDK's storage error copy.** The viewer saw
+3. **Classify authorization failures in the SDK's storage error copy.** The viewer saw
    *"Saving failed for an unknown reason… try again"*; `appStorageErrors.ts` already
    documents that an authz failure classifies `null` and that *"please try again" is the
    WRONG copy for that arm* — nothing enforces it.
@@ -497,53 +491,60 @@ the follow-on release, the fleet rollout and the teaching layer all shipped on t
   consolidated** — it governs LLM TOOL NAMES, a different grammar, and merging them would
   let a money-key policy change silently alter which chat tools register.
 
+- 🔴 **THE CONSUMERS ARE VISIBLE AND THE TEMPLATE IS NOT — BUMP THE SCAFFOLD IN THE SAME
+  SWEEP, ALWAYS.** I bumped 7 consumer repos to `^0.63.0`, wrote the lesson *"`pins-vs-published`
+  is a NETWORK check against npm `latest`… the fix is a scaffold bump, never a rerun"*
+  into the subsystem index, and then **missed the scaffold anyway** — CI caught it on this
+  doc's own PR, naming both stale pins (`blocks-react ^0.62.0` vs published `0.63.0`,
+  `app-sdk ^0.54.0` vs `0.55.0`). Having the rule did not make me apply it, because the
+  seven consumers were the thing I was looking at. 🔴 The stake is not CI: a stale template
+  births every new app WITHOUT whatever the release enforces, which is the same defect
+  class the arc exists to close. `cli#769` then `cli#771` are the same fix one version
+  apart — if you are reading this during a third release, bump the scaffold first.
+- 🔴 **A `--prune` DRY-RUN CANNOT SHOW WHAT `--prune` DELETES, AND IT SAYS SO.** The
+  orphan set "lives in the TABLE, not in this derivation, so a --dry-run CANNOT show it —
+  this is the one part of the delete a pre-flight does not cover." So read the stored
+  labels yourself first: `PostgresSectionStore(db.conn).repos()` via
+  `handoff_index.import_maildb()`, needing `KUBECONFIG=$KC_HOMELAB` for the
+  `mailbox/mailbox-postgres-auth` secret. Measured one orphan, deleted one orphan; the
+  write run's own line then confirmed the bound scope.
+- 🔴 **`gh pr view` IMMEDIATELY AFTER `gh pr update-branch` RETURNS THE PRE-UPDATE HEAD.**
+  It reported `✓ PR branch updated` while `headRefOid` was still the old sha; a re-read
+  seconds later showed the new one, with `merge-base --is-ancestor origin/main <branch>`
+  true and `rev-list --count <branch>..origin/main` = 0. Same propagation lag that makes a
+  check rollup stale — confirm the MOVE, never the success message.
+- ⚠ **A `home-manager switch` reports pre-existing degraded units as part of its own
+  output**, which reads as damage it caused. `drift-check` and `main-green-check` were
+  already failing; the switch said so before reloading anything. Check
+  `systemctl --user show <u> -p ActiveState` rather than attributing them.
+- **The switch is what makes an `agent-handles.nix` change real.** Merging the repoint
+  changed the repo and nothing else: the unit env is generated, so the handle kept
+  resolving to the old path until generation 865. A handle edit is inert until a switch.
+
 ## How to verify
 
 ```bash
-ST=~/workspace/civit/civitai-app-starters; CLI=~/workspace/civit/cli
-DD=~/workspace/civit/civitai-developer-docs
-
-# 0. THE CLOSING CONDITION — both original fixes merged (they are)
-gh pr view 511 --repo civitai/civitai-app-starters --json state --jq .state   # MERGED
-gh pr view 767 --repo civitai/cli --json state --jq .state                    # MERGED
-#    by CONTENT, because a squash merge never makes the branch head an ancestor:
-git -C $ST cat-file -e origin/main:packages/civitai-blocks-react/src/internal/mockHostScopes.ts
-git -C $CLI cat-file -e origin/main:internal/validate/storagescope.go
-
-# 1. the whole chain is published and reaches apps
-npm view @civitai/blocks-react version      # 0.63.0
-npm view @civitai/app-sdk version           # 0.55.0
-cd /tmp && npm install --dry-run @civitai/blocks-react@0.63.0   # rc=0, no ETARGET
-npm view @civitai/blocks-react@0.63.0 --json | python3 -c 'import json,sys; d=json.load(sys.stdin); u=d.get("_npmUser"); print(u.get("name") if isinstance(u,dict) else u, bool(d.get("dist",{}).get("attestations")))'
-#    -> "GitHub Actions" True.  🔴 NEVER verify a publish by a version string alone:
-#       this package once had a `latest` that npm view reported happily while
-#       npm install died with ETARGET.
-
-# 2. every fleet consumer is on it (expect ^0.63.0 / ^0.55.0; docs repo exact)
-for r in civitai-app-gen-matrix civitai-app-model-benchmarking \
-         civitai-app-playable-collections civitai-app-yt-thumbnail app-panorama-360; do
-  git -C ~/workspace/civit/$r show origin/main:package.json | python3 -c 'import json,sys; d=json.load(sys.stdin); m={**d.get("dependencies",{}),**d.get("devDependencies",{})}; print(m.get("@civitai/blocks-react"), m.get("@civitai/app-sdk"))'
-done
-git -C ~/workspace/civit/civitai-app-sensei show origin/trunk:package.json | grep -a blocks-react   # sensei is on TRUNK
-
-# 3. the docs no longer teach it — read the PAIR, never the zero alone
-for f in apps/reference/generation.md apps/guide/text-to-image.md apps/guide/earning.md; do
-  echo "$f colon=$(git -C $DD show origin/main:$f | grep -acE 'idempotencyKey: `[a-z]+:')" \
-       "hyphen=$(git -C $DD show origin/main:$f | grep -acE 'idempotencyKey: `[a-z]+-')"
-done   # expect colon=0 hyphen=1 each
-
-# 4. the predecessor arc's item (a), with its positive control
-git -C $DD show origin/main:apps/reference/hooks.md | grep -ac "baseModelGroup: 'SDXL'"  # 0
-git -C $DD show origin/main:apps/reference/hooks.md | grep -ac 'baseModelGroup'          # 3 = the grep CAN match
-
-# 5. RANK 1's closing condition — is the handle repoint live yet?
+# 0. RANK 1 — the switch and the prune (both DONE; this re-confirms)
 systemctl --user show handoff-index-sync.service -p Environment | tr ' ' '\n' | grep CIVITAI_CLI
-#    still .../civitai-cli  => the switch has NOT happened and #1987 is inert
-python3 ~/workspace/devrc/scripts/lib/handoff_search.py --offline --query x --limit 1 2>&1 | grep repos=
-#    want a `cli` label and indexed_docs reflecting 27, not 25
+#    want .../civit/cli  — .../civitai-cli means the switch was rolled back
+cd $DEVRC && KUBECONFIG=$KC_HOMELAB nix-shell -p 'python3.withPackages(p:[p.psycopg2])' --run 'python -c "
+import sys; sys.path.insert(0,\"scripts/lib\")
+import handoff_index as hi
+with hi.import_maildb()() as db:
+    print(sorted(hi.PostgresSectionStore(db.conn).repos()))"'
+#    want exactly [civitai, cli, datapacket-talos, devrc, homelab-talos]
 
-# 6. RANK 2's closing condition — no env override needed
+# 1. the scaffold admits the current release (the gap CI caught)
+git -C $CIVITAI_CLI show origin/main:internal/scaffold/templates/page-money/package.json.tmpl \
+  | grep -E 'blocks-react|app-sdk'      # want ^0.63.0 / ^0.55.0
+(cd $CIVITAI_CLI && CIVITAI_CHECK_PUBLISHED_PINS=1 go test ./internal/scaffold \
+   -run TestScaffoldPinsSatisfyPublished -count=1)
+#    🔴 must print PASS, not SKIP — it t.Skipf's when npm is unreachable and a SKIP
+#    says nothing about the pins. 🔴 And this goes RED repo-wide the moment a new
+#    blocks-react publishes: the fix is a scaffold bump, never a rerun.
+
+# 2. RANK 1's own closing condition is independent of RANK 2 — prove rank 2 still open
 python3 $DEVRC/scripts/session-analysis/extract_user_msgs.py --arc handoff-appblocks-scope-enforcement
-#    exit 3 today (handle gap). Want exit 0 with NO CIVITAI= override.
-#    🔴 exit 3 = NOTHING MEASURED; exit 4 = measured and genuinely empty. Different facts.
+#    exit 3 today = NOTHING MEASURED (not 4, which is "measured and genuinely empty").
+#    Workaround while open: CIVITAI=$CIVITAI_CLI python3 … --arc …
 ```
