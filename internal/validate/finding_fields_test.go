@@ -173,6 +173,17 @@ func findingFieldLedger() []fieldExpectation {
 			"the finding is about what the browser loads. `page` is what makes the check " +
 				"APPLY and is the one field that is CORRECT — reporting it there would " +
 				"send a consumer to the wrong file entirely"},
+
+		// --- storagescope.go --------------------------------------------
+		{"but the manifest declares no storage scope", "scopes",
+			"🔴 THE DELIBERATE OPPOSITE OF THE readyack ROW ABOVE, and the contrast is the " +
+				"point. Both checks read src/, but they disagree about which side is wrong. " +
+				"readyack's remedy is in SOURCE (restore the emitter), so the manifest is " +
+				"not the place to send anyone. Here the SOURCE IS CORRECT — calling " +
+				"`useAppStorage()` is the whole feature — and the single edit that fixes it " +
+				"is adding two strings to `scopes` (plus their justifications). " +
+				"FieldProject would send a consumer to read their own app code looking for " +
+				"a bug that is not there, which is the mistake this ledger exists to catch"},
 	}
 }
 

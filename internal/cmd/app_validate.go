@@ -60,6 +60,18 @@ It also emits non-fatal WARNINGS the schema can't catch as hard errors:
     server-side SDK and @civitai/theme and @civitai/components are CSS — none
     of those three silences it. It reads source only — never outputDir,
     node_modules, markdown, or comments.
+  - source that calls useAppStorage() or useSharedStorage() while the manifest
+    declares NO scope for that store. The server gates storage by PRESENCE in the
+    approved scope set, so an undeclared scope means every call 403s in
+    production while working locally against the mock host — the exact shape of
+    an app that passed its whole suite, the dev harness and a submit, then failed
+    every save. The two stores are asked independently: declaring
+    apps:storage:shared:* says nothing about the per-viewer store. It does NOT
+    second-guess WHICH scope you picked — one storage scope is someone who knows
+    scopes exist and chose, so only a store with NONE is reported. Advisory ONLY:
+    it reads source statically, so a hook imported but never called is a false
+    positive. Same corpus rules as the ready-ack check — source only, comments
+    stripped, node_modules and build output skipped.
 Warnings do NOT fail validation (exit 0) unless --strict is passed.
 
 Defaults to the current directory.`,
