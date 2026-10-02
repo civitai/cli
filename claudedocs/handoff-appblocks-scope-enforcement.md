@@ -33,39 +33,52 @@ production, surfaced to the viewer as *"Saving failed for an unknown reason… t
 
 ## State now
 
-- **`civitai-app-starters#511` — OPEN, head `1980ad7`.** Dev mock host now gates storage
-  on manifest-declared scopes. 🔴 BREAKING (minor, pre-1.0 — `major` would mean 1.0.0;
-  operator confirmed "we are still v0").
-  - `packages/civitai-blocks-react/src/internal/mockHostScopes.ts` (new): the op→scope
-    table for 15 messages, the refusal prose, the per-reply-type payload builder.
-  - `.../src/internal/mockHost.ts`: `declaredScopes?: string[]` defaulting to EMPTY, and
-    ONE guard ahead of the message switch (not 15 handler copies).
-  - `.../test/mockHostStorageScopes.test.tsx` (new, 12 cases) + 25 migrated call sites
-    across the 2 storage suites.
-  - Verified: build rc=0, typecheck rc=0, **98 files / 1761 tests / 0 failures**, and the
-    migration **watched red first** at 26 failed / 1723 passed.
-- **`civitai/cli#767` — OPEN, head `837607d`.** `validate` warns when source calls a
-  storage hook and the manifest declares no scope for that store.
-  - `internal/validate/storagescope.go` + `storagescope_test.go` (new), wired in
-    `validate.go` beside `readyAckChecks`, plus rows in `finding_contract_test.go` and
-    `finding_fields_test.go`, plus the `app validate --help` text.
-  - Verified: build/vet rc=0, `internal/validate` + `internal/cmd` ok, 20 packages ok.
-    **7-mutant sweep, each killed by its OWN guard's test**, `-count=1` throughout,
-    restores digest-verified, positive control in the batch.
-- **NEITHER IS MERGED.** The hole is open in every shipped surface until both land.
-- **CI at the time of writing:** `#511` had 5 red `Starter (…)` legs from MY regression
-  (a JSDoc `import … from` line — see Gotchas), fixed in `1980ad7` and re-pushed; CI not
-  re-read after that push. `#767` had `build-test` `in_progress`, 0 failures.
-- **Operator DECLINED fixing the two affected live apps** — *"Leave them; I'll handle
-  it."* **Style Explorer (LIVE)** and **Prompt Lab (pending)** declare the same single
-  scope and also use `useAppStorage()`, so their saves 403 in production the same way.
-  Not mine to touch; recorded because it is a live user-facing defect.
-- **No `clawgate-task:` field:** `clawgate_handoff.sh resolve` exited **5**. ⚠ Its first
-  read looked like rc=0 because the command was PIPED through `tail` — the documented
-  pipe-eats-the-status trap. Unpiped it is 5, which cannot distinguish "touched no task"
-  from "wrong session id", so no field was written and that is not a clean bill.
+🔴 **ARC CLOSED 2026-10-02.** The closing condition's `check` is met in both halves —
+both PRs MERGED, and each gate demonstrably refuses the defect at its own merge commit.
+
+- **`civitai-app-starters#511` — MERGED**, squash `b4e3f00d4a493c54fb2b1493ca2c596ae06dd57e`,
+  `mergedAt 2026-10-02T03:45:24Z`. Pre-merge CI re-read SHA-pinned at head `1980ad7`:
+  **20/20 green**, including all five `Starter (…)` legs that were red from the JSDoc
+  `import … from` regression — so the `1980ad7` fix held.
+- **`civitai/cli#767` — MERGED**, squash `87ba43bd92e5e5c90c1e35f3dc909765924cfe16`,
+  `mergedAt 2026-10-02T03:45:27Z`. Pre-merge CI SHA-pinned at head `837607d`: **12/12 green**,
+  `build-test` completed.
+- Both were `MERGEABLE`/`CLEAN` and based directly on `main` — not stacked. Merges verified
+  by CONTENT on `origin/main` (`git cat-file -e` on all four new files), never by ancestry,
+  since a squash merge never makes the branch head an ancestor.
+- **Gate verification at the merge commits, not at the PR branches:**
+  - `cli` @ `87ba43b`: `go test ./internal/validate/ -run StorageScope -count=1 -v` →
+    **5 test functions PASS** (`…FollowsSymlinkedSource`, `…UnobservableScanStaysSilent`,
+    `…DeclaresStore` 7 subtests, `…ToleratesABadScopesField` 3 subtests).
+  - `starters` @ `b4e3f00`: install rc=0, build rc=0, full suite
+    **98 files / 1761 tests / 0 failures** — reproducing the doc's own figures exactly.
+  - 🔴 **Negative control, the part CI cannot give you:** neutering the guard condition at
+    `packages/civitai-blocks-react/src/internal/mockHost.ts:1858`
+    (`if (needed !== null && !declaredScopeSet.has(needed))` → `if (false && …)`) took the
+    gate file to **6 failed / 6 passed of 12**, with failures naming
+    `/apps:storage:shared:write/` — i.e. killed by **this** guard's own assertion, not a
+    neighbour's error. Restored from a `cp` copy, re-ran **12/12 pass**, and confirmed the
+    restore with `git diff` (clean on `mockHost.ts`), never by trusting the copy.
+- **Release is now IN FLIGHT and is a NEW arc, not this one.** Merging `#511` landed the
+  changeset `.changeset/polite-hosts-gate-storage.md` on `origin/main` and
+  `changesets/action` opened the Version PR **`civitai-app-starters#514`**
+  (`changeset-release/main`, *"chore(release): version packages"*).
+  `npm view @civitai/blocks-react version` is still **`0.61.1`** — the dev-host gate reaches
+  no app until that PR merges and publishes.
+- **This doc is still on a branch, not mainline** — `civitai/cli#768`
+  (`zach/handoff-appblocks-scope-enforcement`) is OPEN. Consequence measured this session:
+  `handoff_search.py --exclude-slug appblocks-scope-enforcement` reported
+  `in_scope_docs=533` equal to `indexed_docs=533`, i.e. the flag PARSED but MATCHED nothing,
+  because the index deliberately skips a doc not committed to its repo's mainline. Land `#768`.
+- **No `clawgate-task:` field, again.** `clawgate_handoff.sh resolve` exited **5** (unpiped),
+  and `field <doc>` exited **1** (none present). A 0-task answer cannot distinguish "touched
+  no task" from "wrong session id", so no field was written — not a clean bill of health.
+- **Operator DECLINED fixing the two affected live apps** — *"Leave them; I'll handle it."*
+  **Style Explorer (LIVE)** and **Prompt Lab (pending)** still declare one scope while using
+  `useAppStorage()`, so their saves still 403 in production. Unchanged; recorded because it
+  is a live user-facing defect.
 - **Predecessor arc `appblocks-docs-pin-currency` is CLOSED and verified live**
-  (`claudedocs/handoff-appblocks-docs-pin-currency.md`, `cli#765` still OPEN carrying it).
+  (`claudedocs/handoff-appblocks-docs-pin-currency.md`; `cli#765` still OPEN carrying it).
 
 ## Open investigations — live diagnosis state
 
@@ -116,55 +129,85 @@ production, surfaced to the viewer as *"Saving failed for an unknown reason… t
   deterministic gates exist — the arc's own finding is that prose surfaces failed four
   times here.
 
+### A LIVE app already declares all four storage scopes — it is the falsifier for the 14-of-15 inference, and it is in another repo's handoff
+- as-of: 2026-10-02
+- **Symptom + exact repro:** the op→scope table in
+  `packages/civitai-blocks-react/src/internal/mockHostScopes.ts` is now SHIPPED (merged
+  `b4e3f00`, publishing via `#514`), and 14 of its 15 rows remain an inference no test in
+  that repo can falsify. A wrong row fails a CORRECT app.
+- **Observed (with values):** `handoff_search.py --offline` surfaced
+  `datapacket-talos/claudedocs/handoff-app-taste-rollout.md` investigation #10 — *"Do the
+  App Blocks storage scopes actually reach the token now that an approved version declares
+  them?"* It records `gen-matrix` **0.8.9** as `approved` / `deployState live`,
+  `sourceCommit 267e80f`, whose `block.manifest.json` declares all four:
+  `['ai:write:budgeted','apps:storage:read','apps:storage:write','apps:storage:shared:read','apps:storage:shared:write']`.
+  `via: doc` — this is RECALL from a 2026-09-03 handoff, re-derived against nothing.
+- **Ruled out — that an authoritative table exists to copy.** `BLOCK_SCOPES` in
+  `@civitai/app-sdk` carries scope NAMES and states the mechanism but maps no operation to a
+  scope; `APPS_STORAGE_*` greps to nothing outside `scopes.ts`; the server's table is not
+  vendored. `via: measurement`
+- **Leading hypothesis:** a live app declaring ALL four scopes cannot discriminate the rows
+  either — it satisfies every row by construction. The discriminating observation is an app
+  declaring a STRICT SUBSET, or the host router itself.
+- **Next probe:** read the host's own router rather than any app —
+  `<civitai>` `src/server/.../apps.storage.*` and the shared-storage tRPC procedures — and
+  check `SHARED_REPORT` first, since `useSharedStorage().report()` is a write by construction
+  but a server may route an abuse report outside that store's gate. Confirm the 2026-09-03
+  `gen-matrix` figures are still live before leaning on them.
+
 ## Next steps (ranked)
 
-1. **Re-read CI on `#511` (head `1980ad7`) and `#767`, then merge both.**
-   `civitai-app-starters#511` and `civitai/cli#767`. `#511`'s five `Starter (…)` legs were
-   red from my JSDoc regression and were NOT re-read after the fix push; `#767` had
-   `build-test` still running. SHA-pin the read (`gh pr view <n> --json headRefOid` then
-   `gh api repos/<o>/<r>/commits/$SHA/check-runs`) — a rollup resolved at call time can
-   hand back the pre-push commit's verdict.
-   IN FLIGHT: civitai-app-starters#511, civitai/cli#767
-   forcing: regression — an undeclared storage scope still ships silently in every surface until both land
-2. **After `#511` merges, cut the release and verify the publish.** It is a changeset
-   repo: merging the PR only lands the changeset, and `changesets/action` then opens a
-   Version PR whose merge is what publishes. Verify by RESOLVABILITY plus the OIDC
+1. **Merge the Version PR and verify the publish.** `civitai-app-starters#514`
+   (`changeset-release/main`) is already open. Verify by RESOLVABILITY plus the OIDC
    discriminators, never a version string: `npm install --dry-run @civitai/blocks-react@<v>`
-   rc=0, and `_npmUser = "GitHub Actions"` with `dist.attestations` present.
+   rc=0, `_npmUser = "GitHub Actions"`, `dist.attestations` present.
+   🔴 `#511` is BREAKING (minor, pre-1.0) — the published default is EMPTY `declaredScopes`,
+   so every consumer whose dev harness saves without declaring a scope starts refusing.
    Closing condition: `npm view @civitai/blocks-react version` is past `0.61.1` and resolves.
+   IN FLIGHT: civitai-app-starters#514
    forcing: gate — the dev-host gate reaches no app until it is published
-3. **Teach the storage scopes in the generated `AGENTS.md`.** `civitai/cli`,
+2. **Teach the storage scopes in the generated `AGENTS.md`.** `civitai/cli`,
    `internal/cmd/templates/agents-app.md` — name `apps:storage:read`/`write` beside the
-   existing `ai:write:budgeted` mention, keyed on the persistence trigger. Cheap, and the
-   only surface an agent is actually routed to. 🔴 `agents_size_test.go` ratchets that
-   file's size — budget for it.
+   existing `ai:write:budgeted` mention, keyed on the persistence trigger. The only surface
+   an agent is actually routed to. 🔴 `agents_size_test.go` ratchets that file's size.
    Closing condition: `grep -c apps:storage internal/cmd/templates/agents-app.md` ≥ 1 on origin/main.
    forcing: none
-4. **Classify authorization failures in the SDK's storage error copy.** The viewer saw
-   *"Saving failed for an unknown reason… try again"*, and `appStorageErrors.ts` already
-   documents that an authz failure classifies `null` and that *"please try again" is the
-   WRONG copy for that arm* — nothing enforces it. Operator did not select this.
+3. **Classify authorization failures in the SDK's storage error copy.** The viewer saw
+   *"Saving failed for an unknown reason… try again"*; `appStorageErrors.ts` already documents
+   that an authz failure classifies `null` and that *"please try again" is the WRONG copy for
+   that arm* — nothing enforces it.
    Closing condition: a block can distinguish a scope denial from a transient without parsing host prose.
    forcing: none
 
 ## Defects (batched)
 
+- 🔴 **THIS DOC'S OWN CLOSING-CONDITION COMMAND IS NOT A POSITIVE CONTROL — it does not
+  narrow.** `pnpm --filter @civitai/blocks-react test -- mockHostStorageScopes` returned
+  **98 files / 1761 tests**, byte-identical to the unfiltered run: pnpm/vitest never received
+  it as a file filter, so a reassuring green says nothing about whether the gate file ran.
+  The real control is `npx vitest run --project unit test/mockHostStorageScopes.test.tsx`
+  → **1 file / 12 tests**, a DIFFERENT and EXPECTED count. Measured 2026-10-02; the "How to
+  verify" block below is corrected. Same family as the prettier-quoted-glob trap: a filter
+  that matches nothing is a PASS.
+- ⚠ **`--reporter=basic` does not exist in vitest 4** and fails as `ERR_LOAD_URL` /
+  `loadCustomReporterModule` with a ~20-line vite module-runner stack — which reads as a
+  broken repo, not a bad flag. Drop the flag.
 - 🔴 **`tests/guards/blocks-react-entry-directory-names.test.mjs` treats any `from '…'`
-  in a COMMENT as a module edge.** `allSpecifiers` is
-  `/\bfrom\s*['"]([^'"]+)['"]/g` over raw source, so documenting an import in a JSDoc
-  example — an ordinary thing to do — fails the entry-layout guard with
-  `unresolvable specifier`, naming a path that appears nowhere in the real import list.
-  `blockproto.StripCommentsForExt` already exists for exactly this and is what the
-  sibling `cli` check uses. Reported on `#511`; not fixed there.
-- ⚠ **`pnpm test:guards` has one PRE-EXISTING failure when run locally**:
-  `manifest-sandbox-tokens.test.mjs` rule 2. It walks into `.direnv/flake-inputs/…` and
-  scans its OWN source, so the "documented sandbox literals" it flags are its own
-  fixtures. `origin/main` fails identically; CI never has `.direnv`. Not a defect in the
-  repo's shipped content — a local-environment artifact of the guard's corpus.
+  in a COMMENT as a module edge.** `allSpecifiers` is `/\bfrom\s*['"]([^'"]+)['"]/g` over raw
+  source, so documenting an import in a JSDoc example fails the entry-layout guard with
+  `unresolvable specifier`, naming a path in no real import list.
+  `blockproto.StripCommentsForExt` already exists and the sibling `cli` check uses it.
+  Reported on `#511`; **still not fixed** — it survived the merge.
+- ⚠ **`pnpm test:guards` has one PRE-EXISTING local failure**:
+  `manifest-sandbox-tokens.test.mjs` rule 2 walks into `.direnv/flake-inputs/…` and scans its
+  OWN source. `origin/main` fails identically; CI never has `.direnv`. Local-environment
+  artifact of the guard's corpus, not shipped content.
 - ⚠ **`starters`' `pnpm typecheck` EXCLUDES `test/`**, so a type error in a test file is
-  invisible to it; the editor's checker is the only one that sees them. It caught a real
-  one here (`SharedListItem.value.title`, not `.title`) while its "cannot find module"
-  errors were phantoms from a missing install. Do not dismiss all of its output as noise.
+  invisible to it. Do not dismiss the editor checker's output as noise.
+- ⚠ **`pnpm build` leaves `packages/civitai-components/src/version.generated.ts` dirty** in a
+  fresh worktree at `b4e3f00` — a build-regenerated tracked file, so a post-build
+  `git status` shows one modification that is NOT yours. That drift is the subject of open
+  **`starters#513`**. Do not mistake it for your own edit when checking a restore.
 
 ## Gotchas / decisions / dead-ends
 
@@ -216,30 +259,73 @@ production, surfaced to the viewer as *"Saving failed for an unknown reason… t
   fixed upstream** — `cli#766` and `starters#509`, both merged: the boot skeleton now
   takes the theme from the HOST rather than `prefers-color-scheme`. Do not re-open it.
 
+- 🔴 **A HANDOFF ON A BRANCH IS INVISIBLE TO THE RESUME TOOLING IN TWO SEPARATE WAYS, and
+  both present as reassuring output.** (a) `resume-state.sh "<path>"` on this doc printed
+  `handoff: (none found — git-only)` plus `requested handoff … NO SUCH FILE` — it reconciled
+  NOTHING, and the whole digest (`WORKLOAD`, `ALERTS`, `CLAWGATE`, `INVESTIGATIONS`, `DOD`)
+  was about no document at all. The doc was never on `main`; `git log --all --oneline --`
+  found it on `zach/handoff-appblocks-scope-enforcement` and `branch -a --contains` named the
+  branch. (b) `handoff_search.py --exclude-slug` reported `in_scope_docs == indexed_docs`,
+  the flag PARSED but MATCHED nothing — same cause. **Read the pair of counts, and when a
+  named handoff is "missing", ask `git log --all` before concluding anything.**
+- 🔴 **`resume-state.sh` does NOT expand a leading `~`** — pass an absolute path. It also
+  anchors on the session's cwd repo, so a doc in a sibling client repo is a cross-repo read,
+  not a local one.
+- 🔴 **Verify a squash merge by CONTENT, never ancestry.** `git merge-base --is-ancestor`
+  returns false after every squash merge, forever. `gh pr view --json state,mergeCommit` plus
+  `git cat-file -e origin/main:<path>` on each new file is the check that works.
+- 🔴 **A restore after a mutation must be proved by `git diff`, not by the `cp` succeeding.**
+  Here the post-restore tree had exactly ONE dirty file and it was a build artifact
+  (`version.generated.ts`), while `git diff --stat -- …/mockHost.ts` was empty — which is the
+  only statement that the mutation is gone. A `cp` that silently wrote the wrong file looks
+  identical.
+- **`direnv allow` IS PER-DIRECTORY** — every new `starters` worktree needs its own, and a
+  blocked `.envrc` makes install/build report `rc=1` with no output. 🔴 Do NOT `cp` an
+  `.envrc` in and do NOT `rm` one — it is TRACKED there.
+- **`go test` CACHES RESULTS** — a mutation sweep without `-count=1` scores mutants SURVIVED
+  without executing them.
+- **Decision: enforce-by-default (breaking) over opt-in**, operator's call. A permissive
+  default leaves the old behaviour for every app that did not know the scopes existed.
+- ⚠ **`scaffold boot theme` was a SEPARATE defect already fixed upstream** — `cli#766` and
+  `starters#509`, both merged. Do not re-open it.
+
 ## How to verify
 
 ```bash
 ST=~/workspace/civit/civitai-app-starters; CLI=~/workspace/civit/cli
 
-# 0. THE CLOSING CONDITION — both merged
+# 0. THE CLOSING CONDITION — both MERGED (both were, 2026-10-02T03:45Z)
 gh pr view 511 --repo civitai/civitai-app-starters --json state --jq .state   # MERGED
 gh pr view 767 --repo civitai/cli --json state --jq .state                    # MERGED
+#    and by CONTENT, because a squash merge breaks ancestry:
+git -C $ST cat-file -e origin/main:packages/civitai-blocks-react/src/internal/mockHostScopes.ts
+git -C $CLI cat-file -e origin/main:internal/validate/storagescope.go
 
-# 1. the dev-host gate, in a worktree (direnv allow it FIRST — per-directory)
-WT=/tmp/v511; git -C $ST worktree add --detach $WT origin/main
-direnv allow $WT
-(cd $WT && direnv exec . pnpm install --frozen-lockfile && direnv exec . pnpm build)
-(cd $WT && direnv exec . pnpm --filter @civitai/blocks-react test)   # 98 files / 1761 tests
-git -C $ST worktree remove --force $WT
-
-# 2. the validate check, with its mutation sweep re-runnable
-WC=/tmp/v767; git -C $CLI worktree add --detach $WC origin/main
+# 1. the cli gate, at its merge commit
+WC=/tmp/v767; git -C $CLI worktree add --detach $WC 87ba43bd92e5e5c90c1e35f3dc909765924cfe16
 (cd $WC && go test ./internal/validate/ -run StorageScope -count=1 -v)   # 5 funcs PASS
 (cd $WC && go build ./... && go vet ./...)                               # rc=0, rc=0
 git -C $CLI worktree remove --force $WC
-#   ⚠ whole-repo `go test ./...` has 3 PRE-EXISTING TestOracle* failures, all
-#   `no Chromium on PATH` — identical to main. NEVER set CIVITAI_CHROME here: it
-#   drives a real browser and once left 637 orphaned processes.
+#    ⚠ whole-repo `go test ./...` has 3 PRE-EXISTING TestOracle* failures, all
+#    `no Chromium on PATH` — identical to main. 🔴 NEVER set CIVITAI_CHROME here: it
+#    drives a real browser and once left 637 orphaned processes.
+
+# 2. the dev-host gate, at its merge commit (direnv allow it FIRST — per-directory)
+WT=/tmp/v511; git -C $ST worktree add --detach $WT b4e3f00d4a493c54fb2b1493ca2c596ae06dd57e
+direnv allow $WT
+(cd $WT && direnv exec . pnpm install --frozen-lockfile && direnv exec . pnpm build)
+(cd $WT && direnv exec . pnpm --filter @civitai/blocks-react test)   # 98 files / 1761 tests
+#    🔴 THE POSITIVE CONTROL — `--filter … test -- <name>` DOES NOT NARROW (it returns the
+#    same 98/1761). Use a real path filter and read the COUNT, which must differ:
+(cd $WT/packages/civitai-blocks-react && direnv exec $WT npx vitest run --project unit \
+   test/mockHostStorageScopes.test.tsx)                              # 1 file / 12 tests
+#    🔴 THE NEGATIVE CONTROL — prove it can go red. Edit src/internal/mockHost.ts:1858
+#    `if (needed !== null && …)` → `if (false && needed !== null && …)`, re-run the line
+#    above: expect 6 failed / 6 passed naming /apps:storage:shared:write/. Then restore and
+#    confirm with `git -C $WT diff --stat -- packages/civitai-blocks-react/src/internal/mockHost.ts`
+#    being EMPTY — not with the `cp` exiting 0. One dirty file (components/version.generated.ts)
+#    is expected after a build and is starters#513, not your edit.
+git -C $ST worktree remove --force $WT
 
 # 3. the defect itself, end to end — the fastest proof either gate works
 #    scaffold an app, make it save, declare no storage scope:
@@ -247,4 +333,10 @@ git -C $CLI worktree remove --force $WC
 #      (add a useAppStorage() call; leave `scopes` as scaffolded)
 #      civitai app validate          # expect the storage-scope WARNING (exit 0; --strict fails)
 #      pnpm test                     # expect storage ops to REJECT naming apps:storage:write
+#    ⚠ the `pnpm test` arm needs a PUBLISHED blocks-react carrying #511 — rank 1. Until
+#    then a scaffolded app installs 0.61.1, which has no gate, and this arm passes vacuously.
+
+# 4. the release (rank 1, NOT this arc) — resolvability + OIDC, never a version string
+npm view @civitai/blocks-react version          # was 0.61.1 at close; must advance
+npm view @civitai/blocks-react --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("_npmUser"), bool(d.get("dist",{}).get("attestations")))'
 ```
