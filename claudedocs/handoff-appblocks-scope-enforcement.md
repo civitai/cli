@@ -33,45 +33,63 @@ production, surfaced to the viewer as *"Saving failed for an unknown reason… t
 
 ## State now
 
-🔴 **ARC CLOSED 2026-10-02, AND ITS FOLLOW-ON PUBLISH IS DONE TOO.** Both halves of the
-closing condition were met at round 1; the release that carries the fix to consumers has
-since landed and been verified.
+🔴 **ARC CLOSED 2026-10-02, VERDICT RE-CONFIRMED BY A FULL CLOSE-CHECK.** The frozen
+closing condition (both fixes MERGED, each demonstrably refusing the defect) was met, and
+the follow-on release, the fleet rollout and the teaching layer all shipped on top of it.
+**26 PRs merged, every one verified by CONTENT on its default branch, not by ancestry.**
 
-- **`civitai-app-starters#511` — MERGED**, squash `b4e3f00d4a493c54fb2b1493ca2c596ae06dd57e`
-  (03:45:24Z). Pre-merge CI SHA-pinned at head `1980ad7`: **20/20 green**, including all five
-  `Starter (…)` legs that were red from the JSDoc `import … from` regression.
-- **`civitai/cli#767` — MERGED**, squash `87ba43bd92e5e5c90c1e35f3dc909765924cfe16`
-  (03:45:27Z). Pre-merge CI SHA-pinned at head `837607d`: **12/12 green**.
-- Both based directly on `main`, not stacked. Merges verified by CONTENT on `origin/main`
-  (`git cat-file -e` on all four new files), never by ancestry — a squash merge never makes
-  the branch head an ancestor.
-- **Gates verified firing at the merge commits**, not at the PR branches:
-  `cli` @ `87ba43b` → `go test ./internal/validate/ -run StorageScope -count=1` = **5 funcs
-  PASS**; `starters` @ `b4e3f00` → **98 files / 1761 tests / 0 failures**, matching the doc's
-  own figures. 🔴 Negative control: neutering the guard at
-  `packages/civitai-blocks-react/src/internal/mockHost.ts:1858` took the gate file to
-  **6 failed / 6 passed of 12** with failures naming `/apps:storage:shared:write/` — killed by
-  **this** guard's own assertion. Restore proved by an EMPTY `git diff` on that file, not by
-  the `cp` exiting 0.
-- **PUBLISHED: `@civitai/blocks-react@0.62.0`.** Version PR **`#514` MERGED** `5e05b0ec`
-  (03:59:29Z); release run **36962569820** green END-TO-END (step 8 publish AND step 9 assert
-  both `success`). Verified independently of CI — resolvable, OIDC-attested, registry `time`
-  04:02:03.809Z. Details under `## Gotchas`.
-  🔴 **Consumers are NOT yet on it**: `^0.61.x` excludes `0.62.0`, so each block repo needs an
-  explicit bump before its dev harness refuses undeclared scopes. NEW arc.
-- **Operator DECLINED fixing the two affected live apps** — *"Leave them; I'll handle it."*
-  **Style Explorer (LIVE)** and **Prompt Lab (pending)** still declare one scope while using
-  `useAppStorage()`, so their saves still 403 in production. Unchanged, and still a live
-  user-facing defect.
-- **This doc is still on a branch** — `civitai/cli#768`
-  (`zach/handoff-appblocks-scope-enforcement`) is OPEN, which is why the handoff index cannot
-  see it (`--exclude-slug` reported `in_scope_docs == indexed_docs`, i.e. parsed but matched
-  nothing). Landing `#768` is the one piece of bookkeeping left.
-- **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` exited **5** unpiped and
-  `field <doc>` exited **1**. A 0-task answer cannot distinguish "touched no task" from "wrong
-  session id", so no field was written — not a clean bill of health.
-- **Predecessor arc `appblocks-docs-pin-currency` is CLOSED and verified live**
+- **The three deterministic fixes:** `starters#511` (`b4e3f00`, mock host gates storage on
+  manifest-declared scopes) · `cli#767` (`87ba43b`, `validate` warns on an undeclared
+  scope) · `starters#517` (`c13383d`, the idempotency-key rule vendored once and enforced
+  at the hook boundary AND in the mock host).
+- **Published and verified independently of CI** — resolvable, `_npmUser = GitHub Actions
+  <npm-oidc-no-reply@github.com>`, `dist.attestations` present, never a version string:
+  `@civitai/blocks-react` **0.62.0** (`starters#514`) then **0.63.0** (`starters#515`,
+  `70ec100`), `@civitai/app-sdk` **0.55.0**.
+- **The scaffold admits it** (`cli#769`, `60e0b31`) so a new app is born WITH the gate —
+  without it every future `civitai app init` reproduced the original defect.
+- **All 7 fleet consumers on `^0.63.0` + `^0.55.0`**, verified by reading each default
+  branch: gen-matrix#29, model-benchmarking#81, playable-collections#52, sensei#88 (on
+  `trunk`), yt-thumbnail#40, panorama-360#17, developer-docs#142.
+- **The docs no longer teach the defect** (`developer-docs#141`, `#142`): the three
+  colon-bearing examples are gone (colon-keys **0**, hyphen-keys **1** per file), and
+  `generation.md`'s generated `idempotencyKey?` row went **1007 → 2425 chars**, gaining the
+  charset, the 400 shape and why colons are banned. That row is inside a generated region
+  and was structurally unable to carry the constraint until `#517` put it in the JSDoc.
+- **THREE live production defects closed, only ONE of which was reported:** the storage
+  403 (operator's report), the `idempotencyKey` 400 (the docs taught it), and 🔴
+  **`TipButton`'s every-tip 400** — publicly exported, always supplied a 5-segment colon
+  key, measured `_r_0_:123:50:Image:99` → `keyClears: false`. Nobody had reported it.
+- **The predecessor session's three asks are all accounted for** (they were in
+  `9a8d045a`'s kickoff, never handed to this session — recovered with
+  `extract_user_msgs.py --arc`): (a) docs pin + `baseModelGroup: 'SDXL'` in a generated
+  region → **CLOSED**, grep returns **0** on `origin/main` with a positive control of 3
+  `baseModelGroup` matches in that same file, pin now `0.63.0` (was `0.59.0`); (b)
+  `site/guide/cli-troubleshooting.md` one-clause edit → **CLOSED** in `cbfab1e`
+  (developer-docs#136); (c) `@civitai/components-chat` trusted publisher → **still
+  `0.1.1 / devzacx / attestations False`, published 2026-09-30**, in-tree also `0.1.1`, so
+  no changeset touched it. Its closing condition is that package's NEXT publish, which has
+  not happened. 🔴 **NOT a work item — there is no action, only an event to wait for**;
+  the operator's own framing is *"unconfirmed, not wrong"*.
+- **Index hygiene:** both `OPEN:` bullets this arc wrote on
+  `civitai-app-starters/blocks-react` are now `RESOLVED` with shas (`c13383d`,
+  `9edaf20`); that entry is at **0 OPEN**. The 4 remaining opens in that scope are dated
+  2026-09-03/04 and 10-01 — predecessor arcs. Claims `appblocks-scope-enforcement-1`,
+  `-pinbump`, `-idempotency-key-guard` and `appblocks-fleet-bump-063` all released.
+- **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` exits **5** and
+  `field <doc>` exits **1**. A 0-task answer cannot distinguish "touched no task" from
+  "wrong session id", so none was written — not a clean bill of health.
+- **Sibling arcs:** `appblocks-docs-pin-currency` is CLOSED and verified live
   (`claudedocs/handoff-appblocks-docs-pin-currency.md`; `cli#765` still OPEN carrying it).
+  `appblocks-agent-dx` is CLOSED — do not re-open it; its own doc's authoritative copy is
+  the one `cli#764` merged.
+- 🔴 **ONE THING IS LIVE-BROKEN AND IT IS MINE: `devrc#1987` is correct in the repo and
+  INERT on this machine.** The handle still resolves to the dormant clone until a
+  `home-manager switch`, and the `20:19:19Z` sync tick wrote ~25 docs / 277 sections under
+  the now-orphaned label `civitai-cli`. **I armed that** — my `git merge --ff-only` on the
+  devrc base clone (run to prove the index behaviour) put the five-handle tuple into the
+  exact working-tree file the timer executes, while the unit env still pointed elsewhere.
+  Rank 1 closes it.
 
 ## Open investigations — live diagnosis state
 
@@ -148,57 +166,97 @@ since landed and been verified.
   but a server may route an abuse report outside that store's gate. Confirm the 2026-09-03
   `gen-matrix` figures are still live before leaning on them.
 
+### pnpm and the npm registry disagree about when a version was published, by 60–90s, and nobody knows which pnpm reads
+- as-of: 2026-10-02
+- **Symptom + exact repro:** the pnpm release-age gate quotes a publish instant in its
+  refusal; `npm view <pkg> time --json` quotes a different one for the same version. Both
+  land inside the 24h window so no decision turned on it, but a future decision could.
+- **Observed (with values):** TWO independent measurements, hours apart, same direction —
+  pnpm EARLIER than npm. (1) `@civitai/blocks-react@0.62.0`: pnpm
+  `2026-10-02T04:00:25.000Z`, `npm view … time` `04:02:03.809Z` — **98 s apart**. (2) the
+  0.63.0/0.55.0 set: pnpm `17:38:42–43Z` for all four packages, `npm view` `17:39:39Z –
+  17:42:54Z`. `via: measurement`
+- **Ruled out — that it is noise or one bad reading.** Two separate agents measured it in
+  two separate repos on two separate releases and the sign never flipped; pnpm also quoted
+  a single instant for four packages where npm quoted four distinct ones, which is a
+  different SHAPE, not jitter. `via: measurement`
+- **Leading hypothesis:** pnpm reads a different registry field than `time[<version>]` —
+  plausibly a packument-level or cached `modified`/`publishTime`, or its own metadata
+  cache — so the two are answering different questions rather than one being wrong.
+- **Next probe:** `curl -s https://registry.npmjs.org/@civitai/blocks-react | python3 -c "import json,sys; d=json.load(sys.stdin); print({k:v for k,v in d.get('time',{}).items() if '0.63' in k}); print(d.get('modified'))"` and compare both against what pnpm prints in a forced `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`. 🔴 Record which FIELD matches rather than which tool is "right".
+
 ## Next steps (ranked)
 
-1. **Teach the storage scopes in the generated `AGENTS.md`.** `civitai/cli`,
+1. **`home-manager switch`, then prune the orphaned index label.** Operator's call: a
+   switch activates EVERY devrc change merged since generation 864 (2026-10-02 13:34), not
+   just the handle. Until then `devrc#1987` (`46e8dbc`) is inert and the index reads 25
+   docs from the dormant clone instead of 27. Then the prune — proven available, all five
+   `REPO_ENV_HANDLES` entries resolve and a real `--rebuild --prune` **dry-run returned
+   rc 0 with no refusal**. 🔴 The prune cannot meaningfully run BEFORE the switch: pre-switch
+   the unit still NAMES `civitai-cli`, so there is no orphan from its perspective.
+   Closing condition: `PostgresSectionStore.repos()` returns labels exactly
+   `civitai, cli, datapacket-talos, devrc, homelab-talos`.
+   forcing: regression — the index now serves ~25 stale docs under a label no config names, created by this arc
+2. **Fix `find-session.py`'s hardcoded handle list.** `scripts/find-session.py:1148` loops
+   `("DEVRC","HOMELAB","DATAPACKET","CIVITAI")` while its own docstring at `:1139` says it
+   *"Searches every repo in `handoff_index.REPO_ENV_HANDLES`"*. `devrc#1982` widened that
+   tuple to five and this tool silently did not follow — a description wider than its
+   implementation. It is why `extract_user_msgs.py --arc` exited **3 (nothing measured)**
+   on this very doc and needed a `CIVITAI=<cli-path>` override to answer the operator's
+   question. Make it read `REPO_ENV_HANDLES` (one rule, one place) and correct `:255`'s
+   error text, which also enumerates the four.
+   Closing condition: `python3 $DEVRC/scripts/session-analysis/extract_user_msgs.py --arc handoff-appblocks-scope-enforcement` exits 0 with NO env override.
+   forcing: user — the operator asked for this arc's sessions and the tool could not answer without a hand override
+3. **Teach the storage scopes in the generated `AGENTS.md`.** `civitai/cli`,
    `internal/cmd/templates/agents-app.md` — name `apps:storage:read`/`write` beside the
-   existing `ai:write:budgeted` mention, keyed on the persistence trigger. The only surface
-   an agent is actually routed to. 🔴 `agents_size_test.go` ratchets that file's size.
+   existing `ai:write:budgeted`, keyed on the persistence trigger. The only surface an
+   agent is routed to. 🔴 `agents_size_test.go` ratchets that file's size.
    Closing condition: `grep -c apps:storage internal/cmd/templates/agents-app.md` ≥ 1 on origin/main.
    forcing: none
-2. **Classify authorization failures in the SDK's storage error copy.** The viewer saw
-   *"Saving failed for an unknown reason… try again"*; `appStorageErrors.ts` already documents
-   that an authz failure classifies `null` and that *"please try again" is the WRONG copy for
-   that arm* — nothing enforces it.
+4. **Classify authorization failures in the SDK's storage error copy.** The viewer saw
+   *"Saving failed for an unknown reason… try again"*; `appStorageErrors.ts` already
+   documents that an authz failure classifies `null` and that *"please try again" is the
+   WRONG copy for that arm* — nothing enforces it.
    Closing condition: a block can distinguish a scope denial from a transient without parsing host prose.
    forcing: none
 
-**DONE — the former rank 1 (publish) is CLOSED, 2026-10-02.** `civitai-app-starters#514`
-merged (`5e05b0ec`); `@civitai/blocks-react@0.62.0` is live and verified independently of CI.
-Evidence under `## Gotchas`. **Nothing in this arc is now eligible to be worked** — both
-items above declare `forcing: none`, so a session picking from this queue should skip them
-and do something an external signal asked for. The arc's own closing condition was met at
-round 1 and the publish was its stated follow-on; anything further is a NEW arc.
-
 ## Defects (batched)
 
-- 🔴 **THIS DOC'S OWN CLOSING-CONDITION COMMAND IS NOT A POSITIVE CONTROL — it does not
-  narrow.** `pnpm --filter @civitai/blocks-react test -- mockHostStorageScopes` returned
-  **98 files / 1761 tests**, byte-identical to the unfiltered run: pnpm/vitest never received
-  it as a file filter, so a reassuring green says nothing about whether the gate file ran.
-  The real control is `npx vitest run --project unit test/mockHostStorageScopes.test.tsx`
-  → **1 file / 12 tests**, a DIFFERENT and EXPECTED count. Measured 2026-10-02; the "How to
-  verify" block below is corrected. Same family as the prettier-quoted-glob trap: a filter
-  that matches nothing is a PASS.
-- ⚠ **`--reporter=basic` does not exist in vitest 4** and fails as `ERR_LOAD_URL` /
-  `loadCustomReporterModule` with a ~20-line vite module-runner stack — which reads as a
-  broken repo, not a bad flag. Drop the flag.
-- 🔴 **`tests/guards/blocks-react-entry-directory-names.test.mjs` treats any `from '…'`
-  in a COMMENT as a module edge.** `allSpecifiers` is `/\bfrom\s*['"]([^'"]+)['"]/g` over raw
-  source, so documenting an import in a JSDoc example fails the entry-layout guard with
-  `unresolvable specifier`, naming a path in no real import list.
-  `blockproto.StripCommentsForExt` already exists and the sibling `cli` check uses it.
-  Reported on `#511`; **still not fixed** — it survived the merge.
-- ⚠ **`pnpm test:guards` has one PRE-EXISTING local failure**:
-  `manifest-sandbox-tokens.test.mjs` rule 2 walks into `.direnv/flake-inputs/…` and scans its
-  OWN source. `origin/main` fails identically; CI never has `.direnv`. Local-environment
-  artifact of the guard's corpus, not shipped content.
+- 🔴 **THIS DOC'S ORIGINAL CLOSING-CONDITION COMMAND WAS NOT A POSITIVE CONTROL — it did
+  not narrow.** `pnpm --filter @civitai/blocks-react test -- mockHostStorageScopes` returned
+  **98 files / 1761 tests**, byte-identical to the unfiltered run: pnpm/vitest never took it
+  as a file filter, so a reassuring green said nothing about whether the gate file ran. The
+  real control is `npx vitest run --project unit test/<file>` from inside the package →
+  **1 file / 12 tests**, a DIFFERENT and EXPECTED count. Fixed in `## How to verify`.
+- 🔴 **`scripts/find-session.py:1148` hardcodes four repo handles while `:1139` claims it
+  reads `handoff_index.REPO_ENV_HANDLES`** (now five). Rank 2 fixes it. Also `:255`'s error
+  text enumerates the same four.
+- 🔴 **FOUR separate repos carried a WRONG in-file note about the pnpm release-age gate**,
+  each corrected in place by its bumping agent: gen-matrix and sensei said the exclude list
+  was "INERT" (measured against pnpm 10.28.1/11.28.0, neither the 11.25.0 the flakes pin);
+  model-benchmarking said `@civitai/theme` should not be added "for symmetry" — wrong in
+  the CI-breaking direction. The root claim is false: `pnpm config get minimumReleaseAge`
+  → `undefined` means the **built-in 24h default applies**, not that the feature is off.
+- 🔴 **`tests/guards/blocks-react-entry-directory-names.test.mjs` treats any `from '…'` in
+  a COMMENT as a module edge** — `allSpecifiers` regexes raw source, so a JSDoc example
+  fails the entry-layout guard naming a path in no real import list.
+  `blockproto.StripCommentsForExt` exists and the sibling `cli` check uses it. **Still unfixed.**
 - ⚠ **`starters`' `pnpm typecheck` EXCLUDES `test/`**, so a type error in a test file is
-  invisible to it. Do not dismiss the editor checker's output as noise.
-- ⚠ **`pnpm build` leaves `packages/civitai-components/src/version.generated.ts` dirty** in a
-  fresh worktree at `b4e3f00` — a build-regenerated tracked file, so a post-build
-  `git status` shows one modification that is NOT yours. That drift is the subject of open
-  **`starters#513`**. Do not mistake it for your own edit when checking a restore.
+  invisible to it; `pnpm test` does not typecheck either. Run both separately.
+- ⚠ **`pnpm test:guards` has one PRE-EXISTING local failure** —
+  `manifest-sandbox-tokens.test.mjs` rule 2 walks into `.direnv/` and scans its own
+  fixtures. Identical at `origin/main`; CI has no `.direnv`.
+- ⚠ **`pnpm build` leaves `packages/civitai-components/src/version.generated.ts` dirty** —
+  a build artifact, not your edit. Do not commit it, and do not mistake it for a failed restore.
+- ⚠ **`--reporter=basic` does not exist in vitest 4** — fails as `ERR_LOAD_URL` /
+  `loadCustomReporterModule` under a ~20-line vite stack that reads as a broken repo.
+- ⚠ **playable-collections' `test:browser` tier cannot run on this host at either end** —
+  nix pins `playwright-browsers` rev 1228, `playwright@1.63.0` wants 1243. Baselined as
+  environmental; CI does exercise it.
+- ⚠ **playable-collections installs TWO copies of `components` and `theme`**, predating
+  this arc (`origin/main` already had `0.4.1`+`0.9.0` / `0.3.1`+`0.4.0`). It has no
+  `@civitai` lockstep guard, which is why it passed where sensei failed. Deliberately not
+  folded into a dependency bump.
 
 ## Gotchas / decisions / dead-ends
 
@@ -327,54 +385,165 @@ round 1 and the publish was its stated follow-on; anything further is a NEW arc.
   **tallied** count of terminal conclusions at a **pinned** SHA, re-confirm the head has not
   moved, and report the tally (`{"success":20}`) rather than an absence of failures.
 
+- 🔴 **THE SESSION'S ONE REUSABLE LESSON: nearly every failure here was a GREEN OR A ZERO
+  THAT MEANT NOTHING, and not one was caught by reasoning — every single one was caught by
+  a control.** The complete list, because the pattern is the point: a `pnpm --filter … test
+  -- <name>` that DID NOT NARROW (same 98 files/1761 tests, so the "positive control" was a
+  fact about the glob); `pnpm config get minimumReleaseAge` → `undefined` read as
+  "feature off" when it means the 24h DEFAULT APPLIES; an EMPTY `check-runs` rollup on a
+  repo that gates on four Tekton COMMIT STATUSES; a `--timeout=300` flag typo that ran
+  **zero tests and exited 0**; `${PIPESTATUS[0]}` in zsh (it is lowercase `pipestatus`)
+  reporting **rc 0 over 127 failures**; a config change live on `origin/main` and INERT in
+  the process reading it, because the clone was one commit behind; and a `grep -c` that
+  counted my own QUOTED RETRACTION as a surviving instance of the claim it retracts.
+- 🔴 **THE PEER FLOOR IS THE REAL WORK IN ANY blocks-react BUMP, AND IT FAILS SILENTLY ON
+  pnpm AND LOUDLY ON npm.** `0.63.0` peers `@civitai/app-sdk >=0.55.0 <1.0.0`; a pre-1.0
+  caret locks the minor so `^0.54.0` = `>=0.54.0 <0.55.0` and EXCLUDES it. On pnpm the
+  install merely warns and the break lands at MODULE EVALUATION — suites fail to IMPORT
+  and collect ZERO tests while the summary reports NO failures. Measured across four repos
+  on 0.63.0: gen-matrix 729→502, model-benchmarking **1027→352**, playable-collections
+  809→434, sensei 868→356 — **1,789 tests silently unrun**. On npm (yt-thumbnail,
+  panorama-360, developer-docs) the same mistake is a hard `ERESOLVE` and nothing runs.
+  🔴 **ONLY A THREE-POINT COUNT SEES IT** — baseline, blocks-react ALONE, then +app-sdk.
+  First-vs-last hides it completely, and the middle reading shows **only a passed count**,
+  so read the FILE count too.
+- 🔴 **THE RELEASE-AGE GATE SCORES EVERY LOCKFILE ENTRY, NOT JUST THE RANGES YOU EDIT.**
+  Four tokens were needed, not two: the two direct bumps plus `@civitai/theme@0.5.0` and
+  `@civitai/components@0.9.1`, which arrive only as nested deps of `0.63.0` while
+  `package.json` still pins `^0.3.1`/`^0.4.1`. pnpm appended them itself. Control each
+  token INDIVIDUALLY from a clean tree — model-benchmarking did and found
+  `@civitai/sdk@0.10.0` was NOT load-bearing. 🔴 **APPEND-vs-REPLACE IS PER-REPO**, stated
+  in each file's own header (gen-matrix and playable-collections append;
+  model-benchmarking and sensei replace), and **REPLACE has an ordering trap**: swapping
+  `0.62.0`→`0.63.0` then installing FAILS, because at gate time the lockfile still
+  resolves `0.62.0` and the error names the version you just deliberately removed. Allow
+  both during resolution, then prune.
+- 🔴 **A VERSION PR IS A SNAPSHOT OF THE CHANGESETS THAT EXISTED WHEN IT WAS COMPUTED.**
+  `starters#515` was OPEN, green and mergeable while bumping `blocks-react` to **0.62.1 as
+  a PATCH** from three unrelated theme/docs changesets — `idempotency-key-format-guard.md`
+  was still unconsumed on `main`. Merging it would have published a version without the
+  guard under a plausible number. The one-command discriminator is
+  `git ls-tree --name-only origin/main .changeset/`.
+- 🔴 **A GUARD THAT FIRES ON ITS OWN DEADLINE BEATS A NOTE, AND THIS ARC PROVED IT TWICE.**
+  `#517` ledgered three symbols against the app-sdk version its own branch would publish —
+  unavoidable pre-release — and pinned the prediction so `PREDICTION HAS COME TRUE` goes
+  RED the moment that version appears. It blocked five `Starter (…)` legs on the Version
+  PR. My equivalent was a sentence in a handoff. Its remedy text also named the plausible
+  WRONG fix and why: raise the floor and you exclude a good release forever. **Follow such
+  a remedy verbatim rather than reasoning from scratch.**
+- 🔴 **A DESCRIPTION WIDER THAN ITS IMPLEMENTATION READS AS COVERAGE AND PROVIDES NONE —
+  three instances, one of them mine.** (a) `find-session.py`'s docstring claims it reads
+  `REPO_ENV_HANDLES`; the code hardcodes four (rank 2). (b) The `transport-helpers.test.ts`
+  comment named the idempotency hazard correctly while asserting only against the SDK's own
+  generator, which **already conformed and never could not** — the caller-supplied path,
+  the one that broke, had no guard at any of three layers. (c) I wrote "the floor stays
+  `>=0.49.0`" into a guard file when it is `>=0.55.0`, copied from an adjacent note that
+  says `0.49.0` correctly about a DIFFERENT conversion (`#520` corrected it).
+- 🔴 **THE STORAGE GATE REACHES ALMOST NO EXISTING APP, AND ONLY A TWO-ARM PROBE REVEALS
+  THAT.** 5 of 6 apps ported `useAppStorage`/`useSharedStorage` onto their OWN REST runtime
+  (`./lib/sdk-runtime.js`), so storage never crosses `createMockHost` and the gate is
+  structurally UNREACHABLE; panorama-360 uses no storage at all. Only **yt-thumbnail**
+  exercises it (removing `declaredScopes` fails 9 tests in `src/responsive.test.tsx`). A
+  green suite there is NOT the gate approving. 🔴 And do NOT pre-thread `declaredScopes`
+  where no path observes it — that pre-silences the gate for a future port back.
+- 🔴 **THE DOCS WERE UPSTREAM OF THE MOCK HOST, WHICH REFRAMES THE WHOLE ARC.** I first
+  diagnosed the 400 as mock-host permissiveness — the layer I happened to be looking at.
+  The public docs *taught* the colon key in four places (`generation.md:594`,
+  `text-to-image.md:349`, `earning.md:394`, and `hooks.md:820` recommending `React.useId()`,
+  which returns `":R0:"` on React 18.3.1) while stating no charset anywhere. The app did
+  what it was told. Four layers failed in order: docs taught it → SDK forwarded it
+  unvalidated → mock host never saw the field (**zero** occurrences in `mockHost.ts`) →
+  live host rejected it.
+- 🔴 **THE COLON IS BANNED FOR A REASON, SO A DIFFERENT SEPARATOR IS NOT A FREE CHOICE.**
+  `<civitai>/src/server/utils/block-gen-idempotency.ts:59` says "colon-free" because
+  `block-tip-rate-limit.ts:215` composes its rate-limit key as `<userId>:<key>`. Use `-`;
+  `.` and `/` are also outside `[A-Za-z0-9_-]`.
+- 🔴 **REFUSE, NEVER SANITISE, a malformed idempotency key** — sanitising breaks the
+  identity the key carries, so two logical submits could collapse into one charge or a
+  retry could mint a second reservation. `#517` added `InvalidIdempotencyKeyError` rather
+  than reusing `WorkflowSubmitError`, whose every code is money-AMBIGUOUS by design. An
+  anti-sanitise test pins it.
+- 🔴 **A MUTATION CAN DIE FOR THE WRONG REASON, AND A SUITE CAN BE BLIND TO THE DIMENSION
+  THE BUG LIVES ON.** In `#517`'s 13-mutant sweep, M6 was killed by a NEIGHBOUR's error
+  with the new assertion never executing (M6b — same mutant plus the guard disabled —
+  proved reachability), and **M7 SURVIVED 37/37** because the suite pins ONE React whose
+  `useId()` already conforms while the peer range declares `^18 || ^19`. Closed by
+  extracting `composeTipIdempotencyKey` and feeding each version's real seed.
+- 🔴 **devrc GATES ON FOUR TEKTON COMMIT STATUSES, NOT CHECK-RUNS.**
+  `gh api …/commits/<sha>/check-runs` returns `total_count: 0` there and reads as "no CI".
+  Poll `…/commits/<sha>/status` and read `.state`; `.conclusion` is always null for
+  statuses. Contexts: `tekton/devrc-{pytests,nodetests,gotests,cairn-client-runs}`.
+  ⚠ And the repo genuinely has no `.github`, so "0 checks is by design" is a TRUE sentence
+  about Actions that is a WRONG answer about the gate.
+- 🔴 **THE RESUME TOOLING HAS TWO SEPARATE REPO-HANDLE LISTS AND I ONLY WIDENED ONE.**
+  `handoff_index.REPO_ENV_HANDLES` (fixed in `#1982`, now five) and `find-session.py`'s
+  hardcoded four. Symptom: `extract_user_msgs.py --arc <this doc>` exits **3 — NOTHING
+  MEASURED**, which is NOT "the arc is empty" (that is exit 4). It had TWO stacked causes:
+  the handle gap, and the `cli` clone being 7 commits behind so the doc was not on disk at
+  all. Workaround that answered the question: `CIVITAI=/home/zach/workspace/civit/cli`.
+- ⚠ **`extract_user_msgs.py` counts harness `<task-notification>` blocks as "typed".** It
+  reported 52 messages for this arc; **10** were genuine operator input. Filter on the body
+  before quoting a count.
+- 🔴 **A PRIMARY CLONE BEING BEHIND IS A LIVE HAZARD, NOT HYGIENE — measured twice today.**
+  The `cli` clone was 7 commits behind, so the handoff doc was absent from disk and the arc
+  resolver could not see it. And the playable-collections/sensei agent found BOTH its
+  primary clones stale, noting *"`ls`/`grep` in those clones would have reported the wrong
+  pins"* — it read `origin/<branch>` refs instead, which is the only reason its pin check
+  held.
+- **Decision: enforce-by-default (breaking) over opt-in**, operator's call, for both gates.
+  A permissive default leaves the old behaviour for exactly the apps that did not know the
+  constraint existed.
+- ⚠ **`components-chat`'s identical-looking `const NAME` regex was deliberately NOT
+  consolidated** — it governs LLM TOOL NAMES, a different grammar, and merging them would
+  let a money-key policy change silently alter which chat tools register.
+
 ## How to verify
 
 ```bash
 ST=~/workspace/civit/civitai-app-starters; CLI=~/workspace/civit/cli
+DD=~/workspace/civit/civitai-developer-docs
 
-# 0. THE CLOSING CONDITION — both MERGED (both were, 2026-10-02T03:45Z)
+# 0. THE CLOSING CONDITION — both original fixes merged (they are)
 gh pr view 511 --repo civitai/civitai-app-starters --json state --jq .state   # MERGED
 gh pr view 767 --repo civitai/cli --json state --jq .state                    # MERGED
-#    and by CONTENT, because a squash merge breaks ancestry:
+#    by CONTENT, because a squash merge never makes the branch head an ancestor:
 git -C $ST cat-file -e origin/main:packages/civitai-blocks-react/src/internal/mockHostScopes.ts
 git -C $CLI cat-file -e origin/main:internal/validate/storagescope.go
 
-# 1. the cli gate, at its merge commit
-WC=/tmp/v767; git -C $CLI worktree add --detach $WC 87ba43bd92e5e5c90c1e35f3dc909765924cfe16
-(cd $WC && go test ./internal/validate/ -run StorageScope -count=1 -v)   # 5 funcs PASS
-(cd $WC && go build ./... && go vet ./...)                               # rc=0, rc=0
-git -C $CLI worktree remove --force $WC
-#    ⚠ whole-repo `go test ./...` has 3 PRE-EXISTING TestOracle* failures, all
-#    `no Chromium on PATH` — identical to main. 🔴 NEVER set CIVITAI_CHROME here: it
-#    drives a real browser and once left 637 orphaned processes.
+# 1. the whole chain is published and reaches apps
+npm view @civitai/blocks-react version      # 0.63.0
+npm view @civitai/app-sdk version           # 0.55.0
+cd /tmp && npm install --dry-run @civitai/blocks-react@0.63.0   # rc=0, no ETARGET
+npm view @civitai/blocks-react@0.63.0 --json | python3 -c 'import json,sys; d=json.load(sys.stdin); u=d.get("_npmUser"); print(u.get("name") if isinstance(u,dict) else u, bool(d.get("dist",{}).get("attestations")))'
+#    -> "GitHub Actions" True.  🔴 NEVER verify a publish by a version string alone:
+#       this package once had a `latest` that npm view reported happily while
+#       npm install died with ETARGET.
 
-# 2. the dev-host gate, at its merge commit (direnv allow it FIRST — per-directory)
-WT=/tmp/v511; git -C $ST worktree add --detach $WT b4e3f00d4a493c54fb2b1493ca2c596ae06dd57e
-direnv allow $WT
-(cd $WT && direnv exec . pnpm install --frozen-lockfile && direnv exec . pnpm build)
-(cd $WT && direnv exec . pnpm --filter @civitai/blocks-react test)   # 98 files / 1761 tests
-#    🔴 THE POSITIVE CONTROL — `--filter … test -- <name>` DOES NOT NARROW (it returns the
-#    same 98/1761). Use a real path filter and read the COUNT, which must differ:
-(cd $WT/packages/civitai-blocks-react && direnv exec $WT npx vitest run --project unit \
-   test/mockHostStorageScopes.test.tsx)                              # 1 file / 12 tests
-#    🔴 THE NEGATIVE CONTROL — prove it can go red. Edit src/internal/mockHost.ts:1858
-#    `if (needed !== null && …)` → `if (false && needed !== null && …)`, re-run the line
-#    above: expect 6 failed / 6 passed naming /apps:storage:shared:write/. Then restore and
-#    confirm with `git -C $WT diff --stat -- packages/civitai-blocks-react/src/internal/mockHost.ts`
-#    being EMPTY — not with the `cp` exiting 0. One dirty file (components/version.generated.ts)
-#    is expected after a build and is starters#513, not your edit.
-git -C $ST worktree remove --force $WT
+# 2. every fleet consumer is on it (expect ^0.63.0 / ^0.55.0; docs repo exact)
+for r in civitai-app-gen-matrix civitai-app-model-benchmarking \
+         civitai-app-playable-collections civitai-app-yt-thumbnail app-panorama-360; do
+  git -C ~/workspace/civit/$r show origin/main:package.json | python3 -c 'import json,sys; d=json.load(sys.stdin); m={**d.get("dependencies",{}),**d.get("devDependencies",{})}; print(m.get("@civitai/blocks-react"), m.get("@civitai/app-sdk"))'
+done
+git -C ~/workspace/civit/civitai-app-sensei show origin/trunk:package.json | grep -a blocks-react   # sensei is on TRUNK
 
-# 3. the defect itself, end to end — the fastest proof either gate works
-#    scaffold an app, make it save, declare no storage scope:
-#      civitai app init ./probe && cd ./probe
-#      (add a useAppStorage() call; leave `scopes` as scaffolded)
-#      civitai app validate          # expect the storage-scope WARNING (exit 0; --strict fails)
-#      pnpm test                     # expect storage ops to REJECT naming apps:storage:write
-#    ⚠ the `pnpm test` arm needs a PUBLISHED blocks-react carrying #511 — rank 1. Until
-#    then a scaffolded app installs 0.61.1, which has no gate, and this arm passes vacuously.
+# 3. the docs no longer teach it — read the PAIR, never the zero alone
+for f in apps/reference/generation.md apps/guide/text-to-image.md apps/guide/earning.md; do
+  echo "$f colon=$(git -C $DD show origin/main:$f | grep -acE 'idempotencyKey: `[a-z]+:')" \
+       "hyphen=$(git -C $DD show origin/main:$f | grep -acE 'idempotencyKey: `[a-z]+-')"
+done   # expect colon=0 hyphen=1 each
 
-# 4. the release (rank 1, NOT this arc) — resolvability + OIDC, never a version string
-npm view @civitai/blocks-react version          # was 0.61.1 at close; must advance
-npm view @civitai/blocks-react --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("_npmUser"), bool(d.get("dist",{}).get("attestations")))'
+# 4. the predecessor arc's item (a), with its positive control
+git -C $DD show origin/main:apps/reference/hooks.md | grep -ac "baseModelGroup: 'SDXL'"  # 0
+git -C $DD show origin/main:apps/reference/hooks.md | grep -ac 'baseModelGroup'          # 3 = the grep CAN match
+
+# 5. RANK 1's closing condition — is the handle repoint live yet?
+systemctl --user show handoff-index-sync.service -p Environment | tr ' ' '\n' | grep CIVITAI_CLI
+#    still .../civitai-cli  => the switch has NOT happened and #1987 is inert
+python3 ~/workspace/devrc/scripts/lib/handoff_search.py --offline --query x --limit 1 2>&1 | grep repos=
+#    want a `cli` label and indexed_docs reflecting 27, not 25
+
+# 6. RANK 2's closing condition — no env override needed
+python3 $DEVRC/scripts/session-analysis/extract_user_msgs.py --arc handoff-appblocks-scope-enforcement
+#    exit 3 today (handle gap). Want exit 0 with NO CIVITAI= override.
+#    🔴 exit 3 = NOTHING MEASURED; exit 4 = measured and genuinely empty. Different facts.
 ```
