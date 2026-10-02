@@ -122,6 +122,18 @@ injectBlocksStyles();
  */
 export function App() {
   const { ready, viewer, theme } = useBlockContext();
+  // Keep the PAGE (documentElement) in step with the host theme, so a live
+  // THEME_CHANGE repaints the background behind the shell too — not just the
+  // components under data-theme. index.html's inline script seeds the same
+  // attribute from the URL fragment before first paint; this effect owns it
+  // from BLOCK_INIT onward (the payload is authoritative — it must be able to
+  // correct a stale fragment). Gated on `ready`: before BLOCK_INIT `theme` is
+  // the transport's 'light' sentinel (transport.ts), which would clobber the
+  // fragment seed of a dark host.
+  useEffect(() => {
+    if (!ready) return;
+    document.documentElement.dataset.theme = theme;
+  }, [ready, theme]);
   const token = useBlockToken();
   const { estimate, submit, poll } = useBuzzWorkflow();
   const { requestConsent } = useRequestConsent();
