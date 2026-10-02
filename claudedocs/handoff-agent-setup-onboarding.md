@@ -90,36 +90,13 @@ that wrote it, flagged as such there.
 
 ## State now
 
-- ✅ **RELEASED — `v0.1.106` is live on npm and Homebrew**, re-confirmed independently:
-  a container that never built the CLI installed it from the PUBLIC registry and
-  completed setup end-to-end (the `ctl-pos` grader control).
-- ✅ **Rank 33 — `cli#669` MERGED** (`d0b79ae`) and **MEASURED**: mechanism A is CLOSED.
-  All four `other`-identity cells measured post-ship grade `CLOSING_CONDITION=yes`,
-  against 4-of-4 failing on 2026-09-18.
-- ✅ **Rank 35 — `civitai-developer-docs#89` MERGED AND LIVE** (7433 B, step 4 keys on `ok`).
-- ✅ **Rank 36 — the matrix RAN and is graded: 18/18, 12 `yes` / 6 `no`.** The verdict is
-  now a function of **prefix-writable alone**; identity no longer determines anything.
-  Full grid and limits in the investigation block below. ⚠ Its comparison clause is
-  **partly unmet** — see rank 36.
-- ⚠ **Rank 34 / `cli#665` — UNFIXED, and the remedy analysis is aimed at the wrong
-  path.** 6 of 6 failing containers (complete enumeration) installed the CLI at
-  `$HOME/.npm-global/bin/civitai`, reachable from NEITHER login shell. The issue's
-  candidate (b) is `--prefix="$HOME/.local"`; **no agent took it.**
-- ✅ **`cli#673` MERGED** (`9588fb0`, squash) — grader identity in the verdict line, and a
-  stale stderr-ordering claim corrected. Verified by CONTENT with a negative control:
-  `AGENT_ID` 3× at `origin/main`, 0× at `origin/main~1`. 13/13 checks green SHA-pinned.
+- ✅ **RELEASED — `v0.1.106` is live on npm and Homebrew** (public-registry install + full setup verified via the `ctl-pos` grader control).
+- ✅ **Ranks 33, 35, 36, 37 DONE and shipped** — `cli#669` (`d0b79ae`; mechanism A closed, measured post-ship across four `other` cells), `civitai-developer-docs#89` (live, 7433 B), the 18/18 dogfood matrix (verdict = prefix-writable alone; 3 comparison cells deliberately not re-run), `cli#673` (`9588fb0`). Detail lives in the Next-steps entries and investigation blocks below.
+- ⚠ **Rank 34 / `cli#665` — THE ONLY PRODUCT WORK LEFT; re-verified OPEN 2026-10-02.** 6 of 6 failing containers (complete enumeration) installed the CLI at `$HOME/.npm-global/bin/civitai`, reachable from NEITHER login shell; the issue's candidate (b) `--prefix="$HOME/.local"` was taken by NO agent.
 - **Deploy/verify status:** nothing new deployed. `#673` touches only the harness.
-- ⚠ **No `clawgate-task:` field**: `clawgate_handoff.sh resolve` exited **5**. An unknown
-  session id answers 200 with an empty array, so that zero cannot distinguish "touched no
-  task" from "wrong id". Not a clean bill of health.
-- ⚠ **Live worktrees**, remove by EXACT path: `cli-dogfood36` (holds `runs/` and `logs/` —
-  the ONLY copy of this session's 21 transcripts), `cli-ho674` (this doc), `cli-rank33`
-  and `cli-cc-fix` (both merged — safe to remove).
-- ⚠ **21 `dogfood-*` trial containers + 3 `dogfood-ctl-*` controls are RUNNING**, plus four
-  `df-*` images at 342 MB each. 🔴 `grade.sh` can only read a RUNNING container and
-  refuses a stopped one by name, so tearing these down means any re-grade needs a
-  **re-run** — and `runner.py` opens each transcript `"w"`, so a re-run DESTROYS the
-  transcripts too. Copy `runs/` aside before any re-run.
+- ⚠ **No `clawgate-task:` field**: `clawgate_handoff.sh resolve` exited **5** — that zero cannot distinguish "touched no task" from "wrong id". Not a clean bill of health.
+- 🔴 **OPS STATE MOVED SINCE 2026-09-20 (measured 2026-10-02).** Worktrees `cli-dogfood36`, `cli-ho674`, `cli-rank33` REMOVED; `cli-cc-fix` remains. **`cli-dogfood36` held the ONLY copy of the 21 dogfood transcripts and no `runs/` copy was found on disk** (searched `/tmp` + the session scratchpads) — every per-trial figure now rests on the recorded grid in `refs/agent-setup-dogfood-matrix-2026-09-18.md`; the harness is re-runnable.
+- ⚠ **Containers partially torn down (measured 2026-10-02):** 14 `dogfood-*`-named containers remain (running + stopped, `docker ps -a`), 1 `df-*` image (was 4). The constraint stands — `grade.sh` reads only a RUNNING container, so any re-grade needs a **re-run**, and `runner.py` opens each transcript `"w"`: copy aside before re-running.
 
 ## Open investigations — live diagnosis state
 
