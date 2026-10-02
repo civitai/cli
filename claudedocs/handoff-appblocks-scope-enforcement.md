@@ -190,15 +190,20 @@ this machine"; that is no longer true and the switch + prune have both run.
 
 ## Next steps (ranked)
 
-1. **Fix `find-session.py`'s hardcoded handle list.** `scripts/find-session.py:1148` loops
-   `("DEVRC","HOMELAB","DATAPACKET","CIVITAI")` while its docstring at `:1139` says it
-   *"Searches every repo in `handoff_index.REPO_ENV_HANDLES`"* — now five. A description
-   wider than its implementation. It is why `extract_user_msgs.py --arc` on THIS doc exits
-   **3 (NOTHING MEASURED)** and needed a hand `CIVITAI=<cli-path>` override to answer the
-   operator's own "find all sessions for this arc". Make it read `REPO_ENV_HANDLES` (one
-   rule, one place) and fix `:255`'s error text, which enumerates the same four.
-   ⚠ Note the switch did NOT fix this — `$CIVITAI_CLI` now resolves correctly and the tool
-   still ignores it, because the list is hardcoded rather than derived.
+1. **Fix `find-session.py`'s hardcoded handle list.** 🔴 **IN FLIGHT: `innovation-upstream/devrc`,
+   branch `zach/find-session-derive-handles`** (claimed `appblocks-scope-enforcement-1`; PR number
+   not yet assigned when this was written — check `gh pr list --repo innovation-upstream/devrc
+   --head zach/find-session-derive-handles`). `scripts/find-session.py:1148` loops
+   `("DEVRC","HOMELAB","DATAPACKET","CIVITAI")` while its docstring at `:1139` says it *"Searches
+   every repo in `handoff_index.REPO_ENV_HANDLES`"* — now five. A description wider than its
+   implementation. **THREE sites, not one** — the loop, the `EXIT_ARC_UNMEASURED` description at
+   `find-session.py:~253-257`, and `scripts/session-analysis/extract_user_msgs.py:112-113`, each
+   independently enumerating the same four. Stale "four" prose also at
+   `scripts/lib/handoff_search.py:574` and `scripts/lib/handoff_budget.py:~204,~229`. The
+   derive-don't-restate pattern already exists in that repo at `handoff_search.py:1082`:
+   `", ".join(f"${h}" for h in handoff_index.REPO_ENV_HANDLES)`.
+   ⚠ The 2026-10-02 `home-manager switch` did NOT fix this — `$CIVITAI_CLI` resolves correctly and
+   the tool still ignores it, because the list is hardcoded rather than derived.
    Closing condition: `python3 $DEVRC/scripts/session-analysis/extract_user_msgs.py --arc handoff-appblocks-scope-enforcement` exits 0 with NO env override.
    forcing: user — the operator asked for this arc's sessions and the tool could not answer without a hand override
 2. **Teach the storage scopes in the generated `AGENTS.md`.** `civitai/cli`,
@@ -520,6 +525,46 @@ this machine"; that is no longer true and the switch + prune have both run.
 - **The switch is what makes an `agent-handles.nix` change real.** Merging the repoint
   changed the repo and nothing else: the unit env is generated, so the handle kept
   resolving to the old path until generation 865. A handle edit is inert until a switch.
+
+- 🔴 **RANK 1'S CLOSE WAS RE-VERIFIED INDEPENDENTLY, NOT TAKEN FROM THIS DOC — and the two
+  measurements are worth keeping because each needed its own control.** (a) **The switch is
+  effective, read from BEHAVIOUR not config:** `systemctl --user show handoff-index-sync.service
+  -p Environment` → `CIVITAI_CLI=/home/zach/workspace/civit/cli`, and the unit file itself
+  (`readlink -f` of its `FragmentPath` → `/nix/store/kjryvyr5…-handoff-index-sync.service`) carries
+  `CIVITAI_CLI=%h/workspace/civit/cli`; `home-manager generations` puts generation **865** at
+  18:12 CDT, after the 15:07 commit. (b) **The orphan is gone:** a direct SQL enumeration of the
+  `repo` column of `initiatives.handoff_section` returns exactly
+  `civitai, cli, datapacket-talos, devrc, homelab-talos` — no `civitai-cli`.
+- 🔴 **THAT ABSENCE NEEDED A POSITIVE CONTROL, AND THE TOOL'S OWN DRY-RUN SAYS IT CANNOT SUPPLY
+  ONE.** `handoff_index.py --rebuild --dry-run` prints, in its own words, *"Which labels those are
+  lives in the TABLE, which a --dry-run never opens, so this run cannot list them"* — so the
+  derivation half of the tool is structurally blind to the orphan set and a clean dry-run is NOT
+  evidence the orphan went. The control that makes the zero a measurement: the same query returned
+  **5** labels including `cli`, a label that can only exist AFTER the repoint. Report the pair, not
+  the zero.
+- ⚠ **`MailDB()` resolves its DSN through `kubectl -n mailbox get secret mailbox-postgres-auth`, so
+  it binds to whatever `$KUBECONFIG` is in scope — and this dispatch hub's direnv exports the DP
+  PROD one.** Run from `$DATAPACKET` it dies `Error from server (NotFound): namespaces "mailbox"
+  not found` plus a `CalledProcessError` traceback, which reads as a dead database rather than the
+  wrong cluster. `KUBECONFIG=$KC_HOMELAB` is the fix.
+- 🔴 **A 550-LINE HANDOFF ON `origin/main` READ AS 381 LINES FROM THE WORKING TREE, AND THE CLONE
+  CAUGHT UP 25 SECONDS AFTER THE READ.** `#772` merged at **23:33:53Z**; this session Read
+  `$CIVITAI_CLI/claudedocs/handoff-appblocks-scope-enforcement.md` at ~**23:44Z** while the clone
+  still sat at `1efa372`, and `git -C $CIVITAI_CLI reflog main --date=iso` shows
+  `pull: Fast-forward` → `1c4e78e` at **23:44:50Z**. **The whole kickoff premise — "Rank 1 is the
+  only live-broken thing and it is operator-gated" — came from that stale copy and was already
+  false when it was written.** The clone was only ~11 minutes behind and a re-read moments later
+  would have looked perfectly current, which is why this class is invisible rather than loud: the
+  usual tell (a clone hundreds of commits behind) was absent. **Read a handoff with
+  `git show origin/main:claudedocs/<doc>`, and when a kickoff's premise is load-bearing, date it
+  against the ref before planning on it.**
+- ⚠ **A kickoff's own verification command can be written so that the PASS and the FAIL look
+  alike — read which way it points.** This one said *"if it still reads `.../civitai-cli` the
+  repoint is inert"*; the live value was `.../cli`, i.e. the opposite of inert. A one-token
+  difference between the two paths (`civitai-cli` vs `cli`) is the whole signal.
+- **No `clawgate-task:` field written this session.** `clawgate_handoff.sh resolve` exited **5**
+  (`NOTHING RESOLVED — 0 tasks for this session`). An unknown session id answers 200 with an EMPTY
+  ARRAY, so a 0 cannot distinguish "touched no task" from "wrong id" — not a clean bill of health.
 
 ## How to verify
 
