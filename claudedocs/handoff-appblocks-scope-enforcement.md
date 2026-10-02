@@ -33,50 +33,43 @@ production, surfaced to the viewer as *"Saving failed for an unknown reason… t
 
 ## State now
 
-🔴 **ARC CLOSED 2026-10-02.** The closing condition's `check` is met in both halves —
-both PRs MERGED, and each gate demonstrably refuses the defect at its own merge commit.
+🔴 **ARC CLOSED 2026-10-02, AND ITS FOLLOW-ON PUBLISH IS DONE TOO.** Both halves of the
+closing condition were met at round 1; the release that carries the fix to consumers has
+since landed and been verified.
 
-- **`civitai-app-starters#511` — MERGED**, squash `b4e3f00d4a493c54fb2b1493ca2c596ae06dd57e`,
-  `mergedAt 2026-10-02T03:45:24Z`. Pre-merge CI re-read SHA-pinned at head `1980ad7`:
-  **20/20 green**, including all five `Starter (…)` legs that were red from the JSDoc
-  `import … from` regression — so the `1980ad7` fix held.
-- **`civitai/cli#767` — MERGED**, squash `87ba43bd92e5e5c90c1e35f3dc909765924cfe16`,
-  `mergedAt 2026-10-02T03:45:27Z`. Pre-merge CI SHA-pinned at head `837607d`: **12/12 green**,
-  `build-test` completed.
-- Both were `MERGEABLE`/`CLEAN` and based directly on `main` — not stacked. Merges verified
-  by CONTENT on `origin/main` (`git cat-file -e` on all four new files), never by ancestry,
-  since a squash merge never makes the branch head an ancestor.
-- **Gate verification at the merge commits, not at the PR branches:**
-  - `cli` @ `87ba43b`: `go test ./internal/validate/ -run StorageScope -count=1 -v` →
-    **5 test functions PASS** (`…FollowsSymlinkedSource`, `…UnobservableScanStaysSilent`,
-    `…DeclaresStore` 7 subtests, `…ToleratesABadScopesField` 3 subtests).
-  - `starters` @ `b4e3f00`: install rc=0, build rc=0, full suite
-    **98 files / 1761 tests / 0 failures** — reproducing the doc's own figures exactly.
-  - 🔴 **Negative control, the part CI cannot give you:** neutering the guard condition at
-    `packages/civitai-blocks-react/src/internal/mockHost.ts:1858`
-    (`if (needed !== null && !declaredScopeSet.has(needed))` → `if (false && …)`) took the
-    gate file to **6 failed / 6 passed of 12**, with failures naming
-    `/apps:storage:shared:write/` — i.e. killed by **this** guard's own assertion, not a
-    neighbour's error. Restored from a `cp` copy, re-ran **12/12 pass**, and confirmed the
-    restore with `git diff` (clean on `mockHost.ts`), never by trusting the copy.
-- **Release is now IN FLIGHT and is a NEW arc, not this one.** Merging `#511` landed the
-  changeset `.changeset/polite-hosts-gate-storage.md` on `origin/main` and
-  `changesets/action` opened the Version PR **`civitai-app-starters#514`**
-  (`changeset-release/main`, *"chore(release): version packages"*).
-  `npm view @civitai/blocks-react version` is still **`0.61.1`** — the dev-host gate reaches
-  no app until that PR merges and publishes.
-- **This doc is still on a branch, not mainline** — `civitai/cli#768`
-  (`zach/handoff-appblocks-scope-enforcement`) is OPEN. Consequence measured this session:
-  `handoff_search.py --exclude-slug appblocks-scope-enforcement` reported
-  `in_scope_docs=533` equal to `indexed_docs=533`, i.e. the flag PARSED but MATCHED nothing,
-  because the index deliberately skips a doc not committed to its repo's mainline. Land `#768`.
-- **No `clawgate-task:` field, again.** `clawgate_handoff.sh resolve` exited **5** (unpiped),
-  and `field <doc>` exited **1** (none present). A 0-task answer cannot distinguish "touched
-  no task" from "wrong session id", so no field was written — not a clean bill of health.
+- **`civitai-app-starters#511` — MERGED**, squash `b4e3f00d4a493c54fb2b1493ca2c596ae06dd57e`
+  (03:45:24Z). Pre-merge CI SHA-pinned at head `1980ad7`: **20/20 green**, including all five
+  `Starter (…)` legs that were red from the JSDoc `import … from` regression.
+- **`civitai/cli#767` — MERGED**, squash `87ba43bd92e5e5c90c1e35f3dc909765924cfe16`
+  (03:45:27Z). Pre-merge CI SHA-pinned at head `837607d`: **12/12 green**.
+- Both based directly on `main`, not stacked. Merges verified by CONTENT on `origin/main`
+  (`git cat-file -e` on all four new files), never by ancestry — a squash merge never makes
+  the branch head an ancestor.
+- **Gates verified firing at the merge commits**, not at the PR branches:
+  `cli` @ `87ba43b` → `go test ./internal/validate/ -run StorageScope -count=1` = **5 funcs
+  PASS**; `starters` @ `b4e3f00` → **98 files / 1761 tests / 0 failures**, matching the doc's
+  own figures. 🔴 Negative control: neutering the guard at
+  `packages/civitai-blocks-react/src/internal/mockHost.ts:1858` took the gate file to
+  **6 failed / 6 passed of 12** with failures naming `/apps:storage:shared:write/` — killed by
+  **this** guard's own assertion. Restore proved by an EMPTY `git diff` on that file, not by
+  the `cp` exiting 0.
+- **PUBLISHED: `@civitai/blocks-react@0.62.0`.** Version PR **`#514` MERGED** `5e05b0ec`
+  (03:59:29Z); release run **36962569820** green END-TO-END (step 8 publish AND step 9 assert
+  both `success`). Verified independently of CI — resolvable, OIDC-attested, registry `time`
+  04:02:03.809Z. Details under `## Gotchas`.
+  🔴 **Consumers are NOT yet on it**: `^0.61.x` excludes `0.62.0`, so each block repo needs an
+  explicit bump before its dev harness refuses undeclared scopes. NEW arc.
 - **Operator DECLINED fixing the two affected live apps** — *"Leave them; I'll handle it."*
   **Style Explorer (LIVE)** and **Prompt Lab (pending)** still declare one scope while using
-  `useAppStorage()`, so their saves still 403 in production. Unchanged; recorded because it
-  is a live user-facing defect.
+  `useAppStorage()`, so their saves still 403 in production. Unchanged, and still a live
+  user-facing defect.
+- **This doc is still on a branch** — `civitai/cli#768`
+  (`zach/handoff-appblocks-scope-enforcement`) is OPEN, which is why the handoff index cannot
+  see it (`--exclude-slug` reported `in_scope_docs == indexed_docs`, i.e. parsed but matched
+  nothing). Landing `#768` is the one piece of bookkeeping left.
+- **No `clawgate-task:` field.** `clawgate_handoff.sh resolve` exited **5** unpiped and
+  `field <doc>` exited **1**. A 0-task answer cannot distinguish "touched no task" from "wrong
+  session id", so no field was written — not a clean bill of health.
 - **Predecessor arc `appblocks-docs-pin-currency` is CLOSED and verified live**
   (`claudedocs/handoff-appblocks-docs-pin-currency.md`; `cli#765` still OPEN carrying it).
 
@@ -157,27 +150,25 @@ both PRs MERGED, and each gate demonstrably refuses the defect at its own merge 
 
 ## Next steps (ranked)
 
-1. **Merge the Version PR and verify the publish.** `civitai-app-starters#514`
-   (`changeset-release/main`) is already open. Verify by RESOLVABILITY plus the OIDC
-   discriminators, never a version string: `npm install --dry-run @civitai/blocks-react@<v>`
-   rc=0, `_npmUser = "GitHub Actions"`, `dist.attestations` present.
-   🔴 `#511` is BREAKING (minor, pre-1.0) — the published default is EMPTY `declaredScopes`,
-   so every consumer whose dev harness saves without declaring a scope starts refusing.
-   Closing condition: `npm view @civitai/blocks-react version` is past `0.61.1` and resolves.
-   IN FLIGHT: civitai-app-starters#514
-   forcing: gate — the dev-host gate reaches no app until it is published
-2. **Teach the storage scopes in the generated `AGENTS.md`.** `civitai/cli`,
+1. **Teach the storage scopes in the generated `AGENTS.md`.** `civitai/cli`,
    `internal/cmd/templates/agents-app.md` — name `apps:storage:read`/`write` beside the
    existing `ai:write:budgeted` mention, keyed on the persistence trigger. The only surface
    an agent is actually routed to. 🔴 `agents_size_test.go` ratchets that file's size.
    Closing condition: `grep -c apps:storage internal/cmd/templates/agents-app.md` ≥ 1 on origin/main.
    forcing: none
-3. **Classify authorization failures in the SDK's storage error copy.** The viewer saw
+2. **Classify authorization failures in the SDK's storage error copy.** The viewer saw
    *"Saving failed for an unknown reason… try again"*; `appStorageErrors.ts` already documents
    that an authz failure classifies `null` and that *"please try again" is the WRONG copy for
    that arm* — nothing enforces it.
    Closing condition: a block can distinguish a scope denial from a transient without parsing host prose.
    forcing: none
+
+**DONE — the former rank 1 (publish) is CLOSED, 2026-10-02.** `civitai-app-starters#514`
+merged (`5e05b0ec`); `@civitai/blocks-react@0.62.0` is live and verified independently of CI.
+Evidence under `## Gotchas`. **Nothing in this arc is now eligible to be worked** — both
+items above declare `forcing: none`, so a session picking from this queue should skip them
+and do something an external signal asked for. The arc's own closing condition was met at
+round 1 and the publish was its stated follow-on; anything further is a NEW arc.
 
 ## Defects (batched)
 
@@ -288,6 +279,53 @@ both PRs MERGED, and each gate demonstrably refuses the defect at its own merge 
   default leaves the old behaviour for every app that did not know the scopes existed.
 - ⚠ **`scaffold boot theme` was a SEPARATE defect already fixed upstream** — `cli#766` and
   `starters#509`, both merged. Do not re-open it.
+
+- ✅ **PUBLISHED AND VERIFIED 2026-10-02: `@civitai/blocks-react@0.62.0`** — a pre-1.0 MINOR
+  for the breaking default, which is correct (a `major` would mean 1.0.0). `#514` bumped
+  **only** that package, so the partial-publish/ETARGET class could not fire this time:
+  `@civitai/components@0.9.0` and `@civitai/theme@0.4.0` were each already on the registry at
+  exactly the in-tree version, and the published dep strings are RANGES (`^0.9.0`, `^0.4.0`,
+  `>=0.49.0 <1.0.0`) — not the EXACT pin that made `0.45.0` uninstallable. Verified without
+  trusting CI: `npm install --dry-run @civitai/blocks-react@0.62.0` **rc=0** (added 11
+  packages, no `ETARGET`), `_npmUser = GitHub Actions <npm-oidc-no-reply@github.com>`,
+  `dist.attestations` **present**, registry `time` `2026-10-02T04:02:03.809Z`.
+  🔴 **The gate now reaches real apps** — a consumer on `^0.61.x` does NOT get it
+  (`^0.61.0` resolves `>=0.61.0 <0.62.0`), so every block repo needs an EXPLICIT bump before
+  its dev harness starts refusing undeclared storage scopes. That bump is a NEW arc.
+- 🔴 **A GREEN `gh run` CONCLUSION IS NOT A PUBLISH VERDICT, AND THIS SCOPE'S INDEX HAS FOUR
+  BULLETS ABOUT IT — READ THEM BEFORE READING ANY RELEASE RUN.** The two claims are
+  independent: step 8 `Create release PR or publish` can SUCCEED while step 9
+  `Assert the published versions actually exist on npm` goes RED purely from registry
+  propagation, and that red is NOT proof the publish failed. Read the two steps separately
+  (`gh api repos/<o>/<r>/actions/runs/<id>/jobs --jq '.jobs[].steps[]'`), then the registry's
+  own `time` field. Here BOTH were `success` — run **36962569820** — which the index records
+  as the pairing every earlier release in this repo lacked.
+- 🔴 **The propagation budget was already fixed, and its measured window has only grown.**
+  `release.yml` runs the assert at `PUBLISH_CHECK_TRIES: '60'` / `PUBLISH_CHECK_DELAY: '10000'`
+  = **600s** under `timeout-minutes: 40`, landed in `827eccc` (#421) against a measured
+  **369s** — itself larger than the **157s** measured in September, which was larger than the
+  "~60s" before that. 🔴 **Treat every one of those figures as a LOWER BOUND; the window has
+  not converged.** The workflow's own comment says TRIES and DELAY are COUPLED to the
+  `timeout-minutes` cap (worst case `2 x 59 x 10000` per failing package) — re-derive both if
+  you touch either. This release's green end-to-end run was the stated close-check for that
+  index item, now `RESOLVED 827eccc:`.
+- 🔴 **If a publish ever 404s, the staged-publishing check is `npm stage list` — the verb is
+  `list`, NOT `ls`.** `npm stage ls` prints `EUSAGE Unknown subcommand` and **exits 0**, so an
+  `ls` spelling reads as a clean "nothing staged" while telling you nothing. A staged version
+  returns `E409 Cannot publish over previously staged version` forever and needs the owner's
+  2FA (`npm stage approve`); a silent failure is cured by a plain re-run. On a FIRST attempt
+  the log cannot separate the two — the re-run IS the discriminator, and it is only safe when
+  one package remains and its deps are already live.
+- ⚠ **`@civitai/components-chat` still has NO npm trusted publisher** (operator-only, npmjs.com
+  UI + 2FA). It was not in this release, so it did not bite — but any future release whose
+  changeset set includes it will take an `E404 PUT` on that package while every other package
+  publishes fine. Still OPEN in the index.
+- 🔴 **A non-terminal check is not a failure, and `mergeStateStatus=BLOCKED` can mean exactly
+  that.** `#514` read `BLOCKED` with 19 of 20 checks terminal-green and
+  `README snippets (typecheck)` still `in_progress` — a slow leg that finished ~12 min after
+  the other 19 (03:46:58Z → 03:58:57Z), the same lag it showed on `#511`. Gate on a
+  **tallied** count of terminal conclusions at a **pinned** SHA, re-confirm the head has not
+  moved, and report the tally (`{"success":20}`) rather than an absence of failures.
 
 ## How to verify
 
