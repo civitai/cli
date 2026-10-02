@@ -1148,5 +1148,27 @@ func fieldCoverageCorpus() []fieldFixture {
 				"app.js":     `document.title = 'hello';`,
 			},
 		},
+		{
+			// storageScopeChecks reports against `scopes`, NOT FieldProject — the
+			// deliberate opposite of readyAckChecks above, because here the source
+			// is correct and the manifest is what needs the edit. This fixture is
+			// what makes that assertion checkable rather than asserted.
+			name: "source calls a storage hook with no storage scope declared (storageScopeChecks)",
+			files: map[string]string{
+				"block.manifest.json": `{
+				  "blockId": "cov-block",
+				  "name": "Coverage Block",
+				  "version": "1.0.0",
+				  "description": "storage with no scope",
+				  "author": "tester",
+				  "contentRating": "g",
+				  "page": {"path": "/", "title": "App"},
+				  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+				  "entry": "index.html"
+				}`,
+				"index.html":  `<!doctype html><script type="module" src="./src/App.tsx"></script>`,
+				"src/App.tsx": `import { useAppStorage } from '@civitai/blocks-react';` + "\n" + `export const S = () => useAppStorage();`,
+			},
+		},
 	}
 }

@@ -160,6 +160,12 @@ func validateDir(dir string, projectState bool) (Result, error) {
 		// warningChecks also runs under ManifestOnly, where `civitai app init`
 		// self-checks a template it just wrote. See readyack.go.
 		res.Warnings = append(res.Warnings, readyAckChecks(dir, generic)...)
+
+		// Project state: source that calls a storage hook while the manifest
+		// declares NO scope for that store. Same ADVISORY posture and the same
+		// reason for living here rather than in warningChecks — it reads src/.
+		// See storagescope.go for the production failure it exists to catch.
+		res.Warnings = append(res.Warnings, storageScopeChecks(dir, generic)...)
 	}
 
 	// Non-fatal advisories: real money-path footguns the schema can't catch as
