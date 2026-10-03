@@ -54,6 +54,26 @@ import (
 // user's machine, at startup. A redundant guarded block is harmless, which is
 // exactly what makes the detection unnecessary — and nothing machine-specific is
 // written into AGENTS.md (TestFixPathWritesNoMachinePathIntoAGENTSMD).
+//
+// 🔴 THE WINDOWS POSTURE, IN ONE PLACE, BECAUSE TWO PASSAGES BELOW USED TO STATE
+// IT DIFFERENTLY AND ONE OF THEM WAS WRONG. The flag is registered on every
+// platform and NOTHING gates it on GOOS: `.goreleaser.yaml` builds windows
+// amd64 and arm64, so a Windows run reaches this code, writes `~/.zshenv` and a
+// bash login file, and emits POSIX `sh`. That is useful there to a POSIX shell —
+// Git Bash / MSYS is `GOOS=windows` running a bash that genuinely reads
+// `~/.bash_profile`, and WSL is a Linux build — and useless to `cmd.exe` or
+// PowerShell, for which no profile is written and none is claimed.
+//
+// ⚠ WHAT A NATIVE-WINDOWS RUN ACTUALLY DOES AT RUNTIME IS UNVERIFIED. No Windows
+// host was available when this was written, so every sentence here about Windows
+// is derived from the build matrix and from `os` / `runtime` constants, not from
+// an executed run. Do not promote it to a measurement. What this replaced was
+// worse than unverified: a comment claiming "a Windows run is unsupported either
+// way" and citing decision 39's "Windows is skipped, not supported" — a sentence
+// that is about the two POSIX login-shell PROBES not covering Windows, i.e.
+// TEST COVERAGE, and not about the command refusing to run. The citation did not
+// support the claim, and the claim contradicted the CRLF comment in
+// mergePathFixBlock, which had it right.
 
 // The managed-block markers for a SHELL file. They are shell comments, and they
 // are the contract between one run and the next: everything between them is this
@@ -91,6 +111,46 @@ func cliBinaryBaseName() string {
 	}
 	return "civitai"
 }
+
+// pathEntrySplitChar is the character the EMITTED BLOCK's shell splits PATH on,
+// and pathEntryRefusedChars is every character a resolved directory may not
+// contain if that block is to work.
+//
+// 🔴 THESE ARE PROPERTIES OF THE EMITTED SHELL, NOT OF THE COMPILING PLATFORM —
+// AND KEYING THEM TO THE PLATFORM WAS THE BUG. The block this command writes is
+// POSIX `sh` (pathFixBlock's comment says so three times, and the bash target can
+// be `~/.profile`, which `dash` reads). POSIX `sh` splits PATH on `:` on EVERY
+// platform it runs on. So the only question that matters is what the emitted
+// shell splits on, never what `runtime.GOOS` splits on.
+//
+// The refusal used `os.PathListSeparator` until cli#777 round 2. That constant is
+// `';'` on windows ($GOROOT/src/os/path_windows.go), so the predicate asked the
+// wrong platform and was wrong in BOTH directions:
+//
+//   - `C:\Users\me\AppData\Roaming\npm\node_modules\@civitai\cli\lib\binaries`
+//     contains no `;`, so it was ACCEPTED on a Windows build: both startup files
+//     were written with `civitai_cli_dir='C:\Users\…'`, `ok:true`, exit 0 and
+//     "Open a NEW shell" — the confident false fix this refusal exists to close,
+//     since `\` is not a separator to the `sh` that reads the file.
+//   - `/home/u/a;b` contains a `;`, so it was REFUSED on a Windows build, for a
+//     directory POSIX `sh` accepts without complaint.
+//
+// 🔴 REFUSING EVERY WINDOWS-STYLE PATH IS THE HONEST OUTCOME, AND IT IS WHAT THE
+// BASE-NAME REFUSAL ABOVE ALREADY DOES FOR THE SAME REASON. A drive-letter colon
+// now refuses, which is correct: `sh` would split `C:\…` into `C` and `\…`, so
+// the block could never make the name resolve, and a refusal naming the reason
+// beats a file the user then trusts.
+//
+// 🔴 AND THERE IS DELIBERATELY NO `runtime.GOOS != "windows"` GATE HERE. It was
+// offered as the alternative and it is UNSAFE: Git Bash / MSYS is `GOOS=windows`
+// running a POSIX bash that genuinely reads `~/.bash_profile`, so gating would
+// break a real population of users for whom this feature works. See the Windows
+// posture note at the top of this file — including that the native-Windows
+// runtime shape is UNVERIFIED, no Windows host having been available.
+const (
+	pathEntrySplitChar    = ":"
+	pathEntryRefusedChars = "\n\r" + pathEntrySplitChar
+)
 
 // cliBinDirForPATH resolves the directory a shell must have on PATH for
 // `civitai` to resolve to THIS binary. No shell is run and no PATH is read.
@@ -130,33 +190,13 @@ func cliBinDirForPATH() (string, error) {
 			base, want, abs, want)
 	}
 	dir := filepath.Dir(abs)
-	// A newline in a path cannot be expressed in a shell startup file at all: the
-	// assignment below would be split across lines and the rest of the block would
-	// be read as commands. Refuse rather than emit something unparseable.
-	//
-	// 🔴 AND THE PATH LIST SEPARATOR IS REFUSED FOR A DIFFERENT, SHARPER REASON: a
-	// PATH ENTRY CANNOT CONTAIN IT, EVER. It is the character PATH is split on, so
-	// a directory holding one does not become a bad entry — it becomes TWO entries
-	// that do not exist. Measured end to end before this refusal existed (cli#777
-	// R1-R2): a binary at `…/a:b/civitai` wrote both files, reported `Wrote` for
-	// each, printed `Open a NEW shell`, emitted `ok: true` and exited 0, while a
-	// fresh `bash -lc 'command -v civitai'` with that block sourced still answered
-	// nothing. That is the same confident-false-fix shape the base-name refusal
-	// above exists for, one character over.
-	//
-	// The separator is the PLATFORM's (`:` on POSIX, `;` on Windows) rather than a
-	// hardcoded `:`, so a Windows path's drive-letter colon is not refused. The
-	// emitted block is POSIX `sh`, so a Windows run is unsupported either way —
-	// see decision 39's "Windows is skipped, not supported" — and turning every
-	// Windows invocation into a refusal is a behaviour change this finding did not
-	// ask for and did not measure.
-	if i := strings.IndexAny(dir, "\n\r"+string(os.PathListSeparator)); i >= 0 {
-		return "", fmt.Errorf("this CLI's directory contains %q, which a PATH entry in a shell startup "+
-			"file cannot hold (%q is what PATH is split on, so the entry would become two directories "+
-			"that do not exist; a newline would split the assignment itself): %q — move or symlink "+
-			"this CLI into a directory whose path has neither, then re-run "+
-			"`civitai agent-setup --fix-path`",
-			string(dir[i]), string(os.PathListSeparator), dir)
+	if i := strings.IndexAny(dir, pathEntryRefusedChars); i >= 0 {
+		return "", fmt.Errorf("this CLI's directory contains %q, which a PATH entry in the POSIX shell "+
+			"block this command writes cannot hold (%q is what `sh` splits PATH on, so the entry would "+
+			"become two directories that do not exist; a newline or carriage return would split the "+
+			"assignment itself): %q — move or symlink this CLI into a directory whose path has none of "+
+			"them, then re-run `civitai agent-setup --fix-path`",
+			string(dir[i]), pathEntrySplitChar, dir)
 	}
 	return dir, nil
 }
@@ -198,6 +238,16 @@ func shellSingleQuote(s string) string {
 // so the likelihood here is reasoned, not measured. The guard makes the pin
 // self-expiring: the entry appears only while the file it was written for is
 // still there, which is also the uninstall case.
+//
+// ⚠ AND THE CONVERSE, WHICH ROUND 1 DID NOT RECORD: THE GUARD TURNS A LAZY CHECK
+// INTO AN EAGER ONE. An unconditional prepend resolved `civitai` whenever the
+// file existed at COMMAND-LOOKUP time; the entry now exists only if the file was
+// there at SHELL-START time. A directory that materialises later — an autofs/NFS
+// mount, a container volume, or the window during `npm install -g @civitai/cli`
+// while a shell is sourcing — therefore gets no entry for that shell's whole
+// lifetime, where before it began working as soon as the file appeared. The trade
+// is deliberate; it is listed under decision 39's WHAT IT DOES NOT REACH so the
+// cost is recorded alongside the benefit.
 //
 // It is `-x` on the FILE, not `-d` on the directory, because a directory that
 // survives an uninstall with no `civitai` in it buys a PATH entry that can never
@@ -311,18 +361,41 @@ type pathFixTarget struct {
 //	        then read. `~/.profile` is also what `sh`/`dash` login shells read, so
 //	        it is preferred when nothing forces one of the bash-only names.
 //
-// 🔴 WHAT THIS DOES NOT REACH, STATED SO IT IS NOT ASSUMED. `bash -c` (neither
-// login nor interactive) reads NO startup file at all unless `BASH_ENV` is set,
-// so no profile edit can fix that invocation. An interactive non-login bash reads
-// `~/.bashrc` only, so it is NOT reached either — and the Debian/Ubuntu
-// `~/.profile` that sources `~/.bashrc` does not change that, because it points
-// the other way: it makes a LOGIN bash read `.bashrc`, and nothing can make a
-// shell that never reads `.profile` see a PATH edit in `.profile`. Measured on a
-// Debian-shaped fixture: `bash -lc` resolves the CLI, `bash -ic` does not,
-// `bash -c` does not. ⚠ An earlier draft of this comment claimed the inverse
-// ("it is covered when ~/.profile sources .bashrc") — it was wrong in the
-// direction that matters, since it read as coverage. `~/.bashrc` is deliberately
-// not written: both probes cli#665's closing condition names are login shells.
+// 🔴 WHAT THIS DOES NOT REACH, STATED SO IT IS NOT ASSUMED — AND THE MECHANISM,
+// NOT A VERDICT, BECAUSE TWO EARLIER DRAFTS OF THIS PASSAGE WERE BOTH WRONG.
+// `~/.bashrc` is deliberately not written (both probes cli#665's closing
+// condition names are login shells), so a bash that reads only `~/.bashrc` never
+// READS the block. But reading is not the only way a shell gets the PATH entry:
+//
+//	A shell does not have to read the edit — it INHERITS the resulting PATH from
+//	any ancestor process that did. It misses the entry only when NO ancestor in
+//	its chain read a file carrying the block.
+//
+// That is why a GUI terminal, a VS Code integrated terminal and a `bash -ic`
+// agent harness inside a desktop or ssh session normally DO get it: something
+// upstream was a login shell. Measured on this host (bash 5.3.15, Debian-shaped
+// fixture, `env -i`, each arm controlled against the same fixture with the block
+// REMOVED — where all arms are NOTFOUND while `~/.profile` is still read):
+//
+//	bash -lc 'command -v civitai'                    RESOLVES
+//	bash -ic …           from a non-login parent     NOTFOUND
+//	bash -c  …           from a non-login parent     NOTFOUND
+//	bash -lc "bash -ic 'command -v civitai'"         RESOLVES
+//	bash -lc "bash -c  'command -v civitai'"         RESOLVES
+//	bash -ic "bash -ic 'command -v civitai'"         NOTFOUND
+//
+// ⚠ THIS IS THE THIRD DRAFT OF THIS SENTENCE. Draft 1 claimed an interactive
+// non-login bash was COVERED because Debian's `~/.profile` sources `~/.bashrc` —
+// inverted (that makes a LOGIN bash read `.bashrc`; it does nothing for a shell
+// that never reads `.profile`), and retracted in cli#777 round 1. Draft 2, the
+// retraction itself, said "nothing can make a shell that never reads `.profile`
+// see a PATH edit in `.profile`" — ALSO false, and refuted by row 4 above.
+// Neither draft was a logic slip; both reached for a confident universal. So:
+// the scope of what is claimed here is the six probes listed, on one host, with
+// one bash. No universal is asserted in either direction, and the last two rows
+// of the table are why — the same `bash -ic` invocation lands on opposite sides
+// depending only on its ancestry.
+//
 // And a `.zshrc` that ASSIGNS PATH wholesale rather than prepending to it will
 // discard what `.zshenv` added — nothing written here can prevent that, and the
 // block being idempotent is what makes re-running after such an edit cheap.

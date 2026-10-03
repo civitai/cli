@@ -6,9 +6,28 @@ thing in this CLI that writes outside the project directory, and the only thing
 that writes a file the user's login shell executes.
 
 Implementation: `internal/cmd/agent_setup_fixpath.go`. Guards:
-`internal/cmd/agent_setup_fixpath_test.go` (unit and integration) and
-`agent_setup_fix_path_shell_test.go` at the module root (the real binary, real
-shells).
+`internal/cmd/agent_setup_fixpath_test.go` (unit and integration),
+`internal/cmd/agent_setup_fixpath_audit2_test.go` (round 2's F1 guards), and at
+the module root `agent_setup_fix_path_shell_test.go` (the real binary, real login
+shells) plus `agent_setup_fix_path_multishell_test.go` (the portability table).
+
+> ⚠ **PROPOSED, NOT DONE: THIS FILE IS NOW MOSTLY AN AUDIT LOG, AND THE DECISION
+> IT RECORDS IS A MINORITY OF IT.** 338 → 458 → **657** lines (20,416 → 29,576 →
+> **43,007** bytes) over two audit rounds, +45% each time, and every byte of that
+> growth is this ladder's own record rather than anything about `--fix-path`. The
+> sections a reader needs in order to *change the feature safely* are the top
+> through WHAT IT DOES NOT REACH, plus the flag's contract — roughly the first
+> 340 lines. The three per-round findings-and-mutants sections are **provenance**:
+> they answer "was this verified, and how" and are read approximately never by
+> someone editing the code. **Suggested split (a separate change — round 2
+> deliberately did not perform it):** move `### Mutants…`, `### Round 1 of
+> cli#777…` and `### Round 2 of cli#777…` into
+> `claudedocs/decisions/39-agent-setup-fix-path-verification.md`, leave a
+> one-line pointer, and keep the RETRACTIONS inline where they are — the
+> retracted-claim notes are the part that stops a future draft re-deriving a dead
+> sentence (F2 is on its **third** draft precisely because that history was
+> legible). That lands the decision record near its original size without losing
+> anything a reader of this file was actually looking for.
 
 ## The defect, measured
 
@@ -109,17 +128,53 @@ shell can resolve the word `civitai`; a directory holding `civitai-0.1.2` cannot
 deliver that, so a block written for it would be a confident false fix in a file
 the user then trusts. The refusal names what it found and exits non-zero.
 
-🔴 **AND SO IS A DIRECTORY HOLDING THE PATH LIST SEPARATOR.** That is the one
-character a PATH entry structurally cannot contain: PATH is split on it, so the
-entry does not become a bad directory, it becomes TWO directories that do not
-exist. The refusal used to cover `\n` and `\r` only, and cli#777 round 1 measured
-the gap end to end — a binary at `…/a:b/civitai` wrote both startup files,
-reported `Wrote` for each, printed `Open a NEW shell`, emitted `ok: true` and
-exited 0, while a fresh `bash -lc 'command -v civitai'` with that block sourced
-still answered nothing. It is `os.PathListSeparator` rather than a hardcoded `:`
-so that a Windows drive-letter colon is not refused: a Windows run is unsupported
-for other reasons (the block is POSIX `sh`), and turning every Windows invocation
-into a hard refusal is a behaviour change that finding did not ask for.
+🔴 **AND SO IS A DIRECTORY HOLDING A COLON.** That is the one character a PATH
+entry structurally cannot contain: POSIX `sh` splits PATH on it, so the entry
+does not become a bad directory, it becomes TWO directories that do not exist.
+The refusal used to cover `\n` and `\r` only, and cli#777 round 1 measured the gap
+end to end — a binary at `…/a:b/civitai` wrote both startup files, reported
+`Wrote` for each, printed `Open a NEW shell`, emitted `ok: true` and exited 0,
+while a fresh `bash -lc 'command -v civitai'` with that block sourced still
+answered nothing.
+
+🔴 **THE CHARACTER SET IS A PROPERTY OF THE EMITTED SHELL, NOT OF THE COMPILING
+PLATFORM — AND ROUND 1 GOT THAT WRONG.** Round 1 refused
+`"\n\r" + string(os.PathListSeparator)`. That constant is `';'` on windows
+(`$GOROOT/src/os/path_windows.go`), so the predicate asked what the *compiling
+OS* splits on when the only consumer is the *emitted block*, which is POSIX `sh`
+and splits on `:` on every platform it runs on. It was wrong in **both**
+directions:
+
+| directory | pre-fix verdict on a windows build | correct verdict |
+|---|---|---|
+| `C:\Users\me\AppData\Roaming\npm\node_modules\@civitai\cli\lib\binaries` | **accepted** — both startup files written with `civitai_cli_dir='C:\Users\…'`, `ok:true`, exit 0, "Open a NEW shell" | refused |
+| `/home/u/a;b` | **refused** | accepted — POSIX `sh` does not split on `;` |
+
+The first row is the confident false fix this refusal exists to close, one
+platform over: `\` is not a separator to the `sh` that reads the file, so the
+block can never make the name resolve. Round 2 therefore refuses `:`
+unconditionally (`pathEntryRefusedChars`), and **refusing every Windows-style
+path is the honest outcome** — exactly what the base-name refusal above already
+does for the same reason, and better than a file the user then trusts.
+
+🔴 **THERE IS DELIBERATELY NO `runtime.GOOS != "windows"` GATE.** It was offered
+in round 2's audit as the alternative and it is **unsafe**: Git Bash / MSYS is
+`GOOS=windows` running a POSIX bash that genuinely reads `~/.bash_profile`, so
+gating would break a real population of users for whom this feature works. The
+flag stays registered on all platforms. `TestTheRefusedCharacterSetIsNotDerived`
+`FromTheCompilingPlatform` pins both halves — no platform-derived character set,
+and `runtime.GOOS` referenced exactly once in that file (the `civitai.exe` base
+name).
+
+⚠ **Only one of round 2's three guards here can be red on a POSIX host, and the
+reason is worth keeping.** On linux/amd64 `os.PathListSeparator` already *is*
+`':'`, so the pre-fix and post-fix predicates are the same three bytes and the
+defect is structurally invisible to any behavioural test compiled here. The
+regression guard is therefore the **structural** one (it reads what the predicate
+is derived from); the two behavioural guards are **invariant** guards on this
+host and regression coverage only on a windows build. Measured: structural guard
+RED at `667c59c`, the two behavioural guards GREEN at `667c59c`, all three green
+at round 2's HEAD.
 
 ### Which startup files, and why those
 
@@ -176,18 +231,51 @@ there. Decision 36's scoping clause records the same boundary from its side.
 
 - **`bash -c`** — neither login nor interactive — reads **no** startup file at all
   unless `BASH_ENV` is set. No profile edit can fix that invocation.
-- An **interactive non-login bash** reads `~/.bashrc` only, and is therefore **NOT
-  reached**. ⚠ **This entry asserted the opposite until cli#777 round 1** — "it is
-  covered when `~/.profile` sources `.bashrc` (Debian and Ubuntu ship exactly
-  that)" — and that is backwards. Debian's `~/.profile` sourcing `~/.bashrc` makes
-  a **login** bash read `.bashrc`; it cannot make a shell that never reads
-  `.profile` see a PATH edit *in* `.profile`. Measured on a Debian-shaped fixture:
-  `bash -lc` resolves the CLI, `bash -ic` does not, `bash -c` does not. The
-  feature is not broken by this — both probes the closing condition names are
-  login shells — but the sentence was, in the direction that matters, because it
-  read as coverage. `~/.bashrc` is still deliberately NOT written: the two probes
-  are satisfied without it, and every extra file is another line of someone's
-  login path this CLI owns.
+- An **interactive non-login bash** reads `~/.bashrc` only, so it never **reads**
+  the block — `~/.bashrc` is deliberately NOT written (the two probes the closing
+  condition names are login shells, and every extra file is another line of
+  someone's login path this CLI owns). 🔴 **BUT READING IS NOT THE ONLY WAY A
+  SHELL GETS THE ENTRY, AND THIS IS THE THIRD DRAFT OF THIS BULLET. The
+  mechanism, stated once, instead of a verdict:**
+
+  > A shell does not have to **read** the edit — it **inherits** the resulting
+  > PATH from any ancestor process that did. It misses the entry only when **no
+  > ancestor in its chain** read a file carrying the block.
+
+  That is how every GUI terminal, VS Code integrated terminal and `bash -ic`
+  agent harness inside a desktop or ssh session normally *does* get it: something
+  upstream was a login shell.
+
+  **Measured on this host** — bash 5.3.15, Debian-shaped fixture (`~/.profile`
+  carries the block and sources `~/.bashrc`; `~/.bashrc` carries nothing), under
+  `env -i`, each arm controlled against the same fixture with the block REMOVED,
+  where every arm is NOTFOUND while `~/.profile` is still demonstrably read:
+
+  | probe | result |
+  |---|---|
+  | `bash -lc 'command -v civitai'` | RESOLVES |
+  | `bash -ic …` from a non-login parent | NOTFOUND |
+  | `bash -c …` from a non-login parent | NOTFOUND |
+  | **`bash -lc "bash -ic 'command -v civitai'"`** | **RESOLVES** |
+  | `bash -lc "bash -c 'command -v civitai'"` | RESOLVES |
+  | `bash -ic "bash -ic 'command -v civitai'"` | NOTFOUND |
+
+  ⚠ **THE TWO DEAD DRAFTS, NAMED SO A FOURTH IS NOT DERIVED.**
+  **Draft 1** (shipped, retracted in cli#777 round 1) claimed the case was
+  *covered* because Debian's `~/.profile` sources `~/.bashrc` — inverted: that
+  makes a **login** bash read `.bashrc` and does nothing for a shell that never
+  reads `.profile`. It was wrong in the direction that matters, because it read
+  as coverage.
+  **Draft 2** (the round-1 retraction, replaced in round 2) said *"nothing can
+  make a shell that never reads `.profile` see a PATH edit in `.profile`"* —
+  **also false**, and refuted by row 4 of the table above.
+  Neither was a logic slip; both reached for a **confident universal**, which is
+  the move to stop making here.
+  🔴 **So no universal is claimed in either direction. The scope is the six
+  probes listed, on one host, with one bash** — and rows 2 and 6 against row 4
+  are why: the *same* `bash -ic` invocation lands on opposite sides depending only
+  on its ancestry, so "is an interactive non-login bash reached?" has no
+  context-free answer. "I could not establish a universal" is the finding.
 - A **`.zshrc` that ASSIGNS PATH wholesale** rather than prepending will discard
   what `.zshenv` added. Nothing written here can prevent that; the block being
   idempotent is what makes re-running after such an edit cheap.
@@ -205,6 +293,18 @@ there. Decision 36's scoping clause records the same boundary from its side.
   directory that is still on disk keeps winning). Re-running `--fix-path` from the
   new install is the full repair, and the block is marker-guarded so that is one
   command. Nothing detects the stale state for the user.
+- 🔴 **A DIRECTORY THAT APPEARS AFTER THE SHELL STARTS — the `[ -x … ]` guard's
+  converse, and round 1 recorded only the benefit.** The guard turns a LAZY check
+  into an EAGER one. Before it, the directory was prepended unconditionally and
+  `civitai` resolved whenever the file existed at **command-lookup** time; now the
+  PATH entry exists only if the file was there at **shell-start** time. So a
+  directory that materialises later — an autofs or NFS mount, a container volume,
+  or simply the window during `npm install -g @civitai/cli` while a shell is
+  sourcing — gets **no entry for that shell's whole lifetime**, where it
+  previously began working the moment the file appeared. The trade is deliberate
+  (it is what makes the pin self-expiring on uninstall and on a moved prefix) and
+  the remedy is the same one command, but it is a real loss and it is now
+  written down.
 - **A startup file saved wholly in CRLF** is already degraded for a POSIX shell
   before this command touches it (every blank line in it is a CR-only line, which
   bash answers `$'\r': command not found` for). The no-clobber rule preserves
@@ -362,10 +462,27 @@ patterns were used (one on the MECHANISM, `profile … sources … bashrc` in ei
 order; one on the COVERAGE wording plus the distro names that were its evidence),
 and both were first shown to HIT a positive-control file carrying the retracted
 sentence in both shapes — including in the WRAPPED form, since a bare zero from a
-line-based grep would have been worthless. Run over the BASE tree (`166ffd4`,
-745 files) it found exactly the two sites, and nothing else; run over the fixed
-tree (746 files) the only hits are the three corrected retraction passages
-(this file, the Go comment, and the README bullet).
+line-based grep would have been worthless. Run over the BASE tree (`166ffd4`) it
+found exactly the two sites, and nothing else; run over the fixed tree the only
+hits are the three corrected retraction passages (this file, the Go comment, and
+the README bullet).
+
+⚠ **THE FILE COUNTS THIS PARAGRAPH USED TO CARRY ("745 files" / "746 files") RESTED
+ON AN UNSTATED CORPUS DEFINITION AND ARE NOT REPRODUCIBLE.** Re-measured in round
+2, the two refs count as follows, and no filter yields 745/746:
+
+| corpus definition | `166ffd4` | `667c59c` | delta |
+|---|---|---|---|
+| every tracked path (`git ls-tree -r --name-only`) | 830 | 831 | **+1** |
+| `.go .md .yml .yaml .json .sh .ts .js .txt` | 744 | 745 | **+1** |
+| `.go .md` only | 651 | 652 | **+1** |
+
+**So quote the DELTA, which is corpus-independent: exactly one file, and it is
+`internal/cmd/agent_setup_fixpath_audit1_test.go`** — round 1's own new test file
+(`git diff --name-status 166ffd4 667c59c | grep '^A'`). Any absolute total here
+must name the filter that produced it, or it rots into a number nobody can check:
+the original pair is off by one from the nearest plausible filter and it is no
+longer possible to say which corpus it meant.
 
 🔴 **P1 WAS TOO NARROW ON ITS FIRST RUN AND THE SWEEP ITSELF HAD TO BE WIDENED.**
 It required whitespace between "sources" and the path, so a backtick-wrapped
@@ -394,6 +511,53 @@ replaced the expression; both mutants are now killed by the behavioural half.
 That is the whole value of running the sweep: the guard read as coverage and
 provided none for one shape.
 
+### Round 2 of cli#777 — four findings
+
+Base `667c59c`. F2, F3 and F4(b) are prose; F1 is code plus guards and F4(a)
+commits the multi-shell harness.
+
+| finding | what changed | guard | red at `667c59c` | green at HEAD |
+|---|---|---|---|---|
+| F1 predicate | refuse `:` unconditionally (`pathEntryRefusedChars`), drop `os.PathListSeparator` | `TestTheRefusedCharacterSetIsNotDerivedFromTheCompilingPlatform` | **yes** — `agent_setup_fixpath.go derives a character set from os.PathListSeparator in CODE` | yes |
+| F1 contract | `:` refused, `;` accepted, `\n`/`\r` refused | `TestTheRefusedCharacterSetIsExactlyNewlineReturnAndColon`, `TestFixPathRefusesTheColonAndAcceptsTheSemicolonOnPOSIX` | **no — INVARIANT guards here** (see below) | yes |
+| F1 prose | the Windows posture, stated once in the file header and cited from both passages | prose | n/a | n/a |
+| F2 | the inheritance mechanism, at all three sites | prose + the six measured probes | n/a | n/a |
+| F3 | the `[ -x … ]` guard's eager/lazy converse | prose | n/a | n/a |
+| F4(a) | the multi-shell harness, committed with its control | `TestTheEmittedBlockIsPortableAcrossPOSIXShells` | n/a — new coverage, not a regression | yes (100 assertions, 5 shells) |
+| F4(b) | the sweep's corpus figures replaced by a delta | prose | n/a | n/a |
+
+🔴 **ONLY ONE F1 GUARD CAN BE RED ON A POSIX HOST, AND NOT SAYING SO WOULD BE THE
+SAME CLASS OF DEFECT F1 IS ABOUT.** `os.PathListSeparator` already *is* `':'` on
+linux/amd64, so the pre-fix and post-fix predicates are the **same three bytes**
+here: `:` was already refused and `;` already accepted, before and after. No
+behavioural test compiled for this host can see the defect. The regression guard
+is therefore the **structural** one, which reads what the predicate is derived
+from; the two behavioural guards are **invariant** guards on this host and
+regression coverage only on a windows build. ⚠ The Windows consequences that
+motivated the finding were **not reproduced** — no Windows host was available.
+
+Every test in `internal/cmd/agent_setup_fixpath_audit2_test.go` deliberately
+references **no symbol the fix introduces**, so the whole file compiles at
+`667c59c` and the matrix above is a test shown to fail rather than a build error.
+
+| # | mutation (narrowest expression) | verdict |
+|---|---|---|
+| M25 | the colon is dropped from `pathEntryRefusedChars` | KILLED — `cliBinDirForPATH accepted a directory holding ":"` (and round 1's `cliBinDirForPATH accepted "…/a:b"`) |
+| M26 | a semicolon is ADDED to `pathEntryRefusedChars` | KILLED — `cliBinDirForPATH refused a directory holding ";"` |
+| M27 | `pathEntrySplitChar` is the windows separator `";"` | KILLED — both arms above fire |
+| M28 | the set is re-keyed to `string(os.PathListSeparator)` (the exact pre-fix derivation) | KILLED — `derives a character set from os.PathListSeparator in CODE` |
+| M29 | a `runtime.GOOS != "windows"` gate is added to the refusal | KILLED — `references runtime.GOOS 2 time(s) in code, want exactly 1` |
+| M30 | the block's `case` arm can never match (dedupe inert) | KILLED — `P2: … on PATH 2 time(s) after TWO sources` in **all 5** shells; **no P1/P3/P4 failure**, so the mutation is isolated and the block still parses |
+| M31 | the `[ -x … ]` guard removed — `if` **and** `fi` together | KILLED — exactly **25** `P4: … while that directory holds no civitai` (5 shells × 5 shapes) and **zero** P1/P2/P3, which is what proves the uninstall arm is REACHABLE in every shell rather than merely asserted |
+| CONTROL | no mutation | GREEN |
+
+🔴 **M31 IS THE ONE THAT MATTERED, AND IT IS M20'S LESSON APPLIED RATHER THAN
+RE-LEARNED.** Round 1's first M20 deleted only the `if` line, leaving an orphan
+`fi`, so every shell rejected the block with a syntax error — a mutant that does
+not compile. M31 removes the `if`/`fi` pair, so the block parses and exactly one
+property moves. The 25-and-only-25 count is the isolation evidence: a mutant that
+broke the block wholesale would fire P1 and P3 too.
+
 ## 🔴 WHAT IS NOT ESTABLISHED
 
 - **This does not close cli#665.** Its closing condition is graded by
@@ -406,27 +570,81 @@ provided none for one shape.
   `civitai/civitai-developer-docs`, and changing it before a CLI release ships
   this flag would tell agents to run a flag the published CLI does not have. That
   sequencing is deliberate and is somebody's next step, not this change's.
-- **Only this host's shells were exercised** — but after cli#777 round 1 that is
-  five of them, against the block the REAL binary writes rather than a Go string
-  literal: **bash 5.3.15, dash 0.5.13.5, zsh 5.9.2, mksh 59c and busybox ash
-  1.37.0**, over five directory shapes (plain, space, `'`, `*`/`[`, `$HOME`), for
-  four properties each — one source puts the directory on PATH once; two sources
-  still leave one; `set -eu` is clean with empty stderr; and with the binary moved
-  away the block adds nothing. 109 assertions, 0 failures. 🔴 **The harness was
-  validated first**: an unguarded control block (plain prepend, no `case`, no
-  `[ -x ]`) was confirmed to score 1 / 2 / 1 on those arms in every one of the
-  five shells, because a first draft could not find the shells at all under
-  `env -i` and scored the uninstall arm PASS for every shell it never ran.
-  `~/.zshenv` was observed to survive `/etc/zprofile` on this host, which
-  is NOT a general claim — a distribution whose system `zprofile` assigns PATH
-  wholesale would defeat it, and nothing detects that. The test SKIPS loudly when
-  a shell is absent and never passes on an unmeasured probe.
+- **Only this host's shells were exercised** — five of them, against the block the
+  REAL binary writes rather than a Go string literal. 🔴 **THE HARNESS IS NOW
+  COMMITTED, AND THAT REPLACED A QUOTED TOTAL WITH A DERIVABLE ONE.**
+  `agent_setup_fix_path_multishell_test.go` (module root) builds `./cmd/civitai`,
+  copies it into a directory of each shape, runs `--fix-path` from there against a
+  throwaway HOME, and extracts the managed block out of the `~/.zshenv` it wrote.
+  It prints its own totals, so **read the run, do not quote this paragraph**:
+
+  ```bash
+  go test . -run TheEmittedBlockIsPortable -v                       # this host's shells
+  nix-shell -p dash mksh busybox coreutils \
+    --run 'go test . -run TheEmittedBlockIsPortable -v'             # all five
+  ```
+
+  ⚠ **Round 1 ran this matrix from an UNCOMMITTED harness and this bullet quoted
+  "109 assertions, 0 failures". That figure was not re-derivable and did not
+  follow from its own dimensions** — 5 shells × 5 directory shapes × 4 properties
+  is **100**, 109 is prime, and nothing accounted for the other 9. The committed
+  harness reports **100 assertions, 0 failures** over bash 5.3.15, dash 0.5.13.5,
+  zsh 5.9.2, mksh 59c and busybox ash 1.37.0 — five directory shapes (plain,
+  space, `'`, `*`/`[`, `$HOME`) × four properties: one source puts the directory
+  on PATH once; two sources still leave one; `set -eu` is clean with **empty
+  stderr**; and with the binary moved away the block adds nothing. On this host
+  bare (no `nix-shell`) it reports **40 assertions over 2 shells, and names dash,
+  mksh and busybox ash in a SKIPPED line** — a run that measured two shells
+  cannot be read as a run that measured five.
+
+  🔴 **THE UNGUARDED CONTROL BLOCK IS PART OF THE COMMITTED TEST, AND A CONTROL
+  FAILURE IS A FAILURE, NOT A SKIP.** Before any verdict, each shell sources a
+  plain unconditional prepend — no `case`, no `[ -x … ]` — which must score
+  **1 / 2 / 1** on the three behavioural arms. It is the negative control for all
+  three at once: a control that does not duplicate cannot show that the `case` arm
+  is what prevents a duplicate, and a control that also adds nothing cannot show
+  that `[ -x … ]` is what removes the entry — which is exactly how round 1's first
+  harness scored the uninstall arm PASS for every shell it never ran.
+
+  🔴 **AND THE CONTROL IMMEDIATELY EARNED ITS KEEP: mksh COULD NOT BE MEASURED AT
+  ALL ON THE FIRST COMMITTED RUN.** `printf %s "$PATH"` is how every probe reads
+  its answer, and it is a builtin in bash, dash, zsh and busybox ash but **not in
+  mksh**, which execs `/usr/bin/printf`. On NixOS `/usr/bin` and `/bin` hold
+  almost nothing, so the harness's deliberately minimal PATH left mksh with no
+  `printf` and it exited 127 (`printf: inaccessible or not found`). That is a
+  defect in the harness, not in the block — and it surfaced as the **control**
+  failing, the one thing that cannot be mistaken for a finding. The harness now
+  resolves `printf` and adds its directory. ⚠ **Consequence for the record: round
+  1's claim to have measured mksh is NOT reproducible from anything committed, and
+  round 2 could not confirm it.** Treat the mksh row as first measured here.
+
+  **The harness was also shown to go RED on real defects, isolated to one arm**
+  (round 2 mutants M30/M31 below), which is the positive control the arm count
+  alone cannot give.
+
+  `~/.zshenv` was observed to survive `/etc/zprofile` on this host, which is NOT a
+  general claim — a distribution whose system `zprofile` assigns PATH wholesale
+  would defeat it, and nothing detects that.
 - **macOS was not exercised.** `/etc/zprofile` there runs `path_helper`, which
   rebuilds PATH from `/etc/paths` and `/etc/paths.d` and appends surviving
   entries; the expectation is that the entry survives in a later position, which
   still resolves the name. Expectation, not measurement.
-- **Windows is skipped, not supported.** The two probes are POSIX login shells,
-  and no PowerShell profile is written.
+- 🔴 **WINDOWS: THE TESTS SKIP IT, THE COMMAND DOES NOT REFUSE IT, AND THE
+  RUNTIME SHAPE IS UNVERIFIED.** These are three different claims and an earlier
+  draft of this line collapsed them into one. What is true: the two probes above
+  are POSIX login shells and no PowerShell profile is written, so there is **no
+  test coverage** on Windows. What does **not** follow — and what a Go comment
+  cited *this very bullet* to assert until round 2 — is that a Windows run is
+  "unsupported either way". The flag is registered on every platform, nothing
+  gates it on GOOS, and `.goreleaser.yaml` builds windows amd64 and arm64: a
+  Windows run reaches the code, writes `~/.zshenv` and a bash login file, and
+  emits POSIX `sh`. It is useful there **to a POSIX shell** — Git Bash / MSYS is
+  `GOOS=windows` running a bash that really does read `~/.bash_profile`, and WSL
+  is a Linux build — and useless to `cmd.exe` or PowerShell, for which nothing is
+  written and nothing is claimed. ⚠ **No Windows host was available to either the
+  author or the auditor, so every sentence here about Windows is derived from the
+  build matrix and from `os`/`runtime` constants, not from an executed run. Do
+  not promote it to a measurement.**
 
 ### One property this feature INHERITS rather than states
 

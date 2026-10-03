@@ -409,12 +409,19 @@ exists — which is why one file cannot do it.
   after an uninstall — or an install into a *different* prefix, which a node or
   `--prefix` switch produces — a bare prepend would keep putting the old
   directory first and you would go on running the old build. The test makes the
-  entry disappear with the file.
-- **It does not reach `bash -c`**, which reads no startup file at all unless
-  `BASH_ENV` is set, nor an **interactive non-login bash**, which reads
-  `~/.bashrc` only. A Debian/Ubuntu `~/.profile` that sources `~/.bashrc` does not
-  change that: it points the other way, making a *login* bash read `.bashrc`.
-  Measured: `bash -lc` resolves the CLI, `bash -ic` and `bash -c` do not.
+  entry disappear with the file. The trade: the check runs at **shell start**, not
+  at command lookup, so a directory that appears *later* (a late-mounting volume,
+  or an install that lands while a shell is sourcing) gets no entry until the next
+  shell.
+- **A shell that reads neither file still usually gets it — by inheritance.**
+  `~/.bashrc` is not written, so `bash -c` (which reads no startup file unless
+  `BASH_ENV` is set) and an interactive non-login bash never *read* the block.
+  They still *inherit* the PATH from any ancestor process that did, which is how
+  a GUI terminal, a VS Code terminal or an agent harness inside a login session
+  normally resolves `civitai`. The entry is missing only when **no ancestor in
+  the chain** read a file carrying the block. Measured with bash 5.3.15:
+  `bash -lc` resolves it; a bare `bash -ic` or `bash -c` under a non-login parent
+  does not; `bash -lc "bash -ic …"` **does**.
 - **`--check --fix-path` is refused** (exit 2): `--check` writes nothing by
   contract. Use `--fix-path --dry-run` to see what would happen.
 
