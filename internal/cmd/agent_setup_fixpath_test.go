@@ -35,19 +35,35 @@ import (
 // ran THIS binary rather than some civitai on the developer's own PATH.
 func fakeCLIBinDir(t *testing.T) (dir, marker string) {
 	t.Helper()
-	dir = t.TempDir()
-	marker = "civitai 0.0.0-fixpath-fixture"
+	dir, marker = fakeCLIBinDirAt(t, t.TempDir())
 	exe := filepath.Join(dir, cliBinaryBaseName())
+	prev := cliExecutable
+	cliExecutable = func() (string, error) { return exe, nil }
+	t.Cleanup(func() { cliExecutable = prev })
+	return dir, marker
+}
+
+// fakeCLIBinDirAt is the half of fakeCLIBinDir that does not touch the seam: it
+// makes dir (and any parent) and puts a real executable named exactly
+// cliBinaryBaseName() in it.
+//
+// 🔴 IT EXISTS BECAUSE THE EMITTED BLOCK NOW ASKS WHETHER THAT FILE IS THERE.
+// Since cli#777 round 1 the block is wrapped in `[ -x "$civitai_cli_dir/civitai" ]`,
+// so any test that SOURCES a block for a made-up directory measures the guard
+// refusing rather than the behaviour it meant to drive — and reports green.
+func fakeCLIBinDirAt(t *testing.T, dir string) (string, string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := "civitai 0.0.0-fixpath-fixture"
 	script := "#!/bin/sh\necho '" + marker + "'\n"
 	if runtime.GOOS == "windows" {
 		script = "@echo " + marker + "\r\n"
 	}
-	if err := os.WriteFile(exe, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, cliBinaryBaseName()), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	prev := cliExecutable
-	cliExecutable = func() (string, error) { return exe, nil }
-	t.Cleanup(func() { cliExecutable = prev })
 	return dir, marker
 }
 
@@ -255,8 +271,14 @@ func countPathEntries(pathVar, dir string) int {
 // It then checks the BEHAVIOUR with a real `sh`, because a structural check
 // type-checks past a conditional that is spelled right and tests the wrong
 // thing: sourcing the block twice must leave the directory on PATH exactly once.
+//
+// 🔴 THE FIXTURE DIRECTORY MUST REALLY HOLD AN EXECUTABLE `civitai`. Since
+// cli#777 round 1 the block also asks `[ -x "$civitai_cli_dir/civitai" ]`, so a
+// made-up `/opt/some/bin` would make the behavioural half below assert that
+// nothing is added to PATH — green for the wrong reason, and blind to the `case`
+// guard this test exists for.
 func TestTheEmittedBlockDecidesAtShellStartupNotAtWriteTime(t *testing.T) {
-	const dir = "/opt/some/bin"
+	dir, _ := fakeCLIBinDirAt(t, t.TempDir())
 	block := pathFixBlock(dir)
 	for _, want := range []string{`case ":$PATH:" in`, `*":$civitai_cli_dir:"*)`, `PATH="$civitai_cli_dir:$PATH"`} {
 		if !strings.Contains(block, want) {
@@ -299,13 +321,19 @@ func TestPathFixBlockSurvivesShellMetacharactersInTheDirectory(t *testing.T) {
 	if err != nil {
 		t.Skipf("NOT A PASS: no `sh` on PATH, so the quoting was not measured: %v", err)
 	}
-	for _, dir := range []string{
-		"/opt/My Apps/bin",
-		"/opt/weird'quote/bin",
-		"/opt/glob*[a-z]/bin",
-		`/opt/dollar$HOME/bin`,
+	// 🔴 THESE ARE REAL DIRECTORIES, CREATED UNDER t.TempDir(), AND EACH HOLDS AN
+	// EXECUTABLE `civitai`. They were literal `/opt/...` strings until cli#777
+	// round 1 added the `[ -x … ]` guard to the block — against a path that does
+	// not exist the guard is false, so every assertion below would have been
+	// measuring a block that deliberately does nothing.
+	for _, name := range []string{
+		"My Apps",
+		"weird'quote",
+		"glob*[a-z]",
+		`dollar$HOME`,
 	} {
-		t.Run(dir, func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
+			dir, _ := fakeCLIBinDirAt(t, filepath.Join(t.TempDir(), name, "bin"))
 			f := filepath.Join(t.TempDir(), "block.sh")
 			if werr := os.WriteFile(f, []byte(pathFixBlock(dir)), 0o644); werr != nil {
 				t.Fatal(werr)

@@ -404,8 +404,17 @@ exists — which is why one file cannot do it.
 - **It runs no shell and probes nothing.** The "is it already on PATH?" test is a
   POSIX `case` statement your shell evaluates at startup, so a redundant block is
   harmless and nothing machine-specific is written into `AGENTS.md`.
+- **The block checks that the CLI is still there**, with a POSIX
+  `[ -x "$dir/civitai" ]` around the `case`. It pins one absolute directory, so
+  after an uninstall — or an install into a *different* prefix, which a node or
+  `--prefix` switch produces — a bare prepend would keep putting the old
+  directory first and you would go on running the old build. The test makes the
+  entry disappear with the file.
 - **It does not reach `bash -c`**, which reads no startup file at all unless
-  `BASH_ENV` is set.
+  `BASH_ENV` is set, nor an **interactive non-login bash**, which reads
+  `~/.bashrc` only. A Debian/Ubuntu `~/.profile` that sources `~/.bashrc` does not
+  change that: it points the other way, making a *login* bash read `.bashrc`.
+  Measured: `bash -lc` resolves the CLI, `bash -ic` and `bash -c` do not.
 - **`--check --fix-path` is refused** (exit 2): `--check` writes nothing by
   contract. Use `--fix-path --dry-run` to see what would happen.
 

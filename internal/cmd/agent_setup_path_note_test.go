@@ -36,7 +36,19 @@ func TestEveryBlockTellsYouWhatToDoWhenTheCLIIsNotOnPATH(t *testing.T) {
 			t.Fatalf("rendering for kind %q: %v", shape.Kind, err)
 		}
 		// The symptom a reader actually sees, and the action that fixes it.
-		for _, want := range []string{"command not found", "command -v civitai", "shell profile"} {
+		//
+		// 🔴 `--fix-path` IS IN THAT LIST, AND ITS ABSENCE WAS ROUND 1'S R7. This
+		// block is the DURABLE artefact cli#665 exists to repair: the file a future
+		// agent session reads when `civitai` does not resolve. It described the hand
+		// edit and never named the flag that performs it — in a file written by the
+		// same binary that owns the flag, so decision 39's sequencing argument (a
+		// hosted prompt can skew against a published CLI) does not reach here. A
+		// flag NAME is project-independent, so it does not re-open decision 36's
+		// per-machine render axis.
+		for _, want := range []string{
+			"command not found", "command -v civitai", "shell profile",
+			"civitai agent-setup --fix-path",
+		} {
 			if !strings.Contains(block, want) {
 				t.Errorf("the %q block does not carry %q. Every row in it starts with `civitai`, "+
 					"so a session whose shell cannot resolve that name has no way, from this file, "+

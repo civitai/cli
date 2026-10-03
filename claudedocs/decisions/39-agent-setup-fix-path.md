@@ -67,12 +67,20 @@ So this feature pays for its correctness differently:
 
   ```sh
   civitai_cli_dir='/path/to/bin'
-  case ":$PATH:" in
-    *":$civitai_cli_dir:"*) ;;
-    *) PATH="$civitai_cli_dir:$PATH" ; export PATH ;;
-  esac
+  if [ -x "$civitai_cli_dir/civitai" ]; then
+    case ":$PATH:" in
+      *":$civitai_cli_dir:"*) ;;
+      *) PATH="$civitai_cli_dir:$PATH" ; export PATH ;;
+    esac
+  fi
   unset civitai_cli_dir
   ```
+
+  The `[ -x … ]` wrapper arrived in cli#777 round 1; see the stale-prefix entry
+  under WHAT IT DOES NOT REACH for what it buys and what it does not. It is `-x`
+  on the FILE rather than `-d` on the directory because a surviving directory with
+  no `civitai` in it would buy a PATH entry that can never resolve the name — the
+  same thing the base-name refusal rejects at write time.
 
 - **A redundant block is harmless**, which is exactly what makes the detection
   unnecessary. Running `--fix-path` on a machine where the CLI was already
@@ -100,6 +108,18 @@ itself named `civitai`, so putting its directory on PATH makes the name resolve
 shell can resolve the word `civitai`; a directory holding `civitai-0.1.2` cannot
 deliver that, so a block written for it would be a confident false fix in a file
 the user then trusts. The refusal names what it found and exits non-zero.
+
+🔴 **AND SO IS A DIRECTORY HOLDING THE PATH LIST SEPARATOR.** That is the one
+character a PATH entry structurally cannot contain: PATH is split on it, so the
+entry does not become a bad directory, it becomes TWO directories that do not
+exist. The refusal used to cover `\n` and `\r` only, and cli#777 round 1 measured
+the gap end to end — a binary at `…/a:b/civitai` wrote both startup files,
+reported `Wrote` for each, printed `Open a NEW shell`, emitted `ok: true` and
+exited 0, while a fresh `bash -lc 'command -v civitai'` with that block sourced
+still answered nothing. It is `os.PathListSeparator` rather than a hardcoded `:`
+so that a Windows drive-letter colon is not refused: a Windows run is unsupported
+for other reasons (the block is POSIX `sh`), and turning every Windows invocation
+into a hard refusal is a behaviour change that finding did not ask for.
 
 ### Which startup files, and why those
 
@@ -156,14 +176,41 @@ there. Decision 36's scoping clause records the same boundary from its side.
 
 - **`bash -c`** — neither login nor interactive — reads **no** startup file at all
   unless `BASH_ENV` is set. No profile edit can fix that invocation.
-- An **interactive non-login bash** reads `~/.bashrc` only. It is covered when
-  `~/.profile` sources `.bashrc` (Debian and Ubuntu ship exactly that) and not
-  otherwise. `~/.bashrc` is deliberately NOT written: the two probes the closing
-  condition names are both satisfied without it, and every extra file is another
-  line of someone's login path this CLI owns.
+- An **interactive non-login bash** reads `~/.bashrc` only, and is therefore **NOT
+  reached**. ⚠ **This entry asserted the opposite until cli#777 round 1** — "it is
+  covered when `~/.profile` sources `.bashrc` (Debian and Ubuntu ship exactly
+  that)" — and that is backwards. Debian's `~/.profile` sourcing `~/.bashrc` makes
+  a **login** bash read `.bashrc`; it cannot make a shell that never reads
+  `.profile` see a PATH edit *in* `.profile`. Measured on a Debian-shaped fixture:
+  `bash -lc` resolves the CLI, `bash -ic` does not, `bash -c` does not. The
+  feature is not broken by this — both probes the closing condition names are
+  login shells — but the sentence was, in the direction that matters, because it
+  read as coverage. `~/.bashrc` is still deliberately NOT written: the two probes
+  are satisfied without it, and every extra file is another line of someone's
+  login path this CLI owns.
 - A **`.zshrc` that ASSIGNS PATH wholesale** rather than prepending will discard
   what `.zshenv` added. Nothing written here can prevent that; the block being
   idempotent is what makes re-running after such an edit cheap.
+- **A LATER INSTALL INTO A DIFFERENT PREFIX IS ONLY HALF-REACHED.** The block pins
+  ONE absolute directory and PREPENDS it. Within a single npm prefix that is
+  correct — a re-install lands in the same directory, so updates work. Across
+  prefixes it is not: after an nvm node switch or a `--prefix` change the global
+  install lands elsewhere while the startup file still puts the OLD directory
+  first, so `civitai --version` reports the stale build and `npm update -g` looks
+  inert. ⚠ **The prepend-wins mechanism is certain from the block; how often a
+  user changes prefix was NOT measured — treat the likelihood as reasoned, not
+  measured.** cli#777 round 1 added `[ -x "$civitai_cli_dir/civitai" ]` around the
+  `case`, which closes the UNINSTALL case completely and the moved-prefix case
+  only when the old directory no longer holds the binary (an nvm version
+  directory that is still on disk keeps winning). Re-running `--fix-path` from the
+  new install is the full repair, and the block is marker-guarded so that is one
+  command. Nothing detects the stale state for the user.
+- **A startup file saved wholly in CRLF** is already degraded for a POSIX shell
+  before this command touches it (every blank line in it is a CR-only line, which
+  bash answers `$'\r': command not found` for). The no-clobber rule preserves
+  that. What the replace must not do is ADD such a line out of the old block's own
+  terminator — that was a real defect, fixed in round 1, guarded by
+  `TestReplacingACRLFSavedBlockLeavesNoLoneCarriageReturn`.
 - **`fish`, `csh`, `nushell`** and anything else: not written, not claimed.
 
 ## The flag's contract
@@ -264,6 +311,69 @@ on the machine.
 | M16 | the atomic write replaces a symlink instead of following it | KILLED — `is no longer a symlink` |
 | CONTROL | no mutation | GREEN |
 
+### Round 1 of cli#777 — seven findings, and the mutants for each fix
+
+| # | mutation | verdict |
+|---|---|---|
+| M17 | the footprint's `unchanged` arm returns a write verb | KILLED — `the footprint line for a "unchanged" row is "Wrote …", which does not carry the verb "unchanged"` (and, end to end, `the PATH footprint says "Wrote …" on a repeat run`) |
+| M18 | the footprint's write arms return `unchanged` | KILLED — `the footprint line for a "create" row is "unchanged …", which does not carry the verb "Wrote"` |
+| M19 | the PATH list separator is not refused | KILLED — `cliBinDirForPATH accepted "…/a:b"` |
+| M20 | the block prepends with no `[ -x … ]` test | KILLED — `the block put … on PATH 1 time(s) while that directory holds no "civitai"` |
+| M21 | the test is `-e`, not `-x` | KILLED — `the block prepended …, which holds a NON-executable "civitai"` |
+| M22 | the CRLF tail is not trimmed | KILLED — `the merged file holds a line that is a lone carriage return` |
+| M23 | the home directory is not made absolute | KILLED — `target "junkhome/.zshenv" is not absolute` |
+| M24 | the AGENTS.md block does not name the flag | KILLED — `the "npm" block does not carry "civitai agent-setup --fix-path"` |
+| CONTROL | no mutation | GREEN (22 of 22 in the `--fix-path` selection) |
+
+🔴 **M20'S FIRST FORM DIED FOR THE WRONG REASON AND WAS REBUILT.** Deleting only
+the `if` line left an orphan `fi`, so every shell rejected the block with a
+SYNTAX error — the shell equivalent of a mutant that does not compile. Three
+tests went red on `sourcing the block twice failed: exit status 2`, which says
+nothing about the guard. The rebuilt mutant removes the `if`/`fi` pair and
+re-indents, i.e. it is exactly the block as it shipped before round 1, and then
+one test fails on the behaviour.
+
+⚠ **Two fixture repairs were part of these fixes, and both were green-for-the-
+wrong-reason risks.** `TestTheEmittedBlockDecidesAtShellStartupNotAtWriteTime`
+and `TestPathFixBlockSurvivesShellMetacharactersInTheDirectory` sourced blocks
+built for LITERAL paths (`/opt/some/bin`, `/opt/My Apps/bin`) that do not exist.
+Against the `[ -x … ]` guard those blocks correctly do nothing, so both tests
+would have asserted over a block that never ran. They now build real directories
+under `t.TempDir()` — including the `'`, `*`, `[` and `$HOME` shapes — each
+holding a real executable `civitai` (`fakeCLIBinDirAt`).
+
+The red/green matrix for round 1, all at base `166ffd4`:
+
+| finding | guard | red at 166ffd4 | green at HEAD |
+|---|---|---|---|
+| R1 verb | `TestThePathFootprintVerbIsReadOutOfEveryFilesOwnRow`, `TestASecondFixPathRunDoesNotClaimAWriteItDidNotMake` | yes — `"Wrote /home/u/.s4"`; and `Wrote <path>` on a repeat run whose mtime did not move | yes |
+| R2 separator | `TestFixPathRefusesADirectoryHoldingThePATHSeparator` | yes — `cliBinDirForPATH accepted "…/a:b"` | yes |
+| R4 stale prefix | `TestTheBlockAddsNothingWhenTheDirectoryNoLongerHoldsTheCLI` | yes — `on PATH 1 time(s) while that directory holds no "civitai"` | yes |
+| R5 CRLF | `TestReplacingACRLFSavedBlockLeavesNoLoneCarriageReturn` | yes — lone-CR line, and a real `sh` printed `command not found` | yes |
+| R6 absolute | `TestPathFixTargetsAreAbsoluteEvenWhenHOMEIsRelative` | yes — `"junkhome/.zshenv" is not absolute` | yes |
+| R7 template | `TestEveryBlockTellsYouWhatToDoWhenTheCLIIsNotOnPATH` | yes — block does not carry the flag name | yes |
+| R3 inverted claim | prose, swept (see below) | n/a — a sentence, not a behaviour | n/a |
+
+R3 was corrected at both sites it was handed (this file and
+`internal/cmd/agent_setup_fixpath.go`) and then SWEPT tree-wide over NORMALISED
+text — comment leaders stripped, whitespace collapsed — because the claim wrapped
+across `//` lines and no line-based regex can see it. Two differently-shaped
+patterns were used (one on the MECHANISM, `profile … sources … bashrc` in either
+order; one on the COVERAGE wording plus the distro names that were its evidence),
+and both were first shown to HIT a positive-control file carrying the retracted
+sentence in both shapes — including in the WRAPPED form, since a bare zero from a
+line-based grep would have been worthless. Run over the BASE tree (`166ffd4`,
+745 files) it found exactly the two sites, and nothing else; run over the fixed
+tree (746 files) the only hits are the three corrected retraction passages
+(this file, the Go comment, and the README bullet).
+
+🔴 **P1 WAS TOO NARROW ON ITS FIRST RUN AND THE SWEEP ITSELF HAD TO BE WIDENED.**
+It required whitespace between "sources" and the path, so a backtick-wrapped
+`` sources `~/.bashrc` `` did not match — it missed the README bullet written
+in this very change. Widening the separator class to include backticks and
+quotes found it. The base-tree count above is from the WIDENED pattern, so the
+"exactly two sites" claim is not resting on the narrow one.
+
 M14 and M15 are **round 2**: an adversarial read of this change's own output found
 that the footprint printed `Wrote <path>` for every path in the report, and told
 the reader to open a new shell, on a run whose destinations were all REFUSED and
@@ -296,8 +406,18 @@ provided none for one shape.
   `civitai/civitai-developer-docs`, and changing it before a CLI release ships
   this flag would tell agents to run a flag the published CLI does not have. That
   sequencing is deliberate and is somebody's next step, not this change's.
-- **Only this host's shells were exercised.** zsh and bash were both measured here
-  (NixOS); `~/.zshenv` was observed to survive `/etc/zprofile` on this host, which
+- **Only this host's shells were exercised** — but after cli#777 round 1 that is
+  five of them, against the block the REAL binary writes rather than a Go string
+  literal: **bash 5.3.15, dash 0.5.13.5, zsh 5.9.2, mksh 59c and busybox ash
+  1.37.0**, over five directory shapes (plain, space, `'`, `*`/`[`, `$HOME`), for
+  four properties each — one source puts the directory on PATH once; two sources
+  still leave one; `set -eu` is clean with empty stderr; and with the binary moved
+  away the block adds nothing. 109 assertions, 0 failures. 🔴 **The harness was
+  validated first**: an unguarded control block (plain prepend, no `case`, no
+  `[ -x ]`) was confirmed to score 1 / 2 / 1 on those arms in every one of the
+  five shells, because a first draft could not find the shells at all under
+  `env -i` and scored the uninstall arm PASS for every shell it never ran.
+  `~/.zshenv` was observed to survive `/etc/zprofile` on this host, which
   is NOT a general claim — a distribution whose system `zprofile` assigns PATH
   wholesale would defeat it, and nothing detects that. The test SKIPS loudly when
   a shell is absent and never passes on an unmeasured probe.

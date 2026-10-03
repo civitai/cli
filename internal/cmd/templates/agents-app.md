@@ -32,7 +32,9 @@ shell's PATH** — the usual cause is an install into a prefix whose `bin` was
 added to PATH for the installing shell only, which no later shell inherits. In
 a shell where `civitai` DOES work, `command -v civitai` prints its full path;
 add that directory to your shell profile so every later session can run these
-commands too.
+commands too. `civitai agent-setup --fix-path` does that for you: it writes a
+marker-guarded block into your shell startup files so a NEW shell resolves
+`civitai` (add `--dry-run` to see the exact block first).
 
 Every row below is a `civitai` CLI command and is true in any Civitai App
 project. How you RUN this app locally is not — it depends on what was scaffolded

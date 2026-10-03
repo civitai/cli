@@ -133,9 +133,30 @@ func cliBinDirForPATH() (string, error) {
 	// A newline in a path cannot be expressed in a shell startup file at all: the
 	// assignment below would be split across lines and the rest of the block would
 	// be read as commands. Refuse rather than emit something unparseable.
-	if strings.ContainsAny(dir, "\n\r") {
-		return "", fmt.Errorf("this CLI's directory contains a newline, which cannot be written into a "+
-			"shell startup file: %q", dir)
+	//
+	// 🔴 AND THE PATH LIST SEPARATOR IS REFUSED FOR A DIFFERENT, SHARPER REASON: a
+	// PATH ENTRY CANNOT CONTAIN IT, EVER. It is the character PATH is split on, so
+	// a directory holding one does not become a bad entry — it becomes TWO entries
+	// that do not exist. Measured end to end before this refusal existed (cli#777
+	// R1-R2): a binary at `…/a:b/civitai` wrote both files, reported `Wrote` for
+	// each, printed `Open a NEW shell`, emitted `ok: true` and exited 0, while a
+	// fresh `bash -lc 'command -v civitai'` with that block sourced still answered
+	// nothing. That is the same confident-false-fix shape the base-name refusal
+	// above exists for, one character over.
+	//
+	// The separator is the PLATFORM's (`:` on POSIX, `;` on Windows) rather than a
+	// hardcoded `:`, so a Windows path's drive-letter colon is not refused. The
+	// emitted block is POSIX `sh`, so a Windows run is unsupported either way —
+	// see decision 39's "Windows is skipped, not supported" — and turning every
+	// Windows invocation into a refusal is a behaviour change this finding did not
+	// ask for and did not measure.
+	if i := strings.IndexAny(dir, "\n\r"+string(os.PathListSeparator)); i >= 0 {
+		return "", fmt.Errorf("this CLI's directory contains %q, which a PATH entry in a shell startup "+
+			"file cannot hold (%q is what PATH is split on, so the entry would become two directories "+
+			"that do not exist; a newline would split the assignment itself): %q — move or symlink "+
+			"this CLI into a directory whose path has neither, then re-run "+
+			"`civitai agent-setup --fix-path`",
+			string(dir[i]), string(os.PathListSeparator), dir)
 	}
 	return dir, nil
 }
@@ -165,6 +186,27 @@ func shellSingleQuote(s string) string {
 // straight into the `case` pattern would make a `*` or `[` in the path a glob
 // metacharacter; inside `*":$civitai_cli_dir:"*` the expansion is quoted, so its
 // content is matched literally whatever it holds.
+//
+// 🔴 THE `[ -x … ]` GUARD IS WHAT STOPS THIS BLOCK SHADOWING A LATER INSTALL.
+// The block pins ONE absolute directory and PREPENDS it. Within a single npm
+// prefix that is correct — a re-install lands in the same directory, so updates
+// work. Across prefixes it is not: after an nvm node switch or a `--prefix`
+// change the global install lands somewhere else while this file still puts the
+// OLD directory first, so `civitai --version` reports the stale build
+// indefinitely and `npm update -g` looks inert. The prepend-wins mechanism is
+// certain from the lines below; how often a user changes prefix was NOT measured,
+// so the likelihood here is reasoned, not measured. The guard makes the pin
+// self-expiring: the entry appears only while the file it was written for is
+// still there, which is also the uninstall case.
+//
+// It is `-x` on the FILE, not `-d` on the directory, because a directory that
+// survives an uninstall with no `civitai` in it buys a PATH entry that can never
+// resolve the name — the same thing the base-name refusal rejects at write time.
+// Every line stays POSIX `sh`: `[ ]` not `[[ ]]`, and the expansion is
+// double-quoted so a space or a glob character in the path is literal. It is
+// clean under `set -u` (the variable is assigned immediately above) and under
+// `set -e` (a false `if` condition is not an error, and both `case` arms and the
+// `unset` exit 0).
 func pathFixBlock(dir string) string {
 	q := shellSingleQuote(dir)
 	return pathFixBeginMarker + "\n" +
@@ -172,10 +214,12 @@ func pathFixBlock(dir string) string {
 		"# Re-run `civitai agent-setup --fix-path` to refresh this block, or delete\n" +
 		"# everything from BEGIN to END to remove it. Lines outside the markers are yours.\n" +
 		"civitai_cli_dir=" + q + "\n" +
-		"case \":$PATH:\" in\n" +
-		"  *\":$civitai_cli_dir:\"*) ;;\n" +
-		"  *) PATH=\"$civitai_cli_dir:$PATH\" ; export PATH ;;\n" +
-		"esac\n" +
+		"if [ -x \"$civitai_cli_dir/" + cliBinaryBaseName() + "\" ]; then\n" +
+		"  case \":$PATH:\" in\n" +
+		"    *\":$civitai_cli_dir:\"*) ;;\n" +
+		"    *) PATH=\"$civitai_cli_dir:$PATH\" ; export PATH ;;\n" +
+		"  esac\n" +
+		"fi\n" +
 		"unset civitai_cli_dir\n" +
 		pathFixEndMarker + "\n"
 }
@@ -214,7 +258,20 @@ func mergePathFixBlock(path, existing, block string) (string, fileAction, error)
 		tail := existing[end+len(pathFixEndMarker):]
 		// The marker line's own newline is inside `block`, so drop a single
 		// leading newline from the tail to avoid growing a blank line per run.
-		tail = strings.TrimPrefix(tail, "\n")
+		//
+		// 🔴 CRLF FIRST, AND IT IS NOT COSMETIC. On a file saved with CRLF the
+		// tail begins `"\r\n"`, so trimming only `"\n"` leaves the `"\r"` as a
+		// line of its own — and a lone-CR line is a COMMAND to a shell: bash
+		// answers `$'\r': command not found`, dash and zsh likewise, at every
+		// shell start, forever, in a file this command wrote. Reachable on the
+		// shipped Windows targets (`.goreleaser.yaml` builds windows amd64 and
+		// arm64, and nothing gates `--fix-path` on GOOS). The arms are exclusive:
+		// trimming both in sequence would eat a blank line the user wrote.
+		if strings.HasPrefix(tail, "\r\n") {
+			tail = strings.TrimPrefix(tail, "\r\n")
+		} else {
+			tail = strings.TrimPrefix(tail, "\n")
+		}
 		updated := head + block + tail
 		if updated == existing {
 			return existing, actionUnchanged, nil
@@ -257,11 +314,18 @@ type pathFixTarget struct {
 // 🔴 WHAT THIS DOES NOT REACH, STATED SO IT IS NOT ASSUMED. `bash -c` (neither
 // login nor interactive) reads NO startup file at all unless `BASH_ENV` is set,
 // so no profile edit can fix that invocation. An interactive non-login bash reads
-// `~/.bashrc` only; it is covered when `~/.profile` sources `.bashrc` (Debian and
-// Ubuntu ship exactly that) and not otherwise. And a `.zshrc` that ASSIGNS PATH
-// wholesale rather than prepending to it will discard what `.zshenv` added —
-// nothing written here can prevent that, and the block being idempotent is what
-// makes re-running after such an edit cheap.
+// `~/.bashrc` only, so it is NOT reached either — and the Debian/Ubuntu
+// `~/.profile` that sources `~/.bashrc` does not change that, because it points
+// the other way: it makes a LOGIN bash read `.bashrc`, and nothing can make a
+// shell that never reads `.profile` see a PATH edit in `.profile`. Measured on a
+// Debian-shaped fixture: `bash -lc` resolves the CLI, `bash -ic` does not,
+// `bash -c` does not. ⚠ An earlier draft of this comment claimed the inverse
+// ("it is covered when ~/.profile sources .bashrc") — it was wrong in the
+// direction that matters, since it read as coverage. `~/.bashrc` is deliberately
+// not written: both probes cli#665's closing condition names are login shells.
+// And a `.zshrc` that ASSIGNS PATH wholesale rather than prepending to it will
+// discard what `.zshenv` added — nothing written here can prevent that, and the
+// block being idempotent is what makes re-running after such an edit cheap.
 //
 // 🔴 THE zsh ROW IS WRITTEN UNCONDITIONALLY, AND THAT IS A DELIBERATE CHOICE,
 // NOT AN OVERSIGHT. Gating it on whether zsh is installed was considered and
@@ -284,6 +348,21 @@ func pathFixTargets(env agentEnv) ([]pathFixTarget, error) {
 			"write — set HOME and re-run `civitai agent-setup --fix-path`, or add the directory holding " +
 			"`civitai` to your profile by hand")
 	}
+	// 🔴 ABSOLUTE, FOR THE REASON runAgentSetup MAKES `--dir` ABSOLUTE. README.md
+	// publishes "a path in `--json` is always absolute, whatever `--dir` you
+	// passed"; the project rows earn that with one `filepath.Abs` and these rows
+	// joined `env.Home` raw, so a RELATIVE `HOME` (measured with `HOME=junkhome`:
+	// rows reading `create junkhome/.zshenv`) both broke that contract and created
+	// the files under the CLI's working directory instead of a home directory.
+	// This runs AFTER the empty check on purpose: `Abs("")` is the working
+	// directory, so doing it first would turn "no home" into a silent write into
+	// the project.
+	absHome, err := filepath.Abs(home)
+	if err != nil {
+		return nil, fmt.Errorf("could not make the home directory %q absolute (%w), so the startup files "+
+			"to write cannot be named — add the directory holding `civitai` to your profile by hand", home, err)
+	}
+	home = absHome
 	exists := env.Exists
 	if exists == nil {
 		exists = func(p string) bool { _, err := os.Stat(p); return err == nil }
@@ -382,6 +461,34 @@ func pathFixReason(a fileAction, dir string) string {
 	}
 }
 
+// pathFixFootprintVerb words what happened to ONE startup file, from THAT file's
+// own action. It is the whole implementation of the rule
+// printPathFixFootprint's doc comment states, and it is a function so that the
+// rule has one place rather than one arm.
+//
+// 🔴 `unchanged` IS A WRITE THAT DID NOT HAPPEN, AND IT GETS ITS OWN WORD. The
+// plan is `unchanged` on every repeat run — the common case, since the block is
+// idempotent on purpose — and the write closure returns without touching the
+// file. `Wrote` there is a false claim about a file in the user's home directory,
+// which is precisely what the footprint exists to report honestly.
+//
+// `dryRun` only decides the tense of the rows that WOULD be written: a dry run
+// over an already-current file would still write nothing, so it stays
+// `unchanged` rather than becoming `WOULD write`.
+func pathFixFootprintVerb(action string, dryRun bool) string {
+	switch action {
+	case actionBlocked:
+		return "REFUSED   "
+	case string(actionUnchanged):
+		return "unchanged "
+	default:
+		if dryRun {
+			return "WOULD write"
+		}
+		return "Wrote     "
+	}
+}
+
 // pathFixReport is what the human renderer needs to say what was written. It is
 // a struct rather than four parameters because every field is meaningless unless
 // Requested is true, and a renderer that has to check four flags is a renderer
@@ -435,6 +542,15 @@ func pathFixApplied(changes []agentChangeJSON, pf pathFixReport) int {
 // run whose destination was refused claimed a write the rows immediately above it
 // showed as `blocked` — the same "headline disagreeing with the report" defect
 // agentSetupHeadline records, one surface over.
+//
+// 🔴 AND THAT SENTENCE WAS WIDER THAN THE CODE UNTIL cli#777 ROUND 1. It read the
+// row for `blocked` and for nothing else, so the SECOND `--fix-path` run — plan
+// `actionUnchanged`, write skipped by agent_setup.go's `plan.Action ==
+// actionUnchanged`, file mtime unmoved — printed `Wrote <path>` three lines under
+// a row reading `unchanged`. Mutant M14 repaired the `blocked` arm and nobody
+// checked the others; the lie was unguarded in BOTH directions. pathFixFootprintVerb
+// is now the one place a verb is chosen, and
+// TestThePathFootprintVerbIsReadOutOfEveryFilesOwnRow asserts every action's.
 func printPathFixFootprint(w io.Writer, st ui.Styler, changes []agentChangeJSON, pf pathFixReport, dryRun bool) {
 	if !pf.Requested {
 		return
@@ -449,18 +565,17 @@ func printPathFixFootprint(w io.Writer, st ui.Styler, changes []agentChangeJSON,
 	for _, c := range changes {
 		action[c.Path] = c.Action
 	}
-	verb := "Wrote"
-	if dryRun {
-		verb = "WOULD write"
-	}
 	fmt.Fprintf(w, "  %s lives in %s. A marker-guarded block puts that directory on PATH at startup:\n",
 		st.Bold("civitai"), pf.Dir)
 	for _, p := range pf.Paths {
-		if action[p] == actionBlocked {
-			fmt.Fprintf(w, "  %s %s\n", st.ErrorMsg("REFUSED   "), p)
-			continue
+		switch verb := pathFixFootprintVerb(action[p], dryRun); action[p] {
+		case actionBlocked:
+			fmt.Fprintf(w, "  %s %s\n", st.ErrorMsg(verb), p)
+		case string(actionUnchanged):
+			fmt.Fprintf(w, "  %s %s\n", st.Dim(verb), p)
+		default:
+			fmt.Fprintf(w, "  %s %s\n", verb, p)
 		}
-		fmt.Fprintf(w, "  %s %s\n", verb, p)
 	}
 	if pathFixApplied(changes, pf) == 0 {
 		fmt.Fprintf(w, "  %s\n", st.ErrorMsg("Nothing was written: every startup file above was refused — "+
