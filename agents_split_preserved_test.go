@@ -581,6 +581,13 @@ var bornSplitItems = []string{
 	// Mutation results still live in the PR body and in each guard's own doc
 	// comment, not in this file.
 	"claudedocs/decisions/38-read-body-repair-and-snippet.md",
+	// Item 39 was written straight into claudedocs/decisions/ for the same reason
+	// as 35–38: AGENTS.md had 830 bytes of headroom when it was added, and the
+	// body is the dogfood measurement, the three abandoned-probe inversions it is
+	// shaped to avoid, the per-shell startup-file table, the flag contract, a
+	// 15-row mutation matrix and the enumerated residuals. There was nowhere to
+	// park it, even briefly.
+	"claudedocs/decisions/39-agent-setup-fix-path.md",
 }
 
 // splitItemsFloor is the CI-SIDE KEEPER for bornSplitItems: the set of item

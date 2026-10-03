@@ -478,6 +478,7 @@ func newAgentSetupCmd() *cobra.Command {
 		check   bool
 		jsonOut bool
 		dryRun  bool
+		fixPath bool
 	)
 	cmd := &cobra.Command{
 		Use:   "agent-setup",
@@ -598,6 +599,22 @@ disk and a read-only mount are the same shape and were not measured, so treat
 that as an open list: a green dry run means the plan is sound, not that the write
 will succeed.
 
+WHAT --fix-path DOES, AND WHY IT IS OPT-IN. Every row the AGENTS.md block names
+starts with 'civitai', and an install into a prefix the user owns puts that name
+on PATH for the INSTALLING SHELL ONLY -- so every later agent session, which gets
+a new shell, cannot run any of them. --fix-path appends a marker-guarded block to
+your shell startup files that puts this CLI's own directory on PATH at startup,
+prints the full path of every file it touched, and is idempotent: running it
+twice leaves exactly one block, and nothing outside the markers is ever modified.
+It writes ~/.zshenv (read by every zsh, login or not) and the file a bash login
+shell actually reads -- the first existing of ~/.bash_profile, ~/.bash_login,
+~/.profile, and ~/.profile when none exists. It runs NO shell and probes nothing:
+the 'is it already on PATH' test is a 'case' statement evaluated by your shell at
+startup, so a redundant block is harmless. It does NOT reach 'bash -c', which
+reads no startup file at all. Without the flag NO startup file is read or written.
+--fix-path is REFUSED with --check, which writes nothing by contract; combine it
+with --dry-run to print the exact block instead.
+
 --json SHAPES: 'checks' for --check, 'changes' for a write or dry run, and -- for
 a failure that happened before either could be built -- an 'error' string with
 neither array. Discriminate on which is present. A usage error carries no
@@ -610,6 +627,7 @@ some other reason, which exits 1 and gets the 'error' envelope.`,
   civitai agent-setup --agent cursor        # override the detection
   civitai agent-setup --dir ./my-app        # a project other than the cwd
   civitai agent-setup --dry-run             # print every path, write nothing
+  civitai agent-setup --fix-path            # also put this CLI on a new shell's PATH
   civitai agent-setup --check --json        # verify a setup (scriptable)`,
 		Args: cobra.NoArgs,
 		// 🔴 ONE RETURN, AND THE EMITTER IS BUILT BEFORE THE FIRST THING THAT CAN
@@ -631,7 +649,7 @@ some other reason, which exits 1 and gets the 'error' envelope.`,
 			// CIVITAI_NO_UPDATE_CHECK. Reading only the env var would leave
 			// `--no-update-check --check` making the call it was told not to.
 			noUpdateCheck, _ := cmd.Flags().GetBool("no-update-check")
-			resolvedTrack, resolvedAgent, err := agentSetupCommand(emit, track, agent, dir, check, dryRun, noUpdateCheck)
+			resolvedTrack, resolvedAgent, err := agentSetupCommand(emit, track, agent, dir, check, dryRun, fixPath, noUpdateCheck)
 			emit.envelope(resolvedTrack, resolvedAgent, err)
 			return err
 		},
@@ -648,6 +666,17 @@ some other reason, which exits 1 and gets the 'error' envelope.`,
 		"emit the result as JSON (scriptable); the exit code is unchanged")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"print every path that would be written and why; write nothing")
+	// 🔴 THE WORD "ALSO" IS LOAD-BEARING, AND SO IS THE FACT THAT THIS IS A FLAG
+	// RATHER THAN A DEFAULT. It edits files OUTSIDE the project — the user's shell
+	// startup files — which nothing else in this CLI does, so it is named, opt-in
+	// and reported. See agent_setup_fixpath.go.
+	// 🔴 NO BACK-QUOTES IN THIS STRING. pflag reads the first back-quoted span of a
+	// usage string as the flag's VALUE NAME, so `civitai` in it would render as
+	// `--fix-path civitai` in --help — a boolean flag documented as taking an
+	// argument. TestGenerateFlagUsageHasNoBackquotes caught exactly that here.
+	cmd.Flags().BoolVar(&fixPath, "fix-path", false,
+		"also add this CLI's directory to your shell startup files, so a NEW shell can run civitai; "+
+			"idempotent, marker-guarded, and it prints every file it writes")
 	return cmd
 }
 
@@ -660,10 +689,25 @@ some other reason, which exits 1 and gets the 'error' envelope.`,
 // Flags first, filesystem second: `--track api` and a mistyped `--agent` are
 // answers about the invocation and must not depend on whether some directory
 // happens to exist.
-func agentSetupCommand(emit *agentSetupEmitter, track, agent, dir string, check, dryRun, noUpdateCheck bool) (string, string, error) {
+func agentSetupCommand(emit *agentSetupEmitter, track, agent, dir string, check, dryRun, fixPath, noUpdateCheck bool) (string, string, error) {
 	resolvedTrack, err := validateTrack(track)
 	if err != nil {
 		return track, "", err
+	}
+	// 🔴 `--check --fix-path` IS A USAGE ERROR, AND REFUSING IT IS THE DECISION
+	// RATHER THAN THE SHORTCUT. `--check` writes nothing and probes no credential;
+	// its `--json` shape is a PUBLISHED CONTRACT that the hosted setup prompt and
+	// `readme_agent_setup_claims_test.go` are both written against. The two ways to
+	// honour `--fix-path` there are to write (which breaks "writes nothing") or to
+	// add a row saying whether the block is present (which puts a MACHINE-dependent
+	// row into a contract whose consumers read `ok`). Both are worse than saying no,
+	// so the combination is refused by name and `--dry-run` is pointed at — it is
+	// what a caller asking "what would this do?" actually wants.
+	if check && fixPath {
+		return resolvedTrack, "", asUsageError(fmt.Errorf(
+			"--check and --fix-path cannot be combined: --check writes nothing, and --fix-path is a write. " +
+				"Run `civitai agent-setup --fix-path --dry-run` to see the exact block and the files it would " +
+				"go in, or `civitai agent-setup --fix-path` to apply it"))
 	}
 	resolvedAgent := ""
 	if strings.TrimSpace(agent) != "" {
@@ -677,7 +721,7 @@ func agentSetupCommand(emit *agentSetupEmitter, track, agent, dir string, check,
 	if err := resolveAgentSetupDir(dir); err != nil {
 		return resolvedTrack, resolvedAgent, err
 	}
-	err = runAgentSetup(emit, &resolvedAgent, resolvedTrack, dir, check, dryRun, noUpdateCheck)
+	err = runAgentSetup(emit, &resolvedAgent, resolvedTrack, dir, check, dryRun, fixPath, noUpdateCheck)
 	return resolvedTrack, resolvedAgent, err
 }
 
@@ -685,7 +729,7 @@ func agentSetupCommand(emit *agentSetupEmitter, track, agent, dir string, check,
 // wraps every failure it can reach. resolvedAgent is a pointer because detection
 // happens in here and the envelope wants the answer even when the run then
 // failed.
-func runAgentSetup(emit *agentSetupEmitter, resolvedAgent *string, track, dir string, check, dryRun, noUpdateCheck bool) error {
+func runAgentSetup(emit *agentSetupEmitter, resolvedAgent *string, track, dir string, check, dryRun, fixPath, noUpdateCheck bool) error {
 	// 🔴 ABSOLUTE, BECAUSE EVERY PATH IN THE PAYLOAD IS BUILT FROM IT.
 	// With the default `--dir .` the `--json` `path` fields came out relative
 	// (`AGENTS.md`, `.mcp.json`) while the README's documented example shows
@@ -724,7 +768,7 @@ func runAgentSetup(emit *agentSetupEmitter, resolvedAgent *string, track, dir st
 		return runAgentSetupCheck(emit, env, track, *resolvedAgent, cfg.Token(),
 			resolveVersionFreshness(updateCheckDisabled(noUpdateCheck)))
 	}
-	return runAgentSetupWrite(emit, env, track, *resolvedAgent, cfg.Token(), dryRun)
+	return runAgentSetupWrite(emit, env, track, *resolvedAgent, cfg.Token(), dryRun, fixPath)
 }
 
 // ---------------------------------------------------------------------------
@@ -1072,7 +1116,7 @@ func mcpCheckNameList() string {
 // The run still exits NON-ZERO, and `ok` is false. Degrading is not pretending:
 // a script that reads `ok: true` and exit 0 must be able to conclude every step
 // happened, so a partial run says so in both channels at once.
-func runAgentSetupWrite(emit *agentSetupEmitter, env agentEnv, track, agent, token string, dryRun bool) error {
+func runAgentSetupWrite(emit *agentSetupEmitter, env agentEnv, track, agent, token string, dryRun, fixPath bool) error {
 	var changes []agentChangeJSON
 
 	// 🔴 A PLAN-TIME REFUSAL IS A `blocked` ROW FOR *EVERY* FILE, NOT JUST THE
@@ -1111,6 +1155,39 @@ func runAgentSetupWrite(emit *agentSetupEmitter, env agentEnv, track, agent, tok
 	}
 	mcpRow := len(changes)
 	changes = append(changes, mcpChange)
+
+	// 🔴 THE PATH ROWS GO LAST, AND ONLY WHEN ASKED. Appending keeps `changes[0..2]`
+	// the three files every existing consumer indexes; and because the planning is
+	// skipped entirely without the flag, a default run neither reads nor names a
+	// single file outside the project. TestWithoutFixPathNoShellProfileIsEverWritten
+	// is the guard, and it is what makes "byte-identical by default" a property
+	// rather than a promise.
+	pathReport := pathFixReport{Requested: fixPath}
+	var pathPlans []pathFixPlan
+	pathRow := len(changes)
+	if fixPath {
+		plans, dir, err := planPathFix(env)
+		if err != nil {
+			// No target exists to name — the only cause is an unresolvable home.
+			// It is `blocked`, not `manual`: the user asked for a write in as many
+			// words, so reporting success would be the one thing a script must not
+			// be told. An empty `path` is the same convention a `manual` row uses
+			// when there is no file for this CLI to name.
+			changes = append(changes, agentChangeJSON{
+				Path: "", Action: actionBlocked, Reason: err.Error(),
+			})
+		} else {
+			pathPlans = plans
+			if dir != "" {
+				pathReport.Dir = dir
+				pathReport.Block = pathFixBlock(dir)
+			}
+			for _, p := range plans {
+				pathReport.Paths = append(pathReport.Paths, p.Path)
+				changes = append(changes, planRow(p.Path, p.Action, p.Reason, p.Err))
+			}
+		}
+	}
 
 	// 🔴 A WRITE THAT FAILS IS A `blocked` ROW, NOT AN EMPTY STDOUT — AND EACH
 	// FILE IS ATTEMPTED INDEPENDENTLY. Both halves are fixes for a measured
@@ -1158,6 +1235,21 @@ func runAgentSetupWrite(emit *agentSetupEmitter, env agentEnv, track, agent, tok
 			}
 			return writeMCPConfig(mcpPath, mcpData)
 		})
+		// The startup files are attempted the same way and with the same
+		// independence: one of them being refused does not stop the other, and a
+		// write failure becomes that row's `blocked` reason rather than an empty
+		// stdout. writeProjectFile is reused deliberately — a shell startup file
+		// wants exactly its behaviour (preserve the existing mode, 0644 for a new
+		// file, atomic replace) and carries no credential, unlike an MCP config.
+		for i, p := range pathPlans {
+			plan := p
+			attempt(pathRow+i, func() error {
+				if plan.Action == actionUnchanged {
+					return nil
+				}
+				return writeProjectFile(plan.Path, plan.Content)
+			})
+		}
 	}
 
 	// 🔴 `ok`, THE EXIT CODE AND THE ERROR ALL READ THE ROWS. One predicate, so
@@ -1168,7 +1260,7 @@ func runAgentSetupWrite(emit *agentSetupEmitter, env agentEnv, track, agent, tok
 	if err := emit.emit(agentSetupJSON{
 		Track: track, Agent: agent, OK: blocked == "", Changes: changes, DryRun: dryRun,
 	}, func(w io.Writer, p agentSetupJSON) {
-		printAgentSetupWrite(w, env, agent, token, p.Changes, mcpAuth, dryRun)
+		printAgentSetupWrite(w, env, agent, token, p.Changes, mcpAuth, dryRun, pathReport)
 	}); err != nil {
 		return err
 	}
@@ -1383,7 +1475,7 @@ func agentSetupHeadline(changes []agentChangeJSON, dryRun bool) (lead, tail stri
 }
 
 // printAgentSetupWrite renders the human report and the next-step block.
-func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, changes []agentChangeJSON, cov mcpAuthCoverage, dryRun bool) {
+func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, changes []agentChangeJSON, cov mcpAuthCoverage, dryRun bool, pf pathFixReport) {
 	st := ui.For(w)
 	lead, tail := agentSetupHeadline(changes, dryRun)
 	fmt.Fprintf(w, "%s %s for Civitai App development in %s%s\n\n", lead, st.Bold(agent), env.Dir, tail)
@@ -1406,6 +1498,8 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 			fmt.Fprintf(w, "  %s\n", st.Dim("          "+c.Reason))
 		}
 	}
+
+	printPathFixFootprint(w, st, changes, pf, dryRun)
 
 	target, known := agentTargets[agent]
 	if !known {
@@ -1461,6 +1555,25 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 
 	fmt.Fprintln(w, "\nNext:")
 	n := 1
+	// 🔴 THE "NEW SHELL" STEP IS THE WHOLE POINT OF THE FLAG, SO IT COMES FIRST
+	// WHEN THE FLAG WAS USED. The shell this ran in is NOT changed — a startup file
+	// is read at startup — and a reader who does not know that re-runs
+	// `civitai --version` in the same shell, sees the same failure, and concludes
+	// the flag did nothing.
+	//
+	// 🔴 AND IT IS GATED ON A ROW THAT IS NOT `blocked`, READ OUT OF THE ROWS
+	// THEMSELVES. A run whose every startup file was refused has nothing for a new
+	// shell to pick up, and telling the reader to open one would be the headline
+	// disagreeing with the report — the defect agentSetupHeadline documents, one
+	// surface over. No file is NAMED here on purpose: the files are listed above,
+	// and naming only one of the two sends a zsh user to the bash file.
+	if pf.Requested && !dryRun && pathFixApplied(changes, pf) > 0 {
+		fmt.Fprintf(w, "  %d. Open a NEW shell — THIS shell's PATH is unchanged, because a startup file\n", n)
+		fmt.Fprintf(w, "     is only read at startup. (Or %s one of the files above; the block is POSIX sh,\n",
+			st.Code("source"))
+		fmt.Fprintf(w, "     so any shell can read it.) Then: %s\n", st.Code("command -v civitai"))
+		n++
+	}
 	if dryRun {
 		fmt.Fprintf(w, "  %d. Re-run without --dry-run — nothing above was written.\n", n)
 	} else {

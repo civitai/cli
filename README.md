@@ -79,6 +79,7 @@ contract, and **packages/submits** it for review.
 **Author an App**
 
 - [Set up your coding agent (`agent-setup`)](#set-up-your-coding-agent-agent-setup) — **run this first**
+  - [`--fix-path` — when `civitai: command not found` outlives the install](#--fix-path--when-civitai-command-not-found-outlives-the-install)
   - [The two MCP servers](#the-two-mcp-servers)
 - [SDK packages](#sdk-packages)
 - [The blockId](#the-blockid)
@@ -308,7 +309,7 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 
 | Command | What it does |
 | --- | --- |
-| `civitai agent-setup [--track app\|api] [--agent <name>] [--dir <path>] [--check] [--json] [--dry-run]` | **Set up the coding agent you are using to build Civitai Apps** — an `AGENTS.md` block, a `CLAUDE.md` shim, and the two Civitai MCP servers in that agent's own config file. 🔴 **It never writes a credential into any of those files**, and it never authenticates. See [Set up your coding agent](#set-up-your-coding-agent-agent-setup). |
+| `civitai agent-setup [--track app\|api] [--agent <name>] [--dir <path>] [--check] [--json] [--dry-run] [--fix-path]` | **Set up the coding agent you are using to build Civitai Apps** — an `AGENTS.md` block, a `CLAUDE.md` shim, and the two Civitai MCP servers in that agent's own config file. 🔴 **It never writes a credential into any of those files**, and it never authenticates. See [Set up your coding agent](#set-up-your-coding-agent-agent-setup). |
 | `civitai login [--scopes <set>] [--token [<t>]] [--no-browser]` | Browser OAuth device login by default; `--scopes generate` additively grants generation + Buzz **spend**, which the default set withholds. `--token <t>` stores a personal API key instead. See [Submit & auth](#submit--auth). |
 | `civitai whoami [--scopes] [--json]` | Verify the stored token — user, credential type, and a **`Capabilities:`** section decoded from its scope, so a money-path dead end is visible before `dev:live`. **Submit Apps is tri-state**: `unknown` is never `no`. See [What `civitai whoami` reports](#what-civitai-whoami-reports). |
 | `civitai buzz [--json]` | Show your spendable Buzz balance (**blue / green / yellow**, plus a **total**); needs the BuzzRead scope, which a **default** OAuth login token lacks (`civitai login --scopes generate`, or a full-scope personal API key). `--json` emits `{blue,green,yellow,total}`. |
@@ -373,6 +374,43 @@ the project; `--agent <name>` overrides it, and `--dir <path>` points at a
 project other than the working directory. A path in `--json` is always
 **absolute**, whatever `--dir` you passed — except on a `manual` row, which names
 no file for this CLI to write and carries an empty `path`.
+
+### `--fix-path` — when `civitai: command not found` outlives the install
+
+Every row of the `AGENTS.md` block starts with `civitai`, and an install into a
+prefix you own (`npm install -g --prefix="$HOME/.npm-global" @civitai/cli`) puts
+that name on PATH **for the installing shell only**. Every later agent session
+gets a new shell, so none of those rows can run.
+
+```bash
+civitai agent-setup --fix-path            # also fix PATH for new shells
+civitai agent-setup --fix-path --dry-run  # print the exact block, write nothing
+```
+
+It appends a marker-guarded block to **`~/.zshenv`** (read by every zsh — login or
+not, interactive or not) and to the file a **bash login** shell actually reads:
+the first existing of `~/.bash_profile`, `~/.bash_login`, `~/.profile`, and
+`~/.profile` when none exists. 🔴 **Those two sets are disjoint** — zsh never
+reads `~/.profile`, and bash in login mode stops at the first of its three that
+exists — which is why one file cannot do it.
+
+- **Opt-in.** Without the flag, `agent-setup` neither reads nor writes any
+  startup file.
+- **Idempotent, and it never touches a line it did not write.** Running it twice
+  leaves exactly one block; everything outside the `# BEGIN civitai cli PATH` /
+  `# END civitai cli PATH` markers is kept byte for byte, and a file carrying two
+  blocks or half a block is refused by name rather than repaired.
+- **It prints the full path of every file it wrote.**
+- **It runs no shell and probes nothing.** The "is it already on PATH?" test is a
+  POSIX `case` statement your shell evaluates at startup, so a redundant block is
+  harmless and nothing machine-specific is written into `AGENTS.md`.
+- **It does not reach `bash -c`**, which reads no startup file at all unless
+  `BASH_ENV` is set.
+- **`--check --fix-path` is refused** (exit 2): `--check` writes nothing by
+  contract. Use `--fix-path --dry-run` to see what would happen.
+
+**Open a new shell afterwards** — the shell you ran it in is unchanged, because a
+startup file is only read at startup.
 
 ### The two MCP servers
 
