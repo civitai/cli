@@ -127,6 +127,127 @@ refusal names it, and this file and `README.md` now name it too.
   bug rather than the pin it is. Read the tail as *what the rule was*, and this
   section as *what it is*.
 
+## AMENDED 2026-09-19 (`#602`): the retirement condition above is UNREACHABLE as written, and two claims in this file are corrected
+
+`#602` fixed the boundary (`>` → `>=`; a body of exactly `MaxSubmitBodyBytes` was
+reachable and was being uploaded). Investigating whether the constant should exist
+at all produced three measurements that change what this file asserts. Recorded
+here rather than acted on: **no server change and no CLI change was made for
+this section.**
+
+### 1. "Delete it and let the server answer" cannot be fully done
+
+The retirement condition above says that once a server supplies the real number,
+*"the right move is to **delete it** and let the server answer."* Measured — it
+cannot be, and the reason is not the server side.
+
+The obvious carrier for a server-supplied ceiling is a response the submit path
+**already** fetches before uploading: `ListSubmissions` →
+`GET /api/v1/blocks/submissions`. The mechanics work. The response is an envelope
+(`{"submissions": [...]}`), so a sibling field survives a first-time submit that
+returns zero rows; Go ignores unknown fields, so a server adding one cannot break
+an older CLI; and a missing field means fall back. Zero extra requests.
+
+But `checkVersionNotRegression` returns **before building any request** on two
+paths:
+
+- `internal/cmd/app_submit_version_guard.go:95-97` — returns `nil` immediately
+  when `--allow-downgrade` is set.
+- the empty-slug branch below it — returns early when the manifest carries no
+  `blockId`, which `--skip-validate` permits.
+
+On those paths no response exists to carry a ceiling, so the vendored constant is
+the only value available. **It therefore survives as a fallback even in the world
+where the server answers** — for `--allow-downgrade`, for an empty slug, and for
+any server that does not send the field.
+
+So the honest retirement condition is narrower than the one above: a server-supplied
+ceiling makes the **common path self-correcting**, which is strictly better than a
+drift guard because it heals rather than reports. It does not remove the constant,
+and it does not remove the need to notice the constant going stale on the paths it
+still governs.
+
+### 2. `caps_claim_test.go` does not make the placement legal — measured
+
+The bullet above states that the guard being file-scoped *"is what makes the new
+claim legal"*, implying the constant could not carry a server attribution inside
+`internal/pkgzip`. Measured with both controls, in an isolated copy:
+
+- **Negative control** — appending `caps mirror the server` to `pkgzip.go` makes
+  `TestCapsDoNotClaimToMirrorTheServer` **fail** with its own message. The
+  instrument works.
+- **The actual case** — a fully server-attributed constant in `pkgzip.go`, doc
+  comment and all (*"This IS the server's number"* plus the whole proxy-matcher
+  evidence chain), using none of the four banned phrases: **passes.**
+
+The guard bans four literal phrases over one file. It does not constrain where a
+server-derived constant may live. "A *spelled* guard being routed around rather
+than satisfied" is a fair description of the guard's nature; "is what makes the new
+claim legal" is not, and is corrected here. The placement in `internal/appapi` is
+still right — that package builds the body and `SubmitBodySize` lives there — but
+for that reason, not this one.
+
+`#602` corrected the same overstatement where it appeared in
+`internal/appapi/appblocks.go`. This file was initially judged accurate and left
+alone; re-reading it against the measurement showed it carries the same clause, so
+it is corrected in the same pass rather than left as the surviving copy.
+
+### 3. The constant's input moves more often than this file implies
+
+Nothing above quantifies the drift risk it describes. The effective ceiling is
+determined by three things in the server repo — the proxy matcher including the
+submit route, the absence of a config override, and the pinned framework version's
+shipped default. The version pin has moved **8 times**, including three major
+migrations, and the dependency range is a caret, so a lockfile bump can move the
+shipped default with no manifest change at all.
+
+That is the measurement behind `#599`, which stays open and unbuilt on purpose:
+its scope depends on decision 1 above, and building the wide version of a guard
+that is about to get narrower is the wrong order.
+
+### 4. The boundary is `>=`, and it was chosen on ASYMMETRY — not on a mechanism
+
+`#602` changed the preflight comparison from `>` to `>=`, so the CLI refuses a
+body of **exactly** `MaxSubmitBodyBytes`. That boundary is reachable in
+production, which is why it moved at all: base64 output is a multiple of 4, so the
+body can land precisely on the ceiling only when the JSON envelope's length is too,
+and exactly one provenance shape makes it so. `civitai app submit --allow-dirty`
+on a 7,864,246-byte zip produces a body of exactly 10485760, and under `>` the
+whole thing uploaded.
+
+🔴 **The reasoning is recorded here because the evidence POINTS BOTH WAYS and the
+losing side is the one with source code behind it.** Two measurements disagree,
+and neither was invented:
+
+- **Next.js's own source** reads `bytesRead > bodySizeLimit`. Read literally, a
+  body of exactly the limit is **ACCEPTED**, which argues for `>`.
+- **An end-to-end submit** of exactly 10485760 bytes came back **413**, which
+  argues for `>=`.
+
+**That contradiction is UNRESOLVED.** Nothing in this repo can settle it — the
+effective boundary is decided by whatever sits in front of the handler, and a unit
+test cannot observe it. So `>=` is **not** a claim about where the server's edge
+is. It is a choice between two error costs:
+
+| if the CLI is wrong | the author pays |
+|---|---|
+| refuses one byte early (`>=`, server would have accepted) | one documented flag, `--allow-oversize`, named in the refusal itself |
+| accepts one byte too many (`>`, server refuses) | the entire upload, then `400: Invalid JSON` — an error naming nothing about size, which is issue #423 |
+
+The asymmetry is the whole argument. `>=` is the cheap-to-be-wrong side.
+
+🔴 **THE FAILURE THIS SUBSECTION EXISTS TO PREVENT: a reader finds the
+Next-source argument and flips the operator back.** It is the stronger-looking
+half of the evidence — it is source code, the other half is one observation — and
+on its own it reads as a plain off-by-one bug in the CLI. Flipping it re-opens the
+case the `>` mutant used to survive: a production `--allow-dirty` submit at
+exactly the ceiling uploads ~10 MB and fails with an error about JSON. If you are
+about to change this operator, you are not fixing an off-by-one; you are taking
+the other side of the table above, and the thing to produce first is a measurement
+that resolves the contradiction. `TestSubmitBodyExactlyAtCeilingIsRefused` in
+`internal/appapi/submit_ceiling_value_test.go` pins the current side and its
+comment carries the same warning.
+
 ---
 
 31. **`internal/pkgzip`'s size caps are the CLI's OWN, not a server mirror, and
