@@ -583,10 +583,16 @@ var bornSplitItems = []string{
 	"claudedocs/decisions/38-read-body-repair-and-snippet.md",
 	// Item 39 was written straight into claudedocs/decisions/ for the same reason
 	// as 35–38: AGENTS.md had 830 bytes of headroom when it was added, and the
-	// body is the dogfood measurement, the three abandoned-probe inversions it is
-	// shaped to avoid, the per-shell startup-file table, the flag contract, a
-	// 17-row mutation matrix and the enumerated residuals. There was nowhere to
-	// park it, even briefly.
+	// body is the dogfood measurement, the per-shell startup-file table, the flag
+	// contract, a mutation matrix and the enumerated residuals. There was nowhere
+	// to park it, even briefly.
+	//
+	// 🔴 NO ROW COUNT IS GIVEN, DELIBERATELY. An earlier draft of this note said
+	// "15 mutation rows", was corrected to 16, and then to 17 — three spellings
+	// across three commits of ONE PR, one of which existed only to fix the
+	// number. A derived count restated in prose is rot with a scheduled arrival
+	// date and nothing asserts it; the matrix is in the decision file, where a
+	// reader can count it. Do not reintroduce a figure here.
 	"claudedocs/decisions/39-agent-setup-fix-path.md",
 }
 

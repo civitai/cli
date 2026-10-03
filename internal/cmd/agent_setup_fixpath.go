@@ -30,15 +30,24 @@ import (
 // because it thought it knew better is not a setup step, it is a surprise.
 // TestWithoutFixPathNoShellProfileIsEverWritten pins that.
 //
-// 🔴 AND IT PERFORMS NO DETECTION — NO LOGIN SHELL IS RUN, EVER. Three earlier
-// drafts of this area tried to answer "is `civitai` reachable?" by executing a
-// login shell from Go, and each was measured wrong in a way the previous fix
-// introduced: a distro idempotence sentinel left set so the profile built no PATH
-// at all; then `exec.ErrWaitDelay` returned WITH the shell exited 0 and the
-// resolved path already on stdout, which the probe scored "not reachable" while
-// discarding that answer. See claudedocs/decisions/36-agents-block-per-project.md
-// for the full record. The shape of the bug was never any one inversion: it was
-// that a PER-MACHINE signal's only consumer was a WRITE INTO A COMMITTED FILE.
+// 🔴 AND IT RUNS NO LOGIN SHELL, EVER. Two earlier drafts of this area tried to
+// answer "is `civitai` reachable?" by executing a login shell from Go, and each
+// was measured wrong in a way the previous fix introduced: a distro idempotence
+// sentinel left set so the profile built no PATH at all; then
+// `exec.ErrWaitDelay` returned WITH the shell exited 0 and the resolved path
+// already on stdout, which the probe scored "not reachable" while discarding
+// that answer. See claudedocs/decisions/36-agents-block-per-project.md for the
+// full record. The shape of the bug was never any one inversion: it was that a
+// PER-MACHINE signal's only consumer was a WRITE INTO A COMMITTED FILE.
+//
+// 🔴 SO THE SCOPE IS "NO LOGIN-SHELL PROBE FEEDING A COMMITTED FILE", NOT "NO
+// PER-MACHINE READ ANYWHERE". Decision 36's rule governs what the `AGENTS.md`
+// block may claim, and that is the only thing its evidence measured. It does not
+// forbid, say, an `exec.LookPath("zsh")` — a PATH lookup is not a login-shell
+// probe, and its consumer here would be a DOTFILE, not a file anyone commits.
+// pathFixTargets declines that presence check for a different and stated reason
+// (see its own comment); do not re-derive the decision from a prohibition that
+// is not there.
 //
 // So this feature buys its correctness a different way: it is UNCONDITIONAL and
 // IDEMPOTENT, and the conditional it emits is evaluated BY THE SHELL, on the
@@ -253,6 +262,21 @@ type pathFixTarget struct {
 // wholesale rather than prepending to it will discard what `.zshenv` added —
 // nothing written here can prevent that, and the block being idempotent is what
 // makes re-running after such an edit cheap.
+//
+// 🔴 THE zsh ROW IS WRITTEN UNCONDITIONALLY, AND THAT IS A DELIBERATE CHOICE,
+// NOT AN OVERSIGHT. Gating it on whether zsh is installed was considered and
+// DECLINED: a machine can gain zsh AFTER setup runs, and a gated write would
+// then leave this CLI unreachable from the shell the user later installs — which
+// is precisely the failure cli#665 is about. A stray `~/.zshenv` on a machine
+// with no zsh is inert; the missing one is not. The cost is asymmetric, so the
+// unconditional write wins.
+//
+// ⚠ AND NOT BECAUSE DECISION 36 FORBIDS A PRESENCE CHECK — it does not; see the
+// scope note at the top of this file. `exec.LookPath("zsh")` is a PATH lookup
+// rather than a login-shell probe, and its consumer would be a dotfile rather
+// than a committed file, so neither half of that rule's evidence reaches it.
+// This is a judgement call about robustness, and it is recorded as one so nobody
+// "restores" a prohibition to justify it.
 func pathFixTargets(env agentEnv) ([]pathFixTarget, error) {
 	home := strings.TrimSpace(env.Home)
 	if home == "" {

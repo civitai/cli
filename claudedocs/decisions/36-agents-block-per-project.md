@@ -490,6 +490,37 @@ everyone who did not generate it, and nothing detects the staleness — the
 `agents-md` check row is satisfied by block PRESENCE, not by comparing the file
 against a freshly rendered block.
 
+### 🔴 SCOPING CORRECTION (2026-10-03): the rule governs COMMITTED ARTEFACTS
+
+Nothing above is retracted — the defect, both drafts and all three inversion
+channels stand as measured. What is corrected is the rule's **reach**, because it
+was being read wider than its own evidence supports: as *"no per-machine input
+anywhere in `agent-setup`"*.
+
+**It is not that.** Every inversion recorded here was of a probe whose only
+consumer was a **write into a file the project commits** — that is the sentence
+two paragraphs up, and it is the whole mechanism. The harm was never "a
+per-machine fact was read"; it was "a per-machine fact was frozen into a repo
+other people pull, where nothing detects its staleness".
+
+**So, stated explicitly: this rule binds a per-machine read whose output reaches
+a COMMITTED artefact** — the `AGENTS.md` block, `CLAUDE.md`, anything scaffolded
+into the project. **A per-machine read whose only consumer is a DOTFILE outside
+the project, or STDOUT, is outside it.** Those have no staleness problem to
+detect: the user's own machine is the only reader, and it re-reads at every shell
+start.
+
+Two consequences worth naming, so this is not re-derived from the headline:
+
+- `--fix-path` writing `~/.zshenv` and a bash login file is **outside** this
+  rule. It is per-machine by construction, and the files are the user's own, not
+  the project's. See `claudedocs/decisions/39-agent-setup-fix-path.md`.
+- An `exec.LookPath("zsh")` would be outside it too. A PATH lookup **runs no
+  shell**, so none of the three inversion channels above can reach it, and the
+  rule's subject is what the block may CLAIM. `--fix-path` declines that check
+  anyway, for a robustness reason decision 39 records — a judgement call, **not
+  this rule.**
+
 ⚠ **This does not close cli#665.** The issue's own body says candidate (c)
 "satisfies neither arm" of its closing condition, and that is still true: this
 ships no install fix. The cause-side remedy is candidate (b), which lives in the
