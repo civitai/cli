@@ -190,34 +190,28 @@ this machine"; that is no longer true and the switch + prune have both run.
 
 ## Next steps (ranked)
 
-1. **Fix `find-session.py`'s hardcoded handle list.** 🔴 **IN FLIGHT: `innovation-upstream/devrc`,
-   branch `zach/find-session-derive-handles`** (claimed `appblocks-scope-enforcement-1`; PR number
-   not yet assigned when this was written — check `gh pr list --repo innovation-upstream/devrc
-   --head zach/find-session-derive-handles`). `scripts/find-session.py:1148` loops
-   `("DEVRC","HOMELAB","DATAPACKET","CIVITAI")` while its docstring at `:1139` says it *"Searches
-   every repo in `handoff_index.REPO_ENV_HANDLES`"* — now five. A description wider than its
-   implementation. **THREE sites, not one** — the loop, the `EXIT_ARC_UNMEASURED` description at
-   `find-session.py:~253-257`, and `scripts/session-analysis/extract_user_msgs.py:112-113`, each
-   independently enumerating the same four. Stale "four" prose also at
-   `scripts/lib/handoff_search.py:574` and `scripts/lib/handoff_budget.py:~204,~229`. The
-   derive-don't-restate pattern already exists in that repo at `handoff_search.py:1082`:
-   `", ".join(f"${h}" for h in handoff_index.REPO_ENV_HANDLES)`.
-   ⚠ The 2026-10-02 `home-manager switch` did NOT fix this — `$CIVITAI_CLI` resolves correctly and
-   the tool still ignores it, because the list is hardcoded rather than derived.
-   Closing condition: `python3 $DEVRC/scripts/session-analysis/extract_user_msgs.py --arc handoff-appblocks-scope-enforcement` exits 0 with NO env override.
-   forcing: user — the operator asked for this arc's sessions and the tool could not answer without a hand override
-2. **Teach the storage scopes in the generated `AGENTS.md`.** `civitai/cli`,
+1. **Teach the storage scopes in the generated `AGENTS.md`.** `civitai/cli`,
    `internal/cmd/templates/agents-app.md` — name `apps:storage:read`/`write` beside the
    existing `ai:write:budgeted`, keyed on the persistence trigger. The only surface an
    agent is routed to. 🔴 `agents_size_test.go` ratchets that file's size.
    Closing condition: `grep -c apps:storage internal/cmd/templates/agents-app.md` ≥ 1 on origin/main.
    forcing: none
-3. **Classify authorization failures in the SDK's storage error copy.** The viewer saw
+2. **Classify authorization failures in the SDK's storage error copy.** The viewer saw
    *"Saving failed for an unknown reason… try again"*; `appStorageErrors.ts` already
    documents that an authz failure classifies `null` and that *"please try again" is the
    WRONG copy for that arm* — nothing enforces it.
    Closing condition: a block can distinguish a scope denial from a transient without parsing host prose.
    forcing: none
+
+**DONE — the former rank 1 (`find-session.py` deriving `REPO_ENV_HANDLES`) is CLOSED,
+2026-10-03.** `innovation-upstream/devrc#1994` merged, squash **`3e7725bc`**; claim
+`appblocks-scope-enforcement-1` released. **Its closing condition was re-run against the
+MERGED tree, not the branch:** `python3 $DEVRC/scripts/session-analysis/extract_user_msgs.py
+--arc handoff-appblocks-scope-enforcement` exits **0** with NO env override and resolves
+`repo cli` — 3 sessions / 61 messages — against exit **3 `NOTHING MEASURED`** before.
+**Nothing in this arc is now eligible to be worked**: both items above declare
+`forcing: none`, so a session picking from this queue should skip them and do something an
+external signal asked for.
 
 ## Defects (batched)
 
@@ -565,6 +559,45 @@ this machine"; that is no longer true and the switch + prune have both run.
 - **No `clawgate-task:` field written this session.** `clawgate_handoff.sh resolve` exited **5**
   (`NOTHING RESOLVED — 0 tasks for this session`). An unknown session id answers 200 with an EMPTY
   ARRAY, so a 0 cannot distinguish "touched no task" from "wrong id" — not a clean bill of health.
+
+- 🔴 **THE MUTATION SWEEP, NOT THE REVIEW, FOUND THE ONE REAL DEFECT IN `devrc#1994` — AND IT
+  WAS A GUARD THAT READ AS A NEGATIVE CONTROL WHILE PROVIDING NONE.** `test_an_EMPTY_handle_is_
+  skipped_rather_than_joined_onto_cwd` asserted `(None, None)` using a synthetic doc name, so
+  deleting the `if not root: continue` skip from `arc_repo_for` left the whole file **GREEN at
+  107 passed** — `Path("") / "claudedocs/<synthetic>.md"` does not exist under any cwd either,
+  so the guarded and unguarded walks returned the SAME value and the assertion could not
+  separate them. **A guard whose fixture makes both arms agree is unobservable however its
+  docstring reads.** Cure (`d676d2f1`): plant the doc in a `monkeypatch.chdir(tmp_path)` cwd so
+  the unguarded walk RESOLVES it — the same mutant then gives **1 failed / 106 passed** with
+  that guard's own message. Full sweep: mutant `sorted(REPO_ENV_HANDLES)` KILLED the order
+  guard; the in-batch **positive control** `REPO_ENV_HANDLES[:4]` (the original defect
+  reinstated) KILLED three tests naming `['CIVITAI_CLI']` exactly — that control is what proves
+  the harness could observe anything at all. Run under `PYTHONDONTWRITEBYTECODE=1` with
+  `__pycache__` deleted between mutants, so a SURVIVED verdict cannot be a stale-bytecode
+  artifact. Production restored and proved by `git status --porcelain`, never by the mutation
+  script exiting 0.
+- ⚠ **Of the 10 new tests in `#1994`, 7 are regression coverage (red at base `5ddffdac`) and 3
+  are invariant guards.** `test_this_scan_WOULD_catch_the_original_inline_copy` is a
+  self-contained AST predicate control — no production change can move it, by construction — so
+  it was NOT mutation-tested rather than being credited as if it had been. Matrix: base **7
+  failed / 100 passed**, HEAD **107 passed**, same test file copied into a base worktree so the
+  implementation was the only variable.
+- 🔴 **A `subsystem_touch.py --pr` WINDOW THAT IS EMPTY BEFORE A MERGE IS NOT A DEAD END — IT IS
+  THE SAME WINDOW, ASKED TOO EARLY.** Mid-session the `--session` window REFUSED (exit 3, cwd
+  mismatch: this hub's cwd is `$DATAPACKET`) and the escalation it named, `--pr`/`--commit` over
+  devrc, had nothing to read because nothing had landed there yet. After `#1994` merged the
+  identical command resolved two entries and surfaced the record below. **Re-run the index
+  window after the merge, not only at `/handoff` time.**
+- 🔴 **THE STORE ALREADY HELD THIS EXACT DEFECT, UNMARKED, FOR SIX DAYS — WHICH IS THE PROTOCOL'S
+  OWN NAMED DEFAULT FAILURE.** `devrc/find-session.md`'s 2026-09-27 bullet described `--arc`
+  being blind to `civitai/cli`, named the fix ("a handle per dispatch repo or letting `--arc`
+  accept a path that exists"), and declared **no `OPEN:` marker** — so it read as current
+  behaviour the entire time, and its `$DEVRC/$HOMELAB/$DATAPACKET/$CIVITAI` enumeration was
+  indistinguishable from a live reading long after it went stale. Now rewritten as
+  `RESOLVED 3e7725bc:` with the stale enumeration explicitly marked as history, and the
+  still-open remainder stated: `civitai-orchestration`, `civitai-image-cacher` and `claude-pool`
+  have no handle, so the reach gap is **narrowed, not closed**. Both store writes were verified
+  by reading the synced bytes back, not by the exit code.
 
 ## How to verify
 
