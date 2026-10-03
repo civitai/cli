@@ -131,7 +131,7 @@ func TestWithoutFixPathNoShellProfileIsEverWritten(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestFixPathIsIdempotent is the property that buys the right to skip the
-// detection three earlier drafts got wrong: because applying the block twice is
+// detection two earlier drafts got wrong: because applying the block twice is
 // a no-op, nothing has to ask whether it is needed.
 func TestFixPathIsIdempotent(t *testing.T) {
 	dir, _ := agentSetupProjectWithFakeCLI(t)
@@ -665,61 +665,16 @@ func TestFixPathPrintsEveryFileItWrote(t *testing.T) {
 	}
 }
 
-// TestFixPathFollowsASymlinkedStartupFileInsteadOfReplacingIt pins a property
-// this feature INHERITS rather than states, on the files where it matters most.
-//
-// 🔴 A DOTFILES SYMLINK IS THE NORMAL WAY `~/.zshenv` AND `~/.profile` ARE
-// MANAGED — more so than any MCP config. `writeFileAtomic` already resolves the
-// destination before renaming (its own comment records the measured defect for
-// `~/.codex/config.toml`), so reusing `writeProjectFile` here is what buys the
-// behaviour. But an inherited property with no guard on THIS caller is one
-// refactor away from being lost silently: a rename onto the link destroys it and
-// leaves a regular file, orphaning the dotfiles copy at rc 0.
-func TestFixPathFollowsASymlinkedStartupFileInsteadOfReplacingIt(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink fixture")
-	}
-	dir, _ := agentSetupProjectWithFakeCLI(t)
-	home := os.Getenv("HOME")
-
-	dotfiles := filepath.Join(home, "dotfiles")
-	targets, terr := pathFixTargets(liveAgentEnv(dir))
-	if terr != nil {
-		t.Fatalf("pathFixTargets: %v", terr)
-	}
-	real := map[string]string{}
-	for _, tgt := range targets {
-		r := filepath.Join(dotfiles, filepath.Base(tgt.Path))
-		writeFile(t, r, "# managed in my dotfiles repo\nexport EDITOR=vi\n")
-		if err := os.Symlink(r, tgt.Path); err != nil {
-			t.Fatalf("symlinking %s -> %s: %v", tgt.Path, r, err)
-		}
-		real[tgt.Path] = r
-	}
-
-	if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", "claude", "--fix-path"); err != nil {
-		t.Fatalf("agent-setup --fix-path: %v", err)
-	}
-
-	for _, tgt := range targets {
-		info, err := os.Lstat(tgt.Path)
-		if err != nil {
-			t.Fatalf("lstat %s: %v", tgt.Path, err)
-		}
-		if info.Mode()&os.ModeSymlink == 0 {
-			t.Errorf("%s is no longer a symlink — the write replaced the link with a regular file, "+
-				"orphaning %s and making every future edit to the dotfiles copy invisible",
-				tgt.Path, real[tgt.Path])
-		}
-		got := readFile(t, real[tgt.Path])
-		if !strings.Contains(got, pathFixBeginMarker) {
-			t.Errorf("the real file %s did not gain the managed block:\n%s", real[tgt.Path], got)
-		}
-		if !strings.HasPrefix(got, "# managed in my dotfiles repo\n") {
-			t.Errorf("the real file %s lost its own first line:\n%s", real[tgt.Path], got)
-		}
-	}
-}
+// The symlink-following property of `--fix-path`'s writes is NOT guarded here,
+// deliberately. It belongs to writeProjectFile -> writeFileAtomic ->
+// resolveWriteTarget and is identical for every caller, so a per-caller copy is
+// the same proof re-run with a different fixture — this file shipped one, next
+// to an existing copy in agent_setup_round1_test.go, while `app_init.go`'s
+// caller had none and nothing said so. The behavioural half now lives on the
+// helper (TestWriteProjectFileFollowsASymlinkRatherThanReplacingIt, with the
+// broken-link arm beside it), and the CALLER SET — including which sites have
+// coverage and which deliberately have none — is asserted by
+// TestWriteHelperCallersAreLedgered at the module root.
 
 // TestAFullyRefusedFixPathRunNeverClaimsAWriteOrANewShell is the guard for a
 // defect an adversarial read of this change's own output found, not for one the

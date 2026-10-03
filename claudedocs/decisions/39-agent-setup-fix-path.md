@@ -48,27 +48,16 @@ agents connected the failure to the `AGENTS.md` they had just written — the
 agents relayed the PATH line (8/8) and 6/8 warned it would not persist, so they
 were never the weak link.
 
-## The design, and the three bugs it is shaped to avoid
+## The design, and the bug class it is shaped to avoid
 
-Decision 36 §Fourth records two abandoned drafts of a remedy in this area. Both
-DETECTED the condition by running a login shell from Go and asking whether
-`civitai` resolved, then wrote the binary's absolute path into the managed
-`AGENTS.md` block when it did not. Each was measured wrong in a way the previous
-fix introduced:
+**Decision 36 §Fourth owns that record — read it there.** It holds the two
+abandoned login-shell-probe drafts, each measured inversion, and why the accepted
+fix was deleting the probe rather than repairing it again. The reusable part is
+the shape, not any one inversion: **a per-machine signal whose only consumer was
+a write into a committed file.**
 
-1. stripping `PATH` alone left NixOS's `__NIXOS_SET_ENVIRONMENT_DONE` idempotence
-   sentinel set, so the profile built **no PATH at all** and a correctly
-   installed CLI read as unreachable — on the maintainer's own platform;
-2. stripping the sentinels fixed that, and a `cmd.WaitDelay` added for an
-   unrelated hang introduced a third inversion: a profile that backgrounds a
-   daemon returns `exec.ErrWaitDelay` **with the shell exited 0 and the resolved
-   path already on stdout**, which the probe scored "not reachable" while
-   discarding that answer (measured: 2 s deadline, 30.0 s elapsed, `err=nil`).
-
-The accepted fix then was **deleting the probe**, because the shape of the bug was
-never any one inversion: a per-machine signal's only consumer was a **write into
-a committed file**. Decision 36's rule — *the `AGENTS.md` block may depend on the
-PROJECT, never on the MACHINE* — stands unchanged here.
+That is also the limit of what it governs, and decision 36 now carries a scoping
+clause saying so. Nothing here writes a per-machine fact into a committed file.
 
 So this feature pays for its correctness differently:
 
@@ -138,6 +127,30 @@ straight into the `case` pattern would make a `*` or `[` in the path a glob
 metacharacter; inside `*":$civitai_cli_dir:"*` the expansion is quoted, so its
 content matches literally whatever it holds. A mutant that double-quotes it is
 killed by a `$HOME` in the fixture directory.
+
+### `~/.zshenv` is written unconditionally, and presence-detection was DECLINED
+
+`pathFixTargets` emits the zsh row whether or not zsh is installed. Gating it on
+a presence check was raised in review and **deliberately declined**; the record
+is here because an undocumented divergence reads as an oversight.
+
+**The reasoning is asymmetric cost.** A machine can gain zsh *after* `agent-setup`
+runs. A gated write would then leave this CLI unreachable from the shell the user
+later installs — which is exactly the failure cli#665 is about, re-created by the
+remedy. A stray `~/.zshenv` on a machine that never gets zsh is **inert**: nothing
+reads it, and the block it holds is a `case` that no shell evaluates. The missing
+file is not inert. So the unconditional write is the more robust of the two.
+
+🔴 **AND IT IS NOT BECAUSE DECISION 36 FORBIDS A PRESENCE CHECK — IT DOES NOT.**
+That reason was stated in an earlier draft of this area and it does not hold.
+`exec.LookPath("zsh")` is a **PATH lookup, not a login-shell probe**: it runs no
+shell, so not one of the inversion channels decision 36 measured (a distro
+sentinel, a backgrounding profile, a shell the probe could not run) can reach it.
+And its consumer here would be a **dotfile**, not a committed file, so the rule's
+own subject — what the `AGENTS.md` block may claim — is not engaged either. The
+divergence is a **judgement call about robustness, not a prohibition**, and it is
+written down as one so that no later change defends it with a rule that is not
+there. Decision 36's scoping clause records the same boundary from its side.
 
 ### 🔴 WHAT IT DOES NOT REACH
 
@@ -292,6 +305,9 @@ provided none for one shape.
   rebuilds PATH from `/etc/paths` and `/etc/paths.d` and appends surviving
   entries; the expectation is that the entry survives in a later position, which
   still resolves the name. Expectation, not measurement.
+- **Windows is skipped, not supported.** The two probes are POSIX login shells,
+  and no PowerShell profile is written.
+
 ### One property this feature INHERITS rather than states
 
 A dotfiles symlink is the normal way `~/.zshenv` and `~/.profile` are managed —
@@ -299,10 +315,24 @@ more so than any MCP config. `writeFileAtomic` already resolves the destination
 before renaming (its own comment records the measured defect for
 `~/.codex/config.toml`: a rename onto the link destroys it and leaves a regular
 file, orphaning the dotfiles copy at rc 0), and refuses a BROKEN link by name.
-Reusing `writeProjectFile` is what buys that behaviour here — but an inherited
-property with no guard on this caller is one refactor away from being lost
-silently, so `TestFixPathFollowsASymlinkedStartupFileInsteadOfReplacingIt` pins
-it (mutant M16).
+Reusing `writeProjectFile` is what buys that behaviour here.
 
-- **Windows is skipped, not supported.** The two probes are POSIX login shells,
-  and no PowerShell profile is written.
+🔴 **IT IS GUARDED ON THE HELPER, NOT ON THIS CALLER — and the first draft got
+that wrong.** This change shipped a per-caller copy of the proof
+(`TestFixPathFollowsASymlinkedStartupFileInsteadOfReplacingIt`), which was a
+second copy of `TestASymlinkedConfigIsFollowed`: same fixture shape, same
+`Lstat` assertion, nearly the same failure string. The property is identical for
+every caller, so a copy per caller grows with the caller set and *still* cannot
+report a caller that has NO coverage — `app_init.go`'s did not, and nothing said
+so. Replaced by two guards that split the work:
+
+- **behavioural**, on the seam itself —
+  `TestWriteProjectFileFollowsASymlinkRatherThanReplacingIt` plus
+  `TestWriteProjectFileRefusesABrokenSymlinkByName`
+  (`internal/cmd/write_helper_symlink_test.go`). Mutant M16 is killed here now.
+- **structural**, on the caller SET — `TestWriteHelperCallersAreLedgered`
+  (`writefile_callers_ledger_test.go`) fails when a caller is ADDED or REMOVED,
+  and makes every site state what covers it or record plainly that nothing does.
+
+Neither replaces the other: a ledger type-checks past a wrong argument and never
+watches a byte get written, which is why the behavioural half is not optional.
