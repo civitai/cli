@@ -5,6 +5,44 @@ import (
 	"testing"
 )
 
+// pathNoteWindowsClaim is the WHOLE `--fix-path` claim the managed block makes,
+// normalised to single spaces, and it is pinned as one string rather than as a
+// set of keywords.
+//
+// 🔴 THE PAYLOAD WAS THE FIFTH SITE OF A CLAIM THE WINDOWS POSTURE FIX CORRECTED
+// AT FOUR, AND THE ONLY ONE THAT SHIPS INSIDE THE BINARY. cli#777 round 3 gated
+// `--fix-path` on `GOOS=windows` and swept the prose: the file header, the const
+// doc, the no-gate block, the CRLF comments, audit1/audit2, decision 39, the
+// README and `Long` help. This template was missed. A Windows run exits 1 saying
+// the flag is not supported AND STILL WRITES THIS FILE — the project files are
+// deliberately preserved and asserted byte-identical — so the coding agent then
+// read, in the file that run had just created, that the refused flag "does that
+// for you", directly under the `command not found` advice it was there to act on.
+//
+// 🔴 PINNED AS A NORMALISED SENTENCE BECAUSE THE ARTEFACT IS PROSE. A keyword
+// guard on this is walkable by rewording, which is how this class kept
+// recurring across five sites; the whole string is a machine-readable claim. The
+// cost is deliberate: a cosmetic reword fails this test and the author must
+// restate the claim here, which is the point rather than the friction.
+//
+// 🔴 IT NAMES PLATFORMS, NOT MACHINES, SO DECISION 36 IS UNTOUCHED. That rule is
+// that the block may depend on the PROJECT and never on the MACHINE this run
+// happened on. "macOS and Linux" and "Windows" are properties of the published
+// binary's build matrix, identical in every copy of this file, and nothing here
+// is read off the host — unlike the absolute paths the forbidden list below
+// bans. See claudedocs/decisions/36-agents-block-per-project.md.
+const pathNoteWindowsClaim = "`civitai agent-setup --fix-path` does that for you on macOS and " +
+	"Linux: it writes a marker-guarded block into your shell startup files so a NEW shell resolves " +
+	"`civitai` (add `--dry-run` to see the exact block first). On Windows that flag is refused and " +
+	"writes no startup file, so add the directory through the Windows environment-variable settings, " +
+	"or work inside WSL, where this CLI is a Linux build."
+
+// normaliseProseForTest collapses every whitespace run to one space, so a claim
+// can be pinned as a sentence while the template stays hard-wrapped.
+func normaliseProseForTest(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // TestEveryBlockTellsYouWhatToDoWhenTheCLIIsNotOnPATH is cli#665's remaining
 // payload, and it is deliberately UNCONDITIONAL.
 //
@@ -54,6 +92,20 @@ func TestEveryBlockTellsYouWhatToDoWhenTheCLIIsNotOnPATH(t *testing.T) {
 					"so a session whose shell cannot resolve that name has no way, from this file, "+
 					"to find out why — which is the measured defect (0 of 8).", shape.Kind, want)
 			}
+		}
+		// 🔴 AND THE CLAIM ABOUT THAT FLAG IS PINNED WHOLE, NOT BY KEYWORD. See
+		// pathNoteWindowsClaim: a Windows run REFUSES `--fix-path` and still
+		// writes this file, so an unqualified "does that for you" recommends,
+		// in the file that run just created, the flag that run just declined.
+		if got := normaliseProseForTest(block); !strings.Contains(got, pathNoteWindowsClaim) {
+			t.Errorf("the %q block no longer carries the `--fix-path` claim verbatim.\n"+
+				"want (normalised): %s\n"+
+				"A Windows run exits 1 refusing this flag and STILL writes this file, so the claim "+
+				"has to carry the platform qualifier or it recommends, in the file that run just "+
+				"created, the flag that run just declined. This is pinned as a whole normalised "+
+				"sentence rather than as keywords because the artefact is prose and a keyword guard "+
+				"is walkable by rewording — if you reworded it on purpose, restate it in "+
+				"pathNoteWindowsClaim.", shape.Kind, pathNoteWindowsClaim)
 		}
 		// 🔴 NO ABSOLUTE PATH, EVER. This file is normally committed; a path from
 		// the machine that generated it is wrong for everyone else who pulls.

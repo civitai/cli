@@ -372,8 +372,11 @@ instruction file rots in silence.
 The agent is detected from the environment first and then from marker files in
 the project; `--agent <name>` overrides it, and `--dir <path>` points at a
 project other than the working directory. A path in `--json` is always
-**absolute**, whatever `--dir` you passed — except on a `manual` row, which names
-no file for this CLI to write and carries an empty `path`.
+**absolute**, whatever `--dir` you passed, with two exceptions that both carry an
+empty `path` because there is no file for this CLI to name: a `manual` row, and a
+`blocked` row for a refusal that happened before any target could be worked out
+(no resolvable home, or `--fix-path` on Windows). Every other `blocked` row names
+its file and is absolute like the rest.
 
 ### `--fix-path` — when `civitai: command not found` outlives the install
 
@@ -424,7 +427,8 @@ exists — which is why one file cannot do it.
   does not; `bash -lc "bash -ic …"` **does**.
 - **`--check --fix-path` is refused** (exit 2): `--check` writes nothing by
   contract. Use `--fix-path --dry-run` to see what would happen.
-- **Not supported on Windows** (exit 1, nothing written): the only files this
+- **Not supported on Windows** (exit 1, no startup file written, the project
+  files still written): the only files this
   knows how to edit are POSIX shell startup files, and the block it puts in them
   is POSIX `sh`, which neither `cmd.exe` nor PowerShell reads. A Windows path
   could not go in that block either — `sh` splits `PATH` on a colon and the drive

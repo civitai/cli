@@ -428,53 +428,125 @@ func TestCheckEmitsNoRowAboutAnAbsentHeader(t *testing.T) {
 	}
 }
 
-// TestManualRowCarriesAnEmptyPath pins F3: the exception the README states to
-// its own "a path in --json is always absolute" claim. If a manual row ever
-// gains a real path, the README's exception becomes a lie in the other
-// direction, and this fails.
+// TestManualRowCarriesAnEmptyPath pins F3: the exceptions the README states to
+// its own "a path in --json is always absolute" claim. If an exception row ever
+// gains a real path, or a non-exception row loses one, the README's sentence
+// becomes a lie in one direction or the other, and this fails.
+//
+// 🔴 ITS FIXTURE WAS NARROWER THAN THE SENTENCE IT GUARDS, AND THAT IS cli#777
+// ROUND 4'S F6 — THE FINDING WITH A PUBLISHED CONTRACT BEHIND IT. This guard
+// never passed `--fix-path`, so no `blocked` row was ever in its sample, and its
+// own failure message asserted the README named `manual` as the ONLY exception.
+// Meanwhile `--fix-path` emits `{"path":"","action":"blocked"}` whenever the
+// refusal happens before any target can be worked out — neither absolute nor
+// `manual`, so the published sentence was false and the guard that exists to pin
+// it was structurally unable to see it. The HOME refusal already produced that
+// shape before `--fix-path` existed, so the range did not introduce the
+// violation; the Windows refusal added a second, likelier way to reach it.
+//
+// 🔴 TWO ARMS, AND EACH IS A POSITIVE CONTROL FOR THE OTHER'S EXCEPTION. Arm one
+// (`--agent other`) is the only way to get a `manual` row; arm two (`--fix-path`
+// with no resolvable HOME) is the only way through this entrypoint to get the
+// empty-path `blocked` row — the Windows arm reaches the same code but
+// `agentEnv.GOOS` is not injectable through a CLI invocation, so it is pinned at
+// the seam instead, by TestFixPathRefusesWindowsAndWritesNoStartupFile. Each arm
+// FATALS if its own exception row is absent, so neither can quietly stop
+// measuring anything.
 func TestManualRowCarriesAnEmptyPath(t *testing.T) {
-	dir, _ := agentSetupProject(t)
-	out, _, err := run(t, "agent-setup", "--dir", dir, "--agent", "other", "--json")
-	if err != nil {
-		t.Fatalf("agent-setup --agent other --json: %v", err)
+	type row struct {
+		Path   string `json:"path"`
+		Action string `json:"action"`
 	}
-	var payload struct {
-		Changes []struct {
-			Path   string `json:"path"`
-			Action string `json:"action"`
-		} `json:"changes"`
+	decode := func(t *testing.T, out string) []row {
+		t.Helper()
+		var payload struct {
+			Changes []row `json:"changes"`
+		}
+		if err := json.Unmarshal([]byte(out), &payload); err != nil {
+			t.Fatalf("decode --json: %v\n%s", err, out)
+		}
+		return payload.Changes
 	}
-	if err := json.Unmarshal([]byte(out), &payload); err != nil {
-		t.Fatalf("decode --json: %v\n%s", err, out)
-	}
-	var seenManual bool
-	for _, c := range payload.Changes {
-		if c.Action != actionManual {
-			// The README's rule for every OTHER row: absolute — which means
-			// NON-EMPTY and absolute. 🔴 An earlier version of this guard read
-			// `c.Path != "" && !filepath.IsAbs(...)`, which exempted the empty
-			// string — the exact shape it exists to catch. Round 2 of #641
-			// measured a mutant emptying every path: it produced
-			// `"path": "", "action": "create"` in real output and this guard
-			// PASSED.
+	// assertPaths applies the README's rule to every row: an exception row must
+	// be EMPTY, everything else must be absolute.
+	//
+	// 🔴 "NOT ABSOLUTE" IS THE TEST, NOT "NOT EMPTY AND NOT ABSOLUTE". An earlier
+	// version read `c.Path != "" && !filepath.IsAbs(...)`, which exempted the
+	// empty string — the exact shape it exists to catch. Round 2 of #641 measured
+	// a mutant emptying every path: it produced `"path": "", "action": "create"`
+	// in real output and this guard PASSED. Widening the exception set does NOT
+	// re-open that hole: a RELATIVE path is still red on every row, including a
+	// `blocked` one, and an exception row holding anything at all is red too.
+	assertPaths := func(t *testing.T, rows []row, emptyAction string) (seenException bool) {
+		t.Helper()
+		for _, c := range rows {
+			if c.Action == emptyAction {
+				seenException = true
+				if c.Path != "" {
+					t.Errorf("a %q row carries path %q. The README names it as an exception to "+
+						"absolute paths precisely because there is no file for this CLI to name, "+
+						"and says it is empty — that exception is now wrong.", c.Action, c.Path)
+				}
+				continue
+			}
 			if !filepath.IsAbs(c.Path) {
 				t.Errorf("row %q carries path %q, which is not absolute; the README says a "+
 					"path in `--json` is always absolute whatever --dir you passed, and names "+
-					"the `manual` row as the ONLY exception", c.Action, c.Path)
+					"exactly two exceptions — a `manual` row, and a `blocked` row for a refusal "+
+					"that happened before any target could be worked out", c.Action, c.Path)
 			}
-			continue
 		}
-		seenManual = true
-		if c.Path != "" {
-			t.Errorf("a `manual` row now carries path %q. The README states the manual row "+
-				"as the ONE exception to absolute paths and says it is empty — that "+
-				"exception is now wrong.", c.Path)
+		return seenException
+	}
+
+	t.Run("manual", func(t *testing.T) {
+		dir, _ := agentSetupProject(t)
+		out, _, err := run(t, "agent-setup", "--dir", dir, "--agent", "other", "--json")
+		if err != nil {
+			t.Fatalf("agent-setup --agent other --json: %v", err)
 		}
-	}
-	if !seenManual {
-		t.Fatalf("`--agent other` produced no `manual` row, so this test asserted nothing "+
-			"about the exception it exists to pin\n%s", out)
-	}
+		if !assertPaths(t, decode(t, out), actionManual) {
+			t.Fatalf("`--agent other` produced no `manual` row, so this arm asserted nothing "+
+				"about the exception it exists to pin\n%s", out)
+		}
+	})
+
+	// 🔴 HOME IS EMPTIED AFTER agentSetupProject, DELIBERATELY. That helper points
+	// HOME at a t.TempDir so a `--fix-path` run cannot touch a real dotfile;
+	// emptying it afterwards makes os.UserHomeDir fail, which is what drives
+	// pathFixTargets to its outer error and produces the empty-path `blocked` row.
+	// XDG_CONFIG_HOME stays pointed at the temp dir, so nothing else in the run
+	// starts hunting for config in a home directory that is now "".
+	t.Run("blocked-before-any-target", func(t *testing.T) {
+		dir, _ := agentSetupProject(t)
+		t.Setenv("HOME", "")
+		out, _, err := run(t, "agent-setup", "--dir", dir, "--agent", "claude", "--fix-path", "--json")
+		if err == nil {
+			t.Fatalf("a `--fix-path` run with no resolvable home exited 0; this arm needs the "+
+				"refusal in order to have a `blocked` row to check\n%s", out)
+		}
+		rows := decode(t, out)
+		if !assertPaths(t, rows, actionBlocked) {
+			t.Fatalf("no `blocked` row was emitted, so this arm asserted nothing — and a guard "+
+				"whose fixture cannot produce the row it checks is exactly the defect F6 "+
+				"found here\n%s", out)
+		}
+		// The empty-path shape specifically: a `blocked` row that DOES name a
+		// file is covered by assertPaths' absolute branch, and would leave this
+		// arm passing while the README's second exception went unmeasured.
+		var emptyBlocked int
+		for _, c := range rows {
+			if c.Action == actionBlocked && c.Path == "" {
+				emptyBlocked++
+			}
+		}
+		if emptyBlocked == 0 {
+			t.Errorf("no `blocked` row carries an EMPTY path. The README's second exception is "+
+				"about exactly that row — a refusal reached before any target could be worked "+
+				"out — so without one in the sample this arm measures the first exception "+
+				"twice\n%s", out)
+		}
+	})
 }
 
 // TestTheHelpPointerIsHonoured pins F1 — the defect that shipped. The README

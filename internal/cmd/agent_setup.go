@@ -1172,11 +1172,20 @@ func runAgentSetupWrite(emit *agentSetupEmitter, env agentEnv, track, agent, tok
 	if fixPath {
 		plans, dir, err := planPathFix(env)
 		if err != nil {
-			// No target exists to name — the only cause is an unresolvable home.
+			// No target exists to name. ⚠ TWO CAUSES, NOT ONE — this comment
+			// claimed "the only cause is an unresolvable home" until cli#777
+			// round 4's F5, and it had been false since the Windows refusal
+			// became the first thing pathFixTargets does. A `GOOS=windows` run
+			// lands here too, and it is the likelier of the two in the field.
+			// Both are stated at pathFixTargets and planPathFix; this is the
+			// row's construction site, so it is the first thing anyone debugging
+			// an empty-`path` `blocked` row reads.
+			//
 			// It is `blocked`, not `manual`: the user asked for a write in as many
 			// words, so reporting success would be the one thing a script must not
 			// be told. An empty `path` is the same convention a `manual` row uses
-			// when there is no file for this CLI to name.
+			// when there is no file for this CLI to name — and README.md's
+			// absolute-path sentence names this row as the other exception.
 			changes = append(changes, agentChangeJSON{
 				Path: "", Action: actionBlocked, Reason: err.Error(),
 			})

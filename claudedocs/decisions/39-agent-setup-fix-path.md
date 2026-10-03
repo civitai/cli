@@ -11,12 +11,24 @@ Implementation: `internal/cmd/agent_setup_fixpath.go`. Guards:
 `internal/cmd/agent_setup_fixpath_audit3_test.go` (round 3's Windows refusal), and
 at the module root `agent_setup_fix_path_shell_test.go` (the real binary, real
 login shells) plus `agent_setup_fix_path_multishell_test.go` (the portability
-table and its three floors).
+table and its floors — no count is given here, for the reason the next paragraph
+gives; read the `t.Errorf` calls).
 
 > ⚠ **PROPOSED, NOT DONE: THIS FILE IS NOW MOSTLY AN AUDIT LOG, AND THE DECISION
-> IT RECORDS IS A MINORITY OF IT.** It has roughly doubled over two audit rounds,
-> and every line of that growth is this ladder's own record rather than anything
-> about `--fix-path`.
+> IT RECORDS IS A MINORITY OF IT.** Most of it is this ladder's own record rather
+> than anything about `--fix-path`, and it grows by one `### Round N` section per
+> audit round — **derive both the size and the round count with the block below
+> rather than reading a magnitude word here.**
+>
+> 🔴 **"ROUGHLY DOUBLED OVER TWO AUDIT ROUNDS" WAS WRONG AT THE COMMIT THAT WROTE
+> IT, AND THAT IS ROUND 4'S F4.** There were already **three** `### Round N`
+> sections, and the ratio depends on which baseline and which axis you pick — the
+> growth measures 2.45× on lines against the first figure the retired absolutes
+> quoted (338) and 2.80× against the pre-audit commit (295), on bytes 2.76× and
+> 3.19×. A ratio is exactly as perishable as the absolutes it replaced: it rotted
+> on arrival, in the paragraph whose own thesis is that this file must carry no
+> unreproducible figure. So it carries no magnitude word either, and the round
+> count is derived.
 >
 > 🔴 **NO ABSOLUTE FIGURE IS QUOTED HERE, AND THAT IS ROUND 3'S F4.** This
 > paragraph used to carry `338 → 458 → 657` lines and `20,416 → 29,576 → 43,007`
@@ -32,33 +44,41 @@ table and its three floors).
 > DOC=claudedocs/decisions/39-agent-setup-fix-path.md
 > wc -l "$DOC"                                 # total
 > grep -n '^## Red/green' "$DOC"               # the boundary (see below)
+> grep -c '^### Round [0-9]* of cli#777' "$DOC"  # audit rounds recorded here
 > ```
 >
 > The sections a reader needs in order to *change the feature safely* are the top
 > through WHAT IT DOES NOT REACH, plus the flag's contract — i.e. **everything
 > above the `## Red/green and the mutation matrix` heading**, which is a boundary
-> that moves with the file instead of a line number that rots. (That number was
-> also quoted wrongly: "roughly the first 340 lines" against a real boundary of
-> 356 at round 2's HEAD.) The three per-round findings-and-mutants sections are
+> that moves with the file instead of a line number that rots. (An earlier draft
+> quoted "roughly the first 340 lines" and was then "corrected" to a hard line
+> number — which was itself off by one against that same commit's own `grep`, and
+> is wrong by around ninety lines today. A line number here cannot be right for
+> long: run the `grep` above.) The per-round findings-and-mutants sections are
 > **provenance**: they answer "was this verified, and how" and are read
 > approximately never by someone editing the code.
 >
 > **Suggested split (a separate change — no round has performed it):** move
-> `### Mutants…`, `### Round 1 of cli#777…`, `### Round 2 of cli#777…` and
-> `### Round 3 of cli#777…` into
+> **every `###` child of `## Red/green and the mutation matrix`** — that is
+> `### Mutants…` plus one `### Round N of cli#777…` per audit round — into
 > `claudedocs/decisions/39-agent-setup-fix-path-verification.md` and leave a
 > one-line pointer. (The set grows by one per audit round, which is itself the
-> argument for the split.) Two details that an earlier draft of this proposal left
-> self-contradictory, resolved here — round 3's F5:
+> argument for the split. 🔴 **It is described that way, not enumerated with a
+> count, because round 4's F4 was exactly an enumeration updated in one place out
+> of two:** round 3 appended `### Round 3` to this move list and left every "three
+> sections" downstream of it unchanged, so the proposal contradicted itself about
+> its own scope. Derive the set — `grep -n '^### ' "$DOC"` under that heading —
+> rather than restating it.) Two details that an earlier draft of this proposal
+> left self-contradictory, resolved here — round 3's F5:
 >
 > - 🔴 **"KEEP THE RETRACTIONS INLINE" AND "MOVE `### Round 1`" CANNOT BOTH BE
 >   OBEYED AS WRITTEN**, because the corpus-count retraction sits INSIDE
->   `### Round 1`. So the retracted-claim notes that live inside the three moving
+>   `### Round 1`. So the retracted-claim notes that live inside the moving
 >   sections are **lifted into a new retained `## Retractions` section** before
 >   those sections move: round 1's corpus totals (745/746 files), round 1's claim
 >   to have measured mksh, and round 1's "109 assertions" — each as the one-line
 >   rule it produced, not the full narrative, which travels with its section.
->   Retractions already outside those three sections (F2's three drafts, the
+>   Retractions already outside the moving sections (F2's three drafts, the
 >   "unsupported either way" citation, round 3's Windows posture) stay where they
 >   are; they are in the kept part of the file already.
 > - 🔴 **THE `##` PARENT STAYS, WITH ITS INTRO — IT IS NOT ORPHANED.**
@@ -66,7 +86,8 @@ table and its three floors).
 >   `###` child: the red/green statement, the regression test's name and output,
 >   and the "the probe fails is the WRONG negative control" paragraph. All three
 >   are decision-relevant and none moves. The heading keeps that intro and gains
->   the pointer to the verification file; only its three `###` children leave.
+>   the pointer to the verification file; only its `###` children leave — all of
+>   them, which is the set the move list above describes rather than counts.
 >
 > That lands the decision record near its original size without losing anything a
 > reader of this file was actually looking for.

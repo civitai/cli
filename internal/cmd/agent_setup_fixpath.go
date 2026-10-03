@@ -125,6 +125,42 @@ var cliExecutable = os.Executable
 // managed block to run. Adding a directory to PATH only helps if the file in it
 // is called this, which is why cliBinDirForPATH refuses anything else rather
 // than writing a block that cannot work.
+//
+// 🔴 THE `civitai.exe` BRANCH IS UNREACHABLE IN EVERY SHIPPED BUILD, AND IT IS
+// KEPT ON PURPOSE — cli#777 ROUND 4'S F8, RECORDED SO IT IS NOT REDISCOVERED AS
+// DEAD CODE. Both callers sit behind the Windows short-circuit: planPathFix calls
+// pathFixTargets FIRST and returns on its error, and pathFixWindowsRefused is the
+// first thing pathFixTargets does — so on `GOOS=windows` neither cliBinDirForPATH
+// (which holds the base-name refusal) nor pathFixBlock is ever reached. The
+// branch is therefore correct and dead at the same time.
+//
+// Deleting it and returning a constant was considered and DECLINED, for three
+// reasons:
+//
+//   - It is the only place that knows the platform fact, and this function's
+//     whole job is to answer "what name must a shell resolve". Re-enabling
+//     Windows is described at the top of this file as a separate, unwritten
+//     feature waiting on a Windows host to measure it; with the branch gone that
+//     work needs a second edit in a second place, and FORGETTING it emits
+//     `[ -x "$civitai_cli_dir/civitai" ]` for a file called `civitai.exe` — a
+//     block that is silently inert while the run reports success. That is the
+//     exact confident-false-fix class the base-name refusal below exists to stop.
+//   - The `if` below is this file's ONLY `runtime.GOOS` in code (every other
+//     mention is prose), and the `runtime` import exists for it alone. Round 2's
+//     source scan
+//     banning `runtime.GOOS` was deleted because it could not tell a Windows GATE
+//     from this — see internal/cmd/agent_setup_fixpath_audit3_test.go. Keeping the
+//     one legitimate use, labelled as such, is what keeps "which spelling is
+//     legitimate here" answerable without that scan.
+//   - The cost is three lines returning a string literal: no logic, nothing that
+//     can be wrong, nothing to maintain.
+//
+// ⚠ THE RESIDUAL, STATED RATHER THAN GLOSSED: `runtime.GOOS` is fixed at compile
+// time, so on any host a maintainer runs, this branch cannot be exercised by any
+// test — it is unverified BY CONSTRUCTION, and the cross-compiled windows/amd64
+// and windows/arm64 artifacts ship it unexercised. That is acceptable only
+// because it returns a constant; do not grow logic in here without first giving
+// it a seam, the way upgrade.go's runtimeGOOS does.
 func cliBinaryBaseName() string {
 	if runtime.GOOS == "windows" {
 		return "civitai.exe"
@@ -575,10 +611,15 @@ type pathFixPlan struct {
 
 // planPathFix renders what `--fix-path` would do, writing nothing.
 //
-// The outer error is for the cases in which there is no row to build at all: no
-// resolvable home. A failure to resolve THIS binary still yields one row per
-// target, carrying the refusal, because the paths are known and naming them is
-// more useful than a single message with no file attached.
+// The outer error is for the cases in which there is no row to build at all,
+// which pathFixTargets decides and which are now TWO: a `GOOS=windows` run (the
+// refusal there is unconditional, and no POSIX startup file is a target on that
+// platform) and no resolvable home. ⚠ This comment said "the only cause is an
+// unresolvable home" until cli#777 round 4's F5 — false from the moment
+// pathFixWindowsRefused became the FIRST thing pathFixTargets does. A failure to
+// resolve THIS binary is different again and still yields one row per target,
+// carrying the refusal, because the paths are known and naming them is more
+// useful than a single message with no file attached.
 //
 // 🔴 IT RETURNS THE DIRECTORY IT USED, AND THE CALLER MUST NOT RE-DERIVE IT.
 // cliBinDirForPATH reads the filesystem (EvalSymlinks), so a second call is a

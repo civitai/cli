@@ -42,9 +42,9 @@ import (
 // Measured on a host with three of the five shells absent, a bare run printed
 // exactly `ok github.com/civitai/cli 0.697s` — byte-indistinguishable from the
 // full table. The only channel a default `go test` cannot suppress is the EXIT
-// STATUS, so the three floors below are asserted with `t.Errorf` rather than
-// logged: too few live shells, a retired directory shape, or an assertion count
-// short of the full cross product now FAIL instead of printing `ok`.
+// STATUS, so the floors below are asserted with `t.Errorf` rather than logged:
+// too few live shells, a shape lost at build time, or an assertion count short
+// of the full cross product now FAIL instead of printing `ok`.
 //
 // ⚠ AND THE RESIDUAL, STATED BECAUSE A FLOOR INVITES BEING READ AS A GUARANTEE:
 // the floor is multiShellMinLiveShells, not five. Nothing here can make shells
@@ -62,6 +62,21 @@ import (
 // rejected by VFAT, exFAT, NTFS and CIFS, so a `TMPDIR` on such a mount was
 // enough. It now returns an error, each failed shape gets its OWN skipping
 // subtest, and the shape floor turns the loss into a failure.
+//
+// 🔴 AND THAT SHAPE FLOOR THEN ASSERTED ONE OF SEVEN CAUSES — cli#777 ROUND 4'S
+// F2. It read the loss as "this filesystem would not hold the name" and advised
+// moving `TMPDIR`, while five of the seven ways blockFromRealBinary can fail are
+// PRODUCT defects that no `TMPDIR` touches. It now interpolates the error each
+// lost shape actually returned, so the default output distinguishes them; see
+// shapeLosses, which also carries the measurement.
+//
+// 🔴 A FOURTH FLOOR LIVES OUTSIDE THIS TEST, ON PURPOSE — ROUND 4'S F3, AND THE
+// ONLY SURVIVED MUTANT OF THAT ROUND. The shape TABLE had no floor at all, so
+// deleting a shape was a silent, fully green no-op. It is pinned by
+// TestTheDirectoryShapeTableIsNotSilentlyNarrowed, which is a separate test
+// because this one skips on windows and `t.Fatal`s on a dead harness — either of
+// which would leave a table check here unrun exactly when nobody is watching.
+// Do not count the floors in prose; read the `t.Errorf` calls.
 //
 // 🔴 AND THE HARNESS VALIDATES ITSELF ON AN UNGUARDED CONTROL BLOCK BEFORE
 // TRUSTING ANY VERDICT. The control is a plain unconditional prepend — no `case`,
@@ -99,12 +114,87 @@ var multiShellRunners = []multiShellRunner{
 // multiShellDirShapes are the directory names the block has to survive quoting
 // for. Each becomes the LAST path segment, so the metacharacter is in the PATH
 // entry itself rather than only in a parent.
+//
+// 🔴 DO NOT DELETE A SHAPE TO MAKE A RUN GREEN — THE FLOOR BELOW IS WHY, AND A
+// MUTANT SURVIVED HERE. This table had no floor and no warning while the live
+// shells and the per-shape property count both had one, and the shape floor's
+// own denominator was `len(multiShellDirShapes)` — self-referential, so shrinking
+// the table shrank the thing it was measured against. Measured in cli#777 round 4:
+// deleting `"with'quote"` gave `ok`, exit 0, `skippedShapes == 0`, no SKIPPED row
+// and a `MEASURED 32 assertions` line that read as a full table. A fully green run
+// with zero signal, and the only SURVIVED mutant of that round. The failure it
+// invites is ordinary: a shape fails on some CI image, and the cheapest "fix" is
+// to delete the line — after which the quoting property this whole table exists to
+// measure is silently no longer measured.
 var multiShellDirShapes = []string{
 	"plain",
 	"with space",
 	"with'quote",
 	"glob*[a-z]",
 	"dollar$HOME",
+}
+
+// multiShellMinDirShapes and multiShellRequiredDirShapes are the shape table's
+// floor, and UNLIKE multiShellMinLiveShells this one is pinned at FULL STRENGTH.
+//
+// 🔴 THE DIFFERENCE IS THAT THIS DIMENSION HAS NO ENVIRONMENT CONSTRAINT. The
+// live-shell floor cannot be five without making CI permanently red, because what
+// shells exist is a property of the runner image — so that floor is deliberately
+// below the table and says so. The shape table is entirely IN-REPO: every entry is
+// a string literal in this file, nothing has to be installed to have it, and a
+// filesystem that cannot hold one is reported by the separate shape floor rather
+// than by this one. So there is no reason to accept less than the whole table, and
+// a floor that could have been full strength and was not is decoration.
+//
+// 🔴 THE COUNT AND THE NAMES ARE BOTH ASSERTED, BECAUSE A COUNT ALONE IS
+// TRADEABLE. Deleting `with'quote` and adding `plain2` keeps the count at five and
+// loses the quoting property — the same one-line trade splitItemsFloor records in
+// agents_split_preserved_test.go. The two named here are the two the shape floor's
+// own message already calls "the two whose quoting the emitted block has to
+// survive", so asserting them by name is what makes that sentence true rather than
+// aspirational. Adding a shape stays free; removing one is red by name.
+const multiShellMinDirShapes = 5
+
+var multiShellRequiredDirShapes = []string{"with'quote", "glob*[a-z]"}
+
+// TestTheDirectoryShapeTableIsNotSilentlyNarrowed is the shape table's floor, and
+// it is a test of its OWN rather than a check inside the portability test.
+//
+// 🔴 THAT PLACEMENT IS THE POINT: INSIDE THE PORTABILITY TEST IT COULD PASS
+// VACUOUSLY. That test skips entirely on windows and `t.Fatal`s when no shell is
+// live or no shape could be built, and each of those abandons everything after it
+// — so a table-integrity check living there would be silently unrun in exactly the
+// environments where nobody is watching the table. This test builds nothing, runs
+// no shell and touches no filesystem: it reads two package-level literals, so it
+// runs on every platform under a bare `go test ./...` and has no way not to.
+func TestTheDirectoryShapeTableIsNotSilentlyNarrowed(t *testing.T) {
+	// POSITIVE CONTROL: an empty requirement list would make the loop below
+	// assert nothing, which is the one way this test could go quiet.
+	if len(multiShellRequiredDirShapes) == 0 {
+		t.Fatal("CONTROL failure: multiShellRequiredDirShapes is empty, so the by-name half of this " +
+			"floor asserts nothing and only the count is checked")
+	}
+	if len(multiShellDirShapes) < multiShellMinDirShapes {
+		t.Errorf("the directory-shape table holds %d shape(s) (%q), below the floor of %d. The "+
+			"shapes ARE the point of this table: each one is a quoting hazard the emitted block has "+
+			"to survive, and deleting one does not make the hazard go away — it makes the run stop "+
+			"measuring it, silently, because the shape floor's denominator is this same table. If a "+
+			"shape fails, fix the block or the harness; do NOT shorten this table.",
+			len(multiShellDirShapes), multiShellDirShapes, multiShellMinDirShapes)
+	}
+	have := make(map[string]bool, len(multiShellDirShapes))
+	for _, s := range multiShellDirShapes {
+		have[s] = true
+	}
+	for _, want := range multiShellRequiredDirShapes {
+		if !have[want] {
+			t.Errorf("the directory-shape table no longer holds %q. The count floor alone is "+
+				"tradeable — drop this shape, add a harmless one, and the count is unchanged while "+
+				"the property is gone — so the two shapes whose quoting matters most are asserted by "+
+				"NAME. This is the one the shape floor's own message promises a reader is measured.\n"+
+				"table: %q", want, multiShellDirShapes)
+		}
+	}
 }
 
 // multiShellMinLiveShells is the FLOOR this test fails below, and it is the whole
@@ -363,14 +453,39 @@ func TestTheEmittedBlockIsPortableAcrossPOSIXShells(t *testing.T) {
 		dir   string
 	}
 	var shapes []shapeCase
-	skippedShapes := 0
+	// shapeLosses accumulates the REASON each lost shape was lost, for the floor
+	// to interpolate.
+	//
+	// 🔴 THE FLOOR USED TO ASSERT ONE OF SEVEN CAUSES, AND POINT AT OUTPUT A BARE
+	// RUN SUPPRESSES — cli#777 round 4's F2. blockFromRealBinary returns an error
+	// from seven distinct places: MkdirAll, reading the built binary, copying it,
+	// `--fix-path` exiting non-zero, no `~/.zshenv` written, no complete managed
+	// block in it, and the block naming a different directory. FIVE of those are
+	// product defects. All seven funnelled into `skippedShapes++` and then into a
+	// floor message claiming the filesystem would not hold the name and advising
+	// "point TMPDIR at a filesystem that does", with the real reason reachable only
+	// in the `shape:` subtest's `Skipf` — which prints nothing without `-v`, and
+	// nothing runs this with `-v`. Measured: adding `'` to pathEntryRefusedChars (a
+	// plausible product regression; that set was widened once already) made this
+	// harness print the TMPDIR advice while `go test ./internal/cmd/` stayed green.
+	// An operator follows the advice, changes TMPDIR, fails again, and concludes
+	// the gate is flaky.
+	//
+	// 🔴 IT IS THE SAME DEFECT THIS AREA HAD ALREADY FIXED 200 LINES AWAY, IN THE
+	// PRODUCT, IN THE SAME COMMIT THAT WROTE THIS HARNESS. printPathFixFootprint
+	// carries "IT NAMES NO CAUSE, BECAUSE THERE IS MORE THAN ONE AND THIS LINE
+	// CANNOT TELL THEM APART"; the rule was applied to the payload and not to the
+	// harness. So the cure is the same one: carry the actual error into the one
+	// channel a default run cannot suppress, and let the floor name no cause of its
+	// own.
+	var shapeLosses []string
 	for _, shape := range multiShellDirShapes {
 		block, dir, berr := blockFromRealBinary(t, built, shape)
 		if berr != nil {
 			// 🔴 SCOPED TO THIS SHAPE'S OWN SUBTEST — the F3(b) fix. A `--- SKIP`
 			// row names which shape was lost and why, and the other shapes still
 			// run; the shape floor below is what makes the loss fail the run.
-			skippedShapes++
+			shapeLosses = append(shapeLosses, fmt.Sprintf("%q: %v", shape, berr))
 			shape, berr := shape, berr
 			t.Run("shape:"+shape, func(t *testing.T) {
 				t.Skipf("NOT A PASS — this directory shape was NOT MEASURED in any shell: %v", berr)
@@ -555,13 +670,24 @@ func TestTheEmittedBlockIsPortableAcrossPOSIXShells(t *testing.T) {
 			len(live), strings.Join(names, ", "), multiShellMinLiveShells, strings.Join(absent, ", "))
 	}
 
-	if skippedShapes > 0 {
-		t.Errorf("%d of %d directory shape(s) were NOT MEASURED because this filesystem would not "+
-			"hold the name (see the `shape:` subtests for which, and why). The shapes ARE the point of "+
-			"this table — `with'quote` and `glob*[a-z]` are the two whose quoting the emitted block has "+
-			"to survive — so a run missing one measures a different thing from the one this test "+
-			"claims. Point TMPDIR at a filesystem that holds these names.",
-			skippedShapes, len(multiShellDirShapes))
+	// 🔴 IT NAMES NO CAUSE OF ITS OWN, BECAUSE THERE ARE SEVEN AND THIS LINE
+	// CANNOT TELL THEM APART — it interpolates the error each lost shape actually
+	// returned. See shapeLosses above for what the single-cause version cost. A
+	// filesystem that will not hold the name and a `--fix-path` that exited
+	// non-zero are now distinguishable in the DEFAULT output, which is the whole
+	// requirement: the first is the operator's to fix by moving TMPDIR, the second
+	// is a product regression and no amount of TMPDIR will touch it.
+	if len(shapeLosses) > 0 {
+		t.Errorf("%d of %d directory shape(s) were NOT MEASURED, in any shell. The shapes ARE the "+
+			"point of this table — `with'quote` and `glob*[a-z]` are the two whose quoting the emitted "+
+			"block has to survive — so a run missing one measures a different thing from the one this "+
+			"test claims.\n"+
+			"Each loss, with the reason it returned:\n  %s\n"+
+			"READ THOSE REASONS BEFORE ACTING: a message about this filesystem not holding the name is "+
+			"yours to fix by pointing TMPDIR at one that does, but a `--fix-path` that exited non-zero, "+
+			"wrote no `~/.zshenv`, wrote no complete managed block, or named a different directory is a "+
+			"PRODUCT regression and changing TMPDIR will not touch it.",
+			len(shapeLosses), len(multiShellDirShapes), strings.Join(shapeLosses, "\n  "))
 	}
 
 	// 🔴 THE ASSERTION FLOOR IS THE ONE THAT CANNOT PASS VACUOUSLY. The two above
