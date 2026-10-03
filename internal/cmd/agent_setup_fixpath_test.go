@@ -665,6 +665,62 @@ func TestFixPathPrintsEveryFileItWrote(t *testing.T) {
 	}
 }
 
+// TestFixPathFollowsASymlinkedStartupFileInsteadOfReplacingIt pins a property
+// this feature INHERITS rather than states, on the files where it matters most.
+//
+// 🔴 A DOTFILES SYMLINK IS THE NORMAL WAY `~/.zshenv` AND `~/.profile` ARE
+// MANAGED — more so than any MCP config. `writeFileAtomic` already resolves the
+// destination before renaming (its own comment records the measured defect for
+// `~/.codex/config.toml`), so reusing `writeProjectFile` here is what buys the
+// behaviour. But an inherited property with no guard on THIS caller is one
+// refactor away from being lost silently: a rename onto the link destroys it and
+// leaves a regular file, orphaning the dotfiles copy at rc 0.
+func TestFixPathFollowsASymlinkedStartupFileInsteadOfReplacingIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink fixture")
+	}
+	dir, _ := agentSetupProjectWithFakeCLI(t)
+	home := os.Getenv("HOME")
+
+	dotfiles := filepath.Join(home, "dotfiles")
+	targets, terr := pathFixTargets(liveAgentEnv(dir))
+	if terr != nil {
+		t.Fatalf("pathFixTargets: %v", terr)
+	}
+	real := map[string]string{}
+	for _, tgt := range targets {
+		r := filepath.Join(dotfiles, filepath.Base(tgt.Path))
+		writeFile(t, r, "# managed in my dotfiles repo\nexport EDITOR=vi\n")
+		if err := os.Symlink(r, tgt.Path); err != nil {
+			t.Fatalf("symlinking %s -> %s: %v", tgt.Path, r, err)
+		}
+		real[tgt.Path] = r
+	}
+
+	if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", "claude", "--fix-path"); err != nil {
+		t.Fatalf("agent-setup --fix-path: %v", err)
+	}
+
+	for _, tgt := range targets {
+		info, err := os.Lstat(tgt.Path)
+		if err != nil {
+			t.Fatalf("lstat %s: %v", tgt.Path, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("%s is no longer a symlink — the write replaced the link with a regular file, "+
+				"orphaning %s and making every future edit to the dotfiles copy invisible",
+				tgt.Path, real[tgt.Path])
+		}
+		got := readFile(t, real[tgt.Path])
+		if !strings.Contains(got, pathFixBeginMarker) {
+			t.Errorf("the real file %s did not gain the managed block:\n%s", real[tgt.Path], got)
+		}
+		if !strings.HasPrefix(got, "# managed in my dotfiles repo\n") {
+			t.Errorf("the real file %s lost its own first line:\n%s", real[tgt.Path], got)
+		}
+	}
+}
+
 // TestAFullyRefusedFixPathRunNeverClaimsAWriteOrANewShell is the guard for a
 // defect an adversarial read of this change's own output found, not for one the
 // issue records.

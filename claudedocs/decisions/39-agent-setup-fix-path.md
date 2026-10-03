@@ -248,6 +248,7 @@ on the machine.
 | M13 | an unresolvable `HOME` is accepted | KILLED — `accepted an unresolvable home` |
 | M14 | the footprint's verb ignores a `blocked` row | KILLED — `says \`Wrote \` on a run where every startup file was refused` |
 | M15 | the next-step line ignores a `blocked` row | KILLED — `tells the reader to open a new shell` |
+| M16 | the atomic write replaces a symlink instead of following it | KILLED — `is no longer a symlink` |
 | CONTROL | no mutation | GREEN |
 
 M14 and M15 are **round 2**: an adversarial read of this change's own output found
@@ -291,5 +292,17 @@ provided none for one shape.
   rebuilds PATH from `/etc/paths` and `/etc/paths.d` and appends surviving
   entries; the expectation is that the entry survives in a later position, which
   still resolves the name. Expectation, not measurement.
+### One property this feature INHERITS rather than states
+
+A dotfiles symlink is the normal way `~/.zshenv` and `~/.profile` are managed —
+more so than any MCP config. `writeFileAtomic` already resolves the destination
+before renaming (its own comment records the measured defect for
+`~/.codex/config.toml`: a rename onto the link destroys it and leaves a regular
+file, orphaning the dotfiles copy at rc 0), and refuses a BROKEN link by name.
+Reusing `writeProjectFile` is what buys that behaviour here — but an inherited
+property with no guard on this caller is one refactor away from being lost
+silently, so `TestFixPathFollowsASymlinkedStartupFileInsteadOfReplacingIt` pins
+it (mutant M16).
+
 - **Windows is skipped, not supported.** The two probes are POSIX login shells,
   and no PowerShell profile is written.

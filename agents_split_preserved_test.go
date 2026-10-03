@@ -585,7 +585,7 @@ var bornSplitItems = []string{
 	// as 35–38: AGENTS.md had 830 bytes of headroom when it was added, and the
 	// body is the dogfood measurement, the three abandoned-probe inversions it is
 	// shaped to avoid, the per-shell startup-file table, the flag contract, a
-	// 16-row mutation matrix and the enumerated residuals. There was nowhere to
+	// 17-row mutation matrix and the enumerated residuals. There was nowhere to
 	// park it, even briefly.
 	"claudedocs/decisions/39-agent-setup-fix-path.md",
 }
