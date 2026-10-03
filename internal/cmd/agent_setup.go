@@ -613,7 +613,11 @@ the 'is it already on PATH' test is a 'case' statement evaluated by your shell a
 startup, so a redundant block is harmless. It does NOT reach 'bash -c', which
 reads no startup file at all. Without the flag NO startup file is read or written.
 --fix-path is REFUSED with --check, which writes nothing by contract; combine it
-with --dry-run to print the exact block instead.
+with --dry-run to print the exact block instead. It is also REFUSED on Windows
+(exit 1, no startup file written, the project files still written): POSIX shell
+startup files are the only ones it knows, and the drive-letter colon cannot go in
+a PATH entry in the POSIX 'sh' block it emits -- which covers Git Bash and MSYS
+too. Use the Windows environment-variable settings, or run it inside WSL.
 
 --json SHAPES: 'checks' for --check, 'changes' for a write or dry run, and -- for
 a failure that happened before either could be built -- an 'error' string with

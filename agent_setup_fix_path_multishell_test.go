@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +34,35 @@ import (
 // subtest and is counted in the SKIPPED line of the summary, so a run that
 // measured two shells cannot be read as a run that measured five.
 //
+// 🔴 BUT "VISIBLY" MEANT "UNDER `-v`", AND NOTHING RUNS THIS WITH `-v` — THAT IS
+// cli#777 ROUND 3'S F3, AND THE FIX IS THE FLOOR AT THE BOTTOM OF THIS TEST.
+// `--- SKIP` rows and the `MEASURED` summary are subtest output and `t.Logf`,
+// both suppressed without `-v`, while `Makefile`'s `test` target and
+// `.github/workflows/ci.yml`'s test step both run a bare `go test ./...`.
+// Measured on a host with three of the five shells absent, a bare run printed
+// exactly `ok github.com/civitai/cli 0.697s` — byte-indistinguishable from the
+// full table. The only channel a default `go test` cannot suppress is the EXIT
+// STATUS, so the three floors below are asserted with `t.Errorf` rather than
+// logged: too few live shells, a retired directory shape, or an assertion count
+// short of the full cross product now FAIL instead of printing `ok`.
+//
+// ⚠ AND THE RESIDUAL, STATED BECAUSE A FLOOR INVITES BEING READ AS A GUARANTEE:
+// the floor is multiShellMinLiveShells, not five. Nothing here can make shells
+// 3–5 being absent fail a run without making CI permanently red, and a
+// permanently-red gate is worse than none. So a `ok` from this test means "at
+// least the floor was measured", never "the table was measured" — read the
+// SKIPPED line under `-v`, or install the shells. Widening the floor is a change
+// to what CI INSTALLS, not to this constant.
+//
+// 🔴 A SHAPE THE FILESYSTEM REJECTS USED TO RETIRE THE WHOLE TABLE, SILENTLY —
+// THE OTHER HALF OF F3. blockFromRealBinary took the PARENT `t` and `t.Skipf`'d
+// on it, so one unholdable directory name abandoned every shell in every shape
+// through `runtime.Goexit`: zero assertions, no `MEASURED` line, and `ok` under
+// the default invocation. It is reachable — `glob*[a-z]` and `with'quote` are
+// rejected by VFAT, exFAT, NTFS and CIFS, so a `TMPDIR` on such a mount was
+// enough. It now returns an error, each failed shape gets its OWN skipping
+// subtest, and the shape floor turns the loss into a failure.
+//
 // 🔴 AND THE HARNESS VALIDATES ITSELF ON AN UNGUARDED CONTROL BLOCK BEFORE
 // TRUSTING ANY VERDICT. The control is a plain unconditional prepend — no `case`,
 // no `[ -x … ]` — which MUST score "1 entry after one source / 2 after two / 1
@@ -42,7 +72,14 @@ import (
 //
 // To measure the shells this host does not ship:
 //
-//	nix-shell -p dash mksh busybox --run 'go test . -run MultiShell -v'
+//	nix-shell -p dash mksh busybox coreutils --run 'go test . -run TheEmittedBlockIsPortable -v'
+//
+// 🔴 THE `-run` PATTERN IS PART OF THE INSTRUMENT, AND THIS LINE USED TO NAME ONE
+// THAT MATCHES NOTHING. It read `-run MultiShell`, which appears in no test name
+// in this file; `go test` answers a pattern matching nothing with
+// `ok … [no tests to run]` and EXIT 0 — measured. So the documented way to cover
+// the missing shells ran the table zero times and reported success. Any `-run`
+// written into a doc must be pasted and the result read, not merely spelled.
 
 // multiShellRunner is one shell, as an argv prefix, because `busybox ash` is two
 // words and a `shell string` field cannot hold it.
@@ -69,6 +106,27 @@ var multiShellDirShapes = []string{
 	"glob*[a-z]",
 	"dollar$HOME",
 }
+
+// multiShellMinLiveShells is the FLOOR this test fails below, and it is the whole
+// of F3's fix for the visibility defect: a number in the exit status rather than a
+// sentence in `-v` output.
+//
+// 🔴 TWO IS MEASURED HERE AND DERIVED FOR CI, AND THE TWO CLAIMS ARE DIFFERENT.
+// Measured on the development host (NixOS): `bash` and `zsh` resolve, `dash`,
+// `mksh` and `busybox` do not — 2 live. DERIVED for `ubuntu-latest`, which is
+// where `.github/workflows/ci.yml` runs this: `bash` is present and `dash` is a
+// Debian/Ubuntu Essential package providing `/bin/sh`, so `exec.LookPath("dash")`
+// resolves — 2 live. That second figure is NOT measured; no Ubuntu runner was
+// available. If CI ever reports below this floor, the fix is to install the
+// shells in the workflow, NOT to lower this constant — lowering it is how a floor
+// becomes decoration.
+const multiShellMinLiveShells = 2
+
+// multiShellPropertiesPerShape is the P1..P4 count asserted per shell per shape.
+// It is a constant so the expected-assertion floor is derived from the table
+// rather than restated as a literal total — round 1 quoted a total (109) that did
+// not follow from its own dimensions, and this is what stops that recurring.
+const multiShellPropertiesPerShape = 4
 
 // resolve returns the absolute program for this runner, or "" when it is absent.
 func (r multiShellRunner) resolve() (string, []string, bool) {
@@ -151,20 +209,28 @@ func buildCLIForMultiShell(t *testing.T) string {
 // blockFromRealBinary copies built into a directory of the given shape, runs
 // `agent-setup --fix-path` from that copy, and returns the managed block the run
 // wrote plus the directory the block names.
-func blockFromRealBinary(t *testing.T, built, shape string) (block, dir string) {
+//
+// 🔴 IT RETURNS AN ERROR AND NEVER FAILS OR SKIPS THE TEST ITSELF — F3(b). It
+// used to take the parent `t` and `t.Skipf` on it, which is `runtime.Goexit` on
+// the PARENT: one directory name the filesystem would not hold abandoned every
+// shell and every other shape, printed no summary, and reported `ok` under the
+// default invocation. An error lets the caller scope the loss to the one shape it
+// belongs to and then fail the floor, so the loss is attributable AND audible.
+func blockFromRealBinary(t *testing.T, built, shape string) (block, dir string, err error) {
 	t.Helper()
 	dir = filepath.Join(t.TempDir(), shape)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Skipf("NOT A PASS: this filesystem will not hold a directory named %q, so the %q shape "+
-			"was not measured: %v", shape, shape, err)
+	if mkerr := os.MkdirAll(dir, 0o755); mkerr != nil {
+		return "", dir, fmt.Errorf("this filesystem will not hold a directory named %q "+
+			"(VFAT/exFAT/NTFS/CIFS reject several of these shapes; point TMPDIR at a filesystem that "+
+			"does not): %w", shape, mkerr)
 	}
-	raw, err := os.ReadFile(built)
-	if err != nil {
-		t.Fatal(err)
+	raw, rferr := os.ReadFile(built)
+	if rferr != nil {
+		return "", dir, fmt.Errorf("reading the built CLI %s: %w", built, rferr)
 	}
 	exe := filepath.Join(dir, "civitai")
 	if werr := os.WriteFile(exe, raw, 0o755); werr != nil {
-		t.Fatal(werr)
+		return "", dir, fmt.Errorf("copying the built CLI into the %q shape: %w", shape, werr)
 	}
 
 	home := t.TempDir()
@@ -177,19 +243,21 @@ func blockFromRealBinary(t *testing.T, built, shape string) (block, dir string) 
 		"CIVITAI_NO_UPDATE_CHECK=1",
 	)
 	if out, rerr := cmd.CombinedOutput(); rerr != nil {
-		t.Fatalf("`civitai agent-setup --fix-path` failed for the %q shape: %v\n%s", shape, rerr, out)
+		return "", dir, fmt.Errorf("`civitai agent-setup --fix-path` failed for the %q shape: %w\n%s",
+			shape, rerr, out)
 	}
-	b, err := os.ReadFile(filepath.Join(home, ".zshenv"))
-	if err != nil {
-		t.Fatalf("--fix-path wrote no ~/.zshenv for the %q shape, so there is no block to drive: %v",
-			shape, err)
+	b, zerr := os.ReadFile(filepath.Join(home, ".zshenv"))
+	if zerr != nil {
+		return "", dir, fmt.Errorf("--fix-path wrote no ~/.zshenv for the %q shape, so there is no "+
+			"block to drive: %w", shape, zerr)
 	}
 	const begin = "# BEGIN civitai cli PATH"
 	const end = "# END civitai cli PATH"
 	i := strings.Index(string(b), begin)
 	j := strings.Index(string(b), end)
 	if i < 0 || j < i {
-		t.Fatalf("the ~/.zshenv written for the %q shape holds no complete managed block:\n%s", shape, b)
+		return "", dir, fmt.Errorf("the ~/.zshenv written for the %q shape holds no complete managed "+
+			"block:\n%s", shape, b)
 	}
 	block = string(b)[i:j+len(end)] + "\n"
 	// 🔴 COMPARE THE SHELL-QUOTED FORM, NOT THE RAW PATH. The block renders the
@@ -199,10 +267,10 @@ func blockFromRealBinary(t *testing.T, built, shape string) (block, dir string) 
 	// exactly the shape whose quoting matters most; that is this harness's own
 	// first finding, against itself.
 	if !strings.Contains(block, shQuote(dir)) {
-		t.Fatalf("the block written for the %q shape does not assign %s — the harness would be "+
-			"driving a block for some other directory:\n%s", shape, shQuote(dir), block)
+		return "", dir, fmt.Errorf("the block written for the %q shape does not assign %s — the "+
+			"harness would be driving a block for some other directory:\n%s", shape, shQuote(dir), block)
 	}
-	return block, dir
+	return block, dir, nil
 }
 
 // unguardedControlBlock is the block as it shipped BEFORE round 1: a plain
@@ -277,9 +345,15 @@ func TestTheEmittedBlockIsPortableAcrossPOSIXShells(t *testing.T) {
 				"'go test . -run TheEmittedBlockIsPortable -v'` to cover it.", name)
 		})
 	}
+	// 🔴 ZERO LIVE SHELLS IS A FAILURE, NOT A SKIP. It used to `t.Skipf`, which a
+	// bare `go test ./...` renders as `ok` — the exact state F3 is about: a probe
+	// wired to nothing, reporting the same thing as a full run.
 	if len(live) == 0 {
-		t.Skipf("NOT A PASS — NOTHING WAS MEASURED: none of %s is installed, so the block's "+
-			"portability was not checked here.", strings.Join(absent, ", "))
+		t.Fatalf("NOTHING WAS MEASURED: none of %s is installed, so the emitted block's portability "+
+			"was not checked at all. This is a FAILURE rather than a skip because a skip is invisible "+
+			"under the bare `go test ./...` that the Makefile and CI both run — install at least %d of "+
+			"them, or run under `nix-shell -p dash mksh busybox coreutils`.",
+			strings.Join(absent, ", "), multiShellMinLiveShells)
 	}
 
 	// Pre-build one block per directory shape, from the real binary.
@@ -289,8 +363,20 @@ func TestTheEmittedBlockIsPortableAcrossPOSIXShells(t *testing.T) {
 		dir   string
 	}
 	var shapes []shapeCase
+	skippedShapes := 0
 	for _, shape := range multiShellDirShapes {
-		block, dir := blockFromRealBinary(t, built, shape)
+		block, dir, berr := blockFromRealBinary(t, built, shape)
+		if berr != nil {
+			// 🔴 SCOPED TO THIS SHAPE'S OWN SUBTEST — the F3(b) fix. A `--- SKIP`
+			// row names which shape was lost and why, and the other shapes still
+			// run; the shape floor below is what makes the loss fail the run.
+			skippedShapes++
+			shape, berr := shape, berr
+			t.Run("shape:"+shape, func(t *testing.T) {
+				t.Skipf("NOT A PASS — this directory shape was NOT MEASURED in any shell: %v", berr)
+			})
+			continue
+		}
 		shapes = append(shapes, shapeCase{shape, block, dir})
 	}
 	if len(shapes) == 0 {
@@ -298,7 +384,6 @@ func TestTheEmittedBlockIsPortableAcrossPOSIXShells(t *testing.T) {
 	}
 
 	assertions := 0
-	skippedShapes := 0
 
 	for _, ls := range live {
 		ls := ls
@@ -441,19 +526,54 @@ func TestTheEmittedBlockIsPortableAcrossPOSIXShells(t *testing.T) {
 		})
 	}
 
-	t.Logf("MEASURED %d assertions: %d shell(s) x %d directory shape(s) x 4 properties",
-		assertions, len(live), len(shapes))
 	var names []string
 	for _, ls := range live {
 		names = append(names, ls.runner.name+" ("+ls.prog+")")
 	}
+	t.Logf("MEASURED %d assertions: %d shell(s) x %d directory shape(s) x %d properties",
+		assertions, len(live), len(shapes), multiShellPropertiesPerShape)
 	t.Logf("shells measured: %s", strings.Join(names, ", "))
 	if len(absent) > 0 {
 		t.Logf("SKIPPED — NOT MEASURED HERE (shell not installed): %s. Run "+
-			"`nix-shell -p dash mksh busybox --run 'go test . -run MultiShell -v'` to cover them.",
-			strings.Join(absent, ", "))
+			"`nix-shell -p dash mksh busybox coreutils --run "+
+			"'go test . -run TheEmittedBlockIsPortable -v'` to cover them.", strings.Join(absent, ", "))
 	}
+
+	// ---------------------------------------------------------------------
+	// THE FLOORS. Everything above this line is `t.Logf` and therefore
+	// invisible under the bare `go test ./...` the Makefile and CI run. These
+	// three are the same facts in the one channel a default run cannot
+	// suppress. See the F3 note in this file's header, including the residual.
+	// ---------------------------------------------------------------------
+
+	if len(live) < multiShellMinLiveShells {
+		t.Errorf("only %d shell(s) were measured (%s), below the floor of %d. %s were not installed, "+
+			"so their arms were NOT measured — and a skip is invisible under `go test ./...`, which "+
+			"is how a subset run came to report the same `ok` as the full table. Install the missing "+
+			"shells (`nix-shell -p dash mksh busybox coreutils`, or the CI workflow's package step); "+
+			"do NOT lower this floor.",
+			len(live), strings.Join(names, ", "), multiShellMinLiveShells, strings.Join(absent, ", "))
+	}
+
 	if skippedShapes > 0 {
-		t.Logf("SKIPPED %d directory shape(s) this filesystem would not hold", skippedShapes)
+		t.Errorf("%d of %d directory shape(s) were NOT MEASURED because this filesystem would not "+
+			"hold the name (see the `shape:` subtests for which, and why). The shapes ARE the point of "+
+			"this table — `with'quote` and `glob*[a-z]` are the two whose quoting the emitted block has "+
+			"to survive — so a run missing one measures a different thing from the one this test "+
+			"claims. Point TMPDIR at a filesystem that holds these names.",
+			skippedShapes, len(multiShellDirShapes))
+	}
+
+	// 🔴 THE ASSERTION FLOOR IS THE ONE THAT CANNOT PASS VACUOUSLY. The two above
+	// count what the harness INTENDED to run; this one counts what it actually
+	// asserted, so it also catches a property abandoned inside a shape subtest —
+	// P4's own `t.Skipf` when the fixture binary has gone missing, which is
+	// likewise invisible without `-v`.
+	if want := len(live) * len(shapes) * multiShellPropertiesPerShape; assertions != want {
+		t.Errorf("%d assertions ran, want %d (%d shell(s) x %d shape(s) x %d properties). A count "+
+			"short of the cross product means a property was abandoned mid-table — most likely a "+
+			"per-shape or per-property `t.Skipf`, which prints nothing without `-v`. Run with `-v` and "+
+			"read the SKIP rows.",
+			assertions, want, len(live), len(shapes), multiShellPropertiesPerShape)
 	}
 }

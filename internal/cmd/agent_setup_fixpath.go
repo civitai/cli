@@ -55,25 +55,45 @@ import (
 // exactly what makes the detection unnecessary — and nothing machine-specific is
 // written into AGENTS.md (TestFixPathWritesNoMachinePathIntoAGENTSMD).
 //
-// 🔴 THE WINDOWS POSTURE, IN ONE PLACE, BECAUSE TWO PASSAGES BELOW USED TO STATE
-// IT DIFFERENTLY AND ONE OF THEM WAS WRONG. The flag is registered on every
-// platform and NOTHING gates it on GOOS: `.goreleaser.yaml` builds windows
-// amd64 and arm64, so a Windows run reaches this code, writes `~/.zshenv` and a
-// bash login file, and emits POSIX `sh`. That is useful there to a POSIX shell —
-// Git Bash / MSYS is `GOOS=windows` running a bash that genuinely reads
-// `~/.bash_profile`, and WSL is a Linux build — and useless to `cmd.exe` or
-// PowerShell, for which no profile is written and none is claimed.
+// 🔴 THE WINDOWS POSTURE, IN ONE PLACE, BECAUSE EVERY EARLIER DRAFT OF IT WAS
+// STATED IN SEVERAL PLACES AND AT LEAST ONE OF THEM WAS ALWAYS WRONG.
+// `--fix-path` REFUSES on `GOOS=windows`: the flag is still registered on every
+// platform (so `--help` and the exit-code contract are uniform), but a run on
+// windows gets a `blocked` row, `ok:false` and a non-zero exit, and writes no
+// startup file. The project files — `AGENTS.md`, `CLAUDE.md`, the MCP config —
+// land exactly as they do without the flag. pathFixTargets is where the refusal
+// lives, keyed on the INJECTED `agentEnv.GOOS` rather than on `runtime.GOOS`, so
+// the gate is reachable from a test on this host; see pathFixWindowsRefused.
 //
-// ⚠ WHAT A NATIVE-WINDOWS RUN ACTUALLY DOES AT RUNTIME IS UNVERIFIED. No Windows
-// host was available when this was written, so every sentence here about Windows
-// is derived from the build matrix and from `os` / `runtime` constants, not from
-// an executed run. Do not promote it to a measurement. What this replaced was
-// worse than unverified: a comment claiming "a Windows run is unsupported either
-// way" and citing decision 39's "Windows is skipped, not supported" — a sentence
-// that is about the two POSIX login-shell PROBES not covering Windows, i.e.
-// TEST COVERAGE, and not about the command refusing to run. The citation did not
-// support the claim, and the claim contradicted the CRLF comment in
-// mergePathFixBlock, which had it right.
+// 🔴 THE GATE CHANGES NO BEHAVIOUR, AND THAT IS THE ARGUMENT FOR IT. The
+// unconditional colon refusal below already refuses EVERY native-Windows run:
+// `os.Executable()` there returns a fully-qualified path, `filepath.Abs` keeps it
+// one, and `filepath.Dir` returns `VolumeName(path) + dir`, whose volume on a
+// drive-letter path is two bytes ending in `:`
+// ($GOROOT/src/internal/filepathlite/path.go `Dir`, and `volumeNameLen` in
+// path_windows.go, which returns 2 when `path[1] == ':'`). So the colon is at
+// index 1 of every resolved directory and `strings.IndexAny` finds it. What the
+// gate replaces is therefore only the REASON: "your directory contains a colon,
+// move or symlink this CLI somewhere else" is advice no Windows user can act on,
+// because the drive letter is not a thing they can move away from.
+//
+// 🔴 AND GIT BASH / MSYS CANNOT BE RESCUED BY A CARVE-OUT, WHICH IS WHAT AN
+// EARLIER DRAFT OF THIS AREA ASSUMED. MSYS is `GOOS=windows` running a POSIX bash
+// that really does read `~/.bash_profile`, so the flag was left ungated to
+// protect that population — but the colon refusal already refused all of it, so
+// nothing was being protected. Making it work is not a gate: that bash splits
+// PATH on `:` and needs the `/c/Users/…` form, so real support means translating
+// a Windows path into an MSYS one. That is a separate feature, and it is not
+// writable here without a Windows host to measure it on. WSL is unaffected — it
+// is a Linux build, so `GOOS=linux`, and nothing below sees it.
+//
+// ⚠ WHAT A NATIVE-WINDOWS RUN ACTUALLY DOES AT RUNTIME IS STILL UNVERIFIED. No
+// Windows host has been available to any round of this work, so every sentence
+// here about native Windows — the colon's position included — is DERIVED from the
+// build matrix and from the stdlib source named above, not from an executed run.
+// Do not promote it to a measurement. The refusal itself IS measured, because it
+// is keyed on an injected seam: see
+// TestFixPathRefusesWindowsAndWritesNoStartupFile.
 
 // The managed-block markers for a SHELL file. They are shell comments, and they
 // are the contract between one run and the next: everything between them is this
@@ -113,8 +133,26 @@ func cliBinaryBaseName() string {
 }
 
 // pathEntrySplitChar is the character the EMITTED BLOCK's shell splits PATH on,
-// and pathEntryRefusedChars is every character a resolved directory may not
-// contain if that block is to work.
+// and pathEntryRefusedChars is the set this command refuses a resolved directory
+// for.
+//
+// 🔴 THE SET IS NOT A COMPLETENESS CLAIM, AND SAYING IT WAS is cli#777 round 3's
+// F6. This doc comment used to call it "every character a resolved directory may
+// not contain if that block is to work", and the user-facing message below used
+// to say a newline "would split the assignment itself". Both are false, and they
+// are false in the direction that matters — a stated reason a reader can check
+// and find wrong is what gets a correct guard deleted. The directory is rendered
+// by shellSingleQuote, so a newline or a carriage return sits INSIDE a
+// single-quoted word and splits nothing. Measured in bash 5.3.15 against a
+// fixture binary, on a PATH asserted to hold no `civitai` first, with a plain
+// directory name as the positive control: `a<LF>b` → the block resolves and runs
+// the CLI; `a<CR>b` → resolves and runs; `a:b` → NOTFOUND. Only the colon is a
+// defect. `\n` and `\r` stay refused as PATHOLOGICAL rather than as
+// unrepresentable — a login-file path holding either is far likelier to be a
+// corrupted `HOME` than an intended directory, and this command writes a file the
+// user's shell executes. ⚠ The previous round restated the false reason and
+// WIDENED it to `\r`, inside a commit arguing that a false negative is a defect;
+// this is the correction, not a third justification.
 //
 // 🔴 THESE ARE PROPERTIES OF THE EMITTED SHELL, NOT OF THE COMPILING PLATFORM —
 // AND KEYING THEM TO THE PLATFORM WAS THE BUG. The block this command writes is
@@ -141,12 +179,16 @@ func cliBinaryBaseName() string {
 // the block could never make the name resolve, and a refusal naming the reason
 // beats a file the user then trusts.
 //
-// 🔴 AND THERE IS DELIBERATELY NO `runtime.GOOS != "windows"` GATE HERE. It was
-// offered as the alternative and it is UNSAFE: Git Bash / MSYS is `GOOS=windows`
-// running a POSIX bash that genuinely reads `~/.bash_profile`, so gating would
-// break a real population of users for whom this feature works. See the Windows
-// posture note at the top of this file — including that the native-Windows
-// runtime shape is UNVERIFIED, no Windows host having been available.
+// 🔴 AND THE REFUSAL IS NOT WHERE WINDOWS IS DECIDED — pathFixTargets IS. Round 2
+// left this predicate as the only thing standing between a Windows run and a
+// useless startup file, and recorded "there is deliberately no GOOS gate" here on
+// the grounds that gating would break Git Bash / MSYS. That reasoning was wrong
+// about its own code: the colon below refuses every Windows path including every
+// MSYS one, so the ungated flag protected nobody. Round 3 made the refusal
+// explicit at pathFixWindowsRefused, which changes no outcome and replaces an
+// unactionable reason with the true one. This predicate stays keyed to the
+// EMITTED shell on every platform — see the Windows posture note at the top of
+// this file, including that the native-Windows runtime shape is still UNVERIFIED.
 const (
 	pathEntrySplitChar    = ":"
 	pathEntryRefusedChars = "\n\r" + pathEntrySplitChar
@@ -191,12 +233,14 @@ func cliBinDirForPATH() (string, error) {
 	}
 	dir := filepath.Dir(abs)
 	if i := strings.IndexAny(dir, pathEntryRefusedChars); i >= 0 {
-		return "", fmt.Errorf("this CLI's directory contains %q, which a PATH entry in the POSIX shell "+
-			"block this command writes cannot hold (%q is what `sh` splits PATH on, so the entry would "+
-			"become two directories that do not exist; a newline or carriage return would split the "+
-			"assignment itself): %q — move or symlink this CLI into a directory whose path has none of "+
-			"them, then re-run `civitai agent-setup --fix-path`",
-			string(dir[i]), pathEntrySplitChar, dir)
+		return "", fmt.Errorf("this CLI's directory contains %q, so no PATH block was written: %q — "+
+			"%q is what the POSIX `sh` this command emits splits PATH on, so an entry holding one would "+
+			"become two directories that do not exist; a newline or a carriage return is refused as "+
+			"pathological rather than as unrepresentable (the block single-quotes the directory, so "+
+			"either one would survive, but a login file this command wrote is the wrong place to guess "+
+			"that such a path was intended) — move or symlink this CLI into a directory whose path has "+
+			"none of them, then re-run `civitai agent-setup --fix-path`",
+			string(dir[i]), dir, pathEntrySplitChar)
 	}
 	return dir, nil
 }
@@ -313,9 +357,17 @@ func mergePathFixBlock(path, existing, block string) (string, fileAction, error)
 		// tail begins `"\r\n"`, so trimming only `"\n"` leaves the `"\r"` as a
 		// line of its own — and a lone-CR line is a COMMAND to a shell: bash
 		// answers `$'\r': command not found`, dash and zsh likewise, at every
-		// shell start, forever, in a file this command wrote. Reachable on the
-		// shipped Windows targets (`.goreleaser.yaml` builds windows amd64 and
-		// arm64, and nothing gates `--fix-path` on GOOS). The arms are exclusive:
+		// shell start, forever, in a file this command wrote.
+		//
+		// 🔴 REACHABILITY IS A PROPERTY OF THE FILE, NOT OF THE PLATFORM — and
+		// this comment used to cite the platform ("`.goreleaser.yaml` builds
+		// windows amd64 and arm64, and nothing gates `--fix-path` on GOOS"), which
+		// round 3's Windows refusal makes false. The guard is not weakened: what
+		// has to be CRLF is the USER'S EXISTING startup file, and a POSIX user
+		// acquires one of those from a dotfiles repo edited on Windows, a shared
+		// mount, or any editor that saves CRLF — no Windows run of this CLI is
+		// needed, and TestReplacingACRLFSavedBlockLeavesNoLoneCarriageReturn drives
+		// exactly that case on this host. The arms are exclusive:
 		// trimming both in sequence would eat a blank line the user wrote.
 		if strings.HasPrefix(tail, "\r\n") {
 			tail = strings.TrimPrefix(tail, "\r\n")
@@ -342,8 +394,55 @@ type pathFixTarget struct {
 	Why  string
 }
 
+// pathFixWindowsRefused is the whole Windows posture as one predicate: on
+// `GOOS=windows` there is no startup file for this command to write, and saying
+// so is the refusal.
+//
+// 🔴 IT READS `env.GOOS`, NOT `runtime.GOOS`, AND THAT IS THE LOAD-BEARING PART.
+// `agentEnv.GOOS` is this package's house seam for exactly this (its own doc
+// comment records why: a per-OS path is otherwise untestable on one machine), and
+// it is already a parameter of pathFixTargets and planPathFix. Keyed to the
+// injected value, the refusal is REACHABLE from a test on a POSIX host —
+// TestFixPathRefusesWindowsAndWritesNoStartupFile drives it in both directions.
+// Keyed to `runtime.GOOS` it would be unreachable here and could only ever be
+// asserted by reading the source for a spelling, which is the guard shape round 3
+// deleted: a source scan for `runtime.GOOS` was measured to be walked around by a
+// gate written `env.GOOS == "windows"` while catching the other spelling, i.e. it
+// pinned a word and not the gate.
+//
+// 🔴 IT IS CHECKED BEFORE `HOME`, DELIBERATELY. A Windows run with no resolvable
+// home has two true refusals available and only one of them is actionable; being
+// told to set HOME invites a second run that then refuses for a different reason.
+// The platform answer is the one that ends the matter.
+//
+// The returned error is the OUTER error of pathFixTargets, so the caller turns it
+// into exactly one `blocked` row with an empty `path` — the same convention the
+// unresolvable-HOME refusal uses, and for the same reason: the user asked for a
+// write in as many words, so `ok:true` and exit 0 are the one pair of answers a
+// script must not be given.
+func pathFixWindowsRefused(env agentEnv) error {
+	if env.GOOS != "windows" {
+		return nil
+	}
+	return fmt.Errorf("`--fix-path` is not supported on Windows, so no startup file was written " +
+		"(every other step ran): the only files it knows how to edit are POSIX shell startup files — " +
+		"`~/.zshenv` and the first of `~/.bash_profile`/`~/.bash_login`/`~/.profile` a bash login shell " +
+		"reads — and the block it puts in them is POSIX `sh`, which neither `cmd.exe` nor PowerShell " +
+		"reads. A Windows directory could not be used in that block either: `sh` splits PATH on a " +
+		"colon, and the drive letter puts one in every absolute Windows path. Git Bash and MSYS are " +
+		"in the same position despite running a POSIX bash — that bash wants the `/c/Users/...` form, " +
+		"and translating a path into it is not something this command does. Add the directory holding " +
+		"`civitai.exe` to your PATH through the Windows environment-variable settings, or run " +
+		"`civitai agent-setup --fix-path` inside WSL, where this CLI is a Linux build")
+}
+
 // pathFixTargets picks the startup files that make the two commands cli#665's
 // closing condition names resolve the CLI.
+//
+// It refuses before it picks, in two cases and in this order: `GOOS=windows`
+// (pathFixWindowsRefused — there is no POSIX startup file to write there), then
+// an unresolvable `HOME`. Both are the OUTER error, so each becomes one `blocked`
+// row with an empty `path` rather than a per-file refusal.
 //
 // 🔴 THE TWO SHELLS READ DISJOINT FILES, AND THAT IS THE WHOLE REASON THERE ARE
 // TWO ROWS. zsh reads `.zshenv`, `.zprofile`, `.zshrc` and `.zlogin`, and NEVER
@@ -415,6 +514,9 @@ type pathFixTarget struct {
 // This is a judgement call about robustness, and it is recorded as one so nobody
 // "restores" a prohibition to justify it.
 func pathFixTargets(env agentEnv) ([]pathFixTarget, error) {
+	if err := pathFixWindowsRefused(env); err != nil {
+		return nil, err
+	}
 	home := strings.TrimSpace(env.Home)
 	if home == "" {
 		return nil, fmt.Errorf("no home directory could be resolved, so there is no shell startup file to " +
@@ -630,8 +732,15 @@ func printPathFixFootprint(w io.Writer, st ui.Styler, changes []agentChangeJSON,
 	}
 	fmt.Fprintln(w, "\nPATH:")
 	if pf.Dir == "" {
-		fmt.Fprintf(w, "  %s\n", st.ErrorMsg("this CLI's own directory could not be resolved, so no PATH block "+
-			"was written — the rows above carry the reason"))
+		// 🔴 IT NAMES NO CAUSE, BECAUSE THERE IS MORE THAN ONE AND THIS LINE CANNOT
+		// TELL THEM APART. It used to assert "this CLI's own directory could not be
+		// resolved", which was the only reason `Dir` could be empty when it was
+		// written. Round 3's Windows refusal is a second: there `Dir` is empty
+		// because no directory was ever LOOKED FOR, and claiming a failed lookup
+		// would be a false statement about what the run did — the same class as the
+		// `Wrote <path>` footprint defect this file already records twice. The rows
+		// carry the reason, and they are two lines up.
+		fmt.Fprintf(w, "  %s\n", st.ErrorMsg("no PATH block was written — the rows above carry the reason"))
 		return
 	}
 	action := map[string]string{}

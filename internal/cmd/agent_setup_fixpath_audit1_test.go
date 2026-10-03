@@ -357,8 +357,16 @@ func TestTheBlockAddsNothingWhenTheDirectoryNoLongerHoldsTheCLI(t *testing.T) {
 // single leading `"\n"` from the tail so the block does not grow a blank line per
 // run; on a file saved with CRLF the tail begins `"\r\n"`, so the `"\r"` survives
 // as a line of its own and bash/dash/zsh answer `$'\r': command not found` on
-// every new shell. Reachable on the shipped Windows targets: `.goreleaser.yaml`
-// builds windows amd64 and arm64 and nothing gates `--fix-path` on GOOS.
+// every new shell.
+//
+// 🔴 REACHABILITY IS A PROPERTY OF THE USER'S FILE, NOT OF THE PLATFORM. This
+// comment used to read "reachable on the shipped Windows targets:
+// `.goreleaser.yaml` builds windows amd64 and arm64 and nothing gates
+// `--fix-path` on GOOS" — which round 3's Windows refusal makes false, since no
+// Windows run reaches this code any more. The guard is not weakened, because what
+// has to be CRLF is the EXISTING startup file: a POSIX user acquires one from a
+// dotfiles repo edited on Windows, a shared mount, or any editor that saves CRLF.
+// The fixture below is exactly that case, on this host.
 //
 // ⚠ THE CLAIM IS "NO *NEW* LONE-CR LINE", AND THE FIXTURE ISOLATES THAT. A
 // startup file saved wholly in CRLF is already degraded for a POSIX shell before

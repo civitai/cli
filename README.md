@@ -424,6 +424,16 @@ exists — which is why one file cannot do it.
   does not; `bash -lc "bash -ic …"` **does**.
 - **`--check --fix-path` is refused** (exit 2): `--check` writes nothing by
   contract. Use `--fix-path --dry-run` to see what would happen.
+- **Not supported on Windows** (exit 1, nothing written): the only files this
+  knows how to edit are POSIX shell startup files, and the block it puts in them
+  is POSIX `sh`, which neither `cmd.exe` nor PowerShell reads. A Windows path
+  could not go in that block either — `sh` splits `PATH` on a colon and the drive
+  letter puts one in every absolute Windows path — and that applies to Git Bash
+  and MSYS too, despite the POSIX bash, because that bash wants the `/c/Users/…`
+  form. The run says so and refuses; `AGENTS.md`, `CLAUDE.md` and the MCP config
+  are still written. Add the directory holding `civitai.exe` to your PATH through
+  the Windows environment-variable settings, or run this inside WSL, where the
+  CLI is a Linux build.
 
 **Open a new shell afterwards** — the shell you ran it in is unchanged, because a
 startup file is only read at startup.

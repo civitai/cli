@@ -7,27 +7,69 @@ that writes a file the user's login shell executes.
 
 Implementation: `internal/cmd/agent_setup_fixpath.go`. Guards:
 `internal/cmd/agent_setup_fixpath_test.go` (unit and integration),
-`internal/cmd/agent_setup_fixpath_audit2_test.go` (round 2's F1 guards), and at
-the module root `agent_setup_fix_path_shell_test.go` (the real binary, real login
-shells) plus `agent_setup_fix_path_multishell_test.go` (the portability table).
+`internal/cmd/agent_setup_fixpath_audit2_test.go` (round 2's F1 guards),
+`internal/cmd/agent_setup_fixpath_audit3_test.go` (round 3's Windows refusal), and
+at the module root `agent_setup_fix_path_shell_test.go` (the real binary, real
+login shells) plus `agent_setup_fix_path_multishell_test.go` (the portability
+table and its three floors).
 
 > ⚠ **PROPOSED, NOT DONE: THIS FILE IS NOW MOSTLY AN AUDIT LOG, AND THE DECISION
-> IT RECORDS IS A MINORITY OF IT.** 338 → 458 → **657** lines (20,416 → 29,576 →
-> **43,007** bytes) over two audit rounds, +45% each time, and every byte of that
-> growth is this ladder's own record rather than anything about `--fix-path`. The
-> sections a reader needs in order to *change the feature safely* are the top
-> through WHAT IT DOES NOT REACH, plus the flag's contract — roughly the first
-> 340 lines. The three per-round findings-and-mutants sections are **provenance**:
-> they answer "was this verified, and how" and are read approximately never by
-> someone editing the code. **Suggested split (a separate change — round 2
-> deliberately did not perform it):** move `### Mutants…`, `### Round 1 of
-> cli#777…` and `### Round 2 of cli#777…` into
-> `claudedocs/decisions/39-agent-setup-fix-path-verification.md`, leave a
-> one-line pointer, and keep the RETRACTIONS inline where they are — the
-> retracted-claim notes are the part that stops a future draft re-deriving a dead
-> sentence (F2 is on its **third** draft precisely because that history was
-> legible). That lands the decision record near its original size without losing
-> anything a reader of this file was actually looking for.
+> IT RECORDS IS A MINORITY OF IT.** It has roughly doubled over two audit rounds,
+> and every line of that growth is this ladder's own record rather than anything
+> about `--fix-path`.
+>
+> 🔴 **NO ABSOLUTE FIGURE IS QUOTED HERE, AND THAT IS ROUND 3'S F4.** This
+> paragraph used to carry `338 → 458 → 657` lines and `20,416 → 29,576 → 43,007`
+> bytes with "+45% each time". The third pair was **wrong** — taken before this
+> file's own last edits of that round landed — and the growth rates were wrong on
+> both axes once the real third pair was used. It is the same class as the corpus
+> figure round 2 **retired three sections below**: an unreproducible absolute,
+> quoted in the very file whose size it describes, and therefore stale from the
+> next commit onward. The argument needs no number, so it carries none. **Derive
+> it, from the headings rather than from a remembered line count:**
+>
+> ```bash
+> DOC=claudedocs/decisions/39-agent-setup-fix-path.md
+> wc -l "$DOC"                                 # total
+> grep -n '^## Red/green' "$DOC"               # the boundary (see below)
+> ```
+>
+> The sections a reader needs in order to *change the feature safely* are the top
+> through WHAT IT DOES NOT REACH, plus the flag's contract — i.e. **everything
+> above the `## Red/green and the mutation matrix` heading**, which is a boundary
+> that moves with the file instead of a line number that rots. (That number was
+> also quoted wrongly: "roughly the first 340 lines" against a real boundary of
+> 356 at round 2's HEAD.) The three per-round findings-and-mutants sections are
+> **provenance**: they answer "was this verified, and how" and are read
+> approximately never by someone editing the code.
+>
+> **Suggested split (a separate change — no round has performed it):** move
+> `### Mutants…`, `### Round 1 of cli#777…`, `### Round 2 of cli#777…` and
+> `### Round 3 of cli#777…` into
+> `claudedocs/decisions/39-agent-setup-fix-path-verification.md` and leave a
+> one-line pointer. (The set grows by one per audit round, which is itself the
+> argument for the split.) Two details that an earlier draft of this proposal left
+> self-contradictory, resolved here — round 3's F5:
+>
+> - 🔴 **"KEEP THE RETRACTIONS INLINE" AND "MOVE `### Round 1`" CANNOT BOTH BE
+>   OBEYED AS WRITTEN**, because the corpus-count retraction sits INSIDE
+>   `### Round 1`. So the retracted-claim notes that live inside the three moving
+>   sections are **lifted into a new retained `## Retractions` section** before
+>   those sections move: round 1's corpus totals (745/746 files), round 1's claim
+>   to have measured mksh, and round 1's "109 assertions" — each as the one-line
+>   rule it produced, not the full narrative, which travels with its section.
+>   Retractions already outside those three sections (F2's three drafts, the
+>   "unsupported either way" citation, round 3's Windows posture) stay where they
+>   are; they are in the kept part of the file already.
+> - 🔴 **THE `##` PARENT STAYS, WITH ITS INTRO — IT IS NOT ORPHANED.**
+>   `## Red/green and the mutation matrix` has content of its own above its first
+>   `###` child: the red/green statement, the regression test's name and output,
+>   and the "the probe fails is the WRONG negative control" paragraph. All three
+>   are decision-relevant and none moves. The heading keeps that intro and gains
+>   the pointer to the verification file; only its three `###` children leave.
+>
+> That lands the decision record near its original size without losing anything a
+> reader of this file was actually looking for.
 
 ## The defect, measured
 
@@ -137,6 +179,20 @@ end to end — a binary at `…/a:b/civitai` wrote both startup files, reported
 while a fresh `bash -lc 'command -v civitai'` with that block sourced still
 answered nothing.
 
+⚠ **AND `\n`/`\r` ARE REFUSED AS PATHOLOGICAL, NOT AS DEFECTS — ROUND 3'S F6.**
+The user-facing message said a newline "would split the assignment itself" and
+this doc's const comment called the set "every character a resolved directory may
+not contain if that block is to work". Both are false: the block renders the
+directory through `shellSingleQuote`, so both characters sit inside a
+single-quoted word. Measured in bash 5.3.15, on a `PATH` first asserted to hold
+no `civitai` at all, with a plain directory name as the positive control —
+`a<LF>b` → the block resolves and RUNS the fixture; `a<CR>b` → resolves and runs;
+`a:b` → NOTFOUND. The colon is the only real defect. The refusal is KEPT — a login
+file this command wrote is the wrong place to guess that such a path was intended
+— but as defence in depth, with no completeness claimed. 🔴 Round 2 restated the
+false reason **and widened it to `\r`**, inside a commit whose own thesis was that
+a false negative is a defect; the reason, not the refusal, is what was wrong.
+
 🔴 **THE CHARACTER SET IS A PROPERTY OF THE EMITTED SHELL, NOT OF THE COMPILING
 PLATFORM — AND ROUND 1 GOT THAT WRONG.** Round 1 refused
 `"\n\r" + string(os.PathListSeparator)`. That constant is `';'` on windows
@@ -157,14 +213,41 @@ unconditionally (`pathEntryRefusedChars`), and **refusing every Windows-style
 path is the honest outcome** — exactly what the base-name refusal above already
 does for the same reason, and better than a file the user then trusts.
 
-🔴 **THERE IS DELIBERATELY NO `runtime.GOOS != "windows"` GATE.** It was offered
-in round 2's audit as the alternative and it is **unsafe**: Git Bash / MSYS is
-`GOOS=windows` running a POSIX bash that genuinely reads `~/.bash_profile`, so
-gating would break a real population of users for whom this feature works. The
-flag stays registered on all platforms. `TestTheRefusedCharacterSetIsNotDerived`
-`FromTheCompilingPlatform` pins both halves — no platform-derived character set,
-and `runtime.GOOS` referenced exactly once in that file (the `civitai.exe` base
-name).
+🔴 **ROUND 3 REVERSED THIS: WINDOWS IS NOW REFUSED EXPLICITLY.** Round 2 recorded
+"there is deliberately no `runtime.GOOS != "windows"` gate", on the grounds that
+Git Bash / MSYS is `GOOS=windows` running a POSIX bash which genuinely reads
+`~/.bash_profile`, so gating would break a population the feature works for. That
+reasoning was **wrong about round 2's own code**: the colon refusal it had just
+made unconditional already refuses *every* native-Windows run, MSYS included.
+`os.Executable()` there returns a fully-qualified path and `filepath.Dir` returns
+`VolumeName(path) + dir`, whose volume on a drive-letter path is two bytes ending
+in `:` (`$GOROOT/src/internal/filepathlite/path.go`'s `Dir`, and `volumeNameLen`
+in its `path_windows.go`, which returns 2 when `path[1] == ':'`). So the colon is
+at index 1 of every resolved directory, `strings.IndexAny` finds it, and the
+population the ungated flag existed to protect was never protected.
+
+The gate therefore **changes no behaviour** — it changes the REASON. "Your
+directory contains a colon, move or symlink this CLI" is advice no Windows user
+can act on, because a drive letter is not something they can move away from; the
+refusal now says the true thing instead. And MSYS cannot be rescued by a
+carve-out: that bash splits `PATH` on `:` and wants the `/c/Users/…` form, so real
+support means path translation — a separate feature, and unwritable without a
+Windows host to measure it on. WSL is unaffected: it is a Linux build.
+
+It is keyed on the **injected** `agentEnv.GOOS`, not `runtime.GOOS`, which is what
+makes the refusal reachable from a test on a POSIX host
+(`pathFixWindowsRefused`, `TestFixPathRefusesWindowsAndWritesNoStartupFile`). The
+flag stays REGISTERED on all platforms, so `--help` and the published exit-code
+contract are uniform; what refuses is the run.
+
+⚠ **AND ROUND 2'S GUARD ON THIS WAS DELETED, FOR A REASON WORTH KEEPING.** It
+asserted `strings.Count(code, "runtime.GOOS") == 1` in order to ban the gate by
+name. Measured in round 3: a gate written `env.GOOS == "windows"` survives that
+scan **and the whole module**, while the `runtime.GOOS` spelling is caught — so it
+pinned a WORD, not the gate. A count of a different spelling cannot fix that.
+`TestTheRefusedCharacterSetIsNotDerivedFromTheCompilingPlatform` keeps its other
+half (no platform-derived character set, which is still round 2's F1 regression
+guard); the platform question is now answered behaviourally.
 
 ⚠ **Only one of round 2's three guards here can be red on a POSIX host, and the
 reason is worth keeping.** On linux/amd64 `os.PathListSeparator` already *is*
@@ -353,6 +436,15 @@ there. Decision 36's scoping clause records the same boundary from its side.
   `manual` one.** The user asked for a write in as many words, so a run that
   could not do it must not exit 0. (The `manual` convention — empty path, exit 0 —
   is for a step there was never a file for; this is not that.)
+- **`GOOS=windows` is REFUSED**, by the same convention: one `blocked` row with an
+  empty `path`, `ok:false`, non-zero exit, no startup file written, and the three
+  project files landing exactly as they do without the flag. The flag stays
+  registered on every platform — what refuses is the run, not the invocation, so
+  this is exit 1 and not the exit 2 that `--check --fix-path` gets. Windows is
+  checked BEFORE `HOME`: a Windows box with no resolvable home has two true
+  refusals available and only one of them is actionable. See the reversal note
+  under *Where the directory comes from* for why this changes no behaviour and
+  only the reason.
 
 ## Red/green and the mutation matrix
 
@@ -546,7 +638,7 @@ references **no symbol the fix introduces**, so the whole file compiles at
 | M26 | a semicolon is ADDED to `pathEntryRefusedChars` | KILLED — `cliBinDirForPATH refused a directory holding ";"` |
 | M27 | `pathEntrySplitChar` is the windows separator `";"` | KILLED — both arms above fire |
 | M28 | the set is re-keyed to `string(os.PathListSeparator)` (the exact pre-fix derivation) | KILLED — `derives a character set from os.PathListSeparator in CODE` |
-| M29 | a `runtime.GOOS != "windows"` gate is added to the refusal | KILLED — `references runtime.GOOS 2 time(s) in code, want exactly 1` |
+| M29 | a `runtime.GOOS != "windows"` gate is added to the refusal | ⚠ **RETIRED in round 3** — it was KILLED by `references runtime.GOOS 2 time(s) in code, want exactly 1`, but that guard pinned a SPELLING (an `env.GOOS` gate survived it and the whole module) and the gate it banned is now the shipped design. The platform question is pinned behaviourally instead; see round 3 below. |
 | M30 | the block's `case` arm can never match (dedupe inert) | KILLED — `P2: … on PATH 2 time(s) after TWO sources` in **all 5** shells; **no P1/P3/P4 failure**, so the mutation is isolated and the block still parses |
 | M31 | the `[ -x … ]` guard removed — `if` **and** `fi` together | KILLED — exactly **25** `P4: … while that directory holds no civitai` (5 shells × 5 shapes) and **zero** P1/P2/P3, which is what proves the uninstall arm is REACHABLE in every shell rather than merely asserted |
 | CONTROL | no mutation | GREEN |
@@ -557,6 +649,54 @@ RE-LEARNED.** Round 1's first M20 deleted only the `if` line, leaving an orphan
 not compile. M31 removes the `if`/`fi` pair, so the block parses and exactly one
 property moves. The 25-and-only-25 count is the isolation evidence: a mutant that
 broke the block wholesale would fire P1 and P3 too.
+
+### Round 3 of cli#777 — six findings
+
+Base `eae4935`. F2+F1 are one code change plus its guards; F3 is a test-harness
+change; F4, F5 and F6 are prose.
+
+| finding | what changed | guard | red at `eae4935` | green at HEAD |
+|---|---|---|---|---|
+| F2 + F1 | `--fix-path` REFUSES `GOOS=windows` (`pathFixWindowsRefused`), keyed on the injected seam; four prose sites corrected | `TestFixPathRefusesWindowsAndWritesNoStartupFile`, `TestTheWindowsRefusalLeavesTheProjectFilesByteIdentical` | **yes** — `GOOS=windows: --fix-path returned no error` | yes |
+| F1 (guard) | round 2's `strings.Count(code, "runtime.GOOS")` scan DELETED, not replaced by another count | the two behavioural tests above | n/a — a deletion | yes |
+| F3 | three floors in the exit status; `blockFromRealBinary` returns an error so one unholdable shape no longer retires the table; the dead `skippedShapes` counter wired; two `-run` hints that matched nothing fixed | `TestTheEmittedBlockIsPortableAcrossPOSIXShells`'s own floors | n/a — the defect was a false GREEN, so there is no pre-existing red to show | yes |
+| F4 | the size figures replaced by a derivation | prose | n/a | n/a |
+| F5 | the split proposal made self-consistent (where the retractions go, what happens to the `##` parent) | prose | n/a | n/a |
+| F6 | the `\n`/`\r` reason reworded to "pathological", the completeness claim dropped | prose + the three measured probes | n/a | n/a |
+
+🔴 **THE `windows` ARM'S RED IS STRONGER THAN THE FINDING PREDICTED, AND THE
+DIFFERENCE MATTERS.** The finding expected the base to refuse for the WRONG
+reason (the colon). On a POSIX host it does not refuse **at all**: `runtime.GOOS`
+decides the base name, so the fixture is `civitai` and that check passes, and the
+colon predicate is unconditional but a linux temp dir holds no colon. Measured at
+`eae4935` the `windows` arm therefore **created both startup files** and reported
+`ok:true` at exit 0. The reach-the-colon-refusal case is the NATIVE-windows build,
+which remains unverified.
+
+| # | mutation (narrowest expression) | verdict |
+|---|---|---|
+| M32 | the `pathFixWindowsRefused` call is removed from `pathFixTargets` | KILLED — `GOOS=windows: --fix-path returned no error`; `linux`/`darwin` stay GREEN, so it is isolated |
+| M33 | the gate reads `runtime.GOOS` instead of `env.GOOS` | KILLED — same message. ⚠ The finding predicted this would SURVIVE ("it tests behaviour, not spelling"); it does not, because the behavioural test can only reach the gate THROUGH the seam. So the seam choice is pinned by behaviour and needs no extra guard — a better outcome than the finding asked for. |
+| M34 | the compared literal becomes `"windowsx"` | KILLED — `windows` arm only; the POSIX arms stay GREEN |
+| M35 (F3) | all five runner argv0s made unresolvable (`live == 0`) | KILLED — `NOTHING WAS MEASURED: none of bash, dash, zsh, mksh, busybox ash is installed` |
+| M36 (F3) | only `bash` resolvable (`live == 1`) | KILLED — `only 1 shell(s) were measured …, below the floor of 2`, and the reported count drops to 20 |
+| M37 (F3) | a 300-char directory shape the filesystem rejects | KILLED — `1 of 6 directory shape(s) were NOT MEASURED`, with a scoped `shape:` SKIP subtest, **and the other 5 shapes still measured 40 assertions** — which is the F3(b) fix proven rather than asserted |
+| M38 (F3) | P2's `assertions++` removed, every shell and shape present | KILLED by the ASSERTION floor alone — `30 assertions ran, want 40`; the other two floors stay quiet, so the three are independent |
+| CONTROL (F3) | `live == 0` **and** the zero-shell floor reverted to the pre-fix `t.Skipf` | **GREEN — `ok`**, reproducing the exact false pass F3 is about. This is the positive control on the floor itself: it proves M35's red comes from the floor and not from somewhere else. |
+| CONTROL | no mutation | GREEN |
+
+⚠ **AND THE F3 MUTATION HARNESS HAD TO BE FIXED BEFORE ITS RESULTS COULD BE
+READ.** Its first attempt stripped `PATH` down to a toolbox so the shells would be
+absent — which also removed `gcc`, so every arm failed with
+`[build failed]`: a control red for a reason unrelated to the floor, i.e. built
+out of the step under suspicion. Its second attempt anchored the mutation on
+`{"bash", "-c"}`, which occurs **twice** (the runner table and the doc comment
+above it); the python assertion raised, the shell script had no `set -e`, and
+three mutants were scored SURVIVED **having never been applied** — the tell being
+that all three printed the control's own 40-assertion line verbatim. The results
+above are from the third harness, which anchors on `[]string{…}` (unique), aborts
+on a failed edit, and prints the mutated file's byte count beside the pristine
+one so "the mutation landed" is itself observable.
 
 ## 🔴 WHAT IS NOT ESTABLISHED
 
@@ -629,22 +769,33 @@ broke the block wholesale would fire P1 and P3 too.
   rebuilds PATH from `/etc/paths` and `/etc/paths.d` and appends surviving
   entries; the expectation is that the entry survives in a later position, which
   still resolves the name. Expectation, not measurement.
-- 🔴 **WINDOWS: THE TESTS SKIP IT, THE COMMAND DOES NOT REFUSE IT, AND THE
-  RUNTIME SHAPE IS UNVERIFIED.** These are three different claims and an earlier
-  draft of this line collapsed them into one. What is true: the two probes above
-  are POSIX login shells and no PowerShell profile is written, so there is **no
-  test coverage** on Windows. What does **not** follow — and what a Go comment
-  cited *this very bullet* to assert until round 2 — is that a Windows run is
-  "unsupported either way". The flag is registered on every platform, nothing
-  gates it on GOOS, and `.goreleaser.yaml` builds windows amd64 and arm64: a
-  Windows run reaches the code, writes `~/.zshenv` and a bash login file, and
-  emits POSIX `sh`. It is useful there **to a POSIX shell** — Git Bash / MSYS is
-  `GOOS=windows` running a bash that really does read `~/.bash_profile`, and WSL
-  is a Linux build — and useless to `cmd.exe` or PowerShell, for which nothing is
-  written and nothing is claimed. ⚠ **No Windows host was available to either the
-  author or the auditor, so every sentence here about Windows is derived from the
-  build matrix and from `os`/`runtime` constants, not from an executed run. Do
-  not promote it to a measurement.**
+- 🔴 **WINDOWS: THE COMMAND NOW REFUSES IT, AND THE NATIVE-WINDOWS RUNTIME SHAPE
+  IS STILL UNVERIFIED.** These are two different claims and every earlier draft of
+  this bullet collapsed some of them. What is true as of round 3: `--fix-path`
+  refuses on `GOOS=windows` with a `blocked` row, `ok:false` and a non-zero exit,
+  writing no startup file, while `AGENTS.md`, `CLAUDE.md` and the MCP config land
+  exactly as they do without the flag. The refusal is **measured** — it keys on
+  the injected `agentEnv.GOOS`, so a POSIX host can drive it, and
+  `TestFixPathRefusesWindowsAndWritesNoStartupFile` drives it in three arms
+  (`windows` refuses, `linux` and `darwin` proceed and write both files). Red at
+  `eae4935`, where a `windows` env is not refused at all: both startup files are
+  created and the payload reports `ok:true`.
+  ⚠ **What remains unverified is the NATIVE-Windows build.** No Windows host has
+  been available to any round, so the claim that the gate changes no outcome there
+  — the drive-letter colon already refusing every such run — is DERIVED from the
+  stdlib source (`filepathlite`'s `Dir` and the windows `volumeNameLen`), not from
+  an executed run. Do not promote it to a measurement. There is also still **no
+  test coverage** on a windows build: the two login-shell probes are POSIX, and
+  nothing writes or claims a PowerShell or `cmd.exe` profile.
+  ⚠ **Retracted, round 3:** this bullet previously said "the command does not
+  refuse it", "the flag is registered on every platform, nothing gates it on
+  GOOS", and that the feature is "useful there to a POSIX shell" because MSYS
+  reads `~/.bash_profile`. The first two are now false by design; the third was
+  never true, because the colon refusal already refused MSYS. (The bullet before
+  THAT said a Windows run was "unsupported either way" and was cited by a Go
+  comment to assert exactly that — a claim about test coverage used as a claim
+  about behaviour. Round 3's conclusion happens to agree with it; the citation was
+  still invalid, and is not evidence.)
 
 ### One property this feature INHERITS rather than states
 

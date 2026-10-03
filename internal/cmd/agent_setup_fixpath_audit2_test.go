@@ -92,6 +92,23 @@ func fixPathImplementationCode(t *testing.T) string {
 // cannot see. That is precisely why the two behavioural guards below exist. What
 // this one buys is the thing they structurally cannot: a red at the pre-fix tree
 // on the host the work was done on.
+//
+// 🔴 A SECOND HALF OF THIS TEST WAS DELETED IN ROUND 3, AND THE REASON IS THE
+// SAME SENTENCE ONE PARAGRAPH UP. It asserted `strings.Count(code,
+// "runtime.GOOS") != 1`, in order to ban a `runtime.GOOS != "windows"` gate by
+// name. Two defects, and the first is fatal to the whole shape: a gate written
+// `env.GOOS == "windows"` was measured to survive that scan — and the entire
+// module — while the `runtime.GOOS` spelling was caught, so the guard pinned a
+// WORD and not the gate it was named for. A count of a different spelling cannot
+// fix that; only asserting the behaviour can, which
+// TestFixPathRefusesWindowsAndWritesNoStartupFile now does in both directions.
+// The second: its failure message told the reader "the flag stays registered on
+// all platforms", a claim about `agent_setup.go`'s flag registration, in a test
+// whose only input is `agent_setup_fixpath.go` — it could never have observed
+// the thing it asserted. (And the banned gate is now the SHIPPED design: the
+// colon refusal below already refused every Windows run, MSYS included, so the
+// population the ban existed to protect was never protected. See the Windows
+// posture note at the top of agent_setup_fixpath.go.)
 func TestTheRefusedCharacterSetIsNotDerivedFromTheCompilingPlatform(t *testing.T) {
 	code := fixPathImplementationCode(t)
 
@@ -106,23 +123,11 @@ func TestTheRefusedCharacterSetIsNotDerivedFromTheCompilingPlatform(t *testing.T
 			"`C:\\Users\\…\\lib\\binaries`, so both startup files are written, `ok:true`, exit 0, on a "+
 			"block that can never resolve the name) and REFUSES `/home/u/a;b`, which POSIX `sh` "+
 			"accepts.\n\n"+
-			"Refuse a colon unconditionally instead. And do NOT reach for a "+
-			"`runtime.GOOS != \"windows\"` gate: Git Bash / MSYS is GOOS=windows running a POSIX bash "+
-			"that really does read ~/.bash_profile, so gating would break a real population of users "+
-			"for whom this feature works.", fixPathSourceFile, banned, banned)
-	}
-
-	// 🔴 AND THE GATE THE AUDITOR OFFERED AS AN ALTERNATIVE IS BANNED BY NAME, for
-	// the Git Bash / MSYS reason above. `runtime.GOOS` has exactly one legitimate
-	// use in this file — the binary's own base name really is platform-dependent
-	// (`civitai.exe`) — so the count is pinned rather than the spelling.
-	if n := strings.Count(code, "runtime.GOOS"); n != 1 {
-		t.Errorf("%s references runtime.GOOS %d time(s) in code, want exactly 1 (cliBinaryBaseName's "+
-			"`civitai.exe`).\n\nIf this is a new `runtime.GOOS != \"windows\"` gate on the refusal or on "+
-			"the write: that was considered and REFUSED. Git Bash / MSYS reports GOOS=windows while "+
-			"running a POSIX bash that genuinely reads ~/.bash_profile, so gating the feature on GOOS "+
-			"breaks users it currently works for. The flag stays registered on all platforms.",
-			fixPathSourceFile, n)
+			"Refuse a colon unconditionally instead. This predicate is about the EMITTED shell and is "+
+			"the same on every platform; whether the command runs at all on Windows is a separate "+
+			"question, answered by pathFixWindowsRefused and driven by "+
+			"TestFixPathRefusesWindowsAndWritesNoStartupFile.",
+			fixPathSourceFile, banned, banned)
 	}
 }
 
@@ -144,8 +149,15 @@ func TestTheRefusedCharacterSetIsExactlyNewlineReturnAndColon(t *testing.T) {
 		char string
 		want bool // true = must be REFUSED
 	}{
-		{"newline splits the assignment", "\n", true},
-		{"carriage return splits the assignment", "\r", true},
+		// ⚠ `\n` AND `\r` ARE REFUSED AS PATHOLOGICAL, NOT AS UNREPRESENTABLE, and
+		// these two rows were named "splits the assignment" until round 3's F6
+		// measured otherwise: the block single-quotes the directory, so in bash
+		// 5.3.15 a block for `a<LF>b` and one for `a<CR>b` both resolve and RUN the
+		// CLI, while `a:b` is NOTFOUND. The refusal stays — a login file is the
+		// wrong place to guess that such a path was intended — but the reason is
+		// not the one the old row names claimed. See pathEntryRefusedChars.
+		{"newline is refused as pathological", "\n", true},
+		{"carriage return is refused as pathological", "\r", true},
 		{"colon splits the PATH entry", ":", true},
 		{"semicolon is ordinary to POSIX sh", ";", false},
 		{"space is ordinary (the block quotes it)", " ", false},
@@ -173,9 +185,11 @@ func TestTheRefusedCharacterSetIsExactlyNewlineReturnAndColon(t *testing.T) {
 			got, err := cliBinDirForPATH()
 			switch {
 			case tc.want && err == nil:
-				t.Errorf("cliBinDirForPATH accepted a directory holding %q (%q). A PATH entry in the "+
-					"emitted POSIX `sh` block cannot hold that character, so the block would report a "+
-					"fix it did not make.", tc.char, got)
+				t.Errorf("cliBinDirForPATH accepted a directory holding %q (%q). The refused set is "+
+					"`pathEntryRefusedChars`: a colon because the emitted POSIX `sh` splits PATH on it "+
+					"and the block would then report a fix it did not make, and a newline or carriage "+
+					"return as pathological — those two DO survive the block's single-quoting (measured), "+
+					"so read that comment before widening or narrowing this set.", tc.char, got)
 			case !tc.want && err != nil:
 				t.Errorf("cliBinDirForPATH refused a directory holding %q (%q): %v\n\nPOSIX `sh` "+
 					"handles that character in a PATH entry without complaint, so refusing it is a "+
