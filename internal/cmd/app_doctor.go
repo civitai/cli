@@ -475,10 +475,15 @@ const rolloutNoGateNote = "This does not set the exit code: the rollout is held 
 // 🔴 NO ARM OF THIS TABLE TOUCHES `ok`, `Summary.Gating` OR THE EXIT CODE, AND
 // THAT IS A DECISION WITH A REASON RATHER THAN AN OMISSION.
 //
-// `app doctor`'s exit 1 is published — in `--help`, in the README and in
-// `exitCodeDocs` — as "a blocking problem on a listing that can still publish",
-// and `civitai app doctor my-app || exit 1` is wired into release scripts on
-// that promise. A developer outside the rollout is in a SUPPORTED state: the
+// `app doctor`'s exit 1 is published — in this command's own `--help` and in
+// the README's command table and `app doctor` section — as "a blocking problem
+// on a listing that can still publish", and `civitai app doctor my-app ||
+// exit 1` is wired into release scripts on that promise. (⚠ An earlier draft of
+// this sentence also named `exitCodeDocs` as a publisher of that number, and
+// that is not what it says: `exitcodes_doc.go` documents the exit-1 CLASS —
+// a verdict about STATE rather than about the invocation — and mentions
+// `app doctor` only to say `app submit`'s listing gate is deliberately NARROWER
+// than it. Checked rather than assumed, because the claim is load-bearing here.) A developer outside the rollout is in a SUPPORTED state: the
 // flag is deliberately dark pre-GA, the remedy is a cohort invitation they
 // cannot issue themselves, and nothing about their listing is wrong. Gating on
 // it would make every non-cohort developer's release script red forever for a
