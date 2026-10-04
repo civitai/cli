@@ -352,7 +352,8 @@ It does three things, and **it never authenticates**:
 1. Writes an `AGENTS.md` **managed block** into the project — the commands and
    the gotchas an agent cannot infer by reading your code (Buzz is the *viewer's*,
    a newly declared scope is consent-gated, a hung hook is usually a missing HOST
-   handler, `useSharedStorage()` has no REST route). Its "Local development"
+   handler, shared storage has a REST path and it is the one to prefer). Its
+   "Local development"
    section is **read from the directory**, not fixed, so
    **re-run `civitai agent-setup` after changing your scripts.**
 2. Writes a one-line `CLAUDE.md` containing `@AGENTS.md`, **only when there is

@@ -40,11 +40,13 @@ func TestScanDir(t *testing.T) {
 			wantInMsg: "useBuzzBalance",
 		},
 		{
-			name:      "superseded shared-storage REST route fails",
-			dir:       "shared-storage-rest",
-			wantRule:  "shared-storage-rest",
-			wantFile:  "store.ts",
-			wantInMsg: "SHARED_APPEND",
+			// The REVERSED case. A `shared-storage-rest` rule used to fail this
+			// fixture; the platform is consolidating on that REST path, so the
+			// rule was removed and the fixture now asserts the path is ACCEPTED.
+			// It carries the prefixed literal in a comment AND the prefix-less
+			// real call sites, i.e. both shapes the removed rule got wrong.
+			name: "shared-storage REST route is accepted, in every shape",
+			dir:  "shared-storage-rest-ok",
 		},
 		{
 			name:      "deprecated blocks-cli reference fails",
@@ -143,6 +145,65 @@ func TestLegitRoutesNeverMatchAnyRule(t *testing.T) {
 				t.Errorf("rule %q FALSE-FLAGGED a legit line:\n  rule:    %s\n  matched: %s", r.ID, r.Pattern, line)
 			}
 		}
+	}
+}
+
+// TestSharedStorageRestIsAccepted is the guard against re-adding a rule that
+// flags the shared-storage REST path, in EITHER direction.
+//
+// The platform is consolidating on `/api/v1/blocks/shared-storage/*` (operator
+// decision, 2026-10-04), so a gate that flags it is an enforced,
+// branch-protection-required check pushing authors the wrong way. The removed
+// rule was also ineffective: measured against the real migrated app
+// (ZacxDev/civitai-app-custom-generators, `src/platform/sharedStorage.ts`), its
+// bare substring matched 1 line — a COMMENT, since ScanDir greps raw lines and
+// strips no comments — and 0 of the real call sites, which carry no `/api/v1`
+// prefix because `@civitai/sdk`'s `app.site.get` prepends it.
+//
+// 🔴 The inverse must stay absent too: the `SHARED_*` bridge still works and
+// apps still use it, so a rule flagging the BRIDGE would fail existing correct
+// apps' CI. Both transports are valid; neither is an anti-pattern.
+//
+// Every absence here is paired with a positive control, because "no rule
+// matched" is also what an empty Rules() produces.
+func TestSharedStorageRestIsAccepted(t *testing.T) {
+	supported := []string{
+		// Prefix-less SDK call sites — the real shapes the live app uses.
+		`return app.site.get<{ items: unknown[] }>('blocks/shared-storage/list', { prefix });`,
+		`await app.site.post('blocks/shared-storage/append', { value });`,
+		`await app.site.post('blocks/shared-storage/vote', { key });`,
+		`if (path === 'blocks/shared-storage/withdraw') {`,
+		// The prefixed literal, in a comment and in a direct fetch.
+		"// The app-global SHARED store, over the routes under `/api/v1/blocks/shared-storage/`.",
+		"return fetch(`${base}/api/v1/blocks/shared-storage/counts`, { method: 'POST' });",
+		`await fetch('/api/v1/blocks/shared-storage/increment', { method: 'POST' });`,
+		// The BRIDGE shapes, which must not be flagged either.
+		`const shared = useSharedStorage();`,
+		`window.parent.postMessage({ type: 'SHARED_APPEND', value }, '*');`,
+		`case 'SHARED_GET_COUNT':`,
+		`postMessage({ type: 'SHARED_VOTE', key });`,
+	}
+
+	for _, r := range Rules() {
+		for _, line := range supported {
+			if r.Pattern.MatchString(line) {
+				t.Errorf("rule %q flags a SUPPORTED shared-storage shape — the platform is "+
+					"consolidating on the REST path and the bridge still works, so neither is an "+
+					"anti-pattern:\n  rule:    %s\n  matched: %s", r.ID, r.Pattern, line)
+			}
+		}
+	}
+
+	// Positive control: the rule set is non-empty and still reaches code, so the
+	// absences above are claims about the rules, not about an empty slice.
+	//
+	// The buzz-rest rule needs no ledger here. TestScanDir's `buzz-rest` fixture
+	// case already t.Fatalf's when that rule is absent or stops matching a buzz
+	// fetch, and the scan-clean `shared-storage-rest-ok` fixture already fails if
+	// buzz is widened into the shared-storage path — so all three assertions a
+	// ledger would make are held behaviourally, by the gate's own entrypoint.
+	if len(Rules()) == 0 {
+		t.Fatal("Rules() is empty — every absence asserted above is vacuous")
 	}
 }
 

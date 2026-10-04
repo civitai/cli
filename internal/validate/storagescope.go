@@ -63,9 +63,20 @@ import (
 // The hook names that prove a store is used.
 //
 // 🔴 A CURATED SET, NOT A PREFIX MATCH. `useAppStorage` / `useSharedStorage` are
-// the only documented ways a block reaches either store — the REST routes behind
-// them have no bridge and are the anti-pattern `internal/antipattern` already
-// refuses. Matching something broader (`storage`, `apps.storage`) would fire on
+// the hook names this check looks for. ⚠️ They are NOT the only way a block
+// reaches either store, and this comment used to claim they were: the REST routes
+// under `/api/v1/blocks/shared-storage/` and `/api/v1/blocks/app-storage/` reach
+// the same stores, and for SHARED storage that REST path is the one the platform
+// is consolidating on (so `internal/antipattern` no longer refuses it — the
+// `shared-storage-rest` rule was removed).
+//
+// That is a known LIMITATION of this check, not a reason to widen it: an app that
+// uses only the REST path declares the same scopes and needs the same advisory,
+// but gets none, because nothing in its source names a hook. The scope
+// requirement itself is unaffected and correct either way — the server gates
+// these stores by scope PRESENCE regardless of transport, so
+// `apps:storage:shared:read`/`write` are needed for REST exactly as for the
+// bridge. Matching something broader (`storage`, `apps.storage`) would fire on
 // prose, on an unrelated local named `storage`, and on any app that imports the
 // SDK at all, since the transport internals mention the message names.
 //
