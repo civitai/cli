@@ -608,8 +608,34 @@ func TestAppUnlockGoodsChecksMirrorTheServerRulesTheSchemaWontExpress(t *testing
 			want: nil,
 		},
 		{
-			name: "app_unlock at 60000 → NOTHING from here: above the general ceiling the schema already rejects, and reporting too would double what the server reports once",
+			// 🔴 REGRESSION GUARD for the defect a round-0 audit found. An earlier
+			// draft clamped this check to 2..50000 "so as not to double-report with
+			// the schema", so a 60000 unlock got ONLY the schema's
+			// `maximum: got 60,000, want 50,000` — 10x the real ceiling, telling a
+			// developer to come down to a bound they are still 55000 over. The
+			// schema fires here too; naming the right bound twice beats naming the
+			// wrong one once.
+			name: "app_unlock at 60000 → still names 5000, NOT the general 50000 the schema would quote",
 			in:   map[string]any{"goods": []any{unlock("access", 60000, justified)}},
+			want: []string{"goods[0].priceBuzz must be a whole number between 2 and 5000 Buzz for an app_unlock good"},
+		},
+		{
+			name: "app_unlock at 1 → below the floor, and the message states the real range",
+			in:   map[string]any{"goods": []any{unlock("access", 1, justified)}},
+			want: []string{"goods[0].priceBuzz must be a whole number between 2 and 5000 Buzz for an app_unlock good"},
+		},
+		{
+			name: "app_unlock at a FRACTIONAL price → not a whole number, same message",
+			in: map[string]any{"goods": []any{map[string]any{
+				"id": "access", "title": "T", "priceBuzz": 500.5, "kind": "app_unlock",
+				"justification": "reviewed"}}},
+			want: []string{"goods[0].priceBuzz must be a whole number between 2 and 5000 Buzz for an app_unlock good"},
+		},
+		{
+			name: "a NON-NUMERIC priceBuzz is left to the schema's `type` — nothing to mirror",
+			in: map[string]any{"goods": []any{map[string]any{
+				"id": "access", "title": "T", "priceBuzz": "500", "kind": "app_unlock",
+				"justification": "reviewed"}}},
 			want: nil,
 		},
 
@@ -674,6 +700,29 @@ func TestAppUnlockGoodsChecksMirrorTheServerRulesTheSchemaWontExpress(t *testing
 			in: map[string]any{"goods": []any{map[string]any{
 				"id": "access", "title": "Access", "priceBuzz": float64(7777), "kind": "app_subscription"}}},
 			want: nil,
+		},
+		{
+			// 🔴 PINS AN AUDIT FINDING THAT WAS **REJECTED**, so nobody "fixes" it
+			// into a divergence. A round-0 pass read the invalid-kind skip as
+			// suppressing the payload byte-size finding. It does — and the SERVER
+			// does the same: its kind check returns at
+			// block-goods.constants.ts:385-387, before its payload check at :464.
+			// Mirroring that is this file's contract. If this case ever starts
+			// reporting the payload finding, the CLI has diverged from the server.
+			name: "an invalid kind suppresses the payload finding, exactly as the server's early return does",
+			in: map[string]any{"goods": []any{map[string]any{
+				"id": "access", "title": "T", "priceBuzz": float64(500), "kind": "nope",
+				"payload": map[string]any{"note": strings.Repeat("x", 4096)}}},
+			},
+			want: nil,
+		},
+		{
+			name: "the SAME oversized payload under a VALID kind DOES report — the control proving the case above is about `kind`, not about payload detection",
+			in: map[string]any{"goods": []any{map[string]any{
+				"id": "access", "title": "T", "priceBuzz": float64(500), "kind": "good",
+				"payload": map[string]any{"note": strings.Repeat("x", 4096)}}},
+			},
+			want: []string{"goods[0].payload must serialize to at most 2048 bytes"},
 		},
 	}
 

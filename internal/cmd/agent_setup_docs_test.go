@@ -69,12 +69,12 @@ the manifest fields and the scopes are documented on the docs site, and the
   https://developer.civitai.com/apps/reference/
 - Guide: https://developer.civitai.com/apps/guide/
 - **` + "`https://developer.civitai.com/apps/guide/earning.md`" + `** — the three money
-  rails, and the ONLY place the rules for charging are written out. Fetch it
-  before declaring a ` + "`goods`" + ` catalog. A paid-for-access app
-  (` + "`kind: \"app_unlock\"`" + `) carries three rules the JSON Schema does not express,
-  so a manifest can pass ` + "`civitai app validate`" + ` on an older CLI and still be
-  rejected at submit: a 5000 Buzz price ceiling rather than the general 50000,
-  at most one unlock per manifest, and a mandatory ` + "`justification`" + `.
+  rails. Fetch it before declaring a ` + "`goods`" + ` catalog. The three rules below are
+  stated here too, because they are the ones a manifest can break while passing
+  an older ` + "`civitai app validate`" + `: a paid-for-access app (` + "`kind: \"app_unlock\"`" + `)
+  is capped at **5000** Buzz rather than the general 50000, may declare **at
+  most one** unlock per manifest, and MUST carry a ` + "`justification`" + `. All three are
+  enforced at submit; the published JSON Schema does not declare them.
 - Example apps you can read end-to-end:
   https://developer.civitai.com/apps/examples
 - Full doc index for agents: https://developer.civitai.com/llms.txt

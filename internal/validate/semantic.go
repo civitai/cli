@@ -23,24 +23,50 @@ const blockGoodPayloadMaxBytes = 2048
 // The `app_unlock` bounds, mirrored from the same server module
 // (BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ, BLOCK_APP_UNLOCK_MAX_PER_MANIFEST).
 //
-// 🔴 THESE QUALIFY UNDER THE SAME TEST AS THE PAYLOAD BOUND ABOVE — the schema
-// does not contain them and, here, deliberately will not. The published
-// `priceBuzz.maximum` is still 50000 for every kind and the narrow bound lives
-// only in a prose `description` that declares the server validator
-// authoritative; the arity rule is a whole-array property the per-item subschema
-// cannot state at all. So an `app_unlock` priced at 5001, and a second
-// `app_unlock` in one manifest, BOTH validate against the vendored schema and
-// are rejected at submit. That gap is the reason these are here.
+// 🔴 WHY THESE ARE HERE, STATED CORRECTLY — the first draft said "JSON Schema
+// cannot express them" and that is FALSE, so do not re-derive it. The dialect is
+// draft/2020-12, where all three ARE expressible: `if`/`then` + `required` for
+// the conditional `justification`, `contains` + `maxContains: 1` for the arity,
+// `if`/`then` + `maximum` for the kind's ceiling. The upstream constants file
+// says so itself — *"a conditional `if/then` on `kind` there is more surface than
+// this one property is worth"* — i.e. CONSIDERED AND DECLINED, not impossible.
 //
-// `blockGoodMinPriceBuzz`/`blockGoodMaxPriceBuzz` are NOT checks — the schema's
-// `minimum`/`maximum` already own the general range and re-checking it here
-// would be the duplicated-predicate mistake this file warns about twice. They
-// exist only so the mirrored message can name the real ceiling, and so the
-// `app_unlock` check can be scoped to exactly the window where the schema is
-// silent (2..50000, where it passes).
+// The real reason is ownership: `schema/app-block.manifest.schema.json` is an
+// auto-revendored BYTE-MIRROR of `civitai:public/schemas/app-block/v1.json`, and
+// this repo may not unilaterally edit it — a local change would be reverted by
+// the next re-vendor. So the Go port is the only layer the CLI controls.
+//
+// ⚠ THAT MAKES THIS A SECOND-BEST FIX, AND SAYING SO IS THE POINT: declaring the
+// three rules upstream would cover the SDK, developer.civitai.com and every
+// third-party validator, and would make most of this block redundant. The false
+// "cannot express" version foreclosed that option by making it look unavailable.
+// If you are reading this while touching these rules, the upstream change is the
+// better one to argue for.
+//
+// Measured consequence of the current state: an `app_unlock` priced at 5001, and
+// a second `app_unlock` in one manifest, BOTH validate against the vendored
+// schema and are rejected at submit.
+//
+// `blockGoodMinPriceBuzz` is NOT a check — the schema's `minimum` owns the
+// general floor. It exists so the mirrored message can state the real range.
+//
+// 🔴 THE RULE THIS FILE ACTUALLY HOLDS IS "MIRROR THE SERVER'S SENTENCE", NOT
+// "NEVER REPORT TWICE" — and an earlier draft of this block asserted the latter,
+// which is false about the code it sits in. A goods entry with no `title` already
+// emits BOTH `goods[0].title must be a non-empty string` (here) and
+// `goods[0]: missing property 'title'` (schema), and has since before this
+// block existed. So a non-report rule was never the invariant.
+//
+// That mattered, because the false invariant bought a real defect: an earlier
+// draft scoped the `app_unlock` price check to 2..50000 "so as not to report
+// twice", and an `app_unlock` at 60000 then got ONLY the schema's
+// `maximum: got 60,000, want 50,000` — 10x the real ceiling. A developer is told
+// to come down to 50000, does, and is rejected again with a different number.
+// 🔴 NAMING THE WRONG BOUND IS WORSE THAN NAMING IT TWICE. The check below is
+// therefore unclamped above: for an `app_unlock` it fires on the server's own
+// condition, and the schema may fire alongside it.
 const (
 	blockGoodMinPriceBuzz        = 2
-	blockGoodMaxPriceBuzz        = 50_000
 	blockAppUnlockMaxPriceBuzz   = 5_000
 	blockAppUnlockMaxPerManifest = 1
 )
@@ -248,6 +274,17 @@ func goodsChecks(generic map[string]any) []Finding {
 		// default. A kind that is PRESENT but not a member is the schema's enum to
 		// reject, and the server `return`s on it — so the entry's kind-specific
 		// rules below are unreachable for it here too.
+		//
+		// ⚠ AUDIT FINDING REJECTED, WITH THE EVIDENCE, SO IT IS NOT RE-RAISED: a
+		// round-0 pass read this `continue` as suppressing the `payload` byte-size
+		// finding — the one goods rule JSON Schema provably cannot express — for an
+		// entry whose `kind` is invalid. It does, and that is CORRECT: the server's
+		// kind check `return`s at block-goods.constants.ts:385-387, well before its
+		// own payload check at :464, so it suppresses the identical finding. Making
+		// the CLI continue to the payload check here would be a DIVERGENCE from the
+		// server, which is the one thing this file exists not to do. The cost is
+		// real but is the server's: an author with both defects learns about the
+		// kind first and the payload on the next run.
 		kind := blockGoodDefaultKind
 		if raw, present := e["kind"]; present {
 			k, isString := raw.(string)
@@ -257,23 +294,26 @@ func goodsChecks(generic map[string]any) []Finding {
 			kind = k
 		}
 
-		// The `app_unlock` price ceiling. Scoped to exactly the window where the
-		// vendored schema PASSES — a whole number in 2..50000 — because outside it
-		// the schema's own `minimum`/`maximum`/`type` already reject, and firing
-		// there too would report twice what the server reports once.
+		// The `app_unlock` price ceiling, mirroring the server's own condition for
+		// this kind: a whole number in 2..5000. Deliberately NOT clamped to the
+		// window where the vendored schema passes — see the constant block for why
+		// that clamp was a defect rather than a courtesy. Above 50000 the schema
+		// fires too; two findings naming the right bound beat one naming a bound
+		// 10x too high.
 		//
-		// 🔴 The message names the KIND'S ceiling, not the general one, mirroring
-		// the server verbatim including its ` for an app_unlock good` suffix. The
-		// server's own comment is explicit that for an `app_unlock` this string is
-		// the only machine-delivered statement of the real limit: get it wrong and
-		// a developer at 5001 is told to stay "between 2 and 50000", the bound they
-		// just satisfied.
+		// A non-numeric `priceBuzz` is left to the schema's `type`: `toNumber`
+		// cannot evaluate the server's condition on it, so there is nothing to
+		// mirror.
+		//
+		// 🔴 The message names the KIND'S ceiling, not the general one, verbatim
+		// including the ` for an app_unlock good` suffix. The server's own comment
+		// is explicit that for an `app_unlock` this string is the only
+		// machine-delivered statement of the real limit.
 		if kind == blockGoodKindAppUnlock {
 			if price, isNumber := toNumber(e["priceBuzz"]); isNumber &&
-				price == float64(int64(price)) &&
-				price >= blockGoodMinPriceBuzz &&
-				price <= blockGoodMaxPriceBuzz &&
-				price > blockAppUnlockMaxPriceBuzz {
+				(price != float64(int64(price)) ||
+					price < blockGoodMinPriceBuzz ||
+					price > blockAppUnlockMaxPriceBuzz) {
 				out = append(out, newFinding(at+".priceBuzz", fmt.Sprintf(
 					"%s.priceBuzz must be a whole number between %d and %d Buzz for an %s good",
 					at, blockGoodMinPriceBuzz, blockAppUnlockMaxPriceBuzz, blockGoodKindAppUnlock)))
