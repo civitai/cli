@@ -939,14 +939,149 @@ satisfied by `ctl-neg` too, and by a grader that broke arm A instead — this co
 is only meaningful if arm A is GREEN while arm B is red. Require:
 
 ```
-check_ok=true  failed_checks=[authenticated]  mcp_rows=2
-login_version=none  agent_shell_version=0.1.105  CLOSING_CONDITION=no
+check_ok=true  failed_checks=[authenticated,agent-token]  mcp_rows=2
+login_version=none  agent_shell_version=<the installed version>  CLOSING_CONDITION=no
 ```
 
-Measured against the same container: `bash -lc 'civitai --version'` → `0.1.105`;
-`zsh -lic 'civitai --version'` → `command not found`. The wrapped grader reported
-**yes**; the corrected one reports **no**. ⚠ The 2026-09-18 grid is unaffected — no
-trial installed under `$HOME/.local` — so the defect was latent, not triggered.
+🔴 **ASSERT THE SHAPE, NOT THESE LITERALS — the two that used to be spelled out here
+had both rotted by 2026-10-04 and each rots in the direction that scores a HEALTHY
+control as a failure.** `failed_checks` read `[authenticated]` while the live set is
+`[authenticated,agent-token]`: a second verdict-exempt check was added, and the
+verdict-exempt set is open by design, so any enumeration here goes stale the next time
+one lands. `agent_shell_version` read `0.1.105`, two releases behind. The invariant is
+what matters and it is not a literal: **arm A green (`check_ok=true`) while arm B is red
+(`login_version=none`)**, with `agent_shell_version` equal to whatever the trial
+installed. Read `failed_checks` as a set that MUST NOT contain a row the verdict counts;
+do not require it to equal a list written down here.
+
+Measured against the same container, on the version it installed: `bash -lc 'civitai
+--version'` prints it; `zsh -lic 'civitai --version'` → `command not found`. The wrapped
+grader reported **yes**; the corrected one reports **no**. ⚠ The 2026-09-18 grid is
+unaffected — no trial installed under `$HOME/.local` — so the defect was latent, not
+triggered.
+
+## Measuring a PROPOSED change to the hosted instructions
+
+The entrypoint under test is prose in another repo, and every trial fetches it itself.
+So "would editing the hosted `prompt.md` fix this grid?" had no answer except shipping
+the edit and re-running — which is how `cli#665` arm 1 came to rest on an inference:
+6 of 6 blind cells failed, the cause was located to one sentence in the hosted prompt,
+and the remedy could not be tested before merging it.
+
+`--prompt-url` (driver: `DOGFOOD_PROMPT_URL`) points a trial at different instructions.
+Serve a patched copy and run the cells that failed:
+
+🔴 **Serve it from a CONTAINER on the docker bridge, not from the host** — and read
+the three corrections below, because the first version of this recipe was wrong in
+three ways and its REPLACEMENT was wrong in two more. Round 2 of `/audit-pr` ran it
+on a simulated fresh machine and it **hung forever**.
+
+- The original bound `0.0.0.0` on the **host** (exposing the directory to the LAN for
+  the life of the run) and backgrounded the server with `&` without ever capturing or
+  killing its PID — one outlived its run by about an hour.
+- The replacement added `mkdir -p` for the *destination* and left the **source**
+  undefined. `/tmp/prompt.md` is never created by the recipe, so `cp` fails and the
+  bind-wait loop then **spins forever** asking for a file that is not there, with
+  `2>/dev/null` hiding the 404. That is strictly worse than what it replaced: the old
+  recipe produced a gradeable (if wrong) grid; this one hangs with no message.
+- Two sentences stated as the mechanism were simply false, and they are why the gap
+  survived the round looking straight at it: the `cp` does **not** fail silently (it
+  prints `cp: cannot stat …` and exits 1), and the server **does** start regardless —
+  `python3 -m http.server` serves an empty directory quite happily.
+
+```bash
+# 1. The SOURCE. Fetch the live prompt, then patch it — this is the step whose
+#    absence made the old recipe hang.
+curl -fsS -A 'Mozilla/5.0' https://developer.civitai.com/agent-setup/prompt.md \
+  -o /tmp/prompt.md
+#    …apply your edit to /tmp/prompt.md now…
+
+# 2. Serve it, with teardown armed BEFORE the server exists.
+mkdir -p /tmp/served && cp /tmp/prompt.md /tmp/served/prompt.md
+trap 'docker rm -f dogfood-promptsrv >/dev/null 2>&1' EXIT INT TERM
+docker rm -f dogfood-promptsrv 2>/dev/null
+docker run -d --name dogfood-promptsrv -v /tmp/served:/srv:ro -w /srv \
+  python:3.12-slim python3 -m http.server 8099 --bind 0.0.0.0
+SRV=$(docker inspect -f \
+  '{{range $k, $v := .NetworkSettings.Networks}}{{$v.IPAddress}} {{end}}' \
+  dogfood-promptsrv | awk '{print $1}')
+
+# 3. Wait for it to BIND — BOUNDED. `docker run -d` returns before python is
+#    listening, and that immediate failure looks exactly like a blocked network: it
+#    cost a false "inter-container networking is blocked" diagnosis once. The cap is
+#    the point — an unbounded `until` is what hung the previous recipe.
+# 🔴 `for … done || { … }` would be DEAD IN BOTH ARMS: a loop's status is that of
+#    the LAST command in its body, which is `sleep`, so it always exits 0. Use a
+#    flag. And the probe's error is PRINTED, not sent to /dev/null — hiding it is
+#    what the previous recipe did wrong.
+served=0
+for _ in $(seq 30); do
+  if docker exec dogfood-promptsrv python3 -c \
+      'import urllib.request;urllib.request.urlopen("http://127.0.0.1:8099/prompt.md",timeout=2)'; then
+    served=1; break
+  fi
+  command sleep 1
+done
+[ "$served" = 1 ] || echo "server never served /prompt.md — is /tmp/served/prompt.md there?" >&2
+
+# 4. Run it. driver.sh preflights the URL and refuses early if it cannot fetch it.
+DOGFOOD_PROMPT_URL="http://$SRV:8099/prompt.md" DOGFOOD_TRIAL_PREFIX=px \
+  DOGFOOD_ENVS='df-node-user|nodeuser|dev' DOGFOOD_IDENTITIES='claudeid|CLAUDECODE=1' \
+  DOGFOOD_MODELS='xiaomi/mimo-v2.5|mimo' bash driver.sh
+
+# 5. Teardown. The trap covers a SCRIPT; pasted into an interactive shell it fires
+#    only at shell exit, so keep the explicit line for stopping it mid-session.
+docker rm -f dogfood-promptsrv
+```
+
+⚠ **Why a container and not the host:** on the measured host the firewall drops
+bridge→host, so a container cannot reach `http://<gateway>:8099`. ⚠ That reading is
+**inconclusive and not a cleared control** — the host's own curl timed out in the same
+probe, so both arms failed and the measurement attributes nothing. The container route
+is what was observed to work; treat the explanation as a hypothesis.
+
+⚠ The `$SRV` expression takes the FIRST network's address deliberately: a container on
+two networks would otherwise concatenate both into one malformed string. The preflight
+refuses that, but incidentally rather than by design.
+
+**The URL must be unauthenticated.** It is a VALUE, not a path like
+`--credential-file`, and it reaches host argv, the banner, the `start` record, the
+`user` record, `commands.log`, the container's own `curl` argv and the OpenRouter
+request body — and the `Redactor` only knows strings read from the credential FILE,
+so it scrubs none of them. `driver.sh` refuses a URL carrying **userinfo** (`user[:password]@host`), extracted from the
+authority rather than pattern-matched. 🔴 **That is the ONLY shape it detects.** A token in a
+query parameter (`?token=`, `?X-Amz-Signature=`) or in the path (a capability URL, a private
+gist) is **NOT** refused and leaks just as widely — an earlier version of this line promised
+otherwise, describing a six-pattern blocklist that was deleted for being wrong in both
+directions (it admitted `?Token=` on capitalisation while hard-refusing `?cachekey=`). Serve
+the file unauthenticated; the harness cannot check that for you. A presigned S3 link or a private
+raw-GitHub URL is the tempting shortcut and the one to avoid.
+
+🔴 **SUCH A TRIAL IS NOT EVIDENCE ABOUT THE SHIPPED ENTRYPOINT, AND ITS VERDICT LINE
+CANNOT TELL YOU THAT.** `grade.sh` reads the container; it never reads the transcript,
+so a patched-prompt `yes` and a real `yes` are the same six fields. The provenance lives
+in one place only — the trial's `start` record carries `prompt_url` — so when you quote
+a verdict from one of these runs, quote that field beside it. Use a distinct
+`DOGFOOD_TRIAL_PREFIX` as well, so the two populations are also separable on disk.
+
+Two properties are pinned by `dogfood_brief_test.go`, both of them about not corrupting
+what is already measured: an empty or blank value is **the default**, so the driver may
+forward an unset variable; and `prompt_url` is recorded **only when the URL moved**, so
+a default run's `start` key set is byte-identical to every grid run before this flag
+existed (`TestDogfoodUncredentialedRunIsUnchanged` pins that key set, and it cannot see
+a flag passed with the default value — which is why
+`TestDogfoodPromptURLIsMarkedOnlyWhenItMoved` asserts that arm separately).
+
+🔴 **THE STATED LIMIT, AND IT IS WEAKER THAN "SILENCE MEANS THE REAL HOSTED PROMPT"
+SOUNDS.** The mark pins the URL *string*, never the instruction *bytes*. The hosted
+`prompt.md` lives in a different, independently-mutable repo and nothing here digests
+what was actually served — so a transcript with **no** `prompt_url` key asserts only
+*where the harness pointed*, and two default grids months apart are indistinguishable
+even if the prose changed underneath them. That is exactly the comparability the two
+pinned invariants exist to protect, so read a default grid's provenance as "the hosted
+URL, as it was on that date", never as "these bytes". Recording a `prompt_sha256` would
+be strictly stronger and is not done: it would add a key to every run, which is the
+re-base those invariants forbid.
 
 ## Agent identity is a dimension, not a detail
 

@@ -12,8 +12,9 @@ Usage:
             [--credential-file ~/.config/civitai/config.yaml]
             [--app-prefix dogfood4-] [--max-generations 3] [--max-submissions 1]
             [--max-steps 40] [--max-tokens 32000] [--no-carry-reasoning]
-            [--out <dir>]
-  runner.py --print-task [--brief "<one line>"]   # offline; spends nothing
+            [--prompt-url <url>] [--out <dir>]
+  runner.py --print-task [--prompt-url <url>] [--brief "<one line>"]
+                                                  # offline; spends nothing
 """
 import argparse
 import hashlib
@@ -51,7 +52,7 @@ you did, what you observed, and anything the user still has to do themselves."""
 USER = """https://developer.civitai.com/agent-setup/prompt.md"""
 
 
-def task(brief: str) -> str:
+def task(brief: str, url: str = "") -> str:
     """The user message for one trial: the hosted URL, plus an optional brief.
 
     🔴 WITH NO BRIEF THIS RETURNS `USER` BYTE-IDENTICALLY — not "equivalently".
@@ -59,6 +60,19 @@ def task(brief: str) -> str:
     paragraph, so every setup grid already measured stays comparable instead of
     being silently re-based by a harness change. `--print-task` exists so that
     claim can be DIFFED rather than asserted.
+
+    🔴 `url` DEFAULTS TO `USER` AND AN EMPTY VALUE MEANS "THE DEFAULT", so every
+    existing caller — and a driver that passes the flag unconditionally with an
+    unset variable — produces the same bytes it always did. It exists for ONE
+    purpose: measuring a PROPOSED change to the hosted instructions before
+    shipping it, which is otherwise unmeasurable because the prompt lives in
+    another repo and the trial fetches it itself.
+
+    🔴 A TRIAL RUN AGAINST A NON-DEFAULT URL IS NOT EVIDENCE ABOUT THE SHIPPED
+    PRODUCT, and that is why the `start` record marks it (see the `prompt_url`
+    comment there). The marking is positive and conditional on purpose: silence
+    means the real hosted prompt, which is what every measured grid assumed, and
+    a patched run announces itself rather than blending in.
 
     The brief is appended RAW, with no framing sentence of our own. Framing
     would be Civitai knowledge the harness injected — and the trial's whole
@@ -72,9 +86,10 @@ def task(brief: str) -> str:
     uncredentialed one's and `--print-task` stays a complete preview.
     """
     brief = (brief or "").strip()
+    url = (url or "").strip() or USER
     if not brief:
-        return USER
-    return USER + "\n\n" + brief
+        return url
+    return url + "\n\n" + brief
 
 
 TOOLS = [{
@@ -1358,6 +1373,27 @@ def main() -> int:
                     help="one-line app brief, appended to the hosted URL as the "
                          "second paragraph of the task. Omitted or empty => the "
                          "task is byte-identical to a setup trial.")
+    # 🔴 THE INSTRUCTIONS URL, SO A PROPOSED CHANGE TO THEM CAN BE MEASURED
+    # RATHER THAN PREDICTED. The hosted prompt lives in another repo and the
+    # trial fetches it itself, so without this flag the ONLY way to ask "does
+    # editing the entrypoint fix this grid?" is to ship the edit and find out.
+    # That is how `cli#665` arm 1 came to rest on an inference: six cells failed,
+    # the cause was a sentence in the hosted prompt, and the remedy could not be
+    # tested before merging it.
+    #
+    # 🔴 EMPTY MEANS THE DEFAULT, so `driver.sh` may pass it unconditionally.
+    # A run that does NOT move it is byte-identical in both the task and the
+    # `start` record — the two things every measured grid depends on.
+    ap.add_argument("--prompt-url", default="",
+                    help="fetch the agent instructions from this URL instead of "
+                         "the hosted prompt.md. For measuring a PROPOSED change "
+                         "to those instructions; such a trial is marked "
+                         "`prompt_url` in its start record and is NOT evidence "
+                         "about the shipped entrypoint. MUST BE UNAUTHENTICATED: "
+                         "unlike --credential-file this is a VALUE, and it reaches "
+                         "host argv, the transcript, commands.log, the container's "
+                         "own curl and the OpenRouter request body, none of which "
+                         "the Redactor can scrub. Empty => the default.")
     # 🔴 THE BRIEF'S NAME, BECAUSE ITS PROSE IS NOT AN IDENTIFIER. `--brief`
     # records the brief's TEXT, which is the only thing the model sees and the
     # only thing worth pinning for reproducibility — but a grader has to map
@@ -1483,6 +1519,20 @@ def main() -> int:
                  "brief is operator-typed text, not a file — piping a file in is "
                  "how repo content reaches a blind trial.")
 
+    # 🔴 THE SAME REFUSAL FOR `--prompt-url`, BECAUSE IT FEEDS THE SAME MESSAGE.
+    # The comment above calls a multi-line `--brief` "the one way repo content
+    # could reach a trial" — `--prompt-url` is a SECOND way, and without this the
+    # sentence above is simply false at this revision. `task()` puts the URL
+    # FIRST, so an embedded newline does not merely append: it injects a
+    # paragraph AHEAD of the brief, in the position the model reads as its
+    # instructions. `DOGFOOD_PROMPT_URL=$(cat somefile)` is the shape.
+    # Refused at BOTH layers (driver.sh refuses it too) — this is the inner one,
+    # so a direct runner.py invocation is covered as well.
+    if "\n" in a.prompt_url or "\r" in a.prompt_url:
+        ap.error("--prompt-url must be a single line (got an embedded newline). It "
+                 "is the first paragraph of the trial's task, so a multi-line value "
+                 "injects instructions the harness's blindness depends on absent.")
+
     # 🔴 VALIDATED HERE, BEFORE A CONTAINER OR AN API CALL EXISTS. A
     # `--brief-name` that names nothing, or that names a brief whose committed
     # text is not the text being sent, would be recorded as a fact and then
@@ -1504,7 +1554,7 @@ def main() -> int:
         # Exactly the bytes task() produced, with nothing appended — so a diff
         # against a recorded baseline is a diff of the task, not of our
         # formatting.
-        sys.stdout.write(task(a.brief))
+        sys.stdout.write(task(a.brief, a.prompt_url))
         return 0
 
     missing = [f"--{n}" for n in ("model", "image", "trial") if not getattr(a, n)]
@@ -1598,6 +1648,22 @@ def main() -> int:
     start = dict(trial=a.trial, model=a.model, image=a.image, user=a.user,
                  agent_env=a.agent_env, brief=a.brief, brief_name=a.brief_name,
                  container=container)
+    # 🔴 `prompt_url` IS EMITTED ONLY WHEN THE INSTRUCTIONS WERE MOVED, and the
+    # asymmetry with `brief`/`brief_name` above is the decision rather than an
+    # oversight. For the brief, absence would be indistinguishable from an older
+    # runner's transcript, so it is asserted positively. Here the DEFAULT is the
+    # thing every measured grid assumed — the real hosted prompt — so silence is
+    # already the strongest available claim about it, and adding a key to every
+    # run would re-base the grid exactly as a changed task would
+    # (TestDogfoodUncredentialedRunIsUnchanged pins that key set).
+    #
+    # 🔴 WHAT IT IS FOR: a trial fed patched instructions says NOTHING about the
+    # shipped entrypoint, and a `no`/`yes` verdict looks identical either way —
+    # `grade.sh` reads the container, not this record. So the transcript is the
+    # only place that provenance can live, and it must be a POSITIVE mark on the
+    # patched run rather than an inference from a key being absent.
+    if (a.prompt_url or "").strip() and (a.prompt_url or "").strip() != USER:
+        start["prompt_url"] = a.prompt_url.strip()
     if a.credential_file:
         # 🔴 A MARKER, NEVER THE VALUE. A sha256 prefix is not reversible and is
         # not a substring of the token; it exists so two runs can be told apart
@@ -1642,7 +1708,7 @@ def main() -> int:
     api_key = key()
     # One source for the task: the `user` record and the message actually sent
     # are the same bytes by construction, not by two call sites agreeing.
-    user_msg = task(a.brief)
+    user_msg = task(a.brief, a.prompt_url)
     messages = [{"role": "system", "content": SYSTEM},
                 {"role": "user", "content": user_msg}]
     rec("user", content=user_msg)
