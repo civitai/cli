@@ -43,10 +43,36 @@ const (
 	docListingC = "apl_CHARLIE333"
 )
 
-// listMinePath is the ONE route `app doctor` is allowed to speak. It is spelled
-// here, in the test, rather than read from the production route var: a test that
-// reads the value it is checking agrees with any change to it.
-const listMinePath = "/api/trpc/appListings.listMine"
+// listMinePath and rolloutProbePath are the TWO routes `app doctor` is allowed
+// to speak. Both are spelled here, in the test, rather than read from the
+// production route vars: a test that reads the value it is checking agrees with
+// any change to it.
+//
+// 🔴 THE SECOND ONE IS THE ACCOUNT-LEVEL ROLLOUT PROBE, AND IT IS A SECOND
+// REQUEST ON PURPOSE. `appListings.listMine` is gated on the Apps-AUTHOR flag;
+// the `app-blocks-enabled` rollout is a DIFFERENT flag with a different
+// audience, and nothing on the listMine wire path consults it. See
+// internal/appapi/rollout.go for why this route and not another.
+const (
+	listMinePath     = "/api/trpc/appListings.listMine"
+	rolloutProbePath = "/api/v1/blocks/submissions"
+)
+
+// rolloutEnrolledBody is what the real submissions route answers for an account
+// INSIDE the rollout. The probe reads only the status; the body is here so the
+// fake is shaped like the server rather than like the assertion.
+const rolloutEnrolledBody = `{"submissions":[]}`
+
+// rolloutNotEnrolledBody is the route's own refusal envelope at its
+// `app-blocks-enabled` gate (`civitai/civitai:src/pages/api/v1/blocks/
+// submissions.ts:251`).
+//
+// 🔴 THE TEXT IS A FIXTURE, NOT A CONTRACT THE CLI READS. No production branch
+// matches it; the probe keys on the 503 plus the structural presence of a
+// non-empty `message`. It is spelled realistically so a reader can see what the
+// host sends, and TestRolloutNotEnrolledVerdictIsStatusKeyedNotTextKeyed proves
+// the CLI does not depend on it.
+const rolloutNotEnrolledBody = `{"message":"Apps are not enabled"}`
 
 // doctorProblem builds one server-shaped problem row.
 func doctorProblem(code, label, severity string) map[string]any {
@@ -83,6 +109,25 @@ type doctorServer struct {
 	*httptest.Server
 	mu    sync.Mutex
 	paths []string
+	// rolloutStatus / rolloutBody are what the ROLLOUT probe route answers.
+	// They default to the ENROLLED arm (200) so every pre-existing case keeps
+	// exercising the listing behaviour it was written for.
+	rolloutStatus int
+	rolloutBody   string
+	// rolloutQueries records the RAW QUERY of every rollout-probe request, so a
+	// test can assert the probe narrows by nothing. Recorded rather than
+	// asserted here: a handler that t.Errorf'd on a query would make the
+	// positive control ("was the probe issued at all?") impossible.
+	rolloutQueries []string
+}
+
+// rolloutQueriesSeen returns the recorded probe query strings.
+func (d *doctorServer) rolloutQueriesSeen() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]string, len(d.rolloutQueries))
+	copy(out, d.rolloutQueries)
+	return out
 }
 
 func (d *doctorServer) seen() []string {
@@ -95,7 +140,15 @@ func (d *doctorServer) seen() []string {
 
 func newDoctorServer(t *testing.T, rows ...map[string]any) *doctorServer {
 	t.Helper()
-	d := &doctorServer{}
+	return newDoctorServerRollout(t, http.StatusOK, rolloutEnrolledBody, rows...)
+}
+
+// newDoctorServerRollout is newDoctorServer with the ROLLOUT probe's answer
+// under the caller's control, so each outcome of the account-level check can be
+// driven end to end through the real command.
+func newDoctorServerRollout(t *testing.T, rolloutStatus int, rolloutBody string, rows ...map[string]any) *doctorServer {
+	t.Helper()
+	d := &doctorServer{rolloutStatus: rolloutStatus, rolloutBody: rolloutBody}
 	if rows == nil {
 		rows = []map[string]any{}
 	}
@@ -103,15 +156,25 @@ func newDoctorServer(t *testing.T, rows ...map[string]any) *doctorServer {
 		d.mu.Lock()
 		d.paths = append(d.paths, r.URL.Path)
 		d.mu.Unlock()
-		if r.URL.Path != listMinePath {
+		switch r.URL.Path {
+		case listMinePath:
+			trpcData(w, rows)
+		case rolloutProbePath:
+			d.mu.Lock()
+			d.rolloutQueries = append(d.rolloutQueries, r.URL.RawQuery)
+			d.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(d.rolloutStatus)
+			_, _ = w.Write([]byte(d.rolloutBody))
+		default:
 			// 🔴 A 500 rather than a t.Errorf alone: a command that made an
 			// unexpected call must FAIL, not merely be noted, or a test can pass
 			// while the CLI quietly reaches a proc that 403s in production.
-			t.Errorf("unexpected request to %s — `app doctor` speaks only %s", r.URL.Path, listMinePath)
+			t.Errorf("unexpected request to %s — `app doctor` speaks only %s and %s",
+				r.URL.Path, listMinePath, rolloutProbePath)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		trpcData(w, rows)
 	}))
 	t.Cleanup(d.Close)
 	listingEnv(t, d.URL)
@@ -300,7 +363,16 @@ func TestDoctorJSONShapeIsPinnedWhole(t *testing.T) {
 	// 🔴 THE DELISTED ROW IS SENT FIRST ON THE WIRE and must come LAST in the
 	// payload. Feeding them already in the right order would make the ordering
 	// assertion pass against code that does no ordering at all.
-	newDoctorServer(t,
+	//
+	// 🔴 THE ROLLOUT ARM PINNED HERE IS NOT-ENROLLED, NOT THE DEFAULT ENROLLED
+	// ONE, FOR THE SAME REASON THE `onsite` ROW BELOW EXISTS. On the enrolled
+	// arm `enrolled` is `true`, `fix` is `""` and `serverMessage` is `""` —
+	// three fields a mutant that hardcoded those exact values would survive,
+	// which is the documented blind spot where a fixture can only ever produce
+	// the constant's own value. The 503 arm makes all four fields non-default
+	// and pairwise distinct: `false`, a non-empty fix, a non-empty message, and
+	// status 503. TestDoctorRolloutJSONCoversEveryState covers the other six.
+	newDoctorServerRollout(t, http.StatusServiceUnavailable, rolloutNotEnrolledBody,
 		doctorRow(docSlugC, docListingC, "removed", "owner", nil,
 			doctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking")),
 		doctorRow(docSlugA, docListingA, "draft", "owner", nil,
@@ -333,6 +405,14 @@ func TestDoctorJSONShapeIsPinnedWhole(t *testing.T) {
 	// cannot pass.
 	want := `{
   "ok": false,
+  "rollout": {
+    "state": "not-enrolled",
+    "enrolled": false,
+    "detail": "Your account is NOT in the App Blocks rollout. Every host API call a running block makes on your behalf — shared storage, viewer identity — is refused with 401 \"Apps are not enabled\", whatever the app does. The gate is on your ACCOUNT: it is NOT your app's approval and NOT your token's scopes, which is why checking those explains nothing.",
+    "fix": "ask Civitai to add your account to the App Blocks rollout — ` + "`" + `civitai whoami` + "`" + ` shows which account this is.",
+    "httpStatus": 503,
+    "serverMessage": "Apps are not enabled"
+  },
   "apps": [
     {
       "slug": "` + docSlugA + `",
@@ -710,7 +790,7 @@ func TestDoctorNoListingsIsASentenceAndExitsZero(t *testing.T) {
 // The request ledger — the D3 measurement.
 // ---------------------------------------------------------------------------
 
-// TestDoctorIssuesExactlyOneRequestAndItIsListMine pins the whole request set.
+// TestDoctorIssuesExactlyTheLedgeredRequests pins the whole request set.
 //
 // 🔴 THIS IS WHAT DECIDES WHETHER `doctor` TRIPS THE `getAssetScanStatuses`
 // OWNER FILTER. That proc filters `Image.userId = caller` for non-moderators, so
@@ -724,7 +804,17 @@ func TestDoctorNoListingsIsASentenceAndExitsZero(t *testing.T) {
 // A ledger rather than a "did not call X" check: a set assertion fails when the
 // set GROWS as well as when it shrinks, so a later change that adds a second
 // read has to come here and say so.
-func TestDoctorIssuesExactlyOneRequestAndItIsListMine(t *testing.T) {
+//
+// 🔴 WIDENED FROM ONE REQUEST TO TWO, DELIBERATELY, AND THE ARGUMENT ABOVE IS
+// RE-DERIVED RATHER THAN ASSUMED TO SURVIVE. The previous message required
+// exactly that before widening, so: the second request is
+// `GET /api/v1/blocks/submissions` with NO query parameters, and it is not
+// `getAssetScanStatuses`, does not reach it, and reads no asset row — its whole
+// verdict is the response's HTTP STATUS (internal/appapi/rollout.go). So the
+// owner-filter conclusion is untouched: `doctor` still never asks which asset
+// row is blocked, and the ORDER is pinned here too, because `listMine` must keep
+// its existing failure behaviour and therefore has to go first.
+func TestDoctorIssuesExactlyTheLedgeredRequests(t *testing.T) {
 	srv := newDoctorServer(t, doctorRow(docSlugA, docListingA, "draft", "owner", nil,
 		doctorProblem("blocked-media", "Replace the blocked icon before it can publish", "blocking"),
 	))
@@ -738,10 +828,12 @@ func TestDoctorIssuesExactlyOneRequestAndItIsListMine(t *testing.T) {
 	if len(got) == 0 {
 		t.Fatal("the request ledger is EMPTY — the command made no request, so this test measures nothing")
 	}
-	if len(got) != 1 || got[0] != listMinePath {
-		t.Errorf("`app doctor` issued %v.\nIt must issue EXACTLY [%s]. If a second read was added deliberately, "+
-			"re-derive the getAssetScanStatuses owner-filter argument in this test's doc comment before widening it.",
-			got, listMinePath)
+	if len(got) != 2 || got[0] != listMinePath || got[1] != rolloutProbePath {
+		t.Errorf("`app doctor` issued %v.\nIt must issue EXACTLY [%s %s], IN THAT ORDER. If a third read was added "+
+			"deliberately, re-derive the getAssetScanStatuses owner-filter argument in this test's doc comment "+
+			"before widening it — and note the order is asserted, not incidental: listMine runs first so its "+
+			"failure behaviour (and therefore every exit code it publishes) is unchanged by the rollout probe.",
+			got, listMinePath, rolloutProbePath)
 	}
 	// And the finding is still complete: the SERVER's label names the slot, so
 	// the CLI never needed the per-asset read to be actionable.

@@ -94,6 +94,7 @@ contract, and **packages/submits** it for review.
   - [Link your source code (`app listing set-source-repo`)](#link-your-source-code-app-listing-set-source-repo) — **material: stages a revision**
 - [Submission status](#submission-status)
 - [Listing doctor (`app doctor`)](#listing-doctor-app-doctor) — **gates a release on exit code**
+  - [The App Blocks rollout line](#the-app-blocks-rollout-line) — **account-level, and never gates**
 - [Pull your app's repository (`app pull`)](#pull-your-apps-repository-app-pull)
 - [Browse the App store](#browse-the-app-store)
 - [App metrics](#app-metrics)
@@ -324,7 +325,7 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 | `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps.** ⚠ The clone URL embeds your access token and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
 | `civitai app listing status [--json]\|set-text [--tagline <t>] [--description <d>] [--category <c>] [--clear <fields>] [--yes]\|set-source-repo <url>\|--clear\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots optional, up to 8), and `listing status` prints what the publish floor still requires. 🔴 **`listing status` is not a pure read — `--json` or not — so do not poll it**: on a live listing it opens a revision draft. On a LIVE listing a **material** change — the media commands, and `set-source-repo` — is **staged on a revision** and is not live until `submit-revision` is approved. 🔴 **`set-text` is the exception: it applies IN PLACE, immediately and publicly**, with no revision to review or abandon. **ON-SITE apps are refused** by `set-text` and `set-source-repo`. See [Store listing](https://developer.civitai.com/apps/guide/store-listing) and [Link your source code](#link-your-source-code-app-listing-set-source-repo). |
 | `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions — all of them, or one in detail by `blockId` or `--id`, with a **SOURCE** column carrying the commit the submitting client claimed. Run from inside an app checkout it also warns on **stderr** when your `block.manifest.json` is **BEHIND** your highest approved version. See [Submission status](#submission-status). |
-| `civitai app doctor [slug] [--json]` | **Diagnose what is incomplete or blocked on your App store listings, and how to fix it**, across every listing you own or hold an **accepted** collaborator seat on. 🔴 **Exits `1` when a blocking problem sits on a listing that can still publish, `0` otherwise**, so it gates a release script. A pure read. See [Listing doctor](#listing-doctor-app-doctor). |
+| `civitai app doctor [slug] [--json]` | **Diagnose what is incomplete or blocked on your App store listings, and how to fix it**, across every listing you own or hold an **accepted** collaborator seat on. 🔴 **Exits `1` when a blocking problem sits on a listing that can still publish, `0` otherwise**, so it gates a release script. It also reports whether your **account** is in the **App Blocks rollout** — the gate that answers `401 "Apps are not enabled"` to a running block regardless of the app's approval or the token's scopes — and 🔴 **that never sets the exit code**, nor does a check that could not reach the host (`rollout.enrolled` is `null`, not `false`). A pure read. See [Listing doctor](#listing-doctor-app-doctor). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, API engagement — always printing the window the **server** served. Needs the **Apps submit scope**. See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>] [--yes]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`), freeing the slug. **It also deletes a first-version app's store listing**, so it asks first and needs `--yes` in a script. See [Submission status](#submission-status). |
 | `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--out-name <template>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job, shows the cost + your balance, asks, submits, then **waits and downloads**. `--dry-run` prices it without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes; a **default** OAuth login is refused. See [Generate](#generate). |
@@ -1037,6 +1038,43 @@ on a listing that can still publish, and `0` otherwise** — including when ever
 blocking problem is on a **delisted** listing, and when you have no listings at
 all — so `civitai app doctor my-app || exit 1` gates a release script. It is a
 **pure read**: it reports, and changes nothing.
+
+### The App Blocks rollout line
+
+Above the listings it reports whether your **account** is in the App Blocks
+rollout. 🔴 **That gate is separate from your app's approval and from your
+token's scopes.** While your account is outside it, every host API call a running
+block makes on your behalf — shared storage, viewer identity — is refused with
+`401 "Apps are not enabled"` however the app is configured, which is why
+checking the app and the token explains nothing. The remedy is a cohort
+invitation: ask Civitai to add your account, and `civitai whoami` shows which
+account you are on.
+
+🔴 **It never sets the exit code.** The rollout is deliberately held dark
+pre-GA, so being outside it is a *supported* state, not a broken listing — a
+release script must not go red for a cause the developer cannot act on. Nor does
+a check that could not reach the host.
+
+**`COULD NOT CHECK` is a third answer, and it is not a negative one.** An
+unreachable host, a credential the host would not accept (which is also what a
+banned account looks like), a `403` that refused the credential *before* the
+rollout question, and a rate-limited probe are each reported as their own state
+rather than as "you are not in the rollout". In `--json` that distinction is
+`rollout.enrolled`, a **tristate**: `true`, `false`, or **`null` when the
+question was not answered** — so a script must test `=== false`, never falsiness.
+`rollout.state` names which of the seven outcomes occurred (`enrolled`,
+`not-enrolled`, `author-refused`, `no-credential`, `rate-limited`,
+`unreachable`, `unknown`), and `rollout.serverMessage` carries the host's own
+text verbatim.
+
+```bash
+civitai app doctor --json | jq -e '.rollout.enrolled == false'   # outside the rollout
+civitai app doctor --json | jq -e '.rollout.enrolled == null'    # could not tell
+```
+
+This costs one extra request per run (`GET /api/v1/blocks/submissions`, the same
+route `app status` reads, with no query), issued *after* the listing read so that
+read's behaviour is unchanged. It is still a pure read.
 
 📖 **[Store listing guide](https://developer.civitai.com/apps/guide/store-listing)**
 — every finding code and the fix `doctor` prints for it, how a delisted listing

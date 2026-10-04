@@ -177,6 +177,22 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"id and caption printed below the flushed table are NOT cells and are killed by " +
 			"TestGatedRenderersDoNotForgeOutsideTheirTable"},
 
+	// --- app doctor: the ACCOUNT-level rollout section ----------------------
+	//
+	// 🔴 THE SOFT-WRAP ARM, NOT THE RUNE ARM, WHICH IS WHY THE GATE IS
+	// safeTermBounded. The host's own `message` is quoted directly under
+	// CLI-OWNED verdict lines ("App Blocks rollout: NOT ENROLLED", the exit-code
+	// note), so an unbounded value forges whole display rows by soft wrap with
+	// no ESC, no TAB and no newline in it — a counterfeit "enrolled" headline a
+	// few rows above the real one. safeTermSingle cannot see that
+	// (civitai/cli#605, #624), which is why this is the third call site of the
+	// bounded form rather than a reuse of the single-line one.
+	"printDoctorRollout": {"TestDoctorRolloutServerMessageCannotForgeTheVerdict",
+		"`app doctor`'s rollout section: the host's own refusal message, quoted verbatim beneath the CLI's " +
+			"verdict lines. The named test drives BOTH halves of the bounded gate — the rune class and the " +
+			"length cap — because the cap alone is satisfied by a short hostile string and the strip alone " +
+			"by a long clean one"},
+
 	// --- read path: apps ----------------------------------------------------
 	"printAppList": {"TestReadRenderersStripTheInvisibleClass",
 		"`app list` rows: name, slug, kind, category and author"},

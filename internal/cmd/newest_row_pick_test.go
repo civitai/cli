@@ -504,6 +504,24 @@ var submissionsListReaders = map[string]submissionsListReader{
 			{"TestAppSubmitRefusesARegressionAndNeverUploads", `run(t, "app", "submit"`},
 		},
 	},
+	"cmd/app_doctor.go": {
+		// 🔴 THE ONE ENTRY IN THIS LEDGER THAT CONSUMES NO ROW, and saying so is
+		// the point of the entry. Every neighbour here takes a row out of a list
+		// documented newest-first; this file calls CheckAppBlocksRollout, whose
+		// whole verdict is the HTTP STATUS of an unnarrowed GET. The response
+		// body is never decoded into rows, so there is no order assumption to
+		// pin — and an entry claiming otherwise would read as coverage of a pick
+		// that does not exist.
+		reads: "NO ROWS — it calls CheckAppBlocksRollout, whose verdict is the response STATUS (200 enrolled / 503 outside the app-blocks-enabled rollout / 401 / 403 / 429). " +
+			"The body is read only for the route's own `message` field, which is CARRIED into the report and never matched on. Depends on no list order and takes no Submissions[0]",
+		pinnedBy: []submissionsPin{
+			// Pinned by the case that proves the verdict comes from the status
+			// and not from the rows: a 200 carrying rows whose every field
+			// disagrees with the enrolled fixture still reports enrolled, and a
+			// 503 carrying a full, valid row list still reports NOT enrolled.
+			{"TestDoctorRolloutVerdictComesFromTheStatusNotTheRows", `run(t, "app", "doctor"`},
+		},
+	},
 	"cmd/app_listing.go": {
 		reads: "GetSubmission's single row, for the appBlockId resolveListing hands to GetMyListingForApp — i.e. WHICH listing every `app listing` subcommand reads and mutates",
 		pinnedBy: []submissionsPin{
@@ -549,7 +567,14 @@ const submissionsRouteGateway = "submissionsURL"
 // GetSubmissionRows exposes the ordering itself to its caller. Their shared body
 // is deliberately UNEXPORTED so the derivation below reports both boundaries
 // rather than only whichever one still touches the gateway directly.
-var submissionsRouteAccessors = []string{"GetSubmission", "GetSubmissionRows", "ListSubmissions"}
+// 🔴 FOUR NOW, AND THE FOURTH READS NO ROWS AT ALL. CheckAppBlocksRollout is
+// the account-level App-Blocks rollout probe: it issues the same unnarrowed GET
+// and its verdict is the HTTP STATUS, so it consumes no row, takes no
+// Submissions[0], and depends on no list order. It is ledgered anyway, because
+// this list's job is to make the route's accessor set DISCOVERABLE rather than
+// to enumerate row pickers — an accessor missing from here is one the reader
+// walk below cannot follow, whatever it does with the body.
+var submissionsRouteAccessors = []string{"CheckAppBlocksRollout", "GetSubmission", "GetSubmissionRows", "ListSubmissions"}
 
 // funcDecl matches a top-level func declaration, with or without a receiver, and
 // captures the func's own name.

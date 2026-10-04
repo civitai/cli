@@ -401,6 +401,34 @@ type doctorSummaryJSON struct {
 	Truncated bool `json:"truncated"`
 }
 
+// doctorRolloutJSON is the ACCOUNT-level App-Blocks rollout verdict — the one
+// finding in this payload that is not about a listing.
+//
+// 🔴 `enrolled` IS A TRISTATE AND `state` IS NOT A RESTATEMENT OF IT. `enrolled`
+// answers the yes/no a script branches on and is `null` whenever the probe could
+// not establish it; `state` says WHICH of the five could-not-establish causes
+// occurred (appapi.RolloutState). Publishing only the boolean would make an
+// unreachable host indistinguishable from a refusal — the conflation this whole
+// check exists to stop — and publishing only the state would force every
+// consumer to re-derive the mapping.
+type doctorRolloutJSON struct {
+	// State is appapi.RolloutState verbatim: enrolled | not-enrolled |
+	// author-refused | no-credential | rate-limited | unreachable | unknown.
+	State string `json:"state"`
+	// Enrolled is true / false / null. 🔴 `null` IS NOT `false`.
+	Enrolled *bool  `json:"enrolled"`
+	Detail   string `json:"detail"`
+	// Fix is empty when there is nothing for the caller to do.
+	Fix string `json:"fix"`
+	// HTTPStatus is the status the host answered with, 0 when none arrived.
+	HTTPStatus int `json:"httpStatus"`
+	// ServerMessage is the host's own text, verbatim and possibly empty. It is
+	// the string a developer searched for, and the only thing separating the two
+	// causes of a 503 (see appapi/rollout.go). JSON escapes the control class,
+	// so it is emitted raw here while the human renderer gates it.
+	ServerMessage string `json:"serverMessage"`
+}
+
 // doctorJSON is the `--json` payload.
 //
 // 🔴 `ok` IS THE SAME FIELD `app validate --json` PUBLISHES, and it means the
@@ -409,10 +437,162 @@ type doctorSummaryJSON struct {
 // it, and neither does a blocking problem on a DELISTED listing. A script that
 // wants "is anything wrong anywhere" reads `summary.blocking`; a script that
 // wants "may this ship" reads `ok`.
+//
+// 🔴 `rollout` DOES NOT MOVE `ok`, AND THAT IS THE DELIBERATE PART. See
+// doctorRolloutPayload.
 type doctorJSON struct {
 	OK      bool              `json:"ok"`
+	Rollout doctorRolloutJSON `json:"rollout"`
 	Apps    []doctorAppJSON   `json:"apps"`
 	Summary doctorSummaryJSON `json:"summary"`
+}
+
+// The ACCOUNT-level rollout check's copy. One sentence per appapi.RolloutState,
+// spelled out here so a reader can see the whole table at once.
+//
+// 🔴 EVERY STATE EXCEPT THE FIRST TWO SAYS "COULD NOT CHECK", IN THOSE WORDS.
+// Five of the seven outcomes are an ABSENCE of an answer, and an absence has
+// many causes — reporting an unreachable host, a credential the host would not
+// accept, or a refusal that fired BEFORE the rollout question as "you are not in
+// the rollout" would regenerate, one level out, exactly the wrong-subject
+// diagnosis this check exists to end.
+const (
+	rolloutHeadlineEnrolled = "App Blocks rollout: enrolled"
+	rolloutHeadlineOutside  = "App Blocks rollout: NOT ENROLLED"
+	rolloutHeadlineUnknown  = "App Blocks rollout: COULD NOT CHECK"
+)
+
+// rolloutNoGateNote is printed under every non-enrolled outcome.
+//
+// 🔴 IT IS NOT REASSURANCE, IT IS THE EXIT-CODE CONTRACT. A reader who sees a
+// shouting NOT ENROLLED beside a process that exited 0 has no way to tell that
+// from a broken gate — the same reason the delisted section announces itself.
+const rolloutNoGateNote = "This does not set the exit code: the rollout is held pre-GA on purpose, " +
+	"so being outside it is a supported state and not a broken listing."
+
+// doctorRolloutPayload maps the probe's result onto the published verdict.
+//
+// 🔴 NO ARM OF THIS TABLE TOUCHES `ok`, `Summary.Gating` OR THE EXIT CODE, AND
+// THAT IS A DECISION WITH A REASON RATHER THAN AN OMISSION.
+//
+// `app doctor`'s exit 1 is published — in this command's own `--help` and in
+// the README's command table and `app doctor` section — as "a blocking problem
+// on a listing that can still publish", and `civitai app doctor my-app ||
+// exit 1` is wired into release scripts on that promise. (⚠ An earlier draft of
+// this sentence also named `exitCodeDocs` as a publisher of that number, and
+// that is not what it says: `exitcodes_doc.go` documents the exit-1 CLASS —
+// a verdict about STATE rather than about the invocation — and mentions
+// `app doctor` only to say `app submit`'s listing gate is deliberately NARROWER
+// than it. Checked rather than assumed, because the claim is load-bearing here.) A developer outside the rollout is in a SUPPORTED state: the
+// flag is deliberately dark pre-GA, the remedy is a cohort invitation they
+// cannot issue themselves, and nothing about their listing is wrong. Gating on
+// it would make every non-cohort developer's release script red forever for a
+// cause they cannot act on — which is precisely the failure this command's own
+// delisted rule was created to prevent (measured on production 2026-08-24: ten
+// of eleven blocking problems sat on `removed` apps, and the no-arg form would
+// have exited 1 forever).
+//
+// The five COULD-NOT-CHECK states have a second, independent reason: a check
+// that failed the build on its own inability to reach the host would turn every
+// network blip into a failed release.
+//
+// 🔴 SO THE REPORT GROWS AND THE VERDICT DOES NOT — the same split the delisted
+// rule uses. appapi.CheckAppBlocksRollout returning no error is what makes that
+// structural rather than a promise: there is nothing here a caller could
+// accidentally propagate into the exit mapper.
+func doctorRolloutPayload(r appapi.Rollout) doctorRolloutJSON {
+	out := doctorRolloutJSON{
+		State:         string(r.State),
+		Enrolled:      r.Enrolled(),
+		HTTPStatus:    r.HTTPStatus,
+		ServerMessage: r.ServerMessage,
+	}
+	switch r.State {
+	case appapi.RolloutEnrolled:
+		out.Detail = "Your account is inside the App Blocks rollout, so a running block's calls to the " +
+			"host API are not gated on it."
+	case appapi.RolloutNotEnrolled:
+		// 🔴 THE SENTENCE NAMES WHAT IS *NOT* THE CAUSE, BECAUSE THAT IS THE
+		// WHOLE DEFECT. The report this check was written for
+		// (civitai/civitai-app-starters#537) is of a developer who verified the
+		// app was approved and that the token carried both storage scopes, and
+		// was still refused. A finding that said only "you are not enrolled"
+		// would leave them checking those two things again.
+		out.Detail = "Your account is NOT in the App Blocks rollout. Every host API call a running " +
+			"block makes on your behalf — shared storage, viewer identity — is refused with " +
+			"401 \"Apps are not enabled\", whatever the app does. The gate is on your ACCOUNT: it is " +
+			"NOT your app's approval and NOT your token's scopes, which is why checking those " +
+			"explains nothing."
+		out.Fix = "ask Civitai to add your account to the App Blocks rollout — `civitai whoami` shows " +
+			"which account this is."
+	case appapi.RolloutAuthorRefused:
+		// 🔴 THIS IS AN ABSENCE OF AN ANSWER, NOT A NEGATIVE ONE, AND THE
+		// DIFFERENCE IS A DIFFERENT FLAG. The host's Apps-AUTHOR gate runs
+		// before the rollout gate, so a 403 refused the credential one step too
+		// early and the rollout state behind it was never evaluated.
+		out.Detail = "The host refused this credential for Apps authoring (403) BEFORE it answered the " +
+			"rollout question, so your rollout state is unknown. Two different things do this: an " +
+			"account outside the Apps-author cohort — a DIFFERENT gate from the rollout one — or an " +
+			"OAuth token minted before the Apps submit scope existed."
+		out.Fix = "re-run `civitai login` if your token may predate that scope, or use a full-scope " +
+			"personal API key."
+	case appapi.RolloutNoCredential:
+		// 🔴 IT DOES NOT SAY "YOUR TOKEN IS BAD". The host returns null for a
+		// BANNED user before it looks at the key, so a ban and a bad key are the
+		// same 401 on the wire.
+		out.Detail = "The host did not accept this credential (401), so it was never asked about your " +
+			"account. A banned account looks identical here — the host answers 401 for both."
+		out.Fix = "run `civitai login` (or set CIVITAI_TOKEN)."
+	case appapi.RolloutRateLimited:
+		out.Detail = "The host rate-limited the check (429). That is an answer about the request and no " +
+			"answer at all about your account."
+		out.Fix = "re-run `civitai app doctor` in a minute."
+	case appapi.RolloutUnreachable:
+		out.Detail = "No response arrived from the host, so your rollout state is unknown. This is NOT " +
+			"a report that you are outside the rollout."
+	default:
+		// 🔴 AN UNRECOGNISED STATE TAKES THIS ARM TOO, and it claims nothing.
+		// The honest answer to "a response this CLI cannot read" is that the
+		// question is unanswered, never a guess at which way.
+		out.Detail = "The host answered with something this CLI cannot read a rollout verdict out of, so " +
+			"your rollout state is unknown. This is NOT a report that you are outside the rollout."
+	}
+	return out
+}
+
+// printDoctorRollout renders the account-level section, above the per-app rows.
+//
+// 🔴 IT PRINTS ABOVE THE LISTINGS, AND BEFORE THE no-listings SENTENCE. A
+// developer with no listings yet is exactly who needs this answer, and the
+// earlier shape of this command returned before anything else was written.
+func printDoctorRollout(w io.Writer, st ui.Styler, r doctorRolloutJSON) {
+	switch r.State {
+	case string(appapi.RolloutEnrolled):
+		fmt.Fprintln(w, st.Success(rolloutHeadlineEnrolled))
+	case string(appapi.RolloutNotEnrolled):
+		fmt.Fprintln(w, st.Warn(rolloutHeadlineOutside))
+	default:
+		fmt.Fprintln(w, st.Info(rolloutHeadlineUnknown))
+	}
+	fmt.Fprintf(w, "  %s\n", r.Detail)
+	if r.Fix != "" {
+		fmt.Fprintf(w, "  Fix: %s\n", st.Code(r.Fix))
+	}
+	if r.ServerMessage != "" {
+		// 🔴 safeTermBounded, NOT safeTerm AND NOT safeTermSingle. This is
+		// SERVER-ORIGIN text on a surface whose other lines are CLI-owned
+		// claims, so an unbounded value can forge display rows by SOFT WRAP —
+		// a counterfeit "App Blocks rollout: enrolled" a few rows above the real
+		// verdict, with no ESC, no TAB and no newline anywhere in it, which is
+		// the hazard safeTermSingle cannot see (civitai/cli#605, #624).
+		fmt.Fprintf(w, "  The host said: %s\n", safeTermBounded(r.ServerMessage))
+	}
+	if r.State != string(appapi.RolloutEnrolled) {
+		// The same sentence for all SIX non-enrolled states, so it lives in one
+		// constant rather than being repeated in six arms of the table above.
+		fmt.Fprintf(w, "  %s\n", rolloutNoGateNote)
+	}
+	fmt.Fprintln(w)
 }
 
 func newAppDoctorCmd() *cobra.Command {
@@ -440,6 +620,15 @@ Each finding prints the command or URL that fixes it. The three TEXT problems
 comes from block.manifest.json, an off-site app's from the web listing editor.
 A blocked asset is REPLACED for an icon or cover, but a blocked screenshot must
 be REMOVED — adding another does not clear it.
+
+APP BLOCKS ROLLOUT: before the listings, it reports whether your ACCOUNT is
+inside the App Blocks rollout. That gate is separate from your app's approval
+and from your token's scopes — when your account is outside it, every host API
+call a running block makes (shared storage, viewer identity) is refused with
+401 "Apps are not enabled" however the app is configured. Being outside it is a
+supported pre-GA state, so it NEVER sets the exit code; nor does a check that
+could not reach the host, which is reported as COULD NOT CHECK and is kept
+distinct from a negative answer ('enrolled' is null, not false, in --json).
 
 DELISTED LISTINGS: an app whose status is 'removed' is still reported, in its
 own section, but its blocking problems do NOT set the exit code. The publish
@@ -484,7 +673,16 @@ revision draft on a live listing, so it is safe to run in a loop.`,
 			if err != nil {
 				return err
 			}
-			return runAppDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), rows, slug, cfg.BaseURL(), jsonOut)
+			// 🔴 THE ROLLOUT PROBE RUNS SECOND, AND THAT ORDER IS DELIBERATE.
+			// `listMine` keeps its existing failure behaviour byte-for-byte: a
+			// credential or author-access failure still returns exactly the
+			// error (and therefore exactly the exit code) it returned before
+			// this check existed, with no second request issued first. The
+			// price is that the rollout answer is unavailable on those paths —
+			// accepted, because the developer this check is for HAS author
+			// access (their app is approved) and `listMine` succeeds for them.
+			rollout := client.CheckAppBlocksRollout(cmdCtx(cmd))
+			return runAppDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), rows, rollout, slug, cfg.BaseURL(), jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false,
@@ -528,7 +726,7 @@ func doctorNoSuchApp(slug string, rows []appapi.MyListing) error {
 // selects, renders and returns the verdict. Separated from the cobra wiring so
 // the verdict can be exercised without a server, and so the SAME selection and
 // the SAME counting feed both renderings.
-func runAppDoctor(out, errOut io.Writer, rows []appapi.MyListing, slug, baseURL string, jsonOut bool) error {
+func runAppDoctor(out, errOut io.Writer, rows []appapi.MyListing, rollout appapi.Rollout, slug, baseURL string, jsonOut bool) error {
 	selected := rows
 	if slug != "" {
 		selected = nil
@@ -554,6 +752,7 @@ func runAppDoctor(out, errOut io.Writer, rows []appapi.MyListing, slug, baseURL 
 	// does not transfer.
 	payload := doctorPayload(selected, baseURL)
 	payload.Summary.Truncated = doctorPageTruncated(len(rows))
+	payload.Rollout = doctorRolloutPayload(rollout)
 	if jsonOut {
 		// 🔴 The JSON path does NOT go through the human renderer, and must not:
 		// internal/ui/CONVENTION.md rule 1 is that machine-readable output
@@ -665,6 +864,10 @@ func doctorPayload(rows []appapi.MyListing, baseURL string) doctorJSON {
 // emits, so the two cannot disagree about a finding or a count.
 func printDoctorReport(w io.Writer, payload doctorJSON) {
 	st := ui.For(w)
+	// 🔴 ABOVE THE LISTINGS, AND ABOVE THE no-listings EARLY RETURN. It is the
+	// account-level fact every listing finding below it is conditional on, and a
+	// developer with no listings yet is exactly who needs it.
+	printDoctorRollout(w, st, payload.Rollout)
 	if len(payload.Apps) == 0 {
 		// 🔴 An empty run gets a SENTENCE, not a blank. Silence here is
 		// indistinguishable from a read that failed and was swallowed.
