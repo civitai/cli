@@ -131,6 +131,17 @@ MAX_SUBMISSIONS="${DOGFOOD_MAX_SUBMISSIONS:-}"
 # editing runner.py. Empty => runner.py's own default. It is a ceiling, not a
 # spend cap; money is still bounded by runner.py's --max-cost.
 MAX_TOKENS="${DOGFOOD_MAX_TOKENS:-}"
+# Pass-through for runner.py's --prompt-url: fetch the agent instructions from
+# somewhere other than the hosted prompt.md, so a PROPOSED edit to them can be
+# measured before it ships. Empty => the hosted default, and the whole matrix is
+# then byte-identical to every grid already measured.
+#
+# 🔴 A MATRIX RUN WITH THIS SET IS NOT EVIDENCE ABOUT THE SHIPPED ENTRYPOINT.
+# `grade.sh` reads the CONTAINER, so its verdict line cannot tell you the
+# instructions were patched; the trial's `start` record carries `prompt_url` for
+# exactly that reason. Use a distinct DOGFOOD_TRIAL_PREFIX so the runs are also
+# told apart on disk.
+PROMPT_URL="${DOGFOOD_PROMPT_URL:-}"
 # Same shape, for runner.py's --max-steps. Empty => runner.py's own default of 40.
 #
 # 🔴 40 CANNOT CARRY A BUILD-AND-SHIP BRIEF, AND UNTIL THIS KNOB EXISTED NO
@@ -240,6 +251,16 @@ elif [ "$ALLOW_LISTING_TEXT" = "1" ]; then
   # nothing. Said out loud anyway, because an operator who set it meant to arm
   # something and is entitled to know it did not.
   echo "note: DOGFOOD_ALLOW_LISTING_TEXT=1 is inert without DOGFOOD_CREDENTIAL_FILE" >&2
+fi
+
+if [ -n "$PROMPT_URL" ]; then
+  # Loud, on stderr, before any trial starts. Not fatal — this is a supported
+  # mode — but the verdict it produces is about PROPOSED instructions, and
+  # nothing downstream says so: grade.sh reads the container.
+  echo "🔴 DOGFOOD_PROMPT_URL=$PROMPT_URL — the trials below are being fed" >&2
+  echo "   NON-HOSTED instructions. Their verdicts are evidence about that URL," >&2
+  echo "   NOT about the shipped entrypoint. Each trial's start record carries" >&2
+  echo "   prompt_url; grade.sh's verdict line does not." >&2
   echo "      — an uncredentialed trial reaches no listing to rewrite." >&2
 fi
 
@@ -263,6 +284,7 @@ run_one() {  # model short image ienv trial user
   [ -n "$ienv" ] && args+=(--agent-env "$ienv")
   [ -n "$BRIEF" ] && args+=(--brief "$BRIEF")
   [ -n "$BRIEF_NAME" ] && args+=(--brief-name "$BRIEF_NAME")
+  [ -n "$PROMPT_URL" ] && args+=(--prompt-url "$PROMPT_URL")
   # The credential is passed as a PATH, never as a value — see runner.py's
   # credential section for the three surfaces that keeps it off.
   [ -n "$CREDENTIAL" ] && args+=(--credential-file "$CREDENTIAL")

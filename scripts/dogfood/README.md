@@ -939,14 +939,61 @@ satisfied by `ctl-neg` too, and by a grader that broke arm A instead — this co
 is only meaningful if arm A is GREEN while arm B is red. Require:
 
 ```
-check_ok=true  failed_checks=[authenticated]  mcp_rows=2
-login_version=none  agent_shell_version=0.1.105  CLOSING_CONDITION=no
+check_ok=true  failed_checks=[authenticated,agent-token]  mcp_rows=2
+login_version=none  agent_shell_version=<the installed version>  CLOSING_CONDITION=no
 ```
 
-Measured against the same container: `bash -lc 'civitai --version'` → `0.1.105`;
-`zsh -lic 'civitai --version'` → `command not found`. The wrapped grader reported
-**yes**; the corrected one reports **no**. ⚠ The 2026-09-18 grid is unaffected — no
-trial installed under `$HOME/.local` — so the defect was latent, not triggered.
+🔴 **ASSERT THE SHAPE, NOT THESE LITERALS — the two that used to be spelled out here
+had both rotted by 2026-10-04 and each rots in the direction that scores a HEALTHY
+control as a failure.** `failed_checks` read `[authenticated]` while the live set is
+`[authenticated,agent-token]`: a second verdict-exempt check was added, and the
+verdict-exempt set is open by design, so any enumeration here goes stale the next time
+one lands. `agent_shell_version` read `0.1.105`, two releases behind. The invariant is
+what matters and it is not a literal: **arm A green (`check_ok=true`) while arm B is red
+(`login_version=none`)**, with `agent_shell_version` equal to whatever the trial
+installed. Read `failed_checks` as a set that MUST NOT contain a row the verdict counts;
+do not require it to equal a list written down here.
+
+Measured against the same container, on the version it installed: `bash -lc 'civitai
+--version'` prints it; `zsh -lic 'civitai --version'` → `command not found`. The wrapped
+grader reported **yes**; the corrected one reports **no**. ⚠ The 2026-09-18 grid is
+unaffected — no trial installed under `$HOME/.local` — so the defect was latent, not
+triggered.
+
+## Measuring a PROPOSED change to the hosted instructions
+
+The entrypoint under test is prose in another repo, and every trial fetches it itself.
+So "would editing the hosted `prompt.md` fix this grid?" had no answer except shipping
+the edit and re-running — which is how `cli#665` arm 1 came to rest on an inference:
+6 of 6 blind cells failed, the cause was located to one sentence in the hosted prompt,
+and the remedy could not be tested before merging it.
+
+`--prompt-url` (driver: `DOGFOOD_PROMPT_URL`) points a trial at different instructions.
+Serve a patched copy and run the cells that failed:
+
+```bash
+cp /tmp/prompt.md /tmp/served/prompt.md     # the patched instructions
+(cd /tmp/served && python3 -m http.server 8099 --bind 0.0.0.0) &
+IP=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
+DOGFOOD_PROMPT_URL="http://$IP:8099/prompt.md" DOGFOOD_TRIAL_PREFIX=px \
+  DOGFOOD_ENVS='df-node-user|nodeuser|dev' DOGFOOD_IDENTITIES='claudeid|CLAUDECODE=1' \
+  DOGFOOD_MODELS='xiaomi/mimo-v2.5|mimo' bash driver.sh
+```
+
+🔴 **SUCH A TRIAL IS NOT EVIDENCE ABOUT THE SHIPPED ENTRYPOINT, AND ITS VERDICT LINE
+CANNOT TELL YOU THAT.** `grade.sh` reads the container; it never reads the transcript,
+so a patched-prompt `yes` and a real `yes` are the same six fields. The provenance lives
+in one place only — the trial's `start` record carries `prompt_url` — so when you quote
+a verdict from one of these runs, quote that field beside it. Use a distinct
+`DOGFOOD_TRIAL_PREFIX` as well, so the two populations are also separable on disk.
+
+Two properties are pinned by `dogfood_brief_test.go`, both of them about not corrupting
+what is already measured: an empty or blank value is **the default**, so the driver may
+forward an unset variable; and `prompt_url` is recorded **only when the URL moved**, so
+a default run's `start` key set is byte-identical to every grid run before this flag
+existed (`TestDogfoodUncredentialedRunIsUnchanged` pins that key set, and it cannot see
+a flag passed with the default value — which is why
+`TestDogfoodPromptURLIsMarkedOnlyWhenItMoved` asserts that arm separately).
 
 ## Agent identity is a dimension, not a detail
 

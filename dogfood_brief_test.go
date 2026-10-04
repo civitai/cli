@@ -995,3 +995,120 @@ func TestEveryBriefHasASiblingGuard(t *testing.T) {
 		}
 	}
 }
+
+// ── the instructions URL (--prompt-url) ──────────────────────────────────────
+
+// 🔴 WHY THIS FLAG EXISTS, BECAUSE THE TESTS BELOW ONLY MAKE SENSE WITH IT.
+// The entrypoint under test is prose in ANOTHER repo, and the trial fetches it
+// itself — so until this flag there was no way to ask "does editing the hosted
+// instructions fix this grid?" except to ship the edit and re-run. That is how
+// `cli#665` arm 1 came to rest on an inference: six of six blind cells failed,
+// the located cause was one sentence in the hosted prompt, and the remedy was
+// unmeasurable before merging it.
+//
+// The hazard the flag introduces is the mirror of the one it closes: a trial fed
+// patched instructions produces a verdict that LOOKS exactly like a real one,
+// because grade.sh reads the container and never the transcript. So the marking
+// is tested here as carefully as the delivery.
+
+// The URL the model is given must be the one the operator named. Without this,
+// a flag that parses and is then ignored reads as a working measurement — the
+// worst available outcome, because the grid it produces would be attributed to
+// the patched prose it never saw.
+func TestDogfoodPromptURLReplacesTheInstructionsURL(t *testing.T) {
+	const alt = "http://127.0.0.1:8099/prompt.md"
+	got, code := printTask(t, "--prompt-url", alt)
+	if code != 0 {
+		t.Fatalf("--print-task --prompt-url exited %d, want 0", code)
+	}
+	if got != alt {
+		t.Fatalf("the task did not carry the given URL.\n got: %q\nwant: %q\n\nA --prompt-url that "+
+			"parses and is ignored yields a grid attributed to prose the model never read.", got, alt)
+	}
+	// The brief still rides as the second paragraph, against the new URL.
+	const brief = `Build a thing.`
+	got, code = printTask(t, "--prompt-url", alt, "--brief", brief)
+	if code != 0 {
+		t.Fatalf("--prompt-url with --brief exited %d, want 0", code)
+	}
+	if want := alt + "\n\n" + brief; got != want {
+		t.Fatalf("brief+url composition changed.\n got: %q\nwant: %q", got, want)
+	}
+}
+
+// 🔴 AN EMPTY OR BLANK VALUE IS THE DEFAULT, SO `driver.sh` MAY PASS THE FLAG
+// UNCONDITIONALLY. This is the whole reason the driver can forward an unset
+// DOGFOOD_PROMPT_URL without re-basing every grid already measured.
+func TestDogfoodEmptyPromptURLIsTheDefaultTask(t *testing.T) {
+	for _, u := range []string{"", "   ", "\t "} {
+		got, code := printTask(t, "--prompt-url", u)
+		if code != 0 {
+			t.Fatalf("--prompt-url %q exited %d, want 0", u, code)
+		}
+		if got != dogfoodHostedPrompt {
+			t.Fatalf("--prompt-url %q produced %q, want the default task %q", u, got, dogfoodHostedPrompt)
+		}
+	}
+}
+
+// 🔴 THE PROVENANCE MARK, AND THE ARM THAT THE KEY-SET PIN CANNOT SEE.
+// TestDogfoodUncredentialedRunIsUnchanged pins the `start` key set on a run that
+// passes NO --prompt-url, so it is structurally blind to the case that actually
+// threatens the grid: a driver forwarding the flag with the DEFAULT value. If
+// that added `prompt_url` to every transcript, every already-measured grid would
+// be re-based by a harness change — exactly the hazard that test exists for,
+// arriving through a path it does not exercise.
+//
+// So both arms are asserted here against a real trial:
+//   - a MOVED URL is marked, because its verdict is not about the shipped prompt;
+//   - the DEFAULT URL, passed explicitly, is NOT marked.
+func TestDogfoodPromptURLIsMarkedOnlyWhenItMoved(t *testing.T) {
+	const alt = "http://127.0.0.1:8099/prompt.md"
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string // the expected prompt_url value, "" => the key must be absent
+	}{
+		{"a moved URL is marked", []string{"--prompt-url", alt}, alt},
+		{"the default URL passed explicitly is not marked",
+			[]string{"--prompt-url", dogfoodHostedPrompt}, ""},
+		{"a blank value is not marked", []string{"--prompt-url", "  "}, ""},
+		{"the flag omitted entirely is not marked", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := runFakeTrial(t, []string{"echo hello"}, "", tc.args...)
+			var start map[string]any
+			for _, line := range strings.Split(strings.TrimSpace(readFile(t, tr.transcript)), "\n") {
+				var r map[string]any
+				if err := json.Unmarshal([]byte(line), &r); err != nil {
+					t.Fatalf("transcript line is not JSON: %q", line)
+				}
+				if k, _ := r["kind"].(string); k == "start" {
+					start = r
+				}
+			}
+			if start == nil {
+				t.Fatalf("no start record in:\n%s", readFile(t, tr.transcript))
+			}
+			got, present := start["prompt_url"]
+			if tc.want == "" {
+				if present {
+					t.Fatalf("the start record carries prompt_url=%v for a run on the DEFAULT "+
+						"instructions. Emitting it unconditionally re-bases every grid already "+
+						"measured — see TestDogfoodUncredentialedRunIsUnchanged, which cannot "+
+						"see this case.", got)
+				}
+				return
+			}
+			if !present {
+				t.Fatalf("a trial fed %q recorded NO prompt_url. grade.sh reads the container, so "+
+					"the transcript is the only place this provenance can live — without it a "+
+					"patched-prompt verdict is indistinguishable from a real one.\n%s",
+					tc.want, readFile(t, tr.transcript))
+			}
+			if got != tc.want {
+				t.Fatalf("prompt_url = %v, want %q", got, tc.want)
+			}
+		})
+	}
+}
