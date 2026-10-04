@@ -90,16 +90,34 @@ that wrote it, flagged as such there.
 
 ## State now
 
-- ⏳ **Rank 34 IS IN FLIGHT AS `cli#777` at `cd1a5db`** — `civitai agent-setup --fix-path`, the
-  opt-in, idempotent, marker-guarded PATH writer. `MERGEABLE/BLOCKED`, 10 of 12 checks green.
+- ✅ **Rank 34 MERGED as `cli#777`** — squash `22e7122`, 2026-10-04T01:56Z. `civitai agent-setup
+  --fix-path`, the opt-in, idempotent, marker-guarded PATH writer. Verified on `origin/main` BY
+  CONTENT (`--fix-path` in 8 files) with a negative control at `main~1` returning **zero** — never by
+  ancestry, which a squash makes permanently false.
 - 🔴 **`cli#665` IS NOT CLOSED BY IT, and three sequenced steps remain** — see the investigation
   block below. The flag is unreachable to the agents #665 is about until a release ships it and the
   hosted `prompt.md` names it.
-- 🔴 **`pins-vs-published` is the only red, and it is PRE-EXISTING live-npm drift**, confirmed at
-  five separate shas: `@civitai/app-sdk` published `0.56.0` (2026-10-03T16:48:17Z) against the
-  `^0.55.0` pin in `templates/page-money/package.json.tmpl`; #777 touches no pin file. The nightly
-  `bump-scaffold-pins` is healthy (6/6 success) and last ran 2026-10-03T12:34Z — the publish landed
-  **4h14m after** it, so the next scheduled run opens the bump PR. **Do not hand-author one.**
+- 🔴 **THE DOCS `prompt.md` PR NEEDS A LONGER CHAIN THAN "release, then the PR" — MEASURED
+  2026-10-04 and nothing else records it.** `civitai-developer-docs`'
+  `scripts/check-agent-setup.mjs` check 1 requires every flag in a prompt.md code block or
+  command-shaped inline span to appear in `appblocks-snapshots/civitai-cli-help.txt`, and
+  `.github/workflows/cli-snapshot-refresh.yml` captures that file by `gh release download` of a
+  **published RELEASE asset**, deliberately never from `main`. So the real order is: merge →
+  tag → **publish the draft** → refresh the snapshot (cron `7 7 * * *`, or `workflow_dispatch`) →
+  merge that snapshot PR → only then can the prompt.md PR go green. Writing the prompt.md PR
+  before the snapshot lands is a guaranteed red, and the guard is REPO-LOCAL so it cannot be
+  waited out.
+- ⚠ **`pins-vs-published` RECURRED A FOURTH TIME AND WAS CLEARED — `cli#779`, squash `8a75f6d`.**
+  `@civitai/app-sdk` went `0.56.0` (2026-10-03T16:48:17Z) then `0.56.1` (23:43:58Z) against the
+  `^0.55.0` pin in `templates/page-money/package.json.tmpl`. 🔴 **The prior round's reading that
+  "the next scheduled run opens the bump PR" was right in mechanism and wrong in timing**: the
+  nightly had already run at 12:34Z that day and correctly opened nothing, because `0.55.0` was
+  still latest then — so the next sweep was ~19h out, not imminent, and every open PR in the repo
+  was blocked for the whole window. The fix was **`gh workflow run bump-scaffold-pins.yml`** (the
+  workflow carries `workflow_dispatch`), which is the bot authoring its own bump rather than the
+  hand-authored PR this doc forbids. The bot bumped to `^0.56.0`, which admits `0.56.1`.
+  **Transferable: a healthy nightly that ran recently is NOT evidence the next one is near — read
+  the publish timestamp against the cron, and dispatch rather than wait.**
 - 🔴 **THE AUDIT LADDER ENDED UNAUDITED — operator decision, and that is weaker than convergence.**
   Six audit rounds (0–5) and five fix rounds ran. Round 5's five findings were fixed in `cd1a5db`
   with **no round 6**, because the preceding range changed **zero executable payload lines** (all 62
@@ -115,16 +133,20 @@ that wrote it, flagged as such there.
   `claudedocs/decisions/36-agents-block-per-project.md` limiting its no-per-machine-input rule to
   **committed artefacts**, which is all its own evidence supports.
 - **Live worktrees, remove by EXACT path:** `/home/zach/workspace/civit/cli-665-fixpath` on
-  `zach/665-fix-path` at `cd1a5db` (clean, pushed), and `/home/zach/workspace/civit/cli-ho-r34` on
-  `zach/handoff-agent-setup-rank34` (this doc's own update).
+  `zach/665-fix-path` at `cd1a5db` (now MERGED — removable), and
+  `/home/zach/workspace/civit/cli-ho-r34` on `zach/handoff-agent-setup-rank34` (this doc's own
+  update). ⚠ **`git worktree list` reports 78 entries in this clone** (measured 2026-10-04),
+  most of them `.claude/worktrees/agent-*` and `/tmp/wt-*` from past fan-outs. Not this arc's to
+  clean — destroy only what you created — but a `worktree prune` sweep by someone who can
+  attribute them is overdue.
 - ⚠ **Dogfood containers, carried forward from 2026-10-02 and NOT re-checked:** 14 `dogfood-*`
   containers remained (running + stopped, `docker ps -a`). They matter because step 3 of closing
   `#665` re-runs `scripts/dogfood/driver.sh`, and 🔴 `grade.sh` can only read a RUNNING container
   and refuses a stopped one by name — so a re-grade needs a re-run, and `runner.py` opens each
   transcript `"w"`, which DESTROYS the existing transcripts. **Copy `runs/` aside before any
   re-run.**
-- **Claim `agent-setup-onboarding-34` is HELD** and must stay held until #777 merges and #665's arm
-  1 is graded — the work is not finished by the merge.
+- **Claim `agent-setup-onboarding-34` is HELD** and must stay held until #665's arm 1 is graded —
+  the work is NOT finished by the merge, which has now happened.
 - **No `clawgate-task:` field**: `clawgate_handoff.sh resolve` exited **5**. An unknown session id
   answers 200 with an empty array, so that zero cannot distinguish "touched no task" from "wrong
   id". Not a clean bill of health.
@@ -862,12 +884,17 @@ catches an UNCLAIMED duplicate.
 33. ✅ **DONE** — merged (`d0b79ae`), released in v0.1.106, measured across four post-ship `other`
     cells. Claim released.
     forcing: gate — satisfied
-34. ⏳ **IN FLIGHT: `civitai/cli#777` at `cd1a5db`** — `--fix-path` shipped and audited over six
-    rounds; see both investigation blocks above. **The merge does NOT finish it.** Sequence:
-    merge the nightly's pin bump → `gh pr update-branch 777` (**merge, not rebase** — a rebase
-    re-points the ladder's anchor shas) → re-read checks SHA-pinned → squash-merge → **release** →
-    the `prompt.md` PR in `civitai-developer-docs` → re-run the dogfood matrix and grade arm 1.
-    Claim `agent-setup-onboarding-34` stays HELD throughout.
+34. ⏳ **PARTLY DONE — `civitai/cli#777` MERGED (squash `22e7122`), the rest of the chain is not.**
+    `--fix-path` shipped and audited over six rounds; see both investigation blocks above. ✅ Done:
+    `cli#779` pin bump merged (`8a75f6d`) → `gh pr update-branch 777` as a **merge** (new head
+    `fbe0cd7`, parents `[cd1a5db, 8a75f6d]`, so the ladder's anchor shas stay resolvable; a rebase
+    would have broken them) → 12/12 SHA-pinned green → squash-merge. ❌ Remaining, and it is
+    LONGER than this entry used to claim: **tag + publish the release** (the draft is the
+    designed human gate; publishing is also an npm publish and a tap push, and npm unpublish is
+    restricted) → **refresh `appblocks-snapshots/civitai-cli-help.txt` in `civitai-developer-docs`
+    and merge that PR** → *then* the `prompt.md` PR → re-run the dogfood matrix and grade arm 1.
+    The snapshot step is not optional: the docs guard reads flags from a published release, never
+    from `main` — see the State-now bullet. Claim `agent-setup-onboarding-34` stays HELD throughout.
     forcing: gate — cli#665 is open and its closing condition is unmet
 35. ✅ **DONE — docs#89 merged and verified LIVE** (7433 B, new step 4 present, old wording gone).
     Claim released.
