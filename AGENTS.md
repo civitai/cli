@@ -240,6 +240,8 @@ Item 36 is its THIRD: what the managed block may claim about the project it was
 written into.
 Item 37 is a username that arrives as a NUMBER.
 Item 38 is what the read path may CLAIM about the bytes it prints.
+Item 39 is the FOURTH half of `agent-setup`: the only thing this CLI writes
+outside the project, in a file the user's login shell executes.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -443,6 +445,11 @@ item must carry a trigger that is a routing question rather than a label
 38. **Moving where a read body is repaired, filtering (or unfiltering) what an
     error snippet prints, or wording what `--json` and `Raw` are made of?**
     → evidence: claudedocs/decisions/38-read-body-repair-and-snippet.md
+
+39. **Touching `--fix-path` — which shell startup files it writes, the block it
+    emits, making it implicit, or giving `--check` a row about this machine's
+    PATH?**
+    → evidence: claudedocs/decisions/39-agent-setup-fix-path.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

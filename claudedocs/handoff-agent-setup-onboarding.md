@@ -884,17 +884,35 @@ catches an UNCLAIMED duplicate.
 33. ✅ **DONE** — merged (`d0b79ae`), released in v0.1.106, measured across four post-ship `other`
     cells. Claim released.
     forcing: gate — satisfied
-34. ⏳ **PARTLY DONE — `civitai/cli#777` MERGED (squash `22e7122`), the rest of the chain is not.**
-    `--fix-path` shipped and audited over six rounds; see both investigation blocks above. ✅ Done:
-    `cli#779` pin bump merged (`8a75f6d`) → `gh pr update-branch 777` as a **merge** (new head
-    `fbe0cd7`, parents `[cd1a5db, 8a75f6d]`, so the ladder's anchor shas stay resolvable; a rebase
-    would have broken them) → 12/12 SHA-pinned green → squash-merge. ❌ Remaining, and it is
-    LONGER than this entry used to claim: **tag + publish the release** (the draft is the
-    designed human gate; publishing is also an npm publish and a tap push, and npm unpublish is
-    restricted) → **refresh `appblocks-snapshots/civitai-cli-help.txt` in `civitai-developer-docs`
-    and merge that PR** → *then* the `prompt.md` PR → re-run the dogfood matrix and grade arm 1.
-    The snapshot step is not optional: the docs guard reads flags from a published release, never
-    from `main` — see the State-now bullet. Claim `agent-setup-onboarding-34` stays HELD throughout.
+34. ⏳ **PARTLY DONE — the CLI half is MERGED, the reachability chain is not.** `cli#665` is still
+    OPEN and its remedy was aimed at the wrong path: `cli#671` shipped the `AGENTS.md` half, the
+    install half did not.
+    🔴 **MEASURED 2026-09-19 (enumerated 6 of 6, not sampled):** agents resolve
+    `EACCES` by installing to **`~/.npm-global`**, NOT the `--prefix="$HOME/.local"` the
+    hosted prompt documents as candidate (b). `~/.profile` does not add `~/.npm-global`,
+    so **neither** `bash -lc` nor `zsh -lic` finds the binary — worse than (b), whose
+    known limit was bash-only. Any fix must be designed against `~/.npm-global`.
+    ⚠ An earlier draft of this item said "5 of 8 reported success anyway" — from a keyword
+    regex, RETRACTED. The number that carries the item is **0 of 8** (agents that connected
+    the failure to the `AGENTS.md` they had just written). 8/8 relayed the PATH line and
+    6/8 warned it would not persist — the agents were never the weak link.
+    ✅ **THE FOURTH CANDIDATE NOW EXISTS ON `main` — `cli#777` MERGED, squash `22e7122`.**
+    `civitai agent-setup --fix-path` writes a marker-guarded PATH block into `~/.zshenv` AND the
+    file a bash login shell actually reads (first existing of
+    `~/.bash_profile`/`~/.bash_login`/`~/.profile`), so it is install-location-independent — it does
+    not care that agents chose `~/.npm-global`. Both probes arm 1 names were measured to resolve the
+    CLI on a dev host after it ran, with a negative control. Design, residuals and the mutation
+    matrix: `claudedocs/decisions/39-agent-setup-fix-path.md`.
+    ✅ **How it landed:** `cli#779` pin bump merged (`8a75f6d`) → `gh pr update-branch 777` as a
+    **merge** (new head `fbe0cd7`, parents `[cd1a5db, 8a75f6d]`, so the ladder's anchor shas stay
+    resolvable; a rebase would have broken them) → 12/12 SHA-pinned green → squash-merge.
+    🔴 **IT STILL CHANGES NOTHING FOR A BLIND TRIAL, and the remaining chain is LONGER than this
+    entry used to claim:** **tag + publish the release** (the draft is the designed human gate;
+    publishing is also an npm publish and a tap push, and npm unpublish is restricted) → **refresh
+    `appblocks-snapshots/civitai-cli-help.txt` in `civitai-developer-docs` and merge that PR** →
+    *then* the `prompt.md` PR naming the flag → re-run the dogfood matrix and grade arm 1. The
+    snapshot step is not optional and was not previously recorded: the docs guard reads flags from a
+    published release asset, never from `main` — see the State-now bullet.
     forcing: gate — cli#665 is open and its closing condition is unmet
 35. ✅ **DONE — docs#89 merged and verified LIVE** (7433 B, new step 4 present, old wording gone).
     Claim released.
