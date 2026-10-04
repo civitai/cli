@@ -481,3 +481,197 @@ grader-control findings stand).
   🔴 Then the `gemini × stale × other` cell separately — and note the driver's
   non-crossed envs run the FIRST identity in the list, which is why `DOGFOOD_IDENTITIES`
   must name `other` first or the stale cell silently runs a different identity.
+
+## Evicted from `claudedocs/handoff-agent-setup-onboarding.md` — 2026-10-04
+
+Evicted because they are CLOSED, not because they are worthless — keep reading them for the raw values, which are still the baseline later blocks compare against. Two cautions. The two cli#665 blocks were each wrong about the SHAPE of the gap (one called it release sequencing, one an environment problem) while their measurements were sound, so adopt their numbers and not their framings. And the rank-36 cost findings stand on their own even where their status lines are superseded.
+
+From `Open investigations — live diagnosis state`:
+
+🔴 **NOT OPEN, AND ITS CLOSING BULLET IS NOW WRONG.** The block below ends *"Next
+probe: none … what is missing is a DECISION"* — the decision was made **and
+implemented**; `checkCountsTowardVerdict` now excludes the `mcp-*` rows when
+`agentTargets[agent]` is unknown. Read the IMPLEMENTED block at the bottom of this
+section for what actually shipped and for the **three corrections the decision
+record's plan needed**. Measurements below are kept — they are still the baseline.
+  a round-0 audit refuted its original framing — read the RETRACTED bullet below
+  before acting on any part of this block**
+For `agent == other` — every agent with no entry in the CLI's table — `--check`
+returns `ok: false` and exit 1 after a **completely correct** setup, forever.
+  docker run -d --name x node:22-bookworm-slim sleep infinity
+  docker exec -w /work x bash -lc \
+    'mkdir -p /work && npm install -g @civitai/cli && civitai agent-setup --track app
+     civitai agent-setup --check --json; echo "rc=$?"'
+- **Observed (with values):** `{"agent":"other","ok":false,…}`, rc **1**, with
+  `mcp-site` and `mcp-orch` both false and detail *"agent other has no config file
+  this CLI knows — register … by hand"*. `authenticated` is correctly excluded
+  (the error says "2 check(s) failed", not 3). 4 of 4 such trials hit it; the
+  three de-confounding trials show it follows the IDENTITY, not the model —
+  claude-sonnet-5 on `other` fails, gemini and grok on `claude` pass.
+- **Ruled out:** that this is model behaviour — see the swap above. `via: measurement`
+  · That `authenticated` is the cause — it is already excluded by
+  `checkCountsTowardVerdict`. `via: code`
+- **Mechanism, located:** `internal/cmd/agent_setup.go` `checkCountsTowardVerdict`
+  excludes `authenticated` and `claude-md` and nothing else, so the two MCP rows
+  count even for an agent the CLI has no config target for.
+- ❌ **RETRACTED — "this is the same shape the file's own comments have already
+  recognised TWICE; third instance, not a new class."** Refuted by a round-0
+  audit. The two existing exclusions apply where **no work remains** (auth is out
+  of scope; the CLAUDE.md shim is inert for a non-Claude agent); on `other` work
+  remains and the user must paste. 🔴 **And `agent_setup.go:739-742` — the
+  docstring of the function emitting these rows — records the opposite decision
+  in words: *"An agent this CLI has no target for … are both genuinely unfinished
+  setups"*.** The first draft read a switch as an omission while a sibling
+  function stated the intent. **Do not re-derive the exclusion fix from the
+  switch alone.**
+- **What bites the entrypoint, and is not contested:** `prompt.md` step 4 says
+  *"Do not report success if any check fails"* while this path fails one
+  permanently by design — those cannot both stand; and the CLI's own remediation
+  line, "re-run `civitai agent-setup` to fix what it can write", names an action
+  that can never change the outcome here.
+- 🔴 **Which surface moves is a DESIGN CALL, not a diagnosis.** `prompt.md`'s
+  wording or the verdict semantics — and the `--json` contract has ledgered
+  consumers (`readme_agent_setup_claims_test.go`), so it belongs to whoever owns
+  that contract. This block reports; it does not decide.
+- 🔴 **A2 — the escape hatch exists and the entrypoint never mentions it.**
+  `prompt.md` contains `--agent` **zero** times, while
+  `civitai agent-setup --track app --agent cursor` yields `{"ok":true}` on the spot.
+  The one trial that recovered gracefully did so by **asking the user** which editor
+  they use — the one thing the prompt tells the agent not to do — because nothing it
+  was given mentions the flag. ⚠ **`--agent` is NOT a blanket fix**: it is right when
+  detection merely FAILED for an agent that IS in the table, and wrong when the agent
+  genuinely is not (it writes a config the running agent never reads, and `--check`
+  then reports green on a setup that does not work). Any prompt change here has to
+  separate those two cases, and it does not remove the need to fix A.
+- **Next probe:** none. Nothing here is undiagnosed — what is missing is a DECISION,
+  and this block does not get to make it. 🔴 **Neither candidate is recommended here.**
+  An earlier version of this very bullet said the verdict fix was *"recommended,
+  matches precedent"* — the exact two words the retraction above kills — and left it
+  in the ACTION bullet, which is where the next session looks. That is the failure
+  this block exists to prevent, committed inside the block that prevents it.
+🔴 **ITS "THREE REMAINING STEPS" AND ITS `Next probe` ARE BOTH WRONG NOW AND HAVE BEEN
+DELETED rather than preserved** — steps (1) and (2) landed (#777, v0.1.112), step (3) was
+RETIRED by an operator decision the same day, and the probe has been RUN. Why it was
+wrong is the transferable part: it modelled the gap as **release sequencing**, so every
+step it listed was a shipping step. The measured gap is **delivery** — the hosted
+`prompt.md` never names the flag and forbids the action — which no amount of shipping
+reaches. The measurements below are kept; they are still the baseline.
+- **Symptom + exact repro:** #665's closing condition arm 1 is graded mechanically by
+  `scripts/dogfood/grade.sh` from a blind container trial — `CLOSING_CONDITION=yes` requires
+  `zsh -lic 'civitai --version'` to print the version in the user's login shell. Nothing in #777
+  exercises that path: `--fix-path` appears in nine files, all implementation, tests, README, help
+  text or ledger, and `grep -c 'fix-path' scripts/dogfood/grade.sh` returns **0**.
+- **Observed (with values):** the three remaining steps, in order, none started — (1) merge #777;
+  (2) cut a CLI release carrying the flag (npm + Homebrew), because the hosted prompt must not name
+  a flag the published CLI lacks; (3) a PR to `civitai/civitai-developer-docs` editing
+  `agent-setup/prompt.md` §2's EACCES branch to run `civitai agent-setup --fix-path` and verify in a
+  NEW login shell. Only then can the matrix be re-run and arm 1 graded.
+- **Ruled out:** that #777 alone could close it — the author said so and the audit measured it.
+  `via: measurement` · That a `--prefix="$HOME/.local"` remedy would do instead — all 6 failing
+  containers (complete enumeration) installed to `~/.npm-global`, which **neither** login shell
+  finds. `via: measurement` · That a `GOOS` gate was the right Windows answer — Git Bash/MSYS is
+  `GOOS=windows` running a POSIX bash that genuinely reads `~/.bash_profile`. `via: code`
+- **Leading hypothesis:** not a defect — ordinary release sequencing. The risk is that the arc is
+  read as finished at merge, when the measurable benefit begins two steps later.
+- **Next probe:** after the release ships, `npm view @civitai/cli version` to confirm the flag is
+  published, then the docs PR, then `bash scripts/dogfood/driver.sh` against `df-node-user` or
+  `df-ubuntu-apt` and read `grade.sh`'s `CLOSING_CONDITION=`.
+🔴 **ITS `Leading hypothesis` WAS WRONG AND IS THE REASON TO KEEP THIS BLOCK.** It read
+*"the remedy is sound and the grading is purely an environment problem"* — the first
+half is now MEASURED TRUE and the second is FALSE. The environment was never the
+obstacle: 6 of 6 blind container cells graded `no`, and the obstacle is that the hosted
+`prompt.md` never names `--fix-path` and tells the agent *"do not edit their shell
+profile yourself"*. Reading "purely an environment problem" as "a container will flip
+it" is exactly the inference the grid refutes. Its `Next probe` is kept — it was right,
+and running it is what produced the finding.
+- **Symptom + exact repro:** #665's closing condition wants a BLIND machine — no prior `civitai` —
+  where `civitai agent-setup --check` reports `ok: true` AND `zsh -lic 'civitai --version'` prints
+  the same version. The issue is CLOSED (auto-closed by #777's merge) while that is unmeasured.
+- **Observed (with values):** `gh issue view 665 --json state,closedAt` → `CLOSED COMPLETED
+  2026-10-04T01:56:10Z`; `#777` merged `01:56:08Z`. On THIS host `command -v civitai` →
+  `/home/zach/.local/bin/civitai`, plus `/home/zach/go/bin/civitai` (`v0.1.80`) and the npm copy —
+  three on PATH, so "blind" is unsatisfiable. With `ZDOTDIR` unset and the competing copies removed
+  from PATH, both probes DO pass against the published binary: `zsh -lic` and `bash -lc` each print
+  `civitai 0.1.112` resolving `…/@civitai/cli/lib/binaries/civitai`; with the block deleted, both
+  report not-found.
+- **Ruled out:** that `--fix-path` is inert on the npm `--prefix` path #665 is about — the postinstall
+  writes `lib/binaries/civitai`, the naming guard passes, and `--fix-path --dry-run` through the Node
+  wrapper reports it WOULD write both files. `via: measurement`
+- **Ruled out:** that a NixOS zsh login shell clobbers `~/.zshenv`'s PATH prepend — a synthetic
+  marker survived `zsh -lic` with `ZDOTDIR` unset. The earlier "NixOS clobber" theory is RETRACTED.
+- **Leading hypothesis:** the remedy is sound and the grading is purely an environment problem.
+- **Next probe:** re-run the dogfood matrix in a container. 🔴 Copy `runs/` aside first — `runner.py`
+  opens each transcript `"w"` and DESTROYS existing ones, and `grade.sh` refuses a stopped container.
+
+## Evicted from `claudedocs/handoff-agent-setup-onboarding.md` — 2026-10-04
+
+Closed blocks, evicted for size and kept for their VALUES. Two cautions: the cli#665 blocks were each wrong about the SHAPE of the gap while their measurements were sound — adopt their numbers and not their framings; and anything here quoting "0 of 6 CLOSING_CONDITION=no" is a statement about ARM 1 of a two-arm condition, which no block below says because nobody had read the condition yet.
+
+From `Open investigations — live diagnosis state`:
+
+- **Symptom + exact repro:** the arc shipped ranks 33 and 35 to move the 12-of-16
+  failing cells recorded on 2026-09-18, and nobody had re-measured. Preconditions were
+  met for the first time this session (CLI published, hosted prompt live).
+- **Observed (with values) — the grader was validated in BOTH directions FIRST**, on the
+  merged `#673` code, asserting the FIELDS and not just the verdict word:
+  | control | verdict line |
+  |---|---|
+  | `ctl-neg` (bare container) | `agent=unknown check_ok=parse-error mcp_rows=unreadable login_version=none agent_shell_version=none CLOSING_CONDITION=no` |
+  | `ctl-pos` (public npm install) | `agent=claude check_ok=true failed_checks=[authenticated] mcp_rows=2 login_version=0.1.106 agent_shell_version=0.1.106 CLOSING_CONDITION=yes` |
+  | `ctl-profile` (`--prefix=$HOME/.local`) | `agent=claude check_ok=true failed_checks=[authenticated] mcp_rows=2 login_version=none agent_shell_version=0.1.106 CLOSING_CONDITION=no` |
+  `ctl-profile` is the one that carries weight: arm A GREEN while arm B is RED, which is
+  the false-green shape the README pins, and it reproduces mechanism B directly —
+  `bash -lc 'civitai --version'` → `0.1.106`, `zsh -lic 'civitai --version'` →
+  `command not found`.
+- **Observed (with values) — the 3-trial smoke matrix** (`gemini-3.8-flash`, `node-root`,
+  all three identities), graded from the containers:
+  | cell | recorded 2026-09-18 | measured 2026-09-19 on v0.1.106 |
+  |---|---|---|
+  | `gemini × node-root × claude` | ✅ yes | ✅ `yes` |
+  | `gemini × node-root × codex` | *(never run)* | ✅ `yes` |
+  | `gemini × node-root × other` | ❌ **no** (mechanism A) | ✅ **`yes`** |
+  The `other` cell verbatim: `agent=other check_ok=true
+  failed_checks=[mcp-site,mcp-orch,authenticated] mcp_rows=2 login_version=0.1.106
+  agent_shell_version=0.1.106 CLOSING_CONDITION=yes` — both MCP rows still PRESENT and
+  still `false`, which is rank 33's design, and both halves of the closing condition
+  green on a machine that never built the CLI. All three trials stopped `"finished"` in
+  9–10 steps.
+- 🔴 **`#673` EARNED ITS KEEP ON ITS FIRST RUN.** The `agent=` field is read from the
+  container's own `--check` JSON, and it matched the trial-id label in all three cells —
+  which is the first time identity has been *measured* rather than asserted by whoever
+  named the trial.
+- 🔴 **Ruled out — that a full matrix costs ~$24.** `--max-cost` is a per-trial CAP, not
+  an estimate, and this doc's rank 36 quoted "24 trials at $1/trial" as though it were
+  one. The 3 smoke trials cost **$0.083 total** ($0.028/trial), and this repo's own
+  evidence doc records the entire 19-trial matrix of 2026-09-18 at **$0.66**. A full
+  24-cell run is ~$1. `via: measurement` (the `end` records' `usage.cost`, and
+  `claudedocs/refs/agent-setup-dogfood-matrix-2026-09-18.md` line 469).
+- **Ruled out — that a stale model slug would kill the run.** All four default slugs and
+  all three operator-chosen ones resolve live on OpenRouter, and each advertises `tools`
+  + `tool_choice`, which `runner.py` requires. `via: command`
+  (`curl -s https://openrouter.ai/api/v1/models`, 447 models enumerated).
+- ⚠ **`~/.config/repo-cos/env` holds a LIVE PAID OpenRouter key** — $49.69 of a $50
+  weekly limit remaining, no expiry — while `<devrc>/SECRETS.md` documents that file as
+  belonging to a service retired 2026-09-07 and says it is safe to delete. That entry is
+  wrong about the key being dead. `via: measurement` (the free `/api/v1/key` endpoint).
+- **Leading hypothesis:** mechanism A is closed by the shipped v0.1.106 and mechanism B
+  (rank 34 / `cli#665`) is not, so the post-ship grid should show the four `other` cells
+  flipping to `yes` while every unwritable-prefix cell stays `no`. One of the four is now
+  measured; three are not.
+- 🔴 **Stated limit — the model axis was CHANGED mid-run at the operator's direction**,
+  from the recorded `claude-sonnet-5 / gpt-5.6-terra / gemini-3.8-flash / grok-4.6` to
+  `z-ai/glm-5.3-flash / xiaomi/mimo-v2.5 / deepseek/deepseek-v4-pro`. The two sets are
+  DISJOINT, so rank 36's "compare the `other` cells against the recorded 4-of-4 failure"
+  cannot be done cell-for-cell — the in-flight run tests whether the recorded
+  MODEL-INDEPENDENCE holds on three models never tried, which is a different and arguably
+  stronger question. 🔴 **The confound to watch when reading it: a cheap model that
+  simply cannot drive the task produces the same `CLOSING_CONDITION=no` as a broken
+  product.** Only the transcript separates those two; the verdict line cannot.
+- **Next probe:** grade every finished container and tabulate by (identity, prefix
+  writable), then read the transcript of any `no` cell before attributing it to the
+  product:
+  for t in "$D"/runs/t-{glm,mimo,dsv4}-*/; do
+    id=$(basename "$t"); u=root
+    case "$id" in *-nodeuser-*|*-ubuntu-*) u=dev ;; esac
+    printf '%-34s ' "$id"; bash "$D/grade.sh" "$id" "$u" 2>&1 | tail -1
+  done
