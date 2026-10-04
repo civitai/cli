@@ -47,8 +47,21 @@ const blockGoodPayloadMaxBytes = 2048
 // a second `app_unlock` in one manifest, BOTH validate against the vendored
 // schema and are rejected at submit.
 //
-// `blockGoodMinPriceBuzz` is NOT a check — the schema's `minimum` owns the
-// general floor. It exists so the mirrored message can state the real range.
+// ⚠ `blockGoodMinPriceBuzz` IS part of a check, and an earlier draft of this
+// very block said it was not — "NOT a check; the schema's `minimum` owns the
+// general floor". That was true while the price check was clamped and became
+// false the moment the clamp came off: the condition below tests
+// `price < blockGoodMinPriceBuzz`, so `{"kind":"app_unlock","priceBuzz":0}`
+// emits the mirrored sentence AND the schema's `minimum: got 0, want 2`.
+//
+// 🔴 AND THE FLOOR ARM'S JUSTIFICATION IS NOT THE CEILING'S — do not collapse
+// them. The wrong-bound argument below is CEILING-SPECIFIC: the floor is 2 in
+// the schema, in the server and here, so on that arm the second message corrects
+// no bound and is pure duplication. It is kept anyway, because the arm is how
+// the mirror stays a faithful copy of the server's single condition rather than
+// a hand-picked subset of it — and because a reader who deletes it on the
+// "pure duplication" reasoning silently drops a server rule. The `app_unlock at
+// 1` test row is what catches that deletion.
 //
 // 🔴 THE RULE THIS FILE ACTUALLY HOLDS IS "MIRROR THE SERVER'S SENTENCE", NOT
 // "NEVER REPORT TWICE" — and an earlier draft of this block asserted the latter,
@@ -376,6 +389,20 @@ func goodsChecks(generic map[string]any) []Finding {
 	// loop this one is ADDITIVE rather than entry-terminating — the server pushes
 	// it and falls through to return, so it can accompany a per-entry finding.
 	// Its path is `goods`, not `goods[i]`.
+	//
+	// ⚠ AN EARLIER PER-ENTRY FINDING SUPPRESSES THIS ONE, and that is the server's
+	// behaviour rather than a side effect worth removing. Every per-entry check
+	// above `continue`s, so a failing entry never reaches the counter. The server
+	// states the same two consequences in its own words at
+	// block-goods.constants.ts:501-509 — "two unlocks where one is over-cap
+	// reports ONLY the price error, and two unlocks sharing an id report ONLY the
+	// duplicate error" — and both now hold here, each pinned by its own row below.
+	//
+	// Note the price arm of that only became true when the clamp came off: while
+	// the check was scoped to 2..50000, an unlock at 60000 did NOT `continue`, so
+	// it was counted and a second over-cap unlock reported the arity error the
+	// server would not have reported. Removing the clamp fixed a mirror defect
+	// nobody had looked for.
 	//
 	// ⚠ THE LIMIT, STATED: the server counts only goods that PARSED, and it
 	// enforces rules this package deliberately leaves to the schema (the `id`

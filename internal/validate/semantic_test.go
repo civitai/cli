@@ -686,6 +686,24 @@ func TestAppUnlockGoodsChecksMirrorTheServerRulesTheSchemaWontExpress(t *testing
 			},
 		},
 		{
+			// The server's SECOND stated arity consequence
+			// (block-goods.constants.ts:501-509): "two unlocks sharing an id report
+			// ONLY the duplicate error (the duplicate is dropped before the count,
+			// so it never reaches the arity rule at all)".
+			name: "two unlocks sharing an id → ONLY the duplicate error, never the arity one",
+			in:   map[string]any{"goods": []any{unlock("access", 500, justified), unlock("access", 600, justified)}},
+			want: []string{`goods[1].id duplicates an earlier good id ("access")`},
+		},
+		{
+			// The server's FIRST stated consequence, at a price ABOVE the general
+			// ceiling — the case the removed clamp got wrong. While the check was
+			// scoped to 2..50000 this entry did not `continue`, so it WAS counted
+			// and the arity error fired where the server's would not have.
+			name: "two unlocks, one at 60000 → ONLY the price error; the over-cap entry never reaches the counter",
+			in:   map[string]any{"goods": []any{unlock("a", 500, justified), unlock("b", 60000, justified)}},
+			want: []string{"goods[1].priceBuzz must be a whole number between 2 and 5000 Buzz for an app_unlock good"},
+		},
+		{
 			name: "an entry that FAILED is not counted toward arity, mirroring the server's parsed-goods array",
 			in: map[string]any{"goods": []any{
 				unlock("a", 500, justified),

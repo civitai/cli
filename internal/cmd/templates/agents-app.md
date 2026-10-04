@@ -19,8 +19,8 @@ the manifest fields and the scopes are documented on the docs site, and the
 - Guide: https://developer.civitai.com/apps/guide/
 - **`https://developer.civitai.com/apps/guide/earning.md`** — the three money
   rails. Fetch it before declaring a `goods` catalog. The three rules below are
-  stated here too, because they are the ones a manifest can break while passing
-  an older `civitai app validate`: a paid-for-access app (`kind: "app_unlock"`)
+  repeated in this file deliberately, because they are the ones a manifest can
+  break while passing an older `civitai app validate`: a paid-for-access app (`kind: "app_unlock"`)
   is capped at **5000** Buzz rather than the general 50000, may declare **at
   most one** unlock per manifest, and MUST carry a `justification`. All three are
   enforced at submit; the published JSON Schema does not declare them.
