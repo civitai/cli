@@ -468,19 +468,37 @@ func TestManualRowCarriesAnEmptyPath(t *testing.T) {
 		return payload.Changes
 	}
 	// assertPaths applies the README's rule to every row: an exception row must
-	// be EMPTY, everything else must be absolute.
+	// be EMPTY, everything else must be absolute. `isException` is what picks the
+	// exception out of the payload.
+	//
+	// 🔴 IT IS A PREDICATE, NOT AN ACTION NAME, AND THAT IS cli#777 ROUND 5'S E.
+	// The two exceptions are not the same shape. EVERY `manual` row is one, so
+	// matching on the action alone is correct there. Only ONE `blocked` row is:
+	// the pre-target refusal, which has no file to name and therefore an empty
+	// `path`. Every OTHER `blocked` row names its file and is absolute — the
+	// README says exactly that in the same sentence — so an action-only rule
+	// applied to `blocked` asserted the OPPOSITE of the published contract, and
+	// a conformant run carrying both shapes produced a false red blaming that
+	// contract. Measured with the real binary (a broken `AGENTS.md` symlink plus
+	// `HOME=""`): an absolute-path `blocked` row for the symlink AND an empty-path
+	// `blocked` row for the pre-target refusal, in one `changes` array. The old
+	// rule passed only because this arm's fixture produced no second shape; the
+	// fixture below now plants one, so the discriminator is exercised rather than
+	// merely written.
 	//
 	// 🔴 "NOT ABSOLUTE" IS THE TEST, NOT "NOT EMPTY AND NOT ABSOLUTE". An earlier
 	// version read `c.Path != "" && !filepath.IsAbs(...)`, which exempted the
 	// empty string — the exact shape it exists to catch. Round 2 of #641 measured
 	// a mutant emptying every path: it produced `"path": "", "action": "create"`
-	// in real output and this guard PASSED. Widening the exception set does NOT
-	// re-open that hole: a RELATIVE path is still red on every row, including a
-	// `blocked` one, and an exception row holding anything at all is red too.
-	assertPaths := func(t *testing.T, rows []row, emptyAction string) (seenException bool) {
+	// in real output and this guard PASSED. Narrowing the `blocked` exception to a
+	// SHAPE does not re-open that hole, and that is worth stating because it is
+	// the one way this change could have: a `create` row with an empty path is not
+	// an exception under either predicate, so it still fails the absolute branch,
+	// and a RELATIVE path is still red on every row.
+	assertPaths := func(t *testing.T, rows []row, isException func(row) bool) (seenException bool) {
 		t.Helper()
 		for _, c := range rows {
-			if c.Action == emptyAction {
+			if isException(c) {
 				seenException = true
 				if c.Path != "" {
 					t.Errorf("a %q row carries path %q. The README names it as an exception to "+
@@ -498,6 +516,11 @@ func TestManualRowCarriesAnEmptyPath(t *testing.T) {
 		}
 		return seenException
 	}
+	// The two exception predicates, named so each arm says which rule it is
+	// applying. `manual` is action-only; `blocked` is action PLUS the empty path
+	// that means no target existed to name.
+	isManualRow := func(c row) bool { return c.Action == actionManual }
+	isPreTargetBlockedRow := func(c row) bool { return c.Action == actionBlocked && c.Path == "" }
 
 	t.Run("manual", func(t *testing.T) {
 		dir, _ := agentSetupProject(t)
@@ -505,7 +528,7 @@ func TestManualRowCarriesAnEmptyPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("agent-setup --agent other --json: %v", err)
 		}
-		if !assertPaths(t, decode(t, out), actionManual) {
+		if !assertPaths(t, decode(t, out), isManualRow) {
 			t.Fatalf("`--agent other` produced no `manual` row, so this arm asserted nothing "+
 				"about the exception it exists to pin\n%s", out)
 		}
@@ -517,8 +540,21 @@ func TestManualRowCarriesAnEmptyPath(t *testing.T) {
 	// pathFixTargets to its outer error and produces the empty-path `blocked` row.
 	// XDG_CONFIG_HOME stays pointed at the temp dir, so nothing else in the run
 	// starts hunting for config in a home directory that is now "".
+	//
+	// 🔴 AND THE BROKEN `AGENTS.md` SYMLINK IS THE POSITIVE CONTROL ON THE
+	// DISCRIMINATOR — round 5's E. Emptying HOME alone yields exactly ONE
+	// `blocked` row, the empty-path one, so a rule that admitted EVERY `blocked`
+	// row as the exception passed here while contradicting the README sentence
+	// the same commit published. The symlink plants the other shape: a `blocked`
+	// row that DOES name its file, absolute, which must travel the absolute
+	// branch. Both shapes in one payload is the only fixture that can tell the
+	// two rules apart, and it is a conformant run — neither row is a defect.
 	t.Run("blocked-before-any-target", func(t *testing.T) {
 		dir, _ := agentSetupProject(t)
+		if err := os.Symlink(filepath.Join(dir, "no-such-target"), filepath.Join(dir, "AGENTS.md")); err != nil {
+			t.Fatalf("planting the broken AGENTS.md symlink this arm needs as its second "+
+				"`blocked` shape: %v", err)
+		}
 		t.Setenv("HOME", "")
 		out, _, err := run(t, "agent-setup", "--dir", dir, "--agent", "claude", "--fix-path", "--json")
 		if err == nil {
@@ -526,25 +562,30 @@ func TestManualRowCarriesAnEmptyPath(t *testing.T) {
 				"refusal in order to have a `blocked` row to check\n%s", out)
 		}
 		rows := decode(t, out)
-		if !assertPaths(t, rows, actionBlocked) {
-			t.Fatalf("no `blocked` row was emitted, so this arm asserted nothing — and a guard "+
-				"whose fixture cannot produce the row it checks is exactly the defect F6 "+
-				"found here\n%s", out)
+		// seenException is now specifically "an EMPTY-path `blocked` row was
+		// seen", because that is what the predicate matches — so this one check
+		// covers what a separate empty-row count used to assert alongside it.
+		if !assertPaths(t, rows, isPreTargetBlockedRow) {
+			t.Fatalf("no `blocked` row carries an EMPTY path, so this arm asserted nothing about "+
+				"the README's second exception — a refusal reached before any target could be "+
+				"worked out. A guard whose fixture cannot produce the row it checks is exactly "+
+				"the defect F6 found here\n%s", out)
 		}
-		// The empty-path shape specifically: a `blocked` row that DOES name a
-		// file is covered by assertPaths' absolute branch, and would leave this
-		// arm passing while the README's second exception went unmeasured.
-		var emptyBlocked int
+		// POSITIVE CONTROL on the predicate itself: the file-naming `blocked`
+		// shape must really be present, or the discrimination this arm exists to
+		// pin was never exercised and the arm would pass under the OLD
+		// action-only rule too.
+		var namedBlocked int
 		for _, c := range rows {
-			if c.Action == actionBlocked && c.Path == "" {
-				emptyBlocked++
+			if c.Action == actionBlocked && c.Path != "" {
+				namedBlocked++
 			}
 		}
-		if emptyBlocked == 0 {
-			t.Errorf("no `blocked` row carries an EMPTY path. The README's second exception is "+
-				"about exactly that row — a refusal reached before any target could be worked "+
-				"out — so without one in the sample this arm measures the first exception "+
-				"twice\n%s", out)
+		if namedBlocked == 0 {
+			t.Fatalf("CONTROL failure: no `blocked` row NAMES a file, so this payload holds only "+
+				"one of the two `blocked` shapes and cannot distinguish 'every blocked row is the "+
+				"exception' from 'only the empty-path one is'. The broken AGENTS.md symlink above "+
+				"is supposed to produce that row\n%s", out)
 		}
 	})
 }

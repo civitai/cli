@@ -16,19 +16,27 @@ gives; read the `t.Errorf` calls).
 
 > ⚠ **PROPOSED, NOT DONE: THIS FILE IS NOW MOSTLY AN AUDIT LOG, AND THE DECISION
 > IT RECORDS IS A MINORITY OF IT.** Most of it is this ladder's own record rather
-> than anything about `--fix-path`, and it grows by one `### Round N` section per
-> audit round — **derive both the size and the round count with the block below
-> rather than reading a magnitude word here.**
+> than anything about `--fix-path`. **Derive both the size and the round count
+> with the block below rather than reading a magnitude word here.**
+>
+> 🔴 **IT DOES *NOT* GROW BY ONE `### Round N` SECTION PER AUDIT ROUND, AND THAT
+> IS ROUND 5'S C.** This sentence used to claim it did, in two places. A round
+> whose findings are all prose, instrument or comment fixes adds none: rounds 4
+> and 5 each added zero, so the prescribed derivation returns **three** after
+> five rounds. The count is a floor on rounds, never a census of them — derive
+> it, and do not infer the number of rounds from it.
 >
 > 🔴 **"ROUGHLY DOUBLED OVER TWO AUDIT ROUNDS" WAS WRONG AT THE COMMIT THAT WROTE
-> IT, AND THAT IS ROUND 4'S F4.** There were already **three** `### Round N`
-> sections, and the ratio depends on which baseline and which axis you pick — the
-> growth measures 2.45× on lines against the first figure the retired absolutes
-> quoted (338) and 2.80× against the pre-audit commit (295), on bytes 2.76× and
-> 3.19×. A ratio is exactly as perishable as the absolutes it replaced: it rotted
-> on arrival, in the paragraph whose own thesis is that this file must carry no
-> unreproducible figure. So it carries no magnitude word either, and the round
-> count is derived.
+> IT, AND THAT IS ROUND 4'S F4.** There were already three `### Round N` sections,
+> and a ratio depends on which baseline and which axis you pick. A ratio is also
+> exactly as perishable as the absolutes it replaced: round 4's four replacement
+> ratios rotted on the very next commit, and **round 5's C measured all four of
+> them wrong** — each was the *previous* commit's value, stated in the present
+> tense, inside the paragraph whose own thesis is that this file must carry no
+> unreproducible figure. The third rot of the same kind in this file, so the
+> figures are **dropped rather than corrected again**: no magnitude word, no
+> ratio, no baseline. If you want the growth, pick your own baseline and run `wc`
+> at two refs.
 >
 > 🔴 **NO ABSOLUTE FIGURE IS QUOTED HERE, AND THAT IS ROUND 3'S F4.** This
 > paragraph used to carry `338 → 458 → 657` lines and `20,416 → 29,576 → 43,007`
@@ -42,9 +50,9 @@ gives; read the `t.Errorf` calls).
 >
 > ```bash
 > DOC=claudedocs/decisions/39-agent-setup-fix-path.md
-> wc -l "$DOC"                                 # total
-> grep -n '^## Red/green' "$DOC"               # the boundary (see below)
-> grep -c '^### Round [0-9]* of cli#777' "$DOC"  # audit rounds recorded here
+> wc -l "$DOC"                                   # total
+> grep -n '^## Red/green' "$DOC"                 # the boundary (see below)
+> grep -c '^### Round [0-9]* of cli#777' "$DOC"  # rounds that recorded a section
 > ```
 >
 > The sections a reader needs in order to *change the feature safely* are the top
@@ -52,24 +60,38 @@ gives; read the `t.Errorf` calls).
 > above the `## Red/green and the mutation matrix` heading**, which is a boundary
 > that moves with the file instead of a line number that rots. (An earlier draft
 > quoted "roughly the first 340 lines" and was then "corrected" to a hard line
-> number — which was itself off by one against that same commit's own `grep`, and
-> is wrong by around ninety lines today. A line number here cannot be right for
-> long: run the `grep` above.) The per-round findings-and-mutants sections are
+> number, which was itself off by one against that same commit's own `grep` and
+> then drifted further every commit. **No line number and no drift figure is
+> given here, because round 5's C found the drift figure stale too** — it is the
+> same perishable-number class, one axis over. A line number here cannot be right
+> for long: run the `grep` above.) The per-round findings-and-mutants sections are
 > **provenance**: they answer "was this verified, and how" and are read
 > approximately never by someone editing the code.
 >
 > **Suggested split (a separate change — no round has performed it):** move
 > **every `###` child of `## Red/green and the mutation matrix`** — that is
-> `### Mutants…` plus one `### Round N of cli#777…` per audit round — into
+> `### Mutants…` plus the `### Round N of cli#777…` sections — into
 > `claudedocs/decisions/39-agent-setup-fix-path-verification.md` and leave a
-> one-line pointer. (The set grows by one per audit round, which is itself the
+> one-line pointer. (The set grows as rounds record sections, which is itself the
 > argument for the split. 🔴 **It is described that way, not enumerated with a
 > count, because round 4's F4 was exactly an enumeration updated in one place out
 > of two:** round 3 appended `### Round 3` to this move list and left every "three
 > sections" downstream of it unchanged, so the proposal contradicted itself about
-> its own scope. Derive the set — `grep -n '^### ' "$DOC"` under that heading —
-> rather than restating it.) Two details that an earlier draft of this proposal
-> left self-contradictory, resolved here — round 3's F5:
+> its own scope. Derive the set rather than restating it:
+>
+> ```bash
+> awk '/^## Red\/green/{f=1;next} /^## /{f=0} f&&/^### /{print NR": "$0}' "$DOC"
+> ```
+>
+> 🔴 **That `awk` replaces a bare `grep -n '^### ' "$DOC"`, which OVER-COUNTS —
+> round 5's C.** `grep` cannot see heading nesting, so it also returns the `###`
+> children of *other* `##` sections. Concretely `### One property this feature
+> INHERITS rather than states` sits under `## 🔴 WHAT IS NOT ESTABLISHED`, well
+> past the boundary, and a reader following the old instruction counts it as part
+> of the move set and would move a section that must stay. The `awk` closes the
+> range at the next `## `, so it returns the children and nothing else — check it
+> against `grep -n '^## '` if you doubt it.) Two details that an earlier draft of
+> this proposal left self-contradictory, resolved here — round 3's F5:
 >
 > - 🔴 **"KEEP THE RETRACTIONS INLINE" AND "MOVE `### Round 1`" CANNOT BOTH BE
 >   OBEYED AS WRITTEN**, because the corpus-count retraction sits INSIDE
@@ -721,6 +743,25 @@ one so "the mutation landed" is itself observable.
 
 ## 🔴 WHAT IS NOT ESTABLISHED
 
+- 🔴 **THE LADDER ENDED HERE, AND ROUND 5'S FIXES ARE FIXED-BUT-UNAUDITED.** Five
+  audit rounds ran on cli#777; round 5's five findings (A–E) were fixed **without
+  a round 6**, deliberately. So the state of those specific fixes is *fixed but
+  unaudited* — a strictly weaker stop than the convergence the earlier rounds
+  reached, where a round returning no finding is what ended the ladder. No round
+  has read this change.
+  **The operator's reason, and it is measured rather than asserted:** the range
+  round 5 audited (`f6e14c8..1f8a93c`) changed **zero executable payload lines**.
+  All 62 changed lines in the two Go payload files (`internal/cmd/agent_setup.go`
+  +11/−2, `internal/cmd/agent_setup_fixpath.go` +45/−4) are comments or blank;
+  the only non-comment payload change was 9 lines of embedded template prose
+  (`internal/cmd/templates/agents-app.md`, +6/−3). The ladder had therefore moved
+  onto auditing its own prose and instruments, which is what the attribution gate
+  exists to end — it merely could not fire here, because the diff is *mixed*
+  rather than purely prose. Round 5's own findings are consistent with that
+  reading: A, B and E are defects in guards, C and D in comments and a derivation,
+  and none is a defect in what the CLI does.
+  Each round-5 fix was re-measured before being made and mutation-checked after;
+  what is missing is an adversarial read of the fixes themselves.
 - **This does not close cli#665.** Its closing condition is graded by
   `scripts/dogfood/grade.sh` against `df-node-user` or `df-ubuntu-apt`, from a
   blind model trial. Nothing here is that: the tests measure the same OBSERVABLE

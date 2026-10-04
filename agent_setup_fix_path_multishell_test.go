@@ -65,10 +65,13 @@ import (
 //
 // 🔴 AND THAT SHAPE FLOOR THEN ASSERTED ONE OF SEVEN CAUSES — cli#777 ROUND 4'S
 // F2. It read the loss as "this filesystem would not hold the name" and advised
-// moving `TMPDIR`, while five of the seven ways blockFromRealBinary can fail are
+// moving `TMPDIR`, while FOUR of the seven ways blockFromRealBinary can fail are
 // PRODUCT defects that no `TMPDIR` touches. It now interpolates the error each
 // lost shape actually returned, so the default output distinguishes them; see
-// shapeLosses, which also carries the measurement.
+// shapeLosses, which also carries the measurement. ⚠ This said "five" until
+// cli#777 round 5's C: MkdirAll, reading the built binary and copying it are all
+// environment or harness failures, which leaves four, and the floor's own message
+// has always enumerated exactly those four.
 //
 // 🔴 A FOURTH FLOOR LIVES OUTSIDE THIS TEST, ON PURPOSE — ROUND 4'S F3, AND THE
 // ONLY SURVIVED MUTANT OF THAT ROUND. The shape TABLE had no floor at all, so
@@ -149,13 +152,36 @@ var multiShellDirShapes = []string{
 // 🔴 THE COUNT AND THE NAMES ARE BOTH ASSERTED, BECAUSE A COUNT ALONE IS
 // TRADEABLE. Deleting `with'quote` and adding `plain2` keeps the count at five and
 // loses the quoting property — the same one-line trade splitItemsFloor records in
-// agents_split_preserved_test.go. The two named here are the two the shape floor's
-// own message already calls "the two whose quoting the emitted block has to
-// survive", so asserting them by name is what makes that sentence true rather than
-// aspirational. Adding a shape stays free; removing one is red by name.
+// agents_split_preserved_test.go. Adding a shape stays free; removing ANY is red
+// by name.
+//
+// 🔴 EVERY SHAPE IS NAMED, AND NAMING ONLY SOME OF THEM LEFT THE REST TRADEABLE —
+// cli#777 ROUND 5'S B. This list held two of the five, so the by-name half
+// protected two and the count floor protected only the total. Measured: deleting
+// `"with space"` and `"dollar$HOME"` AND decrementing this floor to 3 was FULLY
+// GREEN on both this test and the portability test — the quoting-adjacent space
+// shape and the `$`-expansion shape went unmeasured, with the assertion line
+// silently reading `MEASURED 24 assertions` instead of 40 and no SKIPPED row to
+// show for it. That is the same two-line trade the comment above describes, just
+// performed on the shapes nobody had named. There is no principled reason to
+// protect a subset when every entry is a string literal in this file, so the list
+// is now the whole table.
+//
+// ⚠ THE COUNT IS THEREFORE IMPLIED BY THE NAMES AND IS KEPT ANYWAY, DELIBERATELY,
+// with no claim that it adds a property: five distinct names present means at
+// least five entries, so this constant cannot now fail alone. It stays because its
+// t.Errorf is where the "do NOT shorten this table" reasoning lives, and because a
+// shape added LATER and then removed is caught by number before anyone thinks to
+// add its name here.
 const multiShellMinDirShapes = 5
 
-var multiShellRequiredDirShapes = []string{"with'quote", "glob*[a-z]"}
+var multiShellRequiredDirShapes = []string{
+	"plain",
+	"with space",
+	"with'quote",
+	"glob*[a-z]",
+	"dollar$HOME",
+}
 
 // TestTheDirectoryShapeTableIsNotSilentlyNarrowed is the shape table's floor, and
 // it is a test of its OWN rather than a check inside the portability test.
@@ -190,9 +216,12 @@ func TestTheDirectoryShapeTableIsNotSilentlyNarrowed(t *testing.T) {
 		if !have[want] {
 			t.Errorf("the directory-shape table no longer holds %q. The count floor alone is "+
 				"tradeable — drop this shape, add a harmless one, and the count is unchanged while "+
-				"the property is gone — so the two shapes whose quoting matters most are asserted by "+
-				"NAME. This is the one the shape floor's own message promises a reader is measured.\n"+
-				"table: %q", want, multiShellDirShapes)
+				"the property is gone — so EVERY shape is asserted by NAME, not only the ones whose "+
+				"quoting looks most obviously hazardous. Naming a subset left the rest tradeable, "+
+				"which is cli#777 round 5's B: %q carries a hazard of its own (a space, a quote, a "+
+				"glob, a `$` to expand, or the plain baseline the others are read against) and "+
+				"nothing else in this table measures it.\n"+
+				"table: %q", want, want, multiShellDirShapes)
 		}
 	}
 }
@@ -460,8 +489,11 @@ func TestTheEmittedBlockIsPortableAcrossPOSIXShells(t *testing.T) {
 	// RUN SUPPRESSES — cli#777 round 4's F2. blockFromRealBinary returns an error
 	// from seven distinct places: MkdirAll, reading the built binary, copying it,
 	// `--fix-path` exiting non-zero, no `~/.zshenv` written, no complete managed
-	// block in it, and the block naming a different directory. FIVE of those are
-	// product defects. All seven funnelled into `skippedShapes++` and then into a
+	// block in it, and the block naming a different directory. The LAST FOUR are
+	// product defects; the first three are environment or harness failures. ⚠ This
+	// said FIVE until cli#777 round 5's C — a count that disagreed with the floor
+	// message fifteen lines below, which enumerates exactly four. All seven
+	// funnelled into `skippedShapes++` and then into a
 	// floor message claiming the filesystem would not hold the name and advising
 	// "point TMPDIR at a filesystem that does", with the real reason reachable only
 	// in the `shape:` subtest's `Skipf` — which prints nothing without `-v`, and
@@ -679,8 +711,9 @@ func TestTheEmittedBlockIsPortableAcrossPOSIXShells(t *testing.T) {
 	// is a product regression and no amount of TMPDIR will touch it.
 	if len(shapeLosses) > 0 {
 		t.Errorf("%d of %d directory shape(s) were NOT MEASURED, in any shell. The shapes ARE the "+
-			"point of this table — `with'quote` and `glob*[a-z]` are the two whose quoting the emitted "+
-			"block has to survive — so a run missing one measures a different thing from the one this "+
+			"point of this table — each is a quoting or expansion hazard the emitted block has to "+
+			"survive, `with'quote` and `glob*[a-z]` most visibly, a space and a `$` no less really — "+
+			"so a run missing one measures a different thing from the one this "+
 			"test claims.\n"+
 			"Each loss, with the reason it returned:\n  %s\n"+
 			"READ THOSE REASONS BEFORE ACTING: a message about this filesystem not holding the name is "+

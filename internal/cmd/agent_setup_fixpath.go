@@ -611,15 +611,23 @@ type pathFixPlan struct {
 
 // planPathFix renders what `--fix-path` would do, writing nothing.
 //
-// The outer error is for the cases in which there is no row to build at all,
-// which pathFixTargets decides and which are now TWO: a `GOOS=windows` run (the
-// refusal there is unconditional, and no POSIX startup file is a target on that
-// platform) and no resolvable home. ⚠ This comment said "the only cause is an
-// unresolvable home" until cli#777 round 4's F5 — false from the moment
-// pathFixWindowsRefused became the FIRST thing pathFixTargets does. A failure to
-// resolve THIS binary is different again and still yields one row per target,
-// carrying the refusal, because the paths are known and naming them is more
-// useful than a single message with no file attached.
+// The outer error is for the cases in which there is no row to build at all.
+// pathFixTargets decides which those are, and its early returns are the ONLY
+// authority on the set — read them, rather than any list here.
+//
+// ⚠ NO COUNT IS STATED, BECAUSE THIS COMMENT HAS CARRIED A WRONG ONE TWICE.
+// It said "the only cause is an unresolvable home" until cli#777 round 4's F5,
+// which replaced it with "now TWO" — and that was wrong on arrival too: the
+// `filepath.Abs(home)` refusal has been a third early return since round 1
+// (`667c59c`, the R6/M23 fix), so the corrected count was already short by one
+// when it was written. Measured in round 5 with the real binary, `HOME=relhome`
+// from a deleted working directory reaches this error and emits the same
+// empty-path `blocked` row. A number maintained beside the function it
+// describes rots on the next early return; do not restore one.
+//
+// A failure to resolve THIS binary is different again and still yields one row
+// per target, carrying the refusal, because the paths are known and naming them
+// is more useful than a single message with no file attached.
 //
 // 🔴 IT RETURNS THE DIRECTORY IT USED, AND THE CALLER MUST NOT RE-DERIVE IT.
 // cliBinDirForPATH reads the filesystem (EvalSymlinks), so a second call is a

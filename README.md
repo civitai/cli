@@ -375,8 +375,8 @@ project other than the working directory. A path in `--json` is always
 **absolute**, whatever `--dir` you passed, with two exceptions that both carry an
 empty `path` because there is no file for this CLI to name: a `manual` row, and a
 `blocked` row for a refusal that happened before any target could be worked out
-(no resolvable home, or `--fix-path` on Windows). Every other `blocked` row names
-its file and is absolute like the rest.
+(for example, no resolvable home, or `--fix-path` on Windows). Every other
+`blocked` row names its file and is absolute like the rest.
 
 ### `--fix-path` — when `civitai: command not found` outlives the install
 
