@@ -90,51 +90,41 @@ that wrote it, flagged as such there.
 
 ## State now
 
-- 🔴 **CORRECTION TO THIS DOC'S OWN FRAMING, AND IT IS THE MOST IMPORTANT LINE HERE.**
-  `cli#665`'s closing condition is **TWO ALTERNATIVES joined by *either/or***; an earlier version
-  of this section stated only the first as the whole requirement. Arm 1 = `zsh -lic 'civitai
-  --version'` printing the version, graded by `grade.sh` (`CLOSING_CONDITION=yes`). **Arm 2** =
-  *"the agent's final report stating plainly that the CLI is not on the user's PATH and the setup
-  is incomplete — read off the trial transcript"*, explicitly NOT mechanically graded. Found by
-  round 0 of `/audit-pr` on `docs#152`.
-- 🔴 **ARM 2 WAS ALREADY SATISFIED BY THE SENTENCE THE FIX DELETED** — 6 of 6, judgement read
-  (arm 2 is transcript-read by its own wording, and a keyword regex on exactly this question was
-  RETRACTED earlier in this arc; do not re-reach for one). `glm-ubuntu`: *"⚠️ Action for you: …
-  it is **not** permanent"*. `mimo-nodeuser`: *"on PATH only for my shells … I did not edit your
-  shell profile"*. **So "0 of 6 `CLOSING_CONDITION=no`" is evidence about ARM 1 ONLY.** Corrected
-  publicly on `docs#152` and `#665`, not silently edited.
-- ✅ **OPERATOR DECISION: ARM 1.** `docs#152` merged, squash `021ec58f`, verified by CONTENT on
-  `origin/main` (`--fix-path` 1, forbidding sentence 0) with a negative control at `main~1`
-  reading exactly inverted. Never by ancestry — a squash makes that permanently false. Arm 1 was
-  chosen over the cheaper arm 2 on this issue's own ground: arm 2 leaves `AGENTS.md` naming a
-  binary the user cannot run, and **0 of 8** agents ever connected those facts.
-- 🔴 **THE "POSTURE REVERSAL" FRAMING WAS WRONG, refuted by the file being edited.**
-  `prompt.md:5-6` already said *"Do not ask the user to run any of these commands"* and
-  `:103-105` already mandated reporting the footprint — both pre-dating the removed sentence. It
-  was an **exception** to the document's own posture. Round 0 examined "close this PR" as `D4`
-  and **rejected** it on that ground.
-- ✅ **THE SHIPPED WORDING IS STRUCTURAL, NOT PERSUASIVE, AND THAT IS WHY IT WORKS.** Prose
-  *asking* the agent to run `--fix-path` → **1 of 3** cells; the command *inside the fenced
-  block* → **5 of 6**. Across all 9 patched trials: every cell that executed it graded `yes`
-  (6/6), every cell that did not graded `no` (3/3).
-- ⚠ **NOTHING MEASURED YET GRADES #665 AGAINST THE SHIPPED ENTRYPOINT** — every patched trial
-  carries `prompt_url` in its `start` record so the populations stay separable. One run with
-  **no** `DOGFOOD_PROMPT_URL` remains, after the deploy is SERVING (branch-tracked, but not
-  instant — `docs#147` flipped later the same day). Probe, do not assume.
-- **`cli#785` is the instrument**, open, on round 3. Rounds 0–2 each found real defects.
-  Operator decision: stop after round 3 regardless, fix its blockers, merge, file the rest.
-- 🔴 **`cli#665` IS REOPENED** (it auto-closed 2 s after #777 on a keyword, arm 1 unmeasured) and
-  carries a mechanical closing condition naming the live URL.
-- **Carried forward:** `cli#777` squash `22e7122`; `--fix-path` shipped in **`v0.1.112`**,
-  published 2026-10-04T03:45:45Z, Homebrew tap commit **`46ebc701`**; npm `latest` is now
-  **`0.1.113`** (18:36:51Z, carrying #782, not a `--fix-path` change). `docs#147` serving. Open:
-  `cli#781` (ZDOTDIR), `docs#148/#149/#151`.
-- **No `clawgate-task:` field**: `clawgate_handoff.sh resolve` exited **5**. An unknown session id
-  answers 200 with an empty array, so that zero cannot distinguish "touched no task" from "wrong
-  id". Not a clean bill of health.
-- **Live, remove by EXACT path:** worktrees `/home/zach/workspace/civit/cli-r38` and
-  `/tmp/wt-prompturl`. The `dogfood-r38-*`, `dogfood-px*` and `ctl-*` containers are left RUNNING
-  on purpose — `grade.sh` refuses a stopped container. `dogfood-promptsrv` was removed.
+✅ **THE ARC IS CLOSED.** `cli#665` arm 1 is MET against the **live** hosted prompt and the issue
+is closed. Nothing is in flight: no open PR, no running container, no worktree, no held claim.
+
+- **The closing measurement:** 5 of 6 blind cells `CLOSING_CONDITION=yes`, every `yes` reading
+  `login_version=0.1.113 agent_shell_version=0.1.113`, all 6 `stop=finished`, $0.058.
+  🔴 **The provenance control ran BEFORE any verdict was read: 0 of 6 `start` records carry a
+  `prompt_url` key**, so none was fed patched instructions. `grade.sh` reads the container, so
+  that control is the only thing that can tell a patched run from a real one.
+- **Merged, each verified BY CONTENT with a negative control** (never by ancestry — a squash
+  makes that permanently false): `docs#152` `021ec58f` (the EACCES-branch edit — *this* is what
+  moved the number) · `cli#784` `7df6e273` (doc, corrected before merge) · `cli#785` `efa1d6c2`
+  (`--prompt-url` + the provenance mark) · `cli#787` (residuals, batched). Controls: docs `main~1` inverted (0/1), cli `main~2` `pf_auth`=0; `docs#152` probed
+  SERVING and `cmp`-identical to the bytes the trials were fed.
+- 🔴 **WHAT CLOSED IT WAS PROSE, AND THE RATIO IS THE POINT.** `cli#777` shipped `--fix-path` in
+  `v0.1.112` and changed **nothing** (0 of 6). Same file, same cells: prose *asking* the agent to
+  run it → **1 of 3**; the command **inside the fenced install block** → **5 of 6**. Across all 15
+  patched-and-live trials the correlation never broke: every cell that executed `--fix-path`
+  graded `yes`; every cell that did not graded `no`.
+- ⚠ **5 of 6, not 6 of 6** — the live `no` (`mimo-v2.5` × `node-user`) is the cell that did not
+  run the flag. Scope: 3 cheap models, `claude` identity, 2 envs, Linux only; the Homebrew branch
+  never executes and **WebFetch-summarisation** is still untested, as `#665`'s scope note said.
+- **`cli#785` ran audit rounds 0–3, each finding real defects** — three in code I had just called
+  verified. Stopped after round 3 by operator decision; blockers fixed, residuals filed.
+- **No `clawgate-task:` field**: `resolve` exited **5** (0 tasks) and `field` exited **1**. An
+  unknown session id answers 200 with an empty array, so that zero cannot distinguish "touched no
+  task" from "wrong id" — not a clean bill of health. 🔴 Captured directly; a `| head` ate the
+  status first time, which is the trap the skill names.
+- **Evidence** at `~/.cache/dogfood-runs-2026-10-04-{r38,r42,live}/`, each with controls
+  (end-records matching trial count, nonsense-string control at 0); `-live/` carries
+  `prompt-as-served.md`, `cmp`-identical to `origin/main`.
+- **Release provenance and the arm-2 evidence** (`v0.1.112` publish time, Homebrew tap
+  `46ebc701`, and the agents' own "it is **not** permanent" finals) are verbatim in `#665`'s
+  closing comment — deliberately not re-copied into a doc 2.2x its ceiling.
+- **Cleanup verified:** 25 containers removed by EXACT resolved name (the unrelated app-author
+  arc's 15 untouched), 3 worktrees by exact path + prune, no listener on `:8099`.
 
 ## Open investigations — live diagnosis state
 
@@ -408,44 +398,54 @@ gap as release sequencing, the other as an environment problem. Both are measure
   🔴 Each `start` record must carry **no** `prompt_url`. If one does, the run is patched and
   cannot close `#665`.
 
+### ~~⚠ OPEN — arm 1 is unmeasured against the LIVE entrypoint~~ ✅ RESOLVED 2026-10-04 — 5 of 6 live, `#665` CLOSED
+- as-of: 2026-10-04
+
+🔴 **ITS `Next probe` WAS RUN AND ITS PREDICTION HELD** — 5 of 6 live, provenance control clean,
+served bytes `cmp`-identical to what was measured. Nothing in it is open; its measurements stay as
+the baseline the live run was compared against.
+
 ## Next steps (ranked)
+
+🔴 **THE ARC IS CLOSED. Everything below is either DONE or was always independent of it.**
+Numbering preserved so live `claim-work` slugs keep resolving.
 
 15. **The docs repo does not build from a pristine `main` locally.** NOT re-verified.
     forcing: gate
-16. **`images search --help` 14 runes under budget.** ⚠ RECOMMENDED FOR RETIREMENT.
+16. **`images search --help` 14 runes under budget.** ⚠ RETIRE.
     forcing: none
-17. **Audit at MERGE time.** ⚠ RECOMMENDED FOR CONVERSION.
+17. **Audit at MERGE time.** ⚠ CONVERT, not work.
     forcing: none
-25. **cli#579 — `saferune.Strip`'s doc claims a byte-for-byte subsequence.** Inert.
+25. **cli#579 — `saferune.Strip` doc claims a byte-for-byte subsequence.** Inert.
     forcing: none
-26. **cli#575 R2–R4.** ⚠ R2/R3 DEFER. R4 has the coverage value.
+26. **cli#575 R2–R4.** ⚠ R2/R3 DEFER; R4 has the coverage value.
     forcing: none
 27. **cli#586 — three near-identical AST expression renderers.**
     forcing: none
-29. ⚠ **PARTLY DONE.** Closed-block eviction has run three times. ❌ Still untouched: the
-    `## Gotchas` split, and demoting dated evidence to `claudedocs/refs/`.
+29. ⚠ **PARTLY DONE** (eviction run 4×). ❌ Left: the `## Gotchas` split, and demoting dated
+    evidence to `claudedocs/refs/`.
     forcing: gate
-34. ✅ **DONE** — `cli#777` → `v0.1.112` → `docs#126`.
+34. ✅ DONE — `cli#777` → `v0.1.112` → `docs#126`.
     forcing: gate — satisfied
-38. ✅ **DONE — arm 1 graded 6/6 `no` against the hosted prompt.** Cause was delivery, not the CLI.
+38. ✅ DONE — arm 1 graded 6/6 `no`; cause was delivery, not the CLI.
     forcing: gate — satisfied
-39. **Decide `cli#781` (ZDOTDIR): honour `$ZDOTDIR` or disclose.** The suite strips the variable,
-    so it is blind to the axis either way.
+39. 🔴 **THE ONLY OPEN ITEM WITH URGENCY, AND NOT THIS ARC'S.** Decide `cli#781` (ZDOTDIR):
+    honour `${ZDOTDIR:-$HOME}/.zshenv` or disclose. `--fix-path` writes `$HOME/.zshenv`, which zsh
+    ignores under `ZDOTDIR`, and `agent_setup_fix_path_shell_test.go` **strips** the variable — so
+    the suite is blind to the axis by construction and a fix needs one probe that does not strip
+    it. No container that closed `#665` set `ZDOTDIR`, so this arc's green says nothing about it.
     forcing: gate — cli#781 is open
-40. **The app-author onboarding arc — its own handoff doc when it next grows.**
+40. **The app-author onboarding arc — its own doc when it next grows.** `docs#151` carries the
+    three remaining routing pointers.
     forcing: user — an external app author reported being blocked and the second half is unfixed
-41. ✅ **DONE — `docs#147` verified SERVING.**
+41. ✅ DONE — `docs#147` verified SERVING.
     forcing: gate — satisfied
-42. ✅ **DONE — `docs#152` MERGED (`021ec58f`)** on an explicit operator decision for arm 1.
-    Verified by content with an inverted negative control. Claim released.
+42. ✅ DONE — `docs#152` merged (`021ec58f`), operator decision for arm 1.
     forcing: gate — satisfied
-43. 🔴 **GRADE #665 ARM 1 AGAINST THE LIVE HOSTED PROMPT — the only product work left.** Probe
-    SERVING first, run with **no** `DOGFOOD_PROMPT_URL`, confirm no `prompt_url` in any `start`
-    record. ~$0.02. Commands in the investigation block above.
-    forcing: gate — cli#665's closing condition is unmet against the live URL
-44. **Merge `cli#785` after round 3's blockers**, then file the residual findings as one
-    follow-up. The ladder stops after round 3 by operator decision.
-    forcing: gate — the harness is the instrument rank 43 depends on
+43. ✅ DONE — arm 1 MET live, 5 of 6, control clean; `#665` CLOSED.
+    forcing: gate — satisfied
+44. ✅ DONE — `cli#785` merged (`efa1d6c2`); residuals are `cli#787`.
+    forcing: gate — satisfied
 
 ## Gotchas / decisions / dead-ends
 
@@ -1883,36 +1883,46 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   run -d` returns before the server binds, and that failure reads exactly like a firewall drop —
   it cost one false "inter-container networking is blocked" diagnosis.
 
+### Added 2026-10-04 (fourth session) — arc closed; the lessons are in the STORE, not here
+
+🔴 **A pointer, not a narrative — deliberately.** This doc is 147 KB against a 65 KB ceiling, so a
+CLOSED arc's lessons belong where they are recalled on demand. Both entries were written this
+session, and the two earlier `OPEN:` bullets rewritten `RESOLVED efa1d6c2:` / `RESOLVED 021ec58f:`
+in the same turn: `$DEVRC/scripts/cairn-ops/read.sh recall --repo /home/zach/workspace/civit/cli
+--ref dogfood` (and `--ref agent-setup`).
+
+- 🔴 **A delivery fix can be worth more than the feature, and the ratio was measured** — merged,
+  published, tapped, documented, and **0 of 6**; one prose edit took it to **5 of 6**. Prose
+  *asking* an agent to run a command scored 1 of 3; the command **in the fenced block**, 5 of 6.
+- 🔴 **Calling a guard structural does not make it structural**, and **two of my own guards passed
+  for the wrong reason** — another guard's error killed their tests.
+- 🔴 **An `either/or` closing condition can be half-satisfied by the sentence you are deleting.**
+- 🔴 **I published two false audit dispositions.** A disposition is a measurement, not intent.
+
 ## How to verify
 
 ```bash
-# 1. The docs change is on origin/main — by CONTENT, with a negative control. A squash
-#    merge makes ancestry permanently false; never use it here.
-DOCS=/home/zach/workspace/civit/civitai-developer-docs
-git -C "$DOCS" fetch origin main
-git -C "$DOCS" show origin/main:public/agent-setup/prompt.md   | grep -c 'agent-setup --fix-path'   # 1
-git -C "$DOCS" show origin/main:public/agent-setup/prompt.md   | grep -c 'do not edit their shell'  # 0
-git -C "$DOCS" show origin/main~1:public/agent-setup/prompt.md | grep -c 'agent-setup --fix-path'   # 0
-git -C "$DOCS" show origin/main~1:public/agent-setup/prompt.md | grep -c 'do not edit their shell'  # 1
-
-# 2. Is it SERVING? (merge is deploy here, but not instantly)
-curl -sS -A 'Mozilla/5.0' https://developer.civitai.com/agent-setup/prompt.md \
-  | grep -c 'agent-setup --fix-path'     # 1 => live
-
-# 3. #665's condition — BOTH arms, because it is an either/or
+# 1. #665 closed, and read BOTH arms — it is an either/or
+gh issue view 665 --repo civitai/cli --json state,stateReason --jq '"\(.state)/\(.stateReason)"'
 gh issue view 665 --repo civitai/cli --json body --jq .body | sed -n '/## Closing condition/,+6p'
 
-# 4. The harness suite (3 TestOracle* failures are environmental — no Chromium; identical
-#    at origin/main, confirmed at three points)
-(cd /tmp/wt-prompturl && go test . -count=1 2>&1 | tail -3)
+# 2. The docs change is SERVING (branch-tracked => merge is deploy, but not instant)
+curl -sS -A 'Mozilla/5.0' https://developer.civitai.com/agent-setup/prompt.md > /tmp/p.md
+grep -c 'agent-setup --fix-path' /tmp/p.md            # 1
+grep -c 'do not edit their shell profile' /tmp/p.md   # 0
+
+# 3. The cli merge, BY CONTENT with a negative control (a squash makes ancestry false)
+C=/home/zach/workspace/civit/cli
+git -C "$C" show origin/main:scripts/dogfood/driver.sh   | grep -c 'pf_auth'   # 2
+git -C "$C" show origin/main~2:scripts/dogfood/driver.sh | grep -c 'pf_auth'   # 0
+
+# 4. The closing evidence and its provenance control — the 0 is the load-bearing half
+R=~/.cache/dogfood-runs-2026-10-04-live/runs
+grep -l '"prompt_url"' "$R"/live-*/transcript.jsonl | wc -l   # 0 — none fed a patched prompt
+grep -o '"stop": "[a-z-]*"' "$R"/live-*/transcript.jsonl | sort | uniq -c   # 6 x finished
 ```
 ## Defects (batched)
 
-- `docs#151` carries three stale routing pointers found by #147's round 1: `cli-troubleshooting.md:36`
-  names one of two causes for `block lacks ai:write:budgeted scope`; `comfy-cloud.md:462` routes
-  "how do I generate locally" at the Submitting anchor and `:294` asserts the manifest budget governs
-  under `dev:live` on an unsubmitted app; the hosted agent-setup surface names none of this.
-- `docs#149`: `#145` merged through a red REQUIRED check, leaving `main` red and blocking every open
-  PR in that repo until `docs#146` cleared it.
-- `docs#148`: the snapshot bot cannot land its own PR (GITHUB_TOKEN-opened PRs get no checks), which
-  hid three releases of drift behind a PR displaying **zero** checks for six days.
+- `cli#787` — the test stub answers `--print-task` regardless of script path, so the default-URL
+  **derivation** is untestable; and the bash trim misses U+00A0. Both measured and bounded; the
+  issue carries the evidence and a mechanical closing condition.
