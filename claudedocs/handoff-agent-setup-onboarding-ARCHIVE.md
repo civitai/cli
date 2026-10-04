@@ -602,3 +602,76 @@ and running it is what produced the finding.
 - **Leading hypothesis:** the remedy is sound and the grading is purely an environment problem.
 - **Next probe:** re-run the dogfood matrix in a container. 🔴 Copy `runs/` aside first — `runner.py`
   opens each transcript `"w"` and DESTROYS existing ones, and `grade.sh` refuses a stopped container.
+
+## Evicted from `claudedocs/handoff-agent-setup-onboarding.md` — 2026-10-04
+
+Closed blocks, evicted for size and kept for their VALUES. Two cautions: the cli#665 blocks were each wrong about the SHAPE of the gap while their measurements were sound — adopt their numbers and not their framings; and anything here quoting "0 of 6 CLOSING_CONDITION=no" is a statement about ARM 1 of a two-arm condition, which no block below says because nobody had read the condition yet.
+
+From `Open investigations — live diagnosis state`:
+
+- **Symptom + exact repro:** the arc shipped ranks 33 and 35 to move the 12-of-16
+  failing cells recorded on 2026-09-18, and nobody had re-measured. Preconditions were
+  met for the first time this session (CLI published, hosted prompt live).
+- **Observed (with values) — the grader was validated in BOTH directions FIRST**, on the
+  merged `#673` code, asserting the FIELDS and not just the verdict word:
+  | control | verdict line |
+  |---|---|
+  | `ctl-neg` (bare container) | `agent=unknown check_ok=parse-error mcp_rows=unreadable login_version=none agent_shell_version=none CLOSING_CONDITION=no` |
+  | `ctl-pos` (public npm install) | `agent=claude check_ok=true failed_checks=[authenticated] mcp_rows=2 login_version=0.1.106 agent_shell_version=0.1.106 CLOSING_CONDITION=yes` |
+  | `ctl-profile` (`--prefix=$HOME/.local`) | `agent=claude check_ok=true failed_checks=[authenticated] mcp_rows=2 login_version=none agent_shell_version=0.1.106 CLOSING_CONDITION=no` |
+  `ctl-profile` is the one that carries weight: arm A GREEN while arm B is RED, which is
+  the false-green shape the README pins, and it reproduces mechanism B directly —
+  `bash -lc 'civitai --version'` → `0.1.106`, `zsh -lic 'civitai --version'` →
+  `command not found`.
+- **Observed (with values) — the 3-trial smoke matrix** (`gemini-3.8-flash`, `node-root`,
+  all three identities), graded from the containers:
+  | cell | recorded 2026-09-18 | measured 2026-09-19 on v0.1.106 |
+  |---|---|---|
+  | `gemini × node-root × claude` | ✅ yes | ✅ `yes` |
+  | `gemini × node-root × codex` | *(never run)* | ✅ `yes` |
+  | `gemini × node-root × other` | ❌ **no** (mechanism A) | ✅ **`yes`** |
+  The `other` cell verbatim: `agent=other check_ok=true
+  failed_checks=[mcp-site,mcp-orch,authenticated] mcp_rows=2 login_version=0.1.106
+  agent_shell_version=0.1.106 CLOSING_CONDITION=yes` — both MCP rows still PRESENT and
+  still `false`, which is rank 33's design, and both halves of the closing condition
+  green on a machine that never built the CLI. All three trials stopped `"finished"` in
+  9–10 steps.
+- 🔴 **`#673` EARNED ITS KEEP ON ITS FIRST RUN.** The `agent=` field is read from the
+  container's own `--check` JSON, and it matched the trial-id label in all three cells —
+  which is the first time identity has been *measured* rather than asserted by whoever
+  named the trial.
+- 🔴 **Ruled out — that a full matrix costs ~$24.** `--max-cost` is a per-trial CAP, not
+  an estimate, and this doc's rank 36 quoted "24 trials at $1/trial" as though it were
+  one. The 3 smoke trials cost **$0.083 total** ($0.028/trial), and this repo's own
+  evidence doc records the entire 19-trial matrix of 2026-09-18 at **$0.66**. A full
+  24-cell run is ~$1. `via: measurement` (the `end` records' `usage.cost`, and
+  `claudedocs/refs/agent-setup-dogfood-matrix-2026-09-18.md` line 469).
+- **Ruled out — that a stale model slug would kill the run.** All four default slugs and
+  all three operator-chosen ones resolve live on OpenRouter, and each advertises `tools`
+  + `tool_choice`, which `runner.py` requires. `via: command`
+  (`curl -s https://openrouter.ai/api/v1/models`, 447 models enumerated).
+- ⚠ **`~/.config/repo-cos/env` holds a LIVE PAID OpenRouter key** — $49.69 of a $50
+  weekly limit remaining, no expiry — while `<devrc>/SECRETS.md` documents that file as
+  belonging to a service retired 2026-09-07 and says it is safe to delete. That entry is
+  wrong about the key being dead. `via: measurement` (the free `/api/v1/key` endpoint).
+- **Leading hypothesis:** mechanism A is closed by the shipped v0.1.106 and mechanism B
+  (rank 34 / `cli#665`) is not, so the post-ship grid should show the four `other` cells
+  flipping to `yes` while every unwritable-prefix cell stays `no`. One of the four is now
+  measured; three are not.
+- 🔴 **Stated limit — the model axis was CHANGED mid-run at the operator's direction**,
+  from the recorded `claude-sonnet-5 / gpt-5.6-terra / gemini-3.8-flash / grok-4.6` to
+  `z-ai/glm-5.3-flash / xiaomi/mimo-v2.5 / deepseek/deepseek-v4-pro`. The two sets are
+  DISJOINT, so rank 36's "compare the `other` cells against the recorded 4-of-4 failure"
+  cannot be done cell-for-cell — the in-flight run tests whether the recorded
+  MODEL-INDEPENDENCE holds on three models never tried, which is a different and arguably
+  stronger question. 🔴 **The confound to watch when reading it: a cheap model that
+  simply cannot drive the task produces the same `CLOSING_CONDITION=no` as a broken
+  product.** Only the transcript separates those two; the verdict line cannot.
+- **Next probe:** grade every finished container and tabulate by (identity, prefix
+  writable), then read the transcript of any `no` cell before attributing it to the
+  product:
+  for t in "$D"/runs/t-{glm,mimo,dsv4}-*/; do
+    id=$(basename "$t"); u=root
+    case "$id" in *-nodeuser-*|*-ubuntu-*) u=dev ;; esac
+    printf '%-34s ' "$id"; bash "$D/grade.sh" "$id" "$u" 2>&1 | tail -1
+  done
