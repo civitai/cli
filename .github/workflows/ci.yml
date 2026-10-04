@@ -561,12 +561,15 @@ jobs:
   #
   #   (a) ANTI-PATTERN gate — scaffold the SDK template, then scan the generated
   #       source for a curated denylist of dead/superseded platform surfaces
-  #       (the REMOVED /api/v1/blocks/buzz route, the superseded shared-storage
-  #       REST route, the deprecated @civitai/blocks-cli). A scaffold can compile
-  #       and pass the pins guard yet still fetch a route that 404s at runtime —
-  #       exactly how playable-collections shipped 3 broken features. The denylist
-  #       is precise: it does NOT flag legitimately-REST unbridged endpoints
-  #       (catalog /models, /images; the /me viewer read; the /dev-token mint).
+  #       (the REMOVED /api/v1/blocks/buzz route, the deprecated
+  #       @civitai/blocks-cli, the dead RESIZE_IFRAME host message). A scaffold
+  #       can compile and pass the pins guard yet still fetch a route that 404s at
+  #       runtime — exactly how playable-collections shipped 3 broken features.
+  #       The denylist is precise: it does NOT flag legitimately-REST endpoints
+  #       (catalog /models, /images; the /me viewer read; the /dev-token mint;
+  #       and shared-storage/*, which is the path the platform is CONSOLIDATING
+  #       on — a `shared-storage-rest` rule was removed for that reason, since
+  #       this job is required and was therefore enforcing the wrong direction).
   #       Logic + fixtures live in internal/antipattern (offline table test); this
   #       runs it against the real `civitai app init` output.
   #

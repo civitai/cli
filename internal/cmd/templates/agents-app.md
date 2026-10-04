@@ -167,8 +167,15 @@ fixed list. As of this CLI version:
 - **A hung hook is usually a missing HOST handler, not your bug.** The host
   silently drops messages it cannot handle, so an unanswered request looks
   exactly like a broken component. Check the host side before rewriting yours.
-- **`useSharedStorage()` is postMessage-only.** There is no REST route for it —
-  it cannot be scripted, seeded or written from a server.
+- **Shared storage has a REST path, and it is the one to prefer.** There are 11
+  routes under `/api/v1/blocks/shared-storage/` (append, counts, increment, item,
+  list, report, top, unvote, update, vote, withdraw) and the platform is
+  consolidating on them; the `useSharedStorage()` postMessage bridge still works,
+  so both are valid. Each route is a thin adapter over the same server function
+  the bridge message called, so a REST read cannot diverge from a bridge read.
+  They authenticate with the **block token** and re-verify it as a block JWT — so
+  an `auth: "oauth"` app cannot use them, and declaring any `apps:storage:*`
+  scope alongside `auth: "oauth"` is refused when you submit.
 - **Open the resource picker with NO base-model ecosystem by default.**
   `baseModelGroup` is a filter, so a hardcoded one hides every resource outside
   that family and the picker looks empty to the viewer. Pass it only when the

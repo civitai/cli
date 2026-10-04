@@ -15,6 +15,8 @@
 //   - it wrote shared state by POSTing `/api/v1/blocks/shared-storage/*` with a
 //     hand-rolled (and wrong) payload shape, instead of the host-mediated
 //     shared-storage bridge — so shared writes silently mismatched the contract.
+//     🔴 THE PAYLOAD BUG WAS REAL; THE CONCLUSION DRAWN FROM IT NO LONGER HOLDS
+//     — see the shared-storage carve-out below.
 //
 // The doctrine (App Blocks "bridge-first"): a browser App block does NOT talk to
 // civitai's REST API directly for any surface that has a PAGE-HOST BRIDGE. The
@@ -23,10 +25,32 @@
 // is civitai's `src/components/AppBlocks/hostHandlerParity.ts` INVENTORY: buzz
 // reads, viewer, workflows (submit/estimate/poll/cancel), pickers, app storage,
 // shared storage, image upload, wildcard packs. A direct `fetch()` to the REST
-// route BEHIND one of those bridges is the anti-pattern.
+// route BEHIND one of those bridges is the anti-pattern — EXCEPT for shared
+// storage, which that inventory still lists (the bridge is real and still works)
+// but which is no longer an anti-pattern to reach over REST.
+//
+// 🔴 SHARED STORAGE IS THE ONE DELIBERATE CARVE-OUT FROM THAT DOCTRINE (operator
+// decision, 2026-10-04): the platform is CONSOLIDATING ON THE REST PATH there, so
+// `/api/v1/blocks/shared-storage/*` is the SUPPORTED path and must never be
+// flagged. This package used to carry a `shared-storage-rest` rule saying the
+// opposite; it was removed, because a REQUIRED CI gate telling authors to avoid
+// the path the platform is consolidating on is worse than no gate. What changed:
+// the 11 routes under `/api/v1/blocks/shared-storage/` are each a thin adapter
+// over the SAME server function the `SHARED_*` bridge message calls, so per-app
+// schema isolation, the approved-block and revocation checks and the fail-closed
+// kill-switch hold verbatim and a REST read cannot diverge from a bridge read —
+// i.e. the "wrong payload shape" trap above is a property of hand-rolling the
+// payload, not of the transport. The `SHARED_*` bridge still works and apps still
+// use it; BOTH paths are valid, so neither direction is an anti-pattern and NO
+// rule here should flag either. Do not "restore" the rule, and do not invert it
+// into one that flags the bridge — that would fail existing correct apps' CI.
+//
+// The doctrine above is still exactly right about everything else: buzz (a route
+// genuinely REMOVED) and dead host messages like `RESIZE_IFRAME`.
 //
 // PRECISION — this is a small CURATED denylist, NOT a blanket "no /api/v1/blocks".
-// Several `/api/v1/blocks/*` routes are legitimately REST and have NO bridge:
+// Several `/api/v1/blocks/*` routes are legitimately REST and must NOT be flagged
+// (each entry says whether a bridge exists for it):
 //   - `/api/v1/blocks/models`, `/api/v1/blocks/images` — public high-volume
 //     catalog reads (there is no host bridge; the scaffolds fetch these).
 //   - `/api/v1/blocks/dev-token` — the headless dev-token mint (a CLI/dev path,
@@ -34,10 +58,15 @@
 //   - `/api/v1/blocks/me` — the viewer self-read; its `useViewer()` bridge
 //     successor exists but the route STAYS LIVE until the hook publishes and
 //     consumers migrate, and the page-money scaffold uses it in its dev harness.
+//   - `/api/v1/blocks/shared-storage/*` — the 11 app-global shared-store routes.
+//     These have a bridge AND are the path being consolidated on; see the
+//     carve-out above. A live app (ZacxDev/civitai-app-custom-generators,
+//     `src/platform/sharedStorage.ts`) reads the board through them in
+//     production, so flagging them fails a correct, shipped app.
 //
 // Flagging any of those would false-fail a correct scaffold, so they are
-// deliberately absent from the denylist. We only flag routes that are REMOVED or
-// whose bridge has fully superseded the REST shape (buzz, shared-storage).
+// deliberately absent from the denylist. We only flag routes that are REMOVED
+// (buzz).
 //
 // THE DENYLIST IS NOT ONLY ABOUT REST. It already covered a dead TOOL
 // (`@civitai/blocks-cli`, a retired npm package). `RESIZE_IFRAME` adds a third
@@ -112,16 +141,17 @@ func Rules() []Rule {
 			Pattern:     regexp.MustCompile("/api/v1/blocks/buzz(?:[/?'\"\\x60\\s),;]|$)"),
 			Replacement: "read buzz through the host bridge — useBuzzBalance() / useBuzzWorkflow() from @civitai/blocks-react (the /api/v1/blocks/buzz route was REMOVED)",
 		},
-		{
-			// SUPERSEDED route. Cross-user/app-global storage is host-mediated
-			// via the SHARED_* bridges (SHARED_APPEND / SHARED_GET_COUNT /
-			// SHARED_VOTE / … in hostHandlerParity.ts). The REST route is the
-			// exact "wrong payload shape" trap the playable-collections app hit.
-			ID:          "shared-storage-rest",
-			What:        "direct fetch of the superseded /api/v1/blocks/shared-storage REST route",
-			Pattern:     regexp.MustCompile("/api/v1/blocks/shared-storage"),
-			Replacement: "use the host-mediated shared-storage hooks from @civitai/blocks-react (the SHARED_APPEND / SHARED_GET_COUNT / SHARED_VOTE bridges), not the REST route — the REST payload shape is superseded",
-		},
+		// 🔴 NO shared-storage RULE HERE, DELIBERATELY. One lived at this spot and
+		// was removed: `/api/v1/blocks/shared-storage/*` is the path the platform
+		// is consolidating on (see the carve-out in the package doc), so the rule
+		// was an enforced, branch-protection-required gate pushing authors the
+		// wrong way. It was also INEFFECTIVE, which is why no narrower pattern was
+		// substituted: measured against the real migrated app, its bare substring
+		// `/api/v1/blocks/shared-storage` matched 1 line — a COMMENT, since ScanDir
+		// greps raw lines and strips no comments — and 0 of the real call sites,
+		// which read `'blocks/shared-storage/list'` with no `/api/v1` prefix
+		// because `@civitai/sdk`'s `app.site.get` prepends it. It fired on prose
+		// and missed every call. TestSharedStorageRestIsAccepted is the guard.
 		{
 			// DEPRECATED tool. The npm `@civitai/blocks-cli` package is retired in
 			// favour of this Go CLI; a scaffold that references it teaches authors
