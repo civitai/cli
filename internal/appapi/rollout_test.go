@@ -198,7 +198,7 @@ func TestRollout503FromAnEdgeIsNotAVerdict(t *testing.T) {
 			t.Errorf("a 503 with body %q read as %q, want %q — only a body carrying the ROUTE's own "+
 				"non-empty `message` may be read as a rollout refusal", body, got.State, RolloutUnknown)
 		}
-		if got.Established() {
+		if got.Enrolled() != nil {
 			t.Errorf("a 503 with body %q reported an established verdict", body)
 		}
 	}
@@ -275,7 +275,7 @@ func TestRolloutTransportFailureIsUnreachableNotNotEnrolled(t *testing.T) {
 		t.Errorf("a dial failure read as %q, want %q — an unreachable host must never be reported as a "+
 			"rollout refusal", got.State, RolloutUnreachable)
 	}
-	if got.Established() {
+	if got.Enrolled() != nil {
 		t.Error("a dial failure reported an established verdict")
 	}
 	if got.HTTPStatus != 0 {
@@ -363,7 +363,7 @@ func TestRolloutEnrolledIsATristate(t *testing.T) {
 			t.Errorf("state %q -> %v, want nil — a script asking `is this developer outside the rollout` "+
 				"must not be handed false for a question that was never answered", st, *got)
 		}
-		if r.Established() {
+		if r.Enrolled() != nil {
 			t.Errorf("state %q reported an established verdict", st)
 		}
 	}

@@ -172,8 +172,13 @@ func (r Rollout) Enrolled() *bool {
 	return nil
 }
 
-// Established reports whether the probe actually answered the rollout question.
-func (r Rollout) Established() bool { return r.Enrolled() != nil }
+// 🔴 THERE IS DELIBERATELY NO `Established()` HELPER. One was written —
+// `func (r Rollout) Established() bool { return r.Enrolled() != nil }` — and
+// removed before shipping: it had three call sites, all in this package's own
+// tests, and no production caller. Exported API is a contract reviewers and
+// future callers have to maintain, and `Enrolled() == nil` already says the
+// thing at every site that asks. Add it back when a caller outside a test wants
+// it, not before.
 
 // CheckAppBlocksRollout asks the host whether the calling account is inside the
 // `app-blocks-enabled` rollout.
