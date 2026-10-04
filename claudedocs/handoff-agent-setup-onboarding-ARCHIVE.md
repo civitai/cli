@@ -373,3 +373,111 @@ the `civitai.com` zone. Never the origin, never the docs repo.
 ### ✅ RESOLVED — was cli#596 audited? (the previous handoff said no)
 
 - as-of: 2026-09-14
+
+## Evicted from `claudedocs/handoff-agent-setup-onboarding.md` — 2026-10-04
+
+Closed investigation bodies from the agent-setup-onboarding arc, evicted when rank 34 shipped end-to-end (cli#777 -> v0.1.112 -> docs#126). Each heading and as-of stamp stays in the handoff as a pointer. Read a block here before re-deriving a diagnosis in the same area: the dogfood matrix readings, the rank-33 verdict decision and its three plan corrections, and the pins-vs-published recurrences all live in this file now.
+
+From `Open investigations — live diagnosis state`:
+
+**Supersedes the `✅ DECIDED (2026-09-19)` block above, whose "Next probe: none —
+what is missing is a DECISION" is now wrong.** The decision was made *and*
+implemented. The durable rule lives in
+`claudedocs/decisions/35-agent-setup-merges-a-users-file.md`
+§"The `mcp-*` rows for an agent this CLI has no target for".
+🔴 **Each correction below was MEASURED, not reasoned. The decision record
+(`claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md`) has been updated with
+all three, and its header retracted.**
+- **Correction 1 — the prescribed code does not compile.** The record's sketch reads
+  `case checkMCPSite, checkMCPOrch:`; **those constants do not exist**. The check
+  names are bare literals on the `civitaiMCPServers` table (`agent_setup_mcp.go`).
+  Shipped as a derived `isMCPCheckName` lookup against that table, which is also what
+  `TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode`'s own docstring demands so a
+  third server is covered the moment it is added. `via: command` (build failure)
+- **Correction 2 — coupled edit 3 predicted the WRONG DIRECTION, and the guard was
+  BLIND.** The plan said `readme_agent_setup_claims_test.go` "goes red until the
+  README sentence names the exemption". Measured, in this order:
+  1. code change alone → `go test ./internal/cmd` **ok**, whole package green, with
+     the README sentence left false;
+  2. then adding `` `mcp-site` `` / `` `mcp-orch` `` to that sentence → **FAIL**:
+     *"the README's exemption sentence names \"mcp-site\" as excluded from `ok`, but
+     checkCountsTowardVerdict COUNTS it."* — **which is itself false.**
+  Cause: the guard derives `exemptForOther` with `"cursor"` — an agent that **IS** in
+  `agentTargets` — so "other" there has only ever meant *not claude*, never *not in
+  the table*. There are **three** agent classes and it sampled two. Following its
+  failure message leads to de-backticking the names (round 3 of #641's measured wrong
+  fix) or to reverting correct code. Widened to sample the unknown class, assert that
+  identity is absent from `agentTargets`, and pin the clause whole. `via: measurement`
+- **Correction 3 — coupled edit 6's `AGENTS.md` item and its forced eviction were NOT
+  NEEDED.** Item **35** already routes here: its trigger sentence names *"`--check`'s
+  verdict"* verbatim, its Code header already lists `checkCountsTowardVerdict`, and
+  decision 35 already carries the verdict-exemption table this change extends.
+  `AGENTS.md` is **unchanged at 30,493 bytes** and no eviction was paid.
+  ⚠ **This is the ONE place the implementation departs from the decision as written.**
+  It is reversible; the `--json` contract's owner can overrule it by minting a new
+  numbered item and paying the eviction. `via: code`
+- **Ruled out — that the change is a blanket exemption.** Negative control with the
+  MCP config removed, same binary: `claude` ok=false rc=1 · `cursor` ok=false rc=1 ·
+  `vscode` ok=false rc=1 · `other` ok=true rc=0. `via: measurement`
+- **Verification matrix** for the new behavioural guard
+  `TestMCPRowsDoNotFailTheVerdictForAnAgentWithNoConfigTarget`: **RED at
+  `origin/main` (`07e9031`)** on `a correct setup for an unknown agent is ok and
+  exits 0`; green at HEAD; a blanket-exemption mutant dies on its own distinct arm
+  (`a KNOWN agent with no MCP config still fails`). The widened README ledger kills
+  three mutants, each with its own message. `make ci-shallow` (depth-1 tier,
+  committed state) **21/21**. `via: measurement`
+- **Next probe:** none for the mechanism. What remains is **merge sequencing** —
+  #668 then #667 then the doc branch then rebase #669.
+**Supersedes the "⏳ IN FLIGHT — rank 36" block above** (its status only; its cost and
+grader-control findings stand).
+- **Observed (with values) — the full grid.** 18 trials, all stopped `"finished"` in 7–11
+  steps, graded from the containers with the `#673` grader:
+  | env | prefix writable | identity | glm-5.3-flash | mimo-v2.5 | deepseek-v4-pro |
+  |---|---|---|---|---|---|
+  | node-root | yes | claude | ✅ yes | ✅ yes | ✅ yes |
+  | node-root | yes | codex | ✅ yes | ✅ yes | ✅ yes |
+  | node-root | yes | **other** | ✅ **yes** | ✅ **yes** | ✅ **yes** |
+  | stale-cli 0.1.101 | yes | claude | ✅ yes | ✅ yes | ✅ yes |
+  | node-user | **no** | claude | ❌ no | ❌ no | ❌ no |
+  | ubuntu-apt | **no** | claude | ❌ no | ❌ no | ❌ no |
+  Every `yes` reads `login_version=0.1.106 agent_shell_version=0.1.106 mcp_rows=2`; every
+  `other` cell reads `failed_checks=[mcp-site,mcp-orch,authenticated]` with both MCP rows
+  PRESENT and `false`, which is rank 33's design. Every `no` reads
+  `agent=unknown check_ok=parse-error mcp_rows=unreadable`.
+- 🔴 **MECHANISM A IS CLOSED.** The `other` identity passes on all three models. With the
+  `gemini × node-root × other` smoke cell — which IS one of the recorded four — that is
+  **four `other` cells measured post-ship, all `yes`**, against 4-of-4 failing before.
+- 🔴 **MECHANISM B IS UNFIXED, AND THE REMEDY ANALYSIS IS AIMED AT A PATH NOBODY WALKS.**
+  Enumerated, not sampled — **6 of 6** failing containers:
+  `installed_at=/home/dev/.npm-global/bin/civitai bash_login=none zsh_login=none`.
+  The install SUCCEEDS; nothing makes it reachable. The hosted prompt documents candidate
+  **(b)** as `--prefix="$HOME/.local"`, and this doc's measured objection to (b) is that
+  the stock `~/.profile` block serves bash but not zsh — **but all six agents
+  independently chose `~/.npm-global`, which `~/.profile` does not add at all**, so
+  neither shell finds it. That is one step WORSE than the modelled case, and the
+  `ctl-profile` control reproduces (b), not what agents do. `via: measurement`
+- **Ruled out — that the six failures are a capability failure of cheap models.** This was
+  the confound flagged before the run: a model that cannot drive the task yields the same
+  `CLOSING_CONDITION=no` as a broken product. It does not apply — every trial stopped
+  `"finished"`, and all six failures hit `EACCES` (5–7 occurrences each) and attempted
+  prefix remedies (8–14 mentions each). `via: measurement` (transcript scan)
+- **Ruled out — that the verdict is model-dependent.** Identical outcomes across three
+  models absent from every prior grid. `via: measurement`
+- 🔴 **Stated limit — the comparison clause is PARTLY UNMET.** Rank 36 asks that the
+  `other` cells be compared against the recorded 4-of-4 failure. **One** of those four
+  (`gemini × node-root × other`) was re-measured directly and flipped; the other three
+  (`gemini × stale`, `grok × node-root`, `grok × stale`) were NOT re-run, and the three
+  new `other` cells are on models absent from the record. The claim "mechanism A is
+  closed" therefore rests on 1 direct re-measurement plus model-independence, not on 4
+  direct ones. Closing that gap is three trials at ~$0.08.
+- **Observed — cost, against the `--max-cost` ceiling that framed this item.** 21 trials
+  totalled **$0.1211** (mean $0.0058) against a $21 cap. Per model: mimo $0.0009–0.0013,
+  glm $0.0013–0.0026, deepseek $0.0029–0.0054, **gemini $0.0248–0.0297** — the frontier
+  model was 5–20× dearer than any of the three.
+- **Next probe:** the three missing recorded cells, which is the whole remaining gap:
+  D=/home/zach/workspace/civit/cli-dogfood36/scripts/dogfood
+  cd "$D" && DOGFOOD_MODELS='x-ai/grok-4.6|grok' DOGFOOD_ENVS='df-node-root|noderoot|root df-stale-cli|stale|root' \
+    DOGFOOD_IDENTITIES='other|' bash driver.sh
+  🔴 Then the `gemini × stale × other` cell separately — and note the driver's
+  non-crossed envs run the FIRST identity in the list, which is why `DOGFOOD_IDENTITIES`
+  must name `other` first or the stale cell silently runs a different identity.
