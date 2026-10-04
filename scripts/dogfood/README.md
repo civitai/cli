@@ -1010,17 +1010,28 @@ SRV=$(docker inspect -f \
 #    listening, and that immediate failure looks exactly like a blocked network: it
 #    cost a false "inter-container networking is blocked" diagnosis once. The cap is
 #    the point — an unbounded `until` is what hung the previous recipe.
+# 🔴 `for … done || { … }` would be DEAD IN BOTH ARMS: a loop's status is that of
+#    the LAST command in its body, which is `sleep`, so it always exits 0. Use a
+#    flag. And the probe's error is PRINTED, not sent to /dev/null — hiding it is
+#    what the previous recipe did wrong.
+served=0
 for _ in $(seq 30); do
-  docker exec dogfood-promptsrv python3 -c \
-    'import urllib.request;urllib.request.urlopen("http://127.0.0.1:8099/prompt.md",timeout=2)' \
-    2>/dev/null && break
+  if docker exec dogfood-promptsrv python3 -c \
+      'import urllib.request;urllib.request.urlopen("http://127.0.0.1:8099/prompt.md",timeout=2)'; then
+    served=1; break
+  fi
   command sleep 1
-done || { echo "server never served /prompt.md — is /tmp/served/prompt.md there?" >&2; }
+done
+[ "$served" = 1 ] || echo "server never served /prompt.md — is /tmp/served/prompt.md there?" >&2
 
 # 4. Run it. driver.sh preflights the URL and refuses early if it cannot fetch it.
 DOGFOOD_PROMPT_URL="http://$SRV:8099/prompt.md" DOGFOOD_TRIAL_PREFIX=px \
   DOGFOOD_ENVS='df-node-user|nodeuser|dev' DOGFOOD_IDENTITIES='claudeid|CLAUDECODE=1' \
   DOGFOOD_MODELS='xiaomi/mimo-v2.5|mimo' bash driver.sh
+
+# 5. Teardown. The trap covers a SCRIPT; pasted into an interactive shell it fires
+#    only at shell exit, so keep the explicit line for stopping it mid-session.
+docker rm -f dogfood-promptsrv
 ```
 
 ⚠ **Why a container and not the host:** on the measured host the firewall drops
@@ -1037,8 +1048,13 @@ refuses that, but incidentally rather than by design.
 `--credential-file`, and it reaches host argv, the banner, the `start` record, the
 `user` record, `commands.log`, the container's own `curl` argv and the OpenRouter
 request body — and the `Redactor` only knows strings read from the credential FILE,
-so it scrubs none of them. `driver.sh` refuses a URL carrying `user@host`, a `token=`
-or a presigned-URL parameter for exactly that reason. A presigned S3 link or a private
+so it scrubs none of them. `driver.sh` refuses a URL carrying **userinfo** (`user[:password]@host`), extracted from the
+authority rather than pattern-matched. 🔴 **That is the ONLY shape it detects.** A token in a
+query parameter (`?token=`, `?X-Amz-Signature=`) or in the path (a capability URL, a private
+gist) is **NOT** refused and leaks just as widely — an earlier version of this line promised
+otherwise, describing a six-pattern blocklist that was deleted for being wrong in both
+directions (it admitted `?Token=` on capitalisation while hard-refusing `?cachekey=`). Serve
+the file unauthenticated; the harness cannot check that for you. A presigned S3 link or a private
 raw-GitHub URL is the tempting shortcut and the one to avoid.
 
 🔴 **SUCH A TRIAL IS NOT EVIDENCE ABOUT THE SHIPPED ENTRYPOINT, AND ITS VERDICT LINE

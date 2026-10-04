@@ -1379,6 +1379,33 @@ func TestDogfoodDriverTreatsTheExplicitDefaultURLAsADefaultRun(t *testing.T) {
 	}
 }
 
+// 🔴 EACH HALF OF THE TRIM IS GUARDED SEPARATELY — round 3's 🟡4. The blank-value
+// test cannot kill a mutant that deletes only the LEADING trim, because the
+// trailing trim alone still empties an all-whitespace value. That made the
+// surviving mutant look like a badly-isolated mutant and nothing else; measured,
+// it is also a real behaviour change with no coverage: a LEADING-padded default
+// URL printed the full "NON-HOSTED instructions" banner while runner.py stripped
+// it, treated it as the default and recorded no prompt_url — round 2's 🟡1
+// symptom again. A survivor is a claim about the mutant first AND a prompt to ask
+// what the suite cannot see.
+func TestDogfoodDriverTrimsLeadingWhitespaceOnThePromptURL(t *testing.T) {
+	argv, code, out := runStubbedDriver(t, []string{
+		"DOGFOOD_PROMPT_URL=  " + dogfoodHostedPrompt,
+		"DOGFOOD_MODELS=m|m", "DOGFOOD_ENVS=img|e|u", "DOGFOOD_IDENTITIES=i|X=1",
+	})
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, out)
+	}
+	if strings.Contains(out, "NON-HOSTED instructions") {
+		t.Fatalf("a LEADING-padded default URL printed the patched-instructions banner. "+
+			"runner.py strips it, treats it as the default and records no prompt_url, so the "+
+			"banner and the transcript disagree.\n%s", out)
+	}
+	if j := strings.Join(argv, " "); strings.Contains(j, "--prompt-url") {
+		t.Fatalf("--prompt-url was forwarded for a leading-padded default URL.\nargv: %v", argv)
+	}
+}
+
 // 🔴 THE NEWLINE ROUTE, REFUSED AT BOTH LAYERS. The brief's own comment calls a
 // multi-line value "the one way repo content could reach a trial whose blindness
 // is otherwise a mount namespace" — `--prompt-url` feeds the SAME message, so
@@ -1450,7 +1477,16 @@ func TestDogfoodDriverRefusesURLUserinfoAndNothingLegitimate(t *testing.T) {
 		{"userinfo with a bare user", "https://tok@example.com/prompt.md", true},
 		// 🔴 The false positives the old blocklist produced. Each is a URL an
 		// operator would plausibly type, and each used to be a hard exit 1.
-		{"an @ in the PATH, as Gitea raw URLs have", served + "?x=@zach", false},
+		// 🔴 THE BYPASS ROUND 3 FOUND: a second `@` after any `/` made the first
+		// attempt's `*/*@*` escape fail OPEN, admitting the credential. The
+		// authority is extracted now, so these must refuse.
+		{"userinfo PLUS an @ later in the path", "https://user:tok@example.com/path@v2/p.md", true},
+		{"userinfo PLUS an @ in a path segment", "https://tok@example.com/files/me@example.com/p.md", true},
+		// The false-positive class the deleted blocklist produced. 🟢3: an earlier
+		// fixture named "an @ in the PATH" actually put the @ in the QUERY, so the
+		// named class had no coverage at all. Both are present now.
+		{"a genuine @ in the PATH, as Gitea raw URLs have", "https://example.com/raw/@v2/p.md", false},
+		{"an @ in the query string", served + "?x=@zach", false},
 		{"a cache-busting parameter", served + "?cachekey=7", false},
 		{"a parameter merely ENDING in key", served + "?monkey=1", false},
 	} {
@@ -1472,6 +1508,18 @@ func TestDogfoodDriverRefusesURLUserinfoAndNothingLegitimate(t *testing.T) {
 				t.Fatalf("%q was refused as credential-bearing. It is not — this is the "+
 					"false-positive class the blocklist produced, and refusing it is a hard "+
 					"exit 1 with no override.\n%s", tc.url, out)
+			}
+			// 🔴 AND IT MUST ACTUALLY HAVE PROCEEDED. Round 3: this arm asserted only
+			// that the userinfo MESSAGE was absent, never that the run survived — so a
+			// mutant adding an unrelated `exit 1` for these URLs PASSED while both
+			// "legitimate" URLs were hard-refused. The arm's own comment says "refusing
+			// it is a hard exit 1 with no override", which is precisely what it was not
+			// checking. Same description-wider-than-implementation shape this ladder
+			// keeps producing.
+			if code != 0 {
+				t.Fatalf("%q exited %d. It carries no userinfo, so it must RUN — a refusal "+
+					"here is the false-positive class, whichever guard produced it.\n%s",
+					tc.url, code, out)
 			}
 		})
 	}

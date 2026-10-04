@@ -221,18 +221,32 @@ if [ -n "$PROMPT_URL" ]; then
     PROMPT_URL=""
   fi
 fi
-case "${PROMPT_URL#*://}" in
-  *@*) case "${PROMPT_URL#*://}" in
-         */*@*) : ;;                       # the `@` is in the path, not userinfo
-         *) echo "DOGFOOD_PROMPT_URL carries URL userinfo (user[:password]@host)." >&2
-            echo "  Refused: this value is recorded in the transcript, printed to stderr," >&2
-            echo "  passed to the container's own curl and sent to OpenRouter inside the" >&2
-            echo "  task, and the Redactor only knows strings read from the credential" >&2
-            echo "  FILE — it scrubs none of them. Serve the file unauthenticated." >&2
-            echo "  ⚠ This checks userinfo ONLY. A token in a query parameter or in the" >&2
-            echo "  path is NOT detected and leaks just as widely." >&2
-            exit 1 ;;
-       esac ;;
+# 🔴 THE AUTHORITY IS EXTRACTED, NOT PATTERN-GUESSED. The first attempt wrote
+# `*@*` with a `*/*@*` escape meaning "the @ is in the path" — which only asks
+# whether SOME `/` precedes SOME `@`, and that is a different predicate. Round 3
+# measured it failing OPEN on every URL with a second `@` after any `/`:
+#   https://user:tok@example.com/path@v2/prompt.md        ADMITTED
+#   https://tok@example.com/files/me@example.com/p.md     ADMITTED
+# and the credential then reached the forwarded argv, the banner, the start
+# record, commands.log, the container's curl and the OpenRouter body — the seven
+# surfaces this guard exists for. The DELETED blocklist would have refused all of
+# them, so that attempt was a net REGRESSION dressed as a structural fix.
+#
+# RFC 3986: userinfo is everything before the FIRST `@` in the AUTHORITY, and the
+# authority ends at the first `/`, `?` or `#`. Extracting it is one expansion and
+# is exact, which the pattern never was.
+pf_rest="${PROMPT_URL#*://}"
+pf_auth="${pf_rest%%[/?#]*}"
+case "$pf_auth" in
+  *@*)
+    echo "DOGFOOD_PROMPT_URL carries URL userinfo (user[:password]@host)." >&2
+    echo "  Refused: this value is recorded in the transcript, printed to stderr," >&2
+    echo "  passed to the container's own curl and sent to OpenRouter inside the" >&2
+    echo "  task, and the Redactor only knows strings read from the credential" >&2
+    echo "  FILE — it scrubs none of them. Serve the file unauthenticated." >&2
+    echo "  ⚠ This checks USERINFO ONLY. A token in a query parameter or in the" >&2
+    echo "  path is NOT detected and leaks just as widely — see the README." >&2
+    exit 1 ;;
 esac
 # Same shape, for runner.py's --max-steps. Empty => runner.py's own default of 40.
 #
