@@ -11,8 +11,7 @@ import (
 // block-goods.constants.ts. It is here rather than read out of the vendored
 // schema because the schema does not contain it and cannot: this bounds the
 // LENGTH OF THE JSON ENCODING of an opaque object, which JSON Schema has no
-// vocabulary for. That makes it the one goods number this package legitimately
-// holds a copy of.
+// vocabulary for.
 //
 // ⚠ The server measures `new TextEncoder().encode(JSON.stringify(payload))`,
 // i.e. UTF-8 bytes of the compact encoding. Go's `json.Marshal` also emits
@@ -20,6 +19,39 @@ import (
 // of both encoders, not by anything asserted here. A non-ASCII payload near the
 // bound is where to look if they ever disagree.
 const blockGoodPayloadMaxBytes = 2048
+
+// The `app_unlock` bounds, mirrored from the same server module
+// (BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ, BLOCK_APP_UNLOCK_MAX_PER_MANIFEST).
+//
+// 🔴 THESE QUALIFY UNDER THE SAME TEST AS THE PAYLOAD BOUND ABOVE — the schema
+// does not contain them and, here, deliberately will not. The published
+// `priceBuzz.maximum` is still 50000 for every kind and the narrow bound lives
+// only in a prose `description` that declares the server validator
+// authoritative; the arity rule is a whole-array property the per-item subschema
+// cannot state at all. So an `app_unlock` priced at 5001, and a second
+// `app_unlock` in one manifest, BOTH validate against the vendored schema and
+// are rejected at submit. That gap is the reason these are here.
+//
+// `blockGoodMinPriceBuzz`/`blockGoodMaxPriceBuzz` are NOT checks — the schema's
+// `minimum`/`maximum` already own the general range and re-checking it here
+// would be the duplicated-predicate mistake this file warns about twice. They
+// exist only so the mirrored message can name the real ceiling, and so the
+// `app_unlock` check can be scoped to exactly the window where the schema is
+// silent (2..50000, where it passes).
+const (
+	blockGoodMinPriceBuzz        = 2
+	blockGoodMaxPriceBuzz        = 50_000
+	blockAppUnlockMaxPriceBuzz   = 5_000
+	blockAppUnlockMaxPerManifest = 1
+)
+
+// The two `kind` values, mirroring BLOCK_GOOD_KINDS / BLOCK_GOOD_DEFAULT_KIND.
+// `app_unlock` is the one carrying extra rules; `good` is the default an absent
+// `kind` resolves to.
+const (
+	blockGoodDefaultKind   = "good"
+	blockGoodKindAppUnlock = "app_unlock"
+)
 
 // semantic.go ports the *semantic* manifest rules the server runs at approve
 // time in BlockManifestValidator
@@ -185,6 +217,7 @@ func goodsChecks(generic map[string]any) []Finding {
 
 	var out []Finding
 	seen := make(map[string]struct{}, len(raw))
+	appUnlockCount := 0
 	for i, entry := range raw {
 		e, ok := entry.(map[string]any)
 		if !ok {
@@ -211,6 +244,66 @@ func goodsChecks(generic map[string]any) []Finding {
 			continue
 		}
 
+		// Resolve the kind exactly as the server does: absent or unset means the
+		// default. A kind that is PRESENT but not a member is the schema's enum to
+		// reject, and the server `return`s on it — so the entry's kind-specific
+		// rules below are unreachable for it here too.
+		kind := blockGoodDefaultKind
+		if raw, present := e["kind"]; present {
+			k, isString := raw.(string)
+			if !isString || (k != blockGoodDefaultKind && k != blockGoodKindAppUnlock) {
+				continue // `kind must be one of good, app_unlock` — schema-covered.
+			}
+			kind = k
+		}
+
+		// The `app_unlock` price ceiling. Scoped to exactly the window where the
+		// vendored schema PASSES — a whole number in 2..50000 — because outside it
+		// the schema's own `minimum`/`maximum`/`type` already reject, and firing
+		// there too would report twice what the server reports once.
+		//
+		// 🔴 The message names the KIND'S ceiling, not the general one, mirroring
+		// the server verbatim including its ` for an app_unlock good` suffix. The
+		// server's own comment is explicit that for an `app_unlock` this string is
+		// the only machine-delivered statement of the real limit: get it wrong and
+		// a developer at 5001 is told to stay "between 2 and 50000", the bound they
+		// just satisfied.
+		if kind == blockGoodKindAppUnlock {
+			if price, isNumber := toNumber(e["priceBuzz"]); isNumber &&
+				price == float64(int64(price)) &&
+				price >= blockGoodMinPriceBuzz &&
+				price <= blockGoodMaxPriceBuzz &&
+				price > blockAppUnlockMaxPriceBuzz {
+				out = append(out, newFinding(at+".priceBuzz", fmt.Sprintf(
+					"%s.priceBuzz must be a whole number between %d and %d Buzz for an %s good",
+					at, blockGoodMinPriceBuzz, blockAppUnlockMaxPriceBuzz, blockGoodKindAppUnlock)))
+				continue
+			}
+		}
+
+		// `justification`. Shape-checked for ANY good so a developer who explains an
+		// ordinary item is not rejected for it; REQUIRED only for `app_unlock`.
+		//
+		// Only the two rules the schema cannot express are here. The schema already
+		// carries `minLength: 1` and `maxLength: 500`, and it measures the RAW
+		// string while the server measures the TRIMMED one — which makes the schema
+		// never MORE permissive, so its length bound cannot pass something the
+		// server's rejects. What it CANNOT see is whitespace-only (`" "` satisfies
+		// `minLength: 1`), and absence (`justification` is not in the schema's
+		// `required`, and could not be: the requirement is conditional on `kind`).
+		if raw, present := e["justification"]; present {
+			if s, isString := raw.(string); !isString || strings.TrimSpace(s) == "" {
+				out = append(out, newFinding(at+".justification", fmt.Sprintf(
+					"%s.justification must be a non-empty string", at)))
+				continue
+			}
+		} else if kind == blockGoodKindAppUnlock {
+			out = append(out, newFinding(at+".justification", fmt.Sprintf(
+				"%s.justification is required for an %s good — it makes the app paid, so a moderator must be told why",
+				at, blockGoodKindAppUnlock)))
+			continue
+		}
+
 		if payload, present := e["payload"]; present {
 			p, ok := payload.(map[string]any)
 			if !ok {
@@ -230,7 +323,35 @@ func goodsChecks(generic map[string]any) []Finding {
 				continue
 			}
 		}
+
+		// Reached only by an entry that survived every check above — which is what
+		// the server's parsed `goods` array holds, and what its arity check counts.
+		if kind == blockGoodKindAppUnlock {
+			appUnlockCount++
+		}
 	}
+
+	// ARITY, a whole-array property: at most one `app_unlock` per manifest, so
+	// "is this viewer admitted?" has exactly one answer. Unlike every check in the
+	// loop this one is ADDITIVE rather than entry-terminating — the server pushes
+	// it and falls through to return, so it can accompany a per-entry finding.
+	// Its path is `goods`, not `goods[i]`.
+	//
+	// ⚠ THE LIMIT, STATED: the server counts only goods that PARSED, and it
+	// enforces rules this package deliberately leaves to the schema (the `id`
+	// pattern and length, `title` length, `description`, the `kind` enum, the
+	// general price range). An entry failing one of those is dropped from the
+	// server's count and cannot be dropped from this one, so on a manifest that is
+	// ALREADY failing the schema the CLI can report an arity violation the server
+	// would not. Same bounded-and-cosmetic trade as the duplicate-id note above,
+	// and the same reason: re-implementing the schema's rules here to close it
+	// would put schema content in a second place.
+	if appUnlockCount > blockAppUnlockMaxPerManifest {
+		out = append(out, newFinding("goods", fmt.Sprintf(
+			"goods may declare at most %d %s good (found %d) — app access is one question with one answer",
+			blockAppUnlockMaxPerManifest, blockGoodKindAppUnlock, appUnlockCount)))
+	}
+
 	return out
 }
 
