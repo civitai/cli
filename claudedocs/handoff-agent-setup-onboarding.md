@@ -903,6 +903,16 @@ that catches an UNCLAIMED duplicate.
     regex, RETRACTED. The number that carries the item is **0 of 8** (agents that connected
     the failure to the `AGENTS.md` they had just written). 8/8 relayed the PATH line and
     6/8 warned it would not persist — the agents were never the weak link.
+    🔴 **A FOURTH CANDIDATE NOW EXISTS IN THE CLI, AND IT IS NOT YET REACHABLE BY ANY
+    AGENT.** `civitai agent-setup --fix-path` (cli#665 branch `zach/665-fix-path`) writes a
+    marker-guarded PATH block into `~/.zshenv` AND the file a bash login shell actually reads
+    (first existing of `~/.bash_profile`/`~/.bash_login`/`~/.profile`), so it is
+    install-location-independent — it does not care that agents chose `~/.npm-global`. Both
+    probes arm 1 names were measured to resolve the CLI on a dev host after it ran, with a
+    negative control. ⚠ **It changes NOTHING for a blind trial until the hosted
+    `agent-setup/prompt.md` names the flag**, and that edit must wait for a CLI release
+    carrying it, or the prompt tells agents to run a flag the published CLI lacks. Design,
+    residuals and the mutation matrix: `claudedocs/decisions/39-agent-setup-fix-path.md`.
     forcing: gate — cli#665 is open and its closing condition is unmet
 35. ✅ **DONE — docs#89 merged and verified LIVE** (7433 B, new step 4 present, old
     wording gone). Claim released.
