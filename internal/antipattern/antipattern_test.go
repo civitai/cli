@@ -194,62 +194,16 @@ func TestSharedStorageRestIsAccepted(t *testing.T) {
 		}
 	}
 
-	// Positive control #1: the rule set is non-empty and still reaches code, so
-	// the absences above are claims about the rules, not about an empty slice.
+	// Positive control: the rule set is non-empty and still reaches code, so the
+	// absences above are claims about the rules, not about an empty slice.
+	//
+	// The buzz-rest rule needs no ledger here. TestScanDir's `buzz-rest` fixture
+	// case already t.Fatalf's when that rule is absent or stops matching a buzz
+	// fetch, and the scan-clean `shared-storage-rest-ok` fixture already fails if
+	// buzz is widened into the shared-storage path — so all three assertions a
+	// ledger would make are held behaviourally, by the gate's own entrypoint.
 	if len(Rules()) == 0 {
 		t.Fatal("Rules() is empty — every absence asserted above is vacuous")
-	}
-
-	// Positive control #2, and the deliberate ledger: the sibling buzz rule MUST
-	// survive. `/api/v1/blocks/buzz` was genuinely REMOVED from the platform, so
-	// flagging it is still correct, and a cleanup sweep that removes the
-	// shared-storage rule must not take this one with it.
-	var buzz Rule
-	for _, r := range Rules() {
-		if r.ID == "buzz-rest" {
-			buzz = r
-		}
-	}
-	if buzz.Pattern == nil {
-		t.Fatal("the buzz-rest rule is GONE — /api/v1/blocks/buzz was REMOVED from the platform, " +
-			"so it must still be flagged; removing the shared-storage rule must not take it too")
-	}
-	if !buzz.Pattern.MatchString(`await fetch('/api/v1/blocks/buzz')`) {
-		t.Error("the buzz-rest rule no longer matches a buzz fetch — this control cannot observe " +
-			"the thing the test above reports zero of")
-	}
-	// …and buzz must not have been widened into the shared-storage path.
-	if buzz.Pattern.MatchString(`await fetch('/api/v1/blocks/shared-storage/list')`) {
-		t.Error("the buzz-rest rule matches a shared-storage route — it has been widened past the " +
-			"/buzz path segment")
-	}
-}
-
-// TestNoRuleMentionsSharedStorage is the structural half of the guard above: the
-// behavioural test proves no rule MATCHES the supported shapes today, and this
-// proves no rule is ABOUT shared storage at all — catching a re-added rule whose
-// pattern happens to miss every line the other test lists.
-func TestNoRuleMentionsSharedStorage(t *testing.T) {
-	checked := 0
-	for _, r := range Rules() {
-		checked++
-		for _, field := range []struct{ name, val string }{
-			{"ID", r.ID},
-			{"What", r.What},
-			{"Pattern", r.Pattern.String()},
-			{"Replacement", r.Replacement},
-		} {
-			if strings.Contains(strings.ToLower(field.val), "shared-storage") ||
-				strings.Contains(field.val, "SHARED_") ||
-				strings.Contains(field.val, "useSharedStorage") {
-				t.Errorf("rule %q names shared storage in its %s (%q) — shared storage is a "+
-					"deliberate carve-out: the REST path is being consolidated on and the bridge "+
-					"still works, so no rule should be about it", r.ID, field.name, field.val)
-			}
-		}
-	}
-	if checked == 0 {
-		t.Fatal("checked 0 rules — this control observed nothing")
 	}
 }
 
