@@ -251,6 +251,7 @@ elif [ "$ALLOW_LISTING_TEXT" = "1" ]; then
   # nothing. Said out loud anyway, because an operator who set it meant to arm
   # something and is entitled to know it did not.
   echo "note: DOGFOOD_ALLOW_LISTING_TEXT=1 is inert without DOGFOOD_CREDENTIAL_FILE" >&2
+  echo "      — an uncredentialed trial reaches no listing to rewrite." >&2
 fi
 
 if [ -n "$PROMPT_URL" ]; then
@@ -261,7 +262,6 @@ if [ -n "$PROMPT_URL" ]; then
   echo "   NON-HOSTED instructions. Their verdicts are evidence about that URL," >&2
   echo "   NOT about the shipped entrypoint. Each trial's start record carries" >&2
   echo "   prompt_url; grade.sh's verdict line does not." >&2
-  echo "      — an uncredentialed trial reaches no listing to rewrite." >&2
 fi
 
 run_one() {  # model short image ienv trial user

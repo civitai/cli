@@ -1112,3 +1112,112 @@ func TestDogfoodPromptURLIsMarkedOnlyWhenItMoved(t *testing.T) {
 		})
 	}
 }
+
+// 🔴 THE DRIVER-LEVEL ARM, AND THE DEFECT THAT PROVES IT WAS NEEDED.
+// `--prompt-url` was added to runner.py with three unit tests and NO driver
+// test, and the driver edit shipped a real bug that CI could not see: the new
+// `if [ -n "$PROMPT_URL" ]` block's `fi` closed the PRECEDING `elif` one line
+// early, so a pre-existing line — "an uncredentialed trial reaches no listing
+// to rewrite" — was swept out of the listing-text note and into the
+// instructions banner. `bash -n` passes (it is valid syntax), and
+// TestDogfoodDriverSaysAllowListingTextIsInertWithoutACredential passes because
+// it asserts `strings.Contains` of ONE line of a two-line note — a guard that is
+// SPELLED rather than structural, satisfied while the hazard exists in a
+// different shape.
+//
+// So this pins the two things a Contains-guard cannot: that the pass-through
+// REACHES runner.py, and that each stderr block stays WHOLE.
+
+// The flag must reach runner.py's argv — a driver that parses the variable and
+// forwards nothing produces a full matrix against the HOSTED prompt while the
+// operator believes they measured a patched one. Every verdict would be real
+// and about the wrong instructions.
+func TestDogfoodDriverForwardsThePromptURL(t *testing.T) {
+	const alt = "http://127.0.0.1:8099/prompt.md"
+	argv, _, _ := runStubbedDriver(t, []string{
+		"DOGFOOD_PROMPT_URL=" + alt,
+		"DOGFOOD_MODELS=m|m", "DOGFOOD_ENVS=img|e|u", "DOGFOOD_IDENTITIES=i|X=1",
+	})
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "--prompt-url "+alt) {
+		t.Fatalf("driver.sh did not forward --prompt-url.\nargv: %v\n\nWithout it the matrix runs "+
+			"against the HOSTED prompt while the operator believes it ran against a patched one.", argv)
+	}
+	// And it must NOT be forwarded when unset, so every already-measured grid's
+	// invocation is unchanged. runner.py treats empty as the default too, but
+	// that is a second line of defence, not this one.
+	argv, _, _ = runStubbedDriver(t, []string{
+		"DOGFOOD_MODELS=m|m", "DOGFOOD_ENVS=img|e|u", "DOGFOOD_IDENTITIES=i|X=1",
+	})
+	if j := strings.Join(argv, " "); strings.Contains(j, "--prompt-url") {
+		t.Fatalf("driver.sh forwarded --prompt-url with DOGFOOD_PROMPT_URL unset.\nargv: %v", argv)
+	}
+}
+
+// 🔴 EACH STDERR BLOCK MUST STAY WHOLE — this is the guard that catches a
+// mis-landed `fi`, and it is STRUCTURAL rather than spelled: it asserts the
+// COMPLETE line set of each block, so a line migrating between blocks fails
+// whichever block it left AND whichever it joined.
+func TestDogfoodDriverStderrBlocksStayWhole(t *testing.T) {
+	const alt = "http://127.0.0.1:8099/prompt.md"
+	// The listing-text note is TWO lines. A `fi` landing between them leaves the
+	// first and loses the second — invisible to a Contains on the first.
+	listing := []string{
+		"is inert without DOGFOOD_CREDENTIAL_FILE",
+		"an uncredentialed trial reaches no listing to rewrite",
+	}
+	// The instructions banner is four lines and must carry NOTHING ELSE: a line
+	// swept in from a neighbouring block reads as part of the warning.
+	banner := []string{
+		"the trials below are being fed",
+		"NON-HOSTED instructions",
+		"Each trial's start record carries",
+		"grade.sh's verdict line does not",
+	}
+
+	t.Run("the listing-text note keeps both lines when the banner is also printed", func(t *testing.T) {
+		_, _, out := runStubbedDriver(t, []string{
+			"DOGFOOD_ALLOW_LISTING_TEXT=1",
+			"DOGFOOD_PROMPT_URL=" + alt,
+			"DOGFOOD_MODELS=m|m", "DOGFOOD_ENVS=img|e|u", "DOGFOOD_IDENTITIES=i|X=1",
+		})
+		for _, want := range listing {
+			if !strings.Contains(out, want) {
+				t.Errorf("the listing-text note lost %q — a block boundary moved.\n%s", want, out)
+			}
+		}
+		for _, want := range banner {
+			if !strings.Contains(out, want) {
+				t.Errorf("the instructions banner lost %q.\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("the banner does not absorb the listing-text line", func(t *testing.T) {
+		// With the listing flag UNSET, that line must not appear at all. Under the
+		// mis-landed `fi` it printed on every DOGFOOD_PROMPT_URL run, because it had
+		// migrated into the banner's own block.
+		_, _, out := runStubbedDriver(t, []string{
+			"DOGFOOD_PROMPT_URL=" + alt,
+			"DOGFOOD_MODELS=m|m", "DOGFOOD_ENVS=img|e|u", "DOGFOOD_IDENTITIES=i|X=1",
+		})
+		if strings.Contains(out, "reaches no listing to rewrite") {
+			t.Fatalf("the instructions banner printed the listing-text line. A `fi` has landed "+
+				"inside the listing-text note, so that line now lives in THIS block.\n%s", out)
+		}
+		for _, want := range banner {
+			if !strings.Contains(out, want) {
+				t.Errorf("the instructions banner lost %q.\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("no banner when the variable is unset", func(t *testing.T) {
+		_, _, out := runStubbedDriver(t, []string{
+			"DOGFOOD_MODELS=m|m", "DOGFOOD_ENVS=img|e|u", "DOGFOOD_IDENTITIES=i|X=1",
+		})
+		if strings.Contains(out, "NON-HOSTED instructions") {
+			t.Fatalf("the instructions banner printed with DOGFOOD_PROMPT_URL unset.\n%s", out)
+		}
+	})
+}
