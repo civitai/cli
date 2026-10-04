@@ -583,8 +583,8 @@ func printDoctorRollout(w io.Writer, st ui.Styler, r doctorRolloutJSON) {
 		fmt.Fprintf(w, "  The host said: %s\n", safeTermBounded(r.ServerMessage))
 	}
 	if r.State != string(appapi.RolloutEnrolled) {
-		// The same sentence for every non-enrolled state, so it lives in one
-		// constant rather than being repeated seven times in the table above.
+		// The same sentence for all SIX non-enrolled states, so it lives in one
+		// constant rather than being repeated in six arms of the table above.
 		fmt.Fprintf(w, "  %s\n", rolloutNoGateNote)
 	}
 	fmt.Fprintln(w)

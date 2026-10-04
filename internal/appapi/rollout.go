@@ -95,7 +95,7 @@ import (
 // RolloutState is what the probe ESTABLISHED about the calling account. A string
 // so it can be published in `--json` unchanged.
 //
-// 🔴 FOUR OF THE SEVEN MEAN "COULD NOT ESTABLISH", AND THEY ARE SEPARATE VALUES
+// 🔴 FIVE OF THE SEVEN MEAN "COULD NOT ESTABLISH", AND THEY ARE SEPARATE VALUES
 // RATHER THAN ONE `unknown`. An absence has many causes, and conflating them is
 // the exact defect this probe exists to close: reporting an unreachable host, a
 // credential the host would not accept, or a refusal that fired BEFORE the
