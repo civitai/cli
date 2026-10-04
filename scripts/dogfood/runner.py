@@ -12,8 +12,9 @@ Usage:
             [--credential-file ~/.config/civitai/config.yaml]
             [--app-prefix dogfood4-] [--max-generations 3] [--max-submissions 1]
             [--max-steps 40] [--max-tokens 32000] [--no-carry-reasoning]
-            [--out <dir>]
-  runner.py --print-task [--brief "<one line>"]   # offline; spends nothing
+            [--prompt-url <url>] [--out <dir>]
+  runner.py --print-task [--prompt-url <url>] [--brief "<one line>"]
+                                                  # offline; spends nothing
 """
 import argparse
 import hashlib
@@ -1388,7 +1389,11 @@ def main() -> int:
                          "the hosted prompt.md. For measuring a PROPOSED change "
                          "to those instructions; such a trial is marked "
                          "`prompt_url` in its start record and is NOT evidence "
-                         "about the shipped entrypoint. Empty => the default.")
+                         "about the shipped entrypoint. MUST BE UNAUTHENTICATED: "
+                         "unlike --credential-file this is a VALUE, and it reaches "
+                         "host argv, the transcript, commands.log, the container's "
+                         "own curl and the OpenRouter request body, none of which "
+                         "the Redactor can scrub. Empty => the default.")
     # 🔴 THE BRIEF'S NAME, BECAUSE ITS PROSE IS NOT AN IDENTIFIER. `--brief`
     # records the brief's TEXT, which is the only thing the model sees and the
     # only thing worth pinning for reproducibility — but a grader has to map
@@ -1513,6 +1518,20 @@ def main() -> int:
         ap.error("--brief must be a single line (got an embedded newline). The "
                  "brief is operator-typed text, not a file — piping a file in is "
                  "how repo content reaches a blind trial.")
+
+    # 🔴 THE SAME REFUSAL FOR `--prompt-url`, BECAUSE IT FEEDS THE SAME MESSAGE.
+    # The comment above calls a multi-line `--brief` "the one way repo content
+    # could reach a trial" — `--prompt-url` is a SECOND way, and without this the
+    # sentence above is simply false at this revision. `task()` puts the URL
+    # FIRST, so an embedded newline does not merely append: it injects a
+    # paragraph AHEAD of the brief, in the position the model reads as its
+    # instructions. `DOGFOOD_PROMPT_URL=$(cat somefile)` is the shape.
+    # Refused at BOTH layers (driver.sh refuses it too) — this is the inner one,
+    # so a direct runner.py invocation is covered as well.
+    if "\n" in a.prompt_url or "\r" in a.prompt_url:
+        ap.error("--prompt-url must be a single line (got an embedded newline). It "
+                 "is the first paragraph of the trial's task, so a multi-line value "
+                 "injects instructions the harness's blindness depends on absent.")
 
     # 🔴 VALIDATED HERE, BEFORE A CONTAINER OR AN API CALL EXISTS. A
     # `--brief-name` that names nothing, or that names a brief whose committed

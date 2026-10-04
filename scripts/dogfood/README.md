@@ -971,14 +971,48 @@ and the remedy could not be tested before merging it.
 `--prompt-url` (driver: `DOGFOOD_PROMPT_URL`) points a trial at different instructions.
 Serve a patched copy and run the cells that failed:
 
+🔴 **Serve it from a CONTAINER on the docker bridge, not from the host.** The host
+recipe this section used to carry was wrong in three ways that each cost real time:
+it bound `0.0.0.0` on the host (exposing the directory to the LAN for the life of the
+run), backgrounded the server with `&` and never captured its PID or killed it (one
+outlived its run by ~an hour), and `cp`-ed into `/tmp/served` without creating it
+first — on a fresh machine the `cp` fails, the server never starts, and every cell
+then fails as an ordinary `no`. A container fixes all three: docker publishes no port
+unless you ask, `docker rm -f` is the teardown, and the mount is explicit.
+
+⚠ And on this host the host-side route **does not work anyway**: the firewall drops
+bridge→host, so a container cannot reach `http://<gateway>:8099`. Measured — the
+container-to-container path is the one that works.
+
 ```bash
+mkdir -p /tmp/served                        # the `cp` below fails silently without it
 cp /tmp/prompt.md /tmp/served/prompt.md     # the patched instructions
-(cd /tmp/served && python3 -m http.server 8099 --bind 0.0.0.0) &
-IP=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')
-DOGFOOD_PROMPT_URL="http://$IP:8099/prompt.md" DOGFOOD_TRIAL_PREFIX=px \
+docker rm -f dogfood-promptsrv 2>/dev/null
+docker run -d --name dogfood-promptsrv -v /tmp/served:/srv:ro -w /srv \
+  python:3.12-slim python3 -m http.server 8099 --bind 0.0.0.0
+SRV=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+  dogfood-promptsrv)
+# 🔴 WAIT FOR IT TO BIND. `docker run -d` returns before python is listening, and the
+# immediate failure looks exactly like a blocked network — it cost a false
+# "inter-container networking is blocked" diagnosis once.
+until docker exec dogfood-promptsrv python3 -c \
+  'import urllib.request,sys; urllib.request.urlopen("http://127.0.0.1:8099/prompt.md",timeout=2)' \
+  2>/dev/null; do command sleep 1; done
+
+DOGFOOD_PROMPT_URL="http://$SRV:8099/prompt.md" DOGFOOD_TRIAL_PREFIX=px \
   DOGFOOD_ENVS='df-node-user|nodeuser|dev' DOGFOOD_IDENTITIES='claudeid|CLAUDECODE=1' \
   DOGFOOD_MODELS='xiaomi/mimo-v2.5|mimo' bash driver.sh
+
+docker rm -f dogfood-promptsrv              # 🔴 teardown — it does not stop itself
 ```
+
+**The URL must be unauthenticated.** It is a VALUE, not a path like
+`--credential-file`, and it reaches host argv, the banner, the `start` record, the
+`user` record, `commands.log`, the container's own `curl` argv and the OpenRouter
+request body — and the `Redactor` only knows strings read from the credential FILE,
+so it scrubs none of them. `driver.sh` refuses a URL carrying `user@host`, a `token=`
+or a presigned-URL parameter for exactly that reason. A presigned S3 link or a private
+raw-GitHub URL is the tempting shortcut and the one to avoid.
 
 🔴 **SUCH A TRIAL IS NOT EVIDENCE ABOUT THE SHIPPED ENTRYPOINT, AND ITS VERDICT LINE
 CANNOT TELL YOU THAT.** `grade.sh` reads the container; it never reads the transcript,
@@ -994,6 +1028,17 @@ a default run's `start` key set is byte-identical to every grid run before this 
 existed (`TestDogfoodUncredentialedRunIsUnchanged` pins that key set, and it cannot see
 a flag passed with the default value — which is why
 `TestDogfoodPromptURLIsMarkedOnlyWhenItMoved` asserts that arm separately).
+
+🔴 **THE STATED LIMIT, AND IT IS WEAKER THAN "SILENCE MEANS THE REAL HOSTED PROMPT"
+SOUNDS.** The mark pins the URL *string*, never the instruction *bytes*. The hosted
+`prompt.md` lives in a different, independently-mutable repo and nothing here digests
+what was actually served — so a transcript with **no** `prompt_url` key asserts only
+*where the harness pointed*, and two default grids months apart are indistinguishable
+even if the prose changed underneath them. That is exactly the comparability the two
+pinned invariants exist to protect, so read a default grid's provenance as "the hosted
+URL, as it was on that date", never as "these bytes". Recording a `prompt_sha256` would
+be strictly stronger and is not done: it would add a key to every run, which is the
+re-base those invariants forbid.
 
 ## Agent identity is a dimension, not a detail
 

@@ -141,7 +141,46 @@ MAX_TOKENS="${DOGFOOD_MAX_TOKENS:-}"
 # instructions were patched; the trial's `start` record carries `prompt_url` for
 # exactly that reason. Use a distinct DOGFOOD_TRIAL_PREFIX so the runs are also
 # told apart on disk.
-PROMPT_URL="${DOGFOOD_PROMPT_URL:-}"
+#
+# 🔴 STRIPPED HERE, BECAUSE `runner.py` STRIPS AND THIS FILE'S OWN BANNER DOES
+# NOT. `[ -n "$PROMPT_URL" ]` is a non-emptiness test while `runner.py:88`
+# normalises with `.strip()`, so a BLANK-but-non-empty value used to print the
+# full "you are being fed NON-HOSTED instructions" banner, forward
+# `--prompt-url "   "`, and then feed the trial the HOSTED prompt with no
+# `prompt_url` key in its start record. That is this file's own named hazard —
+# a matrix run against the hosted prompt while the operator believes they
+# measured a patched one — arriving by the one path neither forwarding test
+# covered. Normalising once, here, makes the banner and the runner agree by
+# construction rather than by two predicates happening to match.
+PROMPT_URL="$(printf '%s' "${DOGFOOD_PROMPT_URL:-}" | tr -d '[:space:]')"
+# 🔴 SAME REFUSAL THE BRIEF GETS, AND FOR THE SAME REASON. `--prompt-url` feeds
+# the SAME user message as `--brief`, so it is a second instance of what the
+# README calls "the one route by which repo content could reach a blind trial":
+# `DOGFOOD_PROMPT_URL=$(cat somefile)` would append arbitrary text as the task's
+# second paragraph. runner.py refuses it too; this is the outer of the two.
+case "${DOGFOOD_PROMPT_URL:-}" in
+  *$'\n'*|*$'\r'*)
+    echo "DOGFOOD_PROMPT_URL must be a single line — a multi-line value injects" >&2
+    echo "  arbitrary text into the trial's task, which is the one thing the" >&2
+    echo "  harness's blindness depends on not happening." >&2
+    exit 1 ;;
+esac
+# 🔴 A CREDENTIAL-BEARING URL IS REFUSED: the value reaches host argv, the
+# banner, the start record, the `user` record, commands.log, the container's own
+# `curl` argv AND the OpenRouter request body — and the Redactor only knows
+# strings read from the credential FILE, so it scrubs none of them. The obvious
+# way to serve a patched prompt without standing up a server is a presigned link
+# or `https://user:token@…`, which would land a live credential in six places
+# including a third party. This file passes the Civitai credential as a PATH for
+# exactly this reason; the URL must be unauthenticated.
+case "$PROMPT_URL" in
+  *@*|*token=*|*Signature=*|*X-Amz-*|*sig=*|*key=*)
+    echo "DOGFOOD_PROMPT_URL looks like it carries a credential (user@host, a token" >&2
+    echo "  or a presigned-URL parameter). Refused: this value is recorded in the" >&2
+    echo "  transcript, printed to stderr and sent to OpenRouter in the task, and" >&2
+    echo "  the Redactor cannot scrub it. Serve the file unauthenticated instead." >&2
+    exit 1 ;;
+esac
 # Same shape, for runner.py's --max-steps. Empty => runner.py's own default of 40.
 #
 # 🔴 40 CANNOT CARRY A BUILD-AND-SHIP BRIEF, AND UNTIL THIS KNOB EXISTED NO
@@ -262,6 +301,31 @@ if [ -n "$PROMPT_URL" ]; then
   echo "   NON-HOSTED instructions. Their verdicts are evidence about that URL," >&2
   echo "   NOT about the shipped entrypoint. Each trial's start record carries" >&2
   echo "   prompt_url; grade.sh's verdict line does not." >&2
+  # 🔴 REACHABILITY PREFLIGHT — this file's stated job is "to refuse the two
+  # mistakes that are invisible afterwards", and an unreachable URL is exactly
+  # one. `grade.sh` reads the container, so a model that could not fetch its
+  # instructions produces an ordinary `no`, indistinguishable from a product
+  # defect — after paying up to `timeout 1500` per cell plus the OpenRouter
+  # spend for the whole grid. One host-side fetch costs 10 s at worst.
+  #
+  # ⚠ IT IS A HOST-SIDE CHECK AND THE TRIAL FETCHES FROM INSIDE A CONTAINER, so
+  # this can pass where the container still cannot reach it (`127.0.0.1` is the
+  # classic case: from the container that is the container). It rules out the
+  # common mistakes — typo, server not started, file not there — and does not
+  # certify container reachability.
+  if command -v curl >/dev/null 2>&1; then
+    if ! curl -fsS --max-time 10 -o /dev/null "$PROMPT_URL" 2>/dev/null; then
+      echo "refusing to run: DOGFOOD_PROMPT_URL is not fetchable from this host." >&2
+      echo "  Every cell would fail as an ordinary CLOSING_CONDITION=no, which is" >&2
+      echo "  indistinguishable from a product defect, after paying for the grid." >&2
+      exit 1
+    fi
+    echo "   (preflight: fetchable from this HOST — not a guarantee the container" >&2
+    echo "    can reach it; 127.0.0.1 would pass here and fail in the trial.)" >&2
+  else
+    echo "   (preflight SKIPPED: no curl on PATH — an unreachable URL will present" >&2
+    echo "    as every cell failing for no stated reason.)" >&2
+  fi
 fi
 
 run_one() {  # model short image ienv trial user
