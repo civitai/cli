@@ -971,40 +971,67 @@ and the remedy could not be tested before merging it.
 `--prompt-url` (driver: `DOGFOOD_PROMPT_URL`) points a trial at different instructions.
 Serve a patched copy and run the cells that failed:
 
-🔴 **Serve it from a CONTAINER on the docker bridge, not from the host.** The host
-recipe this section used to carry was wrong in three ways that each cost real time:
-it bound `0.0.0.0` on the host (exposing the directory to the LAN for the life of the
-run), backgrounded the server with `&` and never captured its PID or killed it (one
-outlived its run by ~an hour), and `cp`-ed into `/tmp/served` without creating it
-first — on a fresh machine the `cp` fails, the server never starts, and every cell
-then fails as an ordinary `no`. A container fixes all three: docker publishes no port
-unless you ask, `docker rm -f` is the teardown, and the mount is explicit.
+🔴 **Serve it from a CONTAINER on the docker bridge, not from the host** — and read
+the three corrections below, because the first version of this recipe was wrong in
+three ways and its REPLACEMENT was wrong in two more. Round 2 of `/audit-pr` ran it
+on a simulated fresh machine and it **hung forever**.
 
-⚠ And on this host the host-side route **does not work anyway**: the firewall drops
-bridge→host, so a container cannot reach `http://<gateway>:8099`. Measured — the
-container-to-container path is the one that works.
+- The original bound `0.0.0.0` on the **host** (exposing the directory to the LAN for
+  the life of the run) and backgrounded the server with `&` without ever capturing or
+  killing its PID — one outlived its run by about an hour.
+- The replacement added `mkdir -p` for the *destination* and left the **source**
+  undefined. `/tmp/prompt.md` is never created by the recipe, so `cp` fails and the
+  bind-wait loop then **spins forever** asking for a file that is not there, with
+  `2>/dev/null` hiding the 404. That is strictly worse than what it replaced: the old
+  recipe produced a gradeable (if wrong) grid; this one hangs with no message.
+- Two sentences stated as the mechanism were simply false, and they are why the gap
+  survived the round looking straight at it: the `cp` does **not** fail silently (it
+  prints `cp: cannot stat …` and exits 1), and the server **does** start regardless —
+  `python3 -m http.server` serves an empty directory quite happily.
 
 ```bash
-mkdir -p /tmp/served                        # the `cp` below fails silently without it
-cp /tmp/prompt.md /tmp/served/prompt.md     # the patched instructions
+# 1. The SOURCE. Fetch the live prompt, then patch it — this is the step whose
+#    absence made the old recipe hang.
+curl -fsS -A 'Mozilla/5.0' https://developer.civitai.com/agent-setup/prompt.md \
+  -o /tmp/prompt.md
+#    …apply your edit to /tmp/prompt.md now…
+
+# 2. Serve it, with teardown armed BEFORE the server exists.
+mkdir -p /tmp/served && cp /tmp/prompt.md /tmp/served/prompt.md
+trap 'docker rm -f dogfood-promptsrv >/dev/null 2>&1' EXIT INT TERM
 docker rm -f dogfood-promptsrv 2>/dev/null
 docker run -d --name dogfood-promptsrv -v /tmp/served:/srv:ro -w /srv \
   python:3.12-slim python3 -m http.server 8099 --bind 0.0.0.0
-SRV=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
-  dogfood-promptsrv)
-# 🔴 WAIT FOR IT TO BIND. `docker run -d` returns before python is listening, and the
-# immediate failure looks exactly like a blocked network — it cost a false
-# "inter-container networking is blocked" diagnosis once.
-until docker exec dogfood-promptsrv python3 -c \
-  'import urllib.request,sys; urllib.request.urlopen("http://127.0.0.1:8099/prompt.md",timeout=2)' \
-  2>/dev/null; do command sleep 1; done
+SRV=$(docker inspect -f \
+  '{{range $k, $v := .NetworkSettings.Networks}}{{$v.IPAddress}} {{end}}' \
+  dogfood-promptsrv | awk '{print $1}')
 
+# 3. Wait for it to BIND — BOUNDED. `docker run -d` returns before python is
+#    listening, and that immediate failure looks exactly like a blocked network: it
+#    cost a false "inter-container networking is blocked" diagnosis once. The cap is
+#    the point — an unbounded `until` is what hung the previous recipe.
+for _ in $(seq 30); do
+  docker exec dogfood-promptsrv python3 -c \
+    'import urllib.request;urllib.request.urlopen("http://127.0.0.1:8099/prompt.md",timeout=2)' \
+    2>/dev/null && break
+  command sleep 1
+done || { echo "server never served /prompt.md — is /tmp/served/prompt.md there?" >&2; }
+
+# 4. Run it. driver.sh preflights the URL and refuses early if it cannot fetch it.
 DOGFOOD_PROMPT_URL="http://$SRV:8099/prompt.md" DOGFOOD_TRIAL_PREFIX=px \
   DOGFOOD_ENVS='df-node-user|nodeuser|dev' DOGFOOD_IDENTITIES='claudeid|CLAUDECODE=1' \
   DOGFOOD_MODELS='xiaomi/mimo-v2.5|mimo' bash driver.sh
-
-docker rm -f dogfood-promptsrv              # 🔴 teardown — it does not stop itself
 ```
+
+⚠ **Why a container and not the host:** on the measured host the firewall drops
+bridge→host, so a container cannot reach `http://<gateway>:8099`. ⚠ That reading is
+**inconclusive and not a cleared control** — the host's own curl timed out in the same
+probe, so both arms failed and the measurement attributes nothing. The container route
+is what was observed to work; treat the explanation as a hypothesis.
+
+⚠ The `$SRV` expression takes the FIRST network's address deliberately: a container on
+two networks would otherwise concatenate both into one malformed string. The preflight
+refuses that, but incidentally rather than by design.
 
 **The URL must be unauthenticated.** It is a VALUE, not a path like
 `--credential-file`, and it reaches host argv, the banner, the `start` record, the
