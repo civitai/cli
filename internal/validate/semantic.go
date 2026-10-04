@@ -390,13 +390,24 @@ func goodsChecks(generic map[string]any) []Finding {
 	// it and falls through to return, so it can accompany a per-entry finding.
 	// Its path is `goods`, not `goods[i]`.
 	//
-	// ⚠ AN EARLIER PER-ENTRY FINDING SUPPRESSES THIS ONE, and that is the server's
-	// behaviour rather than a side effect worth removing. Every per-entry check
-	// above `continue`s, so a failing entry never reaches the counter. The server
-	// states the same two consequences in its own words at
+	// ⚠ A FAILING ENTRY IS NOT COUNTED, WHICH CAN TAKE THE SURVIVING COUNT BELOW
+	// THE LIMIT — it does not suppress this check in general. Every per-entry
+	// check above `continue`s, so a failing entry never reaches the counter; the
+	// arity finding then disappears only when what SURVIVES is one unlock or
+	// fewer. With three unlocks and one over-cap, two survive and BOTH findings
+	// appear — which is the ADDITIVE property stated directly above, and is
+	// pinned by the `arity is ADDITIVE` row below.
+	//
+	// ⚠ Do not restate this as "an earlier finding suppresses the arity one". An
+	// earlier draft of this paragraph did, and it was false while reading
+	// plausibly, because BOTH server consequences quoted next are 2-unlock cases
+	// where the surviving count happens to fall to 1. It also contradicted the
+	// paragraph three lines above it and a test row named after that paragraph.
+	//
+	// The two consequences, in the server's own words at
 	// block-goods.constants.ts:501-509 — "two unlocks where one is over-cap
 	// reports ONLY the price error, and two unlocks sharing an id report ONLY the
-	// duplicate error" — and both now hold here, each pinned by its own row below.
+	// duplicate error" — both hold here, each pinned by its own row below.
 	//
 	// Note the price arm of that only became true when the clamp came off: while
 	// the check was scoped to 2..50000, an unlock at 60000 did NOT `continue`, so
