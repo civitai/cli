@@ -42,7 +42,7 @@ func TestRenderPageElements(t *testing.T) {
 		"vite.config.ts", "vitest.config.ts", ".gitignore", ".env.example", ".env.development",
 		"README.md", "assets/README.md",
 		"src/main.ts", "src/block.ts", "src/index.css", "src/dev/harness.ts",
-		"test/block.test.ts",
+		"test/block.test.ts", "test/elements.test.ts",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(f))); err != nil {
 			t.Errorf("page-elements scaffold is missing %s: %v", f, err)

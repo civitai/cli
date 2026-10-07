@@ -1,0 +1,57 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { expect, test } from 'vitest';
+
+// The app's real element registration: src/block.ts imports the
+// @civitai/components entry point(s) it needs. Loaded here exactly as the app
+// loads it.
+import '../src/block.js';
+
+/**
+ * Every `<civitai-*>` tag this app uses must be DEFINED once the app's imports
+ * have run. An undefined custom element is not an error anywhere: it renders as
+ * an inert, unstyled tag, and the build, the typecheck and every other test stay
+ * green. `@civitai/components/register` defines the generic kit only — not the
+ * civitai-specific elements (`register-site`) or the SDK-backed buttons (their
+ * own `/define`) — so adding one of those to the markup without its import is
+ * exactly what this catches.
+ *
+ * Tags are collected from the source, not listed by hand: `index.html` and every
+ * file under `src/` (markup in template literals, and elements created at
+ * runtime with `document.createElement('civitai-…')`).
+ */
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const TAG = /civitai-[a-z][a-z0-9-]*/g;
+
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return sourceFiles(path);
+    return /\.(ts|js|html)$/.test(entry.name) ? [path] : [];
+  });
+}
+
+function usedTags(): Set<string> {
+  const tags = new Set<string>();
+  for (const file of [join(ROOT, 'index.html'), ...sourceFiles(join(ROOT, 'src'))]) {
+    const text = readFileSync(file, 'utf8');
+    // `<civitai-x` in markup, or 'civitai-x' / "civitai-x" passed to createElement.
+    for (const m of text.matchAll(/<(civitai-[a-z][a-z0-9-]*)|createElement\(\s*['"](civitai-[a-z][a-z0-9-]*)['"]/g)) {
+      tags.add((m[1] ?? m[2])!);
+    }
+  }
+  return tags;
+}
+
+test('every <civitai-*> element the app uses is defined', () => {
+  const tags = usedTags();
+  // Positive controls: the collector reads markup AND runtime-created elements.
+  expect(tags.has('civitai-stack')).toBe(true); // markup in src/block.ts
+  expect(tags.has('civitai-alert')).toBe(true); // createElement in src/block.ts
+  for (const tag of tags) expect(tag).toMatch(TAG);
+
+  const undefinedTags = [...tags].filter((tag) => !customElements.get(tag)).sort();
+  expect(undefinedTags, 'used but never defined — add the @civitai/components import that defines it').toEqual([]);
+});

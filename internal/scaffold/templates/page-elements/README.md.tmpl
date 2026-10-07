@@ -80,7 +80,7 @@ dev-only: `vite build` is unaffected.
 ## What runs in the iframe
 
 ```ts
-import '@civitai/components/register'; // every <civitai-*> element
+import '@civitai/components/register'; // the generic <civitai-*> kit (see below)
 import { initialize } from '@civitai/sdk';
 
 const app = await initialize();          // resolves on the host's BLOCK_INIT
@@ -105,7 +105,14 @@ if the app cannot start; keep that wiring. From the same `app` you also get `app
 `@civitai/sdk` README documents each.
 
 Every tag, attribute, event and slot of the `<civitai-*>` elements is listed in
-`@civitai/components`' `custom-elements.json`.
+`@civitai/components`' `custom-elements.json` — but `@civitai/components/register`
+defines only the generic kit. The civitai-specific elements (`<civitai-avatar>`,
+`<civitai-media-card>`, `<civitai-rating-badge>`, `<civitai-reaction>`,
+`<civitai-tag>`) need `@civitai/components/register-site` instead, and the
+SDK-backed `<civitai-sign-in-button>` / `<civitai-workflow-button>` each need
+their own `@civitai/components/<tag>/define`. An element nothing defines renders
+as an inert tag with no error; `test/elements.test.ts` fails on any element the
+app uses that no import defines.
 
 ## The host handshake
 
