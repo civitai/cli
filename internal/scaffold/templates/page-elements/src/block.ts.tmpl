@@ -75,7 +75,7 @@ function renderStartError(root: HTMLElement): void {
   alert.dataset.blockError = '';
   // A fixed sentence, not the error's message: a message can carry host data,
   // and the details are in the console.
-  alert.textContent = 'This app could not start. Reload the page to try again.';
+  alert.textContent = 'Reload the page to try again.';
   const wrapper = document.createElement('div');
   wrapper.dataset.blockRoot = '';
   wrapper.append(alert);
@@ -156,14 +156,26 @@ function fill(view: View, app: BlockAppClient): void {
  * answered within its timeout, and a slow host is not a missing one, so that one
  * error is retried while the viewer keeps the boot skeleton. A late `BLOCK_INIT`
  * still mounts the app.
+ *
+ * The first `unavailable` is logged ONCE. A BLOCK_INIT from an origin the
+ * bridge does not allow is dropped without a trace, which looks exactly like no
+ * host at all — so the log names the allowlist to check.
  */
 async function waitForHost(): Promise<BlockAppClient> {
+  let logged = false;
   for (;;) {
     try {
       return await initialize();
     } catch (error) {
       // Only "no host answered yet" is retried; anything else is a real failure.
       if (!(error instanceof BridgeError) || error.code !== 'unavailable') throw error;
+      if (!logged) {
+        logged = true;
+        console.info(
+          '[civitai-block] still waiting for the Civitai host. If it is running, check that ' +
+            'VITE_BLOCK_ALLOWED_PARENT_ORIGINS names its origin — a BLOCK_INIT from any other origin is dropped.',
+        );
+      }
     }
   }
 }

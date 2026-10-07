@@ -5,7 +5,27 @@ This project is a **Civitai App**: a web app that runs in a sandboxed iframe
 inside civitai.com. The host page and your app talk over `postMessage`.
 
 ### Docs — fetch these BEFORE writing code
+{{ if .ElementsSDK }}
+This project is built on **`@civitai/sdk`** and **`@civitai/components`**, with
+no UI framework. Their API reference ships with them, in `node_modules`:
 
+- **`node_modules/@civitai/sdk/README.md`** — the host bridge. `initialize()`
+  waits for the host's `BLOCK_INIT` and resolves with `app`; `app.onChange`
+  fires on every snapshot change (theme, context, each token rotation — update
+  the view in place, never rebuild it); `app.site` is the `/api/v1` REST API as
+  the viewer; `app.requestGrants([...])` asks for a consent-gated scope;
+  `app.storage` / `app.sharedStorage` are app storage; `app.host` is the host's
+  own UI.
+- **`node_modules/@civitai/components/custom-elements.json`** — every
+  `<civitai-*>` element's tags, attributes, events and slots.
+
+The manifest fields, the scopes and the message bridge are documented on the
+docs site, and the `.md` suffix serves the plain-text source an agent can read
+directly:
+
+- Reference (manifest, scopes, message bridge, CLI):
+  https://developer.civitai.com/apps/reference/
+{{- else }}
 Nothing in this repository is the API reference. The hooks, the message bridge,
 the manifest fields and the scopes are documented on the docs site, and the
 `.md` suffix serves the plain-text source an agent can read directly.
@@ -16,6 +36,7 @@ the manifest fields and the scopes are documented on the docs site, and the
   not guessed. It is ~40 KB, so page it rather than giving up on it.
 - Reference (manifest, scopes, hooks, message bridge, CLI):
   https://developer.civitai.com/apps/reference/
+{{- end }}
 - Guide: https://developer.civitai.com/apps/guide/
 - **`https://developer.civitai.com/apps/guide/earning.md`** — the three money
   rails. Fetch it before declaring a `goods` catalog. The three rules below are
@@ -27,9 +48,11 @@ the manifest fields and the scopes are documented on the docs site, and the
 - Example apps you can read end-to-end:
   https://developer.civitai.com/apps/examples
 - Full doc index for agents: https://developer.civitai.com/llms.txt
+{{- if not .ElementsSDK }}
 
 Reading `node_modules/@civitai/blocks-react/dist/*.d.ts` to find out what the
 SDK can do is the expensive way round. Fetch the reference.
+{{- end }}
 
 ### Commands
 
@@ -167,13 +190,13 @@ fixed list. As of this CLI version:
 - **A newly declared scope is consent-gated.** Adding a scope to the manifest
   does not grant it: it is dropped from the token until the user consents, so
   you get a 403 while the manifest and the runtime both look correct.
-- **A hung hook is usually a missing HOST handler, not your bug.** The host
+- **A hung {{ if .ElementsSDK }}`app.host` call{{ else }}hook{{ end }} is usually a missing HOST handler, not your bug.** The host
   silently drops messages it cannot handle, so an unanswered request looks
   exactly like a broken component. Check the host side before rewriting yours.
 - **Shared storage has a REST path, and it is the one to prefer.** There are 11
   routes under `/api/v1/blocks/shared-storage/` (append, counts, increment, item,
   list, report, top, unvote, update, vote, withdraw) and the platform is
-  consolidating on them; the `useSharedStorage()` postMessage bridge still works,
+  consolidating on them; the {{ if .ElementsSDK }}`app.sharedStorage`{{ else }}`useSharedStorage()`{{ end }} postMessage bridge still works,
   so both are valid. Each route is a thin adapter over the same server function
   the bridge message called, so a REST read cannot diverge from a bridge read.
   They authenticate with the **block token** and re-verify it as a block JWT — so

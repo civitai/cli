@@ -54,7 +54,7 @@ function initPayload(overrides: Record<string, unknown> = {}) {
     appId: 'app_test',
     token: {
       raw: 'test.token',
-      scopes: ['models:read:self'],
+      scopes: [],
       expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
     },
     context: pageContext(),
@@ -210,6 +210,25 @@ describe('mountBlock over the real bridge', () => {
     await mounted;
     expect(rendered()).toBe(true);
   });
+
+  test('waiting on a host says so ONCE, naming the allowlist, so a dropped origin is never silent', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const mounted = mountBlock(root);
+
+    // A BLOCK_INIT from an origin the allowlist does not name is dropped, so
+    // to the app it looks exactly like no host at all.
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() }, 'https://not-allowlisted.example');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(String(info.mock.calls[0]?.join(' '))).toContain('VITE_BLOCK_ALLOWED_PARENT_ORIGINS');
+
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+    expect(rendered()).toBe(true);
+    expect(info).toHaveBeenCalledTimes(1);
+    info.mockRestore();
+  });
 });
 
 describe('host pushes after mount', () => {
@@ -232,7 +251,7 @@ describe('host pushes after mount', () => {
       payload: {
         token: {
           raw: 'rotated.token',
-          scopes: ['models:read:self'],
+          scopes: [],
           expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
         },
       },
@@ -272,7 +291,8 @@ describe('an app that cannot start', () => {
     await vi.waitFor(() => expect(root.querySelector('[data-block-error]')).not.toBeNull());
     const alert = root.querySelector('[data-block-error]')!;
     expect(alert.getAttribute('role')).toBe('alert');
-    expect(alert.textContent).toContain('could not start');
+    expect(alert.getAttribute('heading')).toBe('This app could not start');
+    expect(alert.textContent).toBe('Reload the page to try again.');
     expect(root.querySelector('[data-boot-skeleton]')).toBeNull();
     expect(errors).toHaveBeenCalled();
     errors.mockRestore();

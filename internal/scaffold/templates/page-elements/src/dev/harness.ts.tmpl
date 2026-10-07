@@ -24,7 +24,7 @@ interface Outbound {
  *      - `REQUEST_TOKEN` → `TOKEN_REFRESH_RESPONSE` with a fresh mock token
  * 3. Dispatches a fake `BLOCK_INIT` from the page's own origin, so the bridge
  *    accepts it only when `VITE_BLOCK_ALLOWED_PARENT_ORIGINS` names that origin
- *    (`http://localhost:5173`, as `.env.development` sets) — no origin spoofing.
+ *    (`http://localhost:5186`, as `.env.development` sets) — no origin spoofing.
  *
  * The mock token is NOT a real RS256 JWT — any call to the orchestrator or to
  * civitai.com that tries to verify it will fail. The harness is for UI
@@ -56,7 +56,7 @@ export function installHarness(root: HTMLElement): () => void {
     tokenSerial += 1;
     return {
       raw: `${DEV_TOKEN}.${tokenSerial}`,
-      scopes: ['models:read:self'],
+      scopes: [],
       expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
     };
   };

@@ -37,14 +37,18 @@ before you submit.
 
 ```bash
 npm install
-npm run dev:harness   # http://localhost:5173, with a local mock host
+npm run dev:harness   # http://localhost:5186, with a local mock host
 ```
 
 `npm run dev:harness` runs Vite with a local dev harness around your app. The
 harness stands in for the host page: it posts a fake `BLOCK_INIT`, logs your
 outbound messages, and echoes token refreshes, so the UI iterates without
 civitai.com embedding it. `.env.development` already allow-lists the harness's
-origin (`http://localhost:5173`); the port is pinned in `vite.config.ts`.
+origin (`http://localhost:5186`) and `https://civitai.com`, the real host's
+origin when `civitai app dev-tunnel` embeds your dev server; the port is pinned
+in `vite.config.ts` and is the dev tunnel's default. If the app sits on its
+skeleton, the console says it is still waiting for a host — check that the
+host's origin is on that list.
 
 `npm run dev` is the same server **without** the harness — nothing sends
 `BLOCK_INIT`, so you will see the boot skeleton until a real host frames the

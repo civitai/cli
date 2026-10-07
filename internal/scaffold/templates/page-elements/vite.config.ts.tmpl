@@ -17,8 +17,9 @@ export default defineConfig({
   plugins: [blockManifestPlugin()],
   server: {
     // The dev harness simulates BLOCK_INIT from the same origin — strict-port
-    // avoids the harness allowlist drifting when 5173 is busy.
-    port: 5173,
+    // avoids the harness allowlist drifting when the port is busy. 5186 is
+    // `civitai app dev-tunnel`'s default port, and page-money's.
+    port: 5186,
     strictPort: true,
   },
   build: {

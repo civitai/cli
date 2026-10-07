@@ -86,6 +86,14 @@ type projectShape struct {
 	// HasSetupWizard reports whether THIS project ships the dev-only auto-setup
 	// wizard — see setupWizardMarker.
 	HasSetupWizard bool
+	// ElementsSDK reports whether THIS project is built on `@civitai/sdk`
+	// (the page-elements template) rather than `@civitai/blocks-react`: its
+	// package.json depends on the former and not the latter. The block's
+	// API-reference pointers and the two gotchas that name a React hook branch
+	// on it, because sending an agent to blocks-react's hook reference and its
+	// `.d.ts` points it at a package this project never installed. Read from the
+	// file, like Scripts, never assumed from a template name.
+	ElementsSDK bool
 }
 
 // setupWizardMarker is the file whose presence means this project can mint its
@@ -173,6 +181,7 @@ func detectProjectShape(dir string) projectShape {
 	if _, err := os.Stat(pkgPath); err == nil {
 		shape.Kind = projectNPM
 		shape.Scripts = devScriptsIn(pkgPath)
+		shape.ElementsSDK = usesElementsSDK(pkgPath)
 		return shape
 	}
 	if _, err := os.Stat(filepath.Join(dir, manifest.Filename)); err == nil {
@@ -181,6 +190,31 @@ func detectProjectShape(dir string) projectShape {
 	}
 	shape.Kind = projectNone
 	return shape
+}
+
+// usesElementsSDK reports whether the package.json at path depends on
+// `@civitai/sdk` and NOT on `@civitai/blocks-react` (in any dependency block).
+// An unreadable or unparseable file answers false, which keeps the long-standing
+// blocks-react wording — see detectProjectShape on why a malformed package.json
+// never fails the run.
+func usesElementsSDK(path string) bool {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var pkg struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(raw, &pkg); err != nil {
+		return false
+	}
+	has := func(name string) bool {
+		_, a := pkg.Dependencies[name]
+		_, b := pkg.DevDependencies[name]
+		return a || b
+	}
+	return has("@civitai/sdk") && !has("@civitai/blocks-react")
 }
 
 // devScriptsIn returns the knownDevScripts the file at path defines, in

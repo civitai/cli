@@ -396,7 +396,7 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 		// host that works today, no Buzz and no beta access — but there is no
 		// money path, dev:live or dev:tunnel script here, so none is named.
 		fmt.Fprintf(out, installStepFmt, destDir)
-		fmt.Fprintln(out, "  2. npm run dev:harness     # mock host on localhost:5173 — works today")
+		fmt.Fprintln(out, "  2. npm run dev:harness     # mock host on localhost:5186 — works today")
 		fmt.Fprintln(out, "  3. edit src/block.ts and iterate (npm test drives it through the real bridge)")
 		fmt.Fprintln(out, "  4. civitai app submit      # validate + submit for review")
 		fmt.Fprintln(out)

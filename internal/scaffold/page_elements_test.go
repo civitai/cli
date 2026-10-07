@@ -12,7 +12,7 @@ import (
 // page-elements — the web-components template, and the default.
 //
 // It mirrors `starters/civitai-block-starter` in civitai/civitai-app-starters
-// (synced to b3213cd): the same dependencies (the @civitai/* ones pinned in this
+// (synced to dbd5fca): the same dependencies (the @civitai/* ones pinned in this
 // repo's `^X.Y.0` form), the same devDependencies and `overrides`, the same
 // main.ts, harness, index.html, index.css and config. Where it deliberately
 // differs, the template's own README says so ("Page, not slot"): it declares a
@@ -178,5 +178,72 @@ func TestParsePageElements(t *testing.T) {
 	}
 	if AllTemplates()[0] != PageElements {
 		t.Errorf("AllTemplates() should list the default first, got %v", AllTemplates())
+	}
+}
+
+// TestPageElementsDevAllowlistAndPort pins the dev-server origin and the parent
+// origins the bridge accepts in dev. Both must match page-money: port 5186 is
+// `civitai app dev-tunnel`'s default, and `https://civitai.com` is the origin
+// the REAL host posts BLOCK_INIT from when the tunnel embeds the dev server.
+// Without it the bridge drops that BLOCK_INIT and the app waits forever.
+func TestPageElementsDevAllowlistAndPort(t *testing.T) {
+	const want = "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5186,https://civitai.com"
+	for _, tmpl := range []Template{PageElements, PageMoney} {
+		dir := filepath.Join(t.TempDir(), "probe")
+		if _, err := Render(tmpl, dir, Data{Slug: "probe-app", Name: "Probe App"}); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, ".env.development"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(line, "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=") {
+				got = append(got, line)
+			}
+		}
+		if len(got) != 1 || got[0] != want {
+			t.Errorf("%s .env.development allowlist = %q, want exactly [%q]", tmpl, got, want)
+		}
+		vite, err := os.ReadFile(filepath.Join(dir, "vite.config.ts"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !regexp.MustCompile(`(?m)^\s*port: 5186,`).Match(vite) {
+			t.Errorf("%s vite.config.ts does not pin the dev server to port 5186", tmpl)
+		}
+	}
+}
+
+// TestPageElementsAsksForNoScopes: the page app reads nothing through the API,
+// so it declares no scope — like `static` and `page-vite` — and neither its
+// harness nor its tests mint a token claiming one.
+func TestPageElementsAsksForNoScopes(t *testing.T) {
+	dir := renderPageElements(t)
+	raw, err := os.ReadFile(filepath.Join(dir, "block.manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		Scopes *[]string `json:"scopes"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Scopes == nil || len(*m.Scopes) != 0 {
+		t.Errorf("page-elements manifest scopes = %v, want an explicit empty list", m.Scopes)
+	}
+	for _, f := range []string{"src/dev/harness.ts", "test/block.test.ts"} {
+		b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(f)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "models:read:self") {
+			t.Errorf("%s still mints a token claiming models:read:self", f)
+		}
+		if !strings.Contains(string(b), "scopes: []") {
+			t.Errorf("CONTROL failure: %s has no `scopes: []` token fixture — the check above read the wrong file", f)
+		}
 	}
 }
