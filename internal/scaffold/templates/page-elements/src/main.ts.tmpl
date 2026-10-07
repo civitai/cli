@@ -11,7 +11,7 @@ import '@civitai/sdk/safe-storage';
 import '@civitai/theme/styles.css';
 import './index.css';
 
-import { mountBlock } from './block.js';
+import { startBlock } from './block.js';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('#root missing from index.html');
@@ -20,11 +20,13 @@ if (!root) throw new Error('#root missing from index.html');
 // posts a fake BLOCK_INIT — `npm run dev:harness`, never a production build.
 // Vite replaces `import.meta.env.VITE_DEV_HARNESS` at build time, so with it
 // unset this branch and the harness module are dropped from the bundle. The
-// harness is installed before `mountBlock` so the bridge's very first message
+// harness is installed before `startBlock` so the bridge's very first message
 // (its `BLOCK_HELLO`) already reaches the harness's stand-in `window.parent`.
 if (import.meta.env.VITE_DEV_HARNESS === 'true') {
   const { installHarness } = await import('./dev/harness.js');
   installHarness(root);
 }
 
-void mountBlock(root);
+// `startBlock` never rejects: an app that cannot start shows an error in place
+// of the boot skeleton (and logs the cause) instead of failing silently.
+void startBlock(root);

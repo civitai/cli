@@ -211,3 +211,70 @@ describe('mountBlock over the real bridge', () => {
     expect(rendered()).toBe(true);
   });
 });
+
+describe('host pushes after mount', () => {
+  test('a TOKEN_REFRESH leaves the page and what the viewer typed intact', async () => {
+    const mounted = mountBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+
+    // A control an app author adds next to the template's fields, holding
+    // something the viewer typed.
+    const input = document.createElement('input');
+    input.value = 'half-written prompt';
+    root.querySelector('[data-block-root]')!.append(input);
+    const heading = root.querySelector('civitai-text');
+
+    // The host rotates the token every few minutes. The snapshot changes (so
+    // onChange fires) but nothing the view shows does.
+    fromHost({
+      type: 'TOKEN_REFRESH',
+      payload: {
+        token: {
+          raw: 'rotated.token',
+          scopes: ['models:read:self'],
+          expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+        },
+      },
+    });
+
+    expect(input.isConnected).toBe(true);
+    expect(input.value).toBe('half-written prompt');
+    expect(root.querySelector('civitai-text')).toBe(heading);
+    expect(field('app-slug')?.textContent).toBe('test-app');
+  });
+
+  test('a THEME_CHANGE re-themes without rebuilding the view', async () => {
+    const mounted = mountBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload({ theme: 'light' }) });
+    await mounted;
+    const input = document.createElement('input');
+    input.value = 'kept';
+    root.querySelector('[data-block-root]')!.append(input);
+
+    fromHost({ type: 'THEME_CHANGE', payload: { theme: 'dark' } });
+
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(input.isConnected).toBe(true);
+    expect(input.value).toBe('kept');
+  });
+});
+
+describe('an app that cannot start', () => {
+  test('the entry module shows a visible error instead of leaving the skeleton up', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.resetModules();
+    // The real entry, as index.html loads it. A host payload with no context
+    // makes the first fill throw.
+    await import('../src/main.js');
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload({ context: null }) });
+
+    await vi.waitFor(() => expect(root.querySelector('[data-block-error]')).not.toBeNull());
+    const alert = root.querySelector('[data-block-error]')!;
+    expect(alert.getAttribute('role')).toBe('alert');
+    expect(alert.textContent).toContain('could not start');
+    expect(root.querySelector('[data-boot-skeleton]')).toBeNull();
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
+  });
+});

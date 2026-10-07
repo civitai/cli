@@ -67,7 +67,7 @@ import { initialize } from '@civitai/sdk';
 
 const app = await initialize();          // resolves on the host's BLOCK_INIT
 document.documentElement.dataset.theme = app.theme;
-app.onChange(() => { /* theme, context, … changed — re-render */ });
+app.onChange(() => { /* theme, context, token … changed — update the view in place */ });
 ```
 
 ```html
@@ -77,7 +77,11 @@ app.onChange(() => { /* theme, context, … changed — re-render */ });
 </civitai-stack>
 ```
 
-The whole demo is `src/block.ts`. From the same `app` you also get `app.site`
+The whole demo is `src/block.ts`. It builds the view ONCE and updates it in
+place from `app.onChange` — which also fires on every token rotation — so never
+rebuild the view there, or a host push wipes whatever the viewer typed.
+`src/main.ts` calls `startBlock`, which shows an error in place of the skeleton
+if the app cannot start; keep that wiring. From the same `app` you also get `app.site`
 (the `/api/v1` REST API as the viewer), `app.storage` / `app.sharedStorage`,
 `app.requestGrants(scopes)`, and the host's own UI via `app.host`. The
 `@civitai/sdk` README documents each.
@@ -123,7 +127,7 @@ stand down its own loading UI; declared over an empty `#root` it is *worse* than
 not opting in — a blank iframe for the whole load.
 
 The skeleton is also this app's loading state: it stays until `BLOCK_INIT`
-lands, and the first render's `root.replaceChildren(…)` removes it. Nothing else
+lands, and the mount's one `root.replaceChildren(…)` removes it. Nothing else
 does, so keep the skeleton *inside* `#root`.
 
 The boot theme is the **host's**, not the OS's. Civitai apps default to dark and
