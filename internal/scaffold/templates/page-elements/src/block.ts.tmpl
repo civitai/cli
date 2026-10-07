@@ -42,8 +42,12 @@ import { isPageSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
  * file gets copied, so a gate spelled inline here becomes the gate the ecosystem
  * writes; the wire contract has moved before, and `isSignedIn` is where that
  * argument lives, once, in the SDK. If your block genuinely needs the viewer's
- * identity, read it from the API (`app.site.get('me')`) rather than from
- * `app.viewer`.
+ * identity, read it from the block route, `app.site.get('blocks/me')`, rather
+ * than from `app.viewer` — and add `user:read:self` to `scopes` in
+ * block.manifest.json: the route requires it, and the scope is consent-gated,
+ * so the token lacks it until the viewer grants it (ask first with
+ * `app.requestGrants(['user:read:self'])`). The plain `me` route does not accept
+ * a block token at all.
  */
 export async function mountBlock(root: HTMLElement): Promise<BlockAppClient> {
   const app = await waitForHost();

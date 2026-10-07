@@ -247,3 +247,61 @@ func TestPageElementsAsksForNoScopes(t *testing.T) {
 		}
 	}
 }
+
+// TestPageElementsNeverAdvisesThePlainMeRoute: a block cannot read the viewer
+// through the plain `me` route. On civitai, `/api/v1/me` is an AuthedEndpoint
+// (session cookie or API key) with no block-scope wrapper, so a block token gets
+// a 401; the block route is `/api/v1/blocks/me`, wrapped in withBlockScope with
+// `requiredScope: 'user:read:self'` — a consent-gated scope. 0.1.114 shipped
+// `app.site.get('me')` as the advice in src/block.ts.
+//
+// The scan covers EVERY rendered file (comments included — a comment is the
+// advice an author copies). A positive control proves the pattern matches the
+// exact spelling that shipped, and the replacement advice must name both the
+// block route and the scope the manifest has to declare.
+func TestPageElementsNeverAdvisesThePlainMeRoute(t *testing.T) {
+	plainMe := regexp.MustCompile("site\\.get(<[^>]*>)?\\(\\s*['\"`]/?me['\"`?]")
+	if !plainMe.MatchString("read it from the API (`app.site.get('me')`)") {
+		t.Fatal("CONTROL failure: the pattern does not match the spelling 0.1.114 shipped")
+	}
+	if plainMe.MatchString("app.site.get('blocks/me')") {
+		t.Fatal("CONTROL failure: the pattern matches the CORRECT route")
+	}
+
+	dir := renderPageElements(t)
+	files := 0
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		files++
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		for i, line := range strings.Split(string(b), "\n") {
+			if plainMe.MatchString(line) {
+				rel, _ := filepath.Rel(dir, p)
+				t.Errorf("%s:%d advises the plain `me` route, which refuses a block token (401) — use `blocks/me` and declare `user:read:self`:\n  %s",
+					rel, i+1, strings.TrimSpace(line))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files < 15 {
+		t.Fatalf("CONTROL failure: scanned only %d rendered file(s)", files)
+	}
+
+	block, err := os.ReadFile(filepath.Join(dir, "src", "block.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"app.site.get('blocks/me')", "user:read:self"} {
+		if !strings.Contains(string(block), want) {
+			t.Errorf("src/block.ts's viewer-identity advice should name %q", want)
+		}
+	}
+}
