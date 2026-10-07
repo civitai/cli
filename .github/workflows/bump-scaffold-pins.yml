@@ -1,11 +1,12 @@
 # Auto-bump the scaffold's @civitai/* pins when they fall behind npm.
 #
-# The page-money template pins @civitai/app-sdk and @civitai/blocks-react with
+# The page-money and page-elements templates pin @civitai/* packages with
 # pre-1.0 carets that LOCK THE MINOR, so every new minor those packages publish
-# turns the `pins-vs-published` guard red until a human hand-bumps the pins in
-# three places. This job runs `bump-pins` (which rewrites the literals in the
-# template + README + the scaffold_test.go canary), validates the result IN THIS
-# JOB, and opens a PR when anything changed — so the hand-fix never recurs.
+# turns the `pins-vs-published` guard red until a human hand-bumps the pins.
+# This job runs `bump-pins` (which rewrites the literals in both templates'
+# package.json, the page-money README and each template's test canary),
+# validates the result IN THIS JOB, and opens a PR when anything changed — so
+# the hand-fix never recurs.
 #
 # 🔴 "OPENS A PR WHEN ANYTHING CHANGED" IS THE WHOLE POINT, AND IT USED TO BE
 # FALSE. Until #530 the PR step required every validation to have passed, so one
@@ -425,14 +426,16 @@ jobs:
             cat <<'BODY'
           Automated by the `bump-scaffold-pins` workflow (`internal/scaffold/cmd/bump-pins`).
 
-          One or more `@civitai/*` packages published a new minor, so the
-          page-money scaffold's pre-1.0 caret pins fell behind npm and the
-          `pins-vs-published` guard would go red. This PR rewrites the literal
-          pins in all three sites:
+          One or more `@civitai/*` packages published a new minor, so a
+          scaffold's pre-1.0 caret pins fell behind npm and the
+          `pins-vs-published` guard would go red. This PR rewrites the stale
+          literal pins wherever they appear:
 
           - `internal/scaffold/templates/page-money/package.json.tmpl`
           - `internal/scaffold/templates/page-money/README.md.tmpl`
-          - `internal/scaffold/scaffold_test.go` (the `mustContain` canary)
+          - `internal/scaffold/scaffold_test.go` (page-money's `mustContain` canary)
+          - `internal/scaffold/templates/page-elements/package.json.tmpl`
+          - `internal/scaffold/page_elements_test.go` (page-elements' pin canary)
 
           The pins are rewritten as **literals** (not templated) on purpose:
           the guard reads the raw `^X.Y.Z` bytes out of the `.tmpl`, so
@@ -469,8 +472,8 @@ jobs:
       #
       # This job was audited against that failure and does not have it: the only
       # step that writes into the repo is the bumper, and `bump-pins` writes
-      # exclusively under its `--dir` (default `internal/scaffold`) to three
-      # constant sites. Everything else writes outside the tree — `go test`
+      # exclusively under its `--dir` (default `internal/scaffold`) to its
+      # constant sites (the `sites` list in bump-pins/main.go). Everything else writes outside the tree — `go test`
       # writes nothing, and `validate — scaffold builds` scaffolds and runs npm
       # in `$RUNNER_TEMP` on purpose (see that step's comment). Measured, not
       # just read: `git status --porcelain` is clean of artifacts after the test

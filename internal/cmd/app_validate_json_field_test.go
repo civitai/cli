@@ -287,7 +287,8 @@ func TestValidateJSONStreamSeparation(t *testing.T) {
 func TestValidateJSONCleanManifestHasEmptyBuckets(t *testing.T) {
 	tmp := t.TempDir()
 	chdir(t, tmp)
-	if _, _, err := run(t, "app", "init", "clean-field-block"); err != nil {
+	// --template static: no install step, so "clean" needs no lockfile stand-in.
+	if _, _, err := run(t, "app", "init", "clean-field-block", "--template", "static"); err != nil {
 		t.Fatalf("app init: %v", err)
 	}
 	dir := filepath.Join(tmp, "clean-field-block")

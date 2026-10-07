@@ -507,6 +507,60 @@ jobs:
         working-directory: ./_ci-page-vite
         run: go run ../cmd/civitai app validate
 
+  # Rot-guard: scaffold the DEFAULT template (page-elements — web components,
+  # @civitai/sdk + @civitai/components + @civitai/theme) and run its JS toolchain
+  # against the PUBLISHED packages: install, typecheck, the app's own tests,
+  # build, validate. It scaffolds with NO --template, so it is also the check
+  # that plain `civitai app init` still produces a project that builds — the
+  # thing a first-time author runs. The same steps run hermetically-gated in
+  # `TestPageElementsScaffoldBuildsTestsAndValidates`
+  # (CIVITAI_SCAFFOLD_TYPECHECK=1).
+  #
+  # Reports; it is NOT a required context until a maintainer adds it to branch
+  # protection (AGENTS.md item 11: measure, never infer, which jobs gate).
+  template-page-elements:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      # node 24 (npm 11), NOT 22 (npm 10) — see template-page-money below.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: scaffold the default template
+        run: |
+          set -euo pipefail
+          go run ./cmd/civitai app init "CI Elements Block" --dir ./_ci-page-elements --yes | tee scaffold.out
+          # The default must BE page-elements, or every step below is checking
+          # some other template while reporting on this one.
+          grep -F '(page-elements)' scaffold.out
+
+      - name: install
+        working-directory: ./_ci-page-elements
+        run: npm install --no-audit --no-fund
+
+      - name: typecheck
+        working-directory: ./_ci-page-elements
+        run: npm run typecheck
+
+      - name: test
+        working-directory: ./_ci-page-elements
+        run: npm test
+
+      - name: build
+        working-directory: ./_ci-page-elements
+        run: npm run build
+
+      - name: validate
+        working-directory: ./_ci-page-elements
+        run: go run ../cmd/civitai app validate
+
   # Rot-guard: scaffold the page-money template and run its JS toolchain against
   # the PUBLISHED SDK (@civitai/blocks-react). Catches a template that renders
   # but no longer installs / typechecks / tests / builds after an SDK bump — the

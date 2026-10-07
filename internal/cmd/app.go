@@ -16,9 +16,9 @@ An App is a sandboxed static web app served in an iframe. The platform
 owns the build and the runtime; the only mandatory file is block.manifest.json.
 The typical authoring lifecycle is create -> validate -> submit.
 
-"civitai app create" is the friendly, batteries-included scaffolder (defaults to
-the rich page-money SDK template); "civitai app init" is the same scaffolder
-with a no-build static default (back-compat alias).`,
+"civitai app create" and "civitai app init" are the same scaffolder; both
+default to the page-elements template (web components, no UI framework).
+"--template page-money" is the React alternative.`,
 		Example: `  civitai app list
   civitai app view my-block
   civitai app create my-block

@@ -1,0 +1,13 @@
+import { defineConfig } from 'vitest/config';
+
+// happy-dom, not a real browser: these tests drive the block's BRIDGE (the
+// postMessage handshake, the host context reaching the page, the outbound
+// messages) and check that the `<civitai-*>` elements are registered and
+// upgraded. happy-dom does no layout, so nothing here asserts a size or a
+// position.
+export default defineConfig({
+  test: {
+    environment: 'happy-dom',
+    include: ['test/**/*.test.ts'],
+  },
+});

@@ -108,10 +108,13 @@ func TestAppInitScaffoldsAndValidates(t *testing.T) {
 	if !strings.Contains(out, "Created App") {
 		t.Errorf("unexpected init output: %s", out)
 	}
-	// Manifest must exist and validate clean.
+	// Manifest must exist and validate clean — after the install step the
+	// default (npm) template's next steps name first, which writes the lockfile
+	// `validate` requires.
 	if _, err := os.Stat(filepath.Join(tmp, "my-block", "block.manifest.json")); err != nil {
 		t.Fatalf("scaffolded manifest missing: %v", err)
 	}
+	simulateInstall(t, filepath.Join(tmp, "my-block"))
 	if _, _, err := run(t, "app", "validate", filepath.Join(tmp, "my-block")); err != nil {
 		t.Errorf("scaffolded project should validate: %v", err)
 	}

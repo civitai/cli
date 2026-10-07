@@ -236,7 +236,8 @@ full download behaviour in
 # 1. Authenticate once (browser device login; or `civitai login --token <t>`).
 civitai login
 
-# 2. Scaffold a ready-to-build App (batteries-included page-money default).
+# 2. Scaffold a ready-to-build App (page-elements default: web components).
+#    Prefer React? add `--template page-money`.
 civitai app create my-app
 cd my-app
 
@@ -316,8 +317,8 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 | `civitai buzz [--json]` | Show your spendable Buzz balance (**blue / green / yellow**, plus a **total**); needs the BuzzRead scope, which a **default** OAuth login token lacks (`civitai login --scopes generate`, or a full-scope personal API key). `--json` emits `{blue,green,yellow,total}`. |
 | `civitai app list [--kind <k>] [--category <c>] [--sort <s>] [--limit <n>] [--cursor <c>] [--json]` | **Discover published Apps in the store** (`GET /api/v1/apps`) — filter-based, cursor-paged, and **not anonymous**: it needs a credential. See [Browse the App store](#browse-the-app-store). |
 | `civitai app view <slug> [--json]` | **Show one published App's store detail** (`GET /api/v1/apps/{slug}`) — the public store catalog, not your own deploy. Needs a credential, same as `app list`. See [Browse the App store](#browse-the-app-store). |
-| `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>] [--slug <slug>] [--yes]` | **The friendly happy path** — scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). `--slug` sets the **blockId** explicitly. See [Templates](#templates) and [The blockId](#the-blockid). |
-| `civitai app init [name] [dir] [--yes] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias); same `--yes`. |
+| `civitai app create [name] [dir] [--template page-elements\|page-money\|page-vite\|static] [--dir <path>] [--name <display>] [--slug <slug>] [--yes]` | **The friendly happy path** — scaffold a ready-to-build App, defaulting to the `page-elements` web-components template (default dir `./<slug>`); `page-money` is the React alternative. `--slug` sets the **blockId** explicitly. See [Templates](#templates) and [The blockId](#the-blockid). |
+| `civitai app init [name] [dir] [--yes] [...]` | The same scaffolder as `create`, with the same `page-elements` default and the same flags. **Changed:** `init` used to default to `static` — pass `--template static` for that. |
 | `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`**; `--spend` must be asked for explicitly to request real-Buzz spend, and `--env` prints a paste-ready `VITE_LIVE_BLOCK_TOKEN=<token>`. See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
 | `civitai app dev-tunnel [blockId] [--block <id>] [--port <n>] [--local-host <host>] [--tunnel-endpoint <h:p>] [--idle-timeout <d>] [--ready-timeout <d>] [--no-wait]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>`. See [Preview in the real host](#preview-in-the-real-host-app-dev-tunnel). |
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json` — warnings are non-fatal unless `--strict`, and a `[dir]` that is missing or not a directory is a **usage error** (exit `2`, no JSON). See [Validate fidelity](#validate-fidelity). |
@@ -504,8 +505,11 @@ Codex's `mcp_servers`), where that file lives, and what `--check` and
 ## SDK packages
 
 This CLI scaffolds, validates, and submits — but the code your app actually
-imports lives in two published npm packages (the `page-money` template wires
-them for you; `static` and `page-vite` are deliberately dependency-free):
+imports lives in published npm packages. The default `page-elements` template
+wires `@civitai/sdk` (the host bridge), `@civitai/components` (`<civitai-*>`
+custom elements) and `@civitai/theme` (design tokens) for you; the React
+alternative, `page-money`, wires the two below; `static` and `page-vite` are
+deliberately dependency-free:
 
 | Package | What it is |
 | --- | --- |
@@ -513,7 +517,7 @@ them for you; `static` and `page-vite` are deliberately dependency-free):
 | [`@civitai/app-sdk`](https://www.npmjs.com/package/@civitai/app-sdk) | The framework-agnostic contract under the hooks — manifest types, scope strings, the `postMessage` protocol, and the `defineBlock` validator (`@civitai/app-sdk/blocks`). |
 
 ```bash
-# Already installed by the scaffold; this is the explicit install line:
+# Already installed by the page-money scaffold; this is the explicit install line:
 pnpm add @civitai/blocks-react @civitai/app-sdk react
 ```
 
@@ -555,17 +559,36 @@ ships with: [`AGENTS.md` item
 Offline: `civitai app create --help`.
 ## Templates
 
-- **`static`** — a no-build page app (`index.html` + a tiny `app.js`,
-  `block.manifest.json` with `page:{}`, no build step).
-- **`page-vite`** — a Vite + React page app with config-as-code build fields
-  (`buildCommand: "npm run build"` + `outputDir: "dist"`).
-- **`page-money`** — a Vite + React + TypeScript full-page (W10) **money-path**
-  app wired to the published App SDK (`@civitai/blocks-react` +
+`civitai app init` and `civitai app create` both default to **`page-elements`**;
+the interactive prompt pre-selects it and lists it first.
+
+> **Changed default.** Plain `civitai app create` used to scaffold `page-money`,
+> and plain `civitai app init` used to scaffold `static`. Both now scaffold
+> `page-elements`. Every template is still selectable by name — a script that
+> relied on the old default must now pass `--template page-money` or
+> `--template static`.
+
+- **`page-elements`** (default) — a Vite + TypeScript full-page app built with
+  **web components and no UI framework**: `@civitai/sdk` for the host bridge
+  (`initialize()` resolves on the host's `BLOCK_INIT`) and `<civitai-*>` custom
+  elements from `@civitai/components`, themed by `@civitai/theme`. Ships a
+  `dev:harness` mock host, a boot skeleton, a direct-load "Open on Civitai"
+  fallback, and a happy-dom test (`npm test`) that drives the app through the
+  real bridge. It mirrors the `civitai-block-starter-elements` starter in
+  [civitai-app-starters](https://github.com/civitai/civitai-app-starters),
+  declared as a page rather than a model slot.
+- **`page-money`** — the **React alternative**: a Vite + React + TypeScript
+  full-page (W10) **money-path** app wired to the published App SDK
+  (`@civitai/blocks-react` +
   `@civitai/app-sdk`): prompt → estimate → lazy consent → submit → poll → real
   Buzz spend, via `useBuzzWorkflow` / `useRequestConsent` / `useBlockResize`
   (never raw `postMessage`). Ships a `dev:harness` mock host, `.env.*` allowed
   parent-origin config, and a unit-test stub. Run `npm run dev:harness` (plain
   `npm run dev` renders blank without a host).
+- **`page-vite`** — a Vite + React page app with no SDK, with config-as-code
+  build fields (`buildCommand: "npm run build"` + `outputDir: "dist"`).
+- **`static`** — a no-build page app (`index.html` + a tiny `app.js`,
+  `block.manifest.json` with `page:{}`, no build step).
 
 Every template also scaffolds an **`assets/`** directory holding a README of the
 store-listing media requirements — and no images, so the `set-icon` / `set-cover`
@@ -582,8 +605,8 @@ into the host's ready state. An app that never sends it is replaced by a visible
 failure card once the host's bounded retries run out, even though the app itself
 renders perfectly. Nothing you can run locally reproduces that.
 
-`page-money` gets the handshake for free: `@civitai/blocks-react`'s iframe
-transport acks internally. The two **SDK-free** templates (`static`,
+`page-elements` and `page-money` get the handshake for free: `@civitai/sdk`'s
+and `@civitai/blocks-react`'s iframe transports ack internally. The two **SDK-free** templates (`static`,
 `page-vite`) ship a small vendored emitter, **`civitai-host.js`**, loaded from
 the entry point. Leave it in place — and if you are retrofitting it into an
 older app, the file has to be *referenced* as well as copied
@@ -616,7 +639,9 @@ reference](https://developer.civitai.com/apps/reference/messages).
 
 A scaffolded App is a sandboxed iframe, and locally there is no host to send
 `BLOCK_INIT` — so `npm run dev` shows you your own UI and nothing of the
-protocol. The **`page-money`** template ships a dev **harness** built on the
+protocol. The default **`page-elements`** template ships a mock-host
+`npm run dev:harness` (no live mode). The **`page-money`** template ships a dev
+**harness** built on the
 SDK's [`@civitai/blocks-react`](https://www.npmjs.com/package/@civitai/blocks-react)
 hosts, with two modes on deliberately separate subexports:
 

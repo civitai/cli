@@ -54,27 +54,30 @@ directory.
 | Task | Command |
 |---|---|
 | Scaffold a new app | `civitai app create <name>` |
-| …choosing the template | `civitai app create <name> --template static\|page-vite\|page-money` |
+| …choosing the template | `civitai app create <name> --template page-elements\|page-money\|page-vite\|static` |
 | Check the manifest | `civitai app validate` |
 | Package and submit for review | `civitai app submit` |
 | Diagnose an incomplete store listing | `civitai app doctor` |
 | Your local app inside the REAL host (needs a local dev server already running — see below) | `civitai app dev-tunnel` |
 
-**Pick the template on purpose — `create` defaults to the biggest one.** With no
-`--template`, `civitai app create` scaffolds `page-money`, which is by a wide
-margin the largest of the three: around forty files, with a README and an
+**Pick the template on purpose.** With no `--template`, `civitai app create`
+scaffolds `page-elements` — web components, no UI framework. `page-money` is by
+a wide margin the largest of the four: around forty files, with a README and an
 `src/App.tsx` of tens of KB each. That is the right starting point when you are
-building a Buzz-spending generation app, because it is a working one. For
-anything else it is a large amount of sample code to read and then delete.
+building a Buzz-spending generation app in React, because it is a working one.
+For anything else it is a large amount of sample code to read and then delete.
 
+- `page-elements` — Vite + TypeScript, no UI framework: `@civitai/sdk` for the
+  host bridge and `<civitai-*>` custom elements from `@civitai/components`, with
+  a mock-host dev harness and a test. **The default.**
+- `page-money` — the React alternative: Vite + React + TypeScript wired to the
+  App SDK: estimate → consent → submit → poll → Buzz spend, with a mock-host dev
+  harness. Reading it end-to-end is expensive; treat it as a reference you copy
+  from, and delete what your app does not use.
+- `page-vite` — Vite + React, a build step, no SDK wiring. The one to pick when
+  you want React but not the money path.
 - `static` — one `index.html` plus a little JS. No build step, nothing to
   install. The smallest thing that can be a Civitai App.
-- `page-vite` — Vite + React, a build step, no SDK wiring. The one to pick when
-  you want a UI framework but not the money path.
-- `page-money` — Vite + React + TypeScript wired to the App SDK: estimate →
-  consent → submit → poll → Buzz spend, with a mock-host dev harness. **The
-  default.** Reading it end-to-end is expensive; treat it as a reference you
-  copy from, and delete what your app does not use.
 
 ### Local development
 {{ if eq .Kind "npm" }}

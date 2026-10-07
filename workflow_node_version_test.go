@@ -74,6 +74,7 @@ const minWorkflowFiles = 9
 //
 //	ci.yml                   → template-page-vite
 //	ci.yml                   → template-page-money
+//	ci.yml                   → template-page-elements (added later; the floor stays 4)
 //	ci.yml                   → scaffold-currency
 //	bump-scaffold-pins.yml   → bump
 //
