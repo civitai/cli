@@ -572,9 +572,9 @@ the interactive prompt pre-selects it and lists it first.
   **web components and no UI framework**: `@civitai/sdk` for the host bridge
   (`initialize()` resolves on the host's `BLOCK_INIT`) and `<civitai-*>` custom
   elements from `@civitai/components`, themed by `@civitai/theme`. Ships a
-  `dev:harness` mock host, a boot skeleton, a direct-load "Open on Civitai"
-  fallback, and a happy-dom test (`npm test`) that drives the app through the
-  real bridge. It mirrors the `civitai-block-starter-elements` starter in
+  `dev:harness` mock host, a boot skeleton, and a happy-dom test (`npm test`)
+  that drives the app through the real bridge. It mirrors the
+  `civitai-block-starter` starter in
   [civitai-app-starters](https://github.com/civitai/civitai-app-starters),
   declared as a page rather than a model slot.
 - **`page-money`** — the **React alternative**: a Vite + React + TypeScript

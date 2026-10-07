@@ -23,11 +23,5 @@ export default defineConfig({
   },
   build: {
     target: 'es2022',
-    // Single-file output keeps the iframe-loaded surface small.
-    rollupOptions: {
-      output: {
-        manualChunks: undefined,
-      },
-    },
   },
 });

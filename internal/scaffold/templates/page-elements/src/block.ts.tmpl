@@ -5,10 +5,8 @@
 // no error, so add a define line for each one you use.
 import '@civitai/components/register';
 
-import { BridgeError, getTransport, initialize, type BlockAppClient } from '@civitai/sdk';
-import { isModelSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
-
-import { DIRECT_LOAD_TIMEOUT_MS, isTopLevel, renderDirectLoadFallback } from './directLoad.js';
+import { BridgeError, initialize, type BlockAppClient } from '@civitai/sdk';
+import { isPageSlotContext, isSignedIn } from '@civitai/app-sdk/blocks';
 
 /**
  * Replace the markup and `render` with your block's actual UI.
@@ -25,9 +23,8 @@ import { DIRECT_LOAD_TIMEOUT_MS, isTopLevel, renderDirectLoadFallback } from './
  *   model-slot block, it does NOT call `app.host.autoResize(root)`. Add that
  *   call only if you add a model-slot `targets` entry, where the host honours it.
  * - `context` is a union keyed on `slotId`, so narrowing is what makes a slot's
- *   fields readable. On the page the host sends `app.page`; the
- *   `isModelSlotContext` branch below is what a model-slot target would see
- *   (use `isPageSlotContext` to read the page's own fields).
+ *   fields readable. The page receives `app.page`, narrowed with
+ *   `isPageSlotContext` to read the app's slug and the path below its root.
  *
  * On the viewer: this calls `isSignedIn(app.viewer)` — a SIGN-IN GATE, which is
  * all most blocks need. 🔴 CALL THE PREDICATE; DO NOT OPEN-CODE THE GATE. This
@@ -38,7 +35,7 @@ import { DIRECT_LOAD_TIMEOUT_MS, isTopLevel, renderDirectLoadFallback } from './
  * `app.viewer`.
  */
 export async function mountBlock(root: HTMLElement): Promise<BlockAppClient> {
-  const app = await waitForHost(root);
+  const app = await waitForHost();
 
   const update = () => {
     syncTheme(app);
@@ -63,7 +60,7 @@ function syncTheme(app: BlockAppClient): void {
 
 /**
  * The markup is STATIC — no value is ever interpolated into it. Everything that
- * comes from the host (the model name above all, which is user-authored) is
+ * comes from the host (anything user-authored above all) is
  * written with `textContent`, so it can never be parsed as HTML. Keep it that
  * way when you extend it: `innerHTML` with a template literal that includes host
  * data is an XSS hole.
@@ -73,9 +70,9 @@ VIEW.innerHTML = `
   <civitai-stack gap="sm" data-block-root>
     <civitai-text as="h2" size="md" weight="bold">Civitai App starter</civitai-text>
     <civitai-text size="xs" data-dimmed>slot: <code data-field="slot"></code></civitai-text>
-    <civitai-text size="sm" data-field="model">
-      Rendering for model <strong data-field="model-name"></strong>
-      (#<span data-field="model-id"></span>, v<span data-field="model-version-id"></span>)
+    <civitai-text size="sm">
+      Running as <strong data-field="app-slug"></strong>, at
+      <code data-field="sub-path"></code>
     </civitai-text>
     <civitai-group gap="sm">
       <civitai-text size="sm">Viewer:</civitai-text>
@@ -88,21 +85,13 @@ function render(root: HTMLElement, app: BlockAppClient): void {
   const view = VIEW.content.cloneNode(true) as DocumentFragment;
   const field = (name: string) => view.querySelector<HTMLElement>(`[data-field="${name}"]`)!;
 
-  // Read through `getTransport()` — the same bridge `initialize()` uses —
-  // because the client does not expose the instance id. Handy for telling
-  // several copies of your block apart in logs.
-  view.querySelector<HTMLElement>('[data-block-root]')!.dataset.blockInstanceId =
-    getTransport().snapshot.get().blockInstanceId;
-
   const { context } = app;
   field('slot').textContent = context.slotId;
 
-  if (isModelSlotContext(context)) {
-    field('model-name').textContent = context.modelName;
-    field('model-id').textContent = String(context.modelId);
-    field('model-version-id').textContent = String(context.modelVersionId);
-  } else {
-    field('model').remove();
+  if (isPageSlotContext(context)) {
+    field('app-slug').textContent = context.slug;
+    // `subPath` is '' on the app's own index.
+    field('sub-path').textContent = `/${context.subPath}`;
   }
 
   field('viewer').textContent = isSignedIn(app.viewer) ? 'signed in' : 'anonymous';
@@ -114,24 +103,18 @@ function render(root: HTMLElement, app: BlockAppClient): void {
 /**
  * Resolves once the host has sent `BLOCK_INIT`.
  *
- * Opened top-level (no host will ever answer), it shows the "Open on Civitai"
- * card after {@link DIRECT_LOAD_TIMEOUT_MS} — but keeps waiting, so a late
- * `BLOCK_INIT` still mounts the block over it. Embedded, it never gives up: a
- * slow host is not a missing one, and the viewer keeps the boot skeleton.
+ * It never gives up: `initialize()` rejects with `unavailable` when no host has
+ * answered within its timeout, and a slow host is not a missing one, so that one
+ * error is retried while the viewer keeps the boot skeleton. A late `BLOCK_INIT`
+ * still mounts the app.
  */
-async function waitForHost(root: HTMLElement): Promise<BlockAppClient> {
-  const topLevel = isTopLevel();
-  let fallbackShown = false;
+async function waitForHost(): Promise<BlockAppClient> {
   for (;;) {
     try {
-      return await initialize({ timeoutMs: DIRECT_LOAD_TIMEOUT_MS });
+      return await initialize();
     } catch (error) {
       // Only "no host answered yet" is retried; anything else is a real failure.
       if (!(error instanceof BridgeError) || error.code !== 'unavailable') throw error;
-      if (topLevel && !fallbackShown) {
-        renderDirectLoadFallback(root);
-        fallbackShown = true;
-      }
     }
   }
 }

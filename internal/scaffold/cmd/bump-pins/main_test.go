@@ -183,7 +183,7 @@ func TestRunRewritesAllThreeFilesAndIsIdempotent(t *testing.T) {
 	elTest := readFile(t, dir, elementsTestFile)
 	assertContains(t, elPkg, `"@civitai/app-sdk": "^0.25.0"`)
 	assertContains(t, elTest, `mustContain(t, pkg, `+"`"+`"@civitai/app-sdk": "^0.25.0"`+"`"+`)`)
-	assertContains(t, elPkg, `"@civitai/sdk": "^0.9.2"`)
+	assertContains(t, elPkg, `"@civitai/sdk": "^0.9.0"`)
 
 	// Second run is a no-op (idempotent).
 	buf.Reset()
@@ -477,13 +477,12 @@ func TestPins(t *testing.T) {
 }
 `
 
-// The page-elements sites: app-sdk shared with page-money, @civitai/sdk only here,
-// pinned at a PATCH floor (^0.9.2) like the elements starter.
+// The page-elements sites: app-sdk shared with page-money, @civitai/sdk only here.
 const fixtureElementsPkgJSON = `{
   "name": "{{ .Slug }}",
   "dependencies": {
     "@civitai/app-sdk": "^0.24.0",
-    "@civitai/sdk": "^0.9.2"
+    "@civitai/sdk": "^0.9.0"
   }
 }
 `
@@ -492,64 +491,9 @@ const fixtureElementsTest = `package scaffold
 
 func TestElementsPins(t *testing.T) {
 	mustContain(t, pkg, ` + "`" + `"@civitai/app-sdk": "^0.24.0"` + "`" + `)
-	mustContain(t, pkg, ` + "`" + `"@civitai/sdk": "^0.9.2"` + "`" + `)
+	mustContain(t, pkg, ` + "`" + `"@civitai/sdk": "^0.9.0"` + "`" + `)
 }
 `
-
-// TestRunLeavesAPinThatStillAdmitsLatest is the "NO LONGER ADMITS, NOT DIFFERS"
-// rule. `^0.9.2` admits a published 0.9.5, so neither elements site may be
-// rewritten to `^0.9.0` — that would loosen the floor and churn a PR. The
-// control: the same package at a NEW minor IS rewritten, in exactly the two
-// elements sites (it is pinned nowhere else).
-func TestRunLeavesAPinThatStillAdmitsLatest(t *testing.T) {
-	fetchAt := func(sdk string) func(string) (string, error) {
-		return func(pkg string) (string, error) {
-			switch pkg {
-			case "@civitai/app-sdk":
-				return "0.24.0", nil
-			case "@civitai/blocks-react":
-				return "0.29.0", nil
-			case "@civitai/sdk":
-				return sdk, nil
-			}
-			return "", scaffold.ErrPkgNotFound
-		}
-	}
-
-	dir := t.TempDir()
-	writeFixture(t, dir)
-	var buf bytes.Buffer
-	changes, err := run(dir, fetchAt("0.9.5"), fakeTokens, false, &buf)
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	for _, c := range changes {
-		if c.pkg == "@civitai/sdk" {
-			t.Errorf("rewrote %s in %s (%s -> %s) although the pin admits the published 0.9.5",
-				c.pkg, c.file, c.oldPin, c.newPin)
-		}
-	}
-	assertContains(t, readFile(t, dir, elementsPkgJSONFile), `"@civitai/sdk": "^0.9.2"`)
-
-	dir = t.TempDir()
-	writeFixture(t, dir)
-	buf.Reset()
-	changes, err = run(dir, fetchAt("0.10.1"), fakeTokens, false, &buf)
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	var sdkFiles []string
-	for _, c := range changes {
-		if c.pkg == "@civitai/sdk" {
-			sdkFiles = append(sdkFiles, c.file)
-		}
-	}
-	if len(sdkFiles) != 2 {
-		t.Fatalf("a stale @civitai/sdk pin should be rewritten in the 2 elements sites, got %v:\n%s", sdkFiles, buf.String())
-	}
-	assertContains(t, readFile(t, dir, elementsPkgJSONFile), `"@civitai/sdk": "^0.10.0"`)
-	assertContains(t, readFile(t, dir, elementsTestFile), `mustContain(t, pkg, `+"`"+`"@civitai/sdk": "^0.10.0"`+"`"+`)`)
-}
 
 // TestTheRealPinSitesExist runs against THIS repo's scaffold dir: every site the
 // bumper rewrites must exist and every pin it discovers must appear in the
@@ -573,16 +517,11 @@ func TestTheRealPinSitesExist(t *testing.T) {
 		if len(pkgs) == 0 {
 			t.Fatalf("CONTROL failure: no @civitai/* pins discovered in %s", pair.pkgFile)
 		}
-		pkgSrc := readFile(t, root, pair.pkgFile)
 		canary := readFile(t, root, pair.canary)
-		for _, p := range pkgs {
-			cur, ok := currentPin(pkgSrc, p, jsonPin)
-			if !ok {
-				t.Fatalf("CONTROL failure: discovered %s in %s but currentPin cannot read it", p, pair.pkgFile)
-			}
-			want := `"` + p + `": "^` + cur + `"`
+		for _, m := range scaffold.CivitaiPinRe.FindAllStringSubmatch(readFile(t, root, pair.pkgFile), -1) {
+			want := `"` + m[1] + `": "` + m[2] + `"`
 			if !strings.Contains(canary, want) {
-				t.Errorf("%s pins %s but its canary %s does not assert %s", pair.pkgFile, p, pair.canary, want)
+				t.Errorf("%s pins %s but its canary %s does not assert %s", pair.pkgFile, m[1], pair.canary, want)
 			}
 		}
 	}

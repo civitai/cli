@@ -3,26 +3,27 @@ package scaffold
 import (
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/civitai/cli/internal/validate"
 )
 
 // page-elements — the web-components template, and the default.
 //
-// It mirrors `starters/civitai-block-starter-elements` in
-// civitai/civitai-app-starters: the same dependencies at the same pins, the same
-// `overrides`, the same src/, test/ and index.html. Where it deliberately
+// It mirrors `starters/civitai-block-starter` in civitai/civitai-app-starters
+// (synced to b3213cd): the same dependencies (the @civitai/* ones pinned in this
+// repo's `^X.Y.0` form), the same devDependencies and `overrides`, the same
+// main.ts, harness, index.html, index.css and config. Where it deliberately
 // differs, the template's own README says so ("Page, not slot"): it declares a
 // `page` like every template here rather than the starter's model-slot target,
 // so it drops the starter's `app.host.autoResize(root)` (RESIZE_IFRAME is N/A on
-// a page — AGENTS.md item 11) and its dev harness sends an `app.page` context.
+// a page — AGENTS.md item 11), narrows `app.page` instead of a model context,
+// and — like page-money — ships no direct-load fallback (src/directLoad.ts).
+//
+// The end-to-end check (install, typecheck, the app's own tests, build,
+// validate) is the `template-page-elements` CI job, which scaffolds with no
+// --template; `bump-scaffold-pins.yml` repeats it after a pin bump.
 
 func renderPageElements(t *testing.T) string {
 	t.Helper()
@@ -40,7 +41,7 @@ func TestRenderPageElements(t *testing.T) {
 		"block.manifest.json", "package.json", "index.html", "tsconfig.json",
 		"vite.config.ts", "vitest.config.ts", ".gitignore", ".env.example", ".env.development",
 		"README.md", "assets/README.md",
-		"src/main.ts", "src/block.ts", "src/directLoad.ts", "src/index.css", "src/dev/harness.ts",
+		"src/main.ts", "src/block.ts", "src/index.css", "src/dev/harness.ts",
 		"test/block.test.ts",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(f))); err != nil {
@@ -57,11 +58,12 @@ func TestRenderPageElements(t *testing.T) {
 	// `go run ./internal/scaffold/cmd/bump-pins` rewrites in lockstep with
 	// templates/page-elements/package.json.tmpl — keep their exact
 	// `"@civitai/<pkg>": "^X.Y.Z"` shape, or the bumper stops finding them.
-	// The values mirror the elements starter (civitai-app-starters #557).
+	// The minors mirror the starter (civitai-app-starters #557), in the
+	// `^X.Y.0` form bump-pins writes.
 	mustContain(t, pkg, `"@civitai/app-sdk": "^0.58.0"`)
-	mustContain(t, pkg, `"@civitai/components": "^0.9.2"`)
-	mustContain(t, pkg, `"@civitai/sdk": "^0.10.1"`)
-	mustContain(t, pkg, `"@civitai/theme": "^0.5.2"`)
+	mustContain(t, pkg, `"@civitai/components": "^0.9.0"`)
+	mustContain(t, pkg, `"@civitai/sdk": "^0.10.0"`)
+	mustContain(t, pkg, `"@civitai/theme": "^0.5.0"`)
 
 	var doc struct {
 		Name            string            `json:"name"`
@@ -154,6 +156,11 @@ func TestRenderPageElements(t *testing.T) {
 		t.Error("CONTROL failure, not a finding: src/block.ts no longer calls initialize(), so the check above read the wrong file")
 	}
 
+	// No direct-load fallback, matching page-money (which ships none).
+	if _, err := os.Stat(filepath.Join(dir, "src", "directLoad.ts")); err == nil {
+		t.Error("page-elements ships src/directLoad.ts — page-money has no direct-load fallback, so neither does this")
+	}
+
 	// The display name reaches the document title; the slug reaches the harness.
 	html, _ := os.ReadFile(filepath.Join(dir, "index.html"))
 	mustContain(t, string(html), "<title>Elements Probe</title>")
@@ -171,89 +178,5 @@ func TestParsePageElements(t *testing.T) {
 	}
 	if AllTemplates()[0] != PageElements {
 		t.Errorf("AllTemplates() should list the default first, got %v", AllTemplates())
-	}
-}
-
-// TestPageElementsScaffoldBuildsTestsAndValidates is the end-to-end guard: render
-// the template, install, and run the app's own typecheck, tests and build, then
-// the CLI's full `validate` (lockfile included) — the out-of-the-box contract.
-// The `template-page-elements` CI job runs the same steps through the built CLI.
-//
-// Gated on CIVITAI_SCAFFOLD_TYPECHECK=1 (network + ~1 min), like
-// TestPageMoneyScaffoldTypechecksItsOwnShippedTests. Plain `npm install`, the
-// shape CI and the next-steps output use.
-func TestPageElementsScaffoldBuildsTestsAndValidates(t *testing.T) {
-	if os.Getenv(typecheckEnv) != "1" {
-		t.Skipf("set %s=1 to render page-elements, npm install, and run its typecheck, tests, build "+
-			"and `validate` (network, ~1 min). NOTHING about the scaffold's build was verified by this run.",
-			typecheckEnv)
-	}
-	npm, err := exec.LookPath("npm")
-	if err != nil {
-		t.Fatalf("%s=1 was set and npm is not on PATH: %v", typecheckEnv, err)
-	}
-	dir := renderPageElements(t)
-
-	step := func(name string, d time.Duration, args ...string) string {
-		t.Helper()
-		c := exec.Command(npm, args...)
-		c.Dir = dir
-		c.Env = append(os.Environ(), "npm_config_update_notifier=false", "CI=1", "NO_COLOR=1")
-		out, err := runWithTimeout(c, d)
-		if err != nil {
-			t.Fatalf("%s failed in the rendered page-elements scaffold: %v\n%s", name, err, tail(out, 4000))
-		}
-		return out
-	}
-
-	step("npm install", 10*time.Minute, "install", "--no-audit", "--no-fund")
-	step("npm run typecheck", 5*time.Minute, "run", "typecheck")
-
-	// COUNT the tests rather than trusting vitest's exit code: a suite that
-	// collected nothing exits 0 too.
-	testOut := step("npm test", 5*time.Minute, "test")
-	m := regexp.MustCompile(`Tests\s+(\d+) passed`).FindStringSubmatch(testOut)
-	if m == nil {
-		t.Fatalf("CONTROL failure: could not find vitest's `Tests N passed` summary:\n%s", tail(testOut, 3000))
-	}
-	if n, _ := strconv.Atoi(m[1]); n < 10 {
-		t.Fatalf("vitest passed only %s test(s); the shipped test/block.test.ts carries 12 — the suite "+
-			"is not running what the template ships:\n%s", m[1], tail(testOut, 3000))
-	}
-	if strings.Contains(testOut, " failed") {
-		t.Fatalf("vitest reported failures:\n%s", tail(testOut, 3000))
-	}
-	t.Logf("vitest: %s tests passed", m[1])
-
-	step("npm run build", 5*time.Minute, "run", "build")
-	// The ack must survive bundling: Vite output is what the platform serves.
-	var js []string
-	_ = filepath.WalkDir(filepath.Join(dir, "dist"), func(p string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".js") {
-			js = append(js, p)
-		}
-		return nil
-	})
-	if len(js) == 0 {
-		t.Fatal("the build emitted no JS into dist/")
-	}
-	var bundle strings.Builder
-	for _, p := range js {
-		b, _ := os.ReadFile(p)
-		bundle.Write(b)
-	}
-	if !strings.Contains(bundle.String(), "civitai-text") {
-		t.Fatal("CONTROL failure: the bundle does not mention civitai-text, so it is not the app's bundle")
-	}
-	if !strings.Contains(bundle.String(), "BLOCK_READY") {
-		t.Error("the built bundle carries no BLOCK_READY — the SDK's ready-ack did not survive bundling")
-	}
-
-	res, err := validate.Dir(dir)
-	if err != nil {
-		t.Fatalf("validate.Dir: %v", err)
-	}
-	if !res.OK() {
-		t.Fatalf("the installed page-elements scaffold fails `civitai app validate`: %v", validate.Messages(res.Errors))
 	}
 }

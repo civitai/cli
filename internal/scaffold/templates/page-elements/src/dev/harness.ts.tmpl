@@ -80,8 +80,7 @@ export function installHarness(root: HTMLElement): () => void {
   Object.defineProperty(window, 'parent', { value: parentMock, configurable: true, writable: true });
 
   // A PageSlotContext — what the host sends this app, because its manifest
-  // declares a `page`. (A block with a model-slot `targets` entry receives a
-  // ModelSlotContext there instead; src/block.ts handles both.)
+  // declares a `page` and nothing else.
   const context: PageSlotContext = {
     slotId: 'app.page',
     entityType: 'none',

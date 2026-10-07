@@ -8,15 +8,17 @@ import { getTransport } from '@civitai/sdk';
 import { __resetTransport } from '@civitai/sdk/testing';
 
 import { mountBlock } from '../src/block.js';
-import { DIRECT_LOAD_TIMEOUT_MS, hostToRunUrl } from '../src/directLoad.js';
 
 /**
- * These drive the block through its REAL bridge: `mountBlock` → `initialize()`
+ * These drive the app through its REAL bridge: `mountBlock` → `initialize()`
  * from `@civitai/sdk` → the iframe transport's `message` listener. Each test
  * plays the host by dispatching the same `postMessage` frames civitai.com sends,
- * and reads what the block posts back through a stand-in `window.parent` — no
+ * and reads what the app posts back through a stand-in `window.parent` — no
  * fake transport, so the handshake, the origin allowlist and the outbound
  * messages are the shipped code paths.
+ *
+ * The context is `app.page`: block.manifest.json declares a page and nothing
+ * else, so that is the only context the host sends this app.
  */
 
 const HOST_ORIGIN = 'https://civitai.com';
@@ -33,24 +35,29 @@ let posted: Posted[];
 let root: HTMLElement;
 const realParent = window.parent;
 
+function pageContext(overrides: Record<string, unknown> = {}) {
+  return {
+    slotId: 'app.page',
+    entityType: 'none',
+    slug: 'test-app',
+    subPath: '',
+    viewerUserId: 7,
+    viewerUsername: 'tester',
+    ...overrides,
+  };
+}
+
 function initPayload(overrides: Record<string, unknown> = {}) {
   return {
     blockInstanceId: 'bki_test',
-    blockId: 'test-block',
+    blockId: 'test-app',
     appId: 'app_test',
     token: {
       raw: 'test.token',
       scopes: ['models:read:self'],
       expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
     },
-    context: {
-      slotId: 'model.sidebar_top',
-      modelId: 4201,
-      modelVersionId: 9902,
-      modelName: 'Lighthouse XL',
-      modelType: 'Checkpoint',
-      modelNsfwLevel: 1,
-    },
+    context: pageContext(),
     settings: { publisherSettings: {}, userSettings: {} },
     viewer: { id: 7, username: 'tester', signedIn: true },
     theme: 'light',
@@ -101,7 +108,7 @@ afterEach(() => {
 });
 
 describe('mountBlock over the real bridge', () => {
-  test('BLOCK_INIT renders the host context into upgraded <civitai-*> elements', async () => {
+  test('BLOCK_INIT renders the page context into upgraded <civitai-*> elements', async () => {
     const mounted = mountBlock(root);
     expect(root.querySelector('[data-boot-skeleton]')).not.toBeNull();
 
@@ -109,12 +116,10 @@ describe('mountBlock over the real bridge', () => {
     await mounted;
 
     // The host's context, on screen.
-    expect(field('slot')?.textContent).toBe('model.sidebar_top');
-    expect(field('model-name')?.textContent).toBe('Lighthouse XL');
-    expect(field('model-id')?.textContent).toBe('4201');
-    expect(field('model-version-id')?.textContent).toBe('9902');
+    expect(field('slot')?.textContent).toBe('app.page');
+    expect(field('app-slug')?.textContent).toBe('test-app');
+    expect(field('sub-path')?.textContent).toBe('/');
     expect(field('viewer')?.textContent).toBe('signed in');
-    expect(root.querySelector<HTMLElement>('[data-block-root]')?.dataset.blockInstanceId).toBe('bki_test');
 
     // …inside REAL custom elements: registered, upgraded, and rendered by Lit
     // into their shadow roots. An unregistered tag would still hold the text
@@ -134,7 +139,7 @@ describe('mountBlock over the real bridge', () => {
     // The page follows the host's theme (BLOCK_INIT is authoritative).
     expect(document.documentElement.dataset.theme).toBe('light');
 
-    // And the block answered the host — to the host's origin, never '*'.
+    // And the app answered the host — to the host's origin, never '*'.
     // Exactly ONE BLOCK_READY: the SDK's transport is the only handshake in this
     // app, and a second one (a hand-added emitter) would race it.
     expect(sentTypes().filter((type) => type === 'BLOCK_READY')).toHaveLength(1);
@@ -150,7 +155,7 @@ describe('mountBlock over the real bridge', () => {
     // Only the bridge's own startup BLOCK_HELLO — no reply to the impostor.
     expect(sentTypes()).toEqual(['BLOCK_HELLO']);
 
-    // Positive control: the same frame from the real host mounts the block, so
+    // Positive control: the same frame from the real host mounts the app, so
     // the silence above was the allowlist and not a dead test.
     fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
     await mounted;
@@ -167,64 +172,42 @@ describe('mountBlock over the real bridge', () => {
     expect(document.documentElement.dataset.theme).toBe('dark');
   });
 
-  test('an anonymous viewer on a non-model slot', async () => {
+  test('an anonymous viewer on a sub-path of the page', async () => {
     const mounted = mountBlock(root);
     fromHost({
       type: 'BLOCK_INIT',
       payload: initPayload({
         viewer: null,
-        context: { slotId: 'app.page', slug: 'my-app', subPath: '/', viewerUserId: null },
+        context: pageContext({ subPath: 'gallery/42', viewerUserId: null, viewerUsername: null }),
       }),
     });
     await mounted;
     expect(field('viewer')?.textContent).toBe('anonymous');
-    expect(field('slot')?.textContent).toBe('app.page');
-    // The model line is only for model slots.
-    expect(field('model')).toBeNull();
+    expect(field('sub-path')?.textContent).toBe('/gallery/42');
   });
 
   test('host-provided strings are rendered as text, never parsed as markup', async () => {
     const mounted = mountBlock(root);
+    // `subPath` comes from the URL the viewer opened, so it is attacker-shaped.
     const hostile = '<img src=x onerror="window.__pwned=1">';
-    fromHost({
-      type: 'BLOCK_INIT',
-      payload: initPayload({ context: { ...initPayload().context, modelName: hostile } }),
-    });
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload({ context: pageContext({ subPath: hostile }) }) });
     await mounted;
-    expect(field('model-name')?.textContent).toBe(hostile);
+    expect(field('sub-path')?.textContent).toBe(`/${hostile}`);
     expect(root.querySelector('img')).toBeNull();
   });
-});
 
-describe('direct (unembedded) load', () => {
-  test('top-level with no host: the "Open on Civitai" card, then the block once a host answers', async () => {
+  test('a slow host is not a missing one: a BLOCK_INIT after the SDK timeout still mounts', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const mounted = mountBlock(root);
 
-    await vi.advanceTimersByTimeAsync(DIRECT_LOAD_TIMEOUT_MS - 1);
-    expect(root.querySelector('[data-civitai-block-direct-load]')).toBeNull();
-    await vi.advanceTimersByTimeAsync(1);
-    // happy-dom serves the page from localhost, so this is the neutral
-    // "waiting" card rather than a link to a run URL.
-    const card = root.querySelector('[data-civitai-block-direct-load]');
-    expect(card).not.toBeNull();
-    expect(card?.textContent).toContain('Waiting for the Civitai host');
+    // Well past initialize()'s own timeout, so at least one `unavailable`
+    // rejection has been retried rather than surfacing.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(rendered()).toBe(false);
+    expect(root.querySelector('[data-boot-skeleton]')).not.toBeNull();
 
-    // A late host still wins.
     fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
     await mounted;
     expect(rendered()).toBe(true);
-    expect(root.querySelector('[data-civitai-block-direct-load]')).toBeNull();
-  });
-
-  test.each([
-    ['my-app.civit.ai', 'https://civitai.com/apps/run/my-app'],
-    ['My-App.Civit.AI.', 'https://civitai.com/apps/run/my-app'],
-    ['localhost', null],
-    ['civit.ai', null],
-    ['evil.example', null],
-    ['bad_label.civit.ai', null],
-  ])('hostToRunUrl(%s) → %s', (hostname, expected) => {
-    expect(hostToRunUrl(hostname)).toBe(expected);
   });
 });

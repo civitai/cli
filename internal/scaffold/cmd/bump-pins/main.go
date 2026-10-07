@@ -6,8 +6,8 @@
 // (TestScaffoldPinsSatisfyPublished) goes red until a human hand-bumps the pins.
 // This command automates that hand-fix: for each distinct @civitai/* package
 // pinned in EITHER template's package.json it fetches npm's `latest`, computes
-// the desired caret pin (scaffold.DesiredPin), and — if the current literal no
-// longer ADMITS that version — rewrites it in every literal site:
+// the desired caret pin (scaffold.DesiredPin), and — if the current literal
+// differs — rewrites it in every literal site that names it:
 //
 //  1. templates/page-money/package.json.tmpl    ("@civitai/<pkg>": "^X.Y.Z")
 //  2. templates/page-money/README.md.tmpl        (@civitai/<pkg>@^X.Y.Z prose)
@@ -16,16 +16,9 @@
 //  5. page_elements_test.go                      (page-elements' pin canary)
 //
 // A package pinned in only one template is rewritten only where it appears
-// (rewritePin is a no-op on a file that does not name it), so the two
-// templates' pin sets need not match. `@civitai/app-sdk` is in both and moves in
-// both at once.
-//
-// 🔴 "NO LONGER ADMITS", NOT "DIFFERS". A pin is left alone while its caret
-// still admits npm's latest — `^0.9.2` is current for a published 0.9.5 — so a
-// template can pin a patch floor (page-elements mirrors the starter's `^0.9.2`)
-// without the bot "normalising" it down to `^0.9.0` on its next run, which
-// would loosen the floor and churn a PR for no behavioural change. Only a pin
-// the guard would fail is rewritten, and then to DesiredPin's `^X.Y.0` form.
+// (rewritePin is a no-op on a file that does not name it). `@civitai/app-sdk` is
+// in both templates and moves in both at once. Both templates pin in
+// DesiredPin's `^X.Y.0` form, so a current pin is never rewritten.
 //
 // It also owns a FOURTH site of a different shape:
 //
@@ -131,9 +124,9 @@ func main() {
 	}
 }
 
-// run discovers the @civitai/* packages pinned in the templates, resolves each to
-// its desired pin via fetch, and rewrites every stale literal across the pin
-// sites plus the design-token ledger. With check=true it computes the needed
+// run discovers the @civitai/* packages pinned in the template, resolves each to
+// its desired pin via fetch, and rewrites every stale literal across the three
+// pin sites plus the design-token ledger. With check=true it computes the needed
 // changes but writes nothing. It returns the list of applied (or, under
 // --check, needed) changes.
 //
@@ -148,8 +141,8 @@ func run(
 ) ([]change, error) {
 	// 1. Discover the distinct @civitai/* packages from the canonical sources.
 	//    EACH source must carry at least one pin: a template whose package.json
-	//    the extractor reads as pin-less is a broken extractor or a broken
-	//    template, and skipping it would leave its pins unwatched.
+	//    reads as pin-less is a broken extractor or template, and skipping it
+	//    would leave its pins unwatched.
 	var pkgs []string
 	seenPkg := map[string]bool{}
 	for _, f := range pkgJSONFiles {
@@ -207,7 +200,7 @@ func run(
 		}
 	}
 
-	// 3. Rewrite every stale literal across the pin sites.
+	// 3. Rewrite every stale literal across the three sites.
 	var changes []change
 	for _, s := range sites {
 		path := filepath.Join(dir, s.file)
@@ -221,11 +214,6 @@ func run(
 			bare, ok := desired[pkg]
 			if !ok {
 				continue // skipped above
-			}
-			if cur, found := currentPin(updated, pkg, s.kind); found {
-				if admits, aerr := scaffold.CaretAdmits("^"+cur, resolved[pkg]); aerr == nil && admits {
-					continue // still current — see "NO LONGER ADMITS" in the package doc
-				}
 			}
 			next, oldBare, did := rewritePin(updated, pkg, bare, s.kind)
 			if did {
@@ -382,8 +370,15 @@ const caretVer = `\d+\.\d+\.\d+`
 // (for reporting), and whether anything changed (false when the pin is absent or
 // already equals newBare).
 func rewritePin(content, pkg, newBare string, kind fileKind) (string, string, bool) {
-	re := pinRegexp(pkg, kind)
-	if re == nil {
+	var re *regexp.Regexp
+	switch kind {
+	case jsonPin:
+		// group1 = `"@civitai/<pkg>": "^`  group2 = version  group3 = `"`
+		re = regexp.MustCompile(`("` + regexp.QuoteMeta(pkg) + `"\s*:\s*"\^)(` + caretVer + `)(")`)
+	case prosePin:
+		// group1 = `@civitai/<pkg>@^`  group2 = version  group3 = "" (empty tail)
+		re = regexp.MustCompile(`(` + regexp.QuoteMeta(pkg) + `@\^)(` + caretVer + `)()`)
+	default:
 		return content, "", false
 	}
 
@@ -397,33 +392,4 @@ func rewritePin(content, pkg, newBare string, kind fileKind) (string, string, bo
 	}
 	updated := re.ReplaceAllString(content, `${1}`+newBare+`${3}`)
 	return updated, oldBare, true
-}
-
-// pinRegexp matches pkg's caret pin in the given literal shape, capturing the
-// prefix, the bare version and the tail. nil for an unknown kind.
-func pinRegexp(pkg string, kind fileKind) *regexp.Regexp {
-	switch kind {
-	case jsonPin:
-		// group1 = `"@civitai/<pkg>": "^`  group2 = version  group3 = `"`
-		return regexp.MustCompile(`("` + regexp.QuoteMeta(pkg) + `"\s*:\s*"\^)(` + caretVer + `)(")`)
-	case prosePin:
-		// group1 = `@civitai/<pkg>@^`  group2 = version  group3 = "" (empty tail)
-		return regexp.MustCompile(`(` + regexp.QuoteMeta(pkg) + `@\^)(` + caretVer + `)()`)
-	default:
-		return nil
-	}
-}
-
-// currentPin returns the bare version of pkg's first caret pin in content, and
-// whether one was found.
-func currentPin(content, pkg string, kind fileKind) (string, bool) {
-	re := pinRegexp(pkg, kind)
-	if re == nil {
-		return "", false
-	}
-	m := re.FindStringSubmatch(content)
-	if m == nil {
-		return "", false
-	}
-	return m[2], true
 }

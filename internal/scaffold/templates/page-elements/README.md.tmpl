@@ -9,7 +9,7 @@ A Civitai App built with **web components and no UI framework** — the default
   **`@civitai/theme`**'s `--civitai-*` tokens.
 - Vite + TypeScript, nothing else.
 
-It mirrors the `civitai-block-starter-elements` starter in
+It mirrors the `civitai-block-starter` starter in
 [civitai/civitai-app-starters](https://github.com/civitai/civitai-app-starters),
 as a full-page app (see "Page, not slot" below).
 
@@ -102,14 +102,17 @@ The starter this template mirrors targets a model-page slot
 (`model.sidebar_top`). This app instead declares a full **page**
 (`"page"` in `block.manifest.json`) that the Civitai host runs full-viewport at
 `https://civitai.com/apps/run/<slug>` once approved — like every other
-`civitai app init` template. Two consequences:
+`civitai app init` template. So:
 
-- The host sends an `app.page` context (the dev harness does too), so the
-  model row in `src/block.ts` is only shown if you add a model-slot `targets`
-  entry.
+- The host sends an `app.page` context (the dev harness does too), which
+  `src/block.ts` narrows with `isPageSlotContext`. If you add a model-slot
+  `targets` entry, narrow its context with `isModelSlotContext`.
 - A page fills the host surface rather than sizing to its content, so there is
   no `app.host.autoResize(root)` call. Add one only alongside a model-slot
   target, where the host honours it.
+- There is no direct-load "Open on Civitai" fallback, matching the React
+  `page-money` template: opened top-level at its own `<slug>.civit.ai` URL, the
+  app keeps its boot skeleton and waits for a host.
 
 ## Boot skeleton
 
@@ -128,14 +131,6 @@ never consult the browser preference: light engages only when the host says the
 viewer chose it — via the `#civitai-block=v1&theme=…` URL fragment (an inline
 script applies it before first paint), then `BLOCK_INIT`, then live
 `THEME_CHANGE` pushes (synced onto `<html>` by `src/block.ts`).
-
-## Direct loads
-
-Opened top-level at its own `<slug>.civit.ai` URL (a shared link, a social
-unfurl), no host ever sends `BLOCK_INIT`. After 2 s the app shows an "Open on
-Civitai" card linking to `https://civitai.com/apps/run/<slug>` instead of a
-skeleton that never resolves (`src/directLoad.ts`). An embedded app never shows
-it, however slow its host.
 
 ## Validate
 

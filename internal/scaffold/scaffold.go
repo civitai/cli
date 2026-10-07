@@ -33,7 +33,7 @@ const (
 	// PageElements is a vite+TS page block with no UI framework: `@civitai/sdk`
 	// for the host bridge and `@civitai/components` `<civitai-*>` custom
 	// elements (themed by `@civitai/theme`) for the UI. It mirrors the
-	// `civitai-block-starter-elements` starter in civitai/civitai-app-starters,
+	// `civitai-block-starter` starter in civitai/civitai-app-starters,
 	// declared as a page rather than a model slot like every template here.
 	PageElements Template = "page-elements"
 )

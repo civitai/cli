@@ -512,9 +512,8 @@ jobs:
   # against the PUBLISHED packages: install, typecheck, the app's own tests,
   # build, validate. It scaffolds with NO --template, so it is also the check
   # that plain `civitai app init` still produces a project that builds — the
-  # thing a first-time author runs. The same steps run hermetically-gated in
-  # `TestPageElementsScaffoldBuildsTestsAndValidates`
-  # (CIVITAI_SCAFFOLD_TYPECHECK=1).
+  # thing a first-time author runs. This job is the template's one end-to-end
+  # check; `bump-scaffold-pins.yml` repeats the same steps after a pin bump.
   #
   # Reports; it is NOT a required context until a maintainer adds it to branch
   # protection (AGENTS.md item 11: measure, never infer, which jobs gate).
