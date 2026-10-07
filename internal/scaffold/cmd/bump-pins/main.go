@@ -1,17 +1,24 @@
 // Command bump-pins keeps the scaffold's @civitai/* pins in lockstep with npm.
 //
-// The page-money template pins `@civitai/app-sdk` and `@civitai/blocks-react`
-// with pre-1.0 carets that LOCK THE MINOR, so every time those packages publish
-// a new minor the pins-vs-published guard (TestScaffoldPinsSatisfyPublished)
-// goes red until a human hand-bumps the pins in THREE places. This command
-// automates that hand-fix: for each distinct @civitai/* package pinned in the
-// template it fetches npm's `latest`, computes the desired caret pin
-// (scaffold.DesiredPin), and — if the current literal differs — rewrites it in
-// all three literal sites:
+// The page-money and page-elements templates pin `@civitai/*` packages with
+// pre-1.0 carets that LOCK THE MINOR, so every time one of those packages
+// publishes a new minor the pins-vs-published guard
+// (TestScaffoldPinsSatisfyPublished) goes red until a human hand-bumps the pins.
+// This command automates that hand-fix: for each distinct @civitai/* package
+// pinned in EITHER template's package.json it fetches npm's `latest`, computes
+// the desired caret pin (scaffold.DesiredPin), and — if the current literal
+// differs — rewrites it in every literal site that names it:
 //
-//  1. templates/page-money/package.json.tmpl   ("@civitai/<pkg>": "^X.Y.Z")
-//  2. templates/page-money/README.md.tmpl       (@civitai/<pkg>@^X.Y.Z prose)
-//  3. scaffold_test.go                          (the mustContain assertion)
+//  1. templates/page-money/package.json.tmpl    ("@civitai/<pkg>": "^X.Y.Z")
+//  2. templates/page-money/README.md.tmpl        (@civitai/<pkg>@^X.Y.Z prose)
+//  3. scaffold_test.go                           (page-money's mustContain assertion)
+//  4. templates/page-elements/package.json.tmpl  ("@civitai/<pkg>": "^X.Y.Z")
+//  5. page_elements_test.go                      (page-elements' pin canary)
+//
+// A package pinned in only one template is rewritten only where it appears
+// (rewritePin is a no-op on a file that does not name it). `@civitai/app-sdk` is
+// in both templates and moves in both at once. Both templates pin in
+// DesiredPin's `^X.Y.0` form, so a current pin is never rewritten.
 //
 // It also owns a FOURTH site of a different shape:
 //
@@ -56,12 +63,18 @@ import (
 	"github.com/civitai/cli/internal/scaffold"
 )
 
-// The three literal pin sites, relative to the scaffold package dir.
+// The literal pin sites, relative to the scaffold package dir.
 const (
-	pkgJSONFile = "templates/page-money/package.json.tmpl"
-	readmeFile  = "templates/page-money/README.md.tmpl"
-	testFile    = "scaffold_test.go"
+	pkgJSONFile         = "templates/page-money/package.json.tmpl"
+	readmeFile          = "templates/page-money/README.md.tmpl"
+	testFile            = "scaffold_test.go"
+	elementsPkgJSONFile = "templates/page-elements/package.json.tmpl"
+	elementsTestFile    = "page_elements_test.go"
 )
+
+// pkgJSONFiles are the canonical sources the package set is discovered from:
+// every template package.json that carries @civitai/* pins.
+var pkgJSONFiles = []string{pkgJSONFile, elementsPkgJSONFile}
 
 // fileKind selects the pin's literal shape in a given file.
 type fileKind int
@@ -83,6 +96,8 @@ var sites = []site{
 	{pkgJSONFile, jsonPin},
 	{readmeFile, prosePin},
 	{testFile, jsonPin},
+	{elementsPkgJSONFile, jsonPin},
+	{elementsTestFile, jsonPin},
 }
 
 // change records one rewritten pin, for reporting.
@@ -124,14 +139,28 @@ func run(
 	check bool,
 	out io.Writer,
 ) ([]change, error) {
-	// 1. Discover the distinct @civitai/* packages from the canonical source.
-	pkgs, err := discoverPackages(filepath.Join(dir, pkgJSONFile))
-	if err != nil {
-		return nil, err
+	// 1. Discover the distinct @civitai/* packages from the canonical sources.
+	//    EACH source must carry at least one pin: a template whose package.json
+	//    reads as pin-less is a broken extractor or template, and skipping it
+	//    would leave its pins unwatched.
+	var pkgs []string
+	seenPkg := map[string]bool{}
+	for _, f := range pkgJSONFiles {
+		found, err := discoverPackages(filepath.Join(dir, f))
+		if err != nil {
+			return nil, err
+		}
+		if len(found) == 0 {
+			return nil, fmt.Errorf("no @civitai/* pins found in %s — the template or the extractor is broken", f)
+		}
+		for _, p := range found {
+			if !seenPkg[p] {
+				seenPkg[p] = true
+				pkgs = append(pkgs, p)
+			}
+		}
 	}
-	if len(pkgs) == 0 {
-		return nil, fmt.Errorf("no @civitai/* pins found in %s — the template or the extractor is broken", pkgJSONFile)
-	}
+	sort.Strings(pkgs)
 
 	// 2. Resolve each package to its desired caret pin. A transient npm error
 	//    (or a genuinely-missing package) skips that package without failing —
@@ -160,6 +189,7 @@ func run(
 	//     than no bump.
 	var tokens []string
 	if _, ok := desired[scaffold.DesignTokenPkg]; ok {
+		var err error
 		tokens, err = fetchTokens(scaffold.DesignTokenPkg, resolved[scaffold.DesignTokenPkg])
 		if err != nil {
 			fmt.Fprintf(os.Stderr,

@@ -75,10 +75,11 @@ import (
 // or duplicated remedy would make `strings.Contains` vacuously true and disarm
 // the whole guard.
 //
-// 🔴 THE SCAFFOLDER IT NAMES IS `app create`, NOT `app init`, AND THE TWO ARE
-// NOT INTERCHANGEABLE. They share one RunE but default to different templates —
-// `create` to the batteries-included page-money, `init` to the no-build
-// `static` — and `civitai app --help` calls `init` "a back-compat alias". Every
+// 🔴 THE SCAFFOLDER IT NAMES IS `app create`, NOT `app init`. They share one
+// RunE and, since web components became the default, one default template
+// (scaffold.DefaultTemplate) — but when this was written they defaulted to
+// different templates (`create` to page-money, `init` to `static`), and naming
+// ONE scaffolder everywhere is still the rule this constant holds. Every
 // other surface that tells somebody with no app how to get one already named
 // `create` (`civitai --help`'s "Get started" block, `app --help`'s example,
 // agentSetupNoSuchDir in agent_setup.go); this constant said `init` and was the

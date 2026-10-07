@@ -1,11 +1,12 @@
 # Auto-bump the scaffold's @civitai/* pins when they fall behind npm.
 #
-# The page-money template pins @civitai/app-sdk and @civitai/blocks-react with
+# The page-money and page-elements templates pin @civitai/* packages with
 # pre-1.0 carets that LOCK THE MINOR, so every new minor those packages publish
-# turns the `pins-vs-published` guard red until a human hand-bumps the pins in
-# three places. This job runs `bump-pins` (which rewrites the literals in the
-# template + README + the scaffold_test.go canary), validates the result IN THIS
-# JOB, and opens a PR when anything changed — so the hand-fix never recurs.
+# turns the `pins-vs-published` guard red until a human hand-bumps the pins.
+# This job runs `bump-pins` (which rewrites the literals in both templates'
+# package.json, the page-money README and each template's test canary),
+# validates the result IN THIS JOB, and opens a PR when anything changed — so
+# the hand-fix never recurs.
 #
 # 🔴 "OPENS A PR WHEN ANYTHING CHANGED" IS THE WHOLE POINT, AND IT USED TO BE
 # FALSE. Until #530 the PR step required every validation to have passed, so one
@@ -336,8 +337,11 @@ jobs:
       # pins guard only proves the pin ADMITS the published minor, NOT that the
       # template code still compiles against it (a removed/renamed SDK export
       # would slip through otherwise, since this PR won't auto-run scaffold-
-      # currency). Mirrors the template-page-money CI job. Scaffold into
-      # RUNNER_TEMP so the generated app never pollutes the auto-PR diff.
+      # currency). Mirrors the template-page-money AND template-page-elements CI
+      # jobs: bump-pins rewrites both templates' pins, so both are rebuilt here.
+      # page-elements also runs its own tests and `civitai app validate`, as its
+      # CI job does. Scaffold into RUNNER_TEMP so the generated apps never
+      # pollute the auto-PR diff.
       #
       # 🔴 THIS STEP FAILING NO LONGER SUPPRESSES THE PR — it downgrades it to a
       # DRAFT (see the `open PR if pins changed` step). It used to gate it, and
@@ -366,11 +370,16 @@ jobs:
         id: validate_build
         if: steps.changed.outputs.changed == 'true'
         run: |
+          set -euo pipefail
+          echo "── page-money ──"
           go run ./cmd/civitai app init "Bump Validation" --dir "$RUNNER_TEMP/bump-validate" --template page-money
-          cd "$RUNNER_TEMP/bump-validate"
-          npm install --no-audit --no-fund
-          npm run typecheck
-          npm run build
+          (cd "$RUNNER_TEMP/bump-validate" && npm install --no-audit --no-fund && npm run typecheck && npm run build)
+
+          echo "── page-elements ──"
+          go run ./cmd/civitai app init "Bump Validation Elements" --dir "$RUNNER_TEMP/bump-validate-elements" --template page-elements
+          civitai_bin="$RUNNER_TEMP/civitai-bump"
+          go build -o "$civitai_bin" ./cmd/civitai
+          (cd "$RUNNER_TEMP/bump-validate-elements" && npm install --no-audit --no-fund && npm run typecheck && npm test && npm run build && "$civitai_bin" app validate)
 
       # Compose the PR body HERE rather than inline in the action's `body:`,
       # because it has to be conditional and a GitHub expression cannot hold a
@@ -409,8 +418,10 @@ jobs:
           >
           > The pin rewrite validated (npm admits the new pins, and the offline
           > scaffold suite is green), but the LAST check did not: a fresh
-          > `civitai app init … --template page-money` at these pins failed to
-          > install, typecheck or build. The bump is proposed anyway because
+          > `civitai app init … --template page-money` (or `page-elements`) at
+          > these pins failed to install, typecheck, test, build or validate —
+          > the run log's `── page-money ──` / `── page-elements ──` markers say
+          > which. The bump is proposed anyway because
           > withholding it froze the repo for three days (#530) —
           > `pins-vs-published` is a REQUIRED check with `enforce_admins`, so
           > un-bumped pins block every open PR regardless of its content.
@@ -425,14 +436,16 @@ jobs:
             cat <<'BODY'
           Automated by the `bump-scaffold-pins` workflow (`internal/scaffold/cmd/bump-pins`).
 
-          One or more `@civitai/*` packages published a new minor, so the
-          page-money scaffold's pre-1.0 caret pins fell behind npm and the
-          `pins-vs-published` guard would go red. This PR rewrites the literal
-          pins in all three sites:
+          One or more `@civitai/*` packages published a new minor, so a
+          scaffold's pre-1.0 caret pins fell behind npm and the
+          `pins-vs-published` guard would go red. This PR rewrites the stale
+          literal pins wherever they appear:
 
           - `internal/scaffold/templates/page-money/package.json.tmpl`
           - `internal/scaffold/templates/page-money/README.md.tmpl`
-          - `internal/scaffold/scaffold_test.go` (the `mustContain` canary)
+          - `internal/scaffold/scaffold_test.go` (page-money's `mustContain` canary)
+          - `internal/scaffold/templates/page-elements/package.json.tmpl`
+          - `internal/scaffold/page_elements_test.go` (page-elements' pin canary)
 
           The pins are rewritten as **literals** (not templated) on purpose:
           the guard reads the raw `^X.Y.Z` bytes out of the `.tmpl`, so
@@ -469,8 +482,8 @@ jobs:
       #
       # This job was audited against that failure and does not have it: the only
       # step that writes into the repo is the bumper, and `bump-pins` writes
-      # exclusively under its `--dir` (default `internal/scaffold`) to three
-      # constant sites. Everything else writes outside the tree — `go test`
+      # exclusively under its `--dir` (default `internal/scaffold`) to its
+      # constant sites (the `sites` list in bump-pins/main.go). Everything else writes outside the tree — `go test`
       # writes nothing, and `validate — scaffold builds` scaffolds and runs npm
       # in `$RUNNER_TEMP` on purpose (see that step's comment). Measured, not
       # just read: `git status --porcelain` is clean of artifacts after the test
@@ -669,7 +682,7 @@ jobs:
               fi
               bump_state=validate-build-failed
               bump_title="the scaffold did not build against the newly-bumped @civitai/* pins"
-              bump_detail="**What was measured.** Pins were rewritten and they satisfy npm's published latest; the offline scaffold suite is green. The LAST check then failed: a fresh \`civitai app init … --template page-money\` at the bumped pins did not install, typecheck or build. The step runs \`npm install\` → \`npm run typecheck\` → \`npm run build\` and this report does not record which of the three died — **the run log does, and it is the first thing to read.**
+              bump_detail="**What was measured.** Pins were rewritten and they satisfy npm's published latest; the offline scaffold suite is green. The LAST check then failed: a fresh \`civitai app init … --template page-money\` (then \`page-elements\`) at the bumped pins did not install, typecheck, test, build or validate. The step runs \`npm install\` → \`npm run typecheck\` → \`npm run build\` for page-money, then the same plus \`npm test\` and \`civitai app validate\` for page-elements, and this report does not record which template or step died — **the run log does, and it is the first thing to read.**
 
           $pr_line
 

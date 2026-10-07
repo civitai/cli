@@ -30,10 +30,16 @@ func newAppInitCmd() *cobra.Command {
 		Long: `Scaffold a correct, ready-to-build App project.
 
 Templates:
-  static      a no-build page app (index.html + a tiny JS, no build step)
-  page-vite   a vite + React page app (config-as-code build: buildCommand + outputDir)
-  page-money  a vite + React + TS full-page (W10) money-path app wired to the
-              published App SDK (estimate -> consent -> submit -> poll -> Buzz spend)
+  page-elements  [default] a vite + TS full-page app built with web components and
+                 no UI framework: @civitai/sdk for the host bridge, <civitai-*>
+                 elements from @civitai/components (themed by @civitai/theme),
+                 a mock-host dev harness and a test
+  page-money     the React alternative: a vite + React + TS full-page (W10)
+                 money-path app wired to the published App SDK (estimate ->
+                 consent -> submit -> poll -> Buzz spend)
+  page-vite      a vite + React page app with no SDK (config-as-code build:
+                 buildCommand + outputDir)
+  static         a no-build page app (index.html + a tiny JS, no build step)
 
 The display name can be free-form ("My Cool Block"); it is slugified for the
 blockId. A slug-shaped name is used verbatim.
@@ -49,11 +55,14 @@ derivation entirely.
 By default the project is created in ./<slug>. Override the output directory with
 a positional [dir] or --dir <path>; override the display name independently with
 --name (so name, slug, and directory can all differ).`,
-		Example: `  # A no-build static app in ./my-block.
+		Example: `  # A web-components app (the page-elements default) in ./my-block.
   civitai app init my-block
 
-  # A page-money app; "My Cool Block" -> slug my-cool-block, dir ./my-cool-block.
+  # The React alternative; "My Cool Block" -> slug my-cool-block, dir ./my-cool-block.
   civitai app init "My Cool Block" --template page-money
+
+  # A no-build static app.
+  civitai app init my-block --template static
 
   # Custom output directory (slug stays my-block; created in ./apps/foo).
   civitai app init my-block --dir ./apps/foo
@@ -69,7 +78,7 @@ a positional [dir] or --dir <path>; override the display name independently with
 		},
 	}
 
-	cmd.Flags().StringVarP(&templateFlag, "template", "t", string(scaffold.Static), "project template: static | page-vite | page-money")
+	cmd.Flags().StringVarP(&templateFlag, "template", "t", string(scaffold.DefaultTemplate), templateFlagUsage)
 	cmd.Flags().StringVar(&fromSlug, "from", "", fromFlagUsage)
 	cmd.Flags().StringVar(&dirFlag, "dir", "", "output directory (default ./<slug>)")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "display name (default derived from the name argument)")
@@ -78,9 +87,11 @@ a positional [dir] or --dir <path>; override the display name independently with
 	return cmd
 }
 
-// slugFlagUsage / fromFlagUsage are shared by `app init` and `app create` so the
-// two commands cannot drift on the same flag.
+// slugFlagUsage / fromFlagUsage / templateFlagUsage are shared by `app init`
+// and `app create` so the two commands cannot drift on the same flag.
 const (
+	templateFlagUsage = "project template: page-elements | page-money | page-vite | static"
+
 	slugFlagUsage = "explicit blockId (bypasses derivation from the name; 3-40 chars, starts with a letter, lowercase a-z/0-9/hyphens)"
 	// The flag stays discoverable — it is a real roadmap item and hiding it
 	// would only move the surprise to a user who read about it elsewhere — but
@@ -374,12 +385,27 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 	// server-registered recipe, and an inline graph the app ships itself. Surface
 	// both honestly (each has its own access gate) and point at the README's
 	// Comfy on Civitai section rather than the raw file count.
-	if tmpl.NeedsHarness() {
+	if tmpl == scaffold.PageMoney {
 		fmt.Fprintln(out, ui.Dim("  Includes a txt2img sample + a Comfy on Civitai (customComfy) sample (invite-only beta), with body builders for BOTH arms: a server-registered recipe and an inline ComfyUI graph your own app ships (app developers) — see the Comfy on Civitai section in README.md."))
 	}
 
 	fmt.Fprintln(out, "\n"+ui.Bold("Next steps:"))
 	switch {
+	case tmpl == scaffold.PageElements:
+		// The default template. Same shape as page-money's free path — a mock
+		// host that works today, no Buzz and no beta access — then the same
+		// invite-only dev tunnel. There is no money path or dev:live here, so
+		// neither is named.
+		fmt.Fprintf(out, installStepFmt, destDir)
+		fmt.Fprintln(out, "  2. npm run dev:harness     # mock host on localhost:5186 — works today")
+		fmt.Fprintln(out, "  3. edit src/block.ts and iterate (npm test drives it through the real bridge)")
+		fmt.Fprintln(out, "  4. civitai app submit      # validate + submit for review")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "  When you have beta access (invite-only):")
+		fmt.Fprintln(out, "     npm run dev:tunnel      # in another terminal: serve your app for the tunnel")
+		fmt.Fprintln(out, "     civitai app dev-tunnel  # your LOCAL app INSIDE the real host, prod-fidelity — no submit needed")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, ui.Dim("  Prefer React? `--template page-money` scaffolds the React alternative."))
 	case tmpl.NeedsHarness():
 		// LEAD with the free, works-today path: `npm run dev:harness` mounts a
 		// MOCK host (no Buzz, no beta access, no network) so a newcomer can build
@@ -429,8 +455,9 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 	// this in its own words.)
 	//
 	// BOTH conjuncts are load-bearing even though they are coextensive across
-	// today's three templates (page-money is the only harness template and the
-	// only one with no emitter). Neither should be dropped as redundant:
+	// today's four templates (page-money and page-elements are the harness
+	// templates and the only ones with no emitter — their SDKs ack). Neither
+	// should be dropped as redundant:
 	//   - `ReadyAckPath() != ""` stops the sentence printing with an EMPTY
 	//     filename for a template that ships no emitter. Not hypothetical:
 	//     forcing this condition true is exactly what produced
@@ -498,11 +525,7 @@ func runScaffoldForm(cmd *cobra.Command, defaultTemplate string, askName bool) (
 	}
 	fields = append(fields, huh.NewSelect[string]().
 		Title("Template").
-		Options(
-			huh.NewOption("static — no-build page app (index.html + a tiny JS)", string(scaffold.Static)),
-			huh.NewOption("page-vite — Vite + React page app", string(scaffold.PageVite)),
-			huh.NewOption("page-money — Vite + React + TS SDK money-path app", string(scaffold.PageMoney)),
-		).
+		Options(scaffoldTemplateOptions()...).
 		Value(&in.template))
 	form := huh.NewForm(
 		huh.NewGroup(fields...),
@@ -512,6 +535,20 @@ func runScaffoldForm(cmd *cobra.Command, defaultTemplate string, askName bool) (
 	}
 	in.name = strings.TrimSpace(in.name)
 	return in, nil
+}
+
+// scaffoldTemplateOptions is the prompt's template list, in display order. The
+// default (scaffold.DefaultTemplate) is listed FIRST as well as pre-selected, so
+// the recommended choice is the one a reader meets first even where a terminal
+// renders the cursor poorly. Separate from runScaffoldForm so a test can read
+// it without a TTY.
+func scaffoldTemplateOptions() []huh.Option[string] {
+	return []huh.Option[string]{
+		huh.NewOption("page-elements — Vite + TS + web components (recommended)", string(scaffold.PageElements)),
+		huh.NewOption("page-money — Vite + React + TS SDK money-path app (the React alternative)", string(scaffold.PageMoney)),
+		huh.NewOption("page-vite — Vite + React page app, no SDK", string(scaffold.PageVite)),
+		huh.NewOption("static — no-build page app (index.html + a tiny JS)", string(scaffold.Static)),
+	}
 }
 
 func joinLines(lines []string) string {

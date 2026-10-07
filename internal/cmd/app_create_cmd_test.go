@@ -55,19 +55,22 @@ func assertScaffoldValid(t *testing.T, dir string) {
 	}
 }
 
-func TestAppCreateDefaultsToPageMoney(t *testing.T) {
+// TestAppCreatePageMoneyOutput pins page-money's scaffold output. It was
+// TestAppCreateDefaultsToPageMoney until page-elements became the default; the
+// page-money assertions are unchanged, and the template is now named explicitly.
+// The DEFAULT is pinned in app_default_template_test.go.
+func TestAppCreatePageMoneyOutput(t *testing.T) {
 	tmp := t.TempDir()
 	dest := filepath.Join(tmp, "my-block")
 
-	stdout, _, err := run(t, "app", "create", "my-block", dest)
+	stdout, _, err := run(t, "app", "create", "my-block", dest, "--template", "page-money")
 	if err != nil {
-		t.Fatalf("app create: %v\n%s", err, stdout)
+		t.Fatalf("app create --template page-money: %v\n%s", err, stdout)
 	}
 
-	// Defaulted to the batteries-included page-money template (named in the
-	// one-line summary).
+	// The template is named in the one-line summary.
 	if !strings.Contains(stdout, "(page-money)") {
-		t.Errorf("create should default to page-money:\n%s", stdout)
+		t.Errorf("create --template page-money should scaffold page-money:\n%s", stdout)
 	}
 	// The summary reports a file COUNT, not a per-file tree.
 	if !strings.Contains(stdout, "files") {
@@ -255,22 +258,22 @@ func TestAppCreateFromIsNotWired(t *testing.T) {
 	}
 }
 
-// TestAppInitStillDefaultsToStatic guards the back-compat alias: the refactor to
-// the shared helper must not change init's default template.
-func TestAppInitStillDefaultsToStatic(t *testing.T) {
+// TestAppInitStaticViaFlag keeps the no-build template reachable by name. It was
+// TestAppInitStillDefaultsToStatic until page-elements became init's default.
+func TestAppInitStaticViaFlag(t *testing.T) {
 	tmp := t.TempDir()
 	dest := filepath.Join(tmp, "init-block")
 
-	stdout, _, err := run(t, "app", "init", "init-block", dest)
+	stdout, _, err := run(t, "app", "init", "init-block", dest, "--template", "static")
 	if err != nil {
-		t.Fatalf("app init: %v\n%s", err, stdout)
+		t.Fatalf("app init --template static: %v\n%s", err, stdout)
 	}
 	if !strings.Contains(stdout, "(static)") {
-		t.Errorf("init should still default to static:\n%s", stdout)
+		t.Errorf("init --template static should scaffold static:\n%s", stdout)
 	}
 	assertScaffoldValid(t, dest)
 	if _, err := os.Stat(filepath.Join(dest, "package.json")); err == nil {
-		t.Error("init's static default should not produce a package.json")
+		t.Error("the static template should not produce a package.json")
 	}
 }
 

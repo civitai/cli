@@ -1,0 +1,191 @@
+# {{ .Name }}
+
+A Civitai App built with **web components and no UI framework** — the default
+`civitai app init` template:
+
+- **`@civitai/sdk`** for the host bridge — `initialize()` waits for the host and
+  hands you the slot context, viewer, theme and `app.host`.
+- **`@civitai/components`** `<civitai-*>` custom elements for the UI, themed by
+  **`@civitai/theme`**'s `--civitai-*` tokens.
+- Vite + TypeScript, nothing else.
+
+It mirrors the `civitai-block-starter` starter in
+[civitai/civitai-app-starters](https://github.com/civitai/civitai-app-starters),
+as a full-page app (see "Page, not slot" below).
+
+Prefer React? `civitai app init "…" --template page-money` scaffolds the React
+alternative: Vite + React + TypeScript on `@civitai/blocks-react`, with a
+runnable generation (Buzz-spend) sample.
+
+## What this is
+
+A sandboxed static web app served in an iframe by the Civitai host. The
+platform owns the build: it runs `npm ci` and then the `buildCommand` from
+`block.manifest.json` (`npm run build`), serving the static output from
+`outputDir` (`dist/`). You do NOT commit `dist/` — the platform builds it.
+
+**Commit your lockfile.** The platform installs *strictly* from it — `npm ci`,
+with no registry re-resolve fallback — so builds are byte-reproducible. Without
+a committed `package-lock.json` the build hard-fails. If you prefer pnpm or
+yarn, set `"buildCommand"` to that package manager (plus the `"outputDir"` the
+manifest schema requires alongside it) and commit *that* lockfile instead:
+`"pnpm run build"` needs `pnpm-lock.yaml`, `"yarn run build"` needs `yarn.lock`.
+`civitai app validate` catches a lockfile that disagrees with `buildCommand`
+before you submit.
+
+## Develop
+
+```bash
+npm install
+npm run dev:harness   # http://localhost:5186, with a local mock host
+```
+
+`npm run dev:harness` runs Vite with a local dev harness around your app. The
+harness stands in for the host page: it posts a fake `BLOCK_INIT`, logs your
+outbound messages, and echoes token refreshes, so the UI iterates without
+civitai.com embedding it. `.env.development` already allow-lists the harness's
+origin (`http://localhost:5186`) and `https://civitai.com`, the real host's
+origin when `civitai app dev-tunnel` embeds your dev server; the port is pinned
+in `vite.config.ts` and is the dev tunnel's default. If the app sits on its
+skeleton, the console says it is still waiting for a host — check that the
+host's origin is on that list.
+
+`npm run dev` is the same server **without** the harness — nothing sends
+`BLOCK_INIT`, so you will see the boot skeleton until a real host frames the
+dev URL.
+
+To see your LOCAL code inside the REAL Civitai host (invite-only beta):
+
+```bash
+npm run dev:tunnel        # terminal 1: the embeddable dev server on :5186
+civitai app dev-tunnel    # terminal 2: tunnels it and prints the /apps/dev/<blockId> URL
+```
+
+`vite.config.ts` makes the dev server embeddable for this — it admits the
+`.civit.ai` tunnel host, sends `Access-Control-Allow-Origin: *` (the host frames
+the app at a null origin) and a `frame-ancestors https://civitai.com` CSP, and
+routes live reload over the tunnel — all from `src/dev-embed.ts`, and all
+dev-only: `vite build` is unaffected.
+
+| Command | What it does |
+|---|---|
+| `npm run dev:harness` | Vite + the local mock host. **Use this for offline iteration.** |
+| `npm run dev` | Vite, no harness — for a real host page that iframes your dev URL. |
+| `npm run dev:tunnel` | The embeddable dev server `civitai app dev-tunnel` serves inside the real host. |
+| `npm test` | Drives the app through the real bridge in happy-dom (`test/block.test.ts`). |
+| `npm run typecheck` | TypeScript strict check. |
+| `npm run build` | Production bundle in `dist/`. Also validates `block.manifest.json`. |
+| `npm run preview` | Serve the production bundle locally. |
+
+## What runs in the iframe
+
+```ts
+import '@civitai/components/register'; // the generic <civitai-*> kit (see below)
+import { initialize } from '@civitai/sdk';
+
+const app = await initialize();          // resolves on the host's BLOCK_INIT
+document.documentElement.dataset.theme = app.theme;
+app.onChange(() => { /* theme, context, token … changed — update the view in place */ });
+```
+
+```html
+<civitai-stack gap="sm">
+  <civitai-text as="h2" size="md" weight="bold">Hello</civitai-text>
+  <civitai-badge variant="light">signed in</civitai-badge>
+</civitai-stack>
+```
+
+The whole demo is `src/block.ts`. It builds the view ONCE and updates it in
+place from `app.onChange` — which also fires on every token rotation — so never
+rebuild the view there, or a host push wipes whatever the viewer typed.
+`src/main.ts` calls `startBlock`, which shows an error in place of the skeleton
+if the app cannot start; keep that wiring. From the same `app` you also get `app.site`
+(the `/api/v1` REST API as the viewer), `app.storage` / `app.sharedStorage`,
+`app.requestGrants(scopes)`, and the host's own UI via `app.host`. The
+`@civitai/sdk` README documents each.
+
+Every tag, attribute, event and slot of the `<civitai-*>` elements is listed in
+`@civitai/components`' `custom-elements.json` — but `@civitai/components/register`
+defines only the generic kit. The civitai-specific elements (`<civitai-avatar>`,
+`<civitai-media-card>`, `<civitai-rating-badge>`, `<civitai-reaction>`,
+`<civitai-tag>`) need `@civitai/components/register-site` instead, and the
+SDK-backed `<civitai-sign-in-button>` / `<civitai-workflow-button>` each need
+their own `@civitai/components/<tag>/define`. An element nothing defines renders
+as an inert tag with no error; `test/elements.test.ts` fails on any element the
+app uses that no import defines.
+
+## The host handshake
+
+The host does not reveal a page app until it answers the host's `BLOCK_INIT`
+with `BLOCK_READY`. **`@civitai/sdk` sends that for you** — `initialize()`'s
+transport answers the first `BLOCK_INIT`, to the origin it came from, and checks
+every inbound message's origin against `VITE_BLOCK_ALLOWED_PARENT_ORIGINS`
+(injected by the platform build in production). So, unlike the SDK-free
+`static` and `page-vite` templates, this app ships **no** `civitai-host.js` —
+and must not gain one: two handshakes race, and the loser can leave the SDK
+never having seen an init.
+
+## Page, not slot
+
+The starter this template mirrors targets a model-page slot
+(`model.sidebar_top`). This app instead declares a full **page**
+(`"page"` in `block.manifest.json`) that the Civitai host runs full-viewport at
+`https://civitai.com/apps/run/<slug>` once approved — like every other
+`civitai app init` template. So:
+
+- The host sends an `app.page` context (the dev harness does too), which
+  `src/block.ts` narrows with `isPageSlotContext`. If you add a model-slot
+  `targets` entry, narrow its context with `isModelSlotContext`.
+- A page fills the host surface rather than sizing to its content, so there is
+  no `app.host.autoResize(root)` call. Add one only alongside a model-slot
+  target, where the host honours it.
+- There is no direct-load "Open on Civitai" fallback, matching the React
+  `page-money` template: opened top-level at its own `<slug>.civit.ai` URL, the
+  app keeps its boot skeleton and waits for a host.
+
+## Boot skeleton
+
+`block.manifest.json` sets `"bootSkeleton": true` and `index.html` paints a
+matching skeleton inside `#root`, styled by an inline `<style>` so it appears
+before any script runs. **Ship them together.** The key makes the run host
+stand down its own loading UI; declared over an empty `#root` it is *worse* than
+not opting in — a blank iframe for the whole load.
+
+The skeleton is also this app's loading state: it stays until `BLOCK_INIT`
+lands, and the mount's one `root.replaceChildren(…)` removes it. Nothing else
+does, so keep the skeleton *inside* `#root`.
+
+The boot theme is the **host's**, not the OS's. Civitai apps default to dark and
+never consult the browser preference: light engages only when the host says the
+viewer chose it — via the `#civitai-block=v1&theme=…` URL fragment (an inline
+script applies it before first paint), then `BLOCK_INIT`, then live
+`THEME_CHANGE` pushes (synced onto `<html>` by `src/block.ts`).
+
+## Validate
+
+```bash
+civitai app validate
+```
+
+## Submit
+
+```bash
+civitai login        # once, to store your API token
+civitai app submit
+```
+
+`submit` packages the SOURCE tree (manifest + src + build config), excluding
+`.git`, `node_modules`, and `dist` — the platform rebuilds from source.
+
+## Store-listing media (`assets/`)
+
+Your store listing **cannot publish without an icon and a cover**, and both are
+settable while the app is in review. `assets/` is scaffolded for them and ships
+with no images on purpose — see [`assets/README.md`](assets/README.md) for the
+size, format and aspect requirements, then:
+
+```bash
+civitai app listing set-icon  ./assets/icon.png
+civitai app listing set-cover ./assets/cover.png
+civitai app listing status
+```

@@ -73,10 +73,10 @@ equivalent to CI. **Run `make lint` too before claiming done** — it errors whe
 golangci-lint is missing rather than degrading to something weaker, which is what
 makes its zero meaningful; do not "helpfully" add a fallback.
 
-CI (`.github/workflows/ci.yml`) runs **eight** jobs, not four steps:
+CI (`.github/workflows/ci.yml`) runs **nine** jobs, not four steps:
 `build-test` (vet + `gofmt -s -l .` + test + build), `lint`, `schema-drift`,
 `pins-vs-published`, `ready-ack-runtime`, `template-page-vite`,
-`template-page-money` and `scaffold-currency`.
+`template-page-money`, `template-page-elements` and `scaffold-currency`.
 
 🔴 **Reporting and gating are different questions, and fewer of those jobs gate
 than run.** Item 11 carries the measured list of required contexts and the

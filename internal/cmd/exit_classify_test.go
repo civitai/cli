@@ -216,12 +216,12 @@ func TestAppInitBadFlagValuesAreUsageTagged(t *testing.T) {
 		{
 			name:    "unknown --template value",
 			args:    []string{"app", "init", "my-app", "--template", "nope", "--yes"},
-			wantMsg: `unknown template "nope" (valid: static, page-vite, page-money)`,
+			wantMsg: `unknown template "nope" (valid: page-elements, page-money, page-vite, static)`,
 		},
 		{
 			name:    "unknown --template value via the create alias",
 			args:    []string{"app", "create", "my-app", "--template", "nope", "--yes"},
-			wantMsg: `unknown template "nope" (valid: static, page-vite, page-money)`,
+			wantMsg: `unknown template "nope" (valid: page-elements, page-money, page-vite, static)`,
 		},
 		{
 			name:    "no project name",

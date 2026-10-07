@@ -271,9 +271,10 @@ func TestTheBlockNamesEveryScaffoldTemplateAndTheFlagThatPicksOne(t *testing.T) 
 		sort.Strings(missing)
 		if !strings.Contains(block, "--template") || len(missing) > 0 {
 			t.Errorf("kind %q: the managed block %s, and names %d of the %d scaffold templates "+
-				"(missing %v).\n  `civitai app create` defaults to `%s` — 37 files, a ~40 KB README and a "+
+				"(missing %v).\n  `civitai app create` once defaulted to `%s` — 37 files, a ~40 KB README and a "+
 				"~40 KB App.tsx — and the table used to show only the bare `civitai app create <name>`. "+
-				"Reading that scaffold cost 53.5%% of a failed run's carried tokens before any work began.",
+				"Reading that scaffold cost 53.5%% of a failed run's carried tokens before any work began. "+
+				"A reader can only choose a template the block names.",
 				shape.Kind,
 				map[bool]string{true: "names `--template`", false: "never names `--template`"}[strings.Contains(block, "--template")],
 				len(want)-len(missing), len(want), missing, scaffold.PageMoney)

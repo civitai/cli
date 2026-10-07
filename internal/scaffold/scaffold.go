@@ -27,26 +27,46 @@ const (
 	// PageVite is a vite+React page block with config-as-code build fields.
 	PageVite Template = "page-vite"
 	// PageMoney is a vite+React+TS page block wired to the published App SDK
-	// for the money path (estimate → consent → submit → poll → Buzz spend).
+	// for the money path (estimate → consent → submit → poll → Buzz spend). It
+	// is the React alternative to PageElements.
 	PageMoney Template = "page-money"
+	// PageElements is a vite+TS page block with no UI framework: `@civitai/sdk`
+	// for the host bridge and `@civitai/components` `<civitai-*>` custom
+	// elements (themed by `@civitai/theme`) for the UI. It mirrors the
+	// `civitai-block-starter` starter in civitai/civitai-app-starters,
+	// declared as a page rather than a model slot like every template here.
+	PageElements Template = "page-elements"
 )
 
-// AllTemplates lists the templates available to `civitai app init`.
-func AllTemplates() []Template { return []Template{Static, PageVite, PageMoney} }
+// DefaultTemplate is what `civitai app init` and `civitai app create` scaffold
+// when no --template is given, and what their interactive prompt pre-selects.
+//
+// 🔴 ONE CONSTANT FOR BOTH COMMANDS. They used to default differently (init to
+// `static`, create to `page-money`), each spelled at its own flag definition;
+// web components became the default for both at once, and a single constant is
+// what keeps a later change from moving one and not the other.
+const DefaultTemplate = PageElements
 
-// SDKTemplates are templates whose dev loop needs a mock host (`dev:harness`)
-// rather than a plain `dev` (which renders blank without a host).
-func (t Template) NeedsHarness() bool { return t == PageMoney }
+// AllTemplates lists the templates available to `civitai app init`, default
+// first — the same order the --template usage string and the interactive prompt
+// list them in.
+func AllTemplates() []Template { return []Template{PageElements, PageMoney, PageVite, Static} }
+
+// NeedsHarness reports whether the template's dev loop runs against a local mock
+// host (`npm run dev:harness`) rather than a plain `dev` (which renders blank
+// without a host).
+func (t Template) NeedsHarness() bool { return t == PageMoney || t == PageElements }
 
 // ReadyAckPath is where this template's rendered tree carries the canonical
 // block -> host ready-ack emitter (blockproto.ReadyAckSource), or "" when the
 // template does not need one.
 //
 // Every template declares a `page` surface, and the host will not reveal a
-// page app until it posts `BLOCK_READY`. page-money gets that for free —
-// `@civitai/blocks-react`'s IframeTransport acks internally — so shipping a
-// second emitter there would double-post into a rate-limited inbound channel
-// for no gain. The two SDK-free templates have to say hello themselves.
+// page app until it posts `BLOCK_READY`. page-money and page-elements get that
+// for free — `@civitai/blocks-react`'s and `@civitai/sdk`'s iframe transports
+// ack internally — so shipping a second emitter there would double-post into a
+// rate-limited inbound channel for no gain. The two SDK-free templates have to
+// say hello themselves.
 //
 // The path is relative to the project root and uses forward slashes.
 // `internal/scaffold/ready_ack_contract_test.go` enumerates AllTemplates() and
@@ -78,6 +98,8 @@ func ParseTemplate(s string) (Template, error) {
 		return PageVite, nil
 	case PageMoney:
 		return PageMoney, nil
+	case PageElements:
+		return PageElements, nil
 	default:
 		names := make([]string, 0, len(AllTemplates()))
 		for _, t := range AllTemplates() {
