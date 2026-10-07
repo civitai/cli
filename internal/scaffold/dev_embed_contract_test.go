@@ -133,9 +133,15 @@ func scaffoldHeaderServer(t *testing.T, c devEmbedConstants, emitHeaders bool) (
 // silent, without them it must complain — so a preflight that degenerated into
 // "always returns nil" fails here instead of passing as a clean bill of health.
 func TestScaffoldHeadersSatisfyDevTunnelPreflight(t *testing.T) {
+	for _, tmpl := range devEmbedTemplates {
+		t.Run(string(tmpl), func(t *testing.T) { scaffoldHeadersSatisfyPreflight(t, tmpl) })
+	}
+}
+
+func scaffoldHeadersSatisfyPreflight(t *testing.T, tmpl Template) {
 	dir := t.TempDir()
-	if _, err := Render(PageMoney, dir, Data{Slug: "my-block", Name: "My Block"}); err != nil {
-		t.Fatalf("render page-money: %v", err)
+	if _, err := Render(tmpl, dir, Data{Slug: "my-block", Name: "My Block"}); err != nil {
+		t.Fatalf("render %s: %v", tmpl, err)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "src", "dev-embed.ts"))
 	if err != nil {
@@ -173,17 +179,22 @@ func TestScaffoldEnvSatisfiesDevTunnelPreflight(t *testing.T) {
 		t.Setenv(devtunnel.ParentOriginsEnvVar, v)
 		_ = os.Unsetenv(devtunnel.ParentOriginsEnvVar)
 	}
+	for _, tmpl := range devEmbedTemplates {
+		t.Run(string(tmpl), func(t *testing.T) { scaffoldEnvSatisfiesPreflight(t, tmpl) })
+	}
+}
 
+func scaffoldEnvSatisfiesPreflight(t *testing.T, tmpl Template) {
 	dir := t.TempDir()
-	if _, err := Render(PageMoney, dir, Data{Slug: "my-block", Name: "My Block"}); err != nil {
-		t.Fatalf("render page-money: %v", err)
+	if _, err := Render(tmpl, dir, Data{Slug: "my-block", Name: "My Block"}); err != nil {
+		t.Fatalf("render %s: %v", tmpl, err)
 	}
 
 	t.Run("positive: the scaffolded project is silent", func(t *testing.T) {
 		if got := devtunnel.CheckParentOrigins(dir); len(got) != 0 {
 			body, _ := os.ReadFile(filepath.Join(dir, ".env.development"))
-			t.Fatalf("a freshly scaffolded page-money app must not trip the parent-origins check.\n"+
-				".env.development:\n%s", body)
+			t.Fatalf("a freshly scaffolded %s app must not trip the parent-origins check.\n"+
+				".env.development:\n%s", tmpl, body)
 		}
 	})
 

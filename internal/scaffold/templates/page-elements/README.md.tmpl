@@ -54,10 +54,24 @@ host's origin is on that list.
 `BLOCK_INIT`, so you will see the boot skeleton until a real host frames the
 dev URL.
 
+To see your LOCAL code inside the REAL Civitai host (invite-only beta):
+
+```bash
+npm run dev:tunnel        # terminal 1: the embeddable dev server on :5186
+civitai app dev-tunnel    # terminal 2: tunnels it and prints the /apps/dev/<blockId> URL
+```
+
+`vite.config.ts` makes the dev server embeddable for this — it admits the
+`.civit.ai` tunnel host, sends `Access-Control-Allow-Origin: *` (the host frames
+the app at a null origin) and a `frame-ancestors https://civitai.com` CSP, and
+routes live reload over the tunnel — all from `src/dev-embed.ts`, and all
+dev-only: `vite build` is unaffected.
+
 | Command | What it does |
 |---|---|
 | `npm run dev:harness` | Vite + the local mock host. **Use this for offline iteration.** |
 | `npm run dev` | Vite, no harness — for a real host page that iframes your dev URL. |
+| `npm run dev:tunnel` | The embeddable dev server `civitai app dev-tunnel` serves inside the real host. |
 | `npm test` | Drives the app through the real bridge in happy-dom (`test/block.test.ts`). |
 | `npm run typecheck` | TypeScript strict check. |
 | `npm run build` | Production bundle in `dist/`. Also validates `block.manifest.json`. |

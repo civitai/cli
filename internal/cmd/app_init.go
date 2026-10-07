@@ -393,12 +393,17 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 	switch {
 	case tmpl == scaffold.PageElements:
 		// The default template. Same shape as page-money's free path — a mock
-		// host that works today, no Buzz and no beta access — but there is no
-		// money path, dev:live or dev:tunnel script here, so none is named.
+		// host that works today, no Buzz and no beta access — then the same
+		// invite-only dev tunnel. There is no money path or dev:live here, so
+		// neither is named.
 		fmt.Fprintf(out, installStepFmt, destDir)
 		fmt.Fprintln(out, "  2. npm run dev:harness     # mock host on localhost:5186 — works today")
 		fmt.Fprintln(out, "  3. edit src/block.ts and iterate (npm test drives it through the real bridge)")
 		fmt.Fprintln(out, "  4. civitai app submit      # validate + submit for review")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "  When you have beta access (invite-only):")
+		fmt.Fprintln(out, "     npm run dev:tunnel      # in another terminal: serve your app for the tunnel")
+		fmt.Fprintln(out, "     civitai app dev-tunnel  # your LOCAL app INSIDE the real host, prod-fidelity — no submit needed")
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, ui.Dim("  Prefer React? `--template page-money` scaffolds the React alternative."))
 	case tmpl.NeedsHarness():

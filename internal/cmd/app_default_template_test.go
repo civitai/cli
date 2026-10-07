@@ -104,7 +104,7 @@ func TestPlainAppInitScaffoldsPageElements(t *testing.T) {
 
 			// The next steps are the elements ones: the harness, the file to edit,
 			// and the pointer to the React alternative.
-			for _, want := range []string{"npm run dev:harness", "src/block.ts", "--template page-money"} {
+			for _, want := range []string{"npm run dev:harness", "src/block.ts", "--template page-money", "npm run dev:tunnel", "civitai app dev-tunnel"} {
 				if !strings.Contains(stdout, want) {
 					t.Errorf("plain `civitai app %s` next steps should mention %q:\n%s", sub, want, stdout)
 				}
