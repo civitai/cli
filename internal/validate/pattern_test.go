@@ -571,6 +571,37 @@ func TestPostsWriteSelfScopeAccepted(t *testing.T) {
 	}
 }
 
+// TestAppsStoreItemsWriteScopeAccepted is the ACCEPT arm for the scope the
+// vendored schema gained with App Store sub-listings (an app publishing the
+// viewer's own items as store cards). Same shape and reasoning as
+// TestPostsWriteSelfScopeAccepted: the enum-wording test only proves the value
+// appears in a REJECTION message, so this pins the accept path, with its own
+// negative control (minus the justification it must fail, naming this scope —
+// the scope is SENSITIVE server-side).
+func TestAppsStoreItemsWriteScopeAccepted(t *testing.T) {
+	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
+		`"scopes":["models:read:self","apps:store:items:write"],` +
+		`"scopeJustifications":{"apps:store:items:write":"lets the viewer list the presets they built as their own store cards"},` +
+		`"kind":"page",` +
+		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
+	for _, f := range manifestOnlyFindings(t, body) {
+		t.Errorf("unexpected finding on %q: %s", f.Field, f.Message)
+	}
+
+	const unjustified = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
+		`"scopes":["models:read:self","apps:store:items:write"],"kind":"page",` +
+		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
+	var hit bool
+	for _, f := range manifestOnlyFindings(t, unjustified) {
+		if f.Field == "scopeJustifications" && strings.Contains(f.Message, "apps:store:items:write") {
+			hit = true
+		}
+	}
+	if !hit {
+		t.Fatal("removing the justification produced no scopeJustifications finding naming apps:store:items:write")
+	}
+}
+
 // schemaEnum returns the `enum` the VENDORED schema declares at an explicit key
 // path, in the schema's own order — which is the order the library renders them
 // in, so a derived message matches byte for byte.

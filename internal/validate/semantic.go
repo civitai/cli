@@ -459,6 +459,11 @@ var SENSITIVE_BLOCK_SCOPES = map[string]struct{}{
 	// (civitai `origin/release`, not `main` — dp-prod serves `release`), where
 	// the set is these seven.
 	"goods:purchase:self": {},
+	// apps:store:items:write publishes the viewer's own items as App Store
+	// sub-listing cards under the calling app — cards every store visitor sees,
+	// under the viewer's name: the "write data other users see" arm. Added by
+	// civitai PR #5511 (not yet on `release` at the time of this mirror).
+	"apps:store:items:write": {},
 }
 
 // isSensitiveBlockScope reports whether scope is in SENSITIVE_BLOCK_SCOPES.
