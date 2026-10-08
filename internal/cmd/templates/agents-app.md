@@ -213,15 +213,6 @@ fixed list. As of this CLI version:
 ### Before you submit
 
 Run the first-review checklist before `civitai app submit` — it is the review
-feedback that came back on app after app:
-https://developer.civitai.com/apps/guide/first-review.md
-
-- Check the cold-open and empty states against the live backend, and a ≈360px
-  width — harness demo data proves only the populated path.
-- One filled primary action per screen, reserved for send/spend.
-- Errors are your own copy: branch on the refusal `code` / `reason`, never print
-  the raw server string. A disabled action names what is missing.
-- One pending submission per app, so batch every fix into it. Withdrawing a
-  first-version submission deletes its store listing (icon, cover, screenshots).
+feedback that came back on app after app: {{ firstReviewURL }}
 
 <!-- END civitai agent-setup -->

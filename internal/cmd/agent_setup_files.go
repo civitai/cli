@@ -76,7 +76,13 @@ const (
 // panics at init rather than turning every `agent-setup` into a runtime error
 // about a file the user cannot see. TestAgentsTemplateRendersForEveryShape is
 // what makes that safe: it executes the template for all three shapes.
-var agentsTemplate = template.Must(template.New(agentsFilename).Parse(agentsAppTemplate))
+//
+// `firstReviewURL` is the template's ONLY way to spell the first-review checklist
+// address: the block and `civitai app submit`'s confirmation step both read
+// firstReviewChecklistURL, so the two cannot name different pages.
+var agentsTemplate = template.Must(template.New(agentsFilename).
+	Funcs(template.FuncMap{"firstReviewURL": func() string { return firstReviewChecklistURL }}).
+	Parse(agentsAppTemplate))
 
 // agentsManagedBlock is the block as it is written into a file: the embedded
 // template rendered for THIS project, with no leading or trailing blank lines,

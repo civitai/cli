@@ -660,17 +660,32 @@ Defaults to the current directory.`,
 	return cmd
 }
 
+// firstReviewChecklistURL is the docs-site checklist of review feedback that
+// recurred on agent-built apps (civitai-app-starters#573). It is the ONE spelling:
+// the managed AGENTS.md block reaches it through the `firstReviewURL` template
+// func, and the confirmation step below prints it.
+const firstReviewChecklistURL = "https://developer.civitai.com/apps/guide/first-review.md"
+
+// firstReviewPointer is the one advisory line confirmSubmit prints. It is a
+// pointer, never a gate: it changes no exit code and asks nothing.
+const firstReviewPointer = "Before you submit: run the first-review checklist — " + firstReviewChecklistURL
+
 // confirmSubmit gates the actual moderator-review submission behind an explicit
 // confirmation, so a bare `civitai app submit` never fires an outward-facing,
 // hard-to-reverse publish request by accident.
 //
-//   - --yes/-y  → proceed without prompting.
+//   - --yes/-y  → proceed without prompting (the first-review pointer goes to
+//     stderr, so stdout is unchanged).
 //   - non-TTY stdin (pipe/CI) without --yes → REFUSE (clear error, non-zero
 //     exit) rather than hang waiting on input or submit silently.
 //   - interactive TTY → print what will happen, prompt "Submit for review?
 //     [y/N]", and proceed only on an explicit yes.
 func confirmSubmit(cmd *cobra.Command, m *manifest.Manifest, baseURL string, assumeYes bool) error {
 	if assumeYes {
+		// --yes is how scripts and agents submit, so the checklist pointer is
+		// printed here too — on STDERR, beside this command's other advisories,
+		// so stdout stays what a script captured before. It never gates.
+		fmt.Fprintln(cmd.ErrOrStderr(), firstReviewPointer)
 		return nil
 	}
 	if !stdinIsTTY() {
@@ -682,6 +697,7 @@ func confirmSubmit(cmd *cobra.Command, m *manifest.Manifest, baseURL string, ass
 	fmt.Fprintf(out, "About to submit %s@%s for moderator review at %s.\n", m.BlockID, m.Version, base)
 	fmt.Fprintln(out, "This creates a real pending moderator-review request — reversible only via `civitai app withdraw`.")
 	fmt.Fprintln(out, "(Use --package-only to just write the .zip without submitting.)")
+	fmt.Fprintln(out, firstReviewPointer)
 	fmt.Fprint(out, "Submit for review? [y/N]: ")
 
 	r := bufio.NewReader(cmd.InOrStdin())
