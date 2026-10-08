@@ -354,7 +354,7 @@ func TestTabwriterRenderersCannotBeForged(t *testing.T) {
 						SourceCommit: &commit,
 						LiveURL:      &live,
 						SubmittedAt:  "2026-09-01T10:00:00Z",
-					})
+					}, nil)
 				})
 			},
 		},
@@ -623,7 +623,7 @@ func TestGatedRenderersDoNotForgeOutsideTheirTable(t *testing.T) {
 				RejectionReason: &reason,
 				SubmittedAt:     "2026-09-01T10:00:00Z",
 				LiveURL:         strPtr("https://example.civit.ai"),
-			})
+			}, nil)
 		})
 		noRawEscape(t, out, "reason-head", "OVERWRITTEN", "FORGED-LINE")
 		noColumnZero(t, out, "FORGED-LINE", "OVERWRITTEN")
@@ -644,7 +644,7 @@ func TestGatedRenderersDoNotForgeOutsideTheirTable(t *testing.T) {
 				ApprovalNotes: &notes,
 				SubmittedAt:   "2026-09-01T10:00:00Z",
 				LiveURL:       strPtr("https://example.civit.ai"),
-			})
+			}, nil)
 		})
 		noRawEscape(t, out, "reason-head", "OVERWRITTEN", "FORGED-LINE")
 		noColumnZero(t, out, "FORGED-LINE", "OVERWRITTEN")
@@ -705,7 +705,7 @@ func TestGatedRenderersDoNotForgeOutsideTheirTable(t *testing.T) {
 				BlockID: "my-app", Version: "1.0.0", Status: "approved",
 				LiveURL:     &live,
 				SubmittedAt: "2026-09-01T10:00:00Z",
-			})
+			}, nil)
 		})
 		if !strings.Contains(out, forgeWant("lvurl")) {
 			t.Errorf("the `Live at:` URL did not render as one inert string; want %q:\n%s", forgeWant("lvurl"), out)
@@ -718,7 +718,7 @@ func TestGatedRenderersDoNotForgeOutsideTheirTable(t *testing.T) {
 			printSubmissionDetail(w, &appapi.Submission{
 				BlockID: forgeCell("nlblock"), Version: "1.0.0", Status: "pending",
 				SubmittedAt: "2026-09-01T10:00:00Z",
-			})
+			}, nil)
 		})
 		var sentence string
 		for _, line := range strings.Split(out, "\n") {

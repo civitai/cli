@@ -37,6 +37,15 @@ With no argument it lists all your submissions (newest first). Pass a blockId
 (app slug) or --id <pubreq_id> to see a single submission in detail, including the
 rejection reason (if rejected) and the live URL (if approved + deployed).
 
+The blockId detail view shows your NEWEST submission, which is not always the
+one serving: a pending resubmission or a withdrawn duplicate can be newer than
+the approved build. When it is, a "Live submission" block below the detail names
+your highest APPROVED submission (version, publish request, deploy state, live
+URL), and --json carries the same row as "liveSubmission". Nothing extra is
+printed when the newest submission IS that row, or when nothing is approved.
+--id shows exactly the submission you asked for and no "Live submission" block:
+that lookup reads no listing, so use the blockId form to see what is live.
+
 --limit N shows only the newest N of them. It is a DISPLAY limit, not a page
 size: this route accepts no limit and no cursor (that is what the cap note is
 about), so the CLI always fetches the same page and prints fewer rows of it.
@@ -138,12 +147,17 @@ and deployed (deployState 'live').`,
 				// `--json` stdout stays a pure parseable payload. Ordering is
 				// about WHEN, purity is about WHICH STREAM — moving the call
 				// changes only the former.
+				// The approved row, when it is NOT the row printed above. Free:
+				// computed from the rows this lookup already holds, so it adds no
+				// request — and on the `--id` path (rows == nil) it is nil, see
+				// liveSubmissionFor.
+				live := liveSubmissionFor(sub, rows)
 				if jsonOut {
-					if err := writeJSON(out, sub); err != nil {
+					if err := writeJSON(out, submissionDetailJSON{Submission: sub, LiveSubmission: live}); err != nil {
 						return err
 					}
 				} else {
-					printSubmissionDetail(out, sub)
+					printSubmissionDetail(out, sub, live)
 				}
 				// The advisory call gets its own, shorter deadline: the client's
 				// 30s budget is sized for the answer, and an optional extra is
@@ -217,6 +231,62 @@ and deployed (deployState 'live').`,
 // Only the unfiltered list goes through here: a slug/id lookup is narrowed
 // server-side before the cap applies.
 func submissionsListTruncated(n int) bool { return n >= appapi.ListSubmissionsCap }
+
+// submissionDetailJSON is the detail view's `--json` payload: the submission's
+// own fields, flattened at the top level EXACTLY as before (the embedded pointer
+// is promoted by encoding/json), plus one additive key.
+//
+// 🔴 ADDITIVE ONLY. Scripts already read `.status`, `.liveUrl`, `.blockId` off
+// this object, so the row stays at the top level rather than moving under a
+// wrapper key, and `liveSubmission` is omitted when there is nothing to say —
+// a payload for an app whose newest row IS the approved one is byte-identical
+// to what this command printed before the key existed. This relies on
+// appapi.Submission having no MarshalJSON of its own: one would be promoted
+// through the embedding and silently drop `liveSubmission`.
+// TestAppStatusJSONCarriesTheLiveSubmission pins both halves.
+type submissionDetailJSON struct {
+	*appapi.Submission
+	LiveSubmission *appapi.Submission `json:"liveSubmission,omitempty"`
+}
+
+// liveSubmissionFor returns the app's highest APPROVED row when it is a
+// DIFFERENT row from shown, and nil otherwise.
+//
+// 🔴 WHY THIS EXISTS. The blockId detail view renders the NEWEST row (the
+// route's Submissions[0] — see getSubmissionRows), which answers "what state is
+// my latest submission in". When that row is a `pending` resubmission or a
+// `withdrawn` duplicate, it says nothing about the build that is actually
+// serving, and an author read their live app as not-live
+// (civitai/civitai-app-starters#573, item 5). The newest-row headline is KEPT —
+// it is the right answer to its own question — and this adds the second answer
+// beside it.
+//
+// 🔴 THE PICK IS highestApprovedVersion, NOT A NEW PREDICATE. "Which row is the
+// approved one" is the #412 predicate, already shared by `app submit`'s guard
+// and the drift warning; a third, open-coded copy here could name a different
+// row than the drift line printed on the same run. Consequences inherited on
+// purpose: an approved version that cannot be ordered (pre-release/build
+// suffix) is skipped, and among several approved rows the HIGHEST version wins,
+// not the newest — the same number the drift warning quotes.
+//
+// Returns nil (print nothing extra) when:
+//   - rows is nil — the `--id` path, which reads a single-row envelope and no
+//     listing. Fetching one here would add a request to every `--id` lookup and
+//     delay the render the command deliberately does first; the help text tells
+//     the user to use the blockId form instead;
+//   - nothing approved and orderable exists for the app;
+//   - the approved row IS the row shown (compared by publish-request id).
+func liveSubmissionFor(shown *appapi.Submission, rows []appapi.Submission) *appapi.Submission {
+	if shown == nil || rows == nil {
+		return nil
+	}
+	peak := highestApprovedVersion(rows, shown.BlockID)
+	if !peak.found || peak.row.ID == shown.ID {
+		return nil
+	}
+	row := peak.row
+	return &row
+}
 
 func writeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
@@ -326,7 +396,11 @@ func sourceDirtySuffix(dirty *bool) string {
 // "deliberately NOT gated here … tracked separately"; they were simply ungated,
 // and a reviewer's note was putting raw escapes on stdout. See the block comment
 // at that code for the shape rule.
-func printSubmissionDetail(w io.Writer, s *appapi.Submission) {
+//
+// live is the app's highest approved row when it differs from s (see
+// liveSubmissionFor), rendered as a separately-labelled block at the end; nil
+// prints nothing extra. Its cells are gated exactly like s's.
+func printSubmissionDetail(w io.Writer, s *appapi.Submission, live *appapi.Submission) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "Block ID:\t%s\n", safeTermSingle(s.BlockID))
 	fmt.Fprintf(tw, "Version:\t%s\n", safeTermSingle(s.Version))
@@ -383,11 +457,38 @@ func printSubmissionDetail(w io.Writer, s *appapi.Submission) {
 	if s.ApprovalNotes != nil && *s.ApprovalNotes != "" {
 		fmt.Fprintf(w, "\nApproval notes:\n  %s\n", indentContinuation(safeTerm(*s.ApprovalNotes), "  "))
 	}
-	if s.LiveURL != nil && *s.LiveURL != "" {
+	liveServing := live != nil && rowIsServing(*live)
+	switch {
+	case s.LiveURL != nil && *s.LiveURL != "":
 		fmt.Fprintf(w, "\nLive at: %s\n", ui.URL(safeTermSingle(*s.LiveURL)))
-	} else {
+	case liveServing:
+		// "Not live yet — <slug>.civit.ai only serves after…" would be FALSE
+		// here: the slug IS serving, just not this row. Say what is true about
+		// this row and point at the block that names the serving one.
+		fmt.Fprintf(w, "\nThis submission is not live — %s.civit.ai is serving the approved submission below.\n", safeTermSingle(s.BlockID))
+	default:
 		fmt.Fprintf(w, "\nNot live yet — %s.civit.ai only serves after the app is approved and deployed (deployState 'live').\n", safeTermSingle(s.BlockID))
 	}
+	if live == nil {
+		return
+	}
+	// The header states the server's serving answer (rowIsServing: liveUrl
+	// first, deployState as fallback — the same reading `app submit` uses), so
+	// an approved row that has not finished deploying is never called "live".
+	if liveServing {
+		fmt.Fprintln(w, "\nLive submission (not the one shown above):")
+	} else {
+		fmt.Fprintln(w, "\nApproved submission (not the one shown above; not reported as serving):")
+	}
+	lt := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(lt, "  Version:\t%s\n", safeTermSingle(live.Version))
+	fmt.Fprintf(lt, "  Publish request:\t%s\n", safeTermSingle(live.ID))
+	fmt.Fprintf(lt, "  Status:\t%s\n", safeTermSingle(live.Status))
+	fmt.Fprintf(lt, "  Deploy state:\t%s\n", safeTermSingle(deployLabel(live.DeployState)))
+	if live.LiveURL != nil && *live.LiveURL != "" {
+		fmt.Fprintf(lt, "  Live at:\t%s\n", safeTermSingle(*live.LiveURL))
+	}
+	_ = lt.Flush()
 }
 
 // deployLabel renders a possibly-null deployState; null means "no Phase-2 deploy

@@ -167,7 +167,8 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	"printSubmissionTable": {"TestTabwriterRenderersCannotBeForged",
 		"`app status` rows: block id, version, status, deploy state, source commit, date and live URL"},
 	"printSubmissionDetail": {"TestTabwriterRenderersCannotBeForged",
-		"`app status --id`: the same fields plus the publish-request id and the deploy detail. The named " +
+		"`app status --id`: the same fields plus the publish-request id and the deploy detail, and the " +
+			"`Live submission` block's cells (pinned by TestLiveSubmissionBlockCellsCannotBeForged). The named " +
 			"test drives its CELLS. Its four NON-cell surfaces — rejection reason, approval notes, live " +
 			"URL and the block id in the not-live sentence — are killed by " +
 			"TestGatedRenderersDoNotForgeOutsideTheirTable instead; they were ungated while this row read " +
