@@ -258,6 +258,26 @@ func TestSensitiveScopeJustificationChecks(t *testing.T) {
 			want: nil,
 		},
 		{
+			// apps:store:items:write publishes store cards every visitor sees,
+			// under the viewer's name — the "write data other users see" arm.
+			// Behavioural half of its TestIsSensitiveBlockScope membership.
+			name: "apps:store:items:write unjustified → hard error",
+			generic: map[string]any{
+				"scopes": []any{"apps:store:items:write"},
+			},
+			want: []string{prefix + "apps:store:items:write"},
+		},
+		{
+			name: "apps:store:items:write WITH a real justification → no error",
+			generic: map[string]any{
+				"scopes": []any{"apps:store:items:write"},
+				"scopeJustifications": map[string]any{
+					"apps:store:items:write": "lets the viewer list the presets they built as their own store cards",
+				},
+			},
+			want: nil,
+		},
+		{
 			// posts:write:self publishes a PUBLIC post under the viewer's byline.
 			// It must behave like every other sensitive scope: unjustified is a
 			// hard local failure, matching the 400 the server would return.
@@ -327,7 +347,7 @@ func TestSensitiveScopeJustificationChecks(t *testing.T) {
 	}
 }
 
-// TestIsSensitiveBlockScope pins the sensitive set to the server's 7 scopes.
+// TestIsSensitiveBlockScope pins the sensitive set to the server's 8 scopes.
 //
 // This list is spelled out rather than derived, and that is correct even though
 // the sibling enum guard in pattern_test.go now derives its content: the
@@ -344,6 +364,8 @@ func TestIsSensitiveBlockScope(t *testing.T) {
 		"posts:write:self",
 		// Spends the viewer's Buzz on the app's own catalog.
 		"goods:purchase:self",
+		// Publishes store cards every visitor sees, under the viewer's name.
+		"apps:store:items:write",
 	}
 	if len(SENSITIVE_BLOCK_SCOPES) != len(sensitive) {
 		t.Fatalf("SENSITIVE_BLOCK_SCOPES has %d entries, want %d", len(SENSITIVE_BLOCK_SCOPES), len(sensitive))
