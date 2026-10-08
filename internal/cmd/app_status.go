@@ -466,7 +466,16 @@ func printSubmissionDetail(w io.Writer, s *appapi.Submission, live *appapi.Submi
 	fmt.Fprintf(tw, "Version:\t%s\n", safeTermSingle(s.Version))
 	fmt.Fprintf(tw, "Publish request:\t%s\n", safeTermSingle(s.ID))
 	fmt.Fprintf(tw, "Status:\t%s\n", safeTermSingle(s.Status))
-	fmt.Fprintf(tw, "Deploy state:\t%s\n", safeTermSingle(deployLabel(s.DeployState)))
+	// 🔴 A SUPERSEDED "live" IS QUALIFIED, NOT HIDDEN. The server never clears
+	// an older row's deployState (see servingSubmission), so when another row was
+	// deployed after this one, this row can still read 'live'. The raw value is
+	// what the server holds and is printed as such; the qualifier stops it
+	// reading as "this build is up" beside a block naming a different one.
+	deployCell := safeTermSingle(deployLabel(s.DeployState))
+	if live != nil && rowIsServing(*s) {
+		deployCell += " (superseded: a later deploy is serving, see Live submission below)"
+	}
+	fmt.Fprintf(tw, "Deploy state:\t%s\n", deployCell)
 	if s.DeployDetail != nil && *s.DeployDetail != "" {
 		fmt.Fprintf(tw, "Deploy detail:\t%s\n", safeTermSingle(*s.DeployDetail))
 	}
@@ -517,14 +526,18 @@ func printSubmissionDetail(w io.Writer, s *appapi.Submission, live *appapi.Submi
 	if s.ApprovalNotes != nil && *s.ApprovalNotes != "" {
 		fmt.Fprintf(w, "\nApproval notes:\n  %s\n", indentContinuation(safeTerm(*s.ApprovalNotes), "  "))
 	}
+	// 🔴 live != nil IS TESTED FIRST, BEFORE THIS ROW'S OWN liveUrl. A row that
+	// was deployed and then superseded keeps its liveUrl (the server derives it
+	// from the never-cleared deployState), so printing `Live at:` for it and then
+	// naming a different serving row below would contradict itself.
 	switch {
-	case s.LiveURL != nil && *s.LiveURL != "":
-		fmt.Fprintf(w, "\nLive at: %s\n", ui.URL(safeTermSingle(*s.LiveURL)))
 	case live != nil:
 		// "Not live yet — <slug>.civit.ai only serves after…" would be FALSE
 		// here: the slug IS serving, just not this row. Say what is true about
 		// this row and point at the block that names the serving one.
 		fmt.Fprintf(w, "\nThis submission is not live — %s.civit.ai is serving the approved submission below.\n", safeTermSingle(s.BlockID))
+	case s.LiveURL != nil && *s.LiveURL != "":
+		fmt.Fprintf(w, "\nLive at: %s\n", ui.URL(safeTermSingle(*s.LiveURL)))
 	default:
 		fmt.Fprintf(w, "\nNot live yet — %s.civit.ai only serves after the app is approved and deployed (deployState 'live').\n", safeTermSingle(s.BlockID))
 	}

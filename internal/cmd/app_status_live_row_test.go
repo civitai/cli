@@ -5,14 +5,22 @@ package cmd
 // The blockId detail view renders the NEWEST row. When that row is a `withdrawn`
 // duplicate or a `pending` resubmission, the build actually serving was nowhere
 // on screen, so an author read a live app as not-live. The detail view now names
-// the highest APPROVED row beside the newest one whenever the two differ.
+// the SERVING row beside the newest one whenever the two differ: among approved
+// rows the server reports as serving, the one deployed most recently
+// (deployUpdatedAt, then reviewedAt, then submittedAt — see servingSubmission).
+// That is NOT the highest approved version (a rollback serves a lower one), and
+// it is not "the row marked live" (the server never clears an older row's
+// deployState, so several rows read live).
 //
-// 🔴 EVERY FIXTURE HERE KEEPS THE NEWEST ROW AND THE APPROVED ROW DISTINCT ON
-// EVERY FIELD THE ASSERTIONS READ (id, version, status, deploy state, live URL),
-// and the expected values are written out by hand. A mutant that renders the
-// newest row a second time, or a hard-coded row, then prints a value this suite
-// names as wrong. The one deliberate exception is the same-VERSION duplicate
-// case, whose whole point is that only the publish-request id separates the rows.
+// 🔴 FIXTURES KEEP THE ROWS DISTINCT ON EVERY FIELD THE ASSERTIONS READ (id,
+// version, live URL, and whichever of status / deploy state / timestamps the
+// case is about), and the expected values are written out by hand. A mutant
+// that renders the newest row a second time, a hard-coded row, or the
+// highest-version row then prints a value this suite names as wrong. Deliberate
+// exceptions, each the point of its case: the same-VERSION duplicate (only the
+// publish-request id separates the rows), the several-rows-read-live cases
+// (shared status and deploy state are the server behaviour under test), and the
+// tied deploy timestamp.
 
 import (
 	"bytes"
@@ -162,6 +170,11 @@ func TestAppStatusDetailNamesTheLiveSubmissionWhenTheNewestRowIsNot(t *testing.T
 			if len(f) != len(want) {
 				t.Errorf("live block has fields %v, want exactly %v", f, want)
 			}
+			// The "superseded" qualifier is for a stale-live newest row only; a
+			// pending/withdrawn newest row's deploy state is printed bare.
+			if strings.Contains(out, "superseded") {
+				t.Errorf("a newest row that never served was qualified as superseded:\n%s", out)
+			}
 			// The old footer claimed the SLUG was not serving — false here.
 			if strings.Contains(out, "Not live yet") {
 				t.Errorf("printed `Not live yet` while the app IS serving the approved row:\n%s", out)
@@ -297,6 +310,61 @@ func TestAppStatusDetailLiveBlockNamesTheMostRecentlyDeployedRow(t *testing.T) {
 					f, tc.wantID, tc.wantVer, tc.wantURL, out)
 			}
 		})
+	}
+}
+
+// TestAppStatusDetailSupersededLiveNewestRowIsNotCalledLive — the NEWEST row
+// is itself approved with deployState 'live' and a liveUrl, but an older
+// submission was deployed after it (a re-deploy), so the server still marks the
+// newest row live although it no longer serves. The headline must not print a
+// `Live at:` for it while the block names a different serving row.
+func TestAppStatusDetailSupersededLiveNewestRowIsNotCalledLive(t *testing.T) {
+	body := liveRowsBody(
+		liveRow{"pubreq_S71", "0.7.1", "approved", "live", "https://s-071.example.test/", "2026-08-06T10:00:00.000Z", "2026-08-06T12:00:00.000Z"},
+		liveRow{"pubreq_T70", "0.7.0", "approved", "live", "https://t-070.example.test/", "2026-08-05T10:00:00.000Z", "2026-08-08T12:00:00.000Z"},
+	)
+	out, _, _ := runLiveStatus(t, body, liveBlockSlug)
+	if got := headlineVersion(out); got != "0.7.1" {
+		t.Fatalf("CONTROL: headline Version = %q, want 0.7.1 (the newest row)\n%s", got, out)
+	}
+	if strings.Contains(out, "Live at: https://s-071.example.test/") {
+		t.Errorf("the superseded newest row printed `Live at:` while the block names another serving row:\n%s", out)
+	}
+	if !strings.Contains(out, "This submission is not live — "+liveBlockSlug+".civit.ai is serving the approved submission below.") {
+		t.Errorf("missing the not-this-row sentence:\n%s", out)
+	}
+	var deployLine string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "Deploy state:") {
+			deployLine = strings.Join(strings.Fields(strings.TrimPrefix(line, "Deploy state:")), " ")
+		}
+	}
+	if deployLine != "live (superseded: a later deploy is serving, see Live submission below)" {
+		t.Errorf("headline Deploy state = %q, want the raw 'live' qualified as superseded\n%s", deployLine, out)
+	}
+	if _, f := liveBlockOf(out); f["Publish request"] != "pubreq_T70" {
+		t.Errorf("live block = %v, want pubreq_T70\n%s", f, out)
+	}
+}
+
+// TestServingSubmissionTieKeepsTheFirstListedRow — one deploy stamps every
+// approved row of the deployed commit with ONE timestamp, so equal
+// deployUpdatedAt values are reachable. The tie keeps the row listed first
+// (newest submitted); the fixture puts a DIFFERENT row second so a
+// "last tied row wins" pick names it instead.
+func TestServingSubmissionTieKeepsTheFirstListedRow(t *testing.T) {
+	s := func(v string) *string { return &v }
+	const tied = "2026-08-09T12:00:00Z"
+	rows := []appapi.Submission{
+		{ID: "pubreq_P90", BlockID: "tie", Version: "0.9.0", Status: "pending", SubmittedAt: "2026-08-10T00:00:00Z"},
+		{ID: "pubreq_X81", BlockID: "tie", Version: "0.8.1", Status: "approved", DeployState: s("live"),
+			SubmittedAt: "2026-08-09T00:00:00Z", DeployUpdatedAt: s(tied), LiveURL: s("https://x-081.example.test/")},
+		{ID: "pubreq_Y80", BlockID: "tie", Version: "0.8.0", Status: "approved", DeployState: s("live"),
+			SubmittedAt: "2026-08-08T00:00:00Z", DeployUpdatedAt: s(tied), LiveURL: s("https://y-080.example.test/")},
+	}
+	got, ok := servingSubmission(rows, "tie")
+	if !ok || got.ID != "pubreq_X81" {
+		t.Errorf("servingSubmission = %q (found=%v), want pubreq_X81 — on a tied deploy time the first-listed row wins", got.ID, ok)
 	}
 }
 
