@@ -263,6 +263,30 @@ file nothing can recall: +347 bytes on every rendered block** — smallest shape
 is one exception, recorded so the next addition has to argue for itself rather
 than cite this one.
 
+#### NOT an exception — `### Before you submit` is a POINTER (civitai-app-starters#573, Zach, 2026-10-08)
+
+The block's `### Before you submit` section is one sentence and the
+first-review checklist URL (`developer.civitai.com/apps/guide/first-review.md`,
+civitai-developer-docs#179). `civitai app submit` prints the same pointer at its
+confirmation step (stdout beside the interactive prompt; stderr under `--yes`).
+Both read one constant, `firstReviewChecklistURL` in `internal/cmd/app_submit.go`
+— the template reaches it through the `firstReviewURL` template func. This
+complies with the rule above: the CLI ships the address.
+
+🔴 **The inline variant was considered and REJECTED — do not re-derive it.** The
+first draft of cli#796 repeated four checklist items in the block (cold-open /
+empty / ≈360px; one filled primary action reserved for send/spend; app-owned
+error copy and a disabled action naming what is missing; one pending submission,
+and a withdrawn first version deletes its listing) as a second named exception,
+at **+721 bytes on every rendered block**. Round-0 review rejected it: the items
+are the docs page's contents and rot here separately and forever; the
+withdraw-deletes-listing sentence duplicated `withdrawDiscardsListing` /
+`withdrawListingCaveat` (`internal/cmd/app_withdraw.go`), which `civitai app
+withdraw` already states and confirm-gates; and the submit prompt reaches the
+reader at the moment the checklist applies, which a block line does not. The
+cost-preview gotcha was kept strengthened to "the exact Buzz price". Pinned by
+`internal/cmd/agent_setup_before_submit_test.go`.
+
 ### The measurements behind it
 
 Taken 2026-09-10/11 from this host, anonymously, over real HTTP.
