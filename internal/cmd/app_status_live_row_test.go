@@ -1,0 +1,493 @@
+package cmd
+
+// THE "LIVE SUBMISSION" BLOCK IN `app status <slug>` — civitai/civitai-app-starters#573 item 5.
+//
+// The blockId detail view renders the NEWEST row. When that row is a `withdrawn`
+// duplicate or a `pending` resubmission, the build actually serving was nowhere
+// on screen, so an author read a live app as not-live. The detail view now names
+// the SERVING row beside the newest one whenever the two differ: among approved
+// rows the server reports as serving, the one deployed most recently
+// (deployUpdatedAt, then reviewedAt, then submittedAt — see servingSubmission).
+// That is NOT the highest approved version (a rollback serves a lower one), and
+// it is not "the row marked live" (the server never clears an older row's
+// deployState, so several rows read live).
+//
+// 🔴 FIXTURES KEEP THE ROWS DISTINCT ON EVERY FIELD THE ASSERTIONS READ (id,
+// version, live URL, and whichever of status / deploy state / timestamps the
+// case is about), and the expected values are written out by hand. A mutant
+// that renders the newest row a second time, a hard-coded row, or the
+// highest-version row then prints a value this suite names as wrong. Deliberate
+// exceptions, each the point of its case: the same-VERSION duplicate (only the
+// publish-request id separates the rows), the several-rows-read-live cases
+// (shared status and deploy state are the server behaviour under test), and the
+// tied deploy timestamp.
+
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/civitai/cli/internal/appapi"
+)
+
+const liveBlockSlug = "custom-generators"
+
+// liveRow is one submissions row, spelled out field by field.
+type liveRow struct {
+	id, version, status, deploy, liveURL, submittedAt, deployUpdatedAt string
+}
+
+// liveRowsBody renders rows (newest first) as the route's list body. An empty
+// deploy / liveURL emits JSON null.
+func liveRowsBody(rows ...liveRow) map[string]any {
+	out := make([]map[string]any, 0, len(rows))
+	for _, r := range rows {
+		var deploy, live, deployAt any
+		if r.deployUpdatedAt != "" {
+			deployAt = r.deployUpdatedAt
+		}
+		if r.deploy != "" {
+			deploy = r.deploy
+		}
+		if r.liveURL != "" {
+			live = r.liveURL
+		}
+		out = append(out, map[string]any{
+			"id": r.id, "blockId": liveBlockSlug, "version": r.version, "status": r.status,
+			"deployState": deploy, "submittedAt": r.submittedAt, "updatedAt": r.submittedAt,
+			"createdAt": r.submittedAt, "liveUrl": live, "deployUpdatedAt": deployAt,
+		})
+	}
+	return map[string]any{"submissions": out}
+}
+
+// The approved, serving row most fixtures sit BELOW a newer row.
+var approvedLive = liveRow{"pubreq_A53", "0.5.3", "approved", "live", "https://approved-053.example.test/", "2026-08-01T10:00:00.000Z", ""}
+
+// liveBlockOf returns the "Live submission" / "Approved submission" block's
+// fields as a label→value map (whitespace-collapsed), plus its header line.
+// header == "" means no block was printed.
+func liveBlockOf(out string) (header string, fields map[string]string) {
+	fields = map[string]string{}
+	in := false
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "Live submission (") || strings.HasPrefix(line, "Approved submission (") {
+			header, in = line, true
+			continue
+		}
+		if !in {
+			continue
+		}
+		if !strings.HasPrefix(line, "  ") {
+			break
+		}
+		label, value, ok := strings.Cut(strings.TrimSpace(line), ":\t")
+		if !ok {
+			label, value, ok = strings.Cut(strings.TrimSpace(line), ": ")
+		}
+		if ok {
+			fields[label] = strings.Join(strings.Fields(value), " ")
+		}
+	}
+	return header, fields
+}
+
+// headlineVersion returns the value of the TOP `Version:` line — the newest
+// row's headline, which this change must leave alone.
+func headlineVersion(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "Version:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
+		}
+	}
+	return ""
+}
+
+func runLiveStatus(t *testing.T, body map[string]any, args ...string) (out, errOut string, calls int32) {
+	t.Helper()
+	var n int32
+	srv := driftServer(t, body, &n, 0)
+	t.Chdir(t.TempDir()) // no manifest: keep the drift check out of the picture
+	setupDriftEnv(t, srv.URL)
+	out, errOut, err := run(t, append([]string{"app", "status"}, args...)...)
+	if err != nil {
+		t.Fatalf("app status %v: %v", args, err)
+	}
+	return out, errOut, atomic.LoadInt32(&n)
+}
+
+// TestAppStatusDetailNamesTheLiveSubmissionWhenTheNewestRowIsNot is the
+// regression case: the newest row is a withdrawn / pending row above the
+// approved, serving one.
+func TestAppStatusDetailNamesTheLiveSubmissionWhenTheNewestRowIsNot(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		newest      liveRow
+		wantHeadVer string
+	}{
+		{
+			name:        "withdrawn duplicate newer than the approved row",
+			newest:      liveRow{"pubreq_W61", "0.6.1", "withdrawn", "", "", "2026-08-03T10:00:00.000Z", ""},
+			wantHeadVer: "0.6.1",
+		},
+		{
+			name:        "pending resubmission newer than the approved row",
+			newest:      liveRow{"pubreq_P70", "0.7.0", "pending", "building", "", "2026-08-02T10:00:00.000Z", ""},
+			wantHeadVer: "0.7.0",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := liveRowsBody(tc.newest, approvedLive,
+				liveRow{"pubreq_R40", "0.4.0", "rejected", "failed", "", "2026-07-02T10:00:00.000Z", ""})
+			out, _, calls := runLiveStatus(t, body, liveBlockSlug)
+
+			if calls != 1 {
+				t.Errorf("%d request(s), want 1 — the live row comes from the rows the slug lookup already holds", calls)
+			}
+			// The newest-row headline is unchanged: it still answers "state of my
+			// latest submission".
+			if got := headlineVersion(out); got != tc.wantHeadVer {
+				t.Errorf("headline Version = %q, want %q (the NEWEST row) — the headline must not move:\n%s", got, tc.wantHeadVer, out)
+			}
+			header, f := liveBlockOf(out)
+			if header != "Live submission (not the one shown above):" {
+				t.Fatalf("no `Live submission` block was printed, so the serving build is invisible (#573 item 5); header=%q\n%s", header, out)
+			}
+			want := map[string]string{
+				"Version":         "0.5.3",
+				"Publish request": "pubreq_A53",
+				"Status":          "approved",
+				"Deploy state":    "live",
+				"Live at":         "https://approved-053.example.test/",
+			}
+			for k, v := range want {
+				if f[k] != v {
+					t.Errorf("live block %s = %q, want %q (the APPROVED row's value)\n%s", k, f[k], v, out)
+				}
+			}
+			if len(f) != len(want) {
+				t.Errorf("live block has fields %v, want exactly %v", f, want)
+			}
+			// The "superseded" qualifier is for a stale-live newest row only; a
+			// pending/withdrawn newest row's deploy state is printed bare.
+			if strings.Contains(out, "superseded") {
+				t.Errorf("a newest row that never served was qualified as superseded:\n%s", out)
+			}
+			// The old footer claimed the SLUG was not serving — false here.
+			if strings.Contains(out, "Not live yet") {
+				t.Errorf("printed `Not live yet` while the app IS serving the approved row:\n%s", out)
+			}
+			if !strings.Contains(out, "This submission is not live — "+liveBlockSlug+".civit.ai is serving the approved submission below.") {
+				t.Errorf("missing the not-this-row sentence:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestAppStatusDetailLiveBlockKeysOnTheRowNotTheVersion — a withdrawn duplicate
+// of the SAME version as the approved row. Only the publish-request id tells
+// them apart, so a version-equality shortcut would hide the live row here.
+func TestAppStatusDetailLiveBlockKeysOnTheRowNotTheVersion(t *testing.T) {
+	body := liveRowsBody(
+		liveRow{"pubreq_W53", "0.5.3", "withdrawn", "", "", "2026-08-03T10:00:00.000Z", ""},
+		approvedLive,
+	)
+	out, _, _ := runLiveStatus(t, body, liveBlockSlug)
+	header, f := liveBlockOf(out)
+	if header == "" {
+		t.Fatalf("no live block for a same-version withdrawn duplicate:\n%s", out)
+	}
+	if f["Publish request"] != "pubreq_A53" {
+		t.Errorf("live block Publish request = %q, want pubreq_A53\n%s", f["Publish request"], out)
+	}
+}
+
+// TestAppStatusDetailNoLiveBlockWhenNewestIsTheApprovedRow — the healthy steady
+// state. A block repeating the row above would be noise on every run.
+func TestAppStatusDetailNoLiveBlockWhenNewestIsTheApprovedRow(t *testing.T) {
+	body := liveRowsBody(approvedLive,
+		liveRow{"pubreq_W49", "0.4.9", "withdrawn", "", "", "2026-07-20T10:00:00.000Z", ""})
+	out, _, _ := runLiveStatus(t, body, liveBlockSlug)
+	if header, _ := liveBlockOf(out); header != "" {
+		t.Errorf("printed %q although the newest row IS the approved row:\n%s", header, out)
+	}
+	if strings.Contains(out, "Live submission") {
+		t.Errorf("a Live submission block was printed for an app whose newest row IS the serving row:\n%s", out)
+	}
+	// The healthy steady state: the newest row is serving and nothing
+	// supersedes it, so its deploy state must not be qualified.
+	if strings.Contains(out, "superseded") {
+		t.Errorf("the serving newest row was qualified as superseded:\n%s", out)
+	}
+	if !strings.Contains(out, "Live at: https://approved-053.example.test/") {
+		t.Errorf("CONTROL: the approved newest row's own Live at line is missing, so the render did not run:\n%s", out)
+	}
+}
+
+// TestAppStatusDetailNoLiveBlockWithoutAnApprovedRow — nothing approved: the
+// old `Not live yet` footer stands and nothing extra is printed.
+func TestAppStatusDetailNoLiveBlockWithoutAnApprovedRow(t *testing.T) {
+	body := liveRowsBody(
+		liveRow{"pubreq_P70", "0.7.0", "pending", "building", "", "2026-08-02T10:00:00.000Z", ""},
+		liveRow{"pubreq_R40", "0.4.0", "rejected", "failed", "", "2026-07-02T10:00:00.000Z", ""},
+	)
+	out, _, _ := runLiveStatus(t, body, liveBlockSlug)
+	if header, _ := liveBlockOf(out); header != "" {
+		t.Errorf("printed %q with no approved row at all:\n%s", header, out)
+	}
+	if !strings.Contains(out, "Not live yet — "+liveBlockSlug+".civit.ai only serves after") {
+		t.Errorf("the `Not live yet` footer must stand when nothing is approved:\n%s", out)
+	}
+}
+
+// TestAppStatusDetailNoLiveBlockWhenTheApprovedRowIsNotServing — an approved
+// row that has not finished deploying is not serving, so there is no live row
+// to name; the `Not live yet` footer is the true answer and stands alone.
+func TestAppStatusDetailNoLiveBlockWhenTheApprovedRowIsNotServing(t *testing.T) {
+	body := liveRowsBody(
+		liveRow{"pubreq_P70", "0.7.0", "pending", "", "", "2026-08-02T10:00:00.000Z", ""},
+		liveRow{"pubreq_A60", "0.6.0", "approved", "building", "", "2026-08-01T10:00:00.000Z", "2026-08-01T11:00:00.000Z"},
+	)
+	out, _, _ := runLiveStatus(t, body, liveBlockSlug)
+	if header, _ := liveBlockOf(out); header != "" {
+		t.Errorf("printed %q although nothing is serving:\n%s", header, out)
+	}
+	if !strings.Contains(out, "Not live yet — "+liveBlockSlug+".civit.ai only serves after") {
+		t.Errorf("nothing is serving, so `Not live yet` must stay:\n%s", out)
+	}
+}
+
+// TestAppStatusDetailLiveBlockNamesTheMostRecentlyDeployedRow — the server
+// never clears an older row's deployState, so after any upgrade or rollback
+// SEVERAL approved rows read `live`. The serving one is the one deployed last
+// (deployUpdatedAt), which is neither "the highest version" nor "the newest
+// submitted" in general. Each case is built so at least one of those wrong
+// picks names a different row.
+func TestAppStatusDetailLiveBlockNamesTheMostRecentlyDeployedRow(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		rows                     []liveRow
+		wantID, wantVer, wantURL string
+	}{
+		{
+			// approve 0.6.0, then approve 0.5.4 with --allow-downgrade: 0.5.4
+			// serves, 0.6.0 is still the HIGHEST approved version and still
+			// reads `live`. A highest-version pick names 0.6.0.
+			name: "rollback: the later-deployed LOWER version serves",
+			rows: []liveRow{
+				{"pubreq_P61", "0.6.1", "pending", "building", "", "2026-08-05T10:00:00.000Z", ""},
+				{"pubreq_R54", "0.5.4", "approved", "live", "https://rollback-054.example.test/", "2026-08-04T10:00:00.000Z", "2026-08-04T12:00:00.000Z"},
+				{"pubreq_U60", "0.6.0", "approved", "live", "https://upgrade-060.example.test/", "2026-08-02T10:00:00.000Z", "2026-08-02T12:00:00.000Z"},
+			},
+			wantID: "pubreq_R54", wantVer: "0.5.4", wantURL: "https://rollback-054.example.test/",
+		},
+		{
+			// The ordinary upgrade: both rows read `live`, the newer deploy
+			// serves. An oldest-deploy (or last-in-list) pick names 0.5.0.
+			name: "upgrade: the newest deploy serves",
+			rows: []liveRow{
+				{"pubreq_W61", "0.6.1", "withdrawn", "", "", "2026-08-07T10:00:00.000Z", ""},
+				{"pubreq_N60", "0.6.0", "approved", "live", "https://new-060.example.test/", "2026-08-05T10:00:00.000Z", "2026-08-06T09:00:00.000Z"},
+				{"pubreq_O50", "0.5.0", "approved", "live", "https://old-050.example.test/", "2026-07-19T10:00:00.000Z", "2026-07-20T09:00:00.000Z"},
+			},
+			wantID: "pubreq_N60", wantVer: "0.6.0", wantURL: "https://new-060.example.test/",
+		},
+		{
+			// Deploy order disagrees with SUBMIT order (a moderator re-trigger
+			// rebuilt 0.7.0 after 0.7.1 had deployed). Both a highest-version
+			// and a newest-submitted pick name 0.7.1.
+			name: "re-deployed older submission: deploy time, not submit time",
+			rows: []liveRow{
+				{"pubreq_P80", "0.8.0", "pending", "", "", "2026-08-10T10:00:00.000Z", ""},
+				{"pubreq_S71", "0.7.1", "approved", "live", "https://s-071.example.test/", "2026-08-06T10:00:00.000Z", "2026-08-06T12:00:00.000Z"},
+				{"pubreq_T70", "0.7.0", "approved", "live", "https://t-070.example.test/", "2026-08-05T10:00:00.000Z", "2026-08-08T12:00:00.000Z"},
+			},
+			wantID: "pubreq_T70", wantVer: "0.7.0", wantURL: "https://t-070.example.test/",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, _, _ := runLiveStatus(t, liveRowsBody(tc.rows...), liveBlockSlug)
+			header, f := liveBlockOf(out)
+			if header == "" {
+				t.Fatalf("no live block printed:\n%s", out)
+			}
+			if f["Publish request"] != tc.wantID || f["Version"] != tc.wantVer || f["Live at"] != tc.wantURL {
+				t.Errorf("live block = %v, want %s / %s / %s (the most recently DEPLOYED serving row)\n%s",
+					f, tc.wantID, tc.wantVer, tc.wantURL, out)
+			}
+		})
+	}
+}
+
+// TestAppStatusDetailSupersededLiveNewestRowIsNotCalledLive — the NEWEST row
+// is itself approved with deployState 'live' and a liveUrl, but an older
+// submission was deployed after it (a re-deploy), so the server still marks the
+// newest row live although it no longer serves. The headline must not print a
+// `Live at:` for it while the block names a different serving row.
+func TestAppStatusDetailSupersededLiveNewestRowIsNotCalledLive(t *testing.T) {
+	body := liveRowsBody(
+		liveRow{"pubreq_S71", "0.7.1", "approved", "live", "https://s-071.example.test/", "2026-08-06T10:00:00.000Z", "2026-08-06T12:00:00.000Z"},
+		liveRow{"pubreq_T70", "0.7.0", "approved", "live", "https://t-070.example.test/", "2026-08-05T10:00:00.000Z", "2026-08-08T12:00:00.000Z"},
+	)
+	out, _, _ := runLiveStatus(t, body, liveBlockSlug)
+	if got := headlineVersion(out); got != "0.7.1" {
+		t.Fatalf("CONTROL: headline Version = %q, want 0.7.1 (the newest row)\n%s", got, out)
+	}
+	if strings.Contains(out, "Live at: https://s-071.example.test/") {
+		t.Errorf("the superseded newest row printed `Live at:` while the block names another serving row:\n%s", out)
+	}
+	if !strings.Contains(out, "This submission is not live — "+liveBlockSlug+".civit.ai is serving the approved submission below.") {
+		t.Errorf("missing the not-this-row sentence:\n%s", out)
+	}
+	var deployLine string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "Deploy state:") {
+			deployLine = strings.Join(strings.Fields(strings.TrimPrefix(line, "Deploy state:")), " ")
+		}
+	}
+	if deployLine != "live (superseded: a later deploy is serving, see Live submission below)" {
+		t.Errorf("headline Deploy state = %q, want the raw 'live' qualified as superseded\n%s", deployLine, out)
+	}
+	if _, f := liveBlockOf(out); f["Publish request"] != "pubreq_T70" {
+		t.Errorf("live block = %v, want pubreq_T70\n%s", f, out)
+	}
+}
+
+// TestServingSubmissionTieKeepsTheFirstListedRow — one deploy stamps every
+// approved row of the deployed commit with ONE timestamp, so equal
+// deployUpdatedAt values are reachable. The tie keeps the row listed first
+// (newest submitted); the fixture puts a DIFFERENT row second so a
+// "last tied row wins" pick names it instead.
+func TestServingSubmissionTieKeepsTheFirstListedRow(t *testing.T) {
+	s := func(v string) *string { return &v }
+	const tied = "2026-08-09T12:00:00Z"
+	rows := []appapi.Submission{
+		{ID: "pubreq_P90", BlockID: "tie", Version: "0.9.0", Status: "pending", SubmittedAt: "2026-08-10T00:00:00Z"},
+		{ID: "pubreq_X81", BlockID: "tie", Version: "0.8.1", Status: "approved", DeployState: s("live"),
+			SubmittedAt: "2026-08-09T00:00:00Z", DeployUpdatedAt: s(tied), LiveURL: s("https://x-081.example.test/")},
+		{ID: "pubreq_Y80", BlockID: "tie", Version: "0.8.0", Status: "approved", DeployState: s("live"),
+			SubmittedAt: "2026-08-08T00:00:00Z", DeployUpdatedAt: s(tied), LiveURL: s("https://y-080.example.test/")},
+	}
+	got, ok := servingSubmission(rows, "tie")
+	if !ok || got.ID != "pubreq_X81" {
+		t.Errorf("servingSubmission = %q (found=%v), want pubreq_X81 — on a tied deploy time the first-listed row wins", got.ID, ok)
+	}
+}
+
+// TestServingSubmissionRanksLegacyRowsByReviewedAt — a legacy approval has no
+// deployUpdatedAt; the pick falls back to reviewedAt. The newer-reviewed row is
+// the LOWER version and the LATER listed one, so neither a version pick nor a
+// first-in-list pick lands on it.
+func TestServingSubmissionRanksLegacyRowsByReviewedAt(t *testing.T) {
+	s := func(v string) *string { return &v }
+	rows := []appapi.Submission{
+		{ID: "pubreq_L2", BlockID: "legacy", Version: "2.0.0", Status: "approved",
+			SubmittedAt: "2025-02-01T00:00:00Z", ReviewedAt: s("2025-02-02T00:00:00Z"), LiveURL: s("https://legacy.example.test/")},
+		{ID: "pubreq_L1", BlockID: "legacy", Version: "1.0.0", Status: "approved",
+			SubmittedAt: "2025-01-01T00:00:00Z", ReviewedAt: s("2025-03-01T00:00:00Z"), LiveURL: s("https://legacy.example.test/")},
+	}
+	got, ok := servingSubmission(rows, "legacy")
+	if !ok || got.ID != "pubreq_L1" {
+		t.Errorf("servingSubmission = %q (found=%v), want pubreq_L1 — the most recently REVIEWED legacy row", got.ID, ok)
+	}
+}
+
+// TestAppStatusDetailByIDPrintsNoLiveBlock pins the documented `--id` decision:
+// that lookup reads a single-row envelope and no listing, and the live block
+// does not buy itself a second request.
+func TestAppStatusDetailByIDPrintsNoLiveBlock(t *testing.T) {
+	body := liveRowsBody(
+		liveRow{"pubreq_W61", "0.6.1", "withdrawn", "", "", "2026-08-03T10:00:00.000Z", ""},
+		approvedLive,
+	)
+	out, _, calls := runLiveStatus(t, body, "--id", "pubreq_W61")
+	if calls != 1 {
+		t.Errorf("%d request(s), want 1 — `--id` must not fetch a listing for the live block", calls)
+	}
+	if header, _ := liveBlockOf(out); header != "" {
+		t.Errorf("`--id` printed %q; it shows exactly the requested row:\n%s", header, out)
+	}
+	if got := headlineVersion(out); got != "0.6.1" {
+		t.Errorf("CONTROL: headline Version = %q, want 0.6.1", got)
+	}
+}
+
+// TestLiveSubmissionBlockCellsCannotBeForged — the live block's values are
+// server text in a tabwriter, exactly like the detail table's cells (#552), so
+// each must render as one inert string and none may reach column zero.
+func TestLiveSubmissionBlockCellsCannotBeForged(t *testing.T) {
+	deploy, url := forgeCell("lsdeploy"), forgeCell("lsurl")
+	live := &appapi.Submission{
+		BlockID: "my-app", ID: forgeCell("lsid"), Version: forgeCell("lsver"),
+		Status: forgeCell("lsstatus"), DeployState: &deploy, LiveURL: &url,
+	}
+	var buf bytes.Buffer
+	printSubmissionDetail(&buf, &appapi.Submission{
+		BlockID: "my-app", ID: "pubreq_new", Version: "9.9.9", Status: "pending",
+		SubmittedAt: "2026-09-01T10:00:00Z",
+	}, live)
+	out := buf.String()
+	if header, _ := liveBlockOf(out); header == "" {
+		t.Fatalf("CONTROL: the live block did not render:\n%s", out)
+	}
+	for _, label := range []string{"lsid", "lsver", "lsstatus", "lsdeploy", "lsurl"} {
+		if !strings.Contains(out, forgeWant(label)) {
+			t.Errorf("%s did not render as one inert string; want %q:\n%q", label, forgeWant(label), out)
+		}
+	}
+	for i, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, forgedRow) {
+			t.Errorf("line %d begins with forged text — server text reached column zero:\n%s", i+1, out)
+		}
+	}
+}
+
+// TestAppStatusJSONCarriesTheLiveSubmission — the --json half: additive key,
+// row fields still flattened at the top level, key absent when there is
+// nothing to say.
+func TestAppStatusJSONCarriesTheLiveSubmission(t *testing.T) {
+	t.Run("newest withdrawn: liveSubmission is the approved row", func(t *testing.T) {
+		body := liveRowsBody(
+			liveRow{"pubreq_W61", "0.6.1", "withdrawn", "", "", "2026-08-03T10:00:00.000Z", ""},
+			approvedLive,
+		)
+		out, _, _ := runLiveStatus(t, body, liveBlockSlug, "--json")
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+			t.Fatalf("--json is not valid JSON: %v\n%s", err, out)
+		}
+		// Existing consumers: the shown row's fields stay at the top level.
+		if parsed["id"] != "pubreq_W61" || parsed["version"] != "0.6.1" || parsed["status"] != "withdrawn" || parsed["blockId"] != liveBlockSlug {
+			t.Errorf("top-level row fields moved or changed: %s", out)
+		}
+		live, ok := parsed["liveSubmission"].(map[string]any)
+		if !ok {
+			t.Fatalf("no liveSubmission object in --json:\n%s", out)
+		}
+		for k, v := range map[string]string{
+			"id": "pubreq_A53", "version": "0.5.3", "status": "approved",
+			"deployState": "live", "liveUrl": "https://approved-053.example.test/",
+		} {
+			if live[k] != v {
+				t.Errorf("liveSubmission.%s = %v, want %q", k, live[k], v)
+			}
+		}
+	})
+	t.Run("newest is the approved row: no liveSubmission key", func(t *testing.T) {
+		body := liveRowsBody(approvedLive,
+			liveRow{"pubreq_W49", "0.4.9", "withdrawn", "", "", "2026-07-20T10:00:00.000Z", ""})
+		out, _, _ := runLiveStatus(t, body, liveBlockSlug, "--json")
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+			t.Fatalf("--json is not valid JSON: %v\n%s", err, out)
+		}
+		if parsed["id"] != "pubreq_A53" {
+			t.Fatalf("CONTROL: top-level id = %v, want pubreq_A53", parsed["id"])
+		}
+		if _, ok := parsed["liveSubmission"]; ok {
+			t.Errorf("liveSubmission must be omitted when the newest row IS the approved row:\n%s", out)
+		}
+	})
+}
