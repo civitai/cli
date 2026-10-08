@@ -1028,7 +1028,8 @@ see your own. With no argument it lists every submission, newest first; pass a
 **rejection reason** if it was rejected, and the live URL once it is approved and
 deployed. The `blockId` form shows your **newest** submission; when that is not
 the one serving (a `pending` resubmission or a `withdrawn` duplicate newer than
-the approved build), a **Live submission** block underneath names the
+the approved build, or an approved submission superseded by a later deploy of an
+older one, whose deploy state is then shown as `live (superseded: …)`), a **Live submission** block underneath names the
 submission that is **serving** — version, publish request, deploy state and live
 URL — and `--json` carries the same row as an additive `liveSubmission` key
 (omitted when the newest submission *is* that row, or when nothing is serving).

@@ -213,6 +213,14 @@ func TestAppStatusDetailNoLiveBlockWhenNewestIsTheApprovedRow(t *testing.T) {
 	if header, _ := liveBlockOf(out); header != "" {
 		t.Errorf("printed %q although the newest row IS the approved row:\n%s", header, out)
 	}
+	if strings.Contains(out, "Live submission") {
+		t.Errorf("a Live submission block was printed for an app whose newest row IS the serving row:\n%s", out)
+	}
+	// The healthy steady state: the newest row is serving and nothing
+	// supersedes it, so its deploy state must not be qualified.
+	if strings.Contains(out, "superseded") {
+		t.Errorf("the serving newest row was qualified as superseded:\n%s", out)
+	}
 	if !strings.Contains(out, "Live at: https://approved-053.example.test/") {
 		t.Errorf("CONTROL: the approved newest row's own Live at line is missing, so the render did not run:\n%s", out)
 	}

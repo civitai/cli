@@ -737,6 +737,34 @@ func TestGatedRenderersDoNotForgeOutsideTheirTable(t *testing.T) {
 		noColumnZero(t, out, forgedRow)
 	})
 
+	t.Run("app status <slug>: the blockId in the not-this-row sentence is single-line", func(t *testing.T) {
+		// The FIFTH non-cell surface: printed instead of `Not live yet` when a
+		// DIFFERENT row is serving (the live block below it is cells, pinned by
+		// TestLiveSubmissionBlockCellsCannotBeForged).
+		out := render(func(w *bytes.Buffer) {
+			printSubmissionDetail(w, &appapi.Submission{
+				BlockID: forgeCell("ntblock"), Version: "1.0.0", Status: "pending",
+				SubmittedAt: "2026-09-01T10:00:00Z",
+			}, &appapi.Submission{ID: "pubreq_live", BlockID: "my-app", Version: "0.9.0", Status: "approved",
+				LiveURL: strPtr("https://example.civit.ai")})
+		})
+		var sentence string
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, "This submission is not live") {
+				sentence = line
+			}
+		}
+		if sentence == "" {
+			t.Fatalf("CONTROL failure, not a finding: the not-this-row sentence did not render, so this case "+
+				"asserts nothing:\n%s", out)
+		}
+		if !strings.Contains(sentence, forgeWant("ntblock")) {
+			t.Errorf("the blockId in the not-this-row sentence is not one inert string; want %q:\n%q",
+				forgeWant("ntblock"), sentence)
+		}
+		noColumnZero(t, out, forgedRow)
+	})
+
 	t.Run("app listing status: the screenshot id and caption are single-line", func(t *testing.T) {
 		// 🔴 THE CAPTION PAYLOAD IS THE MEASURED ONE, NOT forgeCell. It forges the
 		// label this very function writes through its tabwriter five lines above,

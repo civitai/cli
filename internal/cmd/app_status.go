@@ -39,7 +39,9 @@ rejection reason (if rejected) and the live URL (if approved + deployed).
 
 The blockId detail view shows your NEWEST submission, which is not always the
 one serving: a pending resubmission or a withdrawn duplicate can be newer than
-the approved build. When it is, a "Live submission" block below the detail names
+the approved build, and an approved submission can be superseded by a later
+deploy of an older one (its deploy state then reads "live (superseded: ...)").
+When it is not the serving one, a "Live submission" block below the detail names
 the submission that is serving (version, publish request, deploy state, live
 URL), and --json carries the same row as "liveSubmission". Nothing extra is
 printed when the newest submission IS that row, or when nothing is serving.
@@ -258,9 +260,11 @@ type submissionDetailJSON struct {
 //
 // 🔴 WHY THIS EXISTS. The blockId detail view renders the NEWEST row (the
 // route's Submissions[0] — see getSubmissionRows), which answers "what state is
-// my latest submission in". When that row is a `pending` resubmission or a
-// `withdrawn` duplicate, it says nothing about the build that is actually
-// serving, and an author read their live app as not-live
+// my latest submission in". When that row is a `pending` resubmission, a
+// `withdrawn` duplicate, or an approved row superseded by a LATER deploy of an
+// older submission (it still reads 'live' — see servingSubmission), it says
+// nothing true about the build that is actually serving, and an author read
+// their live app as not-live
 // (civitai/civitai-app-starters#573, item 5). The newest-row headline is KEPT —
 // it is the right answer to its own question — and this adds the second answer
 // beside it.
@@ -501,8 +505,9 @@ func printSubmissionDetail(w io.Writer, s *appapi.Submission, live *appapi.Submi
 		fmt.Fprintf(w, "  %s\n", sourceClaimNote)
 	}
 
-	// 🔴 THE FOUR SURFACES BELOW ARE NOT CELLS, AND THEY WERE UNGATED UNTIL
-	// civitai/cli#552's follow-up. The tabwriter ledger only sees values that
+	// 🔴 THE FIVE SURFACES BELOW ARE NOT CELLS. Four were UNGATED UNTIL
+	// civitai/cli#552's follow-up; the fifth (the block id in the not-this-row
+	// sentence, #795) was gated from the start. The tabwriter ledger only sees values that
 	// reach a cell, so its `printSubmissionDetail` row read as coverage of this
 	// whole function while a rejection reason of "\x1b[1A\x1b[2KOVERWRITTEN" put a
 	// RAW ESC on stdout and overwrote the row this same function had just flushed
