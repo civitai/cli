@@ -185,8 +185,8 @@ fixed list. As of this CLI version:
 ### Gotchas — these defy reasonable assumptions
 
 - **Buzz is the user's, not yours.** A generation submitted by your app debits
-  the *viewer's* Buzz via their token. Always show a cost preview before
-  submitting — estimate first, then submit.
+  the *viewer's* Buzz via their token. Always show the exact Buzz price
+  before submitting — estimate first, then submit.
 - **A newly declared scope is consent-gated.** Adding a scope to the manifest
   does not grant it: it is dropped from the token until the user consents, so
   you get a 403 while the manifest and the runtime both look correct.
@@ -209,5 +209,19 @@ fixed list. As of this CLI version:
   that checkpoint's own `baseModel`.
 - **`civitai app validate` is a local mirror. The server is authoritative.** A
   clean local validate is necessary, never sufficient.
+
+### Before you submit
+
+Run the first-review checklist before `civitai app submit` — it is the review
+feedback that came back on app after app:
+https://developer.civitai.com/apps/guide/first-review.md
+
+- Check the cold-open and empty states against the live backend, and a ≈360px
+  width — harness demo data proves only the populated path.
+- One filled primary action per screen, reserved for send/spend.
+- Errors are your own copy: branch on the refusal `code` / `reason`, never print
+  the raw server string. A disabled action names what is missing.
+- One pending submission per app, so batch every fix into it. Withdrawing a
+  first-version submission deletes its store listing (icon, cover, screenshots).
 
 <!-- END civitai agent-setup -->

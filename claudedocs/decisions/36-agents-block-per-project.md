@@ -263,6 +263,23 @@ file nothing can recall: +347 bytes on every rendered block** — smallest shape
 is one exception, recorded so the next addition has to argue for itself rather
 than cite this one.
 
+#### 🔴 SECOND NAMED EXCEPTION — `### Before you submit` (civitai-app-starters#573, Zach, 2026-10-08)
+
+A section after the Gotchas links the docs site's first-review checklist
+(`developer.civitai.com/apps/guide/first-review.md`, added by
+civitai-developer-docs#179) and repeats four of its items in the block: check the
+cold-open/empty states and ≈360px; one filled primary action, reserved for
+send/spend; app-owned error copy and a disabled action that names what is
+missing; one pending submission per app, and a withdrawn first version deletes
+its store listing. The cost-preview gotcha was strengthened to "the exact Buzz
+price" rather than repeated. **Its argument:** human review sent the same
+feedback back on app after app, every item kept here is checkable without taste,
+and the agent reads this block before `civitai app submit` whether or not it
+fetches the page — the same reason the picker bullet was given. Everything else
+on the checklist stays on the page. **Measured cost: +721 bytes on every rendered
+block** — smallest shape 7,281 → 8,002 B, **+9.9%**. Pinned whole, per shape and
+per SDK branch, by `internal/cmd/agent_setup_before_submit_test.go`.
+
 ### The measurements behind it
 
 Taken 2026-09-10/11 from this host, anonymously, over real HTTP.

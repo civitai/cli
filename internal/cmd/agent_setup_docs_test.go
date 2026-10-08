@@ -285,6 +285,9 @@ var docsURLSpellingLedger = map[string]string{
 		"this file's own prose about the URL",
 	"claudedocs/decisions/36-agents-block-per-project.md": "AGENTS.md item 36's evidence file: it quotes the added " +
 		"line verbatim and tabulates each URL's measured status",
+	"internal/cmd/agent_setup_before_submit_test.go": "wantBeforeSubmitSection, the golden for the block's " +
+		"`### Before you submit` section, which links `/apps/guide/first-review.md` — a second section of the " +
+		"shipped block carrying a docs URL, outside the `### Docs` section TestBlockDocsLinksResolve probes",
 	"internal/scaffold/templates/page-money/README.md.tmpl": "the page-money README now POINTS at the hosted " +
 		"hooks reference instead of shipping a local 36-row copy of it — a SECOND shipped artefact carrying " +
 		"the URL, written into every scaffolded project exactly as the managed block is. It used to be " +
