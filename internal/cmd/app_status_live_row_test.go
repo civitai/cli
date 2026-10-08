@@ -28,7 +28,7 @@ const liveBlockSlug = "custom-generators"
 
 // liveRow is one submissions row, spelled out field by field.
 type liveRow struct {
-	id, version, status, deploy, liveURL, submittedAt string
+	id, version, status, deploy, liveURL, submittedAt, deployUpdatedAt string
 }
 
 // liveRowsBody renders rows (newest first) as the route's list body. An empty
@@ -36,7 +36,10 @@ type liveRow struct {
 func liveRowsBody(rows ...liveRow) map[string]any {
 	out := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
-		var deploy, live any
+		var deploy, live, deployAt any
+		if r.deployUpdatedAt != "" {
+			deployAt = r.deployUpdatedAt
+		}
 		if r.deploy != "" {
 			deploy = r.deploy
 		}
@@ -46,14 +49,14 @@ func liveRowsBody(rows ...liveRow) map[string]any {
 		out = append(out, map[string]any{
 			"id": r.id, "blockId": liveBlockSlug, "version": r.version, "status": r.status,
 			"deployState": deploy, "submittedAt": r.submittedAt, "updatedAt": r.submittedAt,
-			"createdAt": r.submittedAt, "liveUrl": live,
+			"createdAt": r.submittedAt, "liveUrl": live, "deployUpdatedAt": deployAt,
 		})
 	}
 	return map[string]any{"submissions": out}
 }
 
 // The approved, serving row most fixtures sit BELOW a newer row.
-var approvedLive = liveRow{"pubreq_A53", "0.5.3", "approved", "live", "https://approved-053.example.test/", "2026-08-01T10:00:00.000Z"}
+var approvedLive = liveRow{"pubreq_A53", "0.5.3", "approved", "live", "https://approved-053.example.test/", "2026-08-01T10:00:00.000Z", ""}
 
 // liveBlockOf returns the "Live submission" / "Approved submission" block's
 // fields as a label→value map (whitespace-collapsed), plus its header line.
@@ -118,18 +121,18 @@ func TestAppStatusDetailNamesTheLiveSubmissionWhenTheNewestRowIsNot(t *testing.T
 	}{
 		{
 			name:        "withdrawn duplicate newer than the approved row",
-			newest:      liveRow{"pubreq_W61", "0.6.1", "withdrawn", "", "", "2026-08-03T10:00:00.000Z"},
+			newest:      liveRow{"pubreq_W61", "0.6.1", "withdrawn", "", "", "2026-08-03T10:00:00.000Z", ""},
 			wantHeadVer: "0.6.1",
 		},
 		{
 			name:        "pending resubmission newer than the approved row",
-			newest:      liveRow{"pubreq_P70", "0.7.0", "pending", "building", "", "2026-08-02T10:00:00.000Z"},
+			newest:      liveRow{"pubreq_P70", "0.7.0", "pending", "building", "", "2026-08-02T10:00:00.000Z", ""},
 			wantHeadVer: "0.7.0",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := liveRowsBody(tc.newest, approvedLive,
-				liveRow{"pubreq_R40", "0.4.0", "rejected", "failed", "", "2026-07-02T10:00:00.000Z"})
+				liveRow{"pubreq_R40", "0.4.0", "rejected", "failed", "", "2026-07-02T10:00:00.000Z", ""})
 			out, _, calls := runLiveStatus(t, body, liveBlockSlug)
 
 			if calls != 1 {
@@ -175,7 +178,7 @@ func TestAppStatusDetailNamesTheLiveSubmissionWhenTheNewestRowIsNot(t *testing.T
 // them apart, so a version-equality shortcut would hide the live row here.
 func TestAppStatusDetailLiveBlockKeysOnTheRowNotTheVersion(t *testing.T) {
 	body := liveRowsBody(
-		liveRow{"pubreq_W53", "0.5.3", "withdrawn", "", "", "2026-08-03T10:00:00.000Z"},
+		liveRow{"pubreq_W53", "0.5.3", "withdrawn", "", "", "2026-08-03T10:00:00.000Z", ""},
 		approvedLive,
 	)
 	out, _, _ := runLiveStatus(t, body, liveBlockSlug)
@@ -192,7 +195,7 @@ func TestAppStatusDetailLiveBlockKeysOnTheRowNotTheVersion(t *testing.T) {
 // state. A block repeating the row above would be noise on every run.
 func TestAppStatusDetailNoLiveBlockWhenNewestIsTheApprovedRow(t *testing.T) {
 	body := liveRowsBody(approvedLive,
-		liveRow{"pubreq_W49", "0.4.9", "withdrawn", "", "", "2026-07-20T10:00:00.000Z"})
+		liveRow{"pubreq_W49", "0.4.9", "withdrawn", "", "", "2026-07-20T10:00:00.000Z", ""})
 	out, _, _ := runLiveStatus(t, body, liveBlockSlug)
 	if header, _ := liveBlockOf(out); header != "" {
 		t.Errorf("printed %q although the newest row IS the approved row:\n%s", header, out)
@@ -206,8 +209,8 @@ func TestAppStatusDetailNoLiveBlockWhenNewestIsTheApprovedRow(t *testing.T) {
 // old `Not live yet` footer stands and nothing extra is printed.
 func TestAppStatusDetailNoLiveBlockWithoutAnApprovedRow(t *testing.T) {
 	body := liveRowsBody(
-		liveRow{"pubreq_P70", "0.7.0", "pending", "building", "", "2026-08-02T10:00:00.000Z"},
-		liveRow{"pubreq_R40", "0.4.0", "rejected", "failed", "", "2026-07-02T10:00:00.000Z"},
+		liveRow{"pubreq_P70", "0.7.0", "pending", "building", "", "2026-08-02T10:00:00.000Z", ""},
+		liveRow{"pubreq_R40", "0.4.0", "rejected", "failed", "", "2026-07-02T10:00:00.000Z", ""},
 	)
 	out, _, _ := runLiveStatus(t, body, liveBlockSlug)
 	if header, _ := liveBlockOf(out); header != "" {
@@ -218,27 +221,100 @@ func TestAppStatusDetailNoLiveBlockWithoutAnApprovedRow(t *testing.T) {
 	}
 }
 
-// TestAppStatusDetailApprovedButNotServingIsNotCalledLive — an approved row that
-// has not finished deploying is named, but under a header that does not claim
-// it serves, and the `Not live yet` footer (true here) stays.
-func TestAppStatusDetailApprovedButNotServingIsNotCalledLive(t *testing.T) {
+// TestAppStatusDetailNoLiveBlockWhenTheApprovedRowIsNotServing — an approved
+// row that has not finished deploying is not serving, so there is no live row
+// to name; the `Not live yet` footer is the true answer and stands alone.
+func TestAppStatusDetailNoLiveBlockWhenTheApprovedRowIsNotServing(t *testing.T) {
 	body := liveRowsBody(
-		liveRow{"pubreq_P70", "0.7.0", "pending", "", "", "2026-08-02T10:00:00.000Z"},
-		liveRow{"pubreq_A60", "0.6.0", "approved", "building", "", "2026-08-01T10:00:00.000Z"},
+		liveRow{"pubreq_P70", "0.7.0", "pending", "", "", "2026-08-02T10:00:00.000Z", ""},
+		liveRow{"pubreq_A60", "0.6.0", "approved", "building", "", "2026-08-01T10:00:00.000Z", "2026-08-01T11:00:00.000Z"},
 	)
 	out, _, _ := runLiveStatus(t, body, liveBlockSlug)
-	header, f := liveBlockOf(out)
-	if header != "Approved submission (not the one shown above; not reported as serving):" {
-		t.Fatalf("header = %q, want the not-serving header\n%s", header, out)
+	if header, _ := liveBlockOf(out); header != "" {
+		t.Errorf("printed %q although nothing is serving:\n%s", header, out)
 	}
-	if f["Publish request"] != "pubreq_A60" || f["Deploy state"] != "building" {
-		t.Errorf("block = %v, want pubreq_A60 / building\n%s", f, out)
-	}
-	if _, ok := f["Live at"]; ok {
-		t.Errorf("a not-serving row must print no Live at:\n%s", out)
-	}
-	if !strings.Contains(out, "Not live yet") {
+	if !strings.Contains(out, "Not live yet — "+liveBlockSlug+".civit.ai only serves after") {
 		t.Errorf("nothing is serving, so `Not live yet` must stay:\n%s", out)
+	}
+}
+
+// TestAppStatusDetailLiveBlockNamesTheMostRecentlyDeployedRow — the server
+// never clears an older row's deployState, so after any upgrade or rollback
+// SEVERAL approved rows read `live`. The serving one is the one deployed last
+// (deployUpdatedAt), which is neither "the highest version" nor "the newest
+// submitted" in general. Each case is built so at least one of those wrong
+// picks names a different row.
+func TestAppStatusDetailLiveBlockNamesTheMostRecentlyDeployedRow(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		rows                     []liveRow
+		wantID, wantVer, wantURL string
+	}{
+		{
+			// approve 0.6.0, then approve 0.5.4 with --allow-downgrade: 0.5.4
+			// serves, 0.6.0 is still the HIGHEST approved version and still
+			// reads `live`. A highest-version pick names 0.6.0.
+			name: "rollback: the later-deployed LOWER version serves",
+			rows: []liveRow{
+				{"pubreq_P61", "0.6.1", "pending", "building", "", "2026-08-05T10:00:00.000Z", ""},
+				{"pubreq_R54", "0.5.4", "approved", "live", "https://rollback-054.example.test/", "2026-08-04T10:00:00.000Z", "2026-08-04T12:00:00.000Z"},
+				{"pubreq_U60", "0.6.0", "approved", "live", "https://upgrade-060.example.test/", "2026-08-02T10:00:00.000Z", "2026-08-02T12:00:00.000Z"},
+			},
+			wantID: "pubreq_R54", wantVer: "0.5.4", wantURL: "https://rollback-054.example.test/",
+		},
+		{
+			// The ordinary upgrade: both rows read `live`, the newer deploy
+			// serves. An oldest-deploy (or last-in-list) pick names 0.5.0.
+			name: "upgrade: the newest deploy serves",
+			rows: []liveRow{
+				{"pubreq_W61", "0.6.1", "withdrawn", "", "", "2026-08-07T10:00:00.000Z", ""},
+				{"pubreq_N60", "0.6.0", "approved", "live", "https://new-060.example.test/", "2026-08-05T10:00:00.000Z", "2026-08-06T09:00:00.000Z"},
+				{"pubreq_O50", "0.5.0", "approved", "live", "https://old-050.example.test/", "2026-07-19T10:00:00.000Z", "2026-07-20T09:00:00.000Z"},
+			},
+			wantID: "pubreq_N60", wantVer: "0.6.0", wantURL: "https://new-060.example.test/",
+		},
+		{
+			// Deploy order disagrees with SUBMIT order (a moderator re-trigger
+			// rebuilt 0.7.0 after 0.7.1 had deployed). Both a highest-version
+			// and a newest-submitted pick name 0.7.1.
+			name: "re-deployed older submission: deploy time, not submit time",
+			rows: []liveRow{
+				{"pubreq_P80", "0.8.0", "pending", "", "", "2026-08-10T10:00:00.000Z", ""},
+				{"pubreq_S71", "0.7.1", "approved", "live", "https://s-071.example.test/", "2026-08-06T10:00:00.000Z", "2026-08-06T12:00:00.000Z"},
+				{"pubreq_T70", "0.7.0", "approved", "live", "https://t-070.example.test/", "2026-08-05T10:00:00.000Z", "2026-08-08T12:00:00.000Z"},
+			},
+			wantID: "pubreq_T70", wantVer: "0.7.0", wantURL: "https://t-070.example.test/",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, _, _ := runLiveStatus(t, liveRowsBody(tc.rows...), liveBlockSlug)
+			header, f := liveBlockOf(out)
+			if header == "" {
+				t.Fatalf("no live block printed:\n%s", out)
+			}
+			if f["Publish request"] != tc.wantID || f["Version"] != tc.wantVer || f["Live at"] != tc.wantURL {
+				t.Errorf("live block = %v, want %s / %s / %s (the most recently DEPLOYED serving row)\n%s",
+					f, tc.wantID, tc.wantVer, tc.wantURL, out)
+			}
+		})
+	}
+}
+
+// TestServingSubmissionRanksLegacyRowsByReviewedAt — a legacy approval has no
+// deployUpdatedAt; the pick falls back to reviewedAt. The newer-reviewed row is
+// the LOWER version and the LATER listed one, so neither a version pick nor a
+// first-in-list pick lands on it.
+func TestServingSubmissionRanksLegacyRowsByReviewedAt(t *testing.T) {
+	s := func(v string) *string { return &v }
+	rows := []appapi.Submission{
+		{ID: "pubreq_L2", BlockID: "legacy", Version: "2.0.0", Status: "approved",
+			SubmittedAt: "2025-02-01T00:00:00Z", ReviewedAt: s("2025-02-02T00:00:00Z"), LiveURL: s("https://legacy.example.test/")},
+		{ID: "pubreq_L1", BlockID: "legacy", Version: "1.0.0", Status: "approved",
+			SubmittedAt: "2025-01-01T00:00:00Z", ReviewedAt: s("2025-03-01T00:00:00Z"), LiveURL: s("https://legacy.example.test/")},
+	}
+	got, ok := servingSubmission(rows, "legacy")
+	if !ok || got.ID != "pubreq_L1" {
+		t.Errorf("servingSubmission = %q (found=%v), want pubreq_L1 — the most recently REVIEWED legacy row", got.ID, ok)
 	}
 }
 
@@ -247,7 +323,7 @@ func TestAppStatusDetailApprovedButNotServingIsNotCalledLive(t *testing.T) {
 // does not buy itself a second request.
 func TestAppStatusDetailByIDPrintsNoLiveBlock(t *testing.T) {
 	body := liveRowsBody(
-		liveRow{"pubreq_W61", "0.6.1", "withdrawn", "", "", "2026-08-03T10:00:00.000Z"},
+		liveRow{"pubreq_W61", "0.6.1", "withdrawn", "", "", "2026-08-03T10:00:00.000Z", ""},
 		approvedLive,
 	)
 	out, _, calls := runLiveStatus(t, body, "--id", "pubreq_W61")
@@ -298,7 +374,7 @@ func TestLiveSubmissionBlockCellsCannotBeForged(t *testing.T) {
 func TestAppStatusJSONCarriesTheLiveSubmission(t *testing.T) {
 	t.Run("newest withdrawn: liveSubmission is the approved row", func(t *testing.T) {
 		body := liveRowsBody(
-			liveRow{"pubreq_W61", "0.6.1", "withdrawn", "", "", "2026-08-03T10:00:00.000Z"},
+			liveRow{"pubreq_W61", "0.6.1", "withdrawn", "", "", "2026-08-03T10:00:00.000Z", ""},
 			approvedLive,
 		)
 		out, _, _ := runLiveStatus(t, body, liveBlockSlug, "--json")
@@ -325,7 +401,7 @@ func TestAppStatusJSONCarriesTheLiveSubmission(t *testing.T) {
 	})
 	t.Run("newest is the approved row: no liveSubmission key", func(t *testing.T) {
 		body := liveRowsBody(approvedLive,
-			liveRow{"pubreq_W49", "0.4.9", "withdrawn", "", "", "2026-07-20T10:00:00.000Z"})
+			liveRow{"pubreq_W49", "0.4.9", "withdrawn", "", "", "2026-07-20T10:00:00.000Z", ""})
 		out, _, _ := runLiveStatus(t, body, liveBlockSlug, "--json")
 		var parsed map[string]any
 		if err := json.Unmarshal([]byte(out), &parsed); err != nil {

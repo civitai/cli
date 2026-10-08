@@ -40,9 +40,13 @@ rejection reason (if rejected) and the live URL (if approved + deployed).
 The blockId detail view shows your NEWEST submission, which is not always the
 one serving: a pending resubmission or a withdrawn duplicate can be newer than
 the approved build. When it is, a "Live submission" block below the detail names
-your highest APPROVED submission (version, publish request, deploy state, live
+the submission that is serving (version, publish request, deploy state, live
 URL), and --json carries the same row as "liveSubmission". Nothing extra is
-printed when the newest submission IS that row, or when nothing is approved.
+printed when the newest submission IS that row, or when nothing is serving.
+"Serving" is inferred: the server leaves older approved builds marked live
+after a newer deploy, so the CLI takes the serving-marked approved submission
+deployed most recently (deployUpdatedAt; reviewedAt for legacy approvals). That
+is the right row after a rollback too, where it is not the highest version.
 --id shows exactly the submission you asked for and no "Live submission" block:
 that lookup reads no listing, so use the blockId form to see what is live.
 
@@ -147,7 +151,7 @@ and deployed (deployState 'live').`,
 				// `--json` stdout stays a pure parseable payload. Ordering is
 				// about WHEN, purity is about WHICH STREAM — moving the call
 				// changes only the former.
-				// The approved row, when it is NOT the row printed above. Free:
+				// The serving row, when it is NOT the row printed above. Free:
 				// computed from the rows this lookup already holds, so it adds no
 				// request — and on the `--id` path (rows == nil) it is nil, see
 				// liveSubmissionFor.
@@ -249,7 +253,7 @@ type submissionDetailJSON struct {
 	LiveSubmission *appapi.Submission `json:"liveSubmission,omitempty"`
 }
 
-// liveSubmissionFor returns the app's highest APPROVED row when it is a
+// liveSubmissionFor returns the row of shown's app that is SERVING when it is a
 // DIFFERENT row from shown, and nil otherwise.
 //
 // 🔴 WHY THIS EXISTS. The blockId detail view renders the NEWEST row (the
@@ -261,31 +265,87 @@ type submissionDetailJSON struct {
 // it is the right answer to its own question — and this adds the second answer
 // beside it.
 //
-// 🔴 THE PICK IS highestApprovedVersion, NOT A NEW PREDICATE. "Which row is the
-// approved one" is the #412 predicate, already shared by `app submit`'s guard
-// and the drift warning; a third, open-coded copy here could name a different
-// row than the drift line printed on the same run. Consequences inherited on
-// purpose: an approved version that cannot be ordered (pre-release/build
-// suffix) is skipped, and among several approved rows the HIGHEST version wins,
-// not the newest — the same number the drift warning quotes.
-//
 // Returns nil (print nothing extra) when:
 //   - rows is nil — the `--id` path, which reads a single-row envelope and no
 //     listing. Fetching one here would add a request to every `--id` lookup and
 //     delay the render the command deliberately does first; the help text tells
 //     the user to use the blockId form instead;
-//   - nothing approved and orderable exists for the app;
-//   - the approved row IS the row shown (compared by publish-request id).
+//   - no row of the app is approved AND serving;
+//   - the serving row IS the row shown (compared by publish-request id).
 func liveSubmissionFor(shown *appapi.Submission, rows []appapi.Submission) *appapi.Submission {
 	if shown == nil || rows == nil {
 		return nil
 	}
-	peak := highestApprovedVersion(rows, shown.BlockID)
-	if !peak.found || peak.row.ID == shown.ID {
+	row, ok := servingSubmission(rows, shown.BlockID)
+	if !ok || row.ID == shown.ID {
 		return nil
 	}
-	row := peak.row
 	return &row
+}
+
+// servingSubmission picks the row of slug that is currently SERVING: among the
+// rows that are approved and that the server reports as serving (rowIsServing),
+// the one DEPLOYED most recently.
+//
+// 🔴 THIS IS DELIBERATELY NOT highestApprovedVersion, AND THE TWO MUST STAY
+// SEPARATE. That predicate (approved_version.go, #412) answers "what is the
+// highest version ever approved" — the number `app submit` must stay above and
+// the drift warning compares a repo against. This one answers "which build is
+// up right now", and the two differ after a rollback: approve 0.6.0, then
+// approve 0.5.4 with --allow-downgrade, and 0.5.4 serves while 0.6.0 is still
+// the highest approved version. An earlier cut of this block reused
+// highestApprovedVersion and named 0.6.0 there. They share the PRIMITIVES
+// (appapi.SameSlug, isApprovedStatus, rowIsServing); they cannot share the pick.
+//
+// 🔴 "SERVING" ALONE DOES NOT IDENTIFY ONE ROW. The server never clears an older
+// row's deploy state: its markRequestDeployState writes deployState and
+// deployUpdatedAt only to the approved row(s) whose commit was just deployed
+// (civitai: publish-request.service.ts). So after ANY upgrade every previously
+// deployed approved row still reads deployState 'live' (and gets a liveUrl),
+// and "the row marked live" is several rows. The tie-break is therefore the
+// timestamp of that write: the serving row is the one whose deployUpdatedAt is
+// newest, because each deploy stamps only the row it deployed.
+//
+// LIMITS, stated rather than implied. The route exposes deployUpdatedAt,
+// reviewedAt, submittedAt and updatedAt per row and no "is current" flag, so
+// this is an inference from the newest deploy write, not a server answer:
+//   - a LEGACY approval (pre deploy-state tracking) has no deployUpdatedAt; it
+//     is ranked by reviewedAt, then submittedAt. Any tracked deploy is newer
+//     than every legacy one, so this only orders legacy rows among themselves;
+//   - a row whose timestamps do not parse ranks lowest;
+//   - equal timestamps keep the row that came first in the listing (newest
+//     submitted), e.g. two approved rows of the same commit, which one deploy
+//     stamps together.
+func servingSubmission(rows []appapi.Submission, slug string) (appapi.Submission, bool) {
+	var best appapi.Submission
+	var bestAt time.Time
+	found := false
+	for _, s := range rows {
+		if !appapi.SameSlug(s.BlockID, slug) || !isApprovedStatus(s.Status) || !rowIsServing(s) {
+			continue
+		}
+		at := deployAnchor(s)
+		if found && !at.After(bestAt) {
+			continue
+		}
+		best, bestAt, found = s, at, true
+	}
+	return best, found
+}
+
+// deployAnchor is when s was last deployed, as far as the route says:
+// deployUpdatedAt, else reviewedAt, else submittedAt; the zero time when none
+// parses. See servingSubmission for why deployUpdatedAt leads.
+func deployAnchor(s appapi.Submission) time.Time {
+	for _, ts := range []*string{s.DeployUpdatedAt, s.ReviewedAt, &s.SubmittedAt} {
+		if ts == nil || *ts == "" {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339, *ts); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 func writeJSON(w io.Writer, v any) error {
@@ -397,7 +457,7 @@ func sourceDirtySuffix(dirty *bool) string {
 // and a reviewer's note was putting raw escapes on stdout. See the block comment
 // at that code for the shape rule.
 //
-// live is the app's highest approved row when it differs from s (see
+// live is the app's SERVING row when it differs from s (see
 // liveSubmissionFor), rendered as a separately-labelled block at the end; nil
 // prints nothing extra. Its cells are gated exactly like s's.
 func printSubmissionDetail(w io.Writer, s *appapi.Submission, live *appapi.Submission) {
@@ -457,11 +517,10 @@ func printSubmissionDetail(w io.Writer, s *appapi.Submission, live *appapi.Submi
 	if s.ApprovalNotes != nil && *s.ApprovalNotes != "" {
 		fmt.Fprintf(w, "\nApproval notes:\n  %s\n", indentContinuation(safeTerm(*s.ApprovalNotes), "  "))
 	}
-	liveServing := live != nil && rowIsServing(*live)
 	switch {
 	case s.LiveURL != nil && *s.LiveURL != "":
 		fmt.Fprintf(w, "\nLive at: %s\n", ui.URL(safeTermSingle(*s.LiveURL)))
-	case liveServing:
+	case live != nil:
 		// "Not live yet — <slug>.civit.ai only serves after…" would be FALSE
 		// here: the slug IS serving, just not this row. Say what is true about
 		// this row and point at the block that names the serving one.
@@ -472,14 +531,11 @@ func printSubmissionDetail(w io.Writer, s *appapi.Submission, live *appapi.Submi
 	if live == nil {
 		return
 	}
-	// The header states the server's serving answer (rowIsServing: liveUrl
-	// first, deployState as fallback — the same reading `app submit` uses), so
-	// an approved row that has not finished deploying is never called "live".
-	if liveServing {
-		fmt.Fprintln(w, "\nLive submission (not the one shown above):")
-	} else {
-		fmt.Fprintln(w, "\nApproved submission (not the one shown above; not reported as serving):")
-	}
+	// live is only ever a SERVING row (servingSubmission filters on
+	// rowIsServing), so there is one header. An approved row that is not
+	// serving gets no block: with nothing serving, the `Not live yet` footer
+	// above is already the true answer about the app.
+	fmt.Fprintln(w, "\nLive submission (not the one shown above):")
 	lt := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(lt, "  Version:\t%s\n", safeTermSingle(live.Version))
 	fmt.Fprintf(lt, "  Publish request:\t%s\n", safeTermSingle(live.ID))

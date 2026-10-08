@@ -6,8 +6,7 @@ import (
 	"github.com/civitai/cli/internal/appapi"
 )
 
-// THE HIGHEST-APPROVED-VERSION PREDICATE (issue #412) — ONE COPY, THREE CALLERS
-// (the third, `app status`'s "Live submission" block, reads approvedPeak.row).
+// THE HIGHEST-APPROVED-VERSION PREDICATE (issue #412) — ONE COPY, TWO CALLERS.
 //
 // #412 has two halves and they shipped as two PRs:
 //
@@ -71,14 +70,6 @@ type approvedPeak struct {
 	live bool
 	// found is false when no approved row was comparable at all.
 	found bool
-	// row is the winning row itself (the zero Submission when found is false).
-	// It exists for `app status`'s detail view, which names the approved row
-	// beside the NEWEST one when the two differ (liveSubmissionFor in
-	// app_status.go). Carrying the row out of this pick, rather than letting
-	// that caller re-find it by version, keeps ONE predicate deciding which row
-	// is "the approved one" — a second lookup would be a second copy of #412's
-	// predicate, which is the defect this file exists to prevent.
-	row appapi.Submission
 	// skipped lists approved versions that could NOT be ordered (see
 	// comparableVersion). `app submit` reports them; `app status` stays silent
 	// about them, because its whole contract is that a fact it could not
@@ -137,7 +128,6 @@ func highestApprovedVersion(subs []appapi.Submission, slug string) approvedPeak 
 		}
 		peak.version, peak.parsed, peak.found = s.Version, v, true
 		peak.live = rowIsServing(s)
-		peak.row = s
 	}
 	return peak
 }
