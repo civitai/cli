@@ -37,6 +37,21 @@ With no argument it lists all your submissions (newest first). Pass a blockId
 (app slug) or --id <pubreq_id> to see a single submission in detail, including the
 rejection reason (if rejected) and the live URL (if approved + deployed).
 
+The blockId detail view shows your NEWEST submission, which is not always the
+one serving: a pending resubmission or a withdrawn duplicate can be newer than
+the approved build, and an approved submission can be superseded by a later
+deploy of an older one (its deploy state then reads "live (superseded: ...)").
+When it is not the serving one, a "Live submission" block below the detail names
+the submission that is serving (version, publish request, deploy state, live
+URL), and --json carries the same row as "liveSubmission". Nothing extra is
+printed when the newest submission IS that row, or when nothing is serving.
+"Serving" is inferred: the server leaves older approved builds marked live
+after a newer deploy, so the CLI takes the serving-marked approved submission
+deployed most recently (deployUpdatedAt; reviewedAt for legacy approvals). That
+is the right row after a rollback too, where it is not the highest version.
+--id shows exactly the submission you asked for and no "Live submission" block:
+that lookup reads no listing, so use the blockId form to see what is live.
+
 --limit N shows only the newest N of them. It is a DISPLAY limit, not a page
 size: this route accepts no limit and no cursor (that is what the cap note is
 about), so the CLI always fetches the same page and prints fewer rows of it.
@@ -138,12 +153,17 @@ and deployed (deployState 'live').`,
 				// `--json` stdout stays a pure parseable payload. Ordering is
 				// about WHEN, purity is about WHICH STREAM — moving the call
 				// changes only the former.
+				// The serving row, when it is NOT the row printed above. Free:
+				// computed from the rows this lookup already holds, so it adds no
+				// request — and on the `--id` path (rows == nil) it is nil, see
+				// liveSubmissionFor.
+				live := liveSubmissionFor(sub, rows)
 				if jsonOut {
-					if err := writeJSON(out, sub); err != nil {
+					if err := writeJSON(out, submissionDetailJSON{Submission: sub, LiveSubmission: live}); err != nil {
 						return err
 					}
 				} else {
-					printSubmissionDetail(out, sub)
+					printSubmissionDetail(out, sub, live)
 				}
 				// The advisory call gets its own, shorter deadline: the client's
 				// 30s budget is sized for the answer, and an optional extra is
@@ -217,6 +237,120 @@ and deployed (deployState 'live').`,
 // Only the unfiltered list goes through here: a slug/id lookup is narrowed
 // server-side before the cap applies.
 func submissionsListTruncated(n int) bool { return n >= appapi.ListSubmissionsCap }
+
+// submissionDetailJSON is the detail view's `--json` payload: the submission's
+// own fields, flattened at the top level EXACTLY as before (the embedded pointer
+// is promoted by encoding/json), plus one additive key.
+//
+// 🔴 ADDITIVE ONLY. Scripts already read `.status`, `.liveUrl`, `.blockId` off
+// this object, so the row stays at the top level rather than moving under a
+// wrapper key, and `liveSubmission` is omitted when there is nothing to say —
+// a payload for an app whose newest row IS the approved one is byte-identical
+// to what this command printed before the key existed. This relies on
+// appapi.Submission having no MarshalJSON of its own: one would be promoted
+// through the embedding and silently drop `liveSubmission`.
+// TestAppStatusJSONCarriesTheLiveSubmission pins both halves.
+type submissionDetailJSON struct {
+	*appapi.Submission
+	LiveSubmission *appapi.Submission `json:"liveSubmission,omitempty"`
+}
+
+// liveSubmissionFor returns the row of shown's app that is SERVING when it is a
+// DIFFERENT row from shown, and nil otherwise.
+//
+// 🔴 WHY THIS EXISTS. The blockId detail view renders the NEWEST row (the
+// route's Submissions[0] — see getSubmissionRows), which answers "what state is
+// my latest submission in". When that row is a `pending` resubmission, a
+// `withdrawn` duplicate, or an approved row superseded by a LATER deploy of an
+// older submission (it still reads 'live' — see servingSubmission), it says
+// nothing true about the build that is actually serving, and an author read
+// their live app as not-live
+// (civitai/civitai-app-starters#573, item 5). The newest-row headline is KEPT —
+// it is the right answer to its own question — and this adds the second answer
+// beside it.
+//
+// Returns nil (print nothing extra) when:
+//   - rows is nil — the `--id` path, which reads a single-row envelope and no
+//     listing. Fetching one here would add a request to every `--id` lookup and
+//     delay the render the command deliberately does first; the help text tells
+//     the user to use the blockId form instead;
+//   - no row of the app is approved AND serving;
+//   - the serving row IS the row shown (compared by publish-request id).
+func liveSubmissionFor(shown *appapi.Submission, rows []appapi.Submission) *appapi.Submission {
+	if shown == nil || rows == nil {
+		return nil
+	}
+	row, ok := servingSubmission(rows, shown.BlockID)
+	if !ok || row.ID == shown.ID {
+		return nil
+	}
+	return &row
+}
+
+// servingSubmission picks the row of slug that is currently SERVING: among the
+// rows that are approved and that the server reports as serving (rowIsServing),
+// the one DEPLOYED most recently.
+//
+// 🔴 THIS IS DELIBERATELY NOT highestApprovedVersion, AND THE TWO MUST STAY
+// SEPARATE. That predicate (approved_version.go, #412) answers "what is the
+// highest version ever approved" — the number `app submit` must stay above and
+// the drift warning compares a repo against. This one answers "which build is
+// up right now", and the two differ after a rollback: approve 0.6.0, then
+// approve 0.5.4 with --allow-downgrade, and 0.5.4 serves while 0.6.0 is still
+// the highest approved version. An earlier cut of this block reused
+// highestApprovedVersion and named 0.6.0 there. They share the PRIMITIVES
+// (appapi.SameSlug, isApprovedStatus, rowIsServing); they cannot share the pick.
+//
+// 🔴 "SERVING" ALONE DOES NOT IDENTIFY ONE ROW. The server never clears an older
+// row's deploy state: its markRequestDeployState writes deployState and
+// deployUpdatedAt only to the approved row(s) whose commit was just deployed
+// (civitai: publish-request.service.ts). So after ANY upgrade every previously
+// deployed approved row still reads deployState 'live' (and gets a liveUrl),
+// and "the row marked live" is several rows. The tie-break is therefore the
+// timestamp of that write: the serving row is the one whose deployUpdatedAt is
+// newest, because each deploy stamps only the row it deployed.
+//
+// LIMITS, stated rather than implied. The route exposes deployUpdatedAt,
+// reviewedAt, submittedAt and updatedAt per row and no "is current" flag, so
+// this is an inference from the newest deploy write, not a server answer:
+//   - a LEGACY approval (pre deploy-state tracking) has no deployUpdatedAt; it
+//     is ranked by reviewedAt, then submittedAt. Any tracked deploy is newer
+//     than every legacy one, so this only orders legacy rows among themselves;
+//   - a row whose timestamps do not parse ranks lowest;
+//   - equal timestamps keep the row that came first in the listing (newest
+//     submitted), e.g. two approved rows of the same commit, which one deploy
+//     stamps together.
+func servingSubmission(rows []appapi.Submission, slug string) (appapi.Submission, bool) {
+	var best appapi.Submission
+	var bestAt time.Time
+	found := false
+	for _, s := range rows {
+		if !appapi.SameSlug(s.BlockID, slug) || !isApprovedStatus(s.Status) || !rowIsServing(s) {
+			continue
+		}
+		at := deployAnchor(s)
+		if found && !at.After(bestAt) {
+			continue
+		}
+		best, bestAt, found = s, at, true
+	}
+	return best, found
+}
+
+// deployAnchor is when s was last deployed, as far as the route says:
+// deployUpdatedAt, else reviewedAt, else submittedAt; the zero time when none
+// parses. See servingSubmission for why deployUpdatedAt leads.
+func deployAnchor(s appapi.Submission) time.Time {
+	for _, ts := range []*string{s.DeployUpdatedAt, s.ReviewedAt, &s.SubmittedAt} {
+		if ts == nil || *ts == "" {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339, *ts); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
 
 func writeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
@@ -326,13 +460,26 @@ func sourceDirtySuffix(dirty *bool) string {
 // "deliberately NOT gated here … tracked separately"; they were simply ungated,
 // and a reviewer's note was putting raw escapes on stdout. See the block comment
 // at that code for the shape rule.
-func printSubmissionDetail(w io.Writer, s *appapi.Submission) {
+//
+// live is the app's SERVING row when it differs from s (see
+// liveSubmissionFor), rendered as a separately-labelled block at the end; nil
+// prints nothing extra. Its cells are gated exactly like s's.
+func printSubmissionDetail(w io.Writer, s *appapi.Submission, live *appapi.Submission) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "Block ID:\t%s\n", safeTermSingle(s.BlockID))
 	fmt.Fprintf(tw, "Version:\t%s\n", safeTermSingle(s.Version))
 	fmt.Fprintf(tw, "Publish request:\t%s\n", safeTermSingle(s.ID))
 	fmt.Fprintf(tw, "Status:\t%s\n", safeTermSingle(s.Status))
-	fmt.Fprintf(tw, "Deploy state:\t%s\n", safeTermSingle(deployLabel(s.DeployState)))
+	// 🔴 A SUPERSEDED "live" IS QUALIFIED, NOT HIDDEN. The server never clears
+	// an older row's deployState (see servingSubmission), so when another row was
+	// deployed after this one, this row can still read 'live'. The raw value is
+	// what the server holds and is printed as such; the qualifier stops it
+	// reading as "this build is up" beside a block naming a different one.
+	deployCell := safeTermSingle(deployLabel(s.DeployState))
+	if live != nil && rowIsServing(*s) {
+		deployCell += " (superseded: a later deploy is serving, see Live submission below)"
+	}
+	fmt.Fprintf(tw, "Deploy state:\t%s\n", deployCell)
 	if s.DeployDetail != nil && *s.DeployDetail != "" {
 		fmt.Fprintf(tw, "Deploy detail:\t%s\n", safeTermSingle(*s.DeployDetail))
 	}
@@ -358,8 +505,9 @@ func printSubmissionDetail(w io.Writer, s *appapi.Submission) {
 		fmt.Fprintf(w, "  %s\n", sourceClaimNote)
 	}
 
-	// 🔴 THE FOUR SURFACES BELOW ARE NOT CELLS, AND THEY WERE UNGATED UNTIL
-	// civitai/cli#552's follow-up. The tabwriter ledger only sees values that
+	// 🔴 THE FIVE SURFACES BELOW ARE NOT CELLS. Four were UNGATED UNTIL
+	// civitai/cli#552's follow-up; the fifth (the block id in the not-this-row
+	// sentence, #795) was gated from the start. The tabwriter ledger only sees values that
 	// reach a cell, so its `printSubmissionDetail` row read as coverage of this
 	// whole function while a rejection reason of "\x1b[1A\x1b[2KOVERWRITTEN" put a
 	// RAW ESC on stdout and overwrote the row this same function had just flushed
@@ -383,11 +531,38 @@ func printSubmissionDetail(w io.Writer, s *appapi.Submission) {
 	if s.ApprovalNotes != nil && *s.ApprovalNotes != "" {
 		fmt.Fprintf(w, "\nApproval notes:\n  %s\n", indentContinuation(safeTerm(*s.ApprovalNotes), "  "))
 	}
-	if s.LiveURL != nil && *s.LiveURL != "" {
+	// 🔴 live != nil IS TESTED FIRST, BEFORE THIS ROW'S OWN liveUrl. A row that
+	// was deployed and then superseded keeps its liveUrl (the server derives it
+	// from the never-cleared deployState), so printing `Live at:` for it and then
+	// naming a different serving row below would contradict itself.
+	switch {
+	case live != nil:
+		// "Not live yet — <slug>.civit.ai only serves after…" would be FALSE
+		// here: the slug IS serving, just not this row. Say what is true about
+		// this row and point at the block that names the serving one.
+		fmt.Fprintf(w, "\nThis submission is not live — %s.civit.ai is serving the approved submission below.\n", safeTermSingle(s.BlockID))
+	case s.LiveURL != nil && *s.LiveURL != "":
 		fmt.Fprintf(w, "\nLive at: %s\n", ui.URL(safeTermSingle(*s.LiveURL)))
-	} else {
+	default:
 		fmt.Fprintf(w, "\nNot live yet — %s.civit.ai only serves after the app is approved and deployed (deployState 'live').\n", safeTermSingle(s.BlockID))
 	}
+	if live == nil {
+		return
+	}
+	// live is only ever a SERVING row (servingSubmission filters on
+	// rowIsServing), so there is one header. An approved row that is not
+	// serving gets no block: with nothing serving, the `Not live yet` footer
+	// above is already the true answer about the app.
+	fmt.Fprintln(w, "\nLive submission (not the one shown above):")
+	lt := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(lt, "  Version:\t%s\n", safeTermSingle(live.Version))
+	fmt.Fprintf(lt, "  Publish request:\t%s\n", safeTermSingle(live.ID))
+	fmt.Fprintf(lt, "  Status:\t%s\n", safeTermSingle(live.Status))
+	fmt.Fprintf(lt, "  Deploy state:\t%s\n", safeTermSingle(deployLabel(live.DeployState)))
+	if live.LiveURL != nil && *live.LiveURL != "" {
+		fmt.Fprintf(lt, "  Live at:\t%s\n", safeTermSingle(*live.LiveURL))
+	}
+	_ = lt.Flush()
 }
 
 // deployLabel renders a possibly-null deployState; null means "no Phase-2 deploy
