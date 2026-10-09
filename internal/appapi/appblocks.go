@@ -1635,7 +1635,7 @@ func (c *Client) GetForgejoCloneInfo(ctx context.Context, app string) (*ForgejoC
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil || env.Result.Data.JSON == nil {
-		return nil, fmt.Errorf("unexpected getMyForgejoCloneInfo response: %s", string(raw))
+		return nil, credentialBodyError("unexpected getMyForgejoCloneInfo response", raw, err)
 	}
 	return env.Result.Data.JSON, nil
 }
@@ -1821,10 +1821,10 @@ func (c *Client) MintDevToken(ctx context.Context, slug string, scopes []string,
 		Token string `json:"token"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", fmt.Errorf("unexpected /api/v1/blocks/dev-token response: %s", string(raw))
+		return "", credentialBodyError("unexpected /api/v1/blocks/dev-token response", raw, err)
 	}
 	if out.Token == "" {
-		return "", fmt.Errorf("dev-token response had no token: %s", string(raw))
+		return "", credentialBodyError("dev-token response had no token", raw, nil)
 	}
 	return out.Token, nil
 }
@@ -2373,6 +2373,25 @@ func submissionsError(status int, raw []byte, id, blockID string) (err error) {
 	default:
 		return fmt.Errorf("server returned %d: %s", status, msg)
 	}
+}
+
+// credentialBodyError reports a 2xx body that did not yield what the caller
+// needed, for a route whose success payload IS a credential (OAuth tokens, a
+// device_code, a dev token, a Forgejo push token). It names the failure and the
+// body's size, and never the body.
+//
+// 🔴 AN UNDECODABLE BODY IS NOT A BODY WITHOUT A CREDENTIAL. One off-shape field
+// fails the whole json.Unmarshal while the tokens beside it are intact, and the
+// refresh route has already rotated them — so echoing the body put the only
+// copy of a live refresh token on stderr. decodeErr is safe to show: encoding/
+// json's errors name a type, a field and at most one offending byte, never a
+// string value. It is formatted with %v, not %w, so the error stays unclassified
+// exactly as before.
+func credentialBodyError(what string, raw []byte, decodeErr error) error {
+	if decodeErr != nil {
+		return fmt.Errorf("%s (%d bytes, not shown because it may carry credentials): %v", what, len(raw), decodeErr)
+	}
+	return fmt.Errorf("%s (%d bytes, not shown because it may carry credentials)", what, len(raw))
 }
 
 // serverMessage extracts the {"message"|"error": ...} field, falling back to the
