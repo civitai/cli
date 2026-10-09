@@ -59,6 +59,13 @@ func isRetriableStatus(status int) bool {
 	}
 }
 
+// Winsock's codes for a refused / reset connection. Spelled as numbers because
+// package syscall names only WSAECONNRESET, and only on Windows.
+const (
+	wsaECONNREFUSED = syscall.Errno(10061)
+	wsaECONNRESET   = syscall.Errno(10054)
+)
+
 // isTransientNetErr reports whether a request error is a transient network
 // condition worth retrying (timeout, connection refused, connection reset). A
 // context cancellation (user SIGINT) is NOT transient and is never retried.
@@ -75,6 +82,14 @@ func isRetriableStatus(status int) bool {
 // `network error from Civitai, retrying (n/4)…` lines plus backoff, for a
 // problem that never clears. See transport_error.go — do not re-spell this as
 // errors.As.
+//
+// 🔴 On Windows, syscall.ECONNREFUSED and syscall.ECONNRESET are values Go
+// INVENTS for package os (zerrors_windows.go); the network stack never returns
+// them. A refused dial there carries Winsock's WSAECONNREFUSED (10061) and a
+// reset read WSAECONNRESET (10054), so the two sentinels alone matched nothing
+// and a refused or reset read failed on the first attempt. Both are plain
+// numbers no other OS uses as an errno, so the check is the same everywhere and
+// CI exercises it on Linux.
 func isTransientNetErr(err error) bool {
 	if err == nil {
 		return false
@@ -82,7 +97,8 @@ func isTransientNetErr(err error) bool {
 	if errors.Is(err, context.Canceled) {
 		return false
 	}
-	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) {
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, wsaECONNREFUSED) || errors.Is(err, wsaECONNRESET) {
 		return true
 	}
 	if netErr, ok := transportError(err); ok {

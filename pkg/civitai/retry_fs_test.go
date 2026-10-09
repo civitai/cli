@@ -322,6 +322,13 @@ func TestTransientTransportErrorsStillRetry(t *testing.T) {
 		{"context.DeadlineExceeded", context.DeadlineExceeded, true},
 		{"bare syscall.ECONNREFUSED", syscall.ECONNREFUSED, false},
 		{"bare syscall.ECONNRESET", syscall.ECONNRESET, false},
+		// The shapes a Windows dial and read really produce. There,
+		// syscall.ECONNREFUSED / ECONNRESET are values Go invents for package os
+		// and the network stack never returns them; it returns Winsock's codes.
+		{"Windows refused dial: *net.OpError nesting *os.SyscallError(WSAECONNREFUSED)",
+			&net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connectex", syscall.Errno(10061))}, false},
+		{"Windows reset read: *net.OpError nesting *os.SyscallError(WSAECONNRESET)",
+			&net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("wsarecv", syscall.Errno(10054))}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := driveReadWithTransportError(t, tc.err)
