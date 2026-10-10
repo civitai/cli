@@ -127,7 +127,7 @@ These go beyond the global defaults because this repo's release pipeline
   BIDIRECTIONAL LEDGER: `layout_ledger_test.go` fails both when a package under
   `internal/` is unnamed and when a named one does not exist.
 - `internal/appapi` — the App-Blocks REST/tRPC client (submissions, listing
-  media, `app metrics`); holds the `Submitter` / `Verifier` seams tests fake.
+  media, `app metrics`, `app feedback`); holds the `Submitter` / `Verifier` seams tests fake.
 - `internal/ui` — the ONE presentation layer; color is configured once, from the
   root command. `internal/ui/CONVENTION.md` is the rule set, including why
   `--json` must never pass through it.
@@ -242,6 +242,7 @@ Item 37 is a username that arrives as a NUMBER.
 Item 38 is what the read path may CLAIM about the bytes it prints.
 Item 39 is the FOURTH half of `agent-setup`: the only thing this CLI writes
 outside the project, in a file the user's login shell executes.
+Item 40 is `civitai app feedback`: text any site user wrote, read by an agent.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -450,6 +451,10 @@ item must carry a trigger that is a routing question rather than a label
     emits, making it implicit, or giving `--check` a row about this machine's
     PATH?**
     → evidence: claudedocs/decisions/39-agent-setup-fix-path.md
+
+40. **Touching `app feedback` — how a message is rendered, its `--json`
+    envelope, the reporter fields, or what an empty inbox or a 403/409 claims?**
+    → evidence: claudedocs/decisions/40-app-feedback-is-untrusted-input.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

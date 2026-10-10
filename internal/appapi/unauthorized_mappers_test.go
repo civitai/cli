@@ -58,6 +58,7 @@ var every401Mapper = map[string]func(int, []byte) error{
 	"cloneInfoError":   cloneInfoError,
 	"devTokenError":    devTokenError,
 	"devTunnelError":   devTunnelError,
+	"feedbackError":    func(s int, raw []byte) error { return feedbackError(s, raw, feedbackOpRead) },
 	"serverError":      serverError,
 	"withdrawError":    withdrawError,
 	"listingError":     func(s int, raw []byte) error { return listingError(s, raw, listingRoute{}) },

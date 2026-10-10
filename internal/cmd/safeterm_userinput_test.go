@@ -112,6 +112,10 @@ var bareIdentArgs = map[string]string{
 	"reportBaseModel::w":             "🔴 MIXED, not SERVER — an earlier draft of this row said SERVER and was wrong. baseModelWarning(have, want) (compat.go:103) interpolates `want`, the USER's --for-base flag. MEASURED: a --for-base carrying a U+2800 renders without it at reportBaseModel's warn print (download.go:403; this row cited :336 for months, which is a different branch entirely — cite the FUNCTION, since a line number in prose nothing asserts on drifts every refactor). Now exercised by TestDownloadFiltersRootAndForBase rather than only recorded here. Accepted on this path for the same reason the ::target rows are, but the row has to SAY so",
 	"reportBaseModel::baseModel":     "SERVER: a base-model label",
 
+	// --- app feedback --------------------------------------------------------
+	"feedbackHeader::s":             "SERVER: one header cell of a feedback row — created time, status, app version, build sha, surface, or the reporter's username — handed to the `cell` closure; never the slug the user typed",
+	"feedbackMessageLines::message": "SERVER, and the least trusted text this CLI prints: a feedback message any signed-in site user wrote (appapi.Feedback.Message)",
+
 	// --- read path ----------------------------------------------------------
 	"printImageResources::w":  "SERVER: an image-metadata WEIGHT (r.WeightString()). Nothing to do with the download warnings also spelled `w` — which is exactly why this ledger is keyed per function",
 	"printImageResources::h":  "SERVER: a hash out of image metadata",
