@@ -32,6 +32,11 @@ the output's SHAPE:
   row, inside a versioned envelope (`schemaVersion`) whose top-level `notice`
   states the rule on every read.
 
+`--since` / `--version` are client-side filters (the server has none). Without
+`--all` they see one page, and when the server reports more, stderr says the
+filter covered only the first page — "nothing matched" over a sample is not
+"nothing matches".
+
 🔴 **There is no heuristic that tries to DETECT a prompt injection, and one must
 not be added.** It would be a phrase list. Item 28 records phrase lists losing
 twice to a paraphrase and once to an appended sentence; an injection detector
@@ -52,29 +57,17 @@ line of message text is prefixed with at the moment it is emitted.
 
 ## 2. `--json` here escapes more than the rest of the CLI's `--json`
 
-`safeTerm`'s doc comment says `--json` is emitted raw because spec-compliant
-JSON already escapes control characters. That is true of C0 only:
-`encoding/json` leaves DEL, the C1 range (which holds the 8-bit CSI and OSC
-introducers) and the invisible/bidi class as literal UTF-8. For platform
-metadata that is a tolerable residual. For text any user can write, printed by
-a command an agent runs in a terminal, it is not — so `writeFeedbackJSON` writes
-every rune `safeTerm` would strip as a `\uXXXX` escape.
-
-It is **escaping, not sanitising**: a JSON decoder returns the identical string
-(`TestAppFeedbackJSONEscapesWhatATerminalWouldActOn` decodes stdout and compares
-byte for byte). The class is asked of `safeTerm` per rune, so there is still one
-table. Do not "simplify" this to `writeJSON`, and do not widen it to an
-ASCII-only encoder — printable non-ASCII text passes through, and the same test
-pins that.
+`encoding/json` escapes C0 only, leaving DEL, C1 and the invisible/bidi class
+raw. For text any user can write, printed by a command an agent runs in a
+terminal, `writeFeedbackJSON` escapes every rune `safeTerm` would strip. It is
+escaping, not sanitising — decoding returns the identical string — and the
+reason is in its doc comment. Do not collapse it into `writeJSON`.
 
 ## 3. Reporter identity is absent by default, not null
 
-Rows are keyed by feedback id. `--with-reporter` adds `reporter: {id, username}`
-to `--json` and a `reporter …` cell to the header. Without it the key does not
-exist: `feedbackRowOut.Reporter` is a pointer with `omitempty` for exactly that
-reason. A consumer that never asked for identity should not receive a field
-that invites it to go looking, and "absent" is the only shape a test can assert
-without also accepting a leaked-but-empty value.
+Operator decision. `--with-reporter` opts in; without it the `reporter` key does
+not exist, because "absent" is the only shape a test can assert without also
+accepting a leaked-but-empty value.
 
 ## 4. The CLI does not say feedback is "disabled", because an owner cannot observe that
 
@@ -110,16 +103,16 @@ fallthrough.
 `set-status` always sends `expectedOwnerStatus` — the status the row was READ
 as, with `new` travelling as JSON `null` (the field is `.nullable()`, not
 `.optional()`, so the key must be present). It reads the row first unless
-`--expect` supplies the value. A row already in the requested status sends
-nothing: the write would succeed and re-issue the reporter notification's key.
+`--expect` supplies the value. When the row is already in the target status —
+as read, OR as `--expect` says — nothing is sent: the compare-and-set would
+match, re-stamp the status and re-run the reporter notification for no change.
+The `--expect` case sends no request at all (round-1 audit finding: it used to
+POST).
 
 ## 6. `--count` is a flag here, not a line in `civitai app status`
 
-`app status` reads the block-SUBMISSIONS route and passes its payload through as
-`--json`. A count there needs a second lookup in a different id space (listing,
-not submission), a new key in a pass-through payload, and a rule for what
-`app status` prints when only the count fails. `civitai app feedback --count`
-has none of those: it cannot fail a command that was not asked about feedback.
+So that a failed count can never fail `app status`; the reasoning is on
+`runAppFeedbackCount`.
 
 ## Not established
 

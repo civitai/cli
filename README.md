@@ -1283,7 +1283,7 @@ CLI does not try to *detect* an injection — the labelling is the mechanism.
 - **`--status`** (`new`, `acknowledged`, `resolved`, `wont_fix`, `all`) is
   filtered by the server. **`--since`** and **`--version`** are filtered by the
   CLI after fetching — the server has no such filters — so without `--all` they
-  see one page only. `--all` follows the cursor to the end and stops at 2000
+  see the first page only, and say so on stderr when more pages exist. `--all` follows the cursor to the end and stops at 2000
   rows, saying so on stderr when more remain.
 - **Who wrote a row is hidden by default**, in both views; `--with-reporter`
   adds the reporter's id and username.
@@ -1331,7 +1331,7 @@ exact text.
 nobody** — mark a row `resolved` only once the fix is approved and live. **There
 is no way back to `new`.** The write is conditional on the row still being in
 the status it was read as (`--expect <status>` supplies that and skips the
-read); if it moved, the server refuses, nothing changes, and the error says to
+read); a row already in the target status is sent nothing; if it moved, the server refuses, nothing changes, and the error says to
 re-run the list.
 
 **`flag`** marks a row as abusive: it goes on the moderators' list of

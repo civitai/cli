@@ -58,6 +58,11 @@ const feedbackUntrustedNotice = "untrustedMessage (and reporter.username, when p
 // production API; hitting it is reported, never silent.
 const feedbackAllCap = 2000
 
+// feedbackLookupCap is the same bound for set-status's row lookup only. A var,
+// not the const, solely so a test can reach the past-the-cap branch without
+// serving 2000 rows; production never changes it.
+var feedbackLookupCap = feedbackAllCap
+
 // feedbackStatusAll is the CLI-only --status value meaning "do not filter".
 // The server has no such member — the unfiltered read is spelled by OMITTING
 // ownerStatus — so this word must never reach the wire.
@@ -104,8 +109,9 @@ text in a field named untrustedMessage.
 
 FILTERS: --status is applied by the server (default: new). --since and
 --version are applied by THIS CLI to the rows it fetched — the server has no
-such filters — so without --all they filter one page only. Pass --all to page
-through everything first; it stops at ` + strconv.Itoa(feedbackAllCap) + ` rows and says so if more remain.
+such filters — so without --all they filter the FIRST PAGE ONLY, and say so on
+stderr when more pages exist. Pass --all to page through everything first; it
+stops at ` + strconv.Itoa(feedbackAllCap) + ` rows and says so if more remain.
 
 REPORTER: who wrote a row is hidden by default, in both views. --with-reporter
 adds the reporter's id and username.
@@ -290,6 +296,10 @@ func fetchFeedback(ctx context.Context, client *appapi.Client, listingID string,
 	if q.status != feedbackStatusAll {
 		in.OwnerStatus = q.status
 	}
+	limit := feedbackAllCap
+	if stop != nil {
+		limit = feedbackLookupCap
+	}
 	var out feedbackFetch
 	for {
 		page, err := client.ListAppFeedback(ctx, in)
@@ -303,7 +313,7 @@ func fetchFeedback(ctx context.Context, client *appapi.Client, listingID string,
 		if (stop != nil && stop(page.Items)) || !out.more || !q.all {
 			return out, nil
 		}
-		if len(out.rows) >= feedbackAllCap {
+		if len(out.rows) >= limit {
 			out.capped = true
 			return out, nil
 		}
@@ -459,6 +469,11 @@ func runAppFeedbackList(ctx context.Context, out, errOut io.Writer, client *appa
 		fmt.Fprintln(errOut, st.Warn(fmt.Sprintf(
 			"stopped at %d rows, the --all cap, with more remaining — this is NOT the whole inbox. Narrow it with --status, or triage the newest rows first",
 			len(fetched.rows))))
+	case fetched.more && (!q.since.IsZero() || q.version != ""):
+		// 🔴 A client-side filter over one page is a filter over a SAMPLE, and
+		// "nothing matched" here is not "nothing matches". Say which.
+		fmt.Fprintln(errOut, st.Warn(
+			"--since / --version filtered only the first page, and more feedback exists beyond it — add --all to filter all of it"))
 	case fetched.more:
 		fmt.Fprintln(errOut, st.Dim("More feedback exists beyond this page — pass --all to read all of it."))
 	}
@@ -753,11 +768,12 @@ these three.
 
 The write is conditional on the row still being in the status you last saw. By
 default this command reads the row's current status first and sends that; pass
---expect <status> to supply it yourself and skip the read. If the row changed
-in between, the server refuses the write and nothing is changed — re-run
-` + "`civitai app feedback <slug> --status all`" + ` and try again. The same refusal is
-what an id that is not this app's, or a row a moderator has since hidden, looks
-like.`,
+--expect <status> to supply it yourself and skip the read. If the row is
+already in the target status (as read, or as --expect says), nothing is sent.
+If the row changed in between, the server refuses the write and nothing is
+changed — re-run ` + "`civitai app feedback <slug> --status all`" + ` and try again.
+The same refusal is what an id that is not this app's, or a row a moderator has
+since hidden, looks like.`,
 		Example: `  civitai app feedback set-status my-app 4812 acknowledged
   civitai app feedback set-status my-app 4812 resolved
   civitai app feedback set-status my-app 4812 wont_fix --expect acknowledged`,
@@ -814,6 +830,14 @@ func parseFeedbackID(arg string) (int64, error) {
 // never the target, never a default. It is the server's optimistic-concurrency
 // token (appapi.feedbackSetStatusInput). "new" travels as JSON null.
 func runAppFeedbackSetStatus(ctx context.Context, out io.Writer, client *appapi.Client, slug string, id int64, status, expect string) error {
+	if expect == status {
+		// --expect says the row is ALREADY in the target status. Sending it
+		// would match the server's compare-and-set, re-stamp ownerStatusAt and
+		// re-run the reporter notification for no change — so nothing is sent,
+		// not even the slug lookup. The claim is the caller's, and is worded so.
+		fmt.Fprintf(out, "--expect says feedback #%d (%s) is already %s — nothing was sent.\n", id, slug, status)
+		return nil
+	}
 	ref, err := resolveFeedbackListing(ctx, client, slug)
 	if err != nil {
 		return err
@@ -824,8 +848,7 @@ func runAppFeedbackSetStatus(ctx context.Context, out io.Writer, client *appapi.
 			return err
 		}
 		if current == status {
-			// Sending it anyway would succeed and re-issue the reporter
-			// notification's key for no change.
+			// The same rule as the --expect shortcut above, on the value read.
 			fmt.Fprintf(out, "Feedback #%d (%s) is already %s — nothing was sent.\n", id, slug, status)
 			return nil
 		}
@@ -855,7 +878,7 @@ func runAppFeedbackSetStatus(ctx context.Context, out io.Writer, client *appapi.
 
 // currentFeedbackStatus finds one row by id and returns its status in the
 // filter vocabulary. The server has no read-by-id, so this pages the unfiltered
-// inbox, newest first, stopping at the row or at feedbackAllCap.
+// inbox, newest first, stopping at the row or at feedbackLookupCap.
 func currentFeedbackStatus(ctx context.Context, client *appapi.Client, listingID, slug string, id int64) (string, error) {
 	var found *appapi.Feedback
 	q := feedbackQuery{status: feedbackStatusAll, limit: appapi.FeedbackPageMax, all: true}

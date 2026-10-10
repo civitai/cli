@@ -242,7 +242,7 @@ Item 37 is a username that arrives as a NUMBER.
 Item 38 is what the read path may CLAIM about the bytes it prints.
 Item 39 is the FOURTH half of `agent-setup`: the only thing this CLI writes
 outside the project, in a file the user's login shell executes.
-Item 40 is `civitai app feedback`: text any site user wrote, read by an agent.
+Item 40 is `app feedback`'s untrusted text.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -452,8 +452,8 @@ item must carry a trigger that is a routing question rather than a label
     PATH?**
     → evidence: claudedocs/decisions/39-agent-setup-fix-path.md
 
-40. **Touching `app feedback` — how a message is rendered, its `--json`
-    envelope, the reporter fields, or what an empty inbox or a 403/409 claims?**
+40. **Touching `app feedback` — message rendering, the `--json` envelope,
+    the reporter fields, or what an empty inbox or a 403/409 claims?**
     → evidence: claudedocs/decisions/40-app-feedback-is-untrusted-input.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
