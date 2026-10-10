@@ -594,6 +594,11 @@ var bornSplitItems = []string{
 	// date and nothing asserts it; the matrix is in the decision file, where a
 	// reader can count it. Do not reintroduce a figure here.
 	"claudedocs/decisions/39-agent-setup-fix-path.md",
+	// Item 40 was written straight into claudedocs/decisions/ for the same reason
+	// as 35–39: AGENTS.md had 426 bytes of headroom under agentsMaxBytes when it
+	// was added, and the body is six separate decisions, an observable-state
+	// table and the enumerated residuals.
+	"claudedocs/decisions/40-app-feedback-is-untrusted-input.md",
 }
 
 // splitItemsFloor is the CI-SIDE KEEPER for bornSplitItems: the set of item
