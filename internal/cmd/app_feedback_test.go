@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -1377,14 +1378,28 @@ func TestAppFeedbackSetStatusExpectEqualToTargetSendsNothing(t *testing.T) {
 	}
 }
 
+// lowerFeedbackCaps lowers the --all cap and the lookup cap TOGETHER, as they
+// are equal in production. Lowering only one would build a state that cannot
+// exist, in which an unfiltered --all read sees further than the lookup.
+func lowerFeedbackCaps(t *testing.T, n int) {
+	t.Helper()
+	list, lookup := feedbackListCap, feedbackLookupCap
+	feedbackListCap, feedbackLookupCap = n, n
+	t.Cleanup(func() { feedbackListCap, feedbackLookupCap = list, lookup })
+}
+
+// wantPastCapAdvice is the refusal for a row the lookup could not reach, with
+// the caps at 20.
+const wantPastCapAdvice = "feedback #3 is not among the newest 20 rows of my-app, which is as far as this command looks — " +
+	"find its status with `civitai app feedback my-app --status <new|acknowledged|resolved|wont_fix> --all`, one status " +
+	"at a time, then re-run with --expect <status>. A row older than the newest 20 of its status cannot be listed " +
+	"from the CLI; only --expect with its known status reaches it"
+
 // TestAppFeedbackSetStatusPastTheLookupCapAsksForExpect: a row deeper than the
-// lookup cap EXISTS, so it must not be reported as not found (exit 4). The cap
-// is lowered through feedbackLookupCap so the branch is reachable with three
-// pages of ten: pages 1-2 reach the cap of 20, id 3 is on page 3.
+// lookup cap EXISTS, so it must not be reported as not found (exit 4). With the
+// caps at 20, pages 1-2 reach the cap and id 3 is on page 3.
 func TestAppFeedbackSetStatusPastTheLookupCapAsksForExpect(t *testing.T) {
-	orig := feedbackLookupCap
-	feedbackLookupCap = 20
-	t.Cleanup(func() { feedbackLookupCap = orig })
+	lowerFeedbackCaps(t, 20)
 	f := &feedbackFake{t: t, list: threePages, setStatus: func(body string) (int, string) {
 		t.Errorf("no write may be sent when the row was not found: %s", body)
 		return http.StatusInternalServerError, `{}`
@@ -1394,10 +1409,8 @@ func TestAppFeedbackSetStatusPastTheLookupCapAsksForExpect(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	want := "feedback #3 is not among the newest 20 rows of my-app, and this command stops looking there — " +
-		"pass --expect <status> with the status `civitai app feedback my-app --status all --all` shows for it"
-	if err.Error() != want {
-		t.Errorf("\n got: %s\nwant: %s", err, want)
+	if err.Error() != wantPastCapAdvice {
+		t.Errorf("\n got: %s\nwant: %s", err, wantPastCapAdvice)
 	}
 	if errors.Is(err, civitai.ErrNotFound) {
 		t.Errorf("a row past the lookup cap is not a missing row; it must not exit 4: %v", err)
@@ -1405,6 +1418,104 @@ func TestAppFeedbackSetStatusPastTheLookupCapAsksForExpect(t *testing.T) {
 	if n := len(f.feedbackCalls()); n != 2 {
 		t.Errorf("the lookup must stop at the cap: want 2 page reads, got %d", n)
 	}
+}
+
+// statusFilteredInbox is a fake inbox that honours ownerStatus and the keyset
+// cursor the way the server does: ids 30..1 newest first, ten to a page, every
+// row `new` except #3, which is `acknowledged`.
+func statusFilteredInbox(t *testing.T) func(int, string) (int, string) {
+	return func(_ int, input string) (int, string) {
+		var in struct {
+			JSON struct {
+				Cursor      int64  `json:"cursor"`
+				OwnerStatus string `json:"ownerStatus"`
+			} `json:"json"`
+		}
+		if err := json.Unmarshal([]byte(input), &in); err != nil {
+			t.Errorf("list input is not JSON: %v", err)
+			return http.StatusBadRequest, `{}`
+		}
+		var rows []string
+		var last int64
+		more := false
+		for id := int64(30); id >= 1; id-- {
+			status := "new"
+			if id == 3 {
+				status = "acknowledged"
+			}
+			if in.JSON.OwnerStatus != "" && in.JSON.OwnerStatus != status {
+				continue
+			}
+			if in.JSON.Cursor != 0 && id >= in.JSON.Cursor {
+				continue
+			}
+			if len(rows) == 10 {
+				more = true
+				break
+			}
+			owner := "null"
+			if status != "new" {
+				owner = `"` + status + `"`
+			}
+			rows = append(rows, fmt.Sprintf(`{"id":%d,"message":"m%d","createdAt":"2026-10-%02dT12:00:00.000Z",`+
+				`"reporter":{"id":1,"username":"u"},"appBlockVersion":"1.0.0","appBlockSha":null,"surface":"page",`+
+				`"ownerStatus":%s,"ownerStatusAt":null,"ownerFlaggedAt":null}`, id, id, id, owner))
+			last = id
+		}
+		next := ""
+		if more {
+			next = fmt.Sprint(last)
+		}
+		return http.StatusOK, feedbackPage(next, rows...)
+	}
+}
+
+// adviceCommand pulls the `civitai app feedback <slug> --status <s> --all`
+// command out of a refusal, so the test runs WHAT THE MESSAGE SAYS rather than a
+// command the test author chose.
+var adviceCommand = regexp.MustCompile("`civitai app feedback (\\S+) --status (\\S+) --all`")
+
+// TestAppFeedbackPastCapAdviceIsReachable: the refusal's advice must actually
+// find the row, in the state that produced the refusal. Caps equal (as in
+// production), the target is past the cap of an UNFILTERED read — so the old
+// advice, `--status all --all`, stops at the same row the lookup did — but it
+// is the only `acknowledged` row, so the per-status read reaches it.
+func TestAppFeedbackPastCapAdviceIsReachable(t *testing.T) {
+	lowerFeedbackCaps(t, 20)
+	f := &feedbackFake{t: t, list: statusFilteredInbox(t)}
+	f.serve()
+	_, _, err := run(t, "app", "feedback", "set-status", "my-app", "3", "resolved")
+	if err == nil {
+		t.Fatal("CONTROL failure: the lookup found row 3, so this scenario does not reach the past-cap refusal")
+	}
+	m := adviceCommand.FindStringSubmatch(err.Error())
+	if m == nil {
+		t.Fatalf("the refusal names no `civitai app feedback <slug> --status <s> --all` command to run:\n%s", err)
+	}
+	status := m[2]
+	if status == "<new|acknowledged|resolved|wont_fix>" {
+		// The advice says to try each status; the one that holds row 3 is the
+		// one a user following it would reach.
+		status = "acknowledged"
+	}
+	out, _, runErr := run(t, "app", "feedback", m[1], "--status", status, "--all", "--json")
+	if runErr != nil {
+		t.Fatalf("the advised read `--status %s --all` failed: %v", status, runErr)
+	}
+	env := decodeFeedbackEnvelope(t, out)
+	if env.Fetched == 0 {
+		t.Fatalf("CONTROL failure: the advised read returned no rows at all")
+	}
+	for _, r := range env.Feedback {
+		if r.ID == 3 {
+			if r.Status != "acknowledged" {
+				t.Errorf("the advised read found row 3 with status %q, want acknowledged", r.Status)
+			}
+			return
+		}
+	}
+	t.Errorf("following the refusal's advice (`--status %s --all`) does not show row 3 — the advice is unreachable. "+
+		"It returned %d row(s), hasMore=%v.", status, len(env.Feedback), env.HasMore)
 }
 
 func TestAppFeedbackSetStatusUnknownIDIsNotFoundAndWritesNothing(t *testing.T) {

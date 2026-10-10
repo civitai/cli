@@ -58,10 +58,15 @@ const feedbackUntrustedNotice = "untrustedMessage (and reporter.username, when p
 // production API; hitting it is reported, never silent.
 const feedbackAllCap = 2000
 
-// feedbackLookupCap is the same bound for set-status's row lookup only. A var,
-// not the const, solely so a test can reach the past-the-cap branch without
-// serving 2000 rows; production never changes it.
-var feedbackLookupCap = feedbackAllCap
+// feedbackListCap and feedbackLookupCap are feedbackAllCap as applied to --all
+// and to set-status's row lookup. Vars, not the const, solely so a test can
+// reach the past-the-cap branches without serving 2000 rows; production never
+// changes them, so the two are always EQUAL — which is why the lookup's refusal
+// cannot send the user to an unfiltered --all read (it stops at the same row).
+var (
+	feedbackListCap   = feedbackAllCap
+	feedbackLookupCap = feedbackAllCap
+)
 
 // feedbackStatusAll is the CLI-only --status value meaning "do not filter".
 // The server has no such member — the unfiltered read is spelled by OMITTING
@@ -296,7 +301,7 @@ func fetchFeedback(ctx context.Context, client *appapi.Client, listingID string,
 	if q.status != feedbackStatusAll {
 		in.OwnerStatus = q.status
 	}
-	limit := feedbackAllCap
+	limit := feedbackListCap
 	if stop != nil {
 		limit = feedbackLookupCap
 	}
@@ -898,9 +903,15 @@ func currentFeedbackStatus(ctx context.Context, client *appapi.Client, listingID
 		return found.Status(), nil
 	}
 	if fetched.capped {
-		return "", fmt.Errorf("feedback #%d is not among the newest %d rows of %s, and this command stops looking there — "+
-			"pass --expect <status> with the status `civitai app feedback %s --status all --all` shows for it",
-			id, len(fetched.rows), slug, slug)
+		// 🔴 NOT `--status all --all`: that read stops at the same cap, so it
+		// cannot show a row this lookup could not reach. A per-status read is a
+		// different (smaller) set, which is why it can — though one status can
+		// exceed the cap too, and the message says so rather than promise.
+		return "", fmt.Errorf("feedback #%d is not among the newest %d rows of %s, which is as far as this command looks — "+
+			"find its status with `civitai app feedback %s --status <new|acknowledged|resolved|wont_fix> --all`, one status "+
+			"at a time, then re-run with --expect <status>. A row older than the newest %d of its status cannot be listed "+
+			"from the CLI; only --expect with its known status reaches it",
+			id, len(fetched.rows), slug, slug, feedbackListCap)
 	}
 	return "", civitai.Tag(civitai.ErrNotFound, fmt.Errorf("no feedback #%d among the rows of %s this account can see — "+
 		"check the id with `civitai app feedback %s --status all`", id, slug, slug))
