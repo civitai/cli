@@ -864,10 +864,10 @@ anyway. See AGENTS.md item 31 and
 [What goes in the bundle](https://developer.civitai.com/apps/guide/packaging#how-big-can-a-bundle-be).
 
 ⚠️ **A resubmit's store-listing media — icon, cover, screenshots — carry
-forward on APPROVAL only — withdrawing the submission, or a moderator rejecting
-it, deletes the listing and everything on it.** `civitai app withdraw` on a
-**first-version** submission is therefore destructive, which is why it asks
-first and needs `--yes` in a script.
+forward once the app is APPROVED — withdrawing the submission deletes the
+listing and everything on it, and a rejection can too.** `civitai app withdraw`
+on a **first-version** submission is therefore destructive, which is why it
+asks first and needs `--yes` in a script.
 
 📖 **The two kinds of credential, what `civitai whoami` reports (including the
 tri-state capability rows) and `whoami --json`:
