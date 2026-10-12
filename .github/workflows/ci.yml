@@ -319,11 +319,6 @@ jobs:
   # so this comment deliberately does not copy it.
   pins-vs-published:
     runs-on: ubuntu-latest
-    # `pull-requests: read` is for ONE read-only lookup: the open bump-bot PR,
-    # so a warning can name its fix instead of describing one.
-    permissions:
-      contents: read
-      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -336,19 +331,9 @@ jobs:
 
       - name: check scaffold pins vs npm latest
         env:
-          GH_TOKEN: ${{ github.token }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -uo pipefail
-
-          # The open bump-bot PR, if any — reporting only. Every failure of this
-          # lookup is an EMPTY string, which pins-gate renders as "no open bot PR
-          # was found"; it cannot change the verdict. `isCrossRepository` because
-          # `--head` matches a branch NAME, and a fork may name its branch
-          # anything it likes.
-          bot_pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
-            --head automation/bump-scaffold-pins --json url,isCrossRepository \
-            --jq '[.[] | select(.isCrossRepository | not)][0].url // empty' 2>/dev/null || true)"
 
           # `go run`, not `go test -run`: the two vacuous greens the old step
           # needed controls for are gone by construction. There is no name
@@ -370,12 +355,16 @@ jobs:
           # errexit is on (see the ERREXIT NOTE at the top), so a non-zero exit
           # from pins-gate kills the step AT THE PIPE — that is the gate.
           go run ./internal/scaffold/cmd/pins-gate \
-            -event "$GITHUB_EVENT_NAME" -pr-head "$PR_HEAD_SHA" -bot-pr "$bot_pr" 2>&1 \
+            -event "$GITHUB_EVENT_NAME" -pr-head "$PR_HEAD_SHA" 2>&1 \
             | tee "$RUNNER_TEMP/pins.log"
 
           # POSITIVE CONTROL — the remaining vacuous green. Exit 0 must mean
           # "pins-gate reached a verdict over at least one pin", so require its
-          # own last line. `verdict=broken` and `exit=1|2` are deliberately not
+          # own last line. `pins=[1-9]` is the ONLY thing that rejects a green
+          # over zero pins: pins-gate refuses that itself, but the refusal sits
+          # behind `go:embed`, so no Go test can present it with zero pins and
+          # it survives a mutation battery. `workflow_pins_gate_test.go` fails
+          # if this line is deleted or loosened. `verdict=broken` and `exit=1|2` are deliberately not
           # accepted: they cannot reach this line, and if one ever does the
           # command and its exit code have come apart.
           if ! grep -Eq -- '^pins-gate: mode=(gate|advise) verdict=(ok|stale|unreachable) pins=[1-9][0-9]* blocking=0 exit=0$' "$RUNNER_TEMP/pins.log"; then
@@ -393,9 +382,9 @@ jobs:
   # static assertion while being completely inert.
   #
   # This job executes the emitter in node against a fake host. It is env-gated
-  # so `make ci` stays Go-only and offline. The daily `bump-scaffold-pins` sweep
-  # runs it too, but a daily runner reports up to 24h AFTER a merge, on a
-  # workflow nobody watches — running it per-PR puts the result in front of a
+  # so `make ci` stays Go-only and offline. The scheduled `bump-scaffold-pins` sweep
+  # (every 6 hours) runs it too, but a scheduled runner reports hours AFTER a
+  # merge, on a workflow nobody watches — running it per-PR puts the result in front of a
   # reviewer while the change is still open.
   #
   # 🔴 NOTE: this both reports AND gates. `main`'s required contexts are
@@ -452,14 +441,15 @@ jobs:
           # completely inert). Disarming it would remove the last thing standing
           # between `main` and a page app that never reaches `ready`.
           #
-          # A SKIP is a FAILURE here, unlike pins-vs-published: there is no
+          # A SKIP is a FAILURE here (pins-vs-published once accepted one; it no
+          # longer runs a test at all, see pins-gate): there is no
           # legitimate skip path when the gate env var is set — the test even
           # t.Fatal()s rather than skipping when node is missing, on purpose.
           # Requiring PASS specifically is what encodes that.
           #
-          # Same control as the daily drift runner in bump-scaffold-pins.yml
+          # Same control as the scheduled drift runner in bump-scaffold-pins.yml
           # (#332). Two copies on purpose: they guard two different runners, and
-          # the daily one cannot block a merge.
+          # the scheduled one cannot block a merge.
           if ! grep -Eq -- '^ *--- PASS: TestScaffoldedReadyAckActuallyFires( |/|$)' "$RUNNER_TEMP/ready-ack.log"; then
             echo "::error::the ready-ack runtime check exited 0 without running TestScaffoldedReadyAckActuallyFires — the -run pattern matched no test (renamed? moved? CIVITAI_CHECK_SCAFFOLD_RUNTIME gate changed?). A green here would have been a claim about nothing, on the only check that proves the scaffolded handshake actually fires (issue #206)."
             exit 1
@@ -687,8 +677,10 @@ jobs:
   #       + @civitai/blocks-react (not the pinned caret npm resolves to) and
   #       re-typecheck + re-build. pins-vs-published catches "the pin can't admit
   #       latest"; THIS catches "the template code breaks against latest" (a
-  #       removed/renamed SDK export). Network-dependent, so it mirrors the
-  #       pins-vs-published SKIP-on-unreachable contract: a reachability PROBE
+  #       removed/renamed SDK export). Network-dependent, so it keeps the
+  #       SKIP-on-unreachable contract pins-vs-published USED to have (that job
+  #       now FAILS a gating run when npm is unreachable — see pins-gate): a
+  #       reachability PROBE
   #       gates the install/typecheck/build steps — an npm outage (network / DNS /
   #       5xx / 429) SKIPS them (job stays green, indistinguishable-from-real is
   #       avoided) while a reachable registry runs them and FAILS on a genuine
@@ -743,7 +735,7 @@ jobs:
           # expands to nothing, produces `--- SKIP` at exit 0: the scan never
           # opens the scaffolded app and this required job goes green anyway.
           # Requiring PASS rather than PASS-or-SKIP is what makes that visible —
-          # unlike pins-vs-published, this check has no network to be
+          # unlike a network check, this one has no registry to be
           # unreachable and no legitimate reason to skip once CI has set the var.
           if ! grep -Eq -- '^ *--- PASS: TestScanDirFromEnv( |/|$)' "$RUNNER_TEMP/antipattern.log"; then
             echo "::error::the anti-pattern scan exited 0 without PASSing TestScanDirFromEnv — either the -run pattern matched no test (renamed? moved?) or the test SKIPPED because CIVITAI_ANTIPATTERN_SCAN_DIR was empty. Either way the scaffolded app was never scanned."
@@ -752,8 +744,9 @@ jobs:
 
       # (b) Build against the LATEST published SDK, not just the pinned caret.
       #     Probe npm first; if the registry is unreachable (network/DNS/5xx/429)
-      #     the build steps SKIP so a transient outage can't red the job (mirrors
-      #     the pins-vs-published skip-on-unreachable contract). A 200 on the
+      #     the build steps SKIP so a transient outage can't red the job (the
+      #     skip-on-unreachable contract pins-vs-published used to share; it
+      #     now fails gating runs instead). A 200 on the
       #     /latest metadata means "reachable" — a real SDK break then fails at
       #     typecheck/build, not here.
       - name: probe npm reachability

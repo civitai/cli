@@ -64,10 +64,12 @@ func TestClassifyDecidesWhichRunsGate(t *testing.T) {
 		{name: "one pin input among many harmless paths", event: "pull_request",
 			changed: []string{"README.md", "internal/cmd/root.go", "internal/scaffold/scaffold_test.go", "main.go"}, want: modeGate,
 			touched: []string{"internal/scaffold/scaffold_test.go"}},
-		// "An unclassified path that could contain a pin": the one file kind a
-		// pin is read from, somewhere no rule names.
-		{name: "a package.json.tmpl outside the known tree", event: "pull_request", changed: []string{"internal/newtemplates/page-x/package.json.tmpl"}, want: modeGate,
-			touched: []string{"internal/newtemplates/page-x/package.json.tmpl"}},
+		// A package.json.tmpl OUTSIDE internal/scaffold is not read by anything
+		// this command is built from (TemplatePins walks scaffold's embed), so it
+		// is not an input. If the templates ever MOVE there, the package that
+		// embeds them joins pins-gate's build graph and
+		// TestPinInputsCoverTheBuildGraph goes red until a row is added.
+		{name: "a package.json.tmpl outside the scaffold package", event: "pull_request", changed: []string{"examples/app/package.json.tmpl"}, want: modeAdvise},
 
 		// ── near misses: a prefix rule must not be a substring rule ──
 		{name: "a sibling directory sharing the prefix's spelling", event: "pull_request", changed: []string{"internal/scaffolding/x.go"}, want: modeAdvise},
@@ -560,20 +562,18 @@ type gateRun struct {
 	stdout  string
 	stderr  string
 	summary string
-	output  string
 	hits    int
 }
 
 func runGate(t *testing.T, reg *registry, args ...string) gateRun {
 	t.Helper()
 	tmp := t.TempDir()
-	sum, outF := filepath.Join(tmp, "summary.md"), filepath.Join(tmp, "output.txt")
-	env := map[string]string{"GITHUB_STEP_SUMMARY": sum, "GITHUB_OUTPUT": outF}
+	sum := filepath.Join(tmp, "summary.md")
+	env := map[string]string{"GITHUB_STEP_SUMMARY": sum}
 	var stdout, stderr bytes.Buffer
 	code := run(append([]string{"-registry", reg.URL}, args...), func(k string) string { return env[k] }, &stdout, &stderr, func(time.Duration) {})
 	s, _ := os.ReadFile(sum)
-	o, _ := os.ReadFile(outF)
-	return gateRun{code: code, stdout: stdout.String(), stderr: stderr.String(), summary: string(s), output: string(o), hits: reg.hits}
+	return gateRun{code: code, stdout: stdout.String(), stderr: stderr.String(), summary: string(s), hits: reg.hits}
 }
 
 // lastLine is the verdict line the workflow's positive control requires.
@@ -748,70 +748,36 @@ func TestRedWhereItMustBeGreenWhereItMustBe(t *testing.T) {
 			if !strings.HasPrefix(got.summary, c.head+"\n") {
 				t.Errorf("job summary heading\n  got:  %s\n  want: %s", strings.SplitN(got.summary, "\n", 2)[0], c.head)
 			}
-			if want := fmt.Sprintf("mode=%s\nverdict=%s\n", c.mode, c.verdict); got.output != want {
-				t.Errorf("step outputs = %q, want %q", got.output, want)
-			}
 		})
 	}
 }
 
 // The warning has to name the stale pin AND the fix, or "reported" is a colour.
-func TestTheAdvisoryNamesTheStalePinAndTheBotPR(t *testing.T) {
+func TestTheAdvisoryNamesTheStalePinAndTheFix(t *testing.T) {
 	pins := currentPins(t)
 	repo, head := sharedCheckout(t, "docs-only", edit(map[string]string{"README.md": "docs only\n"}), false, false)
-	args := []string{"-event", "pull_request", "-repo", repo, "-pr-head", head}
-
-	t.Run("with an open bot PR", func(t *testing.T) {
-		const bot = "https://github.com/civitai/cli/pull/808"
-		got := runGate(t, newRegistry(t, regStale), append(args, "-bot-pr", bot)...)
-		if got.code != 0 {
-			t.Fatalf("exit %d, want 0\n%s", got.code, got.stdout)
+	got := runGate(t, newRegistry(t, regStale), "-event", "pull_request", "-repo", repo, "-pr-head", head)
+	if got.code != 0 {
+		t.Fatalf("exit %d, want 0\n%s", got.code, got.stdout)
+	}
+	for pkg, ver := range pins {
+		want := fmt.Sprintf("%s is pinned ^%s in templates/", pkg, ver)
+		if !strings.Contains(got.stdout, want) {
+			t.Errorf("no annotation names the stale pin %q:\n%s", want, got.stdout)
 		}
-		for pkg, ver := range pins {
-			want := fmt.Sprintf("%s is pinned ^%s in templates/", pkg, ver)
-			if !strings.Contains(got.stdout, want) {
-				t.Errorf("no annotation names the stale pin %q:\n%s", want, got.stdout)
-			}
-			if row := fmt.Sprintf("| `%s` | `^%s` | `999.0.0` | stale | no |", pkg, ver); !strings.Contains(got.summary, row) {
-				t.Errorf("the job summary has no row ending %q:\n%s", row, got.summary)
-			}
+		if row := fmt.Sprintf("| `%s` | `^%s` | `999.0.0` | stale | no |", pkg, ver); !strings.Contains(got.summary, row) {
+			t.Errorf("the job summary has no row ending %q:\n%s", row, got.summary)
 		}
-		if !strings.Contains(got.stdout, "does NOT admit npm's published 999.0.0") {
-			t.Errorf("no annotation names the published version:\n%s", got.stdout)
+	}
+	if !strings.Contains(got.stdout, "does NOT admit npm's published 999.0.0") {
+		t.Errorf("no annotation names the published version:\n%s", got.stdout)
+	}
+	const fix = "The fix is the `bump-scaffold-pins` workflow's pull request (branch `automation/bump-scaffold-pins`): it sweeps every 6 hours and opens or updates one when a pin falls behind. To fix it by hand, run `go run ./internal/scaffold/cmd/bump-pins`."
+	for where, text := range map[string]string{"annotation": got.stdout, "summary": got.summary} {
+		if !strings.Contains(text, fix) {
+			t.Errorf("the %s does not name the fix:\n  want: %s\n%s", where, fix, text)
 		}
-		for where, text := range map[string]string{"annotation": got.stdout, "summary": got.summary} {
-			if !strings.Contains(text, "The fix is the bump bot's pull request: "+bot) {
-				t.Errorf("the %s does not name the bot PR %s:\n%s", where, bot, text)
-			}
-		}
-	})
-
-	t.Run("with no open bot PR it says so, and says what to do", func(t *testing.T) {
-		got := runGate(t, newRegistry(t, regStale), args...)
-		want := "No open `bump-scaffold-pins` pull request was found. That workflow opens one on its next sweep; to fix it by hand run `go run ./internal/scaffold/cmd/bump-pins`."
-		if !strings.Contains(got.summary, want) || !strings.Contains(got.stdout, want) {
-			t.Errorf("want this sentence in both the annotation and the summary:\n  %s\nstdout:\n%s\nsummary:\n%s", want, got.stdout, got.summary)
-		}
-	})
-
-	// The URL arrives from a `gh pr list` over branch names. Anything that is
-	// not a plain pull-request URL is dropped, not printed.
-	t.Run("a bot-pr value that is not a pull-request URL is not printed", func(t *testing.T) {
-		for _, evil := range []string{
-			"https://github.com/civitai/cli/pull/808\n::error title=x::owned",
-			"https://evil.example/civitai/cli/pull/808",
-			"javascript:alert(1)",
-			"https://github.com/civitai/cli/pull/808?x=](https://evil.example)",
-		} {
-			got := runGate(t, newRegistry(t, regStale), append(args, "-bot-pr", evil)...)
-			if strings.Contains(got.stdout+got.summary, "evil.example") || strings.Contains(got.stdout+got.summary, "javascript:") || strings.Contains(got.stdout+got.summary, "owned") {
-				t.Errorf("an untrusted -bot-pr value reached the report: %q\nstdout:\n%s\nsummary:\n%s", evil, got.stdout, got.summary)
-			}
-			if !strings.Contains(got.summary, "No open `bump-scaffold-pins` pull request was found") {
-				t.Errorf("-bot-pr %q was not treated as absent:\n%s", evil, got.summary)
-			}
-		}
-	})
+	}
 }
 
 // A touched PR's report must say WHICH input it touched: "this run gates" with
@@ -926,7 +892,7 @@ func TestAMultiLineReasonCannotStartASecondAnnotation(t *testing.T) {
 		TemplatePin: scaffold.TemplatePin{File: "templates/x/package.json.tmpl", Pkg: "@civitai/x", Pin: "^0.1.0"},
 		Published:   "0.2.0", Status: scaffold.PinStale,
 	}}
-	rep := buildReport(ctx, findings, "")
+	rep := buildReport(ctx, findings)
 	lines := strings.Split(strings.TrimRight(rep.log, "\n"), "\n")
 	if len(lines) != 1 || !strings.HasPrefix(lines[0], "::error title="+titleBlockedStale+"::") {
 		t.Fatalf("want exactly one ::error line, got %d:\n%s", len(lines), rep.log)

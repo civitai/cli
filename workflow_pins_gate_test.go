@@ -188,8 +188,55 @@ func pinsGateJobProblems(raw []byte) []string {
 	if pgErrexitOff.MatchString(before) {
 		add("the pins-gate step turns errexit off before running it. GitHub's `bash -e` is what makes a non-zero pins-gate kill the step at the pipe")
 	}
+
+	// ── the verdict-line control ──
+	//
+	// 🔴 This is the ONLY thing standing between a green job and a green over
+	// ZERO pins. pins-gate refuses zero pins itself, but that refusal sits behind
+	// `go:embed` — no Go test can hand it an empty template tree — and it survives
+	// the mutation battery. So the guard is behavioural, not textual: the regex
+	// the step greps with is run against the lines it must accept and reject, and
+	// a rewording that keeps it equally strict passes.
+	after := script[at:]
+	m := pgVerdictCheckRe.FindStringSubmatchIndex(after)
+	if m == nil {
+		add("the pins-gate step no longer checks pins-gate's own verdict line (`if ! grep -Eq -- '<regex>' \"$RUNNER_TEMP/pins.log\"; then … exit 1`). Without it, an exit 0 over zero pins — a green that checked nothing — reaches the required context")
+		return out
+	}
+	re, err := regexp.Compile(after[m[2]:m[3]])
+	if err != nil {
+		add("the verdict-line regex %q does not compile: %v", after[m[2]:m[3]], err)
+		return out
+	}
+	if body := after[m[1]:]; !pgThenExit1Re.MatchString(body) {
+		add("the verdict-line check does not `exit 1` before its `fi` — a missing verdict line would print and pass")
+	}
+	for _, ok := range []string{
+		"pins-gate: mode=advise verdict=stale pins=6 blocking=0 exit=0",
+		"pins-gate: mode=gate verdict=ok pins=6 blocking=0 exit=0",
+		"pins-gate: mode=advise verdict=unreachable pins=12 blocking=0 exit=0",
+	} {
+		if !re.MatchString(ok) {
+			add("the verdict-line regex rejects a passing verdict %q — every green run would go red", ok)
+		}
+	}
+	for _, bad := range []struct{ line, why string }{
+		{"pins-gate: mode=gate verdict=ok pins=0 blocking=0 exit=0", "a verdict over ZERO pins"},
+		{"pins-gate: mode=gate verdict=stale pins=6 blocking=3 exit=1", "a blocking verdict"},
+		{"pins-gate: mode=advise verdict=broken pins=6 blocking=0 exit=0", "a broken verdict"},
+		{"echo pins-gate: mode=gate verdict=ok pins=6 blocking=0 exit=0", "a line that merely CONTAINS the verdict (the regex is not anchored)"},
+	} {
+		if re.MatchString(bad.line) {
+			add("the verdict-line regex accepts %s: %q. It is the only control that rejects that green", bad.why, bad.line)
+		}
+	}
 	return out
 }
+
+var (
+	pgVerdictCheckRe = regexp.MustCompile(`(?m)^\s*if ! grep -Eq -- '([^']*)' "\$RUNNER_TEMP/pins\.log"; then\n`)
+	pgThenExit1Re    = regexp.MustCompile(`\A(?:[^\n]*\n){0,3}?\s*exit 1\n\s*fi\n`)
+)
 
 func readPinsGateWorkflow(t *testing.T) []byte {
 	t.Helper()
@@ -220,7 +267,8 @@ func TestPinsGateWorkflowGuardCanGoRed(t *testing.T) {
 	}
 
 	const jobHead = "  pins-vs-published:\n    runs-on: ubuntu-latest\n"
-	const invocation = "-event \"$GITHUB_EVENT_NAME\" -pr-head \"$PR_HEAD_SHA\" -bot-pr \"$bot_pr\" 2>&1 \\\n            | tee \"$RUNNER_TEMP/pins.log\"\n"
+	const invocation = "-event \"$GITHUB_EVENT_NAME\" -pr-head \"$PR_HEAD_SHA\" 2>&1 \\\n            | tee \"$RUNNER_TEMP/pins.log\"\n"
+	const verdictRe = `'^pins-gate: mode=(gate|advise) verdict=(ok|stale|unreachable) pins=[1-9][0-9]* blocking=0 exit=0$'`
 	const stepHead = "      - name: check scaffold pins vs npm latest\n"
 
 	mutants := []struct {
@@ -243,10 +291,17 @@ func TestPinsGateWorkflowGuardCanGoRed(t *testing.T) {
 		{"event hardcoded to pull_request", `-event "$GITHUB_EVENT_NAME"`, `-event pull_request`, "must pass `-event \"$GITHUB_EVENT_NAME\"` exactly once"},
 		{"a second -event flag appended", invocation, strings.Replace(invocation, " 2>&1", " -event pull_request 2>&1", 1), "must pass `-event \"$GITHUB_EVENT_NAME\"` exactly once (found 2"},
 		{"pr head no longer the event's", "PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}", "PR_HEAD_SHA: ${{ github.sha }}", "must pass `-pr-head \"$PR_HEAD_SHA\"` with"},
-		{"registry overridden", `-bot-pr "$bot_pr" 2>&1`, `-bot-pr "$bot_pr" -registry "$NPM_MIRROR" 2>&1`, "passes `-registry`"},
+		{"registry overridden", `-pr-head "$PR_HEAD_SHA" 2>&1`, `-pr-head "$PR_HEAD_SHA" -registry "$NPM_MIRROR" 2>&1`, "passes `-registry`"},
 		{"exit code swallowed", "| tee \"$RUNNER_TEMP/pins.log\"\n\n          # POSITIVE CONTROL — the remaining", "| tee \"$RUNNER_TEMP/pins.log\" || true\n\n          # POSITIVE CONTROL — the remaining", "is followed by `||`"},
-		{"pipefail dropped", "          set -uo pipefail\n\n          # The open bump-bot PR", "          set -u\n\n          # The open bump-bot PR", "does not `set -o pipefail`"},
-		{"errexit turned off", "          set -uo pipefail\n\n          # The open bump-bot PR", "          set -uo pipefail\n          set +e\n\n          # The open bump-bot PR", "turns errexit off"},
+		{"pipefail dropped", "          set -uo pipefail\n\n          # `go run`", "          set -u\n\n          # `go run`", "does not `set -o pipefail`"},
+		{"errexit turned off", "          set -uo pipefail\n\n          # `go run`", "          set -uo pipefail\n          set +e\n\n          # `go run`", "turns errexit off"},
+		// The verdict-line control: the coverage for the zero-pins refusal no Go
+		// test can reach.
+		{"verdict-line check deleted", "          if ! grep -Eq -- " + verdictRe + " \"$RUNNER_TEMP/pins.log\"; then\n            echo \"::error::pins-gate exited 0 without printing a passing verdict line over at least one pin. A green here would have been a claim about nothing.\"\n            exit 1\n          fi\n", "", "no longer checks pins-gate's own verdict line"},
+		{"verdict-line check loosened to accept pins=0", "pins=[1-9][0-9]*", "pins=[0-9]+", "accepts a verdict over ZERO pins"},
+		{"verdict-line check unanchored", verdictRe, strings.Replace(verdictRe, "'^", "'", 1), "is not anchored"},
+		{"verdict-line check accepts blocking runs", "blocking=0 exit=0$'", "blocking=[0-9]+ exit=[0-9]$'", "accepts a blocking verdict"},
+		{"verdict-line check no longer exits", "line over at least one pin. A green here would have been a claim about nothing.\"\n            exit 1\n", "line over at least one pin. A green here would have been a claim about nothing.\"\n", "does not `exit 1` before its `fi`"},
 		{"push trigger removed", "  push:\n    branches: [main]\n  pull_request:\n", "  pull_request:\n", "`on:` has no `push` trigger"},
 		{"push no longer covers main", "  push:\n    branches: [main]\n", "  push:\n    branches: [release]\n", "does not include `main`"},
 		{"pull_request trigger removed", "    branches: [main]\n  pull_request:\n", "    branches: [main]\n", "`on:` has no `pull_request` trigger"},
@@ -265,179 +320,6 @@ func TestPinsGateWorkflowGuardCanGoRed(t *testing.T) {
 				}
 			}
 			t.Fatalf("the guard did not report this broken variant with its own message.\n  want a problem containing: %s\n  got: %q", m.want, problems)
-		})
-	}
-}
-
-// ─── the red-main dispatcher ─────────────────────────────────────────────────
-
-const (
-	redMainWorkflow = "bump-scaffold-pins-on-red-main.yml"
-	bumpWorkflow    = "bump-scaffold-pins.yml"
-)
-
-// redMainDispatcherProblems checks the dispatcher against the three files it
-// names. Every assertion is about a way it could fire for the WRONG run (a
-// fork's, a green one) or never fire at all while looking fine.
-func redMainDispatcherProblems(dispatcher, ci, bump []byte) []string {
-	var out []string
-	add := func(format string, a ...any) { out = append(out, fmt.Sprintf(format, a...)) }
-
-	var d struct {
-		On struct {
-			WorkflowRun *struct {
-				Workflows []string `yaml:"workflows"`
-				Types     []string `yaml:"types"`
-				Branches  []string `yaml:"branches"`
-			} `yaml:"workflow_run"`
-		} `yaml:"on"`
-		Permissions yaml.Node `yaml:"permissions"`
-		Jobs        map[string]struct {
-			If          string            `yaml:"if"`
-			Permissions map[string]string `yaml:"permissions"`
-			Steps       []pgStep          `yaml:"steps"`
-		} `yaml:"jobs"`
-	}
-	if err := yaml.Unmarshal(dispatcher, &d); err != nil {
-		return []string{fmt.Sprintf("cannot parse %s: %v", redMainWorkflow, err)}
-	}
-	var c struct {
-		Name string `yaml:"name"`
-	}
-	if err := yaml.Unmarshal(ci, &c); err != nil {
-		return []string{fmt.Sprintf("cannot parse %s: %v", pinsGateWorkflow, err)}
-	}
-	var b struct {
-		On          map[string]yaml.Node `yaml:"on"`
-		Concurrency struct {
-			Group            string `yaml:"group"`
-			CancelInProgress *bool  `yaml:"cancel-in-progress"`
-		} `yaml:"concurrency"`
-	}
-	if err := yaml.Unmarshal(bump, &b); err != nil {
-		return []string{fmt.Sprintf("cannot parse %s: %v", bumpWorkflow, err)}
-	}
-
-	wr := d.On.WorkflowRun
-	if wr == nil {
-		add("%s has no `on.workflow_run` trigger — it can never react to a red main", redMainWorkflow)
-		return out
-	}
-	if len(wr.Workflows) != 1 || wr.Workflows[0] != c.Name || c.Name == "" {
-		add("%s listens to workflows %q, but %s is named %q. `workflow_run` matches by workflow NAME, so a mismatch is a dispatcher that never fires and never errors", redMainWorkflow, wr.Workflows, pinsGateWorkflow, c.Name)
-	}
-	if len(wr.Types) != 1 || wr.Types[0] != "completed" {
-		add("%s reacts to workflow_run types %q, want exactly [completed] — a conclusion only exists once a run has completed", redMainWorkflow, wr.Types)
-	}
-	if len(wr.Branches) != 1 || wr.Branches[0] != "main" {
-		add("%s filters workflow_run branches %q, want exactly [main]", redMainWorkflow, wr.Branches)
-	}
-	if d.Permissions.Kind != yaml.MappingNode || len(d.Permissions.Content) != 0 {
-		add("%s must set `permissions: {}` at the top so no job inherits the repository default (write)", redMainWorkflow)
-	}
-
-	if len(d.Jobs) != 1 {
-		add("%s has %d jobs, want exactly 1", redMainWorkflow, len(d.Jobs))
-		return out
-	}
-	for name, j := range d.Jobs {
-		cond := strings.Join(strings.Fields(j.If), " ")
-		for _, want := range []string{
-			"github.event.workflow_run.conclusion == 'failure'",
-			"github.event.workflow_run.event == 'push'",
-			"github.event.workflow_run.head_branch == 'main'",
-			"github.event.workflow_run.head_repository.full_name == github.repository",
-		} {
-			if !strings.Contains(cond, want) {
-				add("job %q's `if:` does not require `%s`", name, want)
-			}
-		}
-		if strings.Contains(cond, "||") || strings.Contains(cond, "always()") {
-			add("job %q's `if:` contains `||` or `always()` — every term must be required, or a green run or a fork's run can satisfy it", name)
-		}
-		if len(j.Permissions) != 1 || j.Permissions["actions"] != "write" {
-			add("job %q's permissions are %v, want exactly {actions: write} — the dispatch needs that and nothing else", name, j.Permissions)
-		}
-		var dispatches int
-		for _, st := range j.Steps {
-			if strings.HasPrefix(st.Uses, "actions/checkout@") {
-				add("job %q checks out the repository. It runs with `actions: write`; it must not run repository code", name)
-			}
-			if strings.Contains(st.Run, "gh workflow run "+bumpWorkflow+" --ref main") {
-				dispatches++
-			}
-		}
-		if dispatches != 1 {
-			add("job %q dispatches `%s` on main %d time(s), want 1", name, bumpWorkflow, dispatches)
-		}
-	}
-
-	if _, ok := b.On["workflow_dispatch"]; !ok {
-		add("%s has no `workflow_dispatch` trigger, so the dispatcher's `gh workflow run` would fail on every red main", bumpWorkflow)
-	}
-	if b.Concurrency.Group == "" || b.Concurrency.CancelInProgress == nil || *b.Concurrency.CancelInProgress {
-		add("%s must serialise its runs (`concurrency.group` set, `cancel-in-progress: false`) — a dispatched run beside a scheduled one would race to push the same branch, and a cancelled run's `signal` cannot close its own issue", bumpWorkflow)
-	}
-	return out
-}
-
-func readWorkflow(t *testing.T, name string) []byte {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(workflowDir, name))
-	if err != nil {
-		t.Fatalf("read %s: %v", name, err)
-	}
-	return raw
-}
-
-func TestRedMainDispatcherReactsOnlyToARedMain(t *testing.T) {
-	for _, p := range redMainDispatcherProblems(readWorkflow(t, redMainWorkflow), readWorkflow(t, pinsGateWorkflow), readWorkflow(t, bumpWorkflow)) {
-		t.Error(p)
-	}
-}
-
-func TestRedMainDispatcherGuardCanGoRed(t *testing.T) {
-	d, c, b := string(readWorkflow(t, redMainWorkflow)), string(readWorkflow(t, pinsGateWorkflow)), string(readWorkflow(t, bumpWorkflow))
-	if p := redMainDispatcherProblems([]byte(d), []byte(c), []byte(b)); len(p) != 0 {
-		t.Fatalf("control: the unmodified files must be clean, got %q", p)
-	}
-	mutants := []struct {
-		name, file, old, new, want string
-	}{
-		{"CI renamed out from under it", "ci", "name: CI\n", "name: Continuous Integration\n", "`workflow_run` matches by workflow NAME"},
-		{"listens to requested", "d", "types: [completed]", "types: [requested]", "want exactly [completed]"},
-		{"any branch", "d", "    branches: [main]\n", "", "want exactly [main]"},
-		{"fires on success too", "d", "github.event.workflow_run.conclusion == 'failure'\n      && ", "", "does not require `github.event.workflow_run.conclusion == 'failure'`"},
-		{"fires for a PR run", "d", "      && github.event.workflow_run.event == 'push'\n", "", "does not require `github.event.workflow_run.event == 'push'`"},
-		{"fires for a fork named main", "d", "      && github.event.workflow_run.head_repository.full_name == github.repository\n", "", "does not require `github.event.workflow_run.head_repository.full_name == github.repository`"},
-		{"an || slipped in", "d", "      && github.event.workflow_run.event == 'push'\n", "      || github.event.workflow_run.event == 'push'\n", "contains `||` or `always()`"},
-		{"top-level permissions dropped", "d", "permissions: {}\n", "", "must set `permissions: {}`"},
-		{"job permission widened", "d", "      actions: write\n", "      actions: write\n      contents: write\n", "want exactly {actions: write}"},
-		{"checks out the repo", "d", "    steps:\n", "    steps:\n      - uses: actions/checkout@v4\n", "checks out the repository"},
-		{"dispatches the wrong workflow", "d", "gh workflow run bump-scaffold-pins.yml --ref main", "gh workflow run bump-flake-vendorhash.yml --ref main", "dispatches `bump-scaffold-pins.yml` on main 0 time(s)"},
-		{"bot loses workflow_dispatch", "b", "  workflow_dispatch:\n    inputs:\n", "  repository_dispatch:\n    inputs:\n", "has no `workflow_dispatch` trigger"},
-		{"bot cancels in progress", "b", "  cancel-in-progress: false\n", "  cancel-in-progress: true\n", "must serialise its runs"},
-		{"bot loses concurrency", "b", "concurrency:\n  group: bump-scaffold-pins\n  cancel-in-progress: false\n", "", "must serialise its runs"},
-	}
-	for _, m := range mutants {
-		t.Run(m.name, func(t *testing.T) {
-			src := map[string]*string{"d": &d, "c": &c, "ci": &c, "b": &b}[m.file]
-			if n := strings.Count(*src, m.old); n != 1 {
-				t.Fatalf("anchor occurs %d time(s), want 1:\n%s", n, m.old)
-			}
-			files := map[string]string{"d": d, "c": c, "b": b}
-			key := m.file
-			if key == "ci" {
-				key = "c"
-			}
-			files[key] = strings.Replace(*src, m.old, m.new, 1)
-			problems := redMainDispatcherProblems([]byte(files["d"]), []byte(files["c"]), []byte(files["b"]))
-			for _, p := range problems {
-				if strings.Contains(p, m.want) {
-					return
-				}
-			}
-			t.Fatalf("not reported with its own message.\n  want: %s\n  got:  %q", m.want, problems)
 		})
 	}
 }

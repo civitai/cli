@@ -16,8 +16,9 @@ package scaffold
 // `latest`. When it doesn't, it fails loud with the stale pin, the current
 // published version, and the one-line fix.
 //
-// It is network-gated: it only runs when CIVITAI_CHECK_PUBLISHED_PINS=1 (a
-// dedicated CI job sets it), so the default `go test ./...` stays offline. When
+// It is network-gated: it only runs when CIVITAI_CHECK_PUBLISHED_PINS=1 (the
+// bump-scaffold-pins workflow sets it; ci.yml no longer runs this test), so the
+// default `go test ./...` stays offline. When
 // enabled but npm is unreachable it SKIPS (never a false failure).
 //
 // The shared pin logic (CivitaiPinRe / FetchNpmLatest / CaretAdmits /

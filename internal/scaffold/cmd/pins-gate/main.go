@@ -52,7 +52,7 @@
 // Usage (the CI job):
 //
 //	go run ./internal/scaffold/cmd/pins-gate \
-//	    -event "$GITHUB_EVENT_NAME" -pr-head "$PR_HEAD_SHA" -bot-pr "$BOT_PR_URL"
+//	    -event "$GITHUB_EVENT_NAME" -pr-head "$PR_HEAD_SHA"
 //
 // Exit 0: nothing blocks this run (read the annotations — 0 is not "pins are
 // current"). Exit 1: a pin verdict blocks this run. Exit 2: the gate itself
@@ -67,7 +67,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -111,11 +110,6 @@ var pinInputs = []pinInput{
 	{exact: ".github/workflows/ci.yml", why: "the job that runs this command, and the arguments it is given"},
 }
 
-// strayPinFile is the basename of the one file kind a pin is read from. A file
-// with this name OUTSIDE the known tree is "a path that could contain a pin"
-// which nothing above classifies, so it gates.
-const strayPinFile = "package.json.tmpl"
-
 // touchedInputs returns the changed paths that are pin inputs, in input order.
 func touchedInputs(changed []string) []string {
 	var out []string
@@ -136,7 +130,7 @@ func isPinInput(p string) bool {
 			return true
 		}
 	}
-	return path.Base(p) == strayPinFile
+	return false
 }
 
 // ─── which runs gate ─────────────────────────────────────────────────────────
@@ -310,7 +304,6 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer, sl
 	prHead := fs.String("pr-head", "", "the pull request's head sha (github.event.pull_request.head.sha). Empty or wrong gates.")
 	repo := fs.String("repo", ".", "the checked-out repository to read the pull request's diff from")
 	registry := fs.String("registry", "https://registry.npmjs.org", "npm registry root")
-	botPR := fs.String("bot-pr", "", "URL of the open bump-scaffold-pins pull request, if there is one (named in the report)")
 	if err := fs.Parse(args); err != nil {
 		return exitBroken
 	}
@@ -345,17 +338,12 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer, sl
 	fetch := withRetry(func(pkg string) (string, error) { return scaffold.FetchNpmLatestFrom(base, pkg) }, fetchAttempts, sleep)
 	findings := scaffold.CheckPins(pins, fetch)
 
-	rep := buildReport(ctx, findings, validBotPR(*botPR))
+	rep := buildReport(ctx, findings)
 	io.WriteString(stdout, rep.log)
 
 	if p := getenv("GITHUB_STEP_SUMMARY"); p != "" {
 		if err := appendFile(p, rep.summary); err != nil {
 			fmt.Fprintf(stderr, "pins-gate: could not write the job summary: %v\n", err)
-		}
-	}
-	if p := getenv("GITHUB_OUTPUT"); p != "" {
-		if err := appendFile(p, fmt.Sprintf("mode=%s\nverdict=%s\n", ctx.Mode, rep.verdict)); err != nil {
-			fmt.Fprintf(stderr, "pins-gate: could not write the step outputs: %v\n", err)
 		}
 	}
 
@@ -401,6 +389,7 @@ const (
 	headBlockedUnreached  = "### pins-vs-published: FAILED — npm was unreachable, so the pins were NOT checked"
 	headBlockedBroken     = "### pins-vs-published: FAILED — a scaffold pin is invalid"
 	bumpWorkflowName      = "bump-scaffold-pins"
+	bumpBranch            = "automation/bump-scaffold-pins"
 	bumpCommand           = "go run ./internal/scaffold/cmd/bump-pins"
 	titleAdvisedStale     = "pins-vs-published: stale pin (reported, not blocking this pull request)"
 	titleAdvisedUnreached = "pins-vs-published: NOT CHECKED, npm unreachable (not blocking this pull request)"
@@ -409,14 +398,14 @@ const (
 	titleBroken           = "pins-vs-published: invalid pin"
 )
 
-func buildReport(ctx runContext, findings []scaffold.PinFinding, botPR string) report {
+func buildReport(ctx runContext, findings []scaffold.PinFinding) report {
 	var log, rows strings.Builder
 	var nStale, nUnreached, nBroken, blocking int
 
-	fix := "No open `" + bumpWorkflowName + "` pull request was found. That workflow opens one on its next sweep; to fix it by hand run `" + bumpCommand + "`."
-	if botPR != "" {
-		fix = "The fix is the bump bot's pull request: " + botPR
-	}
+	// The fix is named, not looked up: the bot's PR, if one is open, is on the
+	// pull-request list under this branch, and a lookup here would need a token
+	// scope this job otherwise does without.
+	fix := "The fix is the `" + bumpWorkflowName + "` workflow's pull request (branch `" + bumpBranch + "`): it sweeps every 6 hours and opens or updates one when a pin falls behind. To fix it by hand, run `" + bumpCommand + "`."
 
 	for _, f := range findings {
 		blocked := blocks(ctx.Mode, f.Status)
@@ -526,18 +515,6 @@ func orDash(s string) string {
 // A version string comes from the registry and an error string quotes its reply;
 // both end up inside a workflow command and a markdown table. Neither may be
 // able to start a second annotation or break out of a cell.
-
-var botPRRe = regexp.MustCompile(`^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[0-9]+$`)
-
-// validBotPR returns u only if it is a plain GitHub pull-request URL. It comes
-// from a `gh pr list` over branch NAMES, so it is treated as untrusted.
-func validBotPR(u string) string {
-	u = strings.TrimSpace(u)
-	if botPRRe.MatchString(u) {
-		return u
-	}
-	return ""
-}
 
 // safeToken reduces a package name / pin / version / path to the characters such
 // a thing is made of. Anything else becomes `?`, visibly.

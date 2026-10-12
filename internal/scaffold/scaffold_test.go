@@ -188,8 +188,9 @@ func TestRenderPageMoney(t *testing.T) {
 	// from the `buzzBalance` option AND stamps spentAccountType on succeeded
 	// snapshots natively — so the scaffold no longer ships a mock balance shim) +
 	// @civitai/app-sdk@0.14.0+. The pins track the CURRENT published minors — the
-	// pins-vs-published guard (TestScaffoldPinsSatisfyPublished) fails CI if they
-	// fall behind npm, so bump BOTH assertions here in lockstep with the .tmpl.
+	// pins-vs-published CI job (cmd/pins-gate) fails main and pin-touching PRs if
+	// they fall behind npm, so bump BOTH assertions here in lockstep with the .tmpl
+	// (bump-pins does this).
 	mustContain(t, pkg, `"@civitai/blocks-react": "^0.68.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk": "^0.64.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk"`)

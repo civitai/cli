@@ -3,13 +3,14 @@
 // The templates scaffolded by `civitai app create` pin the `@civitai/*` packages
 // with a pre-1.0 caret (`^0.25.0`). Because the SDK is pre-1.0 the caret LOCKS
 // THE MINOR (`^0.25.0` never installs `0.26.0`), so a pin that falls behind npm
-// silently ships apps that are born stale. Two consumers keep those pins honest
+// silently ships apps that are born stale. Three consumers keep those pins honest
 // and MUST agree by construction, so the logic lives here (production code), not
 // in a `_test.go`:
 //
-//   - the pins-vs-published rot-guard (pins_guard_test.go, network-gated by
-//     CIVITAI_CHECK_PUBLISHED_PINS=1) — reads each template's literal pin and
-//     asserts the caret still ADMITS npm's published `latest`.
+//   - the rot-guard test (pins_guard_test.go, network-gated by
+//     CIVITAI_CHECK_PUBLISHED_PINS=1, run by the bump bot before it opens a PR)
+//     — reads each template's literal pin and asserts the caret still ADMITS
+//     npm's published `latest`.
 //   - the bump-pins command (internal/scaffold/cmd/bump-pins) — rewrites the
 //     literal pins to the desired value when they fall behind, so no human ever
 //     hand-bumps them again.

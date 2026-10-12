@@ -57,7 +57,10 @@ on:
     # This was weekly (`17 7 * * 1`) and that cadence was measurably too slow.
     # `pins-vs-published` is a REQUIRED check on `main` and it reads npm's
     # published latest, so from the moment a `@civitai/*` minor lands until this
-    # job bumps the pins, EVERY open PR is blocked regardless of its content.
+    # job bumps the pins, that check is red. When the cadence moved to daily it
+    # blocked EVERY open PR regardless of content; since
+    # `internal/scaffold/cmd/pins-gate` it blocks only `main` and the PRs that
+    # touch a pin input, and warns on the rest.
     # (The sibling `scaffold-currency` is required too but is NOT affected: it
     # installs `@latest` explicitly, overriding the template pins, so it reds on
     # a broken SDK export rather than on a stale caret.)
@@ -78,9 +81,7 @@ on:
     #   * `pins-vs-published` sat red in 18 episodes, the longest 34.4h from
     #     first red to first green, across 6 branches.
     #
-    # So: EVERY 6 HOURS, plus an immediate dispatch whenever CI goes red on a
-    # push to `main` (`bump-scaffold-pins-on-red-main.yml`). The cost is small
-    # and measured: the 15 runs before this change took 0.7–5.0 min each, and
+    # So: EVERY 6 HOURS. The cost is small and measured: the 15 runs before this change took 0.7–5.0 min each, and
     # a no-op sweep is cheap — `detect changes` gates every downstream step.
     # The two drift jobs (`ready-ack-runtime`, `scaffold-typecheck`) now run
     # four times a day too; their reporting is one issue rewritten in place
@@ -109,10 +110,13 @@ permissions:
   contents: write
   pull-requests: write
 
-# A scheduled run and a red-main dispatch can now land together. Two runs would
-# race to push `automation/bump-scaffold-pins`, and the loser's red `bump` job
-# would file an issue about nothing. Queue instead of cancelling: a cancelled
-# run's `signal` never runs, so it can neither file nor CLOSE the report.
+# Two runs at once — a scheduled sweep beside a hand dispatch, or a slow run
+# overlapping the next tick — would race to push `automation/bump-scaffold-pins`,
+# and the loser's red `bump` job would file an issue about nothing. With
+# `cancel-in-progress: false` a run in progress is never cancelled; ONE run waits
+# behind it, and a third arrival CANCELS that waiting run and takes its place
+# (GitHub keeps at most one pending run per group). A cancelled run's `signal`
+# never runs, which is harmless here: the run that replaced it reports instead.
 concurrency:
   group: bump-scaffold-pins
   cancel-in-progress: false
@@ -451,7 +455,8 @@ jobs:
           > which. The bump is proposed anyway because
           > withholding it froze the repo for three days (#530) —
           > `pins-vs-published` is a REQUIRED check with `enforce_admins`, so
-          > un-bumped pins block every open PR regardless of its content.
+          > un-bumped pins keep `main` red and block every open PR that
+          > touches a pin input (other PRs are warned, not blocked).
           >
           > **A human decides which failure this is.** Read the run log, then
           > this PR's own `template-page-money` / `scaffold-currency` checks —
@@ -491,7 +496,9 @@ jobs:
 
           The first two must pass or this PR is not opened at all. The third
           does NOT block it — a failure there opens this PR as a **draft**
-          instead, because withholding the bump freezes the whole repo (#530).
+          instead, because withholding the bump keeps `main` red and blocks every
+          PR that touches a pin input (#530 was the whole repo, before that was
+          narrowed).
           Its result for this run is stated on the last line below; do not read
           "the bump job validates" as "everything passed".
           BODY
@@ -705,7 +712,7 @@ jobs:
               elif [ "$R_PR" = "success" ]; then
                 pr_line="**A DRAFT PR was opened anyway**, deliberately, because withholding it is what froze the repo — but its URL did not reach this report, so open the run's \`bump\` job to find it. Draft means it cannot merge until a human marks it ready."
               else
-                pr_line="**No PR was opened** — the \`open PR if pins changed\` step did not succeed either (\`r_pr=$R_PR\`), which is a SECOND failure on top of the build one. So the pin fix is un-merged and \`pins-vs-published\` (a REQUIRED check on \`main\`) stays red, blocking every open PR, until someone bumps the pins by hand."
+                pr_line="**No PR was opened** — the \`open PR if pins changed\` step did not succeed either (\`r_pr=$R_PR\`), which is a SECOND failure on top of the build one. So the pin fix is un-merged and \`pins-vs-published\` (a REQUIRED check on \`main\`) stays red on \`main\` and on every PR that touches a pin input (other PRs are warned, not blocked), until someone bumps the pins by hand."
               fi
               bump_state=validate-build-failed
               bump_title="the scaffold did not build against the newly-bumped @civitai/* pins"
@@ -732,7 +739,7 @@ jobs:
             elif [ "$R_PR" = "failure" ]; then
               bump_state=pr-failed
               bump_title="the scaffold pin bumper could not open its PR"
-              bump_detail="The pins were bumped and fully validated, but opening the PR failed — usually \`secrets.BUMP_SCAFFOLD_PINS_TOKEN\` being expired or missing. **The fix is still un-merged**, so \`pins-vs-published\` (a REQUIRED check on \`main\`) stays red and blocks EVERY open PR regardless of its content, until someone bumps the pins by hand or repairs the token."
+              bump_detail="The pins were bumped and fully validated, but opening the PR failed — usually \`secrets.BUMP_SCAFFOLD_PINS_TOKEN\` being expired or missing. **The fix is still un-merged**, so \`pins-vs-published\` (a REQUIRED check on \`main\`) stays red on \`main\` and blocks every PR that touches a pin input (other PRs are warned, not blocked), until someone bumps the pins by hand or repairs the token."
             elif [ "$R_READY" = "failure" ]; then
               bump_state=pr-ready-failed
               bump_title="the scaffold pin bumper opened its PR but could not take it out of draft"
@@ -811,7 +818,7 @@ jobs:
             echo "$detail"
             echo
             echo "---"
-            echo "This workflow runs three independent scheduled checks (every 6 hours, and on a red \`main\`): \`ready-ack-runtime\` (does the scaffolded handshake still fire on \`main\`), \`scaffold-typecheck\` (does the page-money template still typecheck on an install shape that does not silently repair it) and \`bump\` (are the template's \`@civitai/*\` pins still current). Any one of them failing files this issue."
+            echo "This workflow runs three independent scheduled checks (every 6 hours): \`ready-ack-runtime\` (does the scaffolded handshake still fire on \`main\`), \`scaffold-typecheck\` (does the page-money template still typecheck on an install shape that does not silently repair it) and \`bump\` (are the template's \`@civitai/*\` pins still current). Any one of them failing files this issue."
             echo "SCAFFOLD_PINS_BODY_EOF"
           } >> "$GITHUB_OUTPUT"
 
