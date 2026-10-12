@@ -1,0 +1,124 @@
+name: setup-go with a restore-only Go cache
+description: >-
+  Install Go and restore the module and build caches from the newest entry the
+  default branch saved. Never saves: exactly one job does, in ci.yml.
+
+# WHY THIS IS NOT `actions/setup-go` WITH `cache: true`.
+#
+# setup-go keys its cache on the go.sum hash alone and saves only on a MISS. So
+# the first job to finish after a go.sum change writes the entry, and every run
+# after it hits the primary key and saves nothing. In this repo that froze a
+# 31 MB entry for seven weeks: the job that won the race had compiled almost
+# nothing, a populated cache for the tree is several times that, and each run
+# logged "Cache hit occurred on the primary key … not saving cache" while
+# recompiling everything it had compiled the day before.
+#
+# Three things differ here, and each closes a different half of that:
+#
+#   * THE KEY ROTATES. It ends in the ISO week, so the entry is rebuilt at
+#     least weekly whatever go.sum does. Go's build cache is content-addressed,
+#     so an entry that is a few days old only misses for the packages that
+#     changed since — it cannot serve a wrong object.
+#
+#     How many entries that leaves alive: one per (Go version, go.sum, week)
+#     that saw a push to main, each a few hundred MB. Restores read the newest
+#     match, so an entry stops being read once its successor exists, and
+#     GitHub evicts any entry not read for 7 days. In steady state that is the
+#     current week's entry plus last week's until it ages out — two, or a few
+#     more in a week that changes go.sum or the Go version — against the
+#     repository's 10 GB quota. A per-run key would instead save on every push
+#     to main and let this one cache crowd out everything else in the quota.
+#   * ONE DESIGNATED JOB SAVES, and it is the job whose cache is a superset of
+#     what the others compile (`build-test` in ci.yml: vet, the test build and
+#     `go build ./...`). No race decides the contents.
+#   * EVERY OTHER RUN ONLY RESTORES. A pull request never writes an entry, so
+#     it cannot spend the repository's cache quota or leave an entry behind for
+#     its own later runs to trust.
+#
+# 🔴 WHAT A RESTORED GOCACHE CAN GET WRONG: TEST RESULTS. Compiled objects are
+# keyed by content, but a cached test RESULT is keyed only by the files and
+# environment variables the test binary itself opened. Tests here start
+# browsers, run npm and scaffold whole projects, none of which that key sees,
+# so a restored cache could replay a PASS for inputs that have since changed.
+# Every `go test` in a workflow therefore carries `-count=1`, and
+# `TestEveryWorkflowGoTestDisablesTheResultCache` fails the build when one
+# does not. Do not remove either on the strength of the other.
+
+inputs:
+  go-version:
+    description: The Go version, as actions/setup-go takes it.
+    required: true
+
+outputs:
+  primary-key:
+    description: The key a save belongs under this week.
+    value: ${{ steps.restore.outputs.cache-primary-key }}
+  exact-hit:
+    description: >-
+      'true' when an entry already exists under primary-key, which is when a
+      save would be refused as a duplicate.
+    value: ${{ steps.restore.outputs.cache-hit }}
+  paths:
+    description: The directories restored, one per line, for the save step.
+    value: ${{ steps.key.outputs.paths }}
+
+runs:
+  using: composite
+  steps:
+    - id: go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: false
+
+    - id: key
+      shell: bash
+      env:
+        GO_VERSION: ${{ steps.go.outputs.go-version }}
+        GO_SUM_HASH: ${{ hashFiles('go.sum') }}
+      run: |
+        set -euo pipefail
+
+        # An empty component would silently widen the key: with no go.sum hash
+        # every module set shares one entry, and with no Go version a toolchain
+        # bump restores objects the new compiler cannot use.
+        if [ -z "$GO_VERSION" ] || [ -z "$GO_SUM_HASH" ]; then
+          echo "::error::cannot build the Go cache key: go-version='$GO_VERSION' go.sum hash='$GO_SUM_HASH'"
+          exit 1
+        fi
+
+        toolchain="go-cache-${RUNNER_OS}-${RUNNER_ARCH}-go${GO_VERSION}-"
+        {
+          echo "toolchain=${toolchain}"
+          echo "modules=${toolchain}${GO_SUM_HASH}-"
+          echo "week=$(date -u +%G-W%V)"
+          echo "paths<<PATHS"
+          go env GOCACHE
+          go env GOMODCACHE
+          echo "PATHS"
+        } >> "$GITHUB_OUTPUT"
+
+    # restore-keys are prefixes and the newest matching entry wins: first the
+    # same module set from an earlier week, then any module set built by this
+    # toolchain, which still holds the standard library and most dependencies.
+    - id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.key.outputs.paths }}
+        key: ${{ steps.key.outputs.modules }}${{ steps.key.outputs.week }}
+        restore-keys: |
+          ${{ steps.key.outputs.modules }}
+          ${{ steps.key.outputs.toolchain }}
+
+    # A miss is not an error, and it is not silent either: the job is about to
+    # compile from nothing, which is the state this action exists to end.
+    - shell: bash
+      env:
+        MATCHED: ${{ steps.restore.outputs.cache-matched-key }}
+      run: |
+        if [ -n "$MATCHED" ]; then
+          echo "Go cache restored from: $MATCHED"
+          du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)" 2>/dev/null || true
+        else
+          echo "::notice title=Go cache::no entry to restore, so this job compiles from nothing. Expected on a pull request until a push to main has saved one, and for the first run after a Go or go.sum change."
+        fi
