@@ -58,7 +58,20 @@ const withdrawDiscardsListing = "withdrawing a FIRST-VERSION submission also DEL
 // with it; TestCarriesForwardClaimsAreQualifiedEverywhere is the ledger, and it
 // covers the README too (which cannot import a Go constant, so the guard is what
 // keeps the prose and the help in step).
-const withdrawListingCaveat = "carry forward on APPROVAL only — withdrawing the submission, or a moderator rejecting it, deletes the listing and everything on it"
+//
+// WHAT IT MAY CLAIM ABOUT A REJECTION. It used to say a moderator rejecting the
+// submission deletes the listing, flatly. That stopped holding on every path:
+// the platform now KEEPS an on-site app's draft listing across a reject (so a
+// fix-and-resubmit lands on the same listing), still deletes an off-site app's
+// first-time draft on reject, and lets a moderator delete a rejected on-site
+// draft as a separate, deliberate action. So the sentence states only what
+// holds on all of them — approval keeps the media, withdraw deletes it, and a
+// rejected submission's listing CAN be deleted. Do not sharpen it back into a
+// per-path description: that is the shape the next server change falsifies.
+//
+// It is interpolated mid-sentence after "they " and after "It will", so it must
+// open with a verb that reads after both.
+const withdrawListingCaveat = "carry forward once the app is APPROVED — withdrawing the submission deletes the listing and everything on it, and a rejection can too"
 
 func newAppWithdrawCmd() *cobra.Command {
 	var idFlag string
@@ -78,9 +91,10 @@ takes the publish-request id and nothing else. So attach your listing media
 AFTER the submission you intend to keep, not before a withdraw — and if a
 listing already has media you care about, copy the captions somewhere first.
 
-The same discard happens when a MODERATOR REJECTS a first-version submission.
-What "carries forward" is APPROVAL: media survives a moderator approving the
-app, and does not survive the app leaving review any other way.
+When a MODERATOR REJECTS a submission the listing is not always discarded — it
+can be kept for your resubmit — but it can be deleted then too. What is
+guaranteed to "carry forward" is APPROVAL: media survives a moderator approving
+the app; do not count on it surviving the app leaving review any other way.
 
 Calls the token-authenticated, self-scoped withdraw route
 (POST /api/v1/blocks/withdraw) with your stored credential — you can only ever
@@ -204,7 +218,7 @@ func confirmWithdraw(cmd *cobra.Command, publishRequestID string, assumeYes bool
 	st := ui.For(errw)
 	fmt.Fprintf(errw, "About to withdraw %s.\n", publishRequestID)
 	fmt.Fprintln(errw, st.Warn("This is not just a resubmit: "+withdrawDiscardsListing+"."))
-	fmt.Fprintln(errw, st.Dim("The media only survives a moderator APPROVING the app — not a withdraw, and not a rejection."))
+	fmt.Fprintln(errw, st.Dim("The media is only guaranteed to survive a moderator APPROVING the app — never a withdraw, and not reliably a rejection."))
 	fmt.Fprintln(errw, st.Dim("Copy any captions you want to keep before answering; `civitai app listing status` prints them."))
 	fmt.Fprint(errw, "Withdraw it? [y/N]: ")
 
