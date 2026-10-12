@@ -2,79 +2,41 @@
 //
 // The pins-vs-published guard (internal/scaffold, PR #118) catches a template
 // whose `@civitai/*` PIN has fallen behind npm. It does NOT catch a scaffold
-// whose CODE still calls a dead/superseded platform endpoint — a template that
-// compiles and installs cleanly yet ships an app that is broken the moment a
-// user runs it. That is the gap this package closes.
+// whose CODE still uses a dead platform surface — a template that compiles and
+// installs cleanly yet ships an app that does not work. That is the gap this
+// package closes: a small CURATED denylist, matched line by line.
 //
-// THE MOTIVATING FAILURE (playable-collections, 2026-07): an app fell 9 SDK
-// minors behind with THREE broken features because its scaffold used REST
-// endpoints the platform had SUPERSEDED with host-mediated SDK hooks:
-//   - it fetched `/api/v1/blocks/buzz` — a route that was REMOVED (buzz is now
-//     read through the host bridge behind `useBuzzBalance()`), so every buzz
-//     read 404'd.
-//   - it wrote shared state by POSTing `/api/v1/blocks/shared-storage/*` with a
-//     hand-rolled (and wrong) payload shape, instead of the host-mediated
-//     shared-storage bridge — so shared writes silently mismatched the contract.
-//     🔴 THE PAYLOAD BUG WAS REAL; THE CONCLUSION DRAWN FROM IT NO LONGER HOLDS
-//     — see the shared-storage carve-out below.
+// WHAT THE DENYLIST HOLDS — two families:
+//   - a dead TOOL: `@civitai/blocks-cli`, an npm package deprecated in favour
+//     of this CLI.
+//   - a dead HOST MESSAGE: `RESIZE_IFRAME` on a page surface, where the host
+//     ignores it — the code compiles, ships, and does nothing. Message-name
+//     rules need tighter scoping than package rules; see `Rule.Exts`.
 //
-// The doctrine (App Blocks "bridge-first"): a browser App block does NOT talk to
-// civitai's REST API directly for any surface that has a PAGE-HOST BRIDGE. The
-// host (which holds the real user session) mediates those via postMessage, and
-// the SDK exposes them as hooks. The authoritative inventory of bridged surfaces
-// is civitai's `src/components/AppBlocks/hostHandlerParity.ts` INVENTORY: buzz
-// reads, viewer, workflows (submit/estimate/poll/cancel), pickers, app storage,
-// shared storage, image upload, wildcard packs. A direct `fetch()` to the REST
-// route BEHIND one of those bridges is the anti-pattern — EXCEPT for shared
-// storage, which that inventory still lists (the bridge is real and still works)
-// but which is no longer an anti-pattern to reach over REST.
+// WHAT IT DOES NOT HOLD — any `/api/v1/blocks/*` REST route. The platform's
+// direction for App Blocks is REST for data reads and writes, and the
+// postMessage bridge only for capabilities that need host chrome or the host
+// session UI (pickers, Buzz purchase, image upload, publish/post,
+// sign-in/consent, token refresh). So a direct call to a live route is the
+// supported path, not an anti-pattern, and no rule here flags one:
+// `/api/v1/blocks/buzz`, `/me`, `/models`, `/images`, `/dev-token`,
+// `/shared-storage/*`, `/app-storage/*`, `/workflows/*`.
 //
-// 🔴 SHARED STORAGE IS THE ONE DELIBERATE CARVE-OUT FROM THAT DOCTRINE (operator
-// decision, 2026-10-04): the platform is CONSOLIDATING ON THE REST PATH there, so
-// `/api/v1/blocks/shared-storage/*` is the SUPPORTED path and must never be
-// flagged. This package used to carry a `shared-storage-rest` rule saying the
-// opposite; it was removed, because a REQUIRED CI gate telling authors to avoid
-// the path the platform is consolidating on is worse than no gate. What changed:
-// the 11 routes under `/api/v1/blocks/shared-storage/` are each a thin adapter
-// over the SAME server function the `SHARED_*` bridge message calls, so per-app
-// schema isolation, the approved-block and revocation checks and the fail-closed
-// kill-switch hold verbatim and a REST read cannot diverge from a bridge read —
-// i.e. the "wrong payload shape" trap above is a property of hand-rolling the
-// payload, not of the transport. The `SHARED_*` bridge still works and apps still
-// use it; BOTH paths are valid, so neither direction is an anti-pattern and NO
-// rule here should flag either. Do not "restore" the rule, and do not invert it
-// into one that flags the bridge — that would fail existing correct apps' CI.
+// The inverse holds too: the bridge hooks that still exist
+// (`useBuzzBalance()`, `useSharedStorage()`, …) keep working and shipped apps
+// use them, so no rule flags the bridge either. Both transports are valid.
 //
-// The doctrine above is still exactly right about everything else: buzz (a route
-// genuinely REMOVED) and dead host messages like `RESIZE_IFRAME`.
+// Two route rules used to live here and were removed, because a REQUIRED CI
+// gate steering authors off the supported path is worse than no gate:
+//   - `shared-storage-rest` — removed on the 2026-10-04 decision to
+//     consolidate shared storage on REST. Its motivating bug (an app POSTing a
+//     hand-rolled, wrong payload) was real, but it was a property of the
+//     payload, not of the transport.
+//   - `buzz-rest` — it called `/api/v1/blocks/buzz` a REMOVED route. The route
+//     was deleted and then restored (civitai #5051, 2026-09-23) and is live.
 //
-// PRECISION — this is a small CURATED denylist, NOT a blanket "no /api/v1/blocks".
-// Several `/api/v1/blocks/*` routes are legitimately REST and must NOT be flagged
-// (each entry says whether a bridge exists for it):
-//   - `/api/v1/blocks/models`, `/api/v1/blocks/images` — public high-volume
-//     catalog reads (there is no host bridge; the scaffolds fetch these).
-//   - `/api/v1/blocks/dev-token` — the headless dev-token mint (a CLI/dev path,
-//     not a runtime block surface).
-//   - `/api/v1/blocks/me` — the viewer self-read; its `useViewer()` bridge
-//     successor exists but the route STAYS LIVE until the hook publishes and
-//     consumers migrate, and the page-money scaffold uses it in its dev harness.
-//   - `/api/v1/blocks/shared-storage/*` — the 11 app-global shared-store routes.
-//     These have a bridge AND are the path being consolidated on; see the
-//     carve-out above. A live app (ZacxDev/civitai-app-custom-generators,
-//     `src/platform/sharedStorage.ts`) reads the board through them in
-//     production, so flagging them fails a correct, shipped app.
-//
-// Flagging any of those would false-fail a correct scaffold, so they are
-// deliberately absent from the denylist. We only flag routes that are REMOVED
-// (buzz).
-//
-// THE DENYLIST IS NOT ONLY ABOUT REST. It already covered a dead TOOL
-// (`@civitai/blocks-cli`, a retired npm package). `RESIZE_IFRAME` adds a third
-// family — a dead HOST MESSAGE: a block -> host message type the page host does
-// not handle, so the code compiles, installs, ships, and does nothing. The raw
-// page templates demoed it until #206, and on a `page` surface the host marks it
-// N/A. Message-name rules need tighter scoping than route or package rules; see
-// `Rule.Exts`.
+// A route rule is only right for a route that is GONE — check the server
+// before adding one, and remove it if the route comes back.
 package antipattern
 
 import (
@@ -90,8 +52,8 @@ import (
 )
 
 // Rule is one curated anti-pattern: a regexp that, when it matches a line of a
-// scaffolded app's source, means the scaffold is using a dead/discouraged
-// platform surface. Each rule carries the concrete replacement so the failure
+// scaffolded app's source, means the scaffold is using a dead platform
+// surface. Each rule carries the concrete replacement so the failure
 // message tells the author exactly what to use instead.
 type Rule struct {
 	// ID is a short stable identifier used in messages and tests.
@@ -100,7 +62,7 @@ type Rule struct {
 	What string
 	// Pattern matches the offending token on a single line.
 	Pattern *regexp.Regexp
-	// Replacement is the concrete thing to use instead (a hook / the Go CLI).
+	// Replacement is the concrete thing to do instead.
 	Replacement string
 	// Exts, when non-nil, restricts this rule to those file extensions
 	// (lowercase, dotted). Nil means every extension in scannedExts.
@@ -124,34 +86,19 @@ var codeExts = map[string]bool{
 func (r Rule) appliesTo(ext string) bool { return r.Exts == nil || r.Exts[ext] }
 
 // Rules is the curated denylist. Keep it SMALL and PRECISE — every entry must be
-// a surface the platform has REMOVED or fully superseded with a host bridge, and
-// must NOT match a legitimately-REST endpoint (see the package doc). Each entry
-// links to its replacement hook.
+// a surface that is dead for the app using it, and must NOT match a live REST
+// route or a working bridge hook (see the package doc). Each entry carries its
+// replacement.
 func Rules() []Rule {
 	return []Rule{
-		{
-			// REMOVED route. Buzz balance is read through the page-host bridge
-			// (GET_BUZZ_BALANCE in hostHandlerParity.ts) exposed as a hook; the
-			// REST route no longer exists, so a scaffold that fetches it 404s.
-			// The terminating char class keeps this to the whole `/buzz` path
-			// segment (won't match a hypothetical `/buzz-*` sibling), and we scan
-			// line-by-line so `$` anchors end-of-line.
-			ID:          "buzz-rest",
-			What:        "fetch of the REMOVED /api/v1/blocks/buzz REST route",
-			Pattern:     regexp.MustCompile("/api/v1/blocks/buzz(?:[/?'\"\\x60\\s),;]|$)"),
-			Replacement: "read buzz through the host bridge — useBuzzBalance() / useBuzzWorkflow() from @civitai/blocks-react (the /api/v1/blocks/buzz route was REMOVED)",
-		},
-		// 🔴 NO shared-storage RULE HERE, DELIBERATELY. One lived at this spot and
-		// was removed: `/api/v1/blocks/shared-storage/*` is the path the platform
-		// is consolidating on (see the carve-out in the package doc), so the rule
-		// was an enforced, branch-protection-required gate pushing authors the
-		// wrong way. It was also INEFFECTIVE, which is why no narrower pattern was
-		// substituted: measured against the real migrated app, its bare substring
-		// `/api/v1/blocks/shared-storage` matched 1 line — a COMMENT, since ScanDir
-		// greps raw lines and strips no comments — and 0 of the real call sites,
-		// which read `'blocks/shared-storage/list'` with no `/api/v1` prefix
-		// because `@civitai/sdk`'s `app.site.get` prepends it. It fired on prose
-		// and missed every call. TestSharedStorageRestIsAccepted is the guard.
+		// NO REST-ROUTE RULE HERE, DELIBERATELY. Two lived at this spot —
+		// `buzz-rest` and `shared-storage-rest` — and both were removed: the
+		// routes are live and REST is the supported path for data (package doc).
+		// TestBuzzRestIsAccepted and TestSharedStorageRestIsAccepted are the
+		// guards. The shared-storage pattern was also ineffective: against a
+		// real migrated app it matched 1 comment line and 0 call sites, which
+		// read `'blocks/shared-storage/list'` because `@civitai/sdk`'s
+		// `app.site.get` prepends `/api/v1`.
 		{
 			// DEPRECATED tool. The npm `@civitai/blocks-cli` package is retired in
 			// favour of this Go CLI; a scaffold that references it teaches authors

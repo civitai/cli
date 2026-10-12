@@ -8,10 +8,9 @@ import (
 )
 
 // TestScanDir is the two-directional correctness proof for the anti-pattern
-// gate: a fixture that uses a dead/superseded surface FAILS (naming the file,
-// pattern, and replacement), a clean fixture PASSES, and — critically — a
-// fixture full of legitimately-REST endpoints that have no bridge does NOT
-// false-flag.
+// gate: a fixture that uses a dead surface FAILS (naming the file, pattern, and
+// replacement), a clean fixture PASSES, and — critically — a fixture full of
+// live REST routes does NOT false-flag.
 func TestScanDir(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -25,7 +24,7 @@ func TestScanDir(t *testing.T) {
 			dir:  "clean",
 		},
 		{
-			name: "legit unbridged REST routes are not flagged",
+			name: "live REST routes are not flagged",
 			dir:  "legit-rest",
 		},
 		{
@@ -33,11 +32,11 @@ func TestScanDir(t *testing.T) {
 			dir:  "skips-deps",
 		},
 		{
-			name:      "removed buzz REST route fails",
-			dir:       "buzz-rest",
-			wantRule:  "buzz-rest",
-			wantFile:  "buzz.ts",
-			wantInMsg: "useBuzzBalance",
+			// A `buzz-rest` rule used to fail this fixture, calling the route
+			// REMOVED. The route is live, so the rule was removed and the
+			// fixture now asserts the read is ACCEPTED.
+			name: "buzz REST route is accepted",
+			dir:  "buzz-rest-ok",
 		},
 		{
 			// The REVERSED case. A `shared-storage-rest` rule used to fail this
@@ -128,14 +127,15 @@ func TestScanDir(t *testing.T) {
 	}
 }
 
-// TestLegitRoutesNeverMatchAnyRule is a focused regression guard: the exact
-// unbridged routes the real scaffolds rely on must never match ANY rule, so the
-// gate can never false-fail a correct scaffold.
+// TestLegitRoutesNeverMatchAnyRule is a focused regression guard: live REST
+// routes must never match ANY rule, so the gate can never false-fail a correct
+// scaffold.
 func TestLegitRoutesNeverMatchAnyRule(t *testing.T) {
 	legit := []string{
 		"await fetch('/api/v1/blocks/models?limit=20')",
 		"await fetch('/api/v1/blocks/images')",
 		"fetch(`${base}/api/v1/blocks/me`)",
+		"fetch(`${base}/api/v1/blocks/buzz`)",
 		"fetch(`${origin}/api/v1/blocks/dev-token`, { method: 'POST' })",
 		"fetch(`${base}/api/trpc/buzz.getBuzzAccount`)",
 	}
@@ -197,13 +197,16 @@ func TestSharedStorageRestIsAccepted(t *testing.T) {
 	// Positive control: the rule set is non-empty and still reaches code, so the
 	// absences above are claims about the rules, not about an empty slice.
 	//
-	// The buzz-rest rule needs no ledger here. TestScanDir's `buzz-rest` fixture
-	// case already t.Fatalf's when that rule is absent or stops matching a buzz
-	// fetch, and the scan-clean `shared-storage-rest-ok` fixture already fails if
-	// buzz is widened into the shared-storage path — so all three assertions a
-	// ledger would make are held behaviourally, by the gate's own entrypoint.
-	if len(Rules()) == 0 {
-		t.Fatal("Rules() is empty — every absence asserted above is vacuous")
+	// A remaining rule must still match its own line, or the loop above compared
+	// the supported shapes against patterns that match nothing.
+	fired := false
+	for _, r := range Rules() {
+		if r.Pattern.MatchString(findingLine) {
+			fired = true
+		}
+	}
+	if !fired {
+		t.Fatal("no rule matches the control line — every absence asserted above is vacuous")
 	}
 }
 
@@ -310,7 +313,7 @@ func TestResizeIframeBoundary(t *testing.T) {
 
 // TestRuleExtScopeDefaultsToEverything pins that adding Exts to one rule did not
 // silently narrow the others: a nil Exts must still mean "the whole corpus", or
-// the package-name and route rules stop catching a documented dead workflow.
+// the package-name rule stops catching a documented dead workflow.
 func TestRuleExtScopeDefaultsToEverything(t *testing.T) {
 	unscoped := 0
 	for _, r := range Rules() {
