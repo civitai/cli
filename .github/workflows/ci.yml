@@ -19,6 +19,14 @@ on:
   # the default branch — so it is only useful if it lands BEFORE the next
   # incident. Do not remove it because it looks unused.
   workflow_dispatch:
+  # Nightly, for the browser suite: its inputs include things no commit
+  # changes — the runner image's Chrome, the image's dbus/sandbox setup — so a
+  # break there would otherwise wait for the next PR that happens to touch
+  # scripts/dogfood. Only `dogfood-browser`'s verdict is REPORTED (an issue via
+  # failure-issue.yml); ⚠ every other job in this file runs nightly too and its
+  # colour reaches nobody, exactly as it never did before.
+  schedule:
+    - cron: "37 7 * * *"
 
 permissions:
   contents: read
@@ -196,8 +204,49 @@ jobs:
   # Each shard checks its own PASS list against its plan; `dogfood-browser`
   # then checks the UNION — every browser-tier test passed exactly once, and
   # always ∪ browser == `go test -list` of the real binary.
+  # Decides whether this event needs the browser shards. ONE implementation:
+  # scripts/dogfood/browser-suite-relevant.sh (table-tested in
+  # dogfood_browser_relevance_test.go). It FAILS OPEN: any event but a pull
+  # request, a failed or empty diff, and any path not positively classified
+  # irrelevant all run the suite — and so does this job failing outright (see
+  # the shard job's `if:`).
+  #
+  # The diff is the PR's merge commit against its first parent — exactly what
+  # merging would change on the base, whatever the base is (a stacked PR's
+  # base included). `fetch-depth: 2` is what makes HEAD^1 present.
+  dogfood-browser-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      reason: ${{ steps.decide.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: classify the change
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -uo pipefail
+          rc=0
+          : > "$RUNNER_TEMP/paths.txt"
+          if [ "$EVENT" = "pull_request" ]; then
+            git diff --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/paths.txt" || rc=$?
+          fi
+          echo "changed paths ($(wc -l < "$RUNNER_TEMP/paths.txt")):"
+          cat "$RUNNER_TEMP/paths.txt"
+          ./scripts/dogfood/browser-suite-relevant.sh "$EVENT" "$RUNNER_TEMP/paths.txt" "$rc"
+
   dogfood-browser-shard:
     runs-on: ubuntu-latest
+    needs: [dogfood-browser-changes]
+    # FAIL OPEN: skipped ONLY on a positive "irrelevant" from a decision job
+    # that succeeded. A decision job that failed, or published nothing, runs
+    # the suite. `!cancelled()` rather than `always()`, so a cancelled run
+    # does not start four browser jobs.
+    if: ${{ !cancelled() && (needs.dogfood-browser-changes.result != 'success' || needs.dogfood-browser-changes.outputs.run != 'false') }}
     strategy:
       fail-fast: false
       matrix:
@@ -266,27 +315,48 @@ jobs:
   # to branch protection. So it always runs, and fails unless every shard
   # reported success AND the union of their PASS lines is exactly the browser
   # tier, each test once.
+  #
+  # 🔴 AND IT REPORTS SUCCESS — NOT "skipped" — WHEN THE SHARDS WERE SKIPPED
+  # ON PURPOSE, so it can be required. That is the ONE skip it accepts: the
+  # decision job succeeded AND said run=false AND the shards were skipped.
+  # Every other combination is checked in full or fails.
   dogfood-browser:
     runs-on: ubuntu-latest
-    needs: [dogfood-browser-shard]
+    needs: [dogfood-browser-changes, dogfood-browser-shard]
     if: always()
     steps:
-      - name: every shard succeeded
+      - name: every shard succeeded, or the suite was positively not needed
+        id: mode
         env:
+          DECIDE_RESULT: ${{ needs.dogfood-browser-changes.result }}
+          DECIDE_RUN: ${{ needs.dogfood-browser-changes.outputs.run }}
+          DECIDE_REASON: ${{ needs.dogfood-browser-changes.outputs.reason }}
           SHARDS_RESULT: ${{ needs.dogfood-browser-shard.result }}
         run: |
+          echo "decision: result=$DECIDE_RESULT run='$DECIDE_RUN' reason='$DECIDE_REASON'"
           echo "dogfood-browser-shard: $SHARDS_RESULT"
+          if [ "$DECIDE_RESULT" = "success" ] && [ "$DECIDE_RUN" = "false" ] && [ "$SHARDS_RESULT" = "skipped" ]; then
+            echo "::notice title=dogfood-browser not run::$DECIDE_REASON. The browser suite still runs on the push to main and nightly."
+            echo "check=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$DECIDE_RESULT" != "success" ]; then
+            echo "::warning title=dogfood-browser decision failed::the change classifier did not succeed, so the suite ran (fail open). Fix the classifier."
+          fi
           if [ "$SHARDS_RESULT" != "success" ]; then
             echo "::error::the browser shards ended '$SHARDS_RESULT', not 'success' — a failed, cancelled or skipped shard is not a green browser suite."
             exit 1
           fi
+          echo "check=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@v4
+        if: steps.mode.outputs.check == 'true'
         with:
           pattern: dogfood-shard-*
           path: shards
 
       - name: every browser test passed exactly once
+        if: steps.mode.outputs.check == 'true'
         run: |
           set -uo pipefail
           n=$(cat shards/dogfood-shard-1/shards.txt)
@@ -324,6 +394,24 @@ jobs:
             exit 1
           fi
           echo "OK: $(wc -l < union.txt) root tests = $(wc -l < shards/dogfood-shard-1/always.txt) always + $total browser, each exactly once"
+
+  # The nightly run's verdict, filed where someone will see it. A scheduled
+  # run's failure mail reaches only whoever last edited the cron line (see
+  # failure-issue.yml), so the drift this schedule exists to catch would
+  # otherwise be found by the next PR to touch scripts/dogfood.
+  dogfood-browser-nightly-report:
+    needs: [dogfood-browser]
+    if: ${{ always() && github.event_name == 'schedule' }}
+    uses: ./.github/workflows/failure-issue.yml
+    permissions:
+      contents: read
+      issues: write
+    with:
+      marker: "[dogfood-browser-nightly]"
+      failing: ${{ needs.dogfood-browser.result != 'success' }}
+      state: ${{ needs.dogfood-browser.result }}
+      title: "[dogfood-browser-nightly] the browser suite failed on main's nightly run"
+      body: "The nightly `dogfood-browser` run on `main` ended `${{ needs.dogfood-browser.result }}`. Nothing in the repo had to change for this: the usual suspects are the runner image's Chrome or its dbus/sandbox setup, which no commit touches. Read the `dogfood-browser-shard` legs of the linked run (each prints the browser version and its smoke-test launch) before changing any test."
 
   # Static-analysis gate: golangci-lint over the whole module using the curated
   # linter set in .golangci.yml (staticcheck / govet / ineffassign / unused /

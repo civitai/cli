@@ -76,6 +76,7 @@ var FileTiers = map[string]Tier{
 	"claude_md_import_only_test.go":           Always,
 	"content_rating_literal_ledger_test.go":   Always,
 	"dogfood_brief_test.go":                   Always,
+	"dogfood_browser_relevance_test.go":       Always,
 	"dogfood_browser_shards_test.go":          Always,
 	"dogfood_cdp_launch_test.go":              Browser,
 	"dogfood_classifier_precision_test.go":    Always,

@@ -131,7 +131,10 @@ drive a headless browser through `scripts/dogfood/` run as `dogfood-browser`
 shards. Which test runs where is `tools/dogfoodshards/plan` — a new root
 `*_test.go` file must be assigned a tier there, and a new browser-tier test
 needs a measured duration there (the ledger test says how). Preview the split
-with `go run ./tools/dogfoodshards`.
+with `go run ./tools/dogfoodshards`. On a pull request the shards run only
+when the diff touches their inputs (`scripts/dogfood/browser-suite-relevant.sh`
+decides, failing open on anything it does not recognise); they always run on
+`main` and nightly.
 
 If your change touches a test that reads git history, also run
 `make ci-shallow` (see above) — a full clone cannot observe that class of
