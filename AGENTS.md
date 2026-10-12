@@ -74,7 +74,8 @@ golangci-lint is missing rather than degrading to something weaker, which is wha
 makes its zero meaningful; do not "helpfully" add a fallback.
 
 CI (`.github/workflows/ci.yml`) runs **nine** jobs, not four steps:
-`build-test` (vet + `gofmt -s -l .` + test + build), `lint`, `schema-drift`,
+`build-test` (`gofmt -s -l .` + test + build), `lint` (golangci-lint, which also
+runs vet), `schema-drift`,
 `pins-vs-published`, `ready-ack-runtime`, `template-page-vite`,
 `template-page-money`, `template-page-elements` and `scaffold-currency`.
 

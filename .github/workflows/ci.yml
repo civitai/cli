@@ -76,8 +76,25 @@ jobs:
           go-version: "1.25"
           cache: true
 
-      - name: go vet
-        run: go vet ./...
+      # NO `go vet` STEP HERE, ON PURPOSE. The `lint` job runs golangci-lint's
+      # govet, whose default analyzer set is a superset of `go vet`'s on Go
+      # 1.25 (compared by name against `go tool vet help`), over the same
+      # packages, test files included — and a control measured it: a printf
+      # bug in a non-test file, a copylocks bug, a printf bug in a file whose
+      # comment reads like a generated-file marker, and a testinggoroutine bug
+      # in a _test.go file were each reported by BOTH tools. Running both spent
+      # ~11-16 s of this REQUIRED job re-deriving what `lint` reports.
+      # 🔴 THE CATCH: `lint` is NOT a required check. Until it is added to
+      # branch protection, a vet finding shows red on the PR but does not
+      # block the merge. `go test` still runs its own vet subset (printf,
+      # atomic, bools, buildtag, directive, errorsas, ifaceassert, nilfunc,
+      # stringintconv, tests) as part of the test step below.
+      #
+      # `gofmt` stays HERE, because lint's gofmt is NOT a superset: it checks
+      # only files in packages it loads, and the same control showed it
+      # missing `internal/cmd/spawn_windows.go` (a GOOS=windows file) and
+      # `scripts/mutate-verify.go` (`//go:build ignore`), both of which
+      # `gofmt -s -l .` below flags. `make ci` still runs `go vet` locally.
 
       # 🔴 THE RENDER-ORACLE TESTS REFUSE TO SKIP UNDER CI, so this job has to be
       # able to give them a browser. They drive a real headless Chromium against
@@ -219,11 +236,11 @@ jobs:
       # run", which is the state a broken build tag, a bad -tags flag or a
       # mis-scoped pattern produces. Count what actually reported ok.
       #
-      # `go vet ./...` and `go build ./...` are deliberately left bare: both are
-      # whole-module walks with no name pattern and no silence-means-clean
-      # ambiguity of their own, and the floor below already proves the module
-      # resolves to ~19 real packages in this same job. A third floor would
-      # assert the same fact a third time.
+      # `go build ./...` is deliberately left bare: it is a whole-module walk
+      # with no name pattern and no silence-means-clean ambiguity of its own,
+      # and the floor below already proves the module resolves to ~19 real
+      # packages in this same job. A second floor would assert the same fact
+      # a second time.
       - name: test
         run: |
           set -uo pipefail
