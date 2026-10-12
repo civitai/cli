@@ -131,14 +131,17 @@ func TestScaffoldTemplatesOnlyUseDefinedDesignTokens(t *testing.T) {
 func TestDesignTokenLedgerMatchesTemplatePin(t *testing.T) {
 	ledger := loadLedger(t)
 
-	pins := collectCivitaiPins(t)
+	pins, err := TemplatePins()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(pins) == 0 {
 		t.Fatal("no @civitai/* pins found in any template package.json.tmpl — the extractor is broken")
 	}
 	var pin string
 	for _, p := range pins {
-		if p.pkg == ledger.Pkg {
-			pin = p.pin
+		if p.Pkg == ledger.Pkg {
+			pin = p.Pin
 			break
 		}
 	}

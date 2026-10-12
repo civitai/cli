@@ -49,10 +49,10 @@ name: bump-scaffold-pins
 
 on:
   schedule:
-    # DAILY at 07:17 UTC (off the top-of-hour rush; the minute is offset from the
-    # sibling drift-bots — revendor-canonical-schema :37 every 6h,
+    # EVERY 6 HOURS at :17 (off the top-of-hour rush; the minute is offset from
+    # the sibling drift-bots — revendor-canonical-schema :37 every 6h,
     # bump-flake-vendorhash 07:47). Cron literal in YAML needs quoting so the `*`
-    # isn't parsed as a YAML alias.
+    # isn't parsed as a YAML alias. It was DAILY at 07:17; why it moved is below.
     #
     # This was weekly (`17 7 * * 1`) and that cadence was measurably too slow.
     # `pins-vs-published` is a REQUIRED check on `main` and it reads npm's
@@ -69,10 +69,29 @@ on:
     # swept, so a large fraction of each week sat red and the pins had to be
     # hand-bumped twice in two days (#194, #203).
     #
-    # Daily bounds that window at ~24h instead of ~168h. A no-op run is cheap:
-    # `detect changes` gates every downstream step, so an already-current sweep
-    # is just checkout + setup-go + the bumper's npm metadata reads.
-    - cron: "17 7 * * *"
+    # Daily bounded that window at ~24h instead of ~168h — on paper. Two
+    # measurements moved it again (2026-09-20..10-12):
+    #
+    #   * GitHub does not run this at 07:17. The scheduled runs of that window
+    #     STARTED between 12:34 and 16:44 UTC — five to nine hours late, every
+    #     day — so "daily at 07:17" was "once, sometime in the afternoon".
+    #   * `pins-vs-published` sat red in 18 episodes, the longest 34.4h from
+    #     first red to first green, across 6 branches.
+    #
+    # So: EVERY 6 HOURS, plus an immediate dispatch whenever CI goes red on a
+    # push to `main` (`bump-scaffold-pins-on-red-main.yml`). The cost is small
+    # and measured: the 15 runs before this change took 0.7–5.0 min each, and
+    # a no-op sweep is cheap — `detect changes` gates every downstream step.
+    # The two drift jobs (`ready-ack-runtime`, `scaffold-typecheck`) now run
+    # four times a day too; their reporting is one issue rewritten in place
+    # (failure-issue.yml), so a persistent failure does not become four.
+    #
+    # It matters less than it did and is still worth it: `pins-vs-published`
+    # no longer blocks a pull request that touches no pin input
+    # (`internal/scaffold/cmd/pins-gate`), so a stale window now blocks only
+    # PRs that touch the scaffold — and `main`, which stays red until this
+    # bot's PR merges. Shortening the window shortens exactly that.
+    - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
       drill:
@@ -90,6 +109,14 @@ permissions:
   contents: write
   pull-requests: write
 
+# A scheduled run and a red-main dispatch can now land together. Two runs would
+# race to push `automation/bump-scaffold-pins`, and the loser's red `bump` job
+# would file an issue about nothing. Queue instead of cancelling: a cancelled
+# run's `signal` never runs, so it can neither file nor CLOSE the report.
+concurrency:
+  group: bump-scaffold-pins
+  cancel-in-progress: false
+
 jobs:
   # Runtime half of the ready-ack contract (issue #206). The offline guard in
   # `internal/scaffold/ready_ack_contract_test.go` proves each SDK-free page
@@ -100,8 +127,8 @@ jobs:
   # `{type:'BLOCK_READY',payload:{height:0}}` goes out.
   #
   # 🔴 This is the DRIFT runner, NOT the gate. The gate is the identically-named
-  # job in ci.yml, which runs on every pull request. A daily job cannot block a
-  # merge — a regression would land green and surface up to 24h later, on a
+  # job in ci.yml, which runs on every pull request. A scheduled job cannot block
+  # a merge — a regression would land green and surface hours later, on a
   # workflow with no dependent job — so this copy alone would be a guard that
   # gates nothing. It exists to catch drift on `main` between PRs (a merged-tree
   # interaction, a node bump, an npm-side change), and is deliberately
@@ -129,7 +156,7 @@ jobs:
       # succeeds). Read one of them before changing this.
       #
       # It matters HERE, in a job that runs no npm install, for a second reason:
-      # this is the daily DRIFT runner for the identically-named GATE job in
+      # this is the scheduled DRIFT runner for the identically-named GATE job in
       # ci.yml. A drift runner on a different node major than the gate it mirrors
       # is a two-tier suite — the two tiers can disagree, and a failure visible in
       # one can be structurally invisible in the other, which is the exact shape
@@ -178,10 +205,10 @@ jobs:
   # Does the page-money scaffold still typecheck on an install shape that does
   # NOT silently repair it?
   #
-  # 🔴 WHY THIS IS A SEPARATE DAILY JOB AND NOT A STEP IN `ci.yml`. The guard
+  # 🔴 WHY THIS IS A SEPARATE SCHEDULED JOB AND NOT A STEP IN `ci.yml`. The guard
   # needs the network and ~60s, and `ci.yml`'s `scaffold-currency` job is
   # REQUIRED with `enforce_admins` — a network-dependent assertion there has
-  # frozen every open PR in this repo TWICE (#530 is one of them). A daily drift
+  # frozen every open PR in this repo TWICE (#530 is one of them). A scheduled drift
   # runner that files an issue is the right blast radius for a check that can
   # fail for reasons no PR author controls.
   #
@@ -784,7 +811,7 @@ jobs:
             echo "$detail"
             echo
             echo "---"
-            echo "This workflow runs three independent daily checks: \`ready-ack-runtime\` (does the scaffolded handshake still fire on \`main\`), \`scaffold-typecheck\` (does the page-money template still typecheck on an install shape that does not silently repair it) and \`bump\` (are the template's \`@civitai/*\` pins still current). Any one of them failing files this issue."
+            echo "This workflow runs three independent scheduled checks (every 6 hours, and on a red \`main\`): \`ready-ack-runtime\` (does the scaffolded handshake still fire on \`main\`), \`scaffold-typecheck\` (does the page-money template still typecheck on an install shape that does not silently repair it) and \`bump\` (are the template's \`@civitai/*\` pins still current). Any one of them failing files this issue."
             echo "SCAFFOLD_PINS_BODY_EOF"
           } >> "$GITHUB_OUTPUT"
 

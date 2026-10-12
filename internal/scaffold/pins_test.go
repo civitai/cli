@@ -2,6 +2,7 @@ package scaffold
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -316,5 +317,72 @@ func TestCivitaiPinRe(t *testing.T) {
 	}
 	if _, ok := got["react"]; ok {
 		t.Error("CivitaiPinRe should not match non-@civitai packages")
+	}
+}
+
+// TestCheckPins pins the verdict the guard, the bump bot and the
+// `pins-vs-published` CI job (cmd/pins-gate) all read. The states are literal:
+// a stale pin, an unreachable registry and a nonexistent package must stay
+// three different answers, because the CI job downgrades the first two on an
+// untouched pull request and never the third.
+func TestCheckPins(t *testing.T) {
+	transient := errors.New("GET …: 503 Service Unavailable")
+	notFound := fmt.Errorf("GET …: 404 Not Found: %w", ErrPkgNotFound)
+	answers := map[string]struct {
+		v   string
+		err error
+	}{
+		"@civitai/current":   {v: "0.25.3"},
+		"@civitai/moved":     {v: "0.26.0"},
+		"@civitai/down":      {err: transient},
+		"@civitai/gone":      {err: notFound},
+		"@civitai/weird-pub": {v: "latest"},
+	}
+	calls := map[string]int{}
+	fetch := func(pkg string) (string, error) {
+		calls[pkg]++
+		a := answers[pkg]
+		return a.v, a.err
+	}
+	pins := []TemplatePin{
+		{File: "a", Pkg: "@civitai/current", Pin: "^0.25.0"},
+		{File: "a", Pkg: "@civitai/moved", Pin: "^0.25.0"},
+		{File: "b", Pkg: "@civitai/moved", Pin: "^0.26.0"}, // same package, other template: fetched once
+		{File: "a", Pkg: "@civitai/down", Pin: "^0.1.0"},
+		{File: "a", Pkg: "@civitai/gone", Pin: "^0.1.0"},
+		{File: "a", Pkg: "@civitai/weird-pub", Pin: "^0.1.0"},
+		{File: "a", Pkg: "@civitai/current", Pin: "~0.25.0"}, // an operator the caret logic cannot read
+	}
+	got := CheckPins(pins, fetch)
+
+	want := []struct {
+		status    PinStatus
+		published string
+		hasErr    bool
+	}{
+		{PinOK, "0.25.3", false},
+		{PinStale, "0.26.0", false},
+		{PinOK, "0.26.0", false},
+		{PinUnreachable, "", true},
+		{PinNotFound, "", true},
+		{PinInvalid, "latest", true},
+		{PinInvalid, "0.25.3", true},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("CheckPins returned %d findings for %d pins — it must return one per pin, in order, and never stop early", len(got), len(pins))
+	}
+	for i, w := range want {
+		g := got[i]
+		if g.TemplatePin != pins[i] || g.Status != w.status || g.Published != w.published || (g.Err != nil) != w.hasErr {
+			t.Errorf("finding %d for %+v = {%s published=%q err=%v}, want {%s published=%q err-set=%v}", i, pins[i], g.Status, g.Published, g.Err, w.status, w.published, w.hasErr)
+		}
+	}
+	if !errors.Is(got[4].Err, ErrPkgNotFound) || !errors.Is(got[3].Err, transient) {
+		t.Errorf("the underlying errors were not kept: not-found=%v unreachable=%v", got[4].Err, got[3].Err)
+	}
+	for pkg, n := range calls {
+		if n != 1 {
+			t.Errorf("%s was fetched %d times, want 1 — each package is asked once however many templates pin it", pkg, n)
+		}
 	}
 }

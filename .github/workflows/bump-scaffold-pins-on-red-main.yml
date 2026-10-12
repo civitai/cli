@@ -1,0 +1,68 @@
+# Run the scaffold pin bumper as soon as CI goes red on `main`, instead of
+# waiting for its next scheduled sweep.
+#
+# WHY. `pins-vs-published` (a REQUIRED check) compares the templates' pins with
+# what npm publishes. Since `internal/scaffold/cmd/pins-gate`, a pull request
+# that touches no pin input is only WARNED about a stale pin — so the first
+# place staleness turns red is `main`, on the next merge after a publish. That
+# red is the signal to bump; acting on it here starts the fix minutes after it
+# appears rather than up to a schedule interval later (and GitHub's own cron
+# delay, measured at 5–9 hours on this repo's bot, comes on top of that).
+#
+# HOW, and why this shape rather than a `workflow_run` trigger on the bot
+# itself. The bot's `signal` job computes "failing" from its jobs' results, so
+# a bot run whose jobs were all SKIPPED (because the CI run it reacted to was
+# green) would file an issue about nothing; avoiding that would mean an `if:`
+# on every one of its jobs, kept identical by hand. A separate dispatcher keeps
+# the bot's reporting exactly as it was: every bot run is an ordinary
+# `workflow_dispatch` with `drill` at its default `none`.
+#
+# A dispatch made with GITHUB_TOKEN DOES start a run — GitHub's loop guard
+# exempts `workflow_dispatch` and `repository_dispatch` — which is why this
+# needs no PAT. The bot still opens its PR with its own scoped token, so CI
+# still runs on that PR. `actions: write` is the only permission granted, and
+# only to this job, which checks out nothing and runs no repository code.
+#
+# WHAT IT REACTS TO. Only a CI run that (a) FAILED, (b) was triggered by a
+# PUSH, (c) to `main`, (d) of this repository. (d) matters: `branches:` matches
+# a run's head BRANCH NAME, and a fork's pull request can name its branch
+# `main`. (b) closes the same door from the other side — a fork cannot push
+# here. A red `main` for a reason other than the pins (build-test, say) still
+# dispatches; the bot then finds nothing to bump and its run is a cheap no-op.
+#
+# The bot serialises its own runs (`concurrency:` in bump-scaffold-pins.yml), so
+# a dispatch landing beside a scheduled sweep queues rather than races.
+#
+# `workflow_run` only fires for a workflow file on the default branch, so none
+# of this does anything until it is merged.
+name: bump-scaffold-pins-on-red-main
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_branch == 'main'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: dispatch bump-scaffold-pins
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RED_RUN: ${{ github.event.workflow_run.html_url }}
+        run: |
+          set -uo pipefail
+          echo "CI went red on a push to main: $RED_RUN"
+          gh workflow run bump-scaffold-pins.yml --ref main
+          echo "dispatched bump-scaffold-pins on main"
