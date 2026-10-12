@@ -314,8 +314,8 @@ jobs:
           #     --- PASS: TestScaffoldPinsSatisfyPublished (0.46s)
           #     ok  github.com/civitai/cli/internal/scaffold  (cached)
           # The second run contacted npm ZERO times and replayed the first run's
-          # timing and PASS line verbatim out of GOCACHE — which `setup-go` with
-          # `cache: true` restores across runs, keyed on go.sum. Go's test cache
+          # timing and PASS line verbatim out of GOCACHE — which every job here
+          # restores across runs (.github/actions/setup-go). Go's test cache
           # tracks the env vars a test reads; it does NOT track what npm
           # published. So the NETWORK half of the scaffold guard — a required
           # check whose whole value is the round-trip — could report green on a

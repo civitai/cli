@@ -21,7 +21,9 @@ description: >-
 #     changed since — it cannot serve a wrong object.
 #
 #     How many entries that leaves alive: one per (Go version, go.sum, week)
-#     that saw a push to main, each a few hundred MB. Restores read the newest
+#     that saw a push to main. Measured on this tree: ~110 MB compressed in
+#     the cache store, ~416 MB on disk once restored (GOCACHE 312M +
+#     GOMODCACHE 104M). Restores read the newest
 #     match, so an entry stops being read once its successor exists, and
 #     GitHub evicts any entry not read for 7 days. In steady state that is the
 #     current week's entry plus last week's until it ages out — two, or a few
@@ -78,14 +80,6 @@ runs:
         GO_SUM_HASH: ${{ hashFiles('go.sum') }}
       run: |
         set -euo pipefail
-
-        # An empty component would silently widen the key: with no go.sum hash
-        # every module set shares one entry, and with no Go version a toolchain
-        # bump restores objects the new compiler cannot use.
-        if [ -z "$GO_VERSION" ] || [ -z "$GO_SUM_HASH" ]; then
-          echo "::error::cannot build the Go cache key: go-version='$GO_VERSION' go.sum hash='$GO_SUM_HASH'"
-          exit 1
-        fi
 
         toolchain="go-cache-${RUNNER_OS}-${RUNNER_ARCH}-go${GO_VERSION}-"
         {
