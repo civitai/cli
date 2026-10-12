@@ -79,104 +79,15 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      # 🔴 THE RENDER-ORACLE TESTS REFUSE TO SKIP UNDER CI, so this job has to be
-      # able to give them a browser. They drive a real headless Chromium against
-      # a real served block (scripts/dogfood/oracle.sh); a skip here and a pass
-      # here are indistinguishable in the log the merge gate is read from, which
-      # is why the helper fails instead — see dogfood_oracle_test.go.
-      #
-      # Resolved rather than installed: the ubuntu runner image ships browsers,
-      # and an unconditional apt/snap install would cost every PR minutes for
-      # something already present. If this step is what goes red, the fix is one
-      # line — add an install here — NOT loosening the test into a skip.
-      #
-      # 🔴 THE ORDER PUTS RELEASE BUILDS FIRST, AND IT CHANGED FOR A REASON.
-      # `ubuntu-latest` ships BOTH: `/usr/bin/google-chrome` is a
-      # `google-chrome-stable` .deb, and `/usr/bin/chromium` is a symlink into
-      # `/usr/local/share/chromium/`, which `install-google-chrome.sh` unzips
-      # straight out of the `chromium-browser-snapshots` bucket at whatever
-      # per-commit revision sits nearest Chrome's. The versions say it plainly —
-      # Chrome 152.0.7977.82 against Chromium 152.0.7977.0. The old order named
-      # `chromium` first, so this job drove an un-release-qualified trunk
-      # snapshot with a shipped release on the same disk. ⚠ That is a
-      # determinism argument, not a measurement: nothing here has shown the
-      # snapshot launching less reliably than the release.
-      #
-      # The same list is in scripts/dogfood/briefs/_cdp.mjs,
-      # scripts/dogfood/oracle.sh and dogfood_oracle_test.go, and
-      # `TestEveryBrowserResolverAgreesOnTheSameOrder` fails when they drift.
-      - name: resolve a browser for the render-oracle tests
-        run: |
-          set -uo pipefail
-          for b in google-chrome google-chrome-stable chromium chromium-browser chrome; do
-            if command -v "$b" >/dev/null 2>&1; then
-              echo "CIVITAI_CHROME=$(command -v "$b")" >> "$GITHUB_ENV"
-              "$b" --version || true
-              exit 0
-            fi
-          done
-          echo "::error::no Chromium/Chrome on this runner. The render-oracle tests refuse to skip under CI, so \`go test ./...\` will fail. Add a browser install step here (the tests themselves must NOT be loosened into a skip)."
-          exit 1
-
-      # 🔴 A RESOLVED BROWSER IS NOT A WORKING BROWSER, AND THAT GAP IS WHAT
-      # MADE THIS JOB FLAKY. Measured 2026-09-21 over four runs — `main` and
-      # three PRs, one of them a single markdown file — the step above resolved
-      # `/usr/bin/chromium` and printed its version, and `go test ./...` then
-      # died with:
-      #
-      #   {"assertion":"celsius","pass":false,"reason":"harness error: browser
-      #    never printed a DevTools endpoint: [ERROR:dbus/bus.cc:405] Failed to
-      #    connect to the bus: Could not parse server address: …"}
-      #   oracle: the assertion could not run (exit 2) — nothing was measured
-      #
-      # In a 31 KB log that produced ZERO `--- FAIL:` lines and every other
-      # package `ok`: the oracle behaved correctly (exit 2, "nothing was
-      # measured", rather than a false `RENDER=no`) and the job went red with no
-      # failing test to point at. Two of those runs went green on re-run with no
-      # change, so the intermittency is in the browser's startup, not in the
-      # code under test.
-      #
-      # This step launches the browser through the harness's own `launch()`
-      # BEFORE any test does. Three things it buys, none of which the version
-      # print above can: (1) a browser that cannot bind a debugging port fails
-      # here, by name, in three lines, instead of eighty lines into a Go test;
-      # (2) it publishes the cold-launch time on every run, which is the
-      # distribution nobody had while diagnosing this; (3) a launch that needed
-      # a retry raises a ::warning EVEN THOUGH IT SUCCEEDED, which is the half a
-      # retry normally hides — "the browser has started failing half the time"
-      # must not be absorbed into a green.
-      - name: browser smoke — the resolved browser must actually launch
-        run: |
-          set -uo pipefail
-
-          # NEGATIVE CONTROL — can this step still go red? A smoke test that
-          # reports success whatever it is pointed at is indistinguishable from
-          # a working browser. One attempt and a short budget so the control
-          # costs ~0s: the fake exits 3 immediately.
-          ctl="$RUNNER_TEMP/not-a-browser"
-          printf '#!/bin/sh\nexit 3\n' > "$ctl" && chmod +x "$ctl"
-          if CIVITAI_CHROME="$ctl" CIVITAI_ASSERT_LAUNCH_ATTEMPTS=1 CIVITAI_ASSERT_LAUNCH_MS=2000 \
-             node -e 'import("./scripts/dogfood/briefs/_cdp.mjs").then(async (m) => { const { proc } = await m.launch(); proc.kill("SIGKILL"); })' \
-             >/dev/null 2>&1; then
-            echo "::error::the browser smoke test reported SUCCESS for a binary that exits 3 without printing anything. It is not testing the browser, so its verdict about the real one means nothing."
-            exit 1
-          fi
-
-          # THE REAL LAUNCH. `|| true` then judged by CONTENT: the step must
-          # distinguish "failed" from "succeeded after a retry", and an exit
-          # code cannot say the second thing.
-          node -e 'import("./scripts/dogfood/briefs/_cdp.mjs").then(async (m) => { const { proc } = await m.launch(); proc.kill("SIGKILL"); console.log("SMOKE OK"); })' \
-            > "$RUNNER_TEMP/browser-smoke.log" 2>&1 || true
-          cat "$RUNNER_TEMP/browser-smoke.log"
-
-          if ! grep -aq 'SMOKE OK' "$RUNNER_TEMP/browser-smoke.log"; then
-            echo "::error::$CIVITAI_CHROME resolved but never printed a DevTools endpoint. Every render-oracle test will report a harness error and this job will go red with no failing test name. Do NOT loosen the tests into a skip and do NOT make the oracle swallow this — fix or replace the browser (see LAUNCH_FLAGS / LAUNCH_MS in scripts/dogfood/briefs/_cdp.mjs)."
-            exit 1
-          fi
-
-          if grep -aq 'BROWSER LAUNCH RETRY' "$RUNNER_TEMP/browser-smoke.log"; then
-            echo "::warning title=browser launch retried::the browser did not start on the first attempt. This run is green, but the launch flake is still live — read the attempt diagnostics above before treating this job's colour as a statement about the browser."
-          fi
+      # 🔴 THE RENDER-ORACLE TESTS REFUSE TO SKIP UNDER CI, so a job running
+      # them has to give them a browser that LAUNCHES — resolved, then smoke-
+      # tested through the harness's own launch(), with a negative control.
+      # This job still needs one: dogfood_t1_floor_test.go stays in the always
+      # tier (it reads internal/cmd/app_doctor.go) and drives the browser. The
+      # logic, and the measured flake it exists for, is in the script — ONE
+      # copy, shared with `dogfood-browser`.
+      - name: resolve and smoke-test a browser for the render-oracle tests
+        run: ./scripts/dogfood/ci-browser.sh
 
       # Shape (2): `gofmt -s -l .` prints NOTHING and exits 0 both when every
       # file is clean AND when it walked zero files, so its silence is not by
@@ -225,19 +136,30 @@ jobs:
       # resolves to ~19 real packages in this same job. A third floor would
       # assert the same fact a third time.
       #
-      # CIVITAI_ASSERT_WAIT_LOG: every in-page wait the render-oracle tests make
-      # is logged (scripts/dogfood/briefs/_cdp.mjs), and the step publishes the
-      # distribution of the ones that SUCCEEDED. That distribution is the only
-      # evidence for the short budget the expected-timeout negative controls run
-      # on (dogfood_control_wait_test.go): a control that reports "absent" after
-      # a wait shorter than a real mount takes is a control that cannot fail.
+      # 🔴 THE ROOT PACKAGE IS SPLIT, AND THIS STEP RUNS ONLY ITS ALWAYS TIER.
+      # Its browser tier — the tests that drive headless Chrome through
+      # scripts/dogfood, ~85% of this job's old wall time — runs in the
+      # `dogfood-browser` job below. The split is ONE list of files,
+      # scripts/dogfood/browser-tier.sh; this step skips those files' tests and
+      # that job runs exactly them. Each job then checks its half against
+      # `go test -list` of the real binary, so always ∪ browser is the whole
+      # package and nothing runs twice. Locally `go test ./...` / `make ci`
+      # still run everything.
       - name: test
-        env:
-          CIVITAI_ASSERT_WAIT_LOG: ${{ runner.temp }}/dogfood-waits.jsonl
         run: |
           set -uo pipefail
 
-          go test ./... 2>&1 | tee "$RUNNER_TEMP/gotest.log"
+          # Every package but the root: unchanged.
+          mapfile -t pkgs < <(go list ./... | grep -vx 'github.com/civitai/cli')
+          go test "${pkgs[@]}" 2>&1 | tee "$RUNNER_TEMP/gotest.log"
+
+          # The root package, minus the browser tier. -json so the tests that
+          # RAN can be counted; rendered back to plain text for the log.
+          skip=$(./scripts/dogfood/browser-tier.sh regex)
+          ./scripts/dogfood/browser-tier.sh names > "$RUNNER_TEMP/browser.txt"
+          go test -list '.*' . | grep -v '^ok' | LC_ALL=C sort > "$RUNNER_TEMP/golist.txt"
+          go test -json -skip "$skip" . | tee "$RUNNER_TEMP/root.json" \
+            | jq -rj 'select(.Action == "output") | .Output' | tee -a "$RUNNER_TEMP/gotest.log"
 
           # Measured on this tree: 19 packages report ok, 1 has no test files.
           # The floor sits below that so ordinary churn does not trip it.
@@ -248,10 +170,86 @@ jobs:
             exit 1
           fi
 
-          ./scripts/dogfood/wait-summary.sh "$CIVITAI_ASSERT_WAIT_LOG"
+          # 🔴 THE -skip FILTER MUST LEAVE EXACTLY (the binary's tests − the
+          # browser tier). An over-broad filter would drop always-tier tests
+          # with the job green; a browser name the binary does not hold means
+          # the list is stale. SKIP is accepted (a test may skip by design);
+          # neither line is not.
+          LC_ALL=C comm -23 "$RUNNER_TEMP/golist.txt" "$RUNNER_TEMP/browser.txt" > "$RUNNER_TEMP/always.txt"
+          jq -r 'select((.Action == "pass" or .Action == "skip") and .Test != null and (.Test | contains("/") | not)) | .Test' \
+            "$RUNNER_TEMP/root.json" | LC_ALL=C sort > "$RUNNER_TEMP/always-ran.txt"
+          echo "root package: $(wc -l < "$RUNNER_TEMP/golist.txt") tests in the binary, $(wc -l < "$RUNNER_TEMP/browser.txt") in the browser tier, $(wc -l < "$RUNNER_TEMP/always-ran.txt") reported here"
+          if [ ! -s "$RUNNER_TEMP/always-ran.txt" ] || ! diff "$RUNNER_TEMP/always.txt" "$RUNNER_TEMP/always-ran.txt"; then
+            echo "::error::the root package's always tier did not run exactly (binary's tests − browser tier). Diff above: < expected but not reported, > reported but not expected. See scripts/dogfood/browser-tier.sh."
+            exit 1
+          fi
 
       - name: build
         run: go build ./...
+
+  # ── the root package's BROWSER tier ──────────────────────────────────────
+  #
+  # The render-oracle tests (headless Chrome against a served block, through
+  # scripts/dogfood) were ~85% of `build-test`'s wall time. They run here, in
+  # ONE job, serially, exactly as they did inside `build-test`.
+  #
+  # ⚠ NOT SHARDED, AND THAT WAS MEASURED. A 4-shard version of this job cut
+  # the unqueued critical path to ~105–135 s, and then waited 147–1123 s per
+  # shard for a runner on a saturated pool: observed wall 432–865 s, worse
+  # than one job. One job, one runner slot.
+  #
+  # 🔴 THIS JOB IS ITS OWN LEDGER. `go test -run <filter>` exits 0 when the
+  # filter matches nothing, so the step requires the top-level PASS lines to
+  # be EXACTLY the browser tier, every name of which the real binary must
+  # hold. With `build-test`'s mirror-image check, always ∪ browser is the
+  # whole package, each test once.
+  dogfood-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: resolve and smoke-test a browser for the render-oracle tests
+        run: ./scripts/dogfood/ci-browser.sh
+
+      - name: browser tests
+        env:
+          CIVITAI_ASSERT_WAIT_LOG: ${{ runner.temp }}/dogfood-waits.jsonl
+        run: |
+          set -uo pipefail
+
+          run=$(./scripts/dogfood/browser-tier.sh regex)
+          ./scripts/dogfood/browser-tier.sh names > "$RUNNER_TEMP/browser.txt"
+          go test -list '.*' . | grep -v '^ok' | LC_ALL=C sort > "$RUNNER_TEMP/golist.txt"
+
+          # Every browser-tier name must be a test the binary holds.
+          stale=$(LC_ALL=C comm -13 "$RUNNER_TEMP/golist.txt" "$RUNNER_TEMP/browser.txt")
+          if [ -n "$stale" ]; then
+            echo "::error::scripts/dogfood/browser-tier.sh names tests the binary does not hold (build tag? renamed?):"
+            echo "$stale"
+            exit 1
+          fi
+
+          # -count=1: these tests' inputs are mostly files their CHILD
+          # processes read (oracle.sh, _cdp.mjs), which Go's test cache does
+          # not track — a cached replay would re-print a PASS for code that
+          # changed.
+          go test -json -count=1 -run "$run" . | tee "$RUNNER_TEMP/browser.json" \
+            | jq -rj 'select(.Action == "output") | .Output'
+
+          jq -r 'select(.Action == "pass" and .Test != null and (.Test | contains("/") | not)) | .Test' \
+            "$RUNNER_TEMP/browser.json" | LC_ALL=C sort > "$RUNNER_TEMP/passed.txt"
+          echo "browser tier: $(wc -l < "$RUNNER_TEMP/passed.txt") top-level PASS, $(wc -l < "$RUNNER_TEMP/browser.txt") listed, of $(wc -l < "$RUNNER_TEMP/golist.txt") tests in the binary"
+          if [ ! -s "$RUNNER_TEMP/passed.txt" ] || ! diff "$RUNNER_TEMP/browser.txt" "$RUNNER_TEMP/passed.txt"; then
+            echo "::error::the browser tier did not PASS exactly its listed tests (diff above; an empty PASS list means the -run filter matched nothing, which \`go test\` reports as success)."
+            exit 1
+          fi
+
+          ./scripts/dogfood/wait-summary.sh "$CIVITAI_ASSERT_WAIT_LOG"
 
   # Static-analysis gate: golangci-lint over the whole module using the curated
   # linter set in .golangci.yml (staticcheck / govet / ineffassign / unused /

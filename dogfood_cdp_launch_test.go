@@ -195,7 +195,7 @@ func runCdpLaunch(t *testing.T, okFrom int, env ...string) launchRun {
 // 🔴 A RETRY IS AN EXCELLENT WAY TO STOP NOTICING A BROKEN BROWSER. The reason
 // this one is acceptable is that its SUCCESS is as loud as its failure: a run
 // whose browser needed a second attempt prints `BROWSER LAUNCH RETRY` with the
-// first attempt's diagnostics, and ci.yml's smoke step turns that string into a
+// first attempt's diagnostics, and ci-browser.sh's smoke step turns that string into a
 // `::warning`. Without that line a browser degrading from "always works" to
 // "works half the time" would be absorbed into a green and nobody would learn
 // about it until it degraded again.
@@ -218,7 +218,7 @@ func TestCdpLaunchRetriesOnceAndAnnouncesItEvenThoughItSucceeded(t *testing.T) {
 			len(r.calls), r.calls)
 	}
 	if !strings.Contains(r.stderr, "BROWSER LAUNCH RETRY") {
-		t.Fatalf("a launch that needed a retry did not say so. ci.yml's browser-smoke step greps for "+
+		t.Fatalf("a launch that needed a retry did not say so. scripts/dogfood/ci-browser.sh's smoke step greps for "+
 			"`BROWSER LAUNCH RETRY` to raise a ::warning; without it a browser that fails half the "+
 			"time is absorbed into a green run.\nstderr:\n%s", r.stderr)
 	}
@@ -263,7 +263,7 @@ func TestCdpLaunchIsBoundedAndStillFailsLoudly(t *testing.T) {
 	}
 }
 
-// The bound is a DEFAULT, not a constant: ci.yml's negative control sets it to
+// The bound is a DEFAULT, not a constant: ci-browser.sh's negative control sets it to
 // 1 so the failing path costs one budget rather than two. If the env var stops
 // being honoured that control silently doubles in cost and stops being the
 // single-attempt measurement it claims to be.
@@ -454,7 +454,10 @@ func TestEveryBrowserResolverAgreesOnTheSameOrder(t *testing.T) {
 	// The two shell copies, matched by the loop that walks the list.
 	for _, p := range []string{
 		filepath.Join(oracleDir, "oracle.sh"),
-		filepath.Join(workflowDir, "ci.yml"),
+		// ci.yml's inline resolver moved into this script when the browser
+		// tests got their own job; every CI job that needs a browser
+		// calls it.
+		filepath.Join(oracleDir, "ci-browser.sh"),
 	} {
 		body := read(p)
 		m := shellBrowserLoopRe.FindAllStringSubmatch(body, -1)
