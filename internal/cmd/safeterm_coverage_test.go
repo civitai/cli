@@ -552,6 +552,21 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"could be reverted with no behavioural test going red. Both are driven now, and the test was " +
 			"renamed off …RefusalCannotForgeALine because that name is what made a one-surface test read " +
 			"as a three-surface one"},
+	// --- app feedback: the one surface whose text ANY site user can write -----
+	"feedbackMessageLines": {"TestAppFeedbackMessageEscapeSequencesNeverReachTheTerminal",
+		"`app feedback`: the message body, written by an arbitrary site user and read by the owner's coding " +
+			"agent. The named test pins the whole rendered view for a message carrying CSI, OSC-52, the 8-bit CSI " +
+			"introducer and a bidi override"},
+	"feedbackHeader": {"TestAppFeedbackHeaderCellsCannotForgeARow",
+		"`app feedback` row headers: created time, status, app version, build sha, surface and (with " +
+			"--with-reporter) the reporter's username — every cell hostile at once, one row in, one column-zero " +
+			"`#` line out"},
+	"escapeTerminalRunes": {"TestAppFeedbackJSONEscapesWhatATerminalWouldActOn",
+		"`app feedback --json`: safeTerm is the PREDICATE here, not a strip — a rune it would remove is written " +
+			"as a \\uXXXX escape instead, so DEL, C1 and the invisible class never reach a terminal raw while the " +
+			"decoded string is unchanged"},
+	"runAppFeedbackCount": {"TestAppFeedbackCountAcrossEveryApp",
+		"`app feedback --count` with no slug: the slug and listing id of every listing listMine returned"},
 	"printAppMetrics": {"TestTabwriterRenderersCannotBeForged",
 		"the scope and endpoint tokens — kept RAW on purpose (AGENTS.md item 8), which makes the " +
 			"strip the ONLY thing between an uploader-shaped token and the terminal — plus the window " +
