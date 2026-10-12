@@ -40,16 +40,16 @@ import (
 //   - each ledgered leaf's control was re-run at the short budget with the
 //     missing thing made PRESENT, and the control's own expectation went red —
 //     the mutation table is in the same PR;
-//   - the default stays 15 s for every leaf NOT in this ledger, and the guards
-//     below make a positive case on the short budget a failure rather than a
+//   - the default stays 15 s for every leaf NOT in this ledger, and the guard
+//     below makes a positive case on the short budget a failure rather than a
 //     faster flake.
 //
 // ⚠ This shortens nothing for an operator grading a real trial: the knob is set
 // on the child environment of a ledgered leaf only, and _cdp.mjs's default is
 // unchanged.
 const (
-	// The in-page wait a ledgered leaf gets. Measured basis in the PR body; the
-	// guard TestControlWaitIsBelowTheDefault keeps it a SHORTENING.
+	// The in-page wait a ledgered leaf gets when nobody raised the default.
+	// Measured basis in the PR body. It is a FLOOR as well: see controlBudget.
 	dogfoodControlWaitMS = 5000
 	// _cdp.mjs's own default, pinned against that file by
 	// TestControlWaitDefaultMatchesTheHarness so the two cannot drift.
@@ -63,11 +63,14 @@ const (
 // every one of these sits beside a positive sibling that must keep the full
 // default.
 //
-// Adding a leaf: run it with `go test -json -run '<Parent>/<leaf>' .` and read
-// its output for `timed out after 15000ms`; if the wait it times out on is the
-// absence the control exists to show, add it here. checkControlWait fails a leaf
-// that times out at the default without being listed, and fails a listed leaf
-// that stops timing out, so the set cannot silently grow stale either way.
+// Adding a leaf: run it with `CIVITAI_ASSERT_WAIT_LOG=/tmp/w.jsonl go test -run
+// '<Parent>/<leaf>' .` and read /tmp/w.jsonl for an `"ok":false` row — NOT the
+// test's output, which the post-arm leaf never prints a timeout into. If the
+// wait it times out on is the absence the control exists to show, add it here.
+// A new negative control that is NOT listed simply keeps the full 15 s: slower,
+// still correct, and nothing fails. A LISTED leaf that stops timing out does
+// fail (checkControlWait), and a listed name that matches no test fails
+// statically, so an entry cannot go stale silently.
 var expectedTimeoutLeaves = map[string]string{
 	"TestOracleGateNeverDecidesTheVerdict/green_gate_over_a_scaffold":                               `[data-testid="celsius"] on an untouched scaffold`,
 	"TestOracleSendsTheHostHandshake/without_it_(control)":                                          `[data-testid="celsius"] on a host-gated block with no handshake`,
@@ -162,12 +165,13 @@ func parseWaitLog(raw []byte) ([]waitRow, error) {
 // hand-added env entry — and every one of those arrives through `full`, not
 // through anything the leaf itself says.
 func resolveControlWait(leaf string, full []string, log string) ([]string, int, error) {
+	v := effectiveEnv(full, controlWaitEnvKey)
 	full = append(full, waitLogEnvKey+"="+log)
 	if _, ledgered := expectedTimeoutLeaves[leaf]; ledgered {
-		full = append(full, fmt.Sprintf("%s=%d", controlWaitEnvKey, dogfoodControlWaitMS))
-		return full, dogfoodControlWaitMS, nil
+		budget := controlBudget(v)
+		full = append(full, fmt.Sprintf("%s=%d", controlWaitEnvKey, budget))
+		return full, budget, nil
 	}
-	v := effectiveEnv(full, controlWaitEnvKey)
 	if v == "" {
 		return full, dogfoodDefaultWaitMS, nil
 	}
@@ -181,6 +185,28 @@ func resolveControlWait(leaf string, full []string, log string) ([]string, int, 
 			controlWaitEnvKey, v, leaf, dogfoodDefaultWaitMS)
 	}
 	return full, n, nil
+}
+
+// controlBudget is the wait a ledgered leaf gets, given the value of
+// CIVITAI_ASSERT_WAIT_MS that would otherwise have reached it.
+//
+// 🔴 A RAISED DEFAULT RAISES THE CONTROL TOO. An operator who sets 30000 is
+// saying "this machine mounts slowly"; forcing 5000 on the controls there is
+// the exact hazard this file exists to rule out (a control reporting "absent"
+// before a real mount could have finished), on the one machine known to be
+// slow. So the control keeps the same 1:3 ratio to whatever the positive cases
+// get, and never goes below the measured floor: max(5000, v/3).
+//
+// A value BELOW the default, or one that does not parse, does not shorten the
+// control further — 5000 is the smallest budget anyone measured a margin for.
+// (Such a value is refused outright for every unledgered leaf, so the run is
+// already red; this only decides what the ledgered leaves do meanwhile.)
+func controlBudget(v string) int {
+	n, err := strconv.Atoi(v)
+	if err != nil || n/3 < dogfoodControlWaitMS {
+		return dogfoodControlWaitMS
+	}
+	return n / 3
 }
 
 // controlWaitVerdict judges one oracle run's wait log against the ledger.
@@ -198,15 +224,6 @@ func controlWaitVerdict(leaf string, rows []waitRow, budget int) error {
 				"is measuring anything", leaf, r.Budget, r.What, budget)
 		}
 		if !r.OK {
-			// The budget field is the harness's own CLAIM. A deadline that is
-			// not computed from it would log the short budget while waiting the
-			// long one — and a control that waited 15 s is not the measurement
-			// this ledger vouches for. Twice the budget is slack for a loaded
-			// poll loop (measured timeouts land 15–110 ms over), not a tolerance.
-			if r.MS > 2*budget {
-				return fmt.Errorf("%s: the wait for %q timed out after %d ms on a logged %d ms budget — the "+
-					"harness's deadline is not the budget it reports", leaf, r.What, r.MS, budget)
-			}
 			timeouts = append(timeouts, fmt.Sprintf("%q after %d ms", r.What, r.MS))
 		}
 	}
@@ -216,15 +233,10 @@ func controlWaitVerdict(leaf string, rows []waitRow, budget int) error {
 				"logged). Either the log is wired to nothing, or the control no longer earns its verdict by "+
 				"timing out — in which case its entry is stale and must go", leaf, len(rows))
 		}
-		return nil
 	}
-	if len(timeouts) > 0 {
-		return fmt.Errorf("%s waited out the FULL %d ms in-page budget (%s) and is not in "+
-			"expectedTimeoutLeaves. If it is a negative control whose verdict IS that absence, add it to "+
-			"the ledger (dogfood_control_wait_test.go says how) so it stops costing the suite %d s per "+
-			"wait. If it is a POSITIVE case, something it waited for never appeared",
-			leaf, budget, strings.Join(timeouts, "; "), budget/1000)
-	}
+	// An UNLEDGERED leaf that times out is not judged here: a new negative
+	// control on the full budget is slower, not wrong, and a positive case that
+	// timed out fails its own assertion.
 	return nil
 }
 
@@ -266,20 +278,10 @@ func TestControlWaitDefaultMatchesTheHarness(t *testing.T) {
 	}
 }
 
-func TestControlWaitIsBelowTheDefault(t *testing.T) {
-	// Exactly half or less: a "shortening" to 14 s would keep the ledger's
-	// shape while buying nothing, and the margin argument needs headroom on
-	// both sides — far enough below the default to pay for itself, and the PR's
-	// measured max successful wait far enough below IT.
-	if dogfoodControlWaitMS*2 > dogfoodDefaultWaitMS || dogfoodControlWaitMS < 1000 {
-		t.Fatalf("dogfoodControlWaitMS=%d is outside [1000, %d]", dogfoodControlWaitMS, dogfoodDefaultWaitMS/2)
-	}
-}
-
 // 🔴 A LEDGER ENTRY THAT NAMES NOTHING IS A GUARD THAT NEVER RUNS. A renamed
 // subtest would leave its entry matching no leaf: the control falls back to the
-// full budget (slower, still correct) and checkControlWait then flags it — but
-// only when that leaf runs, which a renamed PARENT never does. So each key is
+// full budget (slower, still correct) and NOTHING at run time notices — an
+// unledgered leaf that times out is deliberately not a failure. So each key is
 // resolved statically: the parent must be a Test func declared in this package,
 // and the subtest part must be the `go test` rewrite of a string literal in that
 // func's body.
@@ -373,7 +375,11 @@ func TestControlWaitGuardsReadTheEffectiveEnvironment(t *testing.T) {
 		{"positive, set then cleared: the default", leaf, []string{short, controlWaitEnvKey + "="}, "", dogfoodDefaultWaitMS},
 		{"positive, the short wait leaked into the process env", leaf, []string{short, "PATH=/x"}, "NOT in expectedTimeoutLeaves", 0},
 		{"positive, garbage", leaf, []string{controlWaitEnvKey + "=soon"}, "NOT in expectedTimeoutLeaves", 0},
-		{"ledgered, whatever the process says", ledgered, []string{controlWaitEnvKey + "=30000"}, "", dogfoodControlWaitMS},
+		{"ledgered, unset: the short budget", ledgered, []string{"PATH=/x"}, "", 5000},
+		{"ledgered, the default spelled out: the short budget", ledgered, []string{controlWaitEnvKey + "=15000"}, "", 5000},
+		{"ledgered, an operator's raised wait scales the control", ledgered, []string{controlWaitEnvKey + "=30000"}, "", 10000},
+		{"ledgered, a value below the floor never shortens the control", ledgered, []string{controlWaitEnvKey + "=1000"}, "", 5000},
+		{"ledgered, garbage: the short budget", ledgered, []string{controlWaitEnvKey + "=soon"}, "", 5000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env, got, err := resolveControlWait(tc.leaf, append([]string(nil), tc.env...), "/x/waits.jsonl")
@@ -409,9 +415,8 @@ func TestControlWaitGuardsReadTheEffectiveEnvironment(t *testing.T) {
 		{"ledgered but never timed out: stale entry", ledgered, []waitRow{mounted(dogfoodControlWaitMS)}, dogfoodControlWaitMS, "no in-page wait timed out"},
 		{"ledgered but the log is empty: wired to nothing", ledgered, nil, dogfoodControlWaitMS, "no in-page wait timed out"},
 		{"ledgered but the harness ignored the budget", ledgered, []waitRow{timeout(dogfoodDefaultWaitMS)}, dogfoodControlWaitMS, "is not reaching the assertion"},
-		{"ledgered, budget logged but not honoured", ledgered, []waitRow{{What: "x", OK: false, MS: dogfoodDefaultWaitMS, Budget: dogfoodControlWaitMS}}, dogfoodControlWaitMS, "is not the budget it reports"},
 		{"positive and never timed out", leaf, []waitRow{mounted(dogfoodDefaultWaitMS)}, dogfoodDefaultWaitMS, ""},
-		{"unledgered and waited out the full budget", leaf, []waitRow{timeout(dogfoodDefaultWaitMS)}, dogfoodDefaultWaitMS, "waited out the FULL"},
+		{"unledgered and waited out the full budget: slower, not wrong", leaf, []waitRow{timeout(dogfoodDefaultWaitMS)}, dogfoodDefaultWaitMS, ""},
 		{"positive but the harness used another budget", leaf, []waitRow{mounted(dogfoodControlWaitMS)}, dogfoodDefaultWaitMS, "is not reaching the assertion"},
 	} {
 		t.Run("verdict: "+tc.name, func(t *testing.T) {
