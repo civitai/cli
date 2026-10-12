@@ -136,6 +136,7 @@ func TestLegitRoutesNeverMatchAnyRule(t *testing.T) {
 		"await fetch('/api/v1/blocks/images')",
 		"fetch(`${base}/api/v1/blocks/me`)",
 		"fetch(`${base}/api/v1/blocks/buzz`)",
+		"return app.site.get<{ blue: number; green: number; yellow: number }>('blocks/buzz');",
 		"fetch(`${origin}/api/v1/blocks/dev-token`, { method: 'POST' })",
 		"fetch(`${base}/api/trpc/buzz.getBuzzAccount`)",
 	}

@@ -18,9 +18,7 @@
 // postMessage bridge only for capabilities that need host chrome or the host
 // session UI (pickers, Buzz purchase, image upload, publish/post,
 // sign-in/consent, token refresh). So a direct call to a live route is the
-// supported path, not an anti-pattern, and no rule here flags one:
-// `/api/v1/blocks/buzz`, `/me`, `/models`, `/images`, `/dev-token`,
-// `/shared-storage/*`, `/app-storage/*`, `/workflows/*`.
+// supported path, not an anti-pattern, and no rule here flags one.
 //
 // The inverse holds too: the bridge hooks that still exist
 // (`useBuzzBalance()`, `useSharedStorage()`, …) keep working and shipped apps
@@ -35,8 +33,9 @@
 //   - `buzz-rest` — it called `/api/v1/blocks/buzz` a REMOVED route. The route
 //     was deleted and then restored (civitai #5051, 2026-09-23) and is live.
 //
-// A route rule is only right for a route that is GONE — check the server
-// before adding one, and remove it if the route comes back.
+// A route rule is only right for a route that is GONE, checked against the
+// server — never against a list of routes copied into this repo, which is how
+// `buzz-rest` went stale. Remove it if the route comes back.
 package antipattern
 
 import (
@@ -94,8 +93,8 @@ func Rules() []Rule {
 		// NO REST-ROUTE RULE HERE, DELIBERATELY. Two lived at this spot —
 		// `buzz-rest` and `shared-storage-rest` — and both were removed: the
 		// routes are live and REST is the supported path for data (package doc).
-		// TestBuzzRestIsAccepted and TestSharedStorageRestIsAccepted are the
-		// guards. The shared-storage pattern was also ineffective: against a
+		// TestLegitRoutesNeverMatchAnyRule, TestSharedStorageRestIsAccepted and
+		// the scan-clean `buzz-rest-ok` fixture are the guards. The shared-storage pattern was also ineffective: against a
 		// real migrated app it matched 1 comment line and 0 call sites, which
 		// read `'blocks/shared-storage/list'` because `@civitai/sdk`'s
 		// `app.site.get` prepends `/api/v1`.
