@@ -79,104 +79,15 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      # 🔴 THE RENDER-ORACLE TESTS REFUSE TO SKIP UNDER CI, so this job has to be
-      # able to give them a browser. They drive a real headless Chromium against
-      # a real served block (scripts/dogfood/oracle.sh); a skip here and a pass
-      # here are indistinguishable in the log the merge gate is read from, which
-      # is why the helper fails instead — see dogfood_oracle_test.go.
-      #
-      # Resolved rather than installed: the ubuntu runner image ships browsers,
-      # and an unconditional apt/snap install would cost every PR minutes for
-      # something already present. If this step is what goes red, the fix is one
-      # line — add an install here — NOT loosening the test into a skip.
-      #
-      # 🔴 THE ORDER PUTS RELEASE BUILDS FIRST, AND IT CHANGED FOR A REASON.
-      # `ubuntu-latest` ships BOTH: `/usr/bin/google-chrome` is a
-      # `google-chrome-stable` .deb, and `/usr/bin/chromium` is a symlink into
-      # `/usr/local/share/chromium/`, which `install-google-chrome.sh` unzips
-      # straight out of the `chromium-browser-snapshots` bucket at whatever
-      # per-commit revision sits nearest Chrome's. The versions say it plainly —
-      # Chrome 152.0.7977.82 against Chromium 152.0.7977.0. The old order named
-      # `chromium` first, so this job drove an un-release-qualified trunk
-      # snapshot with a shipped release on the same disk. ⚠ That is a
-      # determinism argument, not a measurement: nothing here has shown the
-      # snapshot launching less reliably than the release.
-      #
-      # The same list is in scripts/dogfood/briefs/_cdp.mjs,
-      # scripts/dogfood/oracle.sh and dogfood_oracle_test.go, and
-      # `TestEveryBrowserResolverAgreesOnTheSameOrder` fails when they drift.
-      - name: resolve a browser for the render-oracle tests
-        run: |
-          set -uo pipefail
-          for b in google-chrome google-chrome-stable chromium chromium-browser chrome; do
-            if command -v "$b" >/dev/null 2>&1; then
-              echo "CIVITAI_CHROME=$(command -v "$b")" >> "$GITHUB_ENV"
-              "$b" --version || true
-              exit 0
-            fi
-          done
-          echo "::error::no Chromium/Chrome on this runner. The render-oracle tests refuse to skip under CI, so \`go test ./...\` will fail. Add a browser install step here (the tests themselves must NOT be loosened into a skip)."
-          exit 1
-
-      # 🔴 A RESOLVED BROWSER IS NOT A WORKING BROWSER, AND THAT GAP IS WHAT
-      # MADE THIS JOB FLAKY. Measured 2026-09-21 over four runs — `main` and
-      # three PRs, one of them a single markdown file — the step above resolved
-      # `/usr/bin/chromium` and printed its version, and `go test ./...` then
-      # died with:
-      #
-      #   {"assertion":"celsius","pass":false,"reason":"harness error: browser
-      #    never printed a DevTools endpoint: [ERROR:dbus/bus.cc:405] Failed to
-      #    connect to the bus: Could not parse server address: …"}
-      #   oracle: the assertion could not run (exit 2) — nothing was measured
-      #
-      # In a 31 KB log that produced ZERO `--- FAIL:` lines and every other
-      # package `ok`: the oracle behaved correctly (exit 2, "nothing was
-      # measured", rather than a false `RENDER=no`) and the job went red with no
-      # failing test to point at. Two of those runs went green on re-run with no
-      # change, so the intermittency is in the browser's startup, not in the
-      # code under test.
-      #
-      # This step launches the browser through the harness's own `launch()`
-      # BEFORE any test does. Three things it buys, none of which the version
-      # print above can: (1) a browser that cannot bind a debugging port fails
-      # here, by name, in three lines, instead of eighty lines into a Go test;
-      # (2) it publishes the cold-launch time on every run, which is the
-      # distribution nobody had while diagnosing this; (3) a launch that needed
-      # a retry raises a ::warning EVEN THOUGH IT SUCCEEDED, which is the half a
-      # retry normally hides — "the browser has started failing half the time"
-      # must not be absorbed into a green.
-      - name: browser smoke — the resolved browser must actually launch
-        run: |
-          set -uo pipefail
-
-          # NEGATIVE CONTROL — can this step still go red? A smoke test that
-          # reports success whatever it is pointed at is indistinguishable from
-          # a working browser. One attempt and a short budget so the control
-          # costs ~0s: the fake exits 3 immediately.
-          ctl="$RUNNER_TEMP/not-a-browser"
-          printf '#!/bin/sh\nexit 3\n' > "$ctl" && chmod +x "$ctl"
-          if CIVITAI_CHROME="$ctl" CIVITAI_ASSERT_LAUNCH_ATTEMPTS=1 CIVITAI_ASSERT_LAUNCH_MS=2000 \
-             node -e 'import("./scripts/dogfood/briefs/_cdp.mjs").then(async (m) => { const { proc } = await m.launch(); proc.kill("SIGKILL"); })' \
-             >/dev/null 2>&1; then
-            echo "::error::the browser smoke test reported SUCCESS for a binary that exits 3 without printing anything. It is not testing the browser, so its verdict about the real one means nothing."
-            exit 1
-          fi
-
-          # THE REAL LAUNCH. `|| true` then judged by CONTENT: the step must
-          # distinguish "failed" from "succeeded after a retry", and an exit
-          # code cannot say the second thing.
-          node -e 'import("./scripts/dogfood/briefs/_cdp.mjs").then(async (m) => { const { proc } = await m.launch(); proc.kill("SIGKILL"); console.log("SMOKE OK"); })' \
-            > "$RUNNER_TEMP/browser-smoke.log" 2>&1 || true
-          cat "$RUNNER_TEMP/browser-smoke.log"
-
-          if ! grep -aq 'SMOKE OK' "$RUNNER_TEMP/browser-smoke.log"; then
-            echo "::error::$CIVITAI_CHROME resolved but never printed a DevTools endpoint. Every render-oracle test will report a harness error and this job will go red with no failing test name. Do NOT loosen the tests into a skip and do NOT make the oracle swallow this — fix or replace the browser (see LAUNCH_FLAGS / LAUNCH_MS in scripts/dogfood/briefs/_cdp.mjs)."
-            exit 1
-          fi
-
-          if grep -aq 'BROWSER LAUNCH RETRY' "$RUNNER_TEMP/browser-smoke.log"; then
-            echo "::warning title=browser launch retried::the browser did not start on the first attempt. This run is green, but the launch flake is still live — read the attempt diagnostics above before treating this job's colour as a statement about the browser."
-          fi
+      # 🔴 THE RENDER-ORACLE TESTS REFUSE TO SKIP UNDER CI, so a job running
+      # them has to give them a browser that LAUNCHES — resolved, then smoke-
+      # tested through the harness's own launch(), with a negative control.
+      # This job still needs one: dogfood_t1_floor_test.go stays in the always
+      # tier (it reads internal/cmd/app_doctor.go) and drives the browser. The
+      # logic, and the measured flake it exists for, is in the script — ONE
+      # copy, shared with every dogfood-browser shard.
+      - name: resolve and smoke-test a browser for the render-oracle tests
+        run: ./scripts/dogfood/ci-browser.sh
 
       # Shape (2): `gofmt -s -l .` prints NOTHING and exits 0 both when every
       # file is clean AND when it walked zero files, so its silence is not by
@@ -225,19 +136,28 @@ jobs:
       # resolves to ~19 real packages in this same job. A third floor would
       # assert the same fact a third time.
       #
-      # CIVITAI_ASSERT_WAIT_LOG: every in-page wait the render-oracle tests make
-      # is logged (scripts/dogfood/briefs/_cdp.mjs), and the step publishes the
-      # distribution of the ones that SUCCEEDED. That distribution is the only
-      # evidence for the short budget the expected-timeout negative controls run
-      # on (dogfood_control_wait_test.go): a control that reports "absent" after
-      # a wait shorter than a real mount takes is a control that cannot fail.
+      # 🔴 THE ROOT PACKAGE IS SPLIT, AND THIS STEP RUNS ONLY ITS ALWAYS TIER.
+      # Its browser tier — the tests that drive headless Chrome through
+      # scripts/dogfood, ~85% of this job's old wall time — runs in the
+      # `dogfood-browser` shards below. The split comes from ONE place,
+      # tools/dogfoodshards/plan, and is ledgered both ways: statically by
+      # TestDogfoodBrowserShardsPartitionTheRootPackage (which runs HERE, on
+      # every PR), and at runtime by the count below plus the dogfood-browser
+      # aggregate. Locally `go test ./...` / `make ci` still runs everything.
       - name: test
-        env:
-          CIVITAI_ASSERT_WAIT_LOG: ${{ runner.temp }}/dogfood-waits.jsonl
         run: |
           set -uo pipefail
 
-          go test ./... 2>&1 | tee "$RUNNER_TEMP/gotest.log"
+          # Every package but the root: unchanged.
+          mapfile -t pkgs < <(go list ./... | grep -vx 'github.com/civitai/cli')
+          go test "${pkgs[@]}" 2>&1 | tee "$RUNNER_TEMP/gotest.log"
+
+          # The root package, minus the browser tier. -json so the tests that
+          # RAN can be counted; rendered back to plain text for the log.
+          skip=$(go run ./tools/dogfoodshards -print skip)
+          go run ./tools/dogfoodshards -print list -tier always > "$RUNNER_TEMP/always.txt"
+          go test -json -skip "$skip" . | tee "$RUNNER_TEMP/root.json" \
+            | jq -rj 'select(.Action == "output") | .Output' | tee -a "$RUNNER_TEMP/gotest.log"
 
           # Measured on this tree: 19 packages report ok, 1 has no test files.
           # The floor sits below that so ordinary churn does not trip it.
@@ -248,10 +168,162 @@ jobs:
             exit 1
           fi
 
-          ./scripts/dogfood/wait-summary.sh "$CIVITAI_ASSERT_WAIT_LOG"
+          # 🔴 THE -skip FILTER MUST LEAVE EXACTLY THE ALWAYS TIER. Count the
+          # top-level tests the root package actually reported against the
+          # plan's list: an over-broad skip would drop always-tier tests with
+          # the job green. SKIP is accepted (a test may skip by design);
+          # neither line is not.
+          jq -r 'select((.Action == "pass" or .Action == "skip") and .Test != null and (.Test | contains("/") | not)) | .Test' \
+            "$RUNNER_TEMP/root.json" | sort > "$RUNNER_TEMP/always-ran.txt"
+          echo "root package, always tier: $(wc -l < "$RUNNER_TEMP/always-ran.txt") test(s) reported, $(wc -l < "$RUNNER_TEMP/always.txt") planned"
+          if ! diff <(sort "$RUNNER_TEMP/always.txt") "$RUNNER_TEMP/always-ran.txt"; then
+            echo "::error::the root package's always tier did not run exactly as planned (diff above: < planned but not reported, > reported but not planned). See tools/dogfoodshards/plan."
+            exit 1
+          fi
 
       - name: build
         run: go build ./...
+
+  # ── the root package's BROWSER tier, sharded ─────────────────────────────
+  #
+  # The render-oracle tests (headless Chrome against a served block, through
+  # scripts/dogfood) were ~309 s of `build-test`'s ~330 s test step, fully
+  # serial. They run here as process-level shards instead: separate jobs, so
+  # separate ports, profiles and /tmp/dogfood-oracle-* dirs — which is why
+  # this is not t.Parallel(). Which test runs in which shard is
+  # tools/dogfoodshards/plan: deterministic, longest-measured-first.
+  #
+  # Each shard checks its own PASS list against its plan; `dogfood-browser`
+  # then checks the UNION — every browser-tier test passed exactly once, and
+  # always ∪ browser == `go test -list` of the real binary.
+  dogfood-browser-shard:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Pinned to tools/dogfoodshards/plan.Shards by
+        # TestDogfoodBrowserShardMatrixMatchesThePlan.
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: resolve and smoke-test a browser for the render-oracle tests
+        run: ./scripts/dogfood/ci-browser.sh
+
+      - name: browser tests, shard ${{ matrix.shard }}
+        env:
+          SHARD: ${{ matrix.shard }}
+          CIVITAI_ASSERT_WAIT_LOG: ${{ runner.temp }}/dogfood-waits.jsonl
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/shard"
+          mkdir -p "$out"
+
+          run=$(go run ./tools/dogfoodshards -print run -shard "$SHARD")
+          go run ./tools/dogfoodshards -print list -shard "$SHARD" > "$out/expected.txt"
+          go run ./tools/dogfoodshards -print list -tier always > "$out/always.txt"
+          go run ./tools/dogfoodshards -print shards > "$out/shards.txt"
+          echo "$SHARD" > "$out/index.txt"
+          # What the real binary says it holds — the aggregate's ground truth.
+          go test -list '.*' . | grep -v '^ok' | sort > "$out/golist.txt"
+
+          # -count=1: these tests' inputs are mostly files their CHILD
+          # processes read (oracle.sh, _cdp.mjs), which Go's test cache does
+          # not track — a cached replay would re-print a PASS for code that
+          # changed.
+          go test -json -count=1 -run "$run" . | tee "$out/shard.json" \
+            | jq -rj 'select(.Action == "output") | .Output'
+
+          jq -r 'select(.Action == "pass" and .Test != null and (.Test | contains("/") | not)) | .Test' \
+            "$out/shard.json" | sort > "$out/passed.txt"
+          echo "shard $SHARD: $(wc -l < "$out/passed.txt") top-level PASS, $(wc -l < "$out/expected.txt") planned"
+          if [ ! -s "$out/passed.txt" ] || ! diff <(sort "$out/expected.txt") "$out/passed.txt"; then
+            echo "::error::shard $SHARD did not PASS exactly its planned tests (diff above; an empty PASS list means the -run filter matched nothing, which \`go test\` reports as success)."
+            exit 1
+          fi
+
+          ./scripts/dogfood/wait-summary.sh "$CIVITAI_ASSERT_WAIT_LOG"
+
+      - name: publish the shard's ledger
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dogfood-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/shard/*.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  # 🔴 THE ONE STABLE NAME TO MAKE REQUIRED — `dogfood-browser`, not the
+  # matrix legs (whose names change with the shard count).
+  #
+  # `if: always()` IS LOAD-BEARING: with a bare `needs`, a failed or cancelled
+  # shard makes this job SKIP, and a skipped required check reads as satisfied
+  # to branch protection. So it always runs, and fails unless every shard
+  # reported success AND the union of their PASS lines is exactly the browser
+  # tier, each test once.
+  dogfood-browser:
+    runs-on: ubuntu-latest
+    needs: [dogfood-browser-shard]
+    if: always()
+    steps:
+      - name: every shard succeeded
+        env:
+          SHARDS_RESULT: ${{ needs.dogfood-browser-shard.result }}
+        run: |
+          echo "dogfood-browser-shard: $SHARDS_RESULT"
+          if [ "$SHARDS_RESULT" != "success" ]; then
+            echo "::error::the browser shards ended '$SHARDS_RESULT', not 'success' — a failed, cancelled or skipped shard is not a green browser suite."
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dogfood-shard-*
+          path: shards
+
+      - name: every browser test passed exactly once
+        run: |
+          set -uo pipefail
+          n=$(cat shards/dogfood-shard-1/shards.txt)
+          got=$(find shards -mindepth 1 -maxdepth 1 -type d -name 'dogfood-shard-*' | wc -l)
+          echo "plan: $n shard(s); ledgers received: $got"
+          if [ "$got" -ne "$n" ]; then
+            echo "::error::received $got shard ledger(s) but the plan has $n shards — a shard did not run or did not publish."
+            exit 1
+          fi
+          : > all-passed.txt; : > all-expected.txt
+          for i in $(seq 1 "$n"); do
+            d="shards/dogfood-shard-$i"
+            [ "$(cat "$d/index.txt")" = "$i" ] || { echo "::error::$d is not shard $i"; exit 1; }
+            cmp -s "$d/golist.txt" shards/dogfood-shard-1/golist.txt || { echo "::error::shard $i compiled a different test list from shard 1"; exit 1; }
+            p=$(wc -l < "$d/passed.txt")
+            echo "shard $i: $p PASS"
+            [ "$p" -gt 0 ] || { echo "::error::shard $i passed ZERO tests"; exit 1; }
+            cat "$d/passed.txt" >> all-passed.txt
+            cat "$d/expected.txt" >> all-expected.txt
+          done
+          total=$(wc -l < all-passed.txt)
+          dups=$(sort all-passed.txt | uniq -d)
+          echo "browser tier: $total PASS across $n shards, $(wc -l < all-expected.txt) planned"
+          if [ -n "$dups" ]; then
+            echo "::error::these browser tests ran in more than one shard:"; echo "$dups"; exit 1
+          fi
+          if ! diff <(sort all-expected.txt) <(sort all-passed.txt); then
+            echo "::error::the shards' PASS lines are not exactly the planned browser tier (diff above)."
+            exit 1
+          fi
+          # always ∪ browser must be the real binary's list, disjoint.
+          sort shards/dogfood-shard-1/always.txt all-passed.txt > union.txt
+          if [ -n "$(uniq -d union.txt)" ] || ! diff union.txt shards/dogfood-shard-1/golist.txt; then
+            echo "::error::always tier ∪ browser tier is not exactly \`go test -list '.*' .\` (diff above) — a test is in neither tier, in both, or not a test."
+            exit 1
+          fi
+          echo "OK: $(wc -l < union.txt) root tests = $(wc -l < shards/dogfood-shard-1/always.txt) always + $total browser, each exactly once"
 
   # Static-analysis gate: golangci-lint over the whole module using the curated
   # linter set in .golangci.yml (staticcheck / govet / ineffassign / unused /

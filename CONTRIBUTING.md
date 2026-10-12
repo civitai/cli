@@ -125,6 +125,14 @@ go vet ./...
 gofmt -s -l .        # must print nothing
 ```
 
+`go test ./...` runs everything, and that stays the local contract. CI splits
+the repo-root package: `build-test` runs its always tier, and the tests that
+drive a headless browser through `scripts/dogfood/` run as `dogfood-browser`
+shards. Which test runs where is `tools/dogfoodshards/plan` — a new root
+`*_test.go` file must be assigned a tier there, and a new browser-tier test
+needs a measured duration there (the ledger test says how). Preview the split
+with `go run ./tools/dogfoodshards`.
+
 If your change touches a test that reads git history, also run
 `make ci-shallow` (see above) — a full clone cannot observe that class of
 failure.
