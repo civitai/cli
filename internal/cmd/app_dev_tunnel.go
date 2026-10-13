@@ -689,7 +689,7 @@ func enrichDevTunnelAuthError(ctx context.Context, d tunnelSessionDeps, err erro
 // burns a rate-limited/reaper-tracked server session (which would only serve the
 // browser connection-refused).
 func probeLocalDevServer(host string, port int) error {
-	conn, err := devtunnel.DialLocalDevServer(host, port, 2*time.Second)
+	conn, err := devtunnel.DialLocalDevServer(host, port, localProbeDialTimeout)
 	if err != nil {
 		return fmt.Errorf("no local dev server is listening on %s:%d (%s) — start it first (e.g. `npm run dev:tunnel`), then re-run. (override the port with --port, or the host with --local-host)",
 			localHostForDisplay(host), port, localDialTargets(host))
@@ -706,10 +706,19 @@ func probeEmbeddableDevServer(host string, port int) []devtunnel.Finding {
 	return devtunnel.CheckEmbeddable(host, port, embedProbeTimeout)
 }
 
+// localProbeDialTimeout caps probeLocalDevServer's dial. A package variable for
+// the same reason as embedProbeTimeout below.
+var localProbeDialTimeout = 2 * time.Second
+
 // embedProbeTimeout caps the embeddability probe. Matches probeLocalDevServer's
 // dial timeout: this runs against loopback right after that dial succeeded, so a
 // slow answer means something is wrong, not far away.
-const embedProbeTimeout = 2 * time.Second
+//
+// A package variable, like offsiteProbeTimeout and driftLookupTimeout, so the
+// tests that drive the whole command against a dev server that never answers
+// can wait out a short budget instead of this one. Nothing in production
+// assigns either; TestDevTunnelProbeTimeoutsDefaultToTwoSeconds pins both.
+var embedProbeTimeout = 2 * time.Second
 
 // printEmbedWarnings renders embeddability findings. Placement is the point, and
 // runTunnelSession calls this at BOTH of the two placements that matter (see the

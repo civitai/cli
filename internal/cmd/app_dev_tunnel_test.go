@@ -1476,11 +1476,23 @@ func TestRunTunnelSessionLocalHostFlagPreflightUsesHost(t *testing.T) {
 	t.Setenv("CIVITAI_TOKEN", "tok-1")
 
 	// 192.0.2.1 is TEST-NET-1 (RFC 5737) — guaranteed unreachable, so the probe
-	// fails deterministically without minting. A short dial timeout keeps it fast
-	// (the production probe uses 2s).
+	// fails deterministically without minting. Where the address is merely
+	// unanswered (the usual case) the failure IS the dial timeout, so a short one
+	// is injected; the production probe uses 2s.
+	const injected = 50 * time.Millisecond
+	production := setProbeTimeout(t, &localProbeDialTimeout, injected)
+
+	start := time.Now()
 	_, _, err := run(t, "app", "dev-tunnel", "my-block", "--local-host", "192.0.2.1", "--port", "5186")
+	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected a pre-flight failure against an unreachable --local-host")
+	}
+	// Bounded by the production default, not by a multiple of the injected
+	// value: the question is only which of the two governed the dial. There is
+	// no lower bound, because a host with no route to TEST-NET-1 refuses at once.
+	if elapsed >= production {
+		t.Errorf("the pre-flight dial took %s with a %s timeout injected, which is the production %s or longer: localProbeDialTimeout is not bounding it", elapsed, injected, production)
 	}
 	if !strings.Contains(err.Error(), "192.0.2.1") || !strings.Contains(err.Error(), "--local-host") {
 		t.Errorf("pre-flight error should name the host + --local-host: %v", err)

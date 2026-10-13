@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,18 +19,23 @@ import (
 // follow-up WhoAmI (/api/v1/me), which would otherwise clobber the recorders.
 const startDevTunnelRoute = "/api/trpc/blocks.startDevTunnel"
 
-// listenLocal opens a listener on an ephemeral 127.0.0.1 port and returns the
-// port, so a full-path dev-tunnel test can pass `--port <port>` and satisfy the
-// pre-flight local-dev-server probe (which TCP-dials 127.0.0.1:<port> before the
-// mint). The listener is closed at test end.
+// listenLocal stands in for a local dev server in a full-path dev-tunnel test
+// and returns its port for `--port <port>`. It satisfies the pre-flight
+// local-dev-server probe (a TCP dial before the mint) and then never answers
+// the embeddability probe that follows, so every test using it takes that
+// probe's timeout path. Two things follow, both done here: the timeout is
+// shortened for the test, and the test fails unless the silent server saw
+// exactly one probe request arrive and be abandoned by the client — see
+// app_dev_tunnel_probe_timeout_test.go.
 func listenLocal(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("open local listener: %v", err)
-	}
-	t.Cleanup(func() { _ = l.Close() })
-	return l.Addr().(*net.TCPAddr).Port
+	setProbeTimeout(t, &embedProbeTimeout, testEmbedProbeTimeout)
+	srv, wait := startSilentDevServer(t)
+	t.Cleanup(func() {
+		wait()
+		srv.assertOneProbeTimedOut(t)
+	})
+	return srv.port
 }
 
 // TestAppDevTunnelMissingBlockErrors: no blockId (positional, --block, or a
