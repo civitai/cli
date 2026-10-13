@@ -38,10 +38,6 @@ func TestAgentsBlockPointsAtTheSDKTheProjectInstalled(t *testing.T) {
 	for _, want := range []string{
 		"@civitai/sdk", "initialize()", "app.onChange", "app.site", "app.requestGrants",
 		"@civitai/components", "custom-elements.json",
-		// Generation: the block routes, and where the body kinds and the
-		// multi-step workflow guide are.
-		workflowsGuideURL, generationKindsURL, "blocks/workflows/estimate", "blocks/workflows/submit",
-		"@civitai/app-sdk/blocks",
 	} {
 		if !strings.Contains(elements, want) {
 			t.Errorf("a page-elements project's AGENTS.md should point at %q", want)

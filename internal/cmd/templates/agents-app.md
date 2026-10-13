@@ -25,20 +25,11 @@ directly:
 
 - Reference (manifest, scopes, message bridge, CLI):
   https://developer.civitai.com/apps/reference/
-- **Generation is a body you send, and multi-step workflows are supported.** A
-  block sends the body to the host's block workflow routes, never to the
-  orchestrator directly: `app.orchestration` skips the per-call Buzz budget, the
-  daily caps and the app's attribution. The body's `kind` picks what runs (a
-  single step, a multi-step `kind: 'workflow'`, a training run); the kinds are
-  listed at https://developer.civitai.com/apps/reference/generation.md
-- **`https://developer.civitai.com/apps/guide/workflows.md`** — the multi-step
-  workflow guide. Its "Which template, and which package" box is the call for
-  this project: `app.site.post('blocks/workflows/estimate', { body })`, with the
-  body types from `@civitai/app-sdk/blocks`. Submitting is
-  `'blocks/workflows/submit'` and needs an idempotency key (see "Money calls" in
-  https://developer.civitai.com/apps/guide/sdk.md). If the `@civitai/sdk` README
-  above documents a workflow call of its own, the version installed here has
-  one: use that.
+- Capabilities include generation body kinds (a multi-step workflow is a
+  `kind`); the kinds are listed at
+  https://developer.civitai.com/apps/reference/generation.md
+- Multi-step workflow guide, which shows the call for this template:
+  https://developer.civitai.com/apps/guide/workflows.md
 {{- else }}
 Nothing in this repository is the API reference. The hooks, the message bridge,
 the manifest fields and the scopes are documented on the docs site, and the

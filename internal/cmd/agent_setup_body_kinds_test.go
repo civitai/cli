@@ -43,9 +43,10 @@ func blocksByBranch(t *testing.T) (react, elements string) {
 
 // TestTheElementsBlockPointsAtWorkflowsAndTheBodyKinds: the `@civitai/sdk`
 // branch is the DEFAULT template's, and it must tell its reader that generation
-// exists, that multi-step workflows exist, and where both are documented.
+// body kinds exist, that a multi-step workflow is one, and where both are
+// documented. The pointer is pinned whole, exactly once, inside ### Docs.
 func TestTheElementsBlockPointsAtWorkflowsAndTheBodyKinds(t *testing.T) {
-	react, elements := blocksByBranch(t)
+	_, elements := blocksByBranch(t)
 
 	section, ok := docsSectionOf(elements)
 	if !ok {
@@ -57,40 +58,31 @@ func TestTheElementsBlockPointsAtWorkflowsAndTheBodyKinds(t *testing.T) {
 			"Edit internal/cmd/templates/agents-app.md and wantElementsGenerationPointer together.",
 			n, wantElementsGenerationPointer, got)
 	}
-	for _, url := range []string{generationKindsURL, workflowsGuideURL, sdkGuideURL} {
-		if !strings.Contains(section, url) {
-			t.Errorf("page-elements `### Docs` does not link %s", url)
-		}
-	}
-
-	// CONTROL: the pointer is this branch's. It names `app.site`, which a React
-	// project does not call, so finding it there means the branches merged.
-	if rs, _ := docsSectionOf(react); strings.Contains(normaliseMessage(rs), wantElementsGenerationPointer) {
-		t.Error("the page-money block carries the @civitai/sdk generation pointer; it is written for `app.site`")
-	}
 }
 
 // TestBothSDKBranchesSayMultiStepWorkflowsExist is the RELATIONSHIP guard: the
 // two branches are edited separately, and the defect was one of them saying
-// nothing. Whatever each says, both must name multi-step workflows and link the
-// page that lists the body kinds.
+// nothing. Both must name multi-step workflows and link the page that lists the
+// body kinds.
+//
+// The React side is not rendered again here: wantKindsPointer is pinned into
+// that branch by TestTheBlockPointsAtTheGenerationBodyKinds and by the
+// whole-section golden, so holding the PIN to the claim holds the branch to it.
 func TestBothSDKBranchesSayMultiStepWorkflowsExist(t *testing.T) {
-	react, elements := blocksByBranch(t)
-	if react == elements {
-		t.Fatal("CONTROL failure, not a finding: both branches rendered the same block")
+	_, elements := blocksByBranch(t)
+	section, ok := docsSectionOf(elements)
+	if !ok {
+		t.Fatal("page-elements block has no `### Docs` section")
 	}
-	for name, block := range map[string]string{"page-money (@civitai/blocks-react)": react, "page-elements (@civitai/sdk)": elements} {
-		section, ok := docsSectionOf(block)
-		if !ok {
-			t.Errorf("%s: no `### Docs` section", name)
-			continue
+	for name, text := range map[string]string{
+		"page-money (@civitai/blocks-react), as pinned by wantKindsPointer": wantKindsPointer,
+		"page-elements (@civitai/sdk), as rendered":                         section,
+	} {
+		if !strings.Contains(strings.ToLower(normaliseMessage(text)), "multi-step workflow") {
+			t.Errorf("%s: never mentions a multi-step workflow, so its reader concludes there is none", name)
 		}
-		flat := strings.ToLower(normaliseMessage(section))
-		if !strings.Contains(flat, "multi-step workflow") {
-			t.Errorf("%s: `### Docs` never mentions a multi-step workflow, so its reader concludes there is none", name)
-		}
-		if !strings.Contains(section, generationKindsURL) {
-			t.Errorf("%s: `### Docs` does not link the generation body kinds (%s)", name, generationKindsURL)
+		if !strings.Contains(text, generationKindsURL) {
+			t.Errorf("%s: does not link the generation body kinds (%s)", name, generationKindsURL)
 		}
 	}
 }
