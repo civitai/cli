@@ -41,6 +41,60 @@ func blocksByBranch(t *testing.T) (react, elements string) {
 	return render(scaffold.PageMoney), render(scaffold.PageElements)
 }
 
+// TestTheElementsBlockPointsAtWorkflowsAndTheBodyKinds: the `@civitai/sdk`
+// branch is the DEFAULT template's, and it must tell its reader that generation
+// exists, that multi-step workflows exist, and where both are documented.
+func TestTheElementsBlockPointsAtWorkflowsAndTheBodyKinds(t *testing.T) {
+	react, elements := blocksByBranch(t)
+
+	section, ok := docsSectionOf(elements)
+	if !ok {
+		t.Fatal("page-elements block has no `### Docs` section")
+	}
+	got := normaliseMessage(section)
+	if n := strings.Count(got, wantElementsGenerationPointer); n != 1 {
+		t.Errorf("page-elements `### Docs` carries the generation pointer %d time(s), want 1.\n--- want ---\n%s\n--- section ---\n%s\n"+
+			"Edit internal/cmd/templates/agents-app.md and wantElementsGenerationPointer together.",
+			n, wantElementsGenerationPointer, got)
+	}
+	for _, url := range []string{generationKindsURL, workflowsGuideURL, sdkGuideURL} {
+		if !strings.Contains(section, url) {
+			t.Errorf("page-elements `### Docs` does not link %s", url)
+		}
+	}
+
+	// CONTROL: the pointer is this branch's. It names `app.site`, which a React
+	// project does not call, so finding it there means the branches merged.
+	if rs, _ := docsSectionOf(react); strings.Contains(normaliseMessage(rs), wantElementsGenerationPointer) {
+		t.Error("the page-money block carries the @civitai/sdk generation pointer; it is written for `app.site`")
+	}
+}
+
+// TestBothSDKBranchesSayMultiStepWorkflowsExist is the RELATIONSHIP guard: the
+// two branches are edited separately, and the defect was one of them saying
+// nothing. Whatever each says, both must name multi-step workflows and link the
+// page that lists the body kinds.
+func TestBothSDKBranchesSayMultiStepWorkflowsExist(t *testing.T) {
+	react, elements := blocksByBranch(t)
+	if react == elements {
+		t.Fatal("CONTROL failure, not a finding: both branches rendered the same block")
+	}
+	for name, block := range map[string]string{"page-money (@civitai/blocks-react)": react, "page-elements (@civitai/sdk)": elements} {
+		section, ok := docsSectionOf(block)
+		if !ok {
+			t.Errorf("%s: no `### Docs` section", name)
+			continue
+		}
+		flat := strings.ToLower(normaliseMessage(section))
+		if !strings.Contains(flat, "multi-step workflow") {
+			t.Errorf("%s: `### Docs` never mentions a multi-step workflow, so its reader concludes there is none", name)
+		}
+		if !strings.Contains(section, generationKindsURL) {
+			t.Errorf("%s: `### Docs` does not link the generation body kinds (%s)", name, generationKindsURL)
+		}
+	}
+}
+
 func TestTheBlockPointsAtTheGenerationBodyKinds(t *testing.T) {
 	react, elements := blocksByBranch(t)
 

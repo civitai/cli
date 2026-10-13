@@ -93,6 +93,35 @@ const wantKindsPointer = `- Capabilities are hooks AND generation body kinds (a 
   ` + "`kind`" + `, not a hook); the kinds are listed at
   https://developer.civitai.com/apps/reference/generation.md`
 
+// The docs addresses the `@civitai/sdk` branch's generation pointer ships. They
+// are consts HERE, in a ledgered file, so the tests in other files can name them
+// without becoming a new unledgered spelling of a docs URL.
+const (
+	generationKindsURL = "https://developer.civitai.com/apps/reference/generation.md"
+	workflowsGuideURL  = "https://developer.civitai.com/apps/guide/workflows.md"
+	sdkGuideURL        = "https://developer.civitai.com/apps/guide/sdk.md"
+)
+
+// wantElementsGenerationPointer is the `@civitai/sdk` branch's counterpart of
+// wantKindsPointer, whitespace-normalised (compare with normaliseMessage).
+//
+// That branch used to say nothing about generation at all, so an agent on the
+// DEFAULT template had no route to the body kinds and concluded multi-step
+// workflows did not exist. It is pinned whole because it is prose an agent acts
+// on. It names no `@civitai/sdk` workflow helper on purpose: the sentence must
+// stay true for whichever SDK version a project has installed.
+const wantElementsGenerationPointer = "- **Generation is a body you send, and multi-step workflows are supported.** " +
+	"A block sends the body to the host's block workflow routes, never to the orchestrator directly: " +
+	"`app.orchestration` skips the per-call Buzz budget, the daily caps and the app's attribution. " +
+	"The body's `kind` picks what runs (a single step, a multi-step `kind: 'workflow'`, a training run); " +
+	"the kinds are listed at " + generationKindsURL + " " +
+	"- **`" + workflowsGuideURL + "`** — the multi-step workflow guide. " +
+	"Its \"Which template, and which package\" box is the call for this project: " +
+	"`app.site.post('blocks/workflows/estimate', { body })`, with the body types from `@civitai/app-sdk/blocks`. " +
+	"Submitting is `'blocks/workflows/submit'` and needs an idempotency key (see \"Money calls\" in " +
+	sdkGuideURL + "). " +
+	"If the `@civitai/sdk` README above documents a workflow call of its own, the version installed here has one: use that."
+
 // docsLinkRe pulls the link SET out of a section. The expected set is derived
 // from the golden above rather than written out again, so the two cannot
 // disagree. It exists for the failure MESSAGE: a whole-string mismatch reports a
