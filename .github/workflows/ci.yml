@@ -50,10 +50,13 @@ permissions:
 #       look at our code?) and, where cheap, a NEGATIVE control (can it still go
 #       red at all?).
 #
-#   (3) A `-count=1`-LESS TEST CAN BE REPLAYED FROM GOCACHE, which
-#       `actions/setup-go` with `cache: true` restores across runs. That matters
+#   (3) A `-count=1`-LESS TEST CAN BE REPLAYED FROM GOCACHE, which every job
+#       here restores across runs (.github/actions/setup-go). That matters most
 #       for the NETWORK guards, whose entire value is the round-trip; see the
-#       measurement at `pins-vs-published`.
+#       measurement at `pins-vs-published`. It holds for every other test that
+#       reads something the test binary does not itself open, so EVERY
+#       `go test` in a workflow carries `-count=1`, pinned by
+#       `TestEveryWorkflowGoTestDisablesTheResultCache`.
 #
 # ERREXIT NOTE, the trap behind #316 and #313: GitHub runs every `run:` block as
 # `bash -e {0}`, so errexit is ON before the first line and `set -uo pipefail`
@@ -71,10 +74,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go
+        id: go
         with:
           go-version: "1.25"
-          cache: true
 
       - name: go vet
         run: go vet ./...
@@ -228,7 +231,7 @@ jobs:
         run: |
           set -uo pipefail
 
-          go test ./... 2>&1 | tee "$RUNNER_TEMP/gotest.log"
+          go test -count=1 ./... 2>&1 | tee "$RUNNER_TEMP/gotest.log"
 
           # Measured on this tree: 19 packages report ok, 1 has no test files.
           # The floor sits below that so ordinary churn does not trip it.
@@ -242,6 +245,21 @@ jobs:
       - name: build
         run: go build ./...
 
+      # THE ONE SAVE IN THIS FILE — see .github/actions/setup-go/action.yml for
+      # why every other job, and every pull request, only restores.
+      #
+      # It is this job because its cache is a superset of what the others
+      # compile: vet, the test build of every package and `go build ./...`.
+      # It runs last so that is what gets saved, and it is skipped when an
+      # entry for this week's key already exists, which is what bounds the
+      # number of live entries (see the action for the arithmetic).
+      - name: save the Go cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.go.outputs.exact-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.go.outputs.paths }}
+          key: ${{ steps.go.outputs.primary-key }}
+
   # Static-analysis gate: golangci-lint over the whole module using the curated
   # linter set in .golangci.yml (staticcheck / govet / ineffassign / unused /
   # misspell + gofmt). Runs on every PR. `make lint` mirrors this locally.
@@ -250,10 +268,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      # golangci-lint-action caches only its own analysis results
+      # (~/.cache/golangci-lint); loading the packages it lints still compiles
+      # them, which is what the restored Go build cache saves. It used to run
+      # with no Go cache at all.
+      - uses: ./.github/actions/setup-go
         with:
           go-version: "1.25"
-          cache: false # golangci-lint-action manages its own build/analysis cache
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
@@ -276,10 +297,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go
         with:
           go-version: "1.25"
-          cache: true
 
       - name: check scaffold pins vs npm latest
         env:
@@ -294,8 +314,8 @@ jobs:
           #     --- PASS: TestScaffoldPinsSatisfyPublished (0.46s)
           #     ok  github.com/civitai/cli/internal/scaffold  (cached)
           # The second run contacted npm ZERO times and replayed the first run's
-          # timing and PASS line verbatim out of GOCACHE — which `setup-go` with
-          # `cache: true` restores across runs, keyed on go.sum. Go's test cache
+          # timing and PASS line verbatim out of GOCACHE — which every job here
+          # restores across runs (.github/actions/setup-go). Go's test cache
           # tracks the env vars a test reads; it does NOT track what npm
           # published. So the NETWORK half of the scaffold guard — a required
           # check whose whole value is the round-trip — could report green on a
@@ -357,10 +377,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go
         with:
           go-version: "1.25"
-          cache: true
 
       # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
       # `Cannot read properties of null (reading 'edgesOut')` while walking
@@ -429,10 +448,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go
         with:
           go-version: "1.25"
-          cache: true
 
       # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
       # `Cannot read properties of null (reading 'edgesOut')` while walking
@@ -522,10 +540,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go
         with:
           go-version: "1.25"
-          cache: true
 
       # node 24 (npm 11), NOT 22 (npm 10) — see template-page-money below.
       - uses: actions/setup-node@v4
@@ -569,10 +586,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go
         with:
           go-version: "1.25"
-          cache: true
 
       # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
       # `Cannot read properties of null (reading 'edgesOut')` while walking
@@ -641,10 +657,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go
         with:
           go-version: "1.25"
-          cache: true
 
       # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
       # `Cannot read properties of null (reading 'edgesOut')` while walking
