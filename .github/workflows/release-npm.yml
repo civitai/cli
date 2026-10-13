@@ -16,6 +16,15 @@ jobs:
     # short-lived OIDC token to npm; npm verifies it against the trusted
     # publisher configured on the @civitai/cli package (repo civitai/cli +
     # this workflow file). id-token:write is what mints that token.
+    #
+    # 🔴 THE TRUSTED PUBLISHER IS PER PACKAGE, AND OIDC CANNOT CREATE ONE. Every
+    # platform package in npm/lib/platforms.json is its own npm package: before
+    # the first release that lists it, an npm org member has to publish that
+    # name once by hand and add the same trusted publisher to it. Skip either
+    # and "Publish platform packages" below fails — which stops the job before
+    # the main package is published, so that release ships NO npm version until
+    # it is fixed and this workflow is re-run (workflow_dispatch, same version;
+    # every publish here skips what is already on npm).
     permissions:
       contents: read
       id-token: write # required for OIDC trusted publishing (+ provenance)
@@ -79,7 +88,58 @@ jobs:
           VERSION: ${{ steps.v.outputs.version }}
         run: |
           npm version "$VERSION" --no-git-tag-version --allow-same-version
+          # Pin every platform package (optionalDependencies) to this exact
+          # version — the main package must only ever name a platform package
+          # version published by this same run.
+          node scripts/release.js pin "$VERSION"
           cp ../LICENSE ./LICENSE
+      - name: Publish platform packages
+        # The platform packages (npm/lib/platforms.json) carry the binary
+        # itself, so `npm install @civitai/cli` needs nothing but the npm
+        # registry. Each one is the release's raw-binary asset, verified against
+        # checksums.txt, wrapped in a package.json by scripts/release.js.
+        #
+        # 🔴 THIS STEP MUST STAY BEFORE "Publish" AND MUST BE ALLOWED TO FAIL THE
+        # JOB. The main package pins these at the same version; published first
+        # it would name a version that does not exist. npm tolerates a missing
+        # OPTIONAL dependency, so nothing would error — every install would
+        # silently fall back to the GitHub download this exists to avoid.
+        # No `continue-on-error`, no `|| true` on the publish.
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/platform-packages"
+          mkdir -p "$work"
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --pattern checksums.txt --dir "$work"
+
+          node npm/scripts/release.js platforms "$VERSION" > "$work/platforms.tsv"
+          # Positive control: an empty list would publish nothing and pass.
+          if [ ! -s "$work/platforms.tsv" ]; then
+            echo "::error::npm/scripts/release.js listed no platform packages."
+            exit 1
+          fi
+
+          # fd 3, not stdin: gh and npm must not be able to eat the list.
+          while IFS=$'\t' read -r -u 3 pkg asset; do
+            if npm view "$pkg@$VERSION" version >/dev/null 2>&1; then
+              echo "$pkg@$VERSION already on npm; skipping."
+              continue
+            fi
+            gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+              --pattern "$asset" --dir "$work"
+            awk -v a="$asset" '$2 == a' "$work/checksums.txt" > "$work/$asset.sha256"
+            if [ ! -s "$work/$asset.sha256" ]; then
+              echo "::error::checksums.txt for v$VERSION has no entry for $asset."
+              exit 1
+            fi
+            (cd "$work" && sha256sum --check --strict "$asset.sha256")
+            out="$work/pkg-$asset"
+            node npm/scripts/release.js build-platform "$VERSION" "$pkg" "$work/$asset" "$out"
+            (cd "$out" && npm publish --provenance --access public)
+          done 3< "$work/platforms.tsv"
       - name: Skip if already published (idempotent)
         id: pub
         env:

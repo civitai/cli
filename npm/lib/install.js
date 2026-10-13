@@ -2,11 +2,20 @@
 
 // Dependency-free installer for the @civitai/cli wrapper.
 //
-// Downloads the prebuilt Go binary produced by GoReleaser from the matching
-// GitHub Release, verifies its sha256 against checksums.txt, and drops it at
-// lib/binaries/civitai(.exe). Runs from the npm `postinstall` hook, and is also
-// exported as ensureBinary() so the launcher can lazily download on first run
-// (covers `npm install --ignore-scripts`).
+// Finds the prebuilt Go binary, in this order:
+//
+//  1. The platform package (an `optionalDependencies` entry such as
+//     @civitai/cli-linux-x64, listed in ./platforms.json) when npm installed
+//     one for this host. It IS the binary, so nothing is downloaded — the
+//     install works where only the npm registry is reachable.
+//  2. Otherwise the GitHub Release: download the raw binary GoReleaser
+//     produced, verify its sha256 against checksums.txt, and drop it at
+//     lib/binaries/civitai(.exe). This is every platform without a row in
+//     platforms.json, and any install that skipped optional dependencies.
+//
+// Runs from the npm `postinstall` hook, and is also exported as ensureBinary()
+// so the launcher can resolve lazily on first run (covers
+// `npm install --ignore-scripts`).
 
 const fs = require("fs");
 const path = require("path");
@@ -19,6 +28,15 @@ const PLACEHOLDER_VERSION = "0.0.0-dev";
 
 const BINARIES_DIR = path.join(__dirname, "binaries");
 
+// THE list of platform packages: one row per package, `{ package, os, cpu }` in
+// Node's own process.platform / process.arch vocabulary. This resolver, the
+// release workflow (via scripts/release.js) and package.json's
+// optionalDependencies all follow it; npm_wrapper_test.go at the repo root
+// fails when they disagree. Adding a platform is one row here plus its
+// optionalDependencies entry — and a one-time manual first publish of the new
+// package name, which is why the list is short.
+const PLATFORMS = require("./platforms.json");
+
 // Map Node's platform/arch onto GoReleaser's os/arch tokens.
 const OS_MAP = { linux: "linux", darwin: "darwin", win32: "windows" };
 const ARCH_MAP = { x64: "amd64", arm64: "arm64" };
@@ -28,12 +46,12 @@ const ARCH_MAP = { x64: "amd64", arm64: "arm64" };
 // re-add an entry here if a target is ever dropped from the release matrix.
 const UNSUPPORTED = new Set([]);
 
-function target() {
-  const goos = OS_MAP[process.platform];
-  const goarch = ARCH_MAP[process.arch];
+function target(platform = process.platform, arch = process.arch) {
+  const goos = OS_MAP[platform];
+  const goarch = ARCH_MAP[arch];
   if (!goos || !goarch) {
     throw new Error(
-      `Unsupported platform for @civitai/cli: ${process.platform}/${process.arch}. ` +
+      `Unsupported platform for @civitai/cli: ${platform}/${arch}. ` +
         `Supported: linux, darwin, windows on x64/arm64. ` +
         `Install the CLI another way: https://github.com/${REPO}#installation`
     );
@@ -50,6 +68,24 @@ function target() {
 function binaryPath() {
   const exe = process.platform === "win32" ? "civitai.exe" : "civitai";
   return path.join(BINARIES_DIR, exe);
+}
+
+// Where a platform package keeps its binary, relative to the package root.
+function platformBinaryFile(row) {
+  return row.os === "win32" ? "bin/civitai.exe" : "bin/civitai";
+}
+
+// The binary shipped by this host's platform package, or null when there is no
+// row for this host or npm did not install the package (--omit=optional, an
+// older lockfile, a platform without a row). Never touches the network.
+function platformBinary() {
+  const row = PLATFORMS.find((p) => p.os === process.platform && p.cpu === process.arch);
+  if (!row) return null;
+  try {
+    return require.resolve(`${row.package}/${platformBinaryFile(row)}`);
+  } catch (_) {
+    return null;
+  }
 }
 
 function resolveVersion() {
@@ -139,6 +175,9 @@ function findChecksum(checksumsText, asset) {
 }
 
 async function ensureBinary() {
+  const shipped = platformBinary();
+  if (shipped) return shipped;
+
   const dest = binaryPath();
   if (fs.existsSync(dest)) return dest;
 
@@ -172,12 +211,21 @@ async function ensureBinary() {
   return dest;
 }
 
-module.exports = { ensureBinary, binaryPath };
+module.exports = {
+  ensureBinary,
+  binaryPath,
+  platformBinary,
+  // For scripts/release.js, which builds the platform packages at publish time.
+  PLATFORMS,
+  platformBinaryFile,
+  target,
+  assetName,
+};
 
 if (require.main === module) {
   ensureBinary()
     .then((p) => {
-      console.log(`@civitai/cli: installed binary at ${p}`);
+      console.log(`@civitai/cli: using binary at ${p}`);
     })
     .catch((err) => {
       console.error(`@civitai/cli: failed to install binary.\n${err.message}`);

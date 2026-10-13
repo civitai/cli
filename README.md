@@ -125,8 +125,11 @@ builds from source.
 
 ### npm (Node)
 
-A thin wrapper that downloads the matching prebuilt binary for your OS/arch on
-install and verifies its sha256 against the release `checksums.txt`:
+A thin wrapper around the prebuilt binary. On linux/x64 the binary is itself an
+npm package (`@civitai/cli-linux-x64`, installed automatically), so the install
+needs nothing but the npm registry. On every other OS/arch it is downloaded
+from the GitHub Release on install and verified against the release
+`checksums.txt`:
 
 ```bash
 npm install -g @civitai/cli
