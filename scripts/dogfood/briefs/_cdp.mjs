@@ -82,6 +82,7 @@
 
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
+import { appendFileSync } from 'node:fs';
 import { readFile, mkdtemp, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, extname, normalize, sep } from 'node:path';
@@ -90,6 +91,27 @@ import { join, extname, normalize, sep } from 'node:path';
  * download, parse and mount before its first element exists; a static file is
  * there at first paint. */
 export const WAIT_MS = Number(process.env.CIVITAI_ASSERT_WAIT_MS || 15000);
+
+/**
+ * Opt-in: a file every in-page wait appends one JSON line to —
+ * `{"what","ok","ms","budget"}`. Unset (the default) nothing is written.
+ *
+ * It exists because `WAIT_MS` is now shortened for the negative controls (see
+ * `dogfoodControlWaitMS` in dogfood_control_wait_test.go), and the only honest
+ * basis for "how short" is how long the waits that SUCCEED take on the machine
+ * in question. A passing assertion prints none of that, so without this the
+ * margin under a shortened wait is a guess the next runner image can falsify
+ * silently. `ok:true` rows are the distribution; `ok:false` rows are the
+ * timeouts. A write failure is swallowed: this is a measurement of the harness
+ * and must never be able to change a verdict about a block.
+ */
+export const WAIT_LOG = process.env.CIVITAI_ASSERT_WAIT_LOG || '';
+const logWait = (what, ok, ms) => {
+  if (!WAIT_LOG) return;
+  try {
+    appendFileSync(WAIT_LOG, JSON.stringify({ what, ok, ms, budget: WAIT_MS }) + '\n');
+  } catch { /* a measurement, never a verdict */ }
+};
 
 /**
  * The deadline the BROWSER LAUNCH gets — deliberately NOT `WAIT_MS`.
@@ -1683,10 +1705,16 @@ export async function openPage(c, url, { scopes = [] } = {}) {
     return r.result.value;
   };
   const waitFor = async (expr, what) => {
-    const deadline = Date.now() + WAIT_MS;
+    const started = Date.now();
+    const deadline = started + WAIT_MS;
     for (;;) {
-      try { if (await evalJs(expr)) return true; } catch { /* pre-navigation */ }
-      if (Date.now() > deadline) throw new Error(`timed out after ${WAIT_MS}ms waiting for ${what}`);
+      try {
+        if (await evalJs(expr)) { logWait(what, true, Date.now() - started); return true; }
+      } catch { /* pre-navigation */ }
+      if (Date.now() > deadline) {
+        logWait(what, false, Date.now() - started);
+        throw new Error(`timed out after ${WAIT_MS}ms waiting for ${what}`);
+      }
       await sleep(100);
     }
   };

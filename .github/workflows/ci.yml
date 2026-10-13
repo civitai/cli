@@ -227,7 +227,16 @@ jobs:
       # ambiguity of their own, and the floor below already proves the module
       # resolves to ~19 real packages in this same job. A third floor would
       # assert the same fact a third time.
+      #
+      # CIVITAI_ASSERT_WAIT_LOG: every in-page wait the render-oracle tests make
+      # is logged (scripts/dogfood/briefs/_cdp.mjs), and the step publishes the
+      # distribution of the ones that SUCCEEDED. That distribution is the only
+      # evidence for the short budget the expected-timeout negative controls run
+      # on (dogfood_control_wait_test.go): a control that reports "absent" after
+      # a wait shorter than a real mount takes is a control that cannot fail.
       - name: test
+        env:
+          CIVITAI_ASSERT_WAIT_LOG: ${{ runner.temp }}/dogfood-waits.jsonl
         run: |
           set -uo pipefail
 
@@ -241,6 +250,8 @@ jobs:
             echo "::error::only $ok package(s) reported ok — the suite exited 0 without running, so this green is not a claim about the code"
             exit 1
           fi
+
+          ./scripts/dogfood/wait-summary.sh "$CIVITAI_ASSERT_WAIT_LOG"
 
       - name: build
         run: go build ./...

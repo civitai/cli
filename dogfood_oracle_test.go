@@ -608,7 +608,14 @@ func runScript(t *testing.T, script string, env []string, args ...string) (strin
 	t.Helper()
 	bash := dogfoodTool(t, "bash")
 	cmd := exec.Command(bash, append([]string{filepath.Join(oracleDir, script)}, args...)...)
-	cmd.Env = append(os.Environ(), env...)
+	// 🔴 THE ONE PLACE A LEAF'S IN-PAGE WAIT IS DECIDED. Every browser leaf in
+	// this package reaches the assertion through here, so the expected-timeout
+	// ledger (dogfood_control_wait_test.go) is applied here and nowhere else —
+	// and the guards that keep a POSITIVE case off the short wait read the
+	// environment the child will actually get, process env included.
+	var budget int
+	var waitLog string
+	cmd.Env, budget, waitLog = controlWaitEnv(t, append(os.Environ(), env...))
 	out, err := cmd.CombinedOutput()
 	code := 0
 	var ee *exec.ExitError
@@ -617,6 +624,7 @@ func runScript(t *testing.T, script string, env []string, args ...string) (strin
 	} else if err != nil {
 		t.Fatalf("running %s: %v\n%s", script, err, out)
 	}
+	checkControlWait(t, budget, waitLog)
 	return string(out), code
 }
 

@@ -463,6 +463,14 @@ carrying both controls: it fails a binary that exits 3 without printing (so it
 can still go red) and it fails the job by name if the resolved browser cannot
 bind a debugging port, instead of that surfacing eighty lines into a Go test.
 
+**`CIVITAI_ASSERT_WAIT_LOG=<file>`** (unset by default) makes every in-page wait
+append `{"what","ok","ms","budget"}` to `<file>`. The Go suite uses it to run
+its expected-timeout negative controls on a **short** `CIVITAI_ASSERT_WAIT_MS`
+and to refuse that short budget anywhere else (`dogfood_control_wait_test.go`);
+`build-test` publishes the distribution of the waits that succeeded
+(`wait-summary.sh`), which is the evidence the short budget rests on. A grading
+run is unaffected: neither knob changes `WAIT_MS`'s 15 s default.
+
 - 🔴 **`scopes=` decides no verdict**, exactly like the validate gate. A manifest
   is a declaration, not a behaviour — a block can declare `posts:write:self` and
   post nothing, and the platform grants scopes at review rather than at manifest
