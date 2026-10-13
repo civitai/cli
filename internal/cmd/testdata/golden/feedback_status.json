@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "items": [
+    {
+      "ref": "8001-received",
+      "found": true,
+      "status": "received",
+      "fixedIn": null,
+      "civitaiNote": null,
+      "reporters": 1,
+      "firstSeenAt": "2026-10-11T18:45:00.000Z",
+      "updatedAt": "2026-10-11T18:45:00.000Z"
+    },
+    {
+      "ref": "8002-acked000",
+      "found": true,
+      "status": "acknowledged",
+      "fixedIn": null,
+      "civitaiNote": "Reproduced on 0.1.95.",
+      "reporters": 6,
+      "firstSeenAt": "2026-10-03T11:00:00.000Z",
+      "updatedAt": "2026-10-05T12:30:00.000Z"
+    },
+    {
+      "ref": "8003-fixed000",
+      "found": true,
+      "status": "fixed",
+      "fixedIn": {
+        "component": "@civitai/app-sdk",
+        "version": "0.70.1"
+      },
+      "civitaiNote": null,
+      "reporters": 31,
+      "firstSeenAt": "2026-09-14T10:05:00.000Z",
+      "updatedAt": "2026-10-09T13:20:00.000Z"
+    },
+    {
+      "ref": "8004-addressd",
+      "found": true,
+      "status": "addressed",
+      "fixedIn": null,
+      "civitaiNote": null,
+      "reporters": 4,
+      "firstSeenAt": "2026-09-01T09:00:00.000Z",
+      "updatedAt": "2026-09-30T15:00:00.000Z"
+    },
+    {
+      "ref": "8005-not0plan",
+      "found": true,
+      "status": "not_planned",
+      "fixedIn": null,
+      "civitaiNote": "Out of scope for the sandbox.",
+      "reporters": 2,
+      "firstSeenAt": "2026-08-02T07:00:00.000Z",
+      "updatedAt": "2026-08-20T07:00:00.000Z"
+    },
+    {
+      "ref": "8006-missing0",
+      "found": false,
+      "status": null,
+      "fixedIn": null,
+      "civitaiNote": null,
+      "reporters": 0,
+      "firstSeenAt": null,
+      "updatedAt": null
+    },
+    {
+      "ref": "8007-absent00",
+      "found": false,
+      "status": null,
+      "fixedIn": null,
+      "civitaiNote": null,
+      "reporters": 0,
+      "firstSeenAt": null,
+      "updatedAt": null
+    }
+  ]
+}

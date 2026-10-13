@@ -120,6 +120,13 @@ var writeCallSites = []writeCallSite{
 		calls:        1,
 		symlinkGuard: "NONE. A scaffolded AGENTS.md in a fresh project directory is not a dotfile anyone symlinks, so this is a deliberate gap and not an oversight — but it is RECORDED, so a reader does not infer coverage from the ledger's existence.",
 	},
+	{
+		file:         "internal/cmd/feedback.go",
+		fn:           "recordFeedbackRef",
+		callee:       "writeFileAtomic",
+		calls:        1,
+		symlinkGuard: "TestFeedbackLedgerFollowsASymlinkRatherThanReplacingIt — the local ledger of sent refs, 0600 in the config directory. A dotfiles-managed ~/.config/civitai is the case the helper's follow exists for, so this caller is driven end-to-end rather than left to ride the helper-level test",
+	},
 }
 
 // TestWriteHelperCallersAreLedgered is the set assertion. See the file header.

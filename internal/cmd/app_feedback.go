@@ -102,6 +102,8 @@ func newAppFeedbackCmd() *cobra.Command {
 		Short: "Read the feedback users sent about your App, and triage it",
 		Long: `Read the private feedback users sent about one of YOUR Apps from inside the
 app, newest first. Only the app's owner and its accepted collaborators can.
+This is your app's inbox; to report a problem with the Civitai developer
+platform itself to Civitai, that is ` + "`civitai feedback send`" + `.
 
 Each row shows its id, when it was written (UTC), its status, the app version
 and build it was written against, where it was written (App page, or Model page

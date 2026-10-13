@@ -121,7 +121,7 @@ These go beyond the global defaults because this repo's release pipeline
 - `cmd/civitai/main.go` — binary entrypoint; injects build version/commit/date.
 - `internal/cmd/` — the Cobra tree, **one file per command**, wired in
   `root.go`.
-- `internal/{scaffold,validate,pkgzip,manifest,config,auth}` — the building
+- `internal/{scaffold,validate,pkgzip,manifest,config,auth,redact}` — the building
   blocks behind those commands. No `api` — #172 promoted it to `pkg/civitai` on
   2026-07-20 and it sat here stale until found by hand, so this section is now a
   BIDIRECTIONAL LEDGER: `layout_ledger_test.go` fails both when a package under
@@ -242,7 +242,7 @@ Item 37 is a username that arrives as a NUMBER.
 Item 38 is what the read path may CLAIM about the bytes it prints.
 Item 39 is the FOURTH half of `agent-setup`: the only thing this CLI writes
 outside the project, in a file the user's login shell executes.
-Item 40 is `app feedback`'s untrusted text.
+Items 40–41 are feedback verbs.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -455,6 +455,9 @@ item must carry a trigger that is a routing question rather than a label
 40. **Touching `app feedback` — message rendering, the `--json` envelope,
     the reporter fields, or what an empty inbox or a 403/409 claims?**
     → evidence: claudedocs/decisions/40-app-feedback-is-untrusted-input.md
+
+41. **Advertising `civitai feedback`, or changing its payload?**
+    → evidence: claudedocs/decisions/41-platform-feedback.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

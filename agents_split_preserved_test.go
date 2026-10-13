@@ -599,6 +599,11 @@ var bornSplitItems = []string{
 	// was added, and the body is six separate decisions, an observable-state
 	// table and the enumerated residuals.
 	"claudedocs/decisions/40-app-feedback-is-untrusted-input.md",
+	// Item 41 was written straight into claudedocs/decisions/ too. Its body is
+	// seven separate decisions, two tables and the list of what was built
+	// against a contract rather than a server; AGENTS.md had 129 bytes of
+	// headroom under agentsMaxBytes when it arrived.
+	"claudedocs/decisions/41-platform-feedback.md",
 }
 
 // splitItemsFloor is the CI-SIDE KEEPER for bornSplitItems: the set of item

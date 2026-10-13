@@ -567,6 +567,15 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"decoded string is unchanged"},
 	"runAppFeedbackCount": {"TestAppFeedbackCountAcrossEveryApp",
 		"`app feedback --count` with no slug: the slug and listing id of every listing listMine returned"},
+	// --- feedback (platform): what Civitai answers a report with ---------------
+	"feedbackNoteLines": {"TestPlatformFeedbackNoteEscapeSequencesNeverReachTheTerminal",
+		"`feedback send` / `feedback status`: Civitai's note about a report. Civitai-authored, and still text " +
+			"from the network read by an agent — the named test drives a note carrying CSI, a bidi override, a " +
+			"forged success line and a forged status row through BOTH commands"},
+	"feedbackServerCell": {"TestPlatformFeedbackServerCellsCannotForgeALine",
+		"`feedback send` / `feedback status`: every single-line server cell — the report ref, the status word, " +
+			"fixedIn's component and version, the two timestamps — all hostile at once, with a newline and an " +
+			"escape in each, and the line count of both views pinned"},
 	"printAppMetrics": {"TestTabwriterRenderersCannotBeForged",
 		"the scope and endpoint tokens — kept RAW on purpose (AGENTS.md item 8), which makes the " +
 			"strip the ONLY thing between an uploader-shaped token and the terminal — plus the window " +
