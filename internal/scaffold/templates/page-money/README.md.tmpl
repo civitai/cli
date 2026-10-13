@@ -15,10 +15,8 @@ SDK has no hook for something. It is generated from the published
 `@civitai/blocks-react`, so unlike a copy pasted into this file it cannot fall
 behind the package you actually installed.
 
-**Not every capability is a hook.** What one generation runs is chosen by the
-`kind` of the body you pass to `useBuzzWorkflow()` — `textToImage`, `customComfy`,
-`step`, `training`, or `workflow` for several steps in one generation — and a
-kind has no hook of its own to find. They are defined in
+Capabilities are hooks AND generation body kinds (a multi-step workflow is a
+`kind` you pass to `useBuzzWorkflow()`, not a hook); the kinds are listed at
 <https://developer.civitai.com/apps/reference/generation.md>.
 
 **A declared scope is not a granted scope.** `ai:write:budgeted` and

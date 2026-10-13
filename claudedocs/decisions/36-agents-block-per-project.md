@@ -288,57 +288,6 @@ commands the recipe names as it spells them and asserts the `set-status` line
 makes exactly one request. As with the first exception: the next addition
 argues for itself.
 
-#### 🔴 THIRD NAMED EXCEPTION — the generation body kinds (blind dogfood, 2026-10-12)
-
-`### Docs` now carries a bullet naming the five generation body kinds
-(`textToImage`, `customComfy`, `workflow`, `step`, `training`), three with their
-guide page and all five with the generation reference. That is a LIST in this
-block, which the rule above refuses, so it argues for itself.
-
-It replaces a sentence that was false. The React branch's first bullet said
-*"every capability this platform has is a hook, and a capability you cannot find
-here probably exists under a name you have not guessed."* A generation body
-`kind` is a capability and is not a hook; the multi-step workflows guide says of
-itself "There is no new hook and no new message." A blind dogfood run asked to
-build a multi-step app found the feature only by grepping `llms.txt` for the
-word, three hops from the block, and recorded that an agent following the
-sentence would search the hook reference and stop. Deleting the sentence fixes
-the falsehood and leaves the gap: nothing in the block would say that a second
-axis of capability exists. One pointer line ("see the generation reference")
-was the rule-compliant candidate and was not chosen, because the failure is a
-search with the wrong WORD — the agent needs `workflow` and `customComfy` in
-front of it to know what to look for, and the reference page is over 100 KB.
-
-What keeps it from rotting the way a repository list would: the names are the
-discriminants of a published union whose first member is kept byte-identical
-for backward compatibility, and the bullet's last item sends the reader to the
-page that defines every kind, which covers one added after this CLI shipped.
-
-**Measured cost, paid every turn in a file nothing can recall: +574 bytes on
-every rendered block** — smallest shape 8,018 → 8,592 B, **+7.2%** (that figure
-includes the rewritten hook sentence and its size claim, below). A first draft
-with a prose caveat about staleness cost +875 and was cut. As with the first
-two: the next addition argues for itself.
-
-The same bullet's size claim moved with it: "It is ~40 KB" became "over 100 KB".
-`/apps/reference/hooks.md` measured **142,864 bytes** on 2026-10-12.
-
-`internal/cmd/agent_setup_body_kinds_test.go` pins the bullet whole, in BOTH
-SDK branches of the template (no shape in `allProjectShapesForTest` reaches the
-`@civitai/sdk` branch, so the section golden alone says nothing about it), and
-asserts the false sentence absent. The page-money scaffold README carried the
-same sentence and was corrected with it.
-
-Probed 2026-10-12 from this host, anonymously, over real HTTP
-(`CIVITAI_CHECK_DOCS_LINKS=1 go test ./internal/cmd/ -run TestBlockDocsLinksResolve`):
-
-| Probe | Result |
-|---|---|
-| `developer.civitai.com/apps/guide/text-to-image.md` | `200` |
-| `developer.civitai.com/apps/guide/comfy-cloud.md` | `200` |
-| `developer.civitai.com/apps/guide/workflows.md` | `200` |
-| `developer.civitai.com/apps/reference/generation.md` | `200` |
-
 #### NOT an exception — `### Before you submit` is a POINTER (civitai-app-starters#573, Zach, 2026-10-08)
 
 The block's `### Before you submit` section is one sentence and the

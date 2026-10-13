@@ -64,11 +64,12 @@ the manifest fields and the scopes are documented on the docs site, and the
 - **` + "`https://developer.civitai.com/apps/reference/hooks.md`" + `** — the COMPLETE
   hook reference. Fetch it first: a hook you cannot find here probably exists
   under a name you have not guessed. It is over 100 KB, so page it rather than
-  giving up on it. **Hooks are not every capability:** a generation body ` + "`kind`" + `
-  (below) is not a hook, and a multi-step workflow is a ` + "`kind`" + `.
+  giving up on it.
+- Capabilities are hooks AND generation body kinds (a multi-step workflow is a
+  ` + "`kind`" + `, not a hook); the kinds are listed at
+  https://developer.civitai.com/apps/reference/generation.md
 - Reference (manifest, scopes, hooks, message bridge, CLI):
   https://developer.civitai.com/apps/reference/
-` + wantBodyKindsBullet + `
 - Guide: https://developer.civitai.com/apps/guide/
 - **` + "`https://developer.civitai.com/apps/guide/earning.md`" + `** — the three money
   rails. Fetch it before declaring a ` + "`goods`" + ` catalog. The three rules below are
@@ -84,19 +85,13 @@ the manifest fields and the scopes are documented on the docs site, and the
 Reading ` + "`node_modules/@civitai/blocks-react/dist/*.d.ts`" + ` to find out what the
 SDK can do is the expensive way round. Fetch the reference.`
 
-// wantBodyKindsBullet is the `### Docs` bullet that names the generation body
-// kinds, byte for byte. It is its own constant because it is the one part of the
-// section BOTH template branches render — the React one (wantDocsSection above)
-// and the `@civitai/sdk` one, which no shape in allProjectShapesForTest covers —
-// so TestTheBlockNamesEveryGenerationBodyKind can hold the same bytes against
-// each. See that test for what the bullet replaced.
-const wantBodyKindsBullet = `- **Generation body kinds.** What a generation runs is set by the ` + "`kind`" + ` of the
-  body you submit, and each kind is a capability of its own:
-  - ` + "`textToImage`" + ` — https://developer.civitai.com/apps/guide/text-to-image.md
-  - ` + "`customComfy`" + ` — https://developer.civitai.com/apps/guide/comfy-cloud.md
-  - ` + "`workflow`" + ` (multi-step) — https://developer.civitai.com/apps/guide/workflows.md
-  - ` + "`step`" + `, ` + "`training`" + `, and every kind's fields —
-    https://developer.civitai.com/apps/reference/generation.md`
+// wantKindsPointer is the line of wantDocsSection that replaced "every
+// capability this platform has is a hook". It is a POINTER, not a list of the
+// kinds, so AGENTS.md item 36's "the block ships addresses" rule holds.
+// TestTheBlockPointsAtTheGenerationBodyKinds holds it against both SDK branches.
+const wantKindsPointer = `- Capabilities are hooks AND generation body kinds (a multi-step workflow is a
+  ` + "`kind`" + `, not a hook); the kinds are listed at
+  https://developer.civitai.com/apps/reference/generation.md`
 
 // docsLinkRe pulls the link SET out of a section. The expected set is derived
 // from the golden above rather than written out again, so the two cannot
