@@ -84,6 +84,17 @@ func TestSDKMountConnection(t *testing.T) {
 			map[string]string{"index.html": `<!doctype html><script src="./civitai-host.js"></script>` + sdkIndexHTML,
 				"civitai-host.js": realEmitter()}, ""},
 
+		// CONDITIONAL mount-effect hooks are NOT evidence: in their no-op case
+		// (as written here) they never reach getTransport() at mount on a
+		// pre-fix SDK, so an app using only one of them is the incident's shape.
+		{"only useWildcardPack, with a non-positive id", "import { useWildcardPack } from '@civitai/blocks-react';\n" +
+			"export function App() { const { pack } = useWildcardPack(0); return pack; }\n", nil, "sdk-unconnected"},
+		{"only useBlockResize, ref not attached at mount", "import { useRef } from 'react';\n" +
+			"import { useBlockResize } from '@civitai/blocks-react';\n" +
+			"export function App() { const ref = useRef(null); useBlockResize(ref); return null; }\n", nil, "sdk-unconnected"},
+		{"only useWorkflowBatch, with no ids", "import { useWorkflowBatch } from '@civitai/blocks-react';\n" +
+			"export function App() { const { cells } = useWorkflowBatch([]); return cells; }\n", nil, "sdk-unconnected"},
+
 		// Near-misses that must NOT satisfy it — each fires.
 		{"a COMMENT naming useBlockContext does not count", "// TODO: call useBlockContext() here\n" +
 			"/* getTransport() would also work */\n" + lazyOnlyApp, nil, "sdk-unconnected"},

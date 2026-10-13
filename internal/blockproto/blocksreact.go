@@ -11,66 +11,75 @@ import (
 const BlocksReactPackage = "@civitai/blocks-react"
 
 // blocksReactMountConnecting is the set of `@civitai/blocks-react` exports that
-// CONSTRUCT THE SDK TRANSPORT AT MOUNT — during render, or in an effect that
-// runs on mount. It is a VENDORED MIRROR of SDK source, in the same sense as
-// ackingPackages above.
+// CONSTRUCT THE SDK TRANSPORT AT MOUNT, UNCONDITIONALLY — during render, or in
+// an effect that runs on every mount — IN THE VERSIONS BEFORE THE FIX
+// (civitai/civitai-app-starters#632, "every hook connects the transport at
+// mount"). It is a VENDORED MIRROR of SDK source, in the same sense as
+// ackingPackages above, and it is FROZEN: the SDK-mount check only runs for a
+// lockfile-resolved version older than the first release carrying that fix
+// (see internal/validate's blocksReactMountFixVersion), so later SDK changes
+// never need to be re-derived into it.
 //
-// 🔴 WHY THIS EXISTS: DEPENDING ON THE SDK IS NOT THE SAME AS ACKING. The SDK's
-// `IframeTransport` sends BLOCK_HELLO and answers BLOCK_INIT with BLOCK_READY —
-// but only once something calls `getTransport()`, which builds it lazily on
-// first call (`src/transport/singleton.ts`). A page app whose only SDK use is
-// `useBuzzWorkflow` calls `getTransport()` exclusively INSIDE the callbacks it
-// returns (estimate/submit/poll/cancel), so nothing constructs the transport at
-// mount, BLOCK_READY never goes out, and the host shows "This app didn't load
-// in time" after 10 s, retries twice and fails. Verified live on a production
-// app that passed `civitai app validate` and `app submit`, because the
-// dependency alone used to end the ready-ack check.
+// 🔴 WHY THIS EXISTS: IN THOSE VERSIONS, DEPENDING ON THE SDK IS NOT THE SAME AS
+// ACKING. The SDK's `IframeTransport` sends BLOCK_HELLO and answers BLOCK_INIT
+// with BLOCK_READY — but only once something calls `getTransport()`, which
+// builds it lazily on first call (`src/transport/singleton.ts`). Before #632, a
+// page app whose only SDK use was `useBuzzWorkflow` called `getTransport()`
+// exclusively INSIDE the callbacks it returns (estimate/submit/poll/cancel), so
+// nothing constructed the transport at mount, BLOCK_READY never went out, and
+// the host showed "This app didn't load in time" after 10 s, retried twice and
+// failed. Verified live on a production app that passed `civitai app validate`
+// and `app submit`, because the dependency alone used to end the ready-ack
+// check.
 //
 // DERIVED FROM SOURCE, NOT GUESSED: civitai/civitai-app-starters
 // `packages/civitai-blocks-react/src`, @civitai/blocks-react 0.71.0 (origin/main
 // 14bde2eb, 2026-10-12). Every VALUE export of the package's `.` and `./ui`
-// entry points was classified by where it calls `getTransport()`:
+// entry points was classified by where it calls `getTransport()`, and every
+// member below was re-read for an early return or guard in front of that call:
 //
 //	render — getTransport() directly, via the internal useTransportSnapshot
 //	         (useSyncExternalStore), or in a useMemo initialiser:
 //	  getTransport, useBlockContext, useBlockTheme, useBlockSettings,
 //	  useBlockToken, useHostOrigin, useCivitaiRoute, useDomainMaturity,
 //	  useDirectLoad, useAppStorage, useSharedStorage
-//	render, via one of the above:
+//	render, via one of the above, called at the top of the component/hook:
 //	  useEntitlements, useGenerationResources, useGoodPurchase, useTip,
 //	  useTipAllowance, SfwGate (useDomainMaturity), BlockGate (useDirectLoad),
 //	  TipButton (useTip)
-//	mount effect — a useEffect that calls getTransport() (some conditionally,
-//	  see below):
+//	mount effect — `useEffect(() => { refetch(); }, [refetch])`, or an effect
+//	  body, that reaches getTransport() with no guard in front of it:
 //	  useViewer, useBuzzBalance, useBuzzAccounts, useBuzzTransactions,
-//	  useAppWorkflows, useDailyCompensation, useWildcardPack,
-//	  useConsentUnavailable, useImageUpload, useBlockResize, useWorkflowBatch
+//	  useAppWorkflows, useDailyCompensation, useConsentUnavailable,
+//	  useImageUpload
 //	constructs a transport by hand:
 //	  IframeTransport, BlockTransportDetector
 //
-// and, deliberately ABSENT because they reach getTransport() ONLY inside a
-// caller-invoked callback: useBuzzWorkflow, useBatchEstimate, useBuzzPurchase,
-// useBlockAnalytics, useCivitaiNavigate, useRequestSignIn, useRequestConsent,
-// useCollectionFollow, useCreatePostFromApp, usePrepareTrainingDataset,
-// useRunTraining, useRunConfirmedStep, useCheckpointPicker, useResourcePicker,
-// useUploadImageBytes, usePublishGenerationOutputs, useGatedImages,
-// useSaveImage, FollowButton; and useBlockBreakpoint / useNestedDocument, which
-// never touch the transport at all.
+// and, deliberately ABSENT:
 //
-// 🔴 THE SET ERRS GENEROUS, AND THAT IS THE CHEAP DIRECTION. A name wrongly IN
-// the set can only SILENCE the finding (a false negative); a name wrongly OUT
-// of it warns at a correct app, the expensive direction this whole check is
-// built to avoid. So the conditional mount effects are IN: useWildcardPack
-// skips the request for a non-positive id, useBlockResize only once its ref is
-// attached, useWorkflowBatch only with ids to watch — an app relying on one of
-// those alone may still never connect, and goes unflagged.
+//	callback-only — getTransport() is reached only inside a caller-invoked
+//	  function: useBuzzWorkflow, useBatchEstimate, useBuzzPurchase,
+//	  useBlockAnalytics, useCivitaiNavigate, useRequestSignIn, useRequestConsent,
+//	  useCollectionFollow, useCreatePostFromApp, usePrepareTrainingDataset,
+//	  useRunTraining, useRunConfirmedStep, useCheckpointPicker,
+//	  useResourcePicker, useUploadImageBytes, usePublishGenerationOutputs,
+//	  useGatedImages, useSaveImage, FollowButton
+//	CONDITIONAL mount effect — connects at mount only on some inputs, and not
+//	  in its no-op case (independently measured in civitai-app-starters#632):
+//	  useWildcardPack (returns before the request for a non-positive id),
+//	  useBlockResize (`if (!el) return;` before getTransport(), so nothing
+//	  before its ref is attached), useWorkflowBatch (its watch loops start only
+//	  for ids in the list, so nothing with an empty list)
+//	never touches the transport: useBlockBreakpoint, useNestedDocument
 //
-// Residuals, stated: an older SDK whose hook connected LAZILY where 0.71.0's
-// connects at mount is silenced by this set (false negative). A newer SDK that
-// connects eagerly at import would make the finding a false warning on apps
-// using only lazy hooks — re-derive this set (and the check's gate) when that
-// ships. Adding a name here is a claim about SDK RUNTIME code: read the hook's
-// body, not its docs, and record the version.
+// 🔴 A CONDITIONAL MEMBER IS A HOLE, NOT A HEDGE. An earlier revision listed the
+// three conditional hooks "because a wrong member only silences" — but silence
+// on the incident's own shape (an app whose only SDK use is one of them, in its
+// no-op case) is exactly the false pass this check exists to remove. A name is
+// in this set only if it connects on EVERY mount.
+//
+// Adding a name here is a claim about SDK RUNTIME code in a pre-fix version:
+// read the hook's body, not its docs, and record the version.
 var blocksReactMountConnecting = map[string]bool{
 	// render
 	"getTransport": true, "useBlockContext": true, "useBlockTheme": true,
@@ -81,11 +90,10 @@ var blocksReactMountConnecting = map[string]bool{
 	"useEntitlements": true, "useGenerationResources": true, "useGoodPurchase": true,
 	"useTip": true, "useTipAllowance": true, "SfwGate": true, "BlockGate": true,
 	"TipButton": true,
-	// mount effect
+	// unconditional mount effect
 	"useViewer": true, "useBuzzBalance": true, "useBuzzAccounts": true,
 	"useBuzzTransactions": true, "useAppWorkflows": true, "useDailyCompensation": true,
-	"useWildcardPack": true, "useConsentUnavailable": true, "useImageUpload": true,
-	"useBlockResize": true, "useWorkflowBatch": true,
+	"useConsentUnavailable": true, "useImageUpload": true,
 	// constructs a transport by hand
 	"IframeTransport": true, "BlockTransportDetector": true,
 }

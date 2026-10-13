@@ -19,7 +19,12 @@ func TestMountConnectingSetMembership(t *testing.T) {
 	// alone, and it connects only inside its returned callbacks. If it ever
 	// lands in the set, the finding is inert on exactly the app that broke.
 	out := []string{"useBuzzWorkflow", "useBatchEstimate", "useBuzzPurchase", "useBlockAnalytics",
-		"useRequestSignIn", "useBlockBreakpoint"}
+		"useRequestSignIn", "useBlockBreakpoint",
+		// CONDITIONAL mount effects: each connects at mount only on some inputs
+		// and not in its no-op case (non-positive id / ref not attached / no
+		// ids). Listing one silences the finding on that no-op case — the
+		// incident's own shape — so they are out.
+		"useWildcardPack", "useBlockResize", "useWorkflowBatch"}
 	set := map[string]bool{}
 	for _, n := range BlocksReactMountConnecting() {
 		set[n] = true

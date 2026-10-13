@@ -79,10 +79,11 @@ package validate
 // dependency that ACKS ends the BLOCK_READY scan.
 //
 // 🔴 BUT A DEPENDENCY THAT ACKS IS NOT AN ACK THAT FIRES, AND FOR
-// `@civitai/blocks-react` THE GAP SHIPPED TO PRODUCTION. The SDK constructs its
-// transport lazily, on the first `getTransport()`; an app whose only SDK use is
-// `useBuzzWorkflow` calls it only inside callbacks, so nothing answers BLOCK_INIT
-// and the host shows "This app didn't load in time" after 10 s. That app passed
+// `@civitai/blocks-react` THE GAP SHIPPED TO PRODUCTION. Before
+// civitai/civitai-app-starters#632 the SDK constructed its transport lazily, on
+// the first `getTransport()`; an app whose only SDK use was `useBuzzWorkflow`
+// reached it only inside callbacks, so nothing answered BLOCK_INIT and the host
+// showed "This app didn't load in time" after 10 s. That app passed
 // `validate` and `submit` because the dependency used to END the check. So when
 // the ack comes from blocks-react — and from no other acking package — the
 // entry graph must ALSO reference an export that constructs the transport at
@@ -92,7 +93,10 @@ package validate
 // presence fallback, because "we did not see the call" from a graph we could
 // not finish is the manufactured wiring finding item 20 forbids. The dependency
 // check stays first and still carries its weight: it is what keeps a correct
-// SDK app from ever being asked to ship the emitter.
+// SDK app from ever being asked to ship the emitter. And the finding is
+// VERSION-GATED on the lockfile-resolved blocks-react version, because from the
+// #632 release on every hook connects at mount and the finding would be false
+// (blocksreactversion.go).
 //
 // 🔴 "A dependency that acks" is an EXACT SET (blockproto.PackageAcksReady), not
 // the `@civitai/` scope. Four of the six published first-party packages do not
@@ -221,7 +225,7 @@ func readyAckChecks(dir string, generic any) []Finding {
 	case sdkUnknown:
 		return nil
 	case sdkPresent:
-		return sdkMountChecks(dir, deps)
+		return sdkMountChecks(dir, deps, buildCommandOf(generic))
 	}
 
 	// The whole-tree presence scan runs FIRST and gates everything: if we could
@@ -306,7 +310,20 @@ func resolveLoadedFiles(dir string, deps map[string]bool) (*blockproto.EntryGrap
 // Either kind of evidence ends it: a reference to a mount-connecting export, OR
 // a loaded file that posts BLOCK_READY itself (a hand-written emitter beside an
 // unused SDK dependency acks without the SDK's help).
-func sdkMountChecks(dir string, deps map[string]bool) []Finding {
+//
+// 🔴 VERSION-GATED. The finding is only true for blocks-react versions before
+// civitai/civitai-app-starters#632; from that release on every hook connects at
+// mount. blocksReactPreFix reads the LOCKFILE-resolved version against
+// blocksReactMountFixVersion — see blocksreactversion.go, including why that
+// constant is still a placeholder.
+func sdkMountChecks(dir string, deps map[string]bool, buildCommand string) []Finding {
+	return sdkMountChecksAt(dir, deps, buildCommand, blocksReactMountFixVersion)
+}
+
+// sdkMountChecksAt is sdkMountChecks against an explicit fix release, so the
+// tests can drive the whole check at a real threshold while the constant is
+// still the placeholder.
+func sdkMountChecksAt(dir string, deps map[string]bool, buildCommand, fixVersion string) []Finding {
 	// Under today's only caller (state == sdkPresent, so SOME acking package is
 	// declared) this gate is implied by the loop below — deleting it is a
 	// measured EQUIVALENT mutant. It stays so the function is correct on its
@@ -318,6 +335,9 @@ func sdkMountChecks(dir string, deps map[string]bool) []Finding {
 		if name != blockproto.BlocksReactPackage && blockproto.PackageAcksReady(name) {
 			return nil
 		}
+	}
+	if !blocksReactPreFix(dir, buildCommand, fixVersion) {
+		return nil
 	}
 	connects := false
 	g := blockproto.ResolveEntryGraph(dir, blockproto.EntryGraphOptions{
@@ -339,6 +359,14 @@ func sdkMountChecks(dir string, deps map[string]bool) []Finding {
 		return nil
 	}
 	return []Finding{newFinding(FieldProject, readyAckAdviceSDKNotConnected)}
+}
+
+// buildCommandOf returns the manifest's buildCommand, or "" — the same input
+// lockfileChecks derives the package manager (and so the lockfile) from.
+func buildCommandOf(generic any) string {
+	m, _ := generic.(map[string]any)
+	s, _ := m["buildCommand"].(string)
+	return s
 }
 
 // declaresPage reports whether the manifest declares a non-null `page` surface.
@@ -626,14 +654,22 @@ var readyAckAdviceMissing = "the manifest declares a \"page\" surface but nothin
 //
 // It does not reuse readyAckWhy, because the measured symptom differs: this
 // shape was observed live as the 10 s "didn't load in time" card, retried twice.
+//
+// 🔴 EVERY CLAIM IN IT IS SCOPED TO THE INSTALLED VERSION. It only fires for a
+// blocks-react version older than the #632 release (the version gate), so "the
+// version this project's lockfile installs connects lazily" is true wherever it
+// is printed; an unscoped "useBuzzWorkflow connects lazily" would be false on
+// every fixed release.
 var readyAckAdviceSDKNotConnected = "the manifest declares a \"page\" surface and this project depends on " +
 	blockproto.BlocksReactPackage + ", whose iframe transport sends " + readyAckType + " for you — but only " +
 	"once something constructs that transport, and nothing index.html loads does so at mount: resolving " +
 	"index.html and every module it loads found no reference to a hook that connects during render or on " +
-	"mount. Hooks such as useBuzzWorkflow connect lazily, inside the functions they return, so an app that " +
-	"uses only those never answers the host's BLOCK_INIT. Fix: call useBlockContext() (or getTransport()) in " +
-	"your root component; without it the host shows \"This app didn't load in time\" after 10 s, retries, " +
-	"and gives up. Do not also add `" + blockproto.ReadyAckFilename + "` — two handshakes race. Caveat: " +
+	"mount. In the " + blockproto.BlocksReactPackage + " version this project's lockfile installs (a release " +
+	"from before every hook connected at mount), hooks such as useBuzzWorkflow connect only inside the " +
+	"functions they return, so an app that uses only those never answers the host's BLOCK_INIT. Fix: call " +
+	"useBlockContext() (or getTransport()) in your root component; without it the host shows \"This app " +
+	"didn't load in time\" after 10 s, retries, and gives up. Upgrading " + blockproto.BlocksReactPackage +
+	" to a release in which every hook connects at mount also fixes it. Do not also add `" + blockproto.ReadyAckFilename + "` — two handshakes race. Caveat: " +
 	readyAckTail
 
 // readyAckAdvicePresenceOnlyHead is the PRESENCE finding up to the point where
