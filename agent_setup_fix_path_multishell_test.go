@@ -37,8 +37,10 @@ import (
 // 🔴 BUT "VISIBLY" MEANT "UNDER `-v`", AND NOTHING RUNS THIS WITH `-v` — THAT IS
 // cli#777 ROUND 3'S F3, AND THE FIX IS THE FLOOR AT THE BOTTOM OF THIS TEST.
 // `--- SKIP` rows and the `MEASURED` summary are subtest output and `t.Logf`,
-// both suppressed without `-v`, while `Makefile`'s `test` target and
-// `.github/workflows/ci.yml`'s test step both run a bare `go test ./...`.
+// both suppressed without `-v`, and `Makefile`'s `test` target runs a bare
+// `go test ./...`. (`.github/workflows/ci.yml`'s test step now runs this package
+// through `go test -json`, which is verbose, so CI's log does carry them; a
+// local run still does not, and the floor does not depend on either.)
 // Measured on a host with three of the five shells absent, a bare run printed
 // exactly `ok github.com/civitai/cli 0.697s` — byte-indistinguishable from the
 // full table. The only channel a default `go test` cannot suppress is the EXIT

@@ -468,7 +468,7 @@ append `{"what","ok","ms","budget"}` to `<file>`. The Go suite uses it to run
 its expected-timeout negative controls on a **short** `CIVITAI_ASSERT_WAIT_MS`
 and to refuse that short budget anywhere else (`dogfood_control_wait_test.go`);
 `dogfood-browser` publishes the distribution of the waits that succeeded
-(`wait-summary.sh`), which is the evidence the short budget rests on. A grading
+(`wait-summary.sh`, via `ci-browser-tests.sh`), which is the evidence the short budget rests on. A grading
 run is unaffected: neither knob changes `WAIT_MS`'s 15 s default.
 
 - 🔴 **`scopes=` decides no verdict**, exactly like the validate gate. A manifest

@@ -34,7 +34,7 @@ import (
 // stopped being able to tell present from absent. So:
 //
 //   - the short budget is chosen from the measured time the SUCCESSFUL waits
-//     take (CIVITAI_ASSERT_WAIT_LOG, which build-test now publishes per run),
+//     take (CIVITAI_ASSERT_WAIT_LOG, which dogfood-browser publishes per run),
 //     with margin over the worst observed under load — see the PR that added
 //     this file for the distribution and the load it was taken at;
 //   - each ledgered leaf's control was re-run at the short budget with the
@@ -113,7 +113,7 @@ func checkControlWait(t *testing.T, budget int, log string) {
 		return
 	}
 	// Forward to an operator's own log, which this leaf's private one shadowed —
-	// build-test publishes the distribution from it.
+	// the dogfood-browser CI job publishes the distribution from it.
 	if dst := os.Getenv(waitLogEnvKey); dst != "" && len(raw) > 0 {
 		if f, err := os.OpenFile(dst, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 			_, _ = f.Write(raw)

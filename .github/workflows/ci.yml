@@ -141,9 +141,10 @@ jobs:
       # scripts/dogfood, ~85% of this job's old wall time — runs in the
       # `dogfood-browser` job below. The split is ONE list of files,
       # scripts/dogfood/browser-tier.sh; this step skips those files' tests and
-      # that job runs exactly them. Each job then checks its half against
-      # `go test -list` of the real binary, so always ∪ browser is the whole
-      # package and nothing runs twice. Locally `go test ./...` / `make ci`
+      # that job runs exactly them. This step then requires the tests it
+      # reported to be exactly (`go test -list` of the real binary − that
+      # list), and that job requires its PASS lines to be exactly the list — so
+      # always ∪ browser is the whole package and nothing runs twice. Locally `go test ./...` / `make ci`
       # still run everything.
       - name: test
         run: |
@@ -157,7 +158,10 @@ jobs:
           # RAN can be counted; rendered back to plain text for the log.
           skip=$(./scripts/dogfood/browser-tier.sh regex)
           ./scripts/dogfood/browser-tier.sh names > "$RUNNER_TEMP/browser.txt"
-          go test -list '.*' . | grep -v '^ok' | LC_ALL=C sort > "$RUNNER_TEMP/golist.txt"
+          # `^Test`, not `.*`: -list also prints Benchmark/Fuzz/Example names,
+          # which a plain `go test` run never reports — a root benchmark would
+          # otherwise read as "a test that did not run".
+          go test -list '^Test' . | grep -v '^ok' | LC_ALL=C sort > "$RUNNER_TEMP/golist.txt"
           go test -json -skip "$skip" . | tee "$RUNNER_TEMP/root.json" \
             | jq -rj 'select(.Action == "output") | .Output' | tee -a "$RUNNER_TEMP/gotest.log"
 
@@ -199,10 +203,10 @@ jobs:
   # than one job. One job, one runner slot.
   #
   # 🔴 THIS JOB IS ITS OWN LEDGER. `go test -run <filter>` exits 0 when the
-  # filter matches nothing, so the step requires the top-level PASS lines to
-  # be EXACTLY the browser tier, every name of which the real binary must
-  # hold. With `build-test`'s mirror-image check, always ∪ browser is the
-  # whole package, each test once.
+  # filter matches nothing, so scripts/dogfood/ci-browser-tests.sh requires
+  # the top-level PASS lines to be EXACTLY the browser tier. With
+  # `build-test`'s mirror-image check, always ∪ browser is the whole package,
+  # each test once.
   dogfood-browser:
     runs-on: ubuntu-latest
     steps:
@@ -219,37 +223,7 @@ jobs:
       - name: browser tests
         env:
           CIVITAI_ASSERT_WAIT_LOG: ${{ runner.temp }}/dogfood-waits.jsonl
-        run: |
-          set -uo pipefail
-
-          run=$(./scripts/dogfood/browser-tier.sh regex)
-          ./scripts/dogfood/browser-tier.sh names > "$RUNNER_TEMP/browser.txt"
-          go test -list '.*' . | grep -v '^ok' | LC_ALL=C sort > "$RUNNER_TEMP/golist.txt"
-
-          # Every browser-tier name must be a test the binary holds.
-          stale=$(LC_ALL=C comm -13 "$RUNNER_TEMP/golist.txt" "$RUNNER_TEMP/browser.txt")
-          if [ -n "$stale" ]; then
-            echo "::error::scripts/dogfood/browser-tier.sh names tests the binary does not hold (build tag? renamed?):"
-            echo "$stale"
-            exit 1
-          fi
-
-          # -count=1: these tests' inputs are mostly files their CHILD
-          # processes read (oracle.sh, _cdp.mjs), which Go's test cache does
-          # not track — a cached replay would re-print a PASS for code that
-          # changed.
-          go test -json -count=1 -run "$run" . | tee "$RUNNER_TEMP/browser.json" \
-            | jq -rj 'select(.Action == "output") | .Output'
-
-          jq -r 'select(.Action == "pass" and .Test != null and (.Test | contains("/") | not)) | .Test' \
-            "$RUNNER_TEMP/browser.json" | LC_ALL=C sort > "$RUNNER_TEMP/passed.txt"
-          echo "browser tier: $(wc -l < "$RUNNER_TEMP/passed.txt") top-level PASS, $(wc -l < "$RUNNER_TEMP/browser.txt") listed, of $(wc -l < "$RUNNER_TEMP/golist.txt") tests in the binary"
-          if [ ! -s "$RUNNER_TEMP/passed.txt" ] || ! diff "$RUNNER_TEMP/browser.txt" "$RUNNER_TEMP/passed.txt"; then
-            echo "::error::the browser tier did not PASS exactly its listed tests (diff above; an empty PASS list means the -run filter matched nothing, which \`go test\` reports as success)."
-            exit 1
-          fi
-
-          ./scripts/dogfood/wait-summary.sh "$CIVITAI_ASSERT_WAIT_LOG"
+        run: ./scripts/dogfood/ci-browser-tests.sh
 
   # Static-analysis gate: golangci-lint over the whole module using the curated
   # linter set in .golangci.yml (staticcheck / govet / ineffassign / unused /

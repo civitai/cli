@@ -20,9 +20,11 @@
 #   - dogfood_submission_cap_seam_test.go builds ./cmd/civitai.
 #
 # The name list is grepped out of Go source, which is a claim about `gofmt`'s
-# layout; TestBrowserTierIsAPartitionOfTheRootPackage checks it against the
-# parsed AST, and both CI jobs check their half against `go test -list` of the
-# real binary. Run from the repo root.
+# layout. Nothing checks that statically; the two CI jobs check it against what
+# ACTUALLY RAN: `dogfood-browser` requires its PASS lines to be exactly this
+# list (ci-browser-tests.sh), and `build-test` requires the tests it reported
+# to be exactly the real binary's `go test -list` minus it. A name this list
+# gets wrong in either direction reds one of the two. Run from the repo root.
 set -euo pipefail
 
 FILES=(
