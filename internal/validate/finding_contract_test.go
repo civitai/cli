@@ -1149,6 +1149,26 @@ func fieldCoverageCorpus() []fieldFixture {
 			},
 		},
 		{
+			name: "a blocks-react page app that never constructs the transport at mount (sdkMountChecks)",
+			files: map[string]string{
+				"block.manifest.json": `{
+				  "blockId": "cov-block",
+				  "name": "Coverage Block",
+				  "version": "1.0.0",
+				  "description": "page app whose SDK never connects",
+				  "author": "tester",
+				  "contentRating": "g",
+				  "page": {"path": "/", "title": "App"},
+				  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+				  "entry": "index.html"
+				}`,
+				"package.json": `{"dependencies": {"@civitai/blocks-react": "^0.71.0"}}`,
+				"index.html":   `<!doctype html><script type="module" src="./app.js"></script>`,
+				"app.js": "import { useBuzzWorkflow } from '@civitai/blocks-react';\n" +
+					"export function App() { const { submit } = useBuzzWorkflow(); return submit; }\n",
+			},
+		},
+		{
 			// storageScopeChecks reports against `scopes`, NOT FieldProject — the
 			// deliberate opposite of readyAckChecks above, because here the source
 			// is correct and the manifest is what needs the edit. This fixture is

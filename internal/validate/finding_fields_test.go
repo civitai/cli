@@ -173,6 +173,9 @@ func findingFieldLedger() []fieldExpectation {
 			"the finding is about what the browser loads. `page` is what makes the check " +
 				"APPLY and is the one field that is CORRECT — reporting it there would " +
 				"send a consumer to the wrong file entirely"},
+		{"nothing index.html loads does so at mount", FieldProject,
+			"the SDK-mount finding: same reasoning as the row above — the remedy is one " +
+				"call in the root component, and the manifest's `page` is correct"},
 
 		// --- storagescope.go --------------------------------------------
 		{"but the manifest declares no storage scope", "scopes",

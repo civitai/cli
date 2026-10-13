@@ -331,6 +331,9 @@ type pending struct {
 	depth int
 	what  string
 	syn   refSyntax
+	// fromTS: the importer is a TypeScript module, which enables the
+	// `.js` -> `.ts` specifier rewrite (see resolveRefPath).
+	fromTS bool
 }
 
 // ResolveEntryGraph walks the project in dir the way a browser does, starting
@@ -422,7 +425,7 @@ func resolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 			}
 			continue
 		}
-		file, err := resolveRefPath(resolved, p.syn)
+		file, err := resolveRefPath(resolved, p.syn, p.fromTS)
 		if err != nil {
 			// A reference that points at nothing means this resolver disagrees
 			// with a project that presumably builds — our model is wrong, not
@@ -501,7 +504,7 @@ func resolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 			}
 			queue = append(queue, pending{
 				spec: spec, from: filepath.Dir(file), via: idx, depth: p.depth + 1,
-				what: "import in " + f.Rel, syn: syntaxModule,
+				what: "import in " + f.Rel, syn: syntaxModule, fromTS: isTSModule(file),
 			})
 		}
 	}
@@ -543,7 +546,7 @@ func truncatedBelow(g *EntryGraph, root, fromFile, spec string, deps map[string]
 	case refUnresolved:
 		return true
 	}
-	target, err := resolveRefPath(resolved, syntaxModule)
+	target, err := resolveRefPath(resolved, syntaxModule, isTSModule(fromFile))
 	if err != nil {
 		return true
 	}
@@ -628,18 +631,56 @@ var entryModuleExts = map[string]bool{
 // order a bundler tries them. They are never applied to a URL.
 var entryResolveExts = []string{".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte", ".astro"}
 
+// tsOutputExts maps a JS output extension to the TypeScript sources it may be
+// written for, in the order TypeScript and Vite try them.
+var tsOutputExts = map[string][]string{
+	".js":  {".ts", ".tsx"},
+	".jsx": {".tsx"},
+	".mjs": {".mts"},
+	".cjs": {".cts"},
+}
+
+// isTSModule reports whether path is a TypeScript module, i.e. an importer whose
+// `./x.js` specifiers may name `./x.ts` / `./x.tsx`.
+func isTSModule(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".ts", ".tsx", ".mts", ".cts":
+		return true
+	}
+	return false
+}
+
 // resolveRefPath turns a resolved reference into a file that exists.
 //
 // 🔴 URL syntax gets NO extension or directory-index guessing. A browser fetches
 // the literal path: `<script src="./civitai-host">` on a no-build template is a
 // 404, and guessing `.js` for it accepted exactly the "ships a 404" shape this
 // resolver exists to reject.
-func resolveRefPath(p string, syn refSyntax) (string, error) {
+//
+// 🔴 A TYPESCRIPT IMPORTER'S `./App.js` NAMES `./App.tsx`. That is the
+// convention TypeScript's own module resolution requires for ESM output and the
+// one Vite honours for TS importers, and it is how the shipped `page-money`
+// template imports every local module (`import { App } from './App.js'` with only
+// `src/App.tsx` on disk). Without this rewrite page-money's graph was
+// INCOMPLETE — four dangling references — so every check reading it went quiet
+// by doctrine on the exact template whose apps it most needed to read. The
+// rewrite applies ONLY when the literal file is absent and ONLY from a TS
+// importer (Vite's own condition): a JS importer's `./x.js` still has to exist.
+func resolveRefPath(p string, syn refSyntax, fromTS bool) (string, error) {
 	if info, err := os.Stat(p); err == nil && !info.IsDir() {
 		return filepath.Clean(p), nil
 	}
 	if syn == syntaxURL {
 		return "", os.ErrNotExist
+	}
+	if fromTS {
+		ext := filepath.Ext(p)
+		for _, ts := range tsOutputExts[ext] {
+			cand := strings.TrimSuffix(p, ext) + ts
+			if info, err := os.Stat(cand); err == nil && !info.IsDir() {
+				return filepath.Clean(cand), nil
+			}
+		}
 	}
 	for _, ext := range entryResolveExts {
 		if info, err := os.Stat(p + ext); err == nil && !info.IsDir() {

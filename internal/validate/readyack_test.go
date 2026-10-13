@@ -109,6 +109,11 @@ func readyAckKind(res Result) string {
 			return "missing"
 		case isPresenceOnlyAdvice(w.Message):
 			return "presence-only"
+		case w.Message == readyAckAdviceSDKNotConnected:
+			// Outside readyAckAdvisories on purpose (see its doc comment), so
+			// it must be classified here explicitly — or every SDK fixture in
+			// this package would read "" whether or not the finding fired.
+			return "sdk-unconnected"
 		}
 	}
 	return ""
@@ -196,12 +201,19 @@ func TestReadyAckWarning(t *testing.T) {
 			// 🔴 THE REGRESSION THAT WOULD HURT MOST. The SDK's IframeTransport
 			// acks internally and the literal never appears in src/, so a
 			// source-only check warns at EVERY correct page-money app.
+			//
+			// The fixture CALLS useBlockContext(): a blocks-react app that never
+			// constructs the transport at mount is the SDK-mount finding's case
+			// (TestSDKMountConnection), and this one used to import a name that
+			// constructs nothing — it was only silent because the dependency
+			// ended the check outright.
 			name:     "page app depending on @civitai/blocks-react does not warn",
 			manifest: ackManifest(true),
 			files: map[string]string{
 				"package.json": `{"dependencies": {"react": "^19.0.0", "@civitai/blocks-react": "^0.39.0"}}`,
 				"index.html":   `<script type="module" src="/src/main.tsx"></script>`,
-				"src/main.tsx": `import { BlockProvider } from '@civitai/blocks-react';`,
+				"src/main.tsx": "import { useBlockContext } from '@civitai/blocks-react';\n" +
+					"export function App() { const { ready } = useBlockContext(); return ready; }\n",
 			},
 			wantWarn: false,
 		},
