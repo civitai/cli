@@ -62,8 +62,8 @@ It also emits non-fatal WARNINGS the schema can't catch as hard errors:
     @civitai/blocks-react to a release from before every hook connected at
     mount, it also warns when nothing your index.html loads calls a hook that
     connects at mount (in those releases useBuzzWorkflow alone never acks):
-    call useBlockContext() in your root component. It reads source only — never outputDir, node_modules,
-    markdown, or comments.
+    call useBlockContext() in your root component. It reads source only —
+    never outputDir, node_modules, markdown, or comments.
   - source that calls useAppStorage() or useSharedStorage() while the manifest
     declares NO scope for that store. The server gates storage by PRESENCE in the
     approved scope set, so an undeclared scope means every call 403s in
