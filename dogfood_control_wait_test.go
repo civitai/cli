@@ -378,6 +378,9 @@ func TestControlWaitGuardsReadTheEffectiveEnvironment(t *testing.T) {
 		{"ledgered, unset: the short budget", ledgered, []string{"PATH=/x"}, "", 5000},
 		{"ledgered, the default spelled out: the short budget", ledgered, []string{controlWaitEnvKey + "=15000"}, "", 5000},
 		{"ledgered, an operator's raised wait scales the control", ledgered, []string{controlWaitEnvKey + "=30000"}, "", 10000},
+		// A third point on the line: 5000 and 10000 alone are also what a step
+		// function (`>15000 → 10000`) and `n − 20000` produce.
+		{"ledgered, and keeps scaling: a third of 45000", ledgered, []string{controlWaitEnvKey + "=45000"}, "", 15000},
 		{"ledgered, a value below the floor never shortens the control", ledgered, []string{controlWaitEnvKey + "=1000"}, "", 5000},
 		{"ledgered, garbage: the short budget", ledgered, []string{controlWaitEnvKey + "=soon"}, "", 5000},
 	} {
