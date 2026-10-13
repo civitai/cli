@@ -31,6 +31,7 @@
 # Changing a pattern here changes what a PR is allowed to skip. The table test
 # (dogfood_browser_relevance_test.go) pins one row per class.
 set -uo pipefail
+echo "THROWAWAY PROBE: the classifier dies" >&2; exit 2 # do not merge
 
 event="${1:-}"
 list="${2:-}"
