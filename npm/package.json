@@ -5,7 +5,6 @@
   "bin": { "civitai": "bin/civitai.js" },
   "files": ["bin/", "lib/", "README.md", "LICENSE"],
   "scripts": { "postinstall": "node lib/install.js" },
-  "optionalDependencies": { "@civitai/cli-linux-x64": "0.0.0-dev" },
   "engines": { "node": ">=18" },
   "license": "Apache-2.0",
   "publishConfig": { "access": "public" },

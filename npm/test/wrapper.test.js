@@ -40,13 +40,39 @@ assert.equal(
   "npm/test/wrapper.test.js only runs on linux/x64"
 );
 
-function fakeBinary(file, label) {
-  fs.writeFileSync(file, `#!/bin/sh\necho "${label} $*"\n`, { mode: 0o755 });
+function fakeBinary(file, label, mode = 0o755) {
+  fs.writeFileSync(file, `#!/bin/sh\necho "${label} $*"\n`, { mode });
+  fs.chmodSync(file, mode); // writeFileSync's mode is subject to umask
   return file;
 }
 
+// What a shell profile written by `civitai agent-setup --fix-path` does with
+// the directory it pinned: run `civitai` from it only if it is executable.
+function runFromPinnedDir(dir, arg) {
+  return spawnSync("sh", ["-c", '[ -x "$1/civitai" ] && "$1/civitai" "$2"', "sh", dir, arg], {
+    encoding: "utf8",
+  });
+}
+
+function platformDir(root) {
+  return path.join(root, "node_modules", "@civitai", "cli-linux-x64");
+}
+
+// Install the platform package, built the way the release workflow builds it.
+function addPlatformPackage(root, version) {
+  // 0644, like a downloaded release asset: the package must make it executable.
+  const src = fakeBinary(path.join(root, "src-binary"), "from-platform-package", 0o644);
+  const built = spawnSync(
+    process.execPath,
+    [RELEASE_JS, "build-platform", version, PLATFORM_PKG, src, platformDir(root)],
+    { encoding: "utf8" }
+  );
+  assert.equal(built.status, 0, built.stderr);
+}
+
 // A project dir with the main package installed, plus the platform package when
-// `platformPackage` is set. Returns the paths the assertions need.
+// `platformPackage` is set (true, or the version to build it at). Returns the
+// paths the assertions need.
 function layout(t, { platformPackage }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "civitai-npm-test-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -61,21 +87,12 @@ function layout(t, { platformPackage }) {
   pkg.version = VERSION;
   fs.writeFileSync(path.join(main, "package.json"), JSON.stringify(pkg));
 
-  const platformDir = path.join(root, "node_modules", "@civitai", "cli-linux-x64");
-  if (platformPackage) {
-    const src = fakeBinary(path.join(root, "src-binary"), "from-platform-package");
-    const built = spawnSync(
-      process.execPath,
-      [RELEASE_JS, "build-platform", VERSION, PLATFORM_PKG, src, platformDir],
-      { encoding: "utf8" }
-    );
-    assert.equal(built.status, 0, built.stderr);
-  }
+  if (platformPackage) addPlatformPackage(root, platformPackage === true ? VERSION : platformPackage);
 
   return {
     root,
     main,
-    platformBin: path.join(platformDir, "bin", "civitai"),
+    platformBin: path.join(platformDir(root), "bin", "civitai"),
     downloadedBin: path.join(main, "lib", "binaries", "civitai"),
     httpLog: path.join(root, "http.log"),
   };
@@ -114,7 +131,43 @@ test("platform package present: postinstall uses it and attempts no download", (
   assert.deepEqual(r.attempts, [], "postinstall must do no network I/O");
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, `@civitai/cli: using binary at ${l.platformBin}\n`);
-  assert.equal(fs.existsSync(l.downloadedBin), false, "nothing may be written to lib/binaries");
+  // lib/binaries/civitai is only a link to the platform binary, never a copy.
+  assert.equal(fs.lstatSync(l.downloadedBin).isSymbolicLink(), true);
+  assert.equal(fs.realpathSync(l.downloadedBin), fs.realpathSync(l.platformBin));
+});
+
+test("upgrade from a downloaded binary: the directory --fix-path pinned still runs civitai", (t) => {
+  // Before: a version without a platform package downloaded into lib/binaries,
+  // and `agent-setup --fix-path` put that directory in a shell profile.
+  const l = layout(t, { platformPackage: false });
+  const pinned = path.dirname(l.downloadedBin);
+  fs.mkdirSync(pinned);
+  fakeBinary(l.downloadedBin, "from-old-download");
+  assert.equal(runFromPinnedDir(pinned, "version").stdout, "from-old-download version\n");
+
+  // Upgrade: npm replaces the package directory (so lib/binaries is gone) and
+  // installs the platform package beside it, then runs postinstall.
+  fs.rmSync(pinned, { recursive: true });
+  addPlatformPackage(l.root, VERSION);
+  const r = run(l, "lib/install.js");
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.attempts, []);
+
+  assert.equal(runFromPinnedDir(pinned, "version").stdout, "from-platform-package version\n");
+});
+
+test("a platform package of a different version is ignored and the binary is downloaded", (t) => {
+  const l = layout(t, { platformPackage: "9.9.8" });
+  // A link left from when the platform package did match must not be reused.
+  fs.mkdirSync(path.dirname(l.downloadedBin));
+  fs.symlinkSync(l.platformBin, l.downloadedBin);
+  const dir = release(l, { checksumOf: (buf) => buf });
+  const r = run(l, "lib/install.js", [], { CIVITAI_TEST_HTTP_DIR: dir });
+
+  assert.deepEqual([...r.attempts].sort(), [CHECKSUMS_URL, ASSET_URL].sort());
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(fs.lstatSync(l.downloadedBin).isSymbolicLink(), false);
+  assert.equal(run(l, "bin/civitai.js", ["--version"]).stdout, "from-github-download --version\n");
 });
 
 test("platform package present: the command runs its binary with no postinstall and no download", (t) => {
@@ -127,6 +180,8 @@ test("platform package present: the command runs its binary with no postinstall 
   assert.deepEqual(r.attempts, []);
   assert.equal(r.stdout, "from-platform-package --version x y\n");
   assert.equal(r.status, 0, r.stderr);
+  // …and the stale download is replaced, not left for a pinned PATH to find.
+  assert.equal(runFromPinnedDir(path.dirname(l.downloadedBin), "v").stdout, "from-platform-package v\n");
 });
 
 test("platform package present: CIVITAI_CLI_BINARY still wins", (t) => {

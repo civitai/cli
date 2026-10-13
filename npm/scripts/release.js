@@ -17,7 +17,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { PLATFORMS, platformBinaryFile, target, assetName } = require("../lib/install.js");
+const { PLATFORMS, PLATFORM_BINARY_FILE, target, assetName } = require("../lib/install.js");
 
 const NPM_DIR = path.join(__dirname, "..");
 const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
@@ -37,7 +37,7 @@ function buildPlatform(version, pkgName, binaryFile, outDir) {
   const row = PLATFORMS.find((p) => p.package === pkgName);
   if (!row) throw new Error(`${pkgName} is not listed in lib/platforms.json`);
   const main = JSON.parse(fs.readFileSync(path.join(NPM_DIR, "package.json"), "utf8"));
-  const rel = platformBinaryFile(row);
+  const rel = PLATFORM_BINARY_FILE;
 
   fs.mkdirSync(path.join(outDir, path.dirname(rel)), { recursive: true });
   fs.copyFileSync(binaryFile, path.join(outDir, rel));

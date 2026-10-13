@@ -30,11 +30,10 @@ const BINARIES_DIR = path.join(__dirname, "binaries");
 
 // THE list of platform packages: one row per package, `{ package, os, cpu }` in
 // Node's own process.platform / process.arch vocabulary. This resolver, the
-// release workflow (via scripts/release.js) and package.json's
-// optionalDependencies all follow it; npm_wrapper_test.go at the repo root
-// fails when they disagree. Adding a platform is one row here plus its
-// optionalDependencies entry — and a one-time manual first publish of the new
-// package name, which is why the list is short.
+// release workflow follow it: scripts/release.js generates the published
+// package.json's optionalDependencies from it and tells the workflow what to
+// publish. Adding a platform is one row here — and a one-time manual first
+// publish of the new package name, which is why the list is short.
 const PLATFORMS = require("./platforms.json");
 
 // Map Node's platform/arch onto GoReleaser's os/arch tokens.
@@ -71,20 +70,47 @@ function binaryPath() {
 }
 
 // Where a platform package keeps its binary, relative to the package root.
-function platformBinaryFile(row) {
-  return row.os === "win32" ? "bin/civitai.exe" : "bin/civitai";
-}
+const PLATFORM_BINARY_FILE = "bin/civitai";
 
 // The binary shipped by this host's platform package, or null when there is no
-// row for this host or npm did not install the package (--omit=optional, an
-// older lockfile, a platform without a row). Never touches the network.
+// row for this host, npm did not install the package (--omit=optional, an
+// older lockfile, a platform without a row), or the copy node resolves is a
+// different version from this wrapper (a hoisted leftover) — the caller then
+// downloads the right one. Never touches the network.
 function platformBinary() {
   const row = PLATFORMS.find((p) => p.os === process.platform && p.cpu === process.arch);
   if (!row) return null;
   try {
-    return require.resolve(`${row.package}/${platformBinaryFile(row)}`);
+    if (require(`${row.package}/package.json`).version !== require("../package.json").version) {
+      return null;
+    }
+    return require.resolve(`${row.package}/${PLATFORM_BINARY_FILE}`);
   } catch (_) {
     return null;
+  }
+}
+
+// Keep lib/binaries/civitai pointing at the platform package's binary.
+// `civitai agent-setup --fix-path` writes that directory into shell profiles
+// (it is where the downloaded binary lives), guarded by `[ -x …/civitai ]`;
+// without this link an upgrade to a platform-package version would silently
+// drop `civitai` from those users' PATH. Replaces whatever is there, so a
+// binary downloaded by an older version cannot be left behind. Best effort: the
+// platform binary works without it.
+function linkPlatformBinary(shipped) {
+  const dest = binaryPath();
+  const want = path.relative(BINARIES_DIR, shipped);
+  try {
+    if (fs.readlinkSync(dest) === want) return;
+  } catch (_) {
+    // not a symlink, or not there
+  }
+  try {
+    fs.mkdirSync(BINARIES_DIR, { recursive: true });
+    fs.rmSync(dest, { force: true });
+    fs.symlinkSync(want, dest);
+  } catch (_) {
+    // read-only install tree, or a filesystem without symlinks
   }
 }
 
@@ -176,9 +202,15 @@ function findChecksum(checksumsText, asset) {
 
 async function ensureBinary() {
   const shipped = platformBinary();
-  if (shipped) return shipped;
+  if (shipped) {
+    linkPlatformBinary(shipped);
+    return shipped;
+  }
 
   const dest = binaryPath();
+  // A link left by linkPlatformBinary is not a download: the platform package
+  // it pointed at is gone or is now the wrong version.
+  if (fs.lstatSync(dest, { throwIfNoEntry: false })?.isSymbolicLink()) fs.rmSync(dest);
   if (fs.existsSync(dest)) return dest;
 
   const t = target();
@@ -217,7 +249,7 @@ module.exports = {
   platformBinary,
   // For scripts/release.js, which builds the platform packages at publish time.
   PLATFORMS,
-  platformBinaryFile,
+  PLATFORM_BINARY_FILE,
   target,
   assetName,
 };
