@@ -31,12 +31,20 @@ the manifest fields and the scopes are documented on the docs site, and the
 `.md` suffix serves the plain-text source an agent can read directly.
 
 - **`https://developer.civitai.com/apps/reference/hooks.md`** — the COMPLETE
-  hook reference. Fetch it first: every capability this platform has is a hook,
-  and a capability you cannot find here probably exists under a name you have
-  not guessed. It is ~40 KB, so page it rather than giving up on it.
+  hook reference. Fetch it first: a hook you cannot find here probably exists
+  under a name you have not guessed. It is over 100 KB, so page it rather than
+  giving up on it. **Hooks are not every capability:** a generation body `kind`
+  (below) is not a hook, and a multi-step workflow is a `kind`.
 - Reference (manifest, scopes, hooks, message bridge, CLI):
   https://developer.civitai.com/apps/reference/
 {{- end }}
+- **Generation body kinds.** What a generation runs is set by the `kind` of the
+  body you submit, and each kind is a capability of its own:
+  - `textToImage` — https://developer.civitai.com/apps/guide/text-to-image.md
+  - `customComfy` — https://developer.civitai.com/apps/guide/comfy-cloud.md
+  - `workflow` (multi-step) — https://developer.civitai.com/apps/guide/workflows.md
+  - `step`, `training`, and every kind's fields —
+    https://developer.civitai.com/apps/reference/generation.md
 - Guide: https://developer.civitai.com/apps/guide/
 - **`https://developer.civitai.com/apps/guide/earning.md`** — the three money
   rails. Fetch it before declaring a `goods` catalog. The three rules below are

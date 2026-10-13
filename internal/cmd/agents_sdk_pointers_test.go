@@ -30,7 +30,7 @@ func TestAgentsBlockPointsAtTheSDKTheProjectInstalled(t *testing.T) {
 	}
 
 	elements := render(scaffold.PageElements)
-	for _, react := range []string{"blocks-react", "hooks.md", "useSharedStorage", "every capability this platform has is a hook"} {
+	for _, react := range []string{"blocks-react", "hooks.md", "useSharedStorage", "Hooks are not every capability"} {
 		if strings.Contains(elements, react) {
 			t.Errorf("a page-elements project's AGENTS.md mentions %q — that project does not install @civitai/blocks-react", react)
 		}
