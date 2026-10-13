@@ -333,7 +333,15 @@ func grantedClaimsNotice(claims devTokenClaims, ok bool, now time.Time) string {
 // error. Ask for min(declared, cap) and say plainly when the declared figure is
 // itself unreachable. Same rule as readOnlyTokenWarning: every command this block
 // prints must leave the state it complains about.
-func budgetShortfallNotice(sty ui.Styler, slug string, declared, granted int) string {
+//
+// 🔴 AND IT MUST CARRY THE FLAGS THE MINT WAS RUN WITH. `spend` is the --spend of
+// the invocation that produced this notice. The command used to be built from the
+// slug and the budget alone, so after `dev-token <slug> --spend --env` it printed
+// a re-mint WITHOUT --spend: copy it and the budget is fixed while
+// `ai:write:budgeted` is filtered back out of the request, which trades a token
+// that is refused on the ceiling for one that cannot generate at all. A flag this
+// command grows later belongs in remintFlags for the same reason.
+func budgetShortfallNotice(sty ui.Styler, slug string, declared, granted int, spend bool) string {
 	ask := declared
 	overCap := declared > appapi.DevBuzzBudgetCap
 	if overCap {
@@ -344,13 +352,24 @@ func budgetShortfallNotice(sty ui.Styler, slug string, declared, granted int) st
 		manifest.Filename, declared, granted)) + "\n" +
 		"   A generation is REFUSED outright once the recipe's Buzz ceiling exceeds the token's budget,\n" +
 		"   and that refusal names the ceiling, not the budget. Re-mint asking for it:\n" +
-		"     civitai app dev-token " + slug + fmt.Sprintf(" --budget %d", ask) + " --env >> .env.development.local"
+		"     civitai app dev-token " + slug + remintFlags(spend) + fmt.Sprintf(" --budget %d", ask) + " --env >> .env.development.local"
 	if overCap {
 		msg += fmt.Sprintf("\n   (%d is above the route's cap of %d, so %d is the most a dev token can carry — "+
 			"the cap does not limit your SUBMITTED app.)",
 			declared, appapi.DevBuzzBudgetCap, appapi.DevBuzzBudgetCap)
 	}
 	return msg
+}
+
+// remintFlags renders the flags of THIS invocation that a suggested re-mint has
+// to repeat to reproduce it, each with a leading space. --budget is absent on
+// purpose (the notice that calls this is replacing it), and so is --env, which
+// every suggested re-mint in this file spells out with its redirect.
+func remintFlags(spend bool) string {
+	if spend {
+		return " --spend"
+	}
+	return ""
 }
 
 // readOnlyTokenWarning builds the stderr warning shown when a minted dev token
@@ -622,7 +641,7 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 			// manifest that declared none, has no gap to report.
 			if declared, haveDeclared := manifest.LoadPageBuzzBudget("."); haveDeclared && claimsOK &&
 				claims.BuzzBudget != nil && declared > *claims.BuzzBudget {
-				fmt.Fprintln(errOut, budgetShortfallNotice(ui.For(errOut), slug, declared, *claims.BuzzBudget))
+				fmt.Fprintln(errOut, budgetShortfallNotice(ui.For(errOut), slug, declared, *claims.BuzzBudget, spend))
 			}
 
 			// Catch the #1 dev:live dead-end EARLY: a read-only token makes
