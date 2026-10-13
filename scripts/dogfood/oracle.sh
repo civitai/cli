@@ -209,7 +209,7 @@ ASSERT="$HERE/briefs/$BRIEF.assert.mjs"
 # a release `google-chrome` AND a raw `chromium-browser-snapshots` build at
 # `/usr/bin/chromium`; naming chromium first drove every CI run on an
 # un-release-qualified trunk snapshot. The same list lives in
-# `scripts/dogfood/briefs/_cdp.mjs`, `.github/workflows/ci.yml` and
+# `scripts/dogfood/briefs/_cdp.mjs`, `scripts/dogfood/ci-browser.sh` and
 # `dogfood_oracle_test.go`, and
 # `TestEveryBrowserResolverAgreesOnTheSameOrder` fails when they drift.
 BROWSER="${CIVITAI_CHROME:-}"

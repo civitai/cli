@@ -155,13 +155,13 @@ export const LAUNCH_MS = Number(process.env.CIVITAI_ASSERT_LAUNCH_MS || 30000);
  * What keeps it honest is that a retry is never silent. Every attempt prints a
  * line naming the attempt number, the elapsed ms and the browser's own output,
  * and a launch that needed a retry prints a `BROWSER LAUNCH RETRY` warning even
- * though it SUCCEEDED — which is the half a retry normally hides. `ci.yml`'s
- * browser-smoke step greps for exactly that string and raises a `::warning` on
+ * though it SUCCEEDED — which is the half a retry normally hides. CI's
+ * browser-smoke step (`scripts/dogfood/ci-browser.sh`) greps for exactly that string and raises a `::warning` on
  * it, so "the browser has started failing half the time" is visible in the run
  * rather than absorbed into a green.
  *
  * Set `CIVITAI_ASSERT_LAUNCH_ATTEMPTS=1` to take the retry away — which is what
- * the negative control in `ci.yml` does, so the failing path stays measured.
+ * the negative control in `scripts/dogfood/ci-browser.sh` does, so the failing path stays measured.
  */
 export const LAUNCH_ATTEMPTS = Math.max(
   1, Number(process.env.CIVITAI_ASSERT_LAUNCH_ATTEMPTS || 2) || 1);
@@ -1332,7 +1332,7 @@ export async function serve(dir) {
  * because it is the mechanism.
  *
  * 🔴 THIS LIST EXISTS FOUR TIMES AND THEY MUST AGREE: here, in
- * `scripts/dogfood/oracle.sh`, in `.github/workflows/ci.yml`'s resolve step,
+ * `scripts/dogfood/oracle.sh`, in `scripts/dogfood/ci-browser.sh`,
  * and in `dogfood_oracle_test.go`'s `oracleBrowser`. One rule, four places, so
  * it is pinned by `TestEveryBrowserResolverAgreesOnTheSameOrder` rather than by
  * a comment asking nicely.
@@ -1459,7 +1459,7 @@ export async function launch() {
       if (attempt > 1) {
         // 🔴 LOUD ON SUCCESS. This is the line that stops the retry from being
         // a way to stop noticing a browser that has started failing: a green
-        // run whose browser needed two goes SAYS SO. ci.yml greps for
+        // run whose browser needed two goes SAYS SO. ci-browser.sh greps for
         // `BROWSER LAUNCH RETRY`.
         console.error(
           `[cdp] ⚠ BROWSER LAUNCH RETRY: ${bin} launched on attempt ${attempt} of ` +
