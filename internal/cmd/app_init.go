@@ -54,7 +54,13 @@ derivation entirely.
 
 By default the project is created in ./<slug>. Override the output directory with
 a positional [dir] or --dir <path>; override the display name independently with
---name (so name, slug, and directory can all differ).`,
+--name (so name, slug, and directory can all differ).
+
+The output directory must not exist yet, or must be empty. A directory holding
+only what "civitai agent-setup" wrote into it (AGENTS.md, CLAUDE.md and your
+agent's project MCP config) counts as empty, and those files are kept: only the
+managed block inside AGENTS.md is refreshed for the new project. Anything else in
+the directory is a refusal — nothing is overwritten and there is no --force.`,
 		Example: `  # A web-components app (the page-elements default) in ./my-block.
   civitai app init my-block
 
@@ -245,10 +251,14 @@ func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, d
 		return err
 	}
 
-	written, err := scaffold.Render(tmpl, destDir, scaffold.Data{
+	// 🔴 RenderKeeping, NOT Render: a directory that holds only what
+	// `civitai agent-setup` wrote is the directory the onboarding sends an author
+	// to scaffold into. See agentSetupProjectPaths for the set and
+	// scaffold.RenderKeeping for what "only" means.
+	written, err := scaffold.RenderKeeping(tmpl, destDir, scaffold.Data{
 		Slug: slug,
 		Name: display,
-	})
+	}, agentSetupProjectPaths())
 	if err != nil {
 		return err
 	}
@@ -302,11 +312,12 @@ func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, d
 // reader this defect hurts is an AGENT running non-interactively — `--yes`, no
 // TTY — which is exactly the invocation a prompt cannot reach; a prompt would
 // leave the measured failure untouched and add a question to the one path that
-// was already fine. The write is also as safe as a write gets: `scaffold.Render`
-// has just REFUSED to run in a non-empty directory, so this AGENTS.md is one
-// this command created and no author has touched. `mergeAgentsMD` is used
-// anyway rather than a blind overwrite, so the three-case rule still holds if
-// that ever stops being true.
+// was already fine. `mergeAgentsMD` is what makes the write safe, and it is no
+// longer a belt-and-braces choice: the scaffolder now accepts a directory that
+// holds only `agent-setup`'s own files (agentSetupProjectPaths), so an AGENTS.md
+// can be there before this runs — the one that earlier step wrote, possibly with
+// the author's own text around the managed block. The three-case rule rewrites
+// the span between the markers and nothing else.
 //
 // 🔴 AGENTS.md ONLY — NOT CLAUDE.md, NOT THE MCP CONFIG. Those two are about the
 // AUTHOR'S AGENT, not about the project: which agent it is, where its config

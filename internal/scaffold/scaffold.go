@@ -155,9 +155,42 @@ func outputName(rel string) string {
 // Render writes the chosen template into destDir, creating it if needed.
 // It refuses to overwrite an existing non-empty directory.
 func Render(tmpl Template, destDir string, data Data) ([]string, error) {
+	return RenderKeeping(tmpl, destDir, data, nil)
+}
+
+// RenderKeeping is Render for a destination that may already hold a known set
+// of files, which it leaves exactly as they are.
+//
+// 🔴 WHY IT EXISTS. `civitai agent-setup` supports an empty directory as its
+// starting point and writes its instruction and MCP files into it; the next
+// documented step is `civitai app create`, which then refused that same
+// directory as "not empty". The onboarding path ended in a subdirectory and two
+// AGENTS.md files. `keep` is how the caller names the files the previous step
+// wrote, so a directory holding ONLY those counts as empty here.
+//
+// Each element of keep is a path RELATIVE to destDir, as segments. It is a
+// parameter rather than a list in this package because the set belongs to the
+// command that writes those files, and a second copy here would drift from it.
+//
+// 🔴 A NAME IS NOT ENOUGH. An entry is tolerated only when it is the kind of
+// thing the keep path says it is: a REGULAR FILE at the last segment, a real
+// directory at every segment before it. A directory, a symlink, a socket or a
+// device carrying a kept name still refuses, and so does a kept directory
+// holding anything else — a `.vscode/` with the author's own settings.json in
+// it is the author's, not this command's.
+//
+// 🔴 NOTHING IN keep IS EVER WRITTEN. The check below refuses, before the first
+// byte is written, a template whose output would land on a file that is already
+// there. No template emits one of those names today (TestNoTemplateEmitsAKeptPath
+// in internal/cmd pins the real set); the check is what makes "leaves them
+// exactly as they are" a property of this function and not of today's templates.
+func RenderKeeping(tmpl Template, destDir string, data Data, keep [][]string) ([]string, error) {
 	root := "templates/" + string(tmpl)
 
-	if err := ensureEmptyDir(destDir); err != nil {
+	if err := ensureEmptyDir(destDir, keep); err != nil {
+		return nil, err
+	}
+	if err := refuseIfOutputExists(tmpl, destDir); err != nil {
 		return nil, err
 	}
 
@@ -272,7 +305,7 @@ func Render(tmpl Template, destDir string, data Data) ([]string, error) {
 const NotEmptyRemedy = "refusing to overwrite. Scaffold somewhere else (`--dir <new path>`, or a different name), " +
 	"or remove the directory first — there is no --force"
 
-func ensureEmptyDir(dir string) error {
+func ensureEmptyDir(dir string, keep [][]string) error {
 	info, err := os.Stat(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -283,12 +316,103 @@ func ensureEmptyDir(dir string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("%s exists and is not a directory", dir)
 	}
-	entries, err := os.ReadDir(dir)
+	only, err := holdsOnlyKept(dir, keep)
 	if err != nil {
 		return err
 	}
-	if len(entries) > 0 {
+	if !only {
 		return fmt.Errorf("%s is not empty — %s", dir, NotEmptyRemedy)
 	}
 	return nil
 }
+
+// holdsOnlyKept reports whether every entry under dir is accounted for by keep:
+// a regular file where a keep path ends, a real directory where one continues.
+// With no keep paths it is exactly "dir is empty".
+//
+// It reads the entry's OWN type (os.ReadDir does not follow links), which is the
+// point: a symlink named like a kept file is a symlink, whatever it points at.
+func holdsOnlyKept(dir string, keep [][]string) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range entries {
+		var isFile bool
+		var deeper [][]string
+		for _, k := range keep {
+			if len(k) == 0 || k[0] != e.Name() {
+				continue
+			}
+			if len(k) == 1 {
+				isFile = true
+			} else {
+				deeper = append(deeper, k[1:])
+			}
+		}
+		switch {
+		case isFile && e.Type().IsRegular():
+			// A kept file, and it is one.
+		case len(deeper) > 0 && e.Type().IsDir():
+			only, err := holdsOnlyKept(filepath.Join(dir, e.Name()), deeper)
+			if err != nil || !only {
+				return false, err
+			}
+		default:
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// refuseIfOutputExists refuses a render that would write over something already
+// in destDir. After ensureEmptyDir the only things there are kept files, so this
+// fires exactly when a template and the keep set name the same path — and it
+// runs before anything is written, so a refusal never leaves half a scaffold.
+func refuseIfOutputExists(tmpl Template, destDir string) error {
+	outs, err := outputPaths(tmpl)
+	if err != nil {
+		return err
+	}
+	for _, rel := range outs {
+		if _, err := os.Lstat(filepath.Join(destDir, rel)); err == nil {
+			return fmt.Errorf("%s already holds %s, which this template would write — %s", destDir, rel, NotEmptyRemedy)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// outputPaths lists every path, relative to the destination, that rendering tmpl
+// writes: the template files under their output names plus the ready-ack emitter.
+func outputPaths(tmpl Template) ([]string, error) {
+	root := "templates/" + string(tmpl)
+	var outs []string
+	err := fs.WalkDir(templatesFS, root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		outs = append(outs, outputName(rel))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if rel := tmpl.ReadyAckPath(); rel != "" {
+		outs = append(outs, filepath.FromSlash(rel))
+	}
+	sort.Strings(outs)
+	return outs, nil
+}
+
+// OutputPaths is outputPaths for callers outside this package that need to hold
+// a set of names against what a template writes.
+func OutputPaths(tmpl Template) ([]string, error) { return outputPaths(tmpl) }

@@ -238,7 +238,7 @@ func TestBudgetShortfallNoticeRemedyIsAcceptable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := budgetShortfallNotice(ui.For(io.Discard), "my-block", tc.declared, tc.granted)
+			got := budgetShortfallNotice(ui.For(io.Discard), "my-block", tc.declared, tc.granted, false)
 
 			m := budgetFlagRE.FindStringSubmatch(got)
 			if m == nil {

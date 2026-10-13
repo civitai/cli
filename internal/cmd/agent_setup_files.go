@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
 )
@@ -54,6 +55,41 @@ const (
 	// exactly one place the instructions live and nothing to keep in sync.
 	claudeShim = "@" + agentsFilename + "\n"
 )
+
+// agentSetupProjectPaths is every path `agent-setup` can CREATE inside a project
+// directory, each as segments relative to it: the two instruction files, plus
+// the MCP config of every agent whose config is project-scoped.
+//
+// It exists for `civitai app create`. The onboarding runs `agent-setup` in an
+// empty directory and then scaffolds, and the scaffolder used to refuse that
+// directory as "not empty" because of the files the previous step had just
+// written into it. This is the set it now tolerates (scaffold.RenderKeeping).
+//
+// 🔴 DERIVED FROM agentTargets, NOT SPELLED. A hand-written list here would be
+// right until the next project-scoped agent is added to that table, and then the
+// refusal comes back for that agent's users only. User-scoped targets are absent
+// because they live under $HOME, never in the project.
+//
+// 🔴 `PreferExisting` IS DELIBERATELY NOT IN IT. Those are alternative spellings
+// `agent-setup` merges into when the AUTHOR already has one (`opencode.jsonc`);
+// it never creates them, so one being present means the directory held the
+// author's file before setup ran.
+//
+// The shell startup files `--fix-path` writes are outside the project and are
+// not this function's business.
+func agentSetupProjectPaths() [][]string {
+	paths := [][]string{{agentsFilename}, {claudeFilename}}
+	for _, t := range agentTargets {
+		if t.UserScoped {
+			continue
+		}
+		paths = append(paths, append([]string(nil), t.Parts...))
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		return filepath.Join(paths[i]...) < filepath.Join(paths[j]...)
+	})
+	return paths
+}
 
 // fileAction is what a run did (or would do) to one file. It is reported in
 // `--dry-run`, in the human output and in `--json`, from one value, so the three
