@@ -71,6 +71,12 @@ By default the project is created in ./<slug>. Override the output directory wit
 a positional [dir] or --dir <path>; override the display name independently with
 --name (so name, slug, and directory can all differ).
 
+The output directory must not exist yet, or must be empty. A directory holding
+only what "civitai agent-setup" wrote into it (AGENTS.md, CLAUDE.md and your
+agent's project MCP config) counts as empty, and those files are kept: only the
+managed block inside AGENTS.md is refreshed for the new project. Anything else in
+the directory is a refusal — nothing is overwritten and there is no --force.
+
 Note (page-money): a DEFAULT ` + "`civitai login`" + ` (OAuth) grants submit but NOT
 Buzz-spend. To run ` + "`dev:live`" + ` real generations, authenticate with a credential that carries
 the AI Services scopes: ` + spendCredentialRoutes + `.`,
