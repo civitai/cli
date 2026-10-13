@@ -14,10 +14,11 @@ import (
 	"github.com/civitai/cli/internal/pkgzip"
 )
 
-// findingLine is a line that fires the buzz-rest rule (a REMOVED REST route).
-// It is the same shape in every fixture below so a missing finding can only mean
-// the file was never scanned, never that the rule failed to match it.
-const findingLine = `const bal = await fetch('/api/v1/blocks/buzz');` + "\n"
+// findingLine is a line that fires the deprecated-blocks-cli rule — the one rule
+// with no Exts, so it fires in every extension these fixtures use. It is the
+// same shape in every fixture below so a missing finding can only mean the file
+// was never scanned, never that the rule failed to match it.
+const findingLine = `import { submit } from '@civitai/blocks-cli';` + "\n"
 
 // writeFinding creates <root>/<rel> and fills it with a line that MUST produce a
 // finding if the scanner reads the file at all.
@@ -222,8 +223,8 @@ func TestScanDirReportsOrdinarySourceFindings(t *testing.T) {
 		t.Fatalf("got %d finding(s), want 3:\n%s", len(findings), Format(findings))
 	}
 	for _, f := range findings {
-		if f.Rule.ID != "buzz-rest" {
-			t.Errorf("finding %s:%d fired rule %q, want buzz-rest", f.File, f.Line, f.Rule.ID)
+		if f.Rule.ID != "deprecated-blocks-cli" {
+			t.Errorf("finding %s:%d fired rule %q, want deprecated-blocks-cli", f.File, f.Line, f.Rule.ID)
 		}
 	}
 }
