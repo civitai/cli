@@ -610,7 +610,16 @@ failure card once the host's bounded retries run out, even though the app itself
 renders perfectly. Nothing you can run locally reproduces that.
 
 `page-elements` and `page-money` get the handshake for free: `@civitai/sdk`'s
-and `@civitai/blocks-react`'s iframe transports ack internally. The two **SDK-free** templates (`static`,
+and `@civitai/blocks-react`'s iframe transports ack internally. **With
+`@civitai/blocks-react` releases from before every hook connected at mount,
+only once something constructs that transport:** in those versions hooks such
+as `useBuzzWorkflow` connect only inside the functions they return, so an app
+using only those never acks and the host shows "This app didn't load in time"
+after 10 s. Call `useBlockContext()` (or `getTransport()`) in your root
+component, or upgrade to a release in which every hook connects at mount.
+`civitai app validate` warns when the version your lockfile installs is one of
+the older releases and your resolved entry graph calls nothing that connects at
+mount. The two **SDK-free** templates (`static`,
 `page-vite`) ship a small vendored emitter, **`civitai-host.js`**, loaded from
 the entry point. Leave it in place — and if you are retrofitting it into an
 older app, the file has to be *referenced* as well as copied
