@@ -172,3 +172,5 @@ See `AGENTS.md` for details.
 
 By contributing you agree that your contributions are licensed under the
 project's [Apache 2.0 license](LICENSE).
+
+<!-- throwaway docs-only probe for #816; closed unmerged -->
