@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -134,5 +135,120 @@ func TestNoDogfoodTestImportsTheModule(t *testing.T) {
 		t.Fatalf("a dogfood test imports this module, so product code can now change a browser test's "+
 			"behaviour on a PR that skips the browser suite. Either drop the import, or make the imported "+
 			"path a trigger in scripts/dogfood/browser-suite-relevant.sh:\n  %s", strings.Join(bad, "\n  "))
+	}
+}
+
+// 🔴 AND THE TWO WAYS PRODUCT CODE REACHES A BROWSER TEST WITHOUT AN IMPORT OF
+// ITS OWN. The guard above reads each dogfood file's import block; these are
+// the routes it cannot see.
+//
+//  1. An INTERNAL test file. A browser-tier file declaring `package cli` (not
+//     `cli_test`) reads the root package's symbols — `SchemaJSON`, say — by
+//     bare name, with no import to find.
+//  2. A HELPER in a root test file that DOES import this module (examples_test.go
+//     today). The browser-tier file imports nothing; it calls a function
+//     declared next to an import of `internal/validate`.
+//
+// So: every browser-tier file must be `package cli_test`, and no browser-tier
+// file may reference a top-level identifier (func, var, const, type) declared
+// in a root test file that imports this module.
+//
+// ⚠ ONE HOP. A browser-tier file calling a helper in another dogfood file that
+// in turn calls into examples_test.go is not caught here; any edit to either
+// root test file runs the suite anyway (browser-suite-relevant.sh), so the hop
+// only matters for a change made in product code ALONE.
+func TestNoProductCodeReachesTheBrowserTier(t *testing.T) {
+	const module = "github.com/civitai/cli"
+	out, err := exec.Command(dogfoodTool(t, "bash"), "scripts/dogfood/browser-tier.sh", "files").Output()
+	if err != nil {
+		t.Fatalf("browser-tier.sh files: %v", err)
+	}
+	tier := map[string]bool{}
+	for _, f := range strings.Fields(string(out)) {
+		tier[f] = true
+	}
+	files, err := filepath.Glob("*_test.go")
+	if err != nil || len(tier) == 0 || len(files) == 0 {
+		t.Fatalf("tier=%d files=%d err=%v — nothing to check", len(tier), len(files), err)
+	}
+	fset := token.NewFileSet()
+	parsed := map[string]*ast.File{}
+	declaredIn := map[string]string{} // identifier -> product-importing file
+	var importers []string
+	for _, f := range files {
+		af, err := parser.ParseFile(fset, f, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed[f] = af
+		imports := false
+		for _, im := range af.Imports {
+			if p, _ := strconv.Unquote(im.Path.Value); p == module || strings.HasPrefix(p, module+"/") {
+				imports = true
+			}
+		}
+		if !imports {
+			continue
+		}
+		importers = append(importers, f)
+		for _, d := range af.Decls {
+			switch d := d.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil {
+					declaredIn[d.Name.Name] = f
+				}
+			case *ast.GenDecl:
+				for _, s := range d.Specs {
+					switch s := s.(type) {
+					case *ast.ValueSpec:
+						for _, n := range s.Names {
+							declaredIn[n.Name] = f
+						}
+					case *ast.TypeSpec:
+						declaredIn[s.Name.Name] = f
+					}
+				}
+			}
+		}
+	}
+	// Positive control: examples_test.go imports internal/validate today. An
+	// empty importer set would make the reference check below vacuous.
+	if len(importers) == 0 || len(declaredIn) == 0 {
+		t.Fatalf("found no root test file importing %s — the reference check is wired to nothing", module)
+	}
+	var bad []string
+	refs := 0
+	for f := range tier {
+		af, ok := parsed[f]
+		if !ok {
+			bad = append(bad, f+" is in browser-tier.sh but not a root *_test.go")
+			continue
+		}
+		if af.Name.Name != "cli_test" {
+			bad = append(bad, f+" is `package "+af.Name.Name+"`, not `package cli_test` — it reads the root package's symbols with no import")
+		}
+		seen := map[string]bool{}
+		ast.Inspect(af, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			// Obj == nil: not declared in this file — another file's
+			// package-level symbol, an import name, or a builtin.
+			if !ok || id.Obj != nil || id.Name == "_" || seen[id.Name] {
+				return true
+			}
+			seen[id.Name] = true
+			refs++
+			if src, hit := declaredIn[id.Name]; hit {
+				bad = append(bad, f+" uses "+id.Name+", declared in "+src+", which imports "+module)
+			}
+			return true
+		})
+	}
+	if refs == 0 {
+		t.Fatal("saw no cross-file references in the browser tier — the walk is not reading it")
+	}
+	sort.Strings(bad)
+	if len(bad) > 0 {
+		t.Fatalf("product code can reach a browser-tier test without the classifier seeing it (importers: %s):\n  %s",
+			strings.Join(importers, ", "), strings.Join(bad, "\n  "))
 	}
 }

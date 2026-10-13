@@ -29,6 +29,13 @@ on:
 permissions:
   contents: read
 
+# Same form as readme-links.yml / docs-links.yml: one run at a time, and a
+# scheduled run is never cancelled by a manual dispatch (or vice versa) — a
+# cancelled run would file nothing, which is the silence this file exists to end.
+concurrency:
+  group: dogfood-browser-nightly
+  cancel-in-progress: false
+
 jobs:
   dogfood-browser:
     runs-on: ubuntu-latest
@@ -52,9 +59,12 @@ jobs:
   # A scheduled run's failure mail reaches only whoever last edited the cron
   # line (see failure-issue.yml), so the verdict is filed as an issue: one open
   # issue per marker, rewritten on repeat, closed on green.
+  #
+  # `always()` so a red `dogfood-browser` job still reports; `!= 'cancelled'` so
+  # a hand cancellation is not filed as a defect.
   report:
     needs: [dogfood-browser]
-    if: ${{ always() }}
+    if: always() && needs.dogfood-browser.result != 'cancelled'
     uses: ./.github/workflows/failure-issue.yml
     permissions:
       contents: read
