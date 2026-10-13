@@ -31,9 +31,12 @@ the manifest fields and the scopes are documented on the docs site, and the
 `.md` suffix serves the plain-text source an agent can read directly.
 
 - **`https://developer.civitai.com/apps/reference/hooks.md`** — the COMPLETE
-  hook reference. Fetch it first: every capability this platform has is a hook,
-  and a capability you cannot find here probably exists under a name you have
-  not guessed. It is ~40 KB, so page it rather than giving up on it.
+  hook reference. Fetch it first: a hook you cannot find here probably exists
+  under a name you have not guessed. It is over 100 KB, so page it rather than
+  giving up on it.
+- Capabilities are hooks AND generation body kinds (a multi-step workflow is a
+  `kind`, not a hook); the kinds are listed at
+  https://developer.civitai.com/apps/reference/generation.md
 - Reference (manifest, scopes, hooks, message bridge, CLI):
   https://developer.civitai.com/apps/reference/
 {{- end }}

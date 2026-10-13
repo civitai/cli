@@ -9,11 +9,15 @@ weight) → estimate → (lazy consent) → submit → poll → result.
 ## Every hook the SDK exports
 
 The COMPLETE, always-current list is
-<https://developer.civitai.com/apps/reference/hooks.md>. **Fetch it first.** Every
-capability this platform has is a hook, so if it is not there it is not a hook —
-check that page before concluding the platform cannot do something. It is
-generated from the published `@civitai/blocks-react`, so unlike a copy pasted into
-this file it cannot fall behind the package you actually installed.
+<https://developer.civitai.com/apps/reference/hooks.md>. **Fetch it first.** If a
+hook is not on that page it does not exist — check there before concluding the
+SDK has no hook for something. It is generated from the published
+`@civitai/blocks-react`, so unlike a copy pasted into this file it cannot fall
+behind the package you actually installed.
+
+Capabilities are hooks AND generation body kinds (a multi-step workflow is a
+`kind` you pass to `useBuzzWorkflow()`, not a hook); the kinds are listed at
+<https://developer.civitai.com/apps/reference/generation.md>.
 
 **A declared scope is not a granted scope.** `ai:write:budgeted` and
 `posts:write:self` are consent-gated: they are dropped from the token until the
