@@ -40,9 +40,13 @@ func sdkProject(t *testing.T, app string, extra map[string]string) string {
 	t.Helper()
 	files := map[string]string{
 		"package.json": sdkPkgJSON,
-		"index.html":   sdkIndexHTML,
-		"src/main.tsx": sdkMainImportingApp,
-		"src/App.tsx":  app,
+		// The version gate reads the lockfile: resolve to the last measured
+		// pre-fix release so the check runs. Without a readable version it is
+		// silent by design (TestSDKMountFindingIsGatedOnTheLockedVersion).
+		"package-lock.json": npmLock(blocksReactLastPreFixVersion),
+		"index.html":        sdkIndexHTML,
+		"src/main.tsx":      sdkMainImportingApp,
+		"src/App.tsx":       app,
 	}
 	for k, v := range extra {
 		files[k] = v
@@ -84,16 +88,19 @@ func TestSDKMountConnection(t *testing.T) {
 			map[string]string{"index.html": `<!doctype html><script src="./civitai-host.js"></script>` + sdkIndexHTML,
 				"civitai-host.js": realEmitter()}, ""},
 
-		// CONDITIONAL mount-effect hooks are NOT evidence: in their no-op case
-		// (as written here) they never reach getTransport() at mount on a
-		// pre-fix SDK, so an app using only one of them is the incident's shape.
-		{"only useWildcardPack, with a non-positive id", "import { useWildcardPack } from '@civitai/blocks-react';\n" +
-			"export function App() { const { pack } = useWildcardPack(0); return pack; }\n", nil, "sdk-unconnected"},
-		{"only useBlockResize, ref not attached at mount", "import { useRef } from 'react';\n" +
-			"import { useBlockResize } from '@civitai/blocks-react';\n" +
-			"export function App() { const ref = useRef(null); useBlockResize(ref); return null; }\n", nil, "sdk-unconnected"},
-		{"only useWorkflowBatch, with no ids", "import { useWorkflowBatch } from '@civitai/blocks-react';\n" +
-			"export function App() { const { cells } = useWorkflowBatch([]); return cells; }\n", nil, "sdk-unconnected"},
+		// ARGUMENT-DEPENDENT mount hooks in their ORDINARY use connect at mount,
+		// so each of these correct apps must be silent. (Their no-op cases — an
+		// unattached ref, a non-positive id, an empty list — are the stated
+		// residual: static analysis cannot see the argument, and warning at the
+		// ordinary use is the expensive direction.)
+		{"useBlockResize(rootRef) on the rendered root", "import { useRef } from 'react';\n" +
+			"import { useBlockResize, useBuzzWorkflow } from '@civitai/blocks-react';\n" +
+			"export function App() { const rootRef = useRef(null); useBlockResize(rootRef); useBuzzWorkflow();\n" +
+			"  return <div ref={rootRef}>app</div>; }\n", nil, ""},
+		{"useWildcardPack with a real id", "import { useWildcardPack } from '@civitai/blocks-react';\n" +
+			"export function App() { const { pack } = useWildcardPack(12345); return pack; }\n", nil, ""},
+		{"useWorkflowBatch watching ids", "import { useWorkflowBatch } from '@civitai/blocks-react';\n" +
+			"export function App({ ids }) { const { cells } = useWorkflowBatch(ids); return cells; }\n", nil, ""},
 
 		// Near-misses that must NOT satisfy it — each fires.
 		{"a COMMENT naming useBlockContext does not count", "// TODO: call useBlockContext() here\n" +
@@ -179,6 +186,12 @@ func TestSDKMountSilenceOnIncompleteGraphIsTheGraphs(t *testing.T) {
 // detection — and stripping its mount-connecting references must make it fire.
 func TestPageMoneyIsSilentBecauseItConnects(t *testing.T) {
 	dir := renderTemplate(t, scaffold.PageMoney)
+	// A fresh render has no lockfile; give it one at the gate's bound so the
+	// check runs and the negative control below can fire.
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"),
+		[]byte(npmLock(blocksReactLastPreFixVersion)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	deps, state := packageDeps(dir)
 	if state != sdkPresent || !deps[blockproto.BlocksReactPackage] {
 		t.Fatalf("page-money no longer depends on %s — this test has nothing to pin", blockproto.BlocksReactPackage)

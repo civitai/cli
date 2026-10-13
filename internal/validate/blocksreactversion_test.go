@@ -4,15 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/civitai/cli/internal/blockproto"
 )
-
-// testFixVersion is a REALISTIC threshold the gate tests run at while
-// blocksReactMountFixVersion is still the placeholder. It is NOT a claim about
-// which release carries civitai-app-starters#632 — only a value one patch above
-// the latest published 0.72.0, so the table below straddles it.
-const testFixVersion = "0.72.1"
 
 // npmLock builds a lockfileVersion-3 package-lock.json resolving blocks-react
 // to v at the root.
@@ -77,22 +69,28 @@ func TestLockedBlocksReactVersion(t *testing.T) {
 	})
 }
 
-// TestBlocksReactPreFixGate drives the gate at a real threshold. Rows straddle
-// testFixVersion on every axis that can be wrong: patch, minor, a pre-release
-// of the fix itself, and an unobservable lockfile.
+// TestBlocksReactPreFixGate drives the gate at the REAL bound. Rows straddle
+// it on every axis that can be wrong: patch, minor, major, numeric-vs-lexical,
+// a pre-release on each side, and an unobservable lockfile.
+//
+// PRE-RELEASE DECISION, per SemVer precedence: 0.72.0-rc.1 sorts BELOW 0.72.0,
+// so it is at or below the last measured pre-fix release and fires;
+// 0.72.1-next.0 sorts ABOVE 0.72.0 — an unmeasured build that may already
+// carry #632 — so it is silent (the cheap direction).
 func TestBlocksReactPreFixGate(t *testing.T) {
 	cases := []struct {
 		locked string // "" = no lockfile
 		want   bool
 	}{
 		{"0.71.0", true},         // what page-money's ^0.71.0 resolves to
-		{"0.72.0", true},         // latest published, pre-fix
-		{"0.72.1-next.0", true},  // a pre-release of the fix sorts BELOW it
-		{"0.72.1", false},        // the fix itself
-		{"0.72.2", false},        // after it
+		{"0.72.0", true},         // the bound itself: measured pre-fix
+		{"0.72.0-rc.1", true},    // a pre-release BELOW the bound
+		{"0.72.1-next.0", false}, // a pre-release ABOVE the bound: unmeasured
+		{"0.72.1", false},        // the next patch: unmeasured
 		{"0.73.0", false},        // a later minor
 		{"1.0.0", false},         // a later major
 		{"0.9.99", true},         // numeric, not lexical: 0.9 < 0.72
+		{"0.100.0", false},       // numeric, not lexical: 0.100 > 0.72
 		{"not-a-version", false}, // unparseable: unobservable, silent
 		{"", false},              // no lockfile: unobservable, silent
 	}
@@ -103,62 +101,60 @@ func TestBlocksReactPreFixGate(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if got := blocksReactPreFix(dir, "npm run build", testFixVersion); got != tc.want {
-			t.Errorf("locked %q against fix %s: preFix = %v, want %v", tc.locked, testFixVersion, got, tc.want)
+		if got := blocksReactPreFix(dir, "npm run build", blocksReactLastPreFixVersion); got != tc.want {
+			t.Errorf("locked %q against bound %s: preFix = %v, want %v", tc.locked, blocksReactLastPreFixVersion, got, tc.want)
 		}
 	}
-	// The placeholder: no released version contains the fix, so every
-	// project is pre-fix — including one with no lockfile at all.
-	if !blocksReactPreFix(t.TempDir(), "npm run build", "") {
-		t.Errorf("with no fix release set, the gate must stay open (today's behaviour)")
+	// An unreadable lockfile is unobservable too — a directory where the file
+	// should be (regularFileExists refuses it), so this holds under root.
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "package-lock.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if blocksReactPreFix(dir, "npm run build", blocksReactLastPreFixVersion) {
+		t.Errorf("an unreadable lockfile opened the gate")
+	}
+	// A bound that is not a version must close the gate, not open it.
+	if blocksReactPreFix(dir, "npm run build", "not-a-version") {
+		t.Errorf("an unparseable bound opened the gate")
 	}
 }
 
-// TestSDKMountFindingIsGatedOnTheLockedVersion runs the WHOLE check at a real
-// threshold: the production shape (only useBuzzWorkflow) fires on a pre-fix
-// lockfile and is silent on a fixed one — the false warning the gate exists to
-// prevent.
+// TestLastPreFixVersionValue pins the LITERAL. Every assertion above is written
+// against the constant, so moving it would re-shape them all silently; this is
+// the one that notices. Raising it is a claim that a newer release was MEASURED
+// to lack civitai-app-starters#632 — change this test with that measurement.
+func TestLastPreFixVersionValue(t *testing.T) {
+	if blocksReactLastPreFixVersion != "0.72.0" {
+		t.Fatalf("blocksReactLastPreFixVersion = %q, want \"0.72.0\" — see its doc comment before moving it",
+			blocksReactLastPreFixVersion)
+	}
+}
+
+// TestSDKMountFindingIsGatedOnTheLockedVersion runs the WHOLE check through
+// Dir: the production shape (only useBuzzWorkflow) fires on a pre-fix lockfile
+// and is silent above the bound and with no readable version.
 func TestSDKMountFindingIsGatedOnTheLockedVersion(t *testing.T) {
 	for _, tc := range []struct {
-		locked    string
-		wantFires bool
+		locked string // "" = no lockfile
+		want   string
 	}{
-		{"0.71.0", true},
-		{"0.72.1", false},
-		{"", false},
+		{"0.72.0", "sdk-unconnected"},
+		{"0.71.0", "sdk-unconnected"},
+		{"0.72.1", ""},
+		{"0.73.0", ""},
+		{"", ""},
 	} {
-		extra := map[string]string{}
-		if tc.locked != "" {
-			extra["package-lock.json"] = npmLock(tc.locked)
-		}
-		dir := sdkProject(t, lazyOnlyApp, extra)
-		deps, _ := packageDeps(dir)
-		got := sdkMountChecksAt(dir, deps, "npm run build", testFixVersion)
-		if fires := len(got) == 1 && got[0].Message == readyAckAdviceSDKNotConnected; fires != tc.wantFires {
-			t.Errorf("locked %q: fires = %v, want %v (%v)", tc.locked, fires, tc.wantFires, got)
-		}
-	}
-}
-
-// TestMountFixVersionPlaceholder pins the constant's two legal states. While it
-// is the placeholder, every published version (0.72.0 is the latest as of
-// 2026-10-12) must stay pre-fix, i.e. today's behaviour. Once set, it must be a
-// version the gate can compare against — a typo would silently close the gate
-// for every project.
-func TestMountFixVersionPlaceholder(t *testing.T) {
-	if blocksReactMountFixVersion == "" {
-		t.Logf("blocksReactMountFixVersion is the PLACEHOLDER: set it to the first %s release "+
-			"carrying civitai-app-starters#632 once it is published", blockproto.BlocksReactPackage)
-		return
-	}
-	fix, ok := parseSemver(blocksReactMountFixVersion)
-	if !ok {
-		t.Fatalf("blocksReactMountFixVersion %q is not a version", blocksReactMountFixVersion)
-	}
-	latestPreFix, _ := parseSemver("0.72.0")
-	if !latestPreFix.less(fix) {
-		t.Fatalf("blocksReactMountFixVersion %q is not above 0.72.0, a published version measured "+
-			"WITHOUT the fix — the gate would silence a broken app", blocksReactMountFixVersion)
+		t.Run("locked "+tc.locked, func(t *testing.T) {
+			extra := map[string]string{"package-lock.json": npmLock(tc.locked)}
+			dir := sdkProject(t, lazyOnlyApp, extra)
+			if tc.locked == "" {
+				if err := os.Remove(filepath.Join(dir, "package-lock.json")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wantAckKind(t, dir, tc.want)
+		})
 	}
 }
 

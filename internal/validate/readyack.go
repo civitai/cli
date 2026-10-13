@@ -94,8 +94,9 @@ package validate
 // not finish is the manufactured wiring finding item 20 forbids. The dependency
 // check stays first and still carries its weight: it is what keeps a correct
 // SDK app from ever being asked to ship the emitter. And the finding is
-// VERSION-GATED on the lockfile-resolved blocks-react version, because from the
-// #632 release on every hook connects at mount and the finding would be false
+// VERSION-GATED: it fires only when the lockfile resolves blocks-react to a
+// release at or below the last one measured without #632, because on a release
+// carrying it every hook connects at mount and the finding would be false
 // (blocksreactversion.go).
 //
 // 🔴 "A dependency that acks" is an EXACT SET (blockproto.PackageAcksReady), not
@@ -312,18 +313,12 @@ func resolveLoadedFiles(dir string, deps map[string]bool) (*blockproto.EntryGrap
 // unused SDK dependency acks without the SDK's help).
 //
 // 🔴 VERSION-GATED. The finding is only true for blocks-react versions before
-// civitai/civitai-app-starters#632; from that release on every hook connects at
-// mount. blocksReactPreFix reads the LOCKFILE-resolved version against
-// blocksReactMountFixVersion — see blocksreactversion.go, including why that
-// constant is still a placeholder.
+// civitai/civitai-app-starters#632; on a release carrying it every hook
+// connects at mount. blocksReactPreFix requires the LOCKFILE-resolved version
+// to be <= blocksReactLastPreFixVersion, a known pre-fix release — see
+// blocksreactversion.go for why the bound is the last measured pre-fix release
+// rather than the (not yet published) fix release.
 func sdkMountChecks(dir string, deps map[string]bool, buildCommand string) []Finding {
-	return sdkMountChecksAt(dir, deps, buildCommand, blocksReactMountFixVersion)
-}
-
-// sdkMountChecksAt is sdkMountChecks against an explicit fix release, so the
-// tests can drive the whole check at a real threshold while the constant is
-// still the placeholder.
-func sdkMountChecksAt(dir string, deps map[string]bool, buildCommand, fixVersion string) []Finding {
 	// Under today's only caller (state == sdkPresent, so SOME acking package is
 	// declared) this gate is implied by the loop below — deleting it is a
 	// measured EQUIVALENT mutant. It stays so the function is correct on its
@@ -336,7 +331,7 @@ func sdkMountChecksAt(dir string, deps map[string]bool, buildCommand, fixVersion
 			return nil
 		}
 	}
-	if !blocksReactPreFix(dir, buildCommand, fixVersion) {
+	if !blocksReactPreFix(dir, buildCommand, blocksReactLastPreFixVersion) {
 		return nil
 	}
 	connects := false
@@ -656,7 +651,8 @@ var readyAckAdviceMissing = "the manifest declares a \"page\" surface but nothin
 // shape was observed live as the 10 s "didn't load in time" card, retried twice.
 //
 // 🔴 EVERY CLAIM IN IT IS SCOPED TO THE INSTALLED VERSION. It only fires for a
-// blocks-react version older than the #632 release (the version gate), so "the
+// blocks-react version at or below a release measured without #632 (the version
+// gate), so "the
 // version this project's lockfile installs connects lazily" is true wherever it
 // is printed; an unscoped "useBuzzWorkflow connects lazily" would be false on
 // every fixed release.

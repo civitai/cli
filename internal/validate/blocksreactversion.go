@@ -5,12 +5,20 @@ package validate
 //
 // WHY IT EXISTS. The SDK-mount finding is true only for `@civitai/blocks-react`
 // versions BEFORE civitai/civitai-app-starters#632 ("every hook connects the
-// transport at mount"). From the first release carrying that fix, every hook
-// connects in a mount effect, so an app using only `useBuzzWorkflow` acks
-// correctly — and an ungated finding would be a false warning (rc=1 under
-// `--strict`) at a correct app, the expensive direction. So the finding fires
-// only when the LOCKFILE-RESOLVED blocks-react version is older than that
-// release.
+// transport at mount"). On a release carrying that fix every hook connects in a
+// mount effect, so an app using only `useBuzzWorkflow` acks correctly — and an
+// ungated finding would be a false warning (rc=1 under `--strict`) at a correct
+// app, the expensive direction.
+//
+// 🔴 THE GATE IS A KNOWN UPPER BOUND, NOT THE FIX RELEASE. It fires only for a
+// lockfile-resolved version <= blocksReactLastPreFixVersion, the newest release
+// MEASURED to lack the fix. The alternative — "below the first release carrying
+// #632" — needs a number that does not exist until #632 publishes, and a
+// placeholder for it would ship CLI binaries (releases are near-daily) that
+// false-warn at every correct app on the fixed SDK for as long as anyone runs
+// them. The upper bound's only error is the CHEAP one: a pre-fix release
+// published AFTER 0.72.0 but before #632 ships is not covered, and apps on it
+// get silence (a false negative).
 //
 // WHY THE LOCKFILE, NOT package.json. The range in package.json does not say
 // what is installed: `page-money` scaffolds `^0.71.0`, and on 0.x a caret stays
@@ -19,7 +27,7 @@ package validate
 // installs from (`npm ci` / frozen installs; lockfile.go makes it mandatory), so
 // it is the version that actually ships.
 //
-// "CANNOT OBSERVE" IS SILENCE. Once the threshold is set, a lockfile that is
+// "CANNOT OBSERVE" IS SILENCE. A lockfile that is
 // missing, unreadable, over the size cap, unparseable, has no entry for the
 // package, or resolves it to more than one version gives no version — and the
 // finding stays quiet (a false negative, the cheap direction; a missing lockfile
@@ -37,32 +45,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// blocksReactMountFixVersion is the FIRST `@civitai/blocks-react` release that
-// contains civitai/civitai-app-starters#632. The SDK-mount finding fires only
-// for a lockfile-resolved version strictly below it.
-//
-// 🔴🔴 PLACEHOLDER — NOT YET SET. As of 2026-10-12 #632 is an OPEN patch
-// changeset and the latest published version is 0.72.0. The exact version it
-// will publish as cannot be read from the changeset config: changesets bumps by
-// the HIGHEST pending changeset at release time, and other open PRs carry
-// pending changesets for this package (e.g. #631, itself on a release hold), so
-// #632 may ship as 0.72.1, 0.72.2 or a minor. "" means "no released version
-// contains the fix", which is TRUE TODAY: every published version is pre-fix, so
-// the finding fires for every version — the same behaviour as having no gate.
-// SET THIS TO THE REAL RELEASE the moment #632 is published (read it from the
-// npm registry or the package CHANGELOG, never from the changeset), or the
-// finding becomes a false warning at every correct app on the fixed SDK.
-const blocksReactMountFixVersion = ""
+// blocksReactLastPreFixVersion is the newest `@civitai/blocks-react` release
+// measured to LACK civitai/civitai-app-starters#632: npm `latest` on 2026-10-12,
+// whose hook source is identical to civitai-app-starters 14bde2eb (the commit
+// the mount-connecting set was derived from), and whose published
+// dist/hooks/useBuzzWorkflow.js reaches getTransport() only inside its returned
+// functions. Raise it only after measuring a newer release the same way; never
+// set it to a release that contains #632.
+const blocksReactLastPreFixVersion = "0.72.0"
 
 // blocksReactPreFix reports whether the SDK-mount finding applies to the
-// project in dir, against the fix release `fix` ("" = none released yet).
-// Taking `fix` as a parameter is what lets the tests exercise the gate at a
-// real threshold while the constant is still the placeholder.
-func blocksReactPreFix(dir, buildCommand, fix string) bool {
-	if fix == "" {
-		return true
-	}
-	fixV, ok := parseSemver(fix)
+// project in dir: its lockfile resolves `@civitai/blocks-react` to a version
+// <= lastPreFix. A pre-release orders per SemVer — 0.72.0-rc.1 is BELOW 0.72.0
+// (pre-fix, fires), 0.72.1-next.0 is ABOVE it (unmeasured, silent).
+// Taking `lastPreFix` as a parameter keeps the comparison testable at other
+// bounds.
+func blocksReactPreFix(dir, buildCommand, lastPreFix string) bool {
+	bound, ok := parseSemver(lastPreFix)
 	if !ok {
 		return false
 	}
@@ -74,7 +73,7 @@ func blocksReactPreFix(dir, buildCommand, fix string) bool {
 	if !ok {
 		return false
 	}
-	return v.less(fixV)
+	return !bound.less(v)
 }
 
 // lockedBlocksReactVersion returns the version of `@civitai/blocks-react` that

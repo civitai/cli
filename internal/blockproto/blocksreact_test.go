@@ -14,24 +14,22 @@ func TestMountConnectingSetMembership(t *testing.T) {
 		"useBlockToken", "useHostOrigin", // render, via useTransportSnapshot / directly
 		"useViewer", "useBuzzBalance", // mount effect
 		"useEntitlements", // render, via useBlockContext
+		// ARGUMENT-DEPENDENT mount effects: their ordinary use connects, and
+		// leaving them out warned at a correct `useBlockResize(rootRef)` app.
+		"useBlockResize", "useWildcardPack", "useWorkflowBatch",
 	}
 	// 🔴 useBuzzWorkflow is THE production defect: it is the hook an app used
 	// alone, and it connects only inside its returned callbacks. If it ever
 	// lands in the set, the finding is inert on exactly the app that broke.
 	out := []string{"useBuzzWorkflow", "useBatchEstimate", "useBuzzPurchase", "useBlockAnalytics",
-		"useRequestSignIn", "useBlockBreakpoint",
-		// CONDITIONAL mount effects: each connects at mount only on some inputs
-		// and not in its no-op case (non-positive id / ref not attached / no
-		// ids). Listing one silences the finding on that no-op case — the
-		// incident's own shape — so they are out.
-		"useWildcardPack", "useBlockResize", "useWorkflowBatch"}
+		"useRequestSignIn", "useBlockBreakpoint"}
 	set := map[string]bool{}
 	for _, n := range BlocksReactMountConnecting() {
 		set[n] = true
 	}
 	for _, n := range in {
 		if !set[n] {
-			t.Errorf("%s constructs the transport at mount (SDK 0.71.0) but is not in the set — an app "+
+			t.Errorf("%s constructs the transport at mount (SDK 0.72.0) but is not in the set — an app "+
 				"using it would be warned at although it acks", n)
 		}
 	}

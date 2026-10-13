@@ -1162,8 +1162,9 @@ func fieldCoverageCorpus() []fieldFixture {
 				  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
 				  "entry": "index.html"
 				}`,
-				"package.json": `{"dependencies": {"@civitai/blocks-react": "^0.71.0"}}`,
-				"index.html":   `<!doctype html><script type="module" src="./app.js"></script>`,
+				"package.json":      `{"dependencies": {"@civitai/blocks-react": "^0.72.0"}}`,
+				"package-lock.json": `{"lockfileVersion": 3, "packages": {"node_modules/@civitai/blocks-react": {"version": "0.72.0"}}}`,
+				"index.html":        `<!doctype html><script type="module" src="./app.js"></script>`,
 				"app.js": "import { useBuzzWorkflow } from '@civitai/blocks-react';\n" +
 					"export function App() { const { submit } = useBuzzWorkflow(); return submit; }\n",
 			},
