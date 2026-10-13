@@ -29,11 +29,12 @@ const PLACEHOLDER_VERSION = "0.0.0-dev";
 const BINARIES_DIR = path.join(__dirname, "binaries");
 
 // THE list of platform packages: one row per package, `{ package, os, cpu }` in
-// Node's own process.platform / process.arch vocabulary. This resolver, the
+// Node's own process.platform / process.arch vocabulary. This resolver and the
 // release workflow follow it: scripts/release.js generates the published
 // package.json's optionalDependencies from it and tells the workflow what to
-// publish. Adding a platform is one row here — and a one-time manual first
-// publish of the new package name, which is why the list is short.
+// publish. Adding a non-Windows platform is one row here — and a one-time
+// manual first publish of the new package name, which is why the list is short.
+// A win32 row also needs PLATFORM_BINARY_FILE to gain the `.exe` suffix.
 const PLATFORMS = require("./platforms.json");
 
 // Map Node's platform/arch onto GoReleaser's os/arch tokens.

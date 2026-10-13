@@ -60,7 +60,8 @@ func TestNpmReleaseWorkflowPinsThenPublishesPlatformPackagesThenMain(t *testing.
 			pin = i
 		case publishRe.MatchString(s.Run) && strings.Contains(s.Run, npmReleaseScript+" build-platform "):
 			platforms = i
-		case publishRe.MatchString(s.Run):
+		case publishRe.MatchString(s.Run) && mainPublish == -1:
+			// The FIRST main publish: a later one must not hide an earlier one.
 			mainPublish = i
 		}
 	}
