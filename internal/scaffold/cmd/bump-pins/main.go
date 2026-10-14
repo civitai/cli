@@ -10,21 +10,27 @@
 // differs — rewrites it in every literal site that names it:
 //
 //  1. templates/page-money/package.json.tmpl    ("@civitai/<pkg>": "^X.Y.Z")
-//  2. templates/page-money/README.md.tmpl        (@civitai/<pkg>@^X.Y.Z prose)
-//  3. scaffold_test.go                           (page-money's mustContain assertion)
-//  4. templates/page-elements/package.json.tmpl  ("@civitai/<pkg>": "^X.Y.Z")
-//  5. page_elements_test.go                      (page-elements' pin canary)
+//  2. scaffold_test.go                           (page-money's mustContain assertion)
+//  3. templates/page-elements/package.json.tmpl  ("@civitai/<pkg>": "^X.Y.Z")
+//  4. page_elements_test.go                      (page-elements' pin canary)
+//
+// The page-money README used to be a fifth site: it restated the current pins as
+// the minimum versions its per-account Buzz features "require", so every bump
+// rewrote a sentence whose claim was false the moment it was written (those
+// features shipped in app-sdk 0.14.0 / blocks-react 0.16.0). It now names those
+// fixed minimums instead, and TestPageMoneyREADMESpellsNoCaretPin in
+// internal/scaffold keeps a caret pin from coming back into it.
 //
 // A package pinned in only one template is rewritten only where it appears
 // (rewritePin is a no-op on a file that does not name it). `@civitai/app-sdk` is
 // in both templates and moves in both at once. Both templates pin in
 // DesiredPin's `^X.Y.0` form, so a current pin is never rewritten.
 //
-// It also owns a FOURTH site of a different shape:
+// It also owns a FIFTH site of a different shape:
 //
-//  4. testdata/design-tokens.txt                (the design-token ledger)
+//  5. testdata/design-tokens.txt                (the design-token ledger)
 //
-// 🔴 That fourth site is here, and not in a separate command, because the pin
+// 🔴 That fifth site is here, and not in a separate command, because the pin
 // and the ledger are the SAME FACT and drift apart silently otherwise. The
 // ledger records the CSS custom properties `@civitai/blocks-react` defines, and
 // the offline guard (design_tokens_guard_test.go) checks every token the
@@ -66,7 +72,6 @@ import (
 // The literal pin sites, relative to the scaffold package dir.
 const (
 	pkgJSONFile         = "templates/page-money/package.json.tmpl"
-	readmeFile          = "templates/page-money/README.md.tmpl"
 	testFile            = "scaffold_test.go"
 	elementsPkgJSONFile = "templates/page-elements/package.json.tmpl"
 	elementsTestFile    = "page_elements_test.go"
@@ -81,10 +86,9 @@ type fileKind int
 
 const (
 	// jsonPin: `"@civitai/<pkg>": "^X.Y.Z"` (package.json.tmpl + the
-	// scaffold_test.go mustContain assertion — byte-identical form).
+	// scaffold_test.go mustContain assertion — byte-identical form). It is the
+	// only shape left since the README stopped restating the pins.
 	jsonPin fileKind = iota
-	// prosePin: `@civitai/<pkg>@^X.Y.Z` (README.md.tmpl prose).
-	prosePin
 )
 
 type site struct {
@@ -94,7 +98,6 @@ type site struct {
 
 var sites = []site{
 	{pkgJSONFile, jsonPin},
-	{readmeFile, prosePin},
 	{testFile, jsonPin},
 	{elementsPkgJSONFile, jsonPin},
 	{elementsTestFile, jsonPin},
@@ -200,7 +203,7 @@ func run(
 		}
 	}
 
-	// 3. Rewrite every stale literal across the three sites.
+	// 3. Rewrite every stale literal across the pin sites.
 	var changes []change
 	for _, s := range sites {
 		path := filepath.Join(dir, s.file)
@@ -375,9 +378,6 @@ func rewritePin(content, pkg, newBare string, kind fileKind) (string, string, bo
 	case jsonPin:
 		// group1 = `"@civitai/<pkg>": "^`  group2 = version  group3 = `"`
 		re = regexp.MustCompile(`("` + regexp.QuoteMeta(pkg) + `"\s*:\s*"\^)(` + caretVer + `)(")`)
-	case prosePin:
-		// group1 = `@civitai/<pkg>@^`  group2 = version  group3 = "" (empty tail)
-		re = regexp.MustCompile(`(` + regexp.QuoteMeta(pkg) + `@\^)(` + caretVer + `)()`)
 	default:
 		return content, "", false
 	}

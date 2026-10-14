@@ -257,6 +257,68 @@ func fetchPackageFile(pkg, version, name string) (string, error) {
 }
 
 // ---------------------------------------------------------------------------
+// The README does not restate the moving pins
+// ---------------------------------------------------------------------------
+
+// readmePinSpellingRe matches a version-pinned package spelling in prose —
+// `@civitai/<pkg>@^X.Y`, `@civitai/<pkg>@X.Y` — the shape the README used to
+// restate the template's pins in.
+var readmePinSpellingRe = regexp.MustCompile(`@civitai/[a-z0-9-]+@[~^]?\d+\.\d+`)
+
+// TestPageMoneyREADMESpellsNoCaretPin pins the RELATIONSHIP between the README
+// and package.json.tmpl: the README must not repeat a version the bump bot moves.
+//
+// 🔴 THE DEFECT. The README said its per-account Buzz features "require
+// `@civitai/app-sdk@^0.70.0` + `@civitai/blocks-react@^0.73.0`". Those were the
+// template's CURRENT pins, not a requirement: `spentAccountType` first appears
+// in app-sdk 0.14.0's typings (absent in 0.13.0) and `useBuzzBalance` in
+// blocks-react 0.16.0's (absent in 0.15.0). The sentence was false the moment it
+// was written and was rewritten by `bump-pins` on every bump to stay false in a
+// new way. The README now names those fixed minimums, and `bump-pins` no longer
+// treats it as a pin site.
+//
+// Two checks, because either alone is walkable: the pinned-package SPELLING
+// (`@pkg@^X.Y`), and the bare current pin VERSION of every package page-money
+// pins, so "`@civitai/app-sdk` 0.70.0" is caught too.
+func TestPageMoneyREADMESpellsNoCaretPin(t *testing.T) {
+	// Positive control: the regex matches the spelling that shipped.
+	if !readmePinSpellingRe.MatchString("require `@civitai/app-sdk@^0.70.0` + `@civitai/blocks-react@^0.73.0`") {
+		t.Fatalf("CONTROL failure, not a finding: readmePinSpellingRe (%s) does not match the spelling it exists to catch",
+			readmePinSpellingRe)
+	}
+
+	readme := scaffoldedReadme(t)
+	if m := readmePinSpellingRe.FindAllString(readme, -1); len(m) > 0 {
+		t.Errorf("the scaffolded page-money README spells %d version-pinned package(s): %s.\n"+
+			"A version here restates package.json's pin, which bump-pins moves and this README does not. "+
+			"Name the MINIMUM version a feature needs (a fixed fact), or say \"the versions package.json pins\".",
+			len(m), strings.Join(m, ", "))
+	}
+
+	pins, err := TemplatePins()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, p := range pins {
+		if p.File != "templates/page-money/package.json.tmpl" {
+			continue
+		}
+		checked++
+		bare := strings.TrimLeft(p.Pin, "^~")
+		if strings.Contains(readme, bare) {
+			t.Errorf("the scaffolded page-money README contains %s, the version package.json.tmpl currently pins %s "+
+				"to (%s). That number moves on every bump and the README does not; name the feature's minimum "+
+				"instead.", bare, p.Pkg, p.Pin)
+		}
+	}
+	if checked < 2 {
+		t.Fatalf("CONTROL failure, not a finding: %d page-money @civitai/* pin(s) found, want >= 2 "+
+			"(app-sdk + blocks-react) — the version check above compared against nothing", checked)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
