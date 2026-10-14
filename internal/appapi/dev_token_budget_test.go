@@ -207,14 +207,17 @@ func TestMintDevToken400SurfacesServerMessage(t *testing.T) {
 // asserted rather than left implicit.
 func TestDevBuzzBudgetBoundsMirrorServer(t *testing.T) {
 	// civitai/civitai src/server/services/blocks/dev-scoped-mint.service.ts
-	//   export const DEV_BUZZ_BUDGET_CAP = 250;
-	//   export const DEV_BUZZ_BUDGET_DEFAULT = 50;
+	//   export const DEV_BUZZ_BUDGET_CAP = BUZZ_BUDGET_CAP;
+	//   export const DEV_BUZZ_BUDGET_DEFAULT = BUZZ_BUDGET_DEFAULT;
+	// civitai/civitai src/shared/constants/block-scope.constants.ts
+	//   export const BUZZ_BUDGET_CAP = 5000;
+	//   export const BUZZ_BUDGET_DEFAULT = 1000;
 	// and the route's schema field `buzzBudget: z.number().int().positive()`.
-	if DevBuzzBudgetCap != 250 {
-		t.Errorf("DevBuzzBudgetCap = %d, want 250 (DEV_BUZZ_BUDGET_CAP)", DevBuzzBudgetCap)
+	if DevBuzzBudgetCap != 5000 {
+		t.Errorf("DevBuzzBudgetCap = %d, want 5000 (DEV_BUZZ_BUDGET_CAP = BUZZ_BUDGET_CAP)", DevBuzzBudgetCap)
 	}
-	if DevBuzzBudgetDefault != 50 {
-		t.Errorf("DevBuzzBudgetDefault = %d, want 50 (DEV_BUZZ_BUDGET_DEFAULT)", DevBuzzBudgetDefault)
+	if DevBuzzBudgetDefault != 1000 {
+		t.Errorf("DevBuzzBudgetDefault = %d, want 1000 (DEV_BUZZ_BUDGET_DEFAULT = BUZZ_BUDGET_DEFAULT)", DevBuzzBudgetDefault)
 	}
 	if DevBuzzBudgetMin != 1 {
 		t.Errorf("DevBuzzBudgetMin = %d, want 1 (zod .positive() on an int)", DevBuzzBudgetMin)
@@ -223,5 +226,22 @@ func TestDevBuzzBudgetBoundsMirrorServer(t *testing.T) {
 		t.Errorf("the default (%d) must lie inside [%d, %d] — otherwise omitting --budget "+
 			"yields a budget the CLI would reject if asked for explicitly",
 			DevBuzzBudgetDefault, DevBuzzBudgetMin, DevBuzzBudgetCap)
+	}
+}
+
+// TestInlineMaxBuzzMirrorsServer pins InlineMaxBuzz the same way, and the one
+// relationship the server itself pins next to it: INLINE_MAX_BUZZ <=
+// DEV_BUZZ_BUDGET_CAP. If that ever inverted, the help's "--budget does not lift
+// the inline cap" would be describing a cap the token could never reach anyway.
+func TestInlineMaxBuzzMirrorsServer(t *testing.T) {
+	// civitai/civitai src/server/schema/blocks/workflow.schema.ts
+	//   export const INLINE_MAX_BUZZ = 250;
+	//   maxBuzz: z.number().int().min(1).max(INLINE_MAX_BUZZ),
+	if InlineMaxBuzz != 250 {
+		t.Errorf("InlineMaxBuzz = %d, want 250 (INLINE_MAX_BUZZ)", InlineMaxBuzz)
+	}
+	if InlineMaxBuzz > DevBuzzBudgetCap {
+		t.Errorf("InlineMaxBuzz (%d) > DevBuzzBudgetCap (%d) — upstream pins INLINE_MAX_BUZZ <= DEV_BUZZ_BUDGET_CAP",
+			InlineMaxBuzz, DevBuzzBudgetCap)
 	}
 }

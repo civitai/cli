@@ -320,18 +320,20 @@ func grantedClaimsNotice(claims devTokenClaims, ok bool, now time.Time) string {
 // that fixes it — the shape of spendFilteredNotice, which named `--spend` and was
 // the one message in this command that cost the developer nothing.
 //
-// Only the DECLARED-vs-GRANTED gap is reported. It is not an error: a dev token
-// deliberately carries a smaller budget than a submitted app's ceiling, and the
-// server never reads the local file at mint time (there is no server-side
-// manifest until the app is submitted). What makes the gap worth printing is that
-// nothing else surfaces it until a generation is REFUSED — and the refusal talks
-// about recipe ceilings, not about the budget.
+// Only the DECLARED-vs-GRANTED gap is reported. It is not an error: the server
+// never reads the local file at mint time (there is no server-side manifest until
+// the app is submitted), so an unsubmitted app's token carries the route default
+// or --budget, not what the file declares. What makes the gap worth printing is
+// that nothing else surfaces it until a generation is REFUSED — far from the
+// mint that caused it.
 //
-// 🔴 THE REMEDY MUST BE A COMMAND THAT WORKS. The page-money scaffold declares
-// 300 while the route's cap is 250, so echoing the declared figure back as
-// `--budget 300` would print a command validateDevTokenBudget rejects as a usage
-// error. Ask for min(declared, cap) and say plainly when the declared figure is
-// itself unreachable. Same rule as readOnlyTokenWarning: every command this block
+// 🔴 THE REMEDY MUST BE A COMMAND THAT WORKS. A manifest may declare more than
+// the route's cap (appapi.DevBuzzBudgetCap), and echoing such a figure back as
+// `--budget <declared>` would print a command validateDevTokenBudget rejects as a
+// usage error. Ask for min(declared, cap) and say plainly when the declared
+// figure is itself unreachable. (This was first hit by the page-money scaffold's
+// 300 against the old cap of 250; at today's cap that scaffold is reachable, but
+// any declaration above the cap still is not.) Same rule as readOnlyTokenWarning: every command this block
 // prints must leave the state it complains about.
 //
 // 🔴 AND IT MUST CARRY THE FLAGS THE MINT WAS RUN WITH. `spend` is the --spend of
@@ -350,12 +352,12 @@ func budgetShortfallNotice(sty ui.Styler, slug string, declared, granted int, sp
 	msg := sty.Warn(fmt.Sprintf(
 		"%s declares page.buzzBudgetPerGen %d, but this token was granted %d/generation.",
 		manifest.Filename, declared, granted)) + "\n" +
-		"   A generation is REFUSED outright once the recipe's Buzz ceiling exceeds the token's budget,\n" +
-		"   and that refusal names the ceiling, not the budget. Re-mint asking for it:\n" +
+		"   A generation is REFUSED outright once its Buzz ceiling exceeds the token's budget.\n" +
+		"   Re-mint asking for it:\n" +
 		"     civitai app dev-token " + slug + remintFlags(spend) + fmt.Sprintf(" --budget %d", ask) + " --env >> .env.development.local"
 	if overCap {
-		msg += fmt.Sprintf("\n   (%d is above the route's cap of %d, so %d is the most a dev token can carry — "+
-			"the cap does not limit your SUBMITTED app.)",
+		msg += fmt.Sprintf("\n   (%d is above the platform's per-call cap of %d, so %d is the most a dev token can carry — "+
+			"and your SUBMITTED app's tokens are clamped to the same cap.)",
 			declared, appapi.DevBuzzBudgetCap, appapi.DevBuzzBudgetCap)
 	}
 	return msg
@@ -434,8 +436,9 @@ func readOnlyTokenWarning(sty ui.Styler, canSpend bool, authKind, slug string, m
 // It is a pure function so both bounds are testable without a round trip, and it
 // exists at all because the two bounds fail differently on the server: under the
 // minimum the route answers 400 (so sending it only wastes a call), while OVER
-// the cap the route succeeds and silently clamps — the developer asks for 400,
-// receives a 250-budget token, and nothing anywhere says so. Catching that here
+// the cap the route succeeds and silently clamps — the developer asks for
+// appapi.DevBuzzBudgetCap+1 or more, receives a DevBuzzBudgetCap-budget token, and
+// nothing anywhere says so. Catching that here
 // is the only place it can be caught.
 func validateDevTokenBudget(budget int) error {
 	switch {
@@ -453,15 +456,17 @@ func validateDevTokenBudget(budget int) error {
 	}
 }
 
-func newAppDevTokenCmd() *cobra.Command {
-	var envOut bool
-	var budget int
-	var spend bool
-
-	cmd := &cobra.Command{
-		Use:   "dev-token <slug>",
-		Short: "Mint a short-lived dev block token for `npm run dev:live`",
-		Long: `Mint a short-lived dev block token so a scaffolded page-money app can run
+// devTokenLongHelp renders `app dev-token`'s Long help.
+//
+// 🔴 EVERY BUDGET NUMBER IS FORMATTED FROM appapi, NEVER TYPED. The help used to
+// spell the dev-token default and cap as literals (50 and 250), and kept teaching
+// them after the server raised both to the install-token bounds: appapi is where
+// a bound gets re-vendored, and nothing tied this text to it. Formatting from the
+// constants makes the help move with the vendored values, so the values are
+// pinned where they are vendored (TestDevBuzzBudgetBoundsMirrorServer,
+// TestInlineMaxBuzzMirrorsServer). The help SENTENCES are not pinned by any test.
+func devTokenLongHelp() string {
+	return fmt.Sprintf(`Mint a short-lived dev block token so a scaffolded page-money app can run
 "npm run dev:live" against the REAL Civitai backend.
 
 Calls the invite-gated mint route (POST /api/v1/blocks/dev-token) with your
@@ -499,29 +504,46 @@ scopes in your local block.manifest.json (clamped server-side), so
 "create → dev-token → dev:live" works directly. The token is short-lived —
 never commit it; re-mint when it expires.
 
-BUDGET (--budget, 1-250 Buzz). The token carries a per-generation Buzz budget.
-Omit --budget and the server picks one — 50 for a slug with no submitted app.
-Your LOCAL block.manifest.json page.buzzBudgetPerGen does NOT raise it: until
-the app is submitted there is no server-side manifest to read, so the 50 is a
-flat default, not a clamp of your file. --budget is the only way to move it.
+BUDGET (--budget, %[1]d-%[2]d Buzz). The token carries a per-generation Buzz budget.
+Omit --budget and the server picks one — %[3]d for a slug with no submitted app.
+Your LOCAL block.manifest.json page.buzzBudgetPerGen does NOT set it: until
+the app is submitted there is no server-side manifest to read, so the %[3]d is a
+flat default, not a reading of your file. --budget is the only way to move it.
 
-A generation is REFUSED outright when the recipe's Buzz ceiling exceeds that
-budget, so a shipped recipe with a ceiling of 90 dead-ends on the default:
-
-  insufficient buzz budget: recipe ceiling 90 exceeds budget 50
-
-Raise it (--budget 250) rather than editing the recipe.
+A generation is REFUSED outright when its Buzz ceiling exceeds that budget, with
+an "insufficient buzz budget: ... exceeds budget <M>" error. Raise --budget (up
+to %[2]d) rather than editing the recipe.
 
 The trap: for an inline customComfy graph your maxBuzz is BOTH the Buzz ceiling
-and the step timeout in SECONDS. An over-thrifty budget therefore does not fail
+and the step timeout in SECONDS. An over-thrifty maxBuzz therefore does not fail
 as a billing error — the step runs out of wall clock and comes back "expired",
-which reads like a broken graph. Budget for the seconds the graph needs.`,
-		Example: `  civitai app dev-token my-block               # print the token to stdout
+which reads like a broken graph. Give it the seconds the graph needs, but note
+the server caps an inline maxBuzz at %[4]d — so at most %[4]ds of wall clock —
+whatever the token's budget: --budget %[2]d does not lift it.`,
+		appapi.DevBuzzBudgetMin, appapi.DevBuzzBudgetCap, appapi.DevBuzzBudgetDefault, appapi.InlineMaxBuzz)
+}
+
+// devTokenExample renders `app dev-token`'s Example block, with the budget
+// figures formatted from appapi for the same reason as devTokenLongHelp.
+func devTokenExample() string {
+	return fmt.Sprintf(`  civitai app dev-token my-block               # print the token to stdout
   civitai app dev-token my-block --spend       # also REQUEST ai:write:budgeted (real Buzz)
-  civitai app dev-token my-block --budget 250  # max budget (and 250s of customComfy wall clock)
+  civitai app dev-token my-block --budget %d # the most a dev token can carry
   civitai app dev-token my-block --env         # print VITE_LIVE_BLOCK_TOKEN=<token>
-  civitai app dev-token my-block --env >> .env.development.local`,
-		Args: cobra.MaximumNArgs(1),
+  civitai app dev-token my-block --env >> .env.development.local`, appapi.DevBuzzBudgetCap)
+}
+
+func newAppDevTokenCmd() *cobra.Command {
+	var envOut bool
+	var budget int
+	var spend bool
+
+	cmd := &cobra.Command{
+		Use:     "dev-token <slug>",
+		Short:   "Mint a short-lived dev block token for `npm run dev:live`",
+		Long:    devTokenLongHelp(),
+		Example: devTokenExample(),
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -686,8 +708,8 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 			"field states false — the CLI never asks for budgeted spend implicitly, even when your "+
 			manifest.Filename+" declares it")
 	cmd.Flags().IntVar(&budget, "budget", 0, fmt.Sprintf(
-		"per-generation Buzz budget the token may spend (%d-%d; omit to let the server decide — %d for an unsubmitted app). Must clear your recipe's ceiling; for inline customComfy it is ALSO the step timeout in seconds",
-		appapi.DevBuzzBudgetMin, appapi.DevBuzzBudgetCap, appapi.DevBuzzBudgetDefault))
+		"per-generation Buzz budget the token may spend (%d-%d; omit to let the server decide — %d for an unsubmitted app). Must clear your recipe's ceiling. It does not lift an inline customComfy maxBuzz (also its step timeout in seconds), which the server caps at %d",
+		appapi.DevBuzzBudgetMin, appapi.DevBuzzBudgetCap, appapi.DevBuzzBudgetDefault, appapi.InlineMaxBuzz))
 	return cmd
 }
 

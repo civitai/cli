@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/pkg/civitai"
 )
 
@@ -33,7 +35,7 @@ func devTokenBudgetKey(t *testing.T, rec *devTokenRec) (any, bool) {
 // INVARIANT guard rather than a regression test: it passes both before and after
 // --budget exists. That is deliberate — the risk the flag introduces is that a
 // zero-valued Go variable starts being marshalled on EVERY mint, silently
-// pinning every token at a budget of 0 (or 50) and making the server's own
+// pinning every token at a budget of 0 (or the default) and making the server's own
 // resolution unreachable. This pins the pre-flag wire shape so that regression
 // cannot land unseen.
 func TestAppDevTokenOmitsBudgetWhenFlagUnset(t *testing.T) {
@@ -62,7 +64,7 @@ func TestAppDevTokenSendsBudget(t *testing.T) {
 		budget string
 		want   float64 // encoding/json decodes every JSON number into float64
 	}{
-		{"the server cap", "250", 250},
+		{"the server cap", strconv.Itoa(appapi.DevBuzzBudgetCap), float64(appapi.DevBuzzBudgetCap)},
 		{"clears the seamless-pano-360 ceiling of 90", "120", 120},
 		{"the smallest value the server accepts", "1", 1},
 	}
@@ -102,18 +104,19 @@ func TestAppDevTokenSendsBudget(t *testing.T) {
 // and, in the clamp case, hands back a token whose budget is not what was asked
 // for with no signal at all.
 func TestAppDevTokenRejectsOutOfRangeBudget(t *testing.T) {
+	capStr := strconv.Itoa(appapi.DevBuzzBudgetCap)
 	cases := []struct {
 		name   string
 		budget string
 		want   []string
 	}{
 		// The server's zod schema is .positive(), so 0 and negatives are a 400.
-		{"zero", "0", []string{"--budget", "1", "250"}},
-		{"negative", "-5", []string{"--budget", "1", "250"}},
-		// Over the cap the server does NOT refuse — it silently clamps to 250,
+		{"zero", "0", []string{"--budget", "between 1 and " + capStr}},
+		{"negative", "-5", []string{"--budget", "between 1 and " + capStr}},
+		// Over the cap the server does NOT refuse — it silently clamps to the cap,
 		// which is the worse failure, so the CLI has to be the one to speak up.
-		{"over the cap", "251", []string{"--budget", "250", "clamp"}},
-		{"far over the cap", "100000", []string{"--budget", "250", "clamp"}},
+		{"one over the cap", strconv.Itoa(appapi.DevBuzzBudgetCap + 1), []string{"--budget", "cap of " + capStr, "clamp"}},
+		{"far over the cap", "100000", []string{"--budget", "cap of " + capStr, "clamp"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -229,12 +232,11 @@ func TestAppDevTokenBudgetHelpTeachesTheTrap(t *testing.T) {
 		"customComfy",
 		"seconds",
 		"expired",
-		// The two server constants, written as LITERALS on purpose: this test
-		// must compile against a tree that does not yet vendor them, so the
-		// red-before-green run is a real runtime failure and not a build break.
-		// appapi's own drift guard is what pins these to the server.
-		"250",
-		"50",
+		// No NUMBERS here: this test used to list "250" and "50" as substrings,
+		// which "5000" and "250" go on satisfying after both bounds moved — it
+		// could not see the help go stale, and did not. The help is now formatted
+		// from the appapi constants, which TestDevBuzzBudgetBoundsMirrorServer and
+		// TestInlineMaxBuzzMirrorsServer pin.
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("`app dev-token --help` should mention %q:\n%s", want, out)

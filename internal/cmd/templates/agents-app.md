@@ -183,8 +183,8 @@ Headless, when you cannot open that page: `civitai app dev-token <slug> --spend
   `dev:live` will refuse to generate with `block lacks ai:write:budgeted scope`,
   even though `block.manifest.json` declares that scope.
 - **`--budget` is a per-generation Buzz ceiling, and the default is the SERVER's,
-  not your manifest's.** Omit it and an unsubmitted app gets 50 (the range is
-  1–250). A recipe that costs more than the ceiling is refused, so pass the number
+  not your manifest's.** Omit it and an unsubmitted app gets {{ devBudgetDefault }} (the range is
+  {{ devBudgetMin }}–{{ devBudgetCap }}). A recipe that costs more than the ceiling is refused, so pass the number
   your recipe actually needs.
 {{- end }}
 {{- else if eq .Kind "no-build" }}

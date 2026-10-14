@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+
+	"github.com/civitai/cli/internal/appapi"
 )
 
 // The two instruction files `agent-setup` writes into the project, and the rule
@@ -116,8 +118,18 @@ const (
 // `firstReviewURL` is the template's ONLY way to spell the first-review checklist
 // address: the block and `civitai app submit`'s confirmation step both read
 // firstReviewChecklistURL, so the two cannot name different pages.
+//
+// The `devBudget*` funcs are likewise the block's ONLY way to state the dev-token
+// budget bounds: it used to type them (50 and 250), and since the block is written
+// into every project agent-setup runs in, a literal that went stale there stayed
+// stale in each of those projects. They read the vendored appapi constants.
 var agentsTemplate = template.Must(template.New(agentsFilename).
-	Funcs(template.FuncMap{"firstReviewURL": func() string { return firstReviewChecklistURL }}).
+	Funcs(template.FuncMap{
+		"firstReviewURL":   func() string { return firstReviewChecklistURL },
+		"devBudgetDefault": func() int { return appapi.DevBuzzBudgetDefault },
+		"devBudgetMin":     func() int { return appapi.DevBuzzBudgetMin },
+		"devBudgetCap":     func() int { return appapi.DevBuzzBudgetCap },
+	}).
 	Parse(agentsAppTemplate))
 
 // agentsManagedBlock is the block as it is written into a file: the embedded
