@@ -8,7 +8,8 @@
 //     output, tooling caches — see that var. The VCS names among them
 //     (vcsMetadataNames) are excluded whether the entry is a directory or a
 //     regular file, because in a linked worktree or a submodule `.git` is a
-//     FILE — see that var for the incident.
+//     FILE — see that var for the incident. One name, `scratch`, is dropped
+//     at the PROJECT ROOT only (rootExcludedDirs).
 //
 //   - File names (isExcludedFile): VCS metadata that is a regular file
 //     (a worktree's / submodule's `.git`), build artifacts (*.zip), and dotenv
@@ -116,6 +117,21 @@ var excludedDirs = map[string]struct{}{
 	".mypy_cache":   {},
 	".ruff_cache":   {},
 	".turbo":        {},
+}
+
+// rootExcludedDirs are directory names skipped ONLY AT THE PROJECT ROOT.
+//
+// `scratch/` is the page-elements scaffold's throwaway directory — probes and
+// debug files, git-ignored, outside the typecheck and the test run — so it is
+// not app source and the platform build never reads it.
+//
+// 🔴 ROOT-ONLY ON PURPOSE. It is NOT in excludedDirs, which applies at every
+// depth: that would also drop an app's own `src/<x>/scratch/`, a directory the
+// author named and the build may import from. The name is matched exactly,
+// like excludedDirs (`Scratch/` is packaged). TestBuildDropsRootScratchOnlyNotNestedScratch
+// pins both depths.
+var rootExcludedDirs = map[string]struct{}{
+	"scratch": {},
 }
 
 // vcsMetadataNames are the excludedDirs entries whose exclusion is INDEPENDENT
@@ -350,8 +366,21 @@ const (
 //
 // An empty tag with true means "excluded, by a fixed name" — see the rule-tag
 // block above for why those are deliberately untagged.
+//
+// It answers for a directory BELOW the project root; excludeDirReasonAt is the
+// depth-aware form the walk and IsExcludedPath use.
 func excludeDirReason(name string) (string, bool) {
+	return excludeDirReasonAt(name, false)
+}
+
+// excludeDirReasonAt is excludeDirReason told whether the directory sits
+// directly in the project root, which is the one depth rootExcludedDirs applies
+// at. A root-only drop is a fixed name and so, like excludedDirs, untagged.
+func excludeDirReasonAt(name string, atRoot bool) (string, bool) {
 	if _, skip := excludedDirs[name]; skip {
+		return "", true
+	}
+	if _, skip := rootExcludedDirs[name]; skip && atRoot {
 		return "", true
 	}
 	if isDotenvShaped(name) {
@@ -693,7 +722,9 @@ func Build(dir string) (*Result, error) {
 			if p == dir {
 				return nil
 			}
-			if rule, skip := excludeDirReason(d.Name()); skip {
+			// rel holds no separator exactly when this directory sits directly
+			// in the project root — the depth rootExcludedDirs is scoped to.
+			if rule, skip := excludeDirReasonAt(d.Name(), !strings.Contains(rel, "/")); skip {
 				// ONE entry for the whole subtree: SkipDir means the files
 				// under it are never enumerated, so a per-file count here would
 				// be invented rather than measured. See Skip's doc comment.
@@ -876,8 +907,10 @@ func DirectoryPatternSummary() string {
 // reading, and it fails when either side gains an exclusion the other lacks.
 //
 // The rules, matching Build exactly:
-//   - any DIRECTORY component is excluded by name (excludedDirs), and that
-//     truncates the walk — everything under it is out.
+//   - any DIRECTORY component is excluded by the directory rule
+//     (excludeDirReasonAt), and that truncates the walk — everything under it
+//     is out. The FIRST component is judged at the project root, so a leading
+//     `scratch/` is out and `src/scratch/` is not (rootExcludedDirs).
 //   - the final component, when it is a FILE, is excluded by isExcludedFile.
 //     Build applies the directory rule only to directories, so a plain file
 //     named `dist` is bundle content, and so it is here. The exception is
@@ -917,7 +950,7 @@ func IsExcludedPath(rel string) bool {
 			continue
 		}
 		if i < len(parts)-1 || isDir {
-			if IsExcluded(p) {
+			if _, skip := excludeDirReasonAt(p, dirs == 0); skip {
 				return true
 			}
 			dirs++
@@ -967,6 +1000,18 @@ func IsExcludedEntry(rel string, mode fs.FileMode) bool {
 func ExcludedNames() []string {
 	out := make([]string, 0, len(excludedDirs))
 	for k := range excludedDirs {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// RootExcludedNames returns the directory names excluded ONLY at the project
+// root (rootExcludedDirs), sorted — for `app submit --help`, which must not
+// list them with ExcludedNames' any-depth names.
+func RootExcludedNames() []string {
+	out := make([]string, 0, len(rootExcludedDirs))
+	for k := range rootExcludedDirs {
 		out = append(out, k)
 	}
 	sort.Strings(out)

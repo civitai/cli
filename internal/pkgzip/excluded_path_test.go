@@ -209,6 +209,11 @@ func TestIsExcludedPathAgreesWithBuild(t *testing.T) {
 		// names are already in this fixture, so the tree covers both answers.
 		".env-backup/.env.production",
 		"src/.env.example",
+		// The ROOT-ONLY directory rule (rootExcludedDirs): dropped at the root,
+		// shipped below it. Build reads the depth off `rel`; IsExcludedPath off
+		// the components it consumed — the same two derivations as the row above.
+		"scratch/probe.ts",
+		"src/x/scratch/file.ts",
 	}
 	// Near-miss DIRECTORY names that must keep shipping — here for the same
 	// reason `.gitignore` is, and with the same limitation, stated honestly:

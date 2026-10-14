@@ -9,5 +9,6 @@ Put probes, debug scripts and one-off experiments here, never in `src/` or
 - **Outside the test run**: `vitest.config.ts` collects only `test/**/*.test.ts`
   and excludes `scratch/**`, so a probe here cannot fail `npm test`.
 
-`civitai app submit` still packages this directory with the rest of the
-source, so do not leave secrets or large files here.
+- **Not uploaded**: `civitai app submit` leaves this directory (the one at the
+  project root) out of the package, so nothing here reaches the build. A
+  `scratch/` deeper in the tree, such as `src/<x>/scratch/`, IS packaged.

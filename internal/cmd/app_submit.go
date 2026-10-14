@@ -311,6 +311,10 @@ Excluded DIRECTORIES, by name, at any depth:
   ` + wrapCommaList(pkgzip.ExcludedNames(), 6) + `
 ...and by pattern: ` + pkgzip.DirectoryPatternSummary() + `
 
+Excluded DIRECTORIES, by name, at the PROJECT ROOT only:
+  ` + wrapCommaList(pkgzip.RootExcludedNames(), 6) + `
+...a directory of that name deeper in the tree (src/x/scratch/) IS packaged.
+
 Excluded FILES, by base name:
   ` + wrapCommaList(pkgzip.ExcludedFilePatterns(), 6) + `
 ...but these three are KEPT and uploaded, AT THE PROJECT ROOT ONLY:
