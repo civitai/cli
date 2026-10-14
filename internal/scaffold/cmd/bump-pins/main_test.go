@@ -101,10 +101,10 @@ func fakeTokens(pkg, version string) ([]string, error) {
 	return []string{"--civitai-color-text", "--civitai-color-surface", "--civitai-radius"}, nil
 }
 
-// TestRunRewritesAllThreeFilesAndIsIdempotent exercises the full run() against a
-// temp-dir fixture mirroring the three literal sites, with an injected
+// TestRunRewritesEveryPinSiteAndIsIdempotent exercises the full run() against a
+// temp-dir fixture mirroring the four literal pin sites (plus the ledger it writes), with an injected
 // "published" version (no network).
-func TestRunRewritesAllThreeFilesAndIsIdempotent(t *testing.T) {
+func TestRunRewritesEveryPinSiteAndIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir)
 

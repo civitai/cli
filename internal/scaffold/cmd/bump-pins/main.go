@@ -128,8 +128,8 @@ func main() {
 }
 
 // run discovers the @civitai/* packages pinned in the template, resolves each to
-// its desired pin via fetch, and rewrites every stale literal across the three
-// pin sites plus the design-token ledger. With check=true it computes the needed
+// its desired pin via fetch, and rewrites every stale literal across the four
+// pin sites (the `sites` list) plus the design-token ledger. With check=true it computes the needed
 // changes but writes nothing. It returns the list of applied (or, under
 // --check, needed) changes.
 //
@@ -308,7 +308,7 @@ func syncLedger(dir, pkg, pin, version string, tokens []string, check bool) (*ch
 
 	if !check {
 		// The ledger is the one site that can legitimately not exist yet (the
-		// three pin sites are always read before being written), so create its
+		// four pin sites are always read before being written), so create its
 		// directory rather than failing on a fresh tree.
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return nil, fmt.Errorf("creating %s: %w", filepath.Dir(scaffold.DesignTokenLedgerFile), err)

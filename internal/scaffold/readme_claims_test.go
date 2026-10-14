@@ -278,8 +278,9 @@ var readmePinSpellingRe = regexp.MustCompile(`@civitai/[a-z0-9-]+@[~^]?\d+\.\d+`
 // treats it as a pin site.
 //
 // Two checks, because either alone is walkable: the pinned-package SPELLING
-// (`@pkg@^X.Y`), and the bare current pin VERSION of every package page-money
-// pins, so "`@civitai/app-sdk` 0.70.0" is caught too.
+// (`@pkg@^X.Y`), and the current pin's MAJOR.MINOR of every package page-money
+// pins, matched on number boundaries (pinMinorRe), so "`@civitai/app-sdk`
+// 0.70.0", `^0.70`, `0.70.x` and `v0.70` are all caught.
 func TestPageMoneyREADMESpellsNoCaretPin(t *testing.T) {
 	// Positive control: the regex matches the spelling that shipped.
 	if !readmePinSpellingRe.MatchString("require `@civitai/app-sdk@^0.70.0` + `@civitai/blocks-react@^0.73.0`") {
@@ -305,16 +306,55 @@ func TestPageMoneyREADMESpellsNoCaretPin(t *testing.T) {
 			continue
 		}
 		checked++
-		bare := strings.TrimLeft(p.Pin, "^~")
-		if strings.Contains(readme, bare) {
-			t.Errorf("the scaffolded page-money README contains %s, the version package.json.tmpl currently pins %s "+
-				"to (%s). That number moves on every bump and the README does not; name the feature's minimum "+
-				"instead.", bare, p.Pkg, p.Pin)
+		re, err := pinMinorRe(p.Pin)
+		if err != nil {
+			t.Fatalf("%s pin %q: %v", p.Pkg, p.Pin, err)
+		}
+		if m := re.FindString(readme); m != "" {
+			t.Errorf("the scaffolded page-money README contains %q, which names the major.minor package.json.tmpl "+
+				"currently pins %s to (%s). That number moves on every bump and the README does not; name the "+
+				"feature's minimum instead.", strings.TrimSpace(m), p.Pkg, p.Pin)
 		}
 	}
 	if checked < 2 {
 		t.Fatalf("CONTROL failure, not a finding: %d page-money @civitai/* pin(s) found, want >= 2 "+
 			"(app-sdk + blocks-react) — the version check above compared against nothing", checked)
+	}
+}
+
+// pinMinorRe matches any mention of a caret pin's MAJOR.MINOR as a whole number:
+// `0.70`, `0.70.0`, `0.70.x`, `^0.70`, `v0.70` for pin `^0.70.0` — but not
+// `10.70`, `1.0.70` or `0.701`. A pre-1.0 caret locks the minor, so major.minor is
+// the part of the pin that moves on a bump; matching the full `X.Y.Z` only is
+// walkable by any spelling that drops the patch.
+func pinMinorRe(pin string) (*regexp.Regexp, error) {
+	parts := strings.Split(strings.TrimLeft(pin, "^~"), ".")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return nil, fmt.Errorf("not a X.Y[.Z] pin")
+	}
+	return regexp.Compile(`(?:^|[^0-9.])` + regexp.QuoteMeta(parts[0]+"."+parts[1]) + `(?:[^0-9]|$)`)
+}
+
+// TestPinMinorReCatchesEverySpellingOfTheMovingVersion is the matcher's own
+// control: the spellings that walked the earlier exact-`X.Y.Z` check, and the
+// README's legitimate fixed minimums, which must NOT collide.
+func TestPinMinorReCatchesEverySpellingOfTheMovingVersion(t *testing.T) {
+	re, err := pinMinorRe("^0.70.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"0.70.0", "^0.70", "0.70.x", "v0.70", "@civitai/app-sdk@^0.70.0", "needs 0.70 or later", "(0.70)"} {
+		if !re.MatchString(s) {
+			t.Errorf("pinMinorRe(^0.70.0) does NOT match %q — a README spelling the moving pin that way passes the guard", s)
+		}
+	}
+	for _, s := range []string{"0.14.0", "0.16.0", "10.70", "1.0.70", "0.701", "0.7", "0.71.0"} {
+		if re.MatchString(s) {
+			t.Errorf("pinMinorRe(^0.70.0) matches %q, which is not the pinned version", s)
+		}
+	}
+	if _, err := pinMinorRe("^0"); err == nil {
+		t.Error("pinMinorRe accepted a pin with no minor")
 	}
 }
 

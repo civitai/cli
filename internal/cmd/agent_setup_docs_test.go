@@ -635,45 +635,45 @@ func runDocsProbeNegativeControl(t *testing.T, client *http.Client) docsProbeRes
 }
 
 // blockDocsBranches are the two `{{ if .ElementsSDK }}` arms of the `### Docs`
-// section, named for failure messages. The section's links differ between them —
-// each arm carries at least one address the other does not — so a corpus built
-// from one arm is silent about the other's.
+// section. ElementsSDK is a bool, so there are exactly two;
+// TestBlockDocsLinkCorpusCoversBothSDKBranches asserts this list is that literal
+// pair. golden names the test constant that pins each arm's wording, quoted in
+// failure messages so a reader knows which one to edit.
 var blockDocsBranches = []struct {
 	name        string
 	elementsSDK bool
-	golden      string // the test constant that pins this arm's wording
+	golden      string
 }{
 	{"blocks-react (ElementsSDK=false)", false, "wantDocsSection"},
 	{"@civitai/sdk (ElementsSDK=true, the DEFAULT page-elements template)", true, "wantElementsGenerationPointer"},
 }
 
-// blockDocsLinksByBranch renders the managed block for EVERY project shape under
-// BOTH SDK branches and returns, per branch, the de-duplicated set of links in
-// its `### Docs` section, plus the branches each link was seen in.
+// blockDocsProbeCorpus is THE link list TestBlockDocsLinksResolve probes — the
+// probe calls this and nothing else, so the offline test can check the exact list
+// that goes over the network. It returns the sorted union of `### Docs` links over
+// every project shape × both SDK arms, and the arm names each link was seen in.
 //
 // 🔴 IT RENDERS BOTH ARMS BECAUSE THE PROBE USED TO RENDER ONE.
 // TestBlockDocsLinksResolve rendered `allProjectShapesForTest()[0]` and nothing
 // else, and no shape there sets ElementsSDK — so every address that exists only
 // in the `@civitai/sdk` arm (the default template's, including its multi-step
 // workflow guide pointer) was never fetched by the guard whose doc comment says
-// it "fetches every URL the block ships". The project-kind arms are rendered too
-// even though `### Docs` sits above them today: a mis-nested `{{ end }}` that
-// moved a link into a kind arm is exactly what a one-shape corpus misses.
+// it "fetches every URL the block ships".
 //
-// It fails (not skips) when any rendered section is missing or yields fewer than
-// minDocsLinksPerBranch links — the per-branch POSITIVE CONTROL, so an arm that
-// renders empty cannot pass by contributing nothing to the corpus.
-func blockDocsLinksByBranch(t *testing.T) (perBranch map[string][]string, seenIn map[string][]string) {
+// Its per-arm POSITIVE CONTROL counts the links UNIQUE to each arm — the ones the
+// other arm lacks — and fails when an arm has none. A raw per-section count
+// cannot do this job: the section's shared tail (Guide, earning, examples,
+// llms.txt) sits outside the `{{ if }}` and supplies four links to BOTH arms, so
+// an arm whose own body rendered empty still counts four.
+func blockDocsProbeCorpus(t *testing.T) (links []string, seenIn map[string][]string) {
 	t.Helper()
-	const minDocsLinksPerBranch = 4
-	perBranch = map[string][]string{}
-	seenIn = map[string][]string{}
 	shapes := allProjectShapesForTest()
 	if len(shapes) < 3 {
 		t.Fatalf("CONTROL failure, not a finding: %d shape(s) to render", len(shapes))
 	}
+	perBranch := map[string]map[string]bool{}
 	for _, br := range blockDocsBranches {
-		set := map[string]bool{}
+		perBranch[br.name] = map[string]bool{}
 		for _, shape := range shapes {
 			shape.ElementsSDK = br.elementsSDK
 			block, err := agentsManagedBlock(shape)
@@ -684,56 +684,104 @@ func blockDocsLinksByBranch(t *testing.T) (perBranch map[string][]string, seenIn
 			if !ok {
 				t.Fatalf("kind %q, branch %s: the rendered block has no `### Docs` section to probe", shape.Kind, br.name)
 			}
-			links := docsLinkRe.FindAllString(section, -1)
-			if len(links) < minDocsLinksPerBranch {
-				t.Fatalf("CONTROL failure, not a finding: kind %q, branch %s yields %d link(s) from its `### Docs` "+
-					"section, want >= %d. An arm that contributes nothing to the corpus is an arm the probe "+
-					"says nothing about.", shape.Kind, br.name, len(links), minDocsLinksPerBranch)
-			}
-			for _, l := range links {
-				set[l] = true
+			for _, l := range docsLinkRe.FindAllString(section, -1) {
+				perBranch[br.name][l] = true
 			}
 		}
-		for l := range set {
-			perBranch[br.name] = append(perBranch[br.name], l)
+	}
+	seenIn = map[string][]string{}
+	for _, br := range blockDocsBranches {
+		for l := range perBranch[br.name] {
 			seenIn[l] = append(seenIn[l], br.name)
 		}
-		sort.Strings(perBranch[br.name])
 	}
-	return perBranch, seenIn
+	for _, br := range blockDocsBranches {
+		unique := 0
+		for l := range perBranch[br.name] {
+			if len(seenIn[l]) == 1 {
+				unique++
+			}
+		}
+		if unique == 0 {
+			t.Fatalf("CONTROL failure, not a finding: branch %s yields NO `### Docs` link the other branch lacks. "+
+				"Its own `{{ if .ElementsSDK }}` arm in internal/cmd/templates/agents-app.md contributes nothing to "+
+				"the probe — it rendered empty, or the arms converged (then update %s and rethink this control).",
+				br.name, br.golden)
+		}
+	}
+	for l := range seenIn {
+		links = append(links, l)
+	}
+	sort.Strings(links)
+	return links, seenIn
 }
 
 // TestBlockDocsLinkCorpusCoversBothSDKBranches is the OFFLINE half of the probe's
 // corpus guard: TestBlockDocsLinksResolve is network-gated and skips in `make ci`,
-// so the claim "its corpus covers both arms" needs a check that runs everywhere.
+// so the claim "it probes both arms" needs a check that runs everywhere.
 //
-// It asserts a RELATIONSHIP rather than a spelled URL: each arm must contribute at
-// least one link the other arm does not. That is what makes a one-arm corpus
-// detectable — today's `@civitai/sdk`-only address is the workflow guide, the
-// blocks-react-only one is the hooks reference — without this test going stale
-// when either address is renamed.
+// It renders each arm INDEPENDENTLY of blockDocsProbeCorpus and asserts that the
+// probe's list contains every link of each — so a corpus function that drops an
+// arm (the original defect) fails here, offline, rather than only shrinking a
+// network run that skips in CI. It also asserts each independently rendered arm
+// has a link the other lacks, which is what makes "contains both" a stronger claim
+// than "contains one".
 func TestBlockDocsLinkCorpusCoversBothSDKBranches(t *testing.T) {
-	perBranch, seenIn := blockDocsLinksByBranch(t)
-	if len(perBranch) != len(blockDocsBranches) {
-		t.Fatalf("CONTROL failure, not a finding: %d branch(es) rendered, want %d", len(perBranch), len(blockDocsBranches))
+	if len(blockDocsBranches) != 2 || blockDocsBranches[0].elementsSDK || !blockDocsBranches[1].elementsSDK {
+		t.Fatalf("CONTROL failure, not a finding: blockDocsBranches must be exactly {ElementsSDK=false, "+
+			"ElementsSDK=true}, got %+v", blockDocsBranches)
 	}
+	probed, _ := blockDocsProbeCorpus(t)
+	inProbe := map[string]bool{}
+	for _, l := range probed {
+		inProbe[l] = true
+	}
+
+	own := map[string][]string{}
 	for _, br := range blockDocsBranches {
-		var unique []string
-		for _, l := range perBranch[br.name] {
-			if len(seenIn[l]) == 1 {
-				unique = append(unique, l)
+		shape := allProjectShapesForTest()[0]
+		shape.ElementsSDK = br.elementsSDK
+		block, err := agentsManagedBlock(shape)
+		if err != nil {
+			t.Fatalf("rendering branch %s: %v", br.name, err)
+		}
+		section, ok := docsSectionOf(block)
+		if !ok {
+			t.Fatalf("branch %s: no `### Docs` section", br.name)
+		}
+		own[br.name] = docsLinkRe.FindAllString(section, -1)
+	}
+	a, b := blockDocsBranches[0], blockDocsBranches[1]
+	for _, pair := range [][2]string{{a.name, b.name}, {b.name, a.name}} {
+		other := map[string]bool{}
+		for _, l := range own[pair[1]] {
+			other[l] = true
+		}
+		unique := 0
+		for _, l := range own[pair[0]] {
+			if !other[l] {
+				unique++
 			}
 		}
-		if len(unique) == 0 {
-			t.Errorf("branch %s contributes NO link the other branch lacks (its set: %s). Either the two arms of "+
-				"`{{ if .ElementsSDK }}` in internal/cmd/templates/agents-app.md have converged — then this "+
-				"relationship guard needs rethinking — or the render is no longer reaching this arm.",
-				br.name, strings.Join(perBranch[br.name], ", "))
-			continue
+		if unique == 0 {
+			t.Errorf("branch %s, rendered on its own, has no `### Docs` link that branch %s lacks — so 'the probe "+
+				"covers both' cannot be told apart from 'the probe covers one'.", pair[0], pair[1])
 		}
-		t.Logf("branch %s: %d link(s), %d unique to it: %s", br.name, len(perBranch[br.name]), len(unique),
-			strings.Join(unique, ", "))
 	}
+	for _, br := range blockDocsBranches {
+		var missing []string
+		for _, l := range own[br.name] {
+			if !inProbe[l] {
+				missing = append(missing, l)
+			}
+		}
+		if len(missing) > 0 {
+			t.Errorf("TestBlockDocsLinksResolve's link list (blockDocsProbeCorpus) is MISSING %d link(s) the %s "+
+				"branch ships: %s. The live probe would never fetch them. Pinned by %s.",
+				len(missing), br.name, strings.Join(missing, ", "), br.golden)
+		}
+	}
+	t.Logf("probe corpus: %d link(s): %s", len(probed), strings.Join(probed, ", "))
 }
 
 // TestBlockDocsLinksResolve fetches every URL the block ships and reports what it
@@ -752,7 +800,7 @@ func TestBlockDocsLinkCorpusCoversBothSDKBranches(t *testing.T) {
 //     reason to stop probing the remaining links.
 //
 // Its corpus is the `### Docs` section rendered for every project shape under
-// BOTH `{{ if .ElementsSDK }}` arms (blockDocsLinksByBranch). It used to render
+// BOTH `{{ if .ElementsSDK }}` arms (blockDocsProbeCorpus). It used to render
 // one blocks-react shape only, so the default `@civitai/sdk` template's own
 // addresses were never fetched; TestBlockDocsLinkCorpusCoversBothSDKBranches is
 // the offline guard that keeps both arms in the corpus.
@@ -773,15 +821,9 @@ func TestBlockDocsLinksResolve(t *testing.T) {
 	probe := func(url string) docsProbeResult { return probeDocsURL(client, url) }
 	control := runDocsProbeNegativeControl(t, client)
 
-	// The corpus is the UNION over every shape × both SDK arms — see
-	// blockDocsLinksByBranch for why one rendering was not enough, and for the
-	// per-branch positive control that fails an arm yielding no links.
-	_, seenIn := blockDocsLinksByBranch(t)
-	links := make([]string, 0, len(seenIn))
-	for l := range seenIn {
-		links = append(links, l)
-	}
-	sort.Strings(links)
+	// The ONE list the probe fetches — see blockDocsProbeCorpus for why one
+	// rendering was not enough and for its per-arm positive control.
+	links, seenIn := blockDocsProbeCorpus(t)
 	if len(links) < 4 {
 		t.Fatalf("CONTROL failure, not a finding: %d link(s) extracted, want >= 4", len(links))
 	}
