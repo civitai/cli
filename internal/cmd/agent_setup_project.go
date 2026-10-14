@@ -94,12 +94,24 @@ type projectShape struct {
 	// `.d.ts` points it at a package this project never installed. Read from the
 	// file, like Scripts, never assumed from a template name.
 	ElementsSDK bool
-	// HasScratchDir reports whether THIS project has a `scratch/` directory —
-	// the git-ignored home for probes that page-elements scaffolds, outside its
-	// tsconfig and vitest includes. The block tells an agent to put throwaway
-	// files there only when the directory exists, so it never names one a
-	// project does not have (the item-36 rule: render from the project).
+	// HasScratchDir reports whether THIS project has a `scratch/` directory at
+	// its root. The block tells an agent to put throwaway files there only when
+	// the directory exists, so it never names one a project does not have (the
+	// item-36 rule: render from the project).
+	//
+	// 🔴 IT IS EVIDENCE OF THE DIRECTORY AND OF NOTHING ELSE. Whether it is
+	// git-ignored, or outside the typecheck and the test run, is decided by
+	// that project's own .gitignore / tsconfig / vitest config. page-elements
+	// scaffolds all three; any other project's scratch/ is whatever its author
+	// made it. So the line this gates claims only what holds in EVERY project
+	// (`app submit` leaves the root scratch/ out — pkgzip's rootExcludedDirs)
+	// and leaves the rest to HasScratchReadme's pointer.
 	HasScratchDir bool
+	// HasScratchReadme reports whether `scratch/README.md` is a regular file.
+	// page-elements ships one stating what its scaffold makes true of the
+	// directory; the block POINTS at it rather than restating those claims,
+	// because only that project's own files can say whether they still hold.
+	HasScratchReadme bool
 }
 
 // scratchDirName is the directory HasScratchDir looks for.
@@ -187,6 +199,9 @@ func detectProjectShape(dir string) projectShape {
 	}
 	if fi, err := os.Stat(filepath.Join(dir, scratchDirName)); err == nil && fi.IsDir() {
 		shape.HasScratchDir = true
+		if fi, err := os.Stat(filepath.Join(dir, scratchDirName, "README.md")); err == nil && fi.Mode().IsRegular() {
+			shape.HasScratchReadme = true
+		}
 	}
 
 	pkgPath := filepath.Join(dir, "package.json")

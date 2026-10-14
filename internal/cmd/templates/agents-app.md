@@ -159,9 +159,11 @@ Run `npm run` to list what this project does define.
   the pins that are known to work together; a hand-picked version is how the
   money path breaks silently.
 {{- if .HasScratchDir }}
-- **Put probes and debug files in `scratch/`, never in `src/` or `test/`.** It
-  is git-ignored and outside both the typecheck and the test run, so a
-  throwaway file there cannot fail `npm run typecheck` or `npm test`.
+- **Put probes and debug files in `scratch/`, never in `src/` or `test/`.**
+  `civitai app submit` leaves this project-root `scratch/` out of the package.
+{{- if .HasScratchReadme }} `scratch/README.md` says what else holds for it in
+  this project.
+{{- end }}
 {{- end }}
 {{ if .HasSetupWizard }}
 **The dev token for live mode: click the button. Nothing needs exporting.** This

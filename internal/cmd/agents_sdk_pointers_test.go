@@ -85,10 +85,17 @@ func TestAgentsBlockPointsAtTheSDKTheProjectInstalled(t *testing.T) {
 	}
 }
 
-// scratchLine is the one AGENTS.md line about scratch/, normalised.
-const scratchLine = "**Put probes and debug files in `scratch/`, never in `src/` or `test/`.** It is " +
-	"git-ignored and outside both the typecheck and the test run, so a throwaway file there cannot " +
-	"fail `npm run typecheck` or `npm test`."
+// scratchLine is the AGENTS.md line about scratch/, normalised, as EVERY project
+// with a root scratch/ gets it. It claims only what holds in every such project:
+// `app submit` leaves the root scratch/ out (pkgzip's rootExcludedDirs). Whether
+// the directory is git-ignored or outside the typecheck is that project's own
+// config's business, so the block does not say it.
+const scratchLine = "**Put probes and debug files in `scratch/`, never in `src/` or `test/`.** " +
+	"`civitai app submit` leaves this project-root `scratch/` out of the package."
+
+// scratchReadmePointer follows scratchLine only where `scratch/README.md`
+// exists — page-elements ships one stating what its scaffold makes true.
+const scratchReadmePointer = " `scratch/README.md` says what else holds for it in this project."
 
 // TestAgentsBlockNamesScratchOnlyWhereItExists: page-elements scaffolds a
 // git-ignored scratch/ outside its tsconfig and vitest includes, and an eval run
@@ -114,8 +121,8 @@ func TestAgentsBlockNamesScratchOnlyWhereItExists(t *testing.T) {
 		return dir
 	}
 
-	if got := blockFor(render(scaffold.PageElements)); !strings.Contains(got, scratchLine) {
-		t.Errorf("a page-elements project's AGENTS.md does not carry the scratch/ line:\nwant: %s", scratchLine)
+	if got := blockFor(render(scaffold.PageElements)); !strings.Contains(got, scratchLine+scratchReadmePointer) {
+		t.Errorf("a page-elements project's AGENTS.md does not carry the scratch/ line and README pointer:\nwant: %s", scratchLine+scratchReadmePointer)
 	}
 
 	money := render(scaffold.PageMoney)
@@ -136,7 +143,25 @@ func TestAgentsBlockNamesScratchOnlyWhereItExists(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(money, "scratch"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := blockFor(money); !strings.Contains(got, scratchLine) {
+	got := blockFor(money)
+	if !strings.Contains(got, scratchLine) {
 		t.Errorf("a page-money project WITH a scratch/ directory did not get the scratch/ line")
+	}
+	// 🔴 A BARE scratch/ PROVES ONLY THE DIRECTORY. page-money's .gitignore has
+	// no scratch rule, so a block telling the agent its probes are git-ignored
+	// would get them committed. Neither that claim nor the README pointer (no
+	// README here) may appear.
+	for _, banned := range []string{"git-ignored", "scratch/README.md"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("a page-money project with a bare scratch/ got %q in its AGENTS.md — "+
+				"nothing in that project establishes it", banned)
+		}
+	}
+	// And the README, not the template, is what turns the pointer on.
+	if err := os.WriteFile(filepath.Join(money, "scratch", "README.md"), []byte("# notes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := blockFor(money); !strings.Contains(got, scratchLine+scratchReadmePointer) {
+		t.Errorf("a scratch/README.md did not add the pointer to the block")
 	}
 }
