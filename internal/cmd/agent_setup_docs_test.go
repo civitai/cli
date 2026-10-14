@@ -634,6 +634,108 @@ func runDocsProbeNegativeControl(t *testing.T, client *http.Client) docsProbeRes
 	return control
 }
 
+// blockDocsBranches are the two `{{ if .ElementsSDK }}` arms of the `### Docs`
+// section, named for failure messages. The section's links differ between them —
+// each arm carries at least one address the other does not — so a corpus built
+// from one arm is silent about the other's.
+var blockDocsBranches = []struct {
+	name        string
+	elementsSDK bool
+	golden      string // the test constant that pins this arm's wording
+}{
+	{"blocks-react (ElementsSDK=false)", false, "wantDocsSection"},
+	{"@civitai/sdk (ElementsSDK=true, the DEFAULT page-elements template)", true, "wantElementsGenerationPointer"},
+}
+
+// blockDocsLinksByBranch renders the managed block for EVERY project shape under
+// BOTH SDK branches and returns, per branch, the de-duplicated set of links in
+// its `### Docs` section, plus the branches each link was seen in.
+//
+// 🔴 IT RENDERS BOTH ARMS BECAUSE THE PROBE USED TO RENDER ONE.
+// TestBlockDocsLinksResolve rendered `allProjectShapesForTest()[0]` and nothing
+// else, and no shape there sets ElementsSDK — so every address that exists only
+// in the `@civitai/sdk` arm (the default template's, including its multi-step
+// workflow guide pointer) was never fetched by the guard whose doc comment says
+// it "fetches every URL the block ships". The project-kind arms are rendered too
+// even though `### Docs` sits above them today: a mis-nested `{{ end }}` that
+// moved a link into a kind arm is exactly what a one-shape corpus misses.
+//
+// It fails (not skips) when any rendered section is missing or yields fewer than
+// minDocsLinksPerBranch links — the per-branch POSITIVE CONTROL, so an arm that
+// renders empty cannot pass by contributing nothing to the corpus.
+func blockDocsLinksByBranch(t *testing.T) (perBranch map[string][]string, seenIn map[string][]string) {
+	t.Helper()
+	const minDocsLinksPerBranch = 4
+	perBranch = map[string][]string{}
+	seenIn = map[string][]string{}
+	shapes := allProjectShapesForTest()
+	if len(shapes) < 3 {
+		t.Fatalf("CONTROL failure, not a finding: %d shape(s) to render", len(shapes))
+	}
+	for _, br := range blockDocsBranches {
+		set := map[string]bool{}
+		for _, shape := range shapes {
+			shape.ElementsSDK = br.elementsSDK
+			block, err := agentsManagedBlock(shape)
+			if err != nil {
+				t.Fatalf("rendering kind %q, branch %s: %v", shape.Kind, br.name, err)
+			}
+			section, ok := docsSectionOf(block)
+			if !ok {
+				t.Fatalf("kind %q, branch %s: the rendered block has no `### Docs` section to probe", shape.Kind, br.name)
+			}
+			links := docsLinkRe.FindAllString(section, -1)
+			if len(links) < minDocsLinksPerBranch {
+				t.Fatalf("CONTROL failure, not a finding: kind %q, branch %s yields %d link(s) from its `### Docs` "+
+					"section, want >= %d. An arm that contributes nothing to the corpus is an arm the probe "+
+					"says nothing about.", shape.Kind, br.name, len(links), minDocsLinksPerBranch)
+			}
+			for _, l := range links {
+				set[l] = true
+			}
+		}
+		for l := range set {
+			perBranch[br.name] = append(perBranch[br.name], l)
+			seenIn[l] = append(seenIn[l], br.name)
+		}
+		sort.Strings(perBranch[br.name])
+	}
+	return perBranch, seenIn
+}
+
+// TestBlockDocsLinkCorpusCoversBothSDKBranches is the OFFLINE half of the probe's
+// corpus guard: TestBlockDocsLinksResolve is network-gated and skips in `make ci`,
+// so the claim "its corpus covers both arms" needs a check that runs everywhere.
+//
+// It asserts a RELATIONSHIP rather than a spelled URL: each arm must contribute at
+// least one link the other arm does not. That is what makes a one-arm corpus
+// detectable — today's `@civitai/sdk`-only address is the workflow guide, the
+// blocks-react-only one is the hooks reference — without this test going stale
+// when either address is renamed.
+func TestBlockDocsLinkCorpusCoversBothSDKBranches(t *testing.T) {
+	perBranch, seenIn := blockDocsLinksByBranch(t)
+	if len(perBranch) != len(blockDocsBranches) {
+		t.Fatalf("CONTROL failure, not a finding: %d branch(es) rendered, want %d", len(perBranch), len(blockDocsBranches))
+	}
+	for _, br := range blockDocsBranches {
+		var unique []string
+		for _, l := range perBranch[br.name] {
+			if len(seenIn[l]) == 1 {
+				unique = append(unique, l)
+			}
+		}
+		if len(unique) == 0 {
+			t.Errorf("branch %s contributes NO link the other branch lacks (its set: %s). Either the two arms of "+
+				"`{{ if .ElementsSDK }}` in internal/cmd/templates/agents-app.md have converged — then this "+
+				"relationship guard needs rethinking — or the render is no longer reaching this arm.",
+				br.name, strings.Join(perBranch[br.name], ", "))
+			continue
+		}
+		t.Logf("branch %s: %d link(s), %d unique to it: %s", br.name, len(perBranch[br.name]), len(unique),
+			strings.Join(unique, ", "))
+	}
+}
+
 // TestBlockDocsLinksResolve fetches every URL the block ships and reports what it
 // found, in four separable verdicts. The split is the point: "gone", "moved",
 // "cannot tell" and "could not reach" lead to four different actions, and the
@@ -648,6 +750,12 @@ func runDocsProbeNegativeControl(t *testing.T, client *http.Client) docsProbeRes
 //     genuinely broken page without a positive control.
 //   - transport error     — COULD NOT REACH. Collected, never fatal, and never a
 //     reason to stop probing the remaining links.
+//
+// Its corpus is the `### Docs` section rendered for every project shape under
+// BOTH `{{ if .ElementsSDK }}` arms (blockDocsLinksByBranch). It used to render
+// one blocks-react shape only, so the default `@civitai/sdk` template's own
+// addresses were never fetched; TestBlockDocsLinkCorpusCoversBothSDKBranches is
+// the offline guard that keeps both arms in the corpus.
 //
 // 🔴 ITS CORPUS IS THE MANAGED BLOCK AND NOTHING ELSE, AND THAT IS DELIBERATE
 // RATHER THAN AN OVERSIGHT — NOW. The block's URLs are written into somebody
@@ -665,18 +773,19 @@ func TestBlockDocsLinksResolve(t *testing.T) {
 	probe := func(url string) docsProbeResult { return probeDocsURL(client, url) }
 	control := runDocsProbeNegativeControl(t, client)
 
-	block, err := agentsManagedBlock(allProjectShapesForTest()[0])
-	if err != nil {
-		t.Fatalf("rendering: %v", err)
+	// The corpus is the UNION over every shape × both SDK arms — see
+	// blockDocsLinksByBranch for why one rendering was not enough, and for the
+	// per-branch positive control that fails an arm yielding no links.
+	_, seenIn := blockDocsLinksByBranch(t)
+	links := make([]string, 0, len(seenIn))
+	for l := range seenIn {
+		links = append(links, l)
 	}
-	section, ok := docsSectionOf(block)
-	if !ok {
-		t.Fatal("no `### Docs` section to probe")
-	}
-	links := docsLinkRe.FindAllString(section, -1)
+	sort.Strings(links)
 	if len(links) < 4 {
 		t.Fatalf("CONTROL failure, not a finding: %d link(s) extracted, want >= 4", len(links))
 	}
+	branchesOf := func(url string) string { return strings.Join(seenIn[url], " + ") }
 
 	// Probe EVERY link first. Nothing in this loop can end the run.
 	results := make([]docsProbeResult, 0, len(links))
@@ -722,19 +831,21 @@ func TestBlockDocsLinksResolve(t *testing.T) {
 	for _, r := range gone {
 		t.Errorf("DEAD LINK IN THE MANAGED BLOCK — this URL is written into every project "+
 			"`civitai agent-setup` runs in, and nothing can recall it.\n  url:    %s\n  status: %d\n"+
-			"  fix:    correct it in internal/cmd/templates/agents-app.md AND wantDocsSection in this file "+
-			"(then run TestEveryDocsURLSpellingIsLedgered for the rest), or publish the page before merging.",
-			r.url, r.code)
+			"  branch: %s\n"+
+			"  fix:    correct it in internal/cmd/templates/agents-app.md AND that branch's golden in this file "+
+			"(wantDocsSection for blocks-react, wantElementsGenerationPointer for @civitai/sdk; then run "+
+			"TestEveryDocsURLSpellingIsLedgered for the rest), or publish the page before merging.",
+			r.url, r.code, branchesOf(r.url))
 	}
 	for _, r := range moved {
 		t.Errorf("MOVED LINK IN THE MANAGED BLOCK — the page answers, but NOT at the spelling that ships. "+
 			"This is not a dead link and it is not a live one: a browser follows the hop, and the block is "+
 			"left naming a URL the site no longer serves directly.\n  url:      %s\n  status:   %d\n"+
-			"  location: %s\n"+
+			"  location: %s\n  branch:   %s\n"+
 			"  fix:      if the target is the intended canonical spelling, write THAT into "+
-			"internal/cmd/templates/agents-app.md and wantDocsSection. Check the scheme before you copy it: "+
+			"internal/cmd/templates/agents-app.md and that branch's golden. Check the scheme before you copy it: "+
 			"this host has been measured redirecting https to cleartext http.",
-			r.url, r.code, orNone(r.location))
+			r.url, r.code, orNone(r.location), branchesOf(r.url))
 	}
 	if len(cannotTell) > 0 {
 		var lines []string
