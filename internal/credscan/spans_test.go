@@ -305,6 +305,86 @@ func TestEntropyCountsInvalidBytesApart(t *testing.T) {
 	}
 }
 
+// TestProseInAScriptWithoutSpacesIsSilent: Chinese, Japanese, Thai and the
+// other scripts written without spaces between words put a whole sentence in
+// one non-space run, so assignRe's value capture takes the sentence and the
+// letter/digit/entropy gate passes it. Before the gate read letters and digits
+// in every script, it rejected these lines by accident (no ASCII letter);
+// widening it reported every i18n string as a credential. A value containing
+// any character of such a script is read as prose — at the cost of a password
+// written in one, which is a KNOWN MISS of the redactor.
+func TestProseInAScriptWithoutSpacesIsSilent(t *testing.T) {
+	silent := []string{
+		// Scripts written without spaces.
+		"token_expired: トークンの有効期限（24時間）が切れました",
+		`"password_hint": "密码长度至少8位，包含字母和数字",`,
+		"secret_note: 秘密鍵は2048ビット以上を推奨します",
+		"password_policy: รหัสผ่านต้องมีอย่างน้อย8ตัวอักษร",
+		// Spaced scripts: the capture is one word, as it is for English.
+		"password_hint: Пароль должен содержать не менее 8 символов",
+		"password_hint: يجب أن تحتوي كلمة المرور على 8 أحرف على الأقل",
+		"password_hint: Ο κωδικός πρέπει να έχει τουλάχιστον 8 χαρακτήρες",
+		"password_hint: must be at least 8 characters long",
+		"token: ${CIVITAI_TOKEN}",
+	}
+	for _, line := range silent {
+		if _, ok := match(line); ok {
+			t.Errorf("match fires on prose: %q", line)
+		}
+		if spans := Spans(line); len(spans) != 0 {
+			t.Errorf("Spans locates %+v in prose: %q", spans, line)
+		}
+	}
+
+	// One character from each script table is enough to read the value as
+	// prose. CONTROL: the same value without it is a secret, so the silence is
+	// that character's doing and not the rest of the value's.
+	const secret = "Kq9Zx2Lm7Rb5Tn8Vc"
+	assertOneSpan(t, "DB_PASSWORD="+secret, secret)
+	for script, r := range map[string]rune{
+		"Han": '中', "Hiragana": 'あ', "Katakana": 'ア', "Thai": 'ก',
+		"Lao": 'ກ', "Khmer": 'ក', "Myanmar": 'က',
+	} {
+		line := "DB_PASSWORD=" + secret + string(r)
+		if _, ok := match(line); ok {
+			t.Errorf("%s: match fires on %q", script, line)
+		}
+		if spans := Spans(line); len(spans) != 0 {
+			t.Errorf("%s: Spans locates %+v in %q", script, spans, line)
+		}
+	}
+
+	// Still caught: spaced non-Latin scripts are judged like ASCII.
+	for _, v := range []string{"Пароль2024Секрет", "KqZxLmRbTnVc٢٠٢٤", "a1ЖЩЯФЫВАПРО"} {
+		assertOneSpan(t, "DB_PASSWORD="+v, v)
+	}
+}
+
+// TestSpansFindTheRealClosingQuoteOfAnEscapedValue: a quoted value can carry
+// escaped quotes (`\"`) — JSON written into a log line as a string. When the
+// capture is cut before the real closing quote, the span must run to THAT
+// quote; an escaped one is part of the value.
+func TestSpansFindTheRealClosingQuoteOfAnEscapedValue(t *testing.T) {
+	inner := `{\"client_id\":\"abc123def456\",\"client_secret\":\"` + testSecret(600, 0, false) + `\"}`
+	head510, tail200 := testSecret(510, 0, false), testSecret(200, 11, false)
+	cases := []struct{ name, line, want string }{
+		// The value's own `,` ends it early under the unquoted rules, right
+		// before an escaped quote.
+		{"escaped JSON in a string, secret past the bound",
+			`{"credentials":"` + inner + `"}`, inner},
+		// The cut lands between `\` and `"`.
+		{"cut between a backslash and its quote",
+			`{"sessionSecret": "` + head510 + `\"` + tail200 + `", "other": 1}`,
+			head510 + `\"` + tail200},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { assertOneSpan(t, tc.line, tc.want) })
+	}
+	// CONTROL: an escaped quote in a value under the bound already ends at the
+	// real closing quote.
+	assertOneSpan(t, `{"sessionSecret": "Kq9\"Zx2Lm7Rb5Tn8", "other": 1}`, `Kq9\"Zx2Lm7Rb5Tn8`)
+}
+
 // byteEntropy is Shannon entropy over BYTES — the measure the gate used to
 // apply — kept here only to show the fixture above sits below the floor on it.
 func byteEntropy(s string) float64 {

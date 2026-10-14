@@ -647,6 +647,9 @@ func valueLooksLikeSecret(value string, quoted bool) bool {
 	if !quoted && dottedRefRe.MatchString(value) {
 		return false
 	}
+	if strings.ContainsFunc(value, inUnspacedScript) {
+		return false
+	}
 	if !hasDigit(value) || !hasLetter(value) {
 		return false
 	}
@@ -671,6 +674,24 @@ func valueLooksLikeSecret(value string, quoted bool) bool {
 // same shape, so it is a deliberate false negative. Anchored to the exact key
 // shape, so it exempts nothing else.
 var publicByDesignRe = regexp.MustCompile(`^AIza[0-9A-Za-z_-]{35}$`)
+
+// unspacedScripts are the scripts written without spaces between words.
+//
+// 🔴 A VALUE CONTAINING ONE OF THEIR CHARACTERS IS PROSE, NOT A SECRET. assignRe's
+// value capture is a non-space run, which in English is one word — but in
+// these scripts it is a whole sentence (`token_expired: トークンの有効期限（24時間）が切れました`),
+// and a sentence with a digit in it passes the letter/digit/entropy gate. The
+// gate used to reject these lines only by accident (it knew no letter outside
+// ASCII); once it read every script, every such i18n string became a
+// "credential". The cost is a password containing one of these characters,
+// which is never reported — a KNOWN MISS of internal/redact.
+// TestProseInAScriptWithoutSpacesIsSilent pins both sides.
+var unspacedScripts = []*unicode.RangeTable{
+	unicode.Han, unicode.Hiragana, unicode.Katakana,
+	unicode.Thai, unicode.Lao, unicode.Khmer, unicode.Myanmar,
+}
+
+func inUnspacedScript(r rune) bool { return unicode.In(r, unspacedScripts...) }
 
 // hasDigit and hasLetter report whether s holds a decimal digit / a letter in
 // ANY script. Both used to accept only ASCII, so a password whose letters

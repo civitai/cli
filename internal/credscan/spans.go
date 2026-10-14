@@ -107,19 +107,25 @@ const assignValueBound = 512
 // LONG A SECRET IS. Scan only needs to know the line holds one, so capturing
 // 512 characters of it is enough there. A consumer that REMOVES the secret needs
 // all of it: redacting the first 512 characters of a 700-character value sends
-// the rest. The
-// extension is one linear walk from the capture's end — not the per-word rescan
-// of the line that the bound exists to limit.
+// the rest. The extension is one linear walk — not the per-word rescan of the
+// line that the bound exists to limit.
 //
 // Where the value ends follows cleanValue: a value that opened with a quote
 // runs to that quote's close (a backslash escapes the next byte), and an
 // unquoted one to white space or the first structural delimiter.
+//
+// 🔴 A QUOTED VALUE IS RE-READ FROM ITS OPENING QUOTE, NOT FROM sp.End. The
+// span cleanValue produced can end ON an escaped quote: a quoted value whose
+// close lies past the cut goes through the unquoted rules, which may stop at a
+// `,` just before `\"`, and a cut can fall between `\` and `"`. A walk starting
+// at sp.End cannot see the backslash behind it, took that `"` as the close, and
+// sent the rest — JSON escaped into a log line leaked its `client_secret`.
+// Walking from the opening quote sees every escape.
+// TestSpansFindTheRealClosingQuoteOfAnEscapedValue pins both shapes.
 func wholeValue(line string, rawStart int, sp Span) Span {
 	if q := line[rawStart]; q == '"' || q == '\'' || q == '`' {
-		if sp.Start == rawStart {
-			sp.Start++ // the opening quote is not part of the value
-		}
-		for i := sp.End; i < len(line); i++ {
+		sp.Start = rawStart + 1 // the opening quote is not part of the value
+		for i := sp.Start; i < len(line); i++ {
 			if line[i] == '\\' && q != '`' {
 				i++
 				continue

@@ -79,6 +79,13 @@ var knownMisses = []knownEntry{
 		doc:   "a JSON-escaped URL (`https:\\/\\/…?sig=…`): it is not recognised as a URL, so its query is kept",
 		cases: []knownCase{{in: `{"url":"https:\/\/cdn.fieldstone.dev\/f.bin?sig=Uv2Wx4Yz6Ab8Cd0Ef"}`}},
 	},
+	{
+		doc: "a value after a credential key that contains any character of a script written without spaces (Chinese, Japanese, Thai, Lao, Khmer, Burmese): it is read as prose, so `DB_PASSWORD=Kq9Zx2Lm7Rb5Tn8Vc中` is kept",
+		cases: []knownCase{
+			{in: "DB_PASSWORD=Kq9Zx2Lm7Rb5Tn8Vc中"},
+			{in: "DB_PASSWORD=秘密Wq8Zt3Lm6Xr1Bv5"},
+		},
+	},
 }
 
 // knownOverRedactions is what redaction removes that was not a secret. Every
