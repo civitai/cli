@@ -16,7 +16,6 @@ import (
 
 	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/pkg/civitai"
-	"github.com/spf13/cobra"
 )
 
 // Every expectation in this file is a LITERAL — a request body, a query input,
@@ -1473,88 +1472,5 @@ func TestAppFeedbackHelpPointsAtThePlatformLane(t *testing.T) {
 	// It is in the opening paragraph, above the first labelled section.
 	if strings.Index(out, want) > strings.Index(out, "UNTRUSTED TEXT:") {
 		t.Errorf("the clause must sit in the opening paragraph, before the labelled sections")
-	}
-}
-
-// TestPlatformFeedbackVerbIsUnadvertised asserts the STATE "nothing points an
-// agent at this verb", on each surface an agent actually reads — not the absence
-// of a spelling in some directory.
-//
-// 🔴 THE VERB IS UNADVERTISED ON PURPOSE (AGENTS.md item 41): the server side
-// was not live when it shipped. So the command is Hidden, the root help does not
-// list it, the README does not document it, and the managed AGENTS.md block
-// `agent-setup` writes does not mention it. `civitai feedback --help` itself
-// still works, for whoever is told the verb exists. The PR that turns it on
-// flips each of these on purpose.
-func TestPlatformFeedbackVerbIsUnadvertised(t *testing.T) {
-	// `civitai feedback`, but not `civitai app feedback`.
-	names := func(src string) bool {
-		return strings.Contains(strings.ReplaceAll(src, "civitai app feedback", ""), "civitai feedback")
-	}
-	// Positive control on the matcher: it does see the verb where the verb is.
-	if !names("run `civitai feedback send`") || names("run `civitai app feedback my-app`") {
-		t.Fatal("CONTROL failure: the matcher cannot tell `civitai feedback` from `civitai app feedback`")
-	}
-
-	root := NewRootCmd()
-	var verb *cobra.Command
-	listed := 0
-	for _, c := range root.Commands() {
-		if c.Name() == "feedback" {
-			verb = c
-		}
-		if !c.Hidden {
-			listed++
-		}
-	}
-	if verb == nil {
-		t.Fatal("CONTROL failure: the root has no `feedback` command, so there is nothing to keep hidden")
-	}
-	if listed < 10 {
-		t.Fatalf("CONTROL failure: only %d root command(s) are listed — the tree walk is broken", listed)
-	}
-	if !verb.Hidden {
-		t.Error("the root `feedback` command is not Hidden: `civitai --help` and shell completion now advertise a verb whose server side is not live")
-	}
-
-	// The rendered root help: no command row for it, and no mention anywhere.
-	help := renderRootHelp(t)
-	for _, line := range strings.Split(help, "\n") {
-		if f := strings.Fields(line); len(f) > 0 && f[0] == "feedback" {
-			t.Errorf("`civitai --help` lists the verb: %q", line)
-		}
-	}
-	if names(help) {
-		t.Error("`civitai --help` mentions `civitai feedback`")
-	}
-	// Positive control: that same rendering DOES list a visible command.
-	if !strings.Contains(help, "\n  whoami ") {
-		t.Fatalf("CONTROL failure: the rendered root help lists no `whoami` row, so a missing `feedback` row proves nothing:\n%s", help)
-	}
-
-	// Hidden hides the listing, not the command.
-	if out, _, err := run(t, "feedback", "--help"); err != nil || !strings.Contains(out, "send") || !strings.Contains(out, "status") {
-		t.Errorf("`civitai feedback --help` must still work and list its subcommands (err=%v):\n%s", err, out)
-	}
-
-	// The README — the published contract — does not document it yet.
-	readme := readREADME(t)
-	if len(readme) < 20000 || !names(strings.ReplaceAll(readme, "civitai app feedback", "civitai feedback")) {
-		t.Fatal("CONTROL failure: the README read is not the README (too short, or it has no `civitai app feedback` section to tell apart)")
-	}
-	if names(readme) {
-		t.Error("README.md documents `civitai feedback`. That section ships with the PR that advertises the verb.")
-	}
-
-	// The managed block agent-setup writes into a project's AGENTS.md.
-	tmpl, err := os.ReadFile(filepath.Join("templates", "agents-app.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(tmpl), "civitai app") {
-		t.Fatal("CONTROL failure: templates/agents-app.md does not look like the managed block")
-	}
-	if names(string(tmpl)) {
-		t.Error("the managed AGENTS.md template points agents at `civitai feedback`")
 	}
 }

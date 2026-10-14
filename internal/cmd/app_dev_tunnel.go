@@ -579,6 +579,10 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 		// The mint succeeded but we couldn't bind — revoke so we don't orphan the
 		// route/credential.
 		stop("tunnel dial failed")
+		// The platform minted the session and its tunnel endpoint would not
+		// take the connection — the one dev-tunnel failure that is the
+		// platform's rather than the local dev server's (feedback_hint.go).
+		printFeedbackHint(d.errw, feedbackHintTunnelDial)
 		return fmt.Errorf("open reverse tunnel to %s: %w", d.endpoint, err)
 	}
 

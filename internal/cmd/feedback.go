@@ -47,9 +47,12 @@ import (
 //   - WHAT COMES BACK IS DATA. `note` is text Civitai wrote; it is sanitised,
 //     capped, printed behind the same gutter as any other server-supplied
 //     message, and labelled as information rather than instruction.
-//   - THE VERB IS UNADVERTISED. The command is Hidden, the README does not
-//     document it, and nothing else points at it — not the managed AGENTS.md
-//     block, not another command's error — until the server side is switched on.
+//   - THE VERB IS ADVERTISED, AT A WHITELIST OF PLACES. It is listed in
+//     `civitai --help` and the README, the managed AGENTS.md block names it, and
+//     a small fixed set of platform-failure sites print a ready-to-run
+//     `civitai feedback send` line (feedback_hint.go). It shipped Hidden while
+//     the server side was off; it was un-hidden once it was on for every
+//     signed-in account.
 
 // platformFeedbackSchemaVersion versions both --json envelopes. Bump it on any
 // change a consumer could break on; adding a key is not one.
@@ -105,16 +108,11 @@ var (
 
 func newFeedbackCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "feedback",
-		Short: "Report a problem with the Civitai developer platform to Civitai",
-		// 🔴 HIDDEN ON PURPOSE, AND THIS LINE IS THE "UNADVERTISED" DECISION (item
-		// 41). The server side was not live when the verb shipped, so `civitai
-		// --help` and shell completion do not list it and the README does not
-		// document it; `civitai feedback --help` still works for whoever is told
-		// it exists. TestPlatformFeedbackVerbIsUnadvertised asserts each of those
-		// states. Removing this is the job of the PR that turns the verb on, in
-		// the same change that adds the README section.
-		Hidden: true,
+		Use: "feedback",
+		// 🔴 THE SHORT CARRIES THE LANE, because it is the only line `civitai
+		// --help` prints beside `app` — whose `feedback` subcommand is the
+		// OPPOSITE direction. Pinned whole by TestFeedbackShortsStateTheirLane.
+		Short: "Report Civitai developer-platform problems TO Civitai (not your app's user feedback)",
 		Long: `Report problems with the Civitai developer platform to Civitai — this is NOT ` + "`civitai app feedback`" + ` (which reads what users wrote about your app).
 
 Use it when the platform itself got in your way: the CLI, an SDK, the docs,
@@ -239,8 +237,7 @@ scope, which a default login grants.`,
 	return cmd
 }
 
-// feedbackSendEnvelope is the --json shape of a send. The golden file pins it;
-// the README does not publish it yet (the verb is unadvertised, item 41).
+// feedbackSendEnvelope is the --json shape of a send. The golden file pins it.
 type feedbackSendEnvelope struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	OK            bool   `json:"ok"`

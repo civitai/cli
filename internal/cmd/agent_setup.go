@@ -1656,6 +1656,11 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 		fmt.Fprintf(w, "  %d. Already authenticated — run %s again only if you need different scopes.\n",
 			n, st.Code("civitai login"))
 	}
+	// The one non-failure feedback hint (feedback_hint.go): the moment a new
+	// project's agent is set up is the moment to tell it where platform
+	// friction goes. Human view only — this function is never the --json path.
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, agentSetupFeedbackLine())
 }
 
 // printAgentSetupAuthNote says what was — and was not — written about auth.

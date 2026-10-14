@@ -234,6 +234,13 @@ is the manifest's `blockId`).
 - `resolved` only once a fixed version is approved and live — it notifies the
   user who wrote it.
 
+### Reporting a platform problem
+
+When the Civitai platform itself gets in your way (CLI, SDK, docs, review,
+sandbox, scopes, MCP), report it: `civitai feedback send --about <area>
+"<what happened>"`, then `civitai feedback status <ref>`. It is NOT `civitai
+app feedback` (your app's user inbox).
+
 ### Before you submit
 
 Run the first-review checklist before `civitai app submit` — it is the review
