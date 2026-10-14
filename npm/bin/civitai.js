@@ -1,22 +1,21 @@
 #!/usr/bin/env node
 "use strict";
 
-// Thin launcher for the @civitai/cli wrapper: locate (or lazily download) the
-// prebuilt Go binary and exec it, forwarding args, stdio, and exit status.
+// Thin launcher for the @civitai/cli wrapper: locate the prebuilt Go binary
+// (platform package first, else a lazily downloaded one — see lib/install.js)
+// and exec it, forwarding args, stdio, and exit status.
 
 const fs = require("fs");
 const { spawnSync } = require("child_process");
-const { ensureBinary, binaryPath } = require("../lib/install.js");
+const { ensureBinary } = require("../lib/install.js");
 
 async function resolveBinary() {
   // Escape hatch + test hook: use an explicit binary if provided and present.
   const override = process.env.CIVITAI_CLI_BINARY;
   if (override && fs.existsSync(override)) return override;
 
-  const bin = binaryPath();
-  if (fs.existsSync(bin)) return bin;
-
-  // Missing (e.g. `npm install --ignore-scripts`) — download it now.
+  // The platform package's binary, else the one postinstall downloaded, else
+  // (e.g. `npm install --ignore-scripts`) download it now.
   return ensureBinary();
 }
 

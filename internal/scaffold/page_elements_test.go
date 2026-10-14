@@ -60,9 +60,9 @@ func TestRenderPageElements(t *testing.T) {
 	// `"@civitai/<pkg>": "^X.Y.Z"` shape, or the bumper stops finding them.
 	// The minors mirror the starter (civitai-app-starters #557), in the
 	// `^X.Y.0` form bump-pins writes.
-	mustContain(t, pkg, `"@civitai/app-sdk": "^0.66.0"`)
+	mustContain(t, pkg, `"@civitai/app-sdk": "^0.69.0"`)
 	mustContain(t, pkg, `"@civitai/components": "^0.9.0"`)
-	mustContain(t, pkg, `"@civitai/sdk": "^0.11.0"`)
+	mustContain(t, pkg, `"@civitai/sdk": "^0.12.0"`)
 	mustContain(t, pkg, `"@civitai/theme": "^0.5.0"`)
 
 	var doc struct {
