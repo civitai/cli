@@ -478,6 +478,10 @@ jobs:
           - `internal/scaffold/templates/page-elements/package.json.tmpl`
           - `internal/scaffold/page_elements_test.go` (page-elements' pin canary)
 
+          and regenerates `internal/scaffold/testdata/design-tokens.txt` (the
+          design-token ledger) when the `@civitai/blocks-react` pin or its
+          token set moved, or the ledger is missing.
+
           The pins are rewritten as **literals** (not templated) on purpose:
           the guard reads the raw `^X.Y.Z` bytes out of the `.tmpl`, so
           templating the value would blind it.
@@ -679,7 +683,7 @@ jobs:
             if [ "$R_BUMP" = "failure" ]; then
               bump_state=bump-failed
               bump_title="the scaffold pin bumper could not run the bumper"
-              bump_detail="The \`bump stale @civitai/* scaffold pins\` step failed — \`go run ./internal/scaffold/cmd/bump-pins\` exited non-zero. It exits 2 only on a hard error (the template holds no \`@civitai/*\` pins at all, or one of the three literal sites could not be read/written); a transient npm lookup failure is a per-package SKIP inside the tool, not a failure, so this is not a network blip."
+              bump_detail="The \`bump stale @civitai/* scaffold pins\` step failed — \`go run ./internal/scaffold/cmd/bump-pins\` exited non-zero. It exits 2 only on a hard error (the template holds no \`@civitai/*\` pins at all, or one of the four literal pin sites or the design-token ledger could not be read/written); a transient npm lookup failure is a per-package SKIP inside the tool, not a failure, so this is not a network blip."
             elif [ "$R_CHANGED" = "failure" ]; then
               bump_state=detect-failed
               bump_title="the scaffold pin bumper failed while checking for changes"
@@ -691,7 +695,7 @@ jobs:
             elif [ "$R_SUITE" = "failure" ]; then
               bump_state=validate-suite-failed
               bump_title="the scaffold pin bumper broke the offline scaffold suite"
-              bump_detail="Pins were rewritten and satisfy npm, but \`go test ./internal/scaffold/...\` then failed. **No PR was opened.** The usual cause is the bumper rewriting only some of the three literal sites, leaving the \`scaffold_test.go\` \`mustContain\` canary disagreeing with the template."
+              bump_detail="Pins were rewritten and satisfy npm, but \`go test ./internal/scaffold/...\` then failed. **No PR was opened.** The usual cause is the bumper rewriting only some of the four literal pin sites, leaving a test canary (\`scaffold_test.go\` / \`page_elements_test.go\`) disagreeing with its template."
             elif [ "$R_BUILD" = "failure" ]; then
               # 🔴 THE SENTENCE THAT USED TO BE HERE COST THREE DAYS. It asserted
               # "**No PR was opened**, on purpose — this is the removed/renamed
