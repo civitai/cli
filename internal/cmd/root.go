@@ -334,6 +334,11 @@ Get started:
 	// Top-level, beside login rather than under `app`: it configures the
 	// DEVELOPER's coding agent, not an app, and runs before any app exists.
 	root.AddCommand(newAgentSetupCmd())
+	// Top-level, NOT under `app`: it reports friction with the developer platform
+	// to Civitai. `civitai app feedback` is the other lane (what users wrote about
+	// an app), and nesting this beside it would make the two one word apart in
+	// the same help listing.
+	root.AddCommand(newFeedbackCmd())
 	root.AddCommand(newLoginCmd())
 	root.AddCommand(newWhoAmICmd())
 	root.AddCommand(newBuzzCmd())

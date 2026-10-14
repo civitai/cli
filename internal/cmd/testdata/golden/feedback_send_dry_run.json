@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "dryRun": true,
+  "request": {
+    "message": "the scopes page does not list the dev-token scope; I am \u003cemail\u003e",
+    "report": {
+      "about": "docs",
+      "kind": "missing",
+      "client": {
+        "name": "civitai-cli",
+        "version": "0.1.96"
+      },
+      "os": "linux",
+      "arch": "amd64",
+      "docUrl": "https://developer.civitai.com/apps/scopes"
+    }
+  },
+  "redactions": [
+    {
+      "kind": "email",
+      "count": 1
+    }
+  ]
+}
