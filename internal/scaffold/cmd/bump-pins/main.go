@@ -2,8 +2,8 @@
 //
 // The page-money and page-elements templates pin `@civitai/*` packages with
 // pre-1.0 carets that LOCK THE MINOR, so every time one of those packages
-// publishes a new minor the pins-vs-published guard
-// (TestScaffoldPinsSatisfyPublished) goes red until a human hand-bumps the pins.
+// publishes a new minor the pins-vs-published CI job (cmd/pins-gate) goes red on
+// main and on pin-touching PRs until a human hand-bumps the pins.
 // This command automates that hand-fix: for each distinct @civitai/* package
 // pinned in EITHER template's package.json it fetches npm's `latest`, computes
 // the desired caret pin (scaffold.DesiredPin), and — if the current literal
