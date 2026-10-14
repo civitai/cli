@@ -38,6 +38,27 @@ func TestWarnBudgetedPageWithoutBudget(t *testing.T) {
 	if !hasWarningContaining(res, "page.buzzBudgetPerGen is not set") {
 		t.Errorf("expected budgeted-without-budget warning, got: %v", res.Warnings)
 	}
+	// The WHOLE message is pinned: it is a claim about server behaviour, and its
+	// previous wording ("tokens fall back to a 10 Buzz budget … every submit is
+	// rejected") went false when civitai raised the default to 1,000 while a
+	// substring pin stayed green. A reword must now be made on purpose.
+	const want = "scopes include \"ai:write:budgeted\" but page.buzzBudgetPerGen is not set — " +
+		"tokens get the platform's default per-call budget, which you do not control: " +
+		"it can change without your app being re-reviewed, and any generation that costs " +
+		"more is rejected with insufficient budget before it runs. Set " +
+		"page.buzzBudgetPerGen: it is a SAFETY CEILING on what one generation may " +
+		"cost, not a cost estimate — size it several times your worst-case run " +
+		"(headroom is free; you are charged the real price, and the server clamps " +
+		"the budget at the per-gen cap)"
+	found := false
+	for _, w := range res.Warnings {
+		if w.Message == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("budgeted-without-budget warning text drifted; want exactly:\n%s\ngot: %v", want, res.Warnings)
+	}
 }
 
 // A budgeted manifest with NO page block — money scope on a non-page app.
