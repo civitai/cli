@@ -235,6 +235,7 @@ func TestSpansStopAtADelimiterThatEndsTheValue(t *testing.T) {
 		{"short unquoted, `}` then more", "{SECRET=" + short + "}" + next, short},
 		{"short quoted", `{"sessionSecret": "` + short + `", "next": "` + next + `"}`, short},
 		{"cut unquoted, `,` at the bound", "SECRET=" + head511 + ",next=" + next, head511},
+		{"cut unquoted, CJK text at the bound", "SECRET=" + head511 + "中文说明" + next, head511},
 		// Minified JSON: the capture runs past the value's closing quote into
 		// the next key and is cut there, but the value itself is closed.
 		{"cut capture, quoted value closed before the cut",
@@ -305,14 +306,24 @@ func TestEntropyCountsInvalidBytesApart(t *testing.T) {
 	}
 }
 
+// unspacedSample is one character from each script written without spaces
+// between words, keyed by its unicode table name.
+var unspacedSample = map[string]rune{
+	"Han": '中', "Hiragana": 'あ', "Katakana": 'ア', "Thai": 'ก',
+	"Lao": 'ກ', "Khmer": 'ក', "Myanmar": 'က',
+}
+
 // TestProseInAScriptWithoutSpacesIsSilent: Chinese, Japanese, Thai and the
 // other scripts written without spaces between words put a whole sentence in
-// one non-space run, so assignRe's value capture takes the sentence and the
-// letter/digit/entropy gate passes it. Before the gate read letters and digits
-// in every script, it rejected these lines by accident (no ASCII letter);
-// widening it reported every i18n string as a credential. A value containing
-// any character of such a script is read as prose — at the cost of a password
-// written in one, which is a KNOWN MISS of the redactor.
+// one non-space run, so assignRe's value capture takes the sentence and a
+// letter/digit/entropy gate that reads every script passes it. So:
+//   - a QUOTED value containing any character of such a script is prose;
+//   - an UNQUOTED value ends at its first such character (or at CJK /
+//     full-width punctuation), and the part before it is judged as usual.
+//
+// An i18n sentence is then silent (nothing, or too little, comes before its
+// first CJK character), while an ASCII secret with CJK text glued after it is
+// still caught — and only the ASCII part is located.
 func TestProseInAScriptWithoutSpacesIsSilent(t *testing.T) {
 	silent := []string{
 		// Scripts written without spaces.
@@ -336,27 +347,56 @@ func TestProseInAScriptWithoutSpacesIsSilent(t *testing.T) {
 		}
 	}
 
-	// One character from each script table is enough to read the value as
-	// prose. CONTROL: the same value without it is a secret, so the silence is
-	// that character's doing and not the rest of the value's.
 	const secret = "Kq9Zx2Lm7Rb5Tn8Vc"
-	assertOneSpan(t, "DB_PASSWORD="+secret, secret)
-	for script, r := range map[string]rune{
-		"Han": '中', "Hiragana": 'あ', "Katakana": 'ア', "Thai": 'ก',
-		"Lao": 'ກ', "Khmer": 'ក', "Myanmar": 'က',
-	} {
-		line := "DB_PASSWORD=" + secret + string(r)
-		if _, ok := match(line); ok {
-			t.Errorf("%s: match fires on %q", script, line)
+	for script, r := range unspacedSample {
+		// QUOTED: one character of the script makes the value prose. CONTROL:
+		// the same quoted value without it is a secret.
+		quoted := `{"password": "` + secret + string(r) + `"}`
+		if _, ok := match(quoted); ok {
+			t.Errorf("%s: match fires on %q", script, quoted)
 		}
-		if spans := Spans(line); len(spans) != 0 {
-			t.Errorf("%s: Spans locates %+v in %q", script, spans, line)
+		if spans := Spans(quoted); len(spans) != 0 {
+			t.Errorf("%s: Spans locates %+v in %q", script, spans, quoted)
 		}
+		// UNQUOTED: the value ends at that character; the ASCII before it is
+		// caught, and nothing after it is located.
+		unquoted := "DB_PASSWORD=" + secret + string(r) + "备注"
+		if _, ok := match(unquoted); !ok {
+			t.Errorf("%s: match is silent about %q", script, unquoted)
+		}
+		t.Run(script+" unquoted", func(t *testing.T) { assertOneSpan(t, unquoted, secret) })
 	}
+	assertOneSpan(t, `{"password": "`+secret+`"}`, secret)
 
 	// Still caught: spaced non-Latin scripts are judged like ASCII.
 	for _, v := range []string{"Пароль2024Секрет", "KqZxLmRbTnVc٢٠٢٤", "a1ЖЩЯФЫВАПРО"} {
 		assertOneSpan(t, "DB_PASSWORD="+v, v)
+	}
+}
+
+// TestAnASCIISecretFollowedByCJKTextIsCaught: an unquoted ASCII secret with CJK
+// text joined to it by something other than `,` `}` `]` `)` is still a secret.
+// Reading the whole run as prose dropped every one of these, which main caught.
+func TestAnASCIISecretFollowedByCJKTextIsCaught(t *testing.T) {
+	cases := []struct{ line, want string }{
+		{"登录失败 token=Wq8Zt3Lm6Xr1Bv5，请重试", "Wq8Zt3Lm6Xr1Bv5"}, // full-width comma
+		{"token=Wq8Zt3Lm6Xr1Bv5&lang=中文", "Wq8Zt3Lm6Xr1Bv5&lang="},
+		{"password=Wq8Zt3Lm6Xr1Bv5;备注", "Wq8Zt3Lm6Xr1Bv5"},
+		{"password: Wq8Zt3Lm6Xr1Bv5|用户", "Wq8Zt3Lm6Xr1Bv5|"},
+		{"DB_PASSWORD=Kq9Zx2Lm7Rb5Tn8Vc中", "Kq9Zx2Lm7Rb5Tn8Vc"},
+		// CJK and full-width punctuation end the value too.
+		{"token=Wq8Zt3Lm6Xr1Bv5、次へ", "Wq8Zt3Lm6Xr1Bv5"},  // U+3001
+		{"token=Wq8Zt3Lm6Xr1Bv5　次へ", "Wq8Zt3Lm6Xr1Bv5"},  // U+3000 ideographic space
+		{"token=Wq8Zt3Lm6Xr1Bv5：次へ", "Wq8Zt3Lm6Xr1Bv5"},  // U+FF1A
+		{"token=Wq8Zt3Lm6Xr1Bv5（説明）", "Wq8Zt3Lm6Xr1Bv5"}, // U+FF08
+	}
+	for _, tc := range cases {
+		t.Run(tc.line, func(t *testing.T) {
+			if _, ok := match(tc.line); !ok {
+				t.Errorf("match is silent about %q", tc.line)
+			}
+			assertOneSpan(t, tc.line, tc.want)
+		})
 	}
 }
 
@@ -365,24 +405,34 @@ func TestProseInAScriptWithoutSpacesIsSilent(t *testing.T) {
 // capture is cut before the real closing quote, the span must run to THAT
 // quote; an escaped one is part of the value.
 func TestSpansFindTheRealClosingQuoteOfAnEscapedValue(t *testing.T) {
-	inner := `{\"client_id\":\"abc123def456\",\"client_secret\":\"` + testSecret(600, 0, false) + `\"}`
 	head510, tail200 := testSecret(510, 0, false), testSecret(200, 11, false)
-	cases := []struct{ name, line, want string }{
-		// The value's own `,` ends it early under the unquoted rules, right
-		// before an escaped quote.
-		{"escaped JSON in a string, secret past the bound",
-			`{"credentials":"` + inner + `"}`, inner},
-		// The cut lands between `\` and `"`.
-		{"cut between a backslash and its quote",
-			`{"sessionSecret": "` + head510 + `\"` + tail200 + `", "other": 1}`,
-			head510 + `\"` + tail200},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) { assertOneSpan(t, tc.line, tc.want) })
-	}
+	t.Run("cut between a backslash and its quote", func(t *testing.T) {
+		assertOneSpan(t, `{"sessionSecret": "`+head510+`\"`+tail200+`", "other": 1}`, head510+`\"`+tail200)
+	})
 	// CONTROL: an escaped quote in a value under the bound already ends at the
 	// real closing quote.
 	assertOneSpan(t, `{"sessionSecret": "Kq9\"Zx2Lm7Rb5Tn8", "other": 1}`, `Kq9\"Zx2Lm7Rb5Tn8`)
+}
+
+// TestACutQuotedValueIsJudgedWhole: when a quoted value's closing quote lies
+// past the 512-character cut, the unquoted rules would end it at its first
+// `,`, and the gate would judge only that fragment. Escaped JSON in a log line
+// is exactly that shape: the fragment is `{\"client_id\":\"<id>\"`, and an id
+// with no digit failed the gate — so nothing was located and the 600-character
+// client_secret after it was sent. The value is judged to its real closing
+// quote instead, by match and Spans alike.
+func TestACutQuotedValueIsJudgedWhole(t *testing.T) {
+	secret := testSecret(600, 0, false)
+	for _, id := range []string{"abc", "civitai-cli", "my-web-app", "abc123def456"} {
+		t.Run(id, func(t *testing.T) {
+			inner := `{\"client_id\":\"` + id + `\",\"client_secret\":\"` + secret + `\"}`
+			line := `{"credentials":"` + inner + `"}`
+			if _, ok := match(line); !ok {
+				t.Errorf("match is silent about the escaped JSON with client_id %q", id)
+			}
+			assertOneSpan(t, line, inner)
+		})
+	}
 }
 
 // byteEntropy is Shannon entropy over BYTES — the measure the gate used to

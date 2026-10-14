@@ -80,9 +80,10 @@ var knownMisses = []knownEntry{
 		cases: []knownCase{{in: `{"url":"https:\/\/cdn.fieldstone.dev\/f.bin?sig=Uv2Wx4Yz6Ab8Cd0Ef"}`}},
 	},
 	{
-		doc: "a value after a credential key that contains any character of a script written without spaces (Chinese, Japanese, Thai, Lao, Khmer, Burmese): it is read as prose, so `DB_PASSWORD=Kq9Zx2Lm7Rb5Tn8Vc中` is kept",
+		doc: "a value after a credential key that contains a character of a script written without spaces (Chinese, Japanese, Thai, Lao, Khmer, Burmese): a quoted one is read as prose, and an unquoted one is judged only up to that character, so `\"password\": \"Kq9Zx2Lm7Rb5Tn8Vc中\"` and `password=Wq8中Zt3Lm6Xr1Bv5Tn8Vc` are kept",
 		cases: []knownCase{
-			{in: "DB_PASSWORD=Kq9Zx2Lm7Rb5Tn8Vc中"},
+			{in: `{"password": "Kq9Zx2Lm7Rb5Tn8Vc中"}`},
+			{in: "password=Wq8中Zt3Lm6Xr1Bv5Tn8Vc"},
 			{in: "DB_PASSWORD=秘密Wq8Zt3Lm6Xr1Bv5"},
 		},
 	},

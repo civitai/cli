@@ -44,28 +44,21 @@ func Spans(line string) []Span {
 			break
 		}
 		rawStart, rawEnd := pos+loc[8], pos+loc[9]
-		raw := line[rawStart:rawEnd]
-		if value, quoted := cleanValue(raw); valueLooksLikeSecret(value, quoted) {
-			// cleanValue only ever trims and unquotes, so the value it returns is
-			// a substring of the raw capture; locating it there recovers the
-			// offset without a second copy of the cleaning rules.
-			if i := strings.Index(raw, value); i >= 0 {
-				sp := Span{rawStart + i, rawStart + i + len(value)}
-				// 🔴 A CUT CAPTURE IS EXTENDED WHEREVER cleanValue LEFT ITS END.
-				// cleanValue can end the value before the cut — it trims a
-				// trailing `;`, and an unclosed quote (the closing one lies past
-				// the cut) sends a quoted value through the unquoted rules, which
-				// stop at `,` `}` `]` `)`. Extending only when the value ended
-				// exactly at the cut left the rest of the secret outside the span
-				// in every such shape. wholeValue re-derives the end from the
-				// LINE, so a delimiter that really ends the value still ends it.
-				// TestSpansCoverACutValueWhoseEndTheCleanerMoved and
-				// TestSpansStopAtADelimiterThatEndsTheValue pin both sides.
-				if utf8.RuneCountInString(raw) == assignValueBound {
-					sp = wholeValue(line, rawStart, sp)
-				}
-				out = append(out, sp)
+		if value, quoted, start := assignedValue(line, rawStart, rawEnd); valueLooksLikeSecret(value, quoted) {
+			sp := Span{start, start + len(value)}
+			// 🔴 A CUT UNQUOTED CAPTURE IS EXTENDED WHEREVER cleanValue LEFT ITS END,
+			// not only when that end sat exactly at the cut: cleanValue trims a
+			// trailing `;`, so `SECRET=<511 chars>;<200 chars>` used to stop before
+			// the `;` and send the 200. extendUnquoted re-reads the LINE with the
+			// same terminators cleanValue cuts at, so a delimiter that really ends
+			// the value still ends it. (A cut QUOTED capture is already whole —
+			// assignedValue read it to its closing quote.)
+			// TestSpansCoverACutValueWhoseEndTheCleanerMoved and
+			// TestSpansStopAtADelimiterThatEndsTheValue pin both sides.
+			if cutUnquoted(line, rawStart, rawEnd) {
+				sp.End = extendUnquoted(line, sp.End)
 			}
+			out = append(out, sp)
 		}
 		// The same advance matchAssignment makes, with the same floor: resume just
 		// past this match's operator so the next credential word gets its turn.
@@ -100,48 +93,91 @@ func Spans(line string) []Span {
 // TestSpansCoverANonASCIIValueLongerThanTheCaptureBound pins the unit.
 const assignValueBound = 512
 
-// wholeValue extends a span that stopped at assignRe's capture bound to the
-// real end of the value.
+// isQuote reports whether c opens a quoted value, as cleanValue reads one.
+func isQuote(c byte) bool { return c == '"' || c == '\'' || c == '`' }
+
+// capturedToTheBound reports whether assignRe's capture of [rawStart, rawEnd)
+// stopped at its bound rather than at the value's end.
+func capturedToTheBound(line string, rawStart, rawEnd int) bool {
+	return utf8.RuneCountInString(line[rawStart:rawEnd]) == assignValueBound
+}
+
+func cutUnquoted(line string, rawStart, rawEnd int) bool {
+	return !isQuote(line[rawStart]) && capturedToTheBound(line, rawStart, rawEnd)
+}
+
+// assignedValue is the value one assignRe match assigns — what the gate judges
+// — with where it starts in line. matchAssignment and Spans both call it, so
+// the detector and the redactor cannot disagree about what a value is.
 //
 // 🔴 THE BOUND IS A COMPLEXITY FIX FOR THE DETECTOR, NOT A STATEMENT ABOUT HOW
-// LONG A SECRET IS. Scan only needs to know the line holds one, so capturing
-// 512 characters of it is enough there. A consumer that REMOVES the secret needs
-// all of it: redacting the first 512 characters of a 700-character value sends
-// the rest. The extension is one linear walk — not the per-word rescan of the
-// line that the bound exists to limit.
+// LONG A SECRET IS. assignRe stops its capture at 512 characters so a line
+// costs linear time. A consumer that REMOVES the secret needs all of it, and a
+// cut capture can be the wrong thing to JUDGE as well:
 //
-// Where the value ends follows cleanValue: a value that opened with a quote
-// runs to that quote's close (a backslash escapes the next byte), and an
-// unquoted one to white space or the first structural delimiter.
+//   - 🔴 A CUT QUOTED VALUE IS JUDGED TO ITS REAL CLOSING QUOTE. Its close lies
+//     past the cut, so cleanValue (which sees only the capture) sends it
+//     through the unquoted rules, which end it at its first `,`. In JSON
+//     escaped into a log line — `{"credentials":"{\"client_id\":\"abc\",
+//     \"client_secret\":\"<600 chars>\"}"}` — that fragment is
+//     `{\"client_id\":\"abc\"`, which has no digit and fails the gate, so
+//     nothing was located and the client_secret was sent. Judging the whole
+//     quoted value fixes the verdict and the span together.
+//     TestACutQuotedValueIsJudgedWhole pins it.
+//   - everything else is cleanValue's reading of the capture; Spans extends a
+//     cut unquoted one afterwards (extendUnquoted).
 //
-// 🔴 A QUOTED VALUE IS RE-READ FROM ITS OPENING QUOTE, NOT FROM sp.End. The
-// span cleanValue produced can end ON an escaped quote: a quoted value whose
-// close lies past the cut goes through the unquoted rules, which may stop at a
-// `,` just before `\"`, and a cut can fall between `\` and `"`. A walk starting
-// at sp.End cannot see the backslash behind it, took that `"` as the close, and
-// sent the rest — JSON escaped into a log line leaked its `client_secret`.
-// Walking from the opening quote sees every escape.
+// The quote scan stays linear across a line: every later match whose value
+// opens with the same quote character puts an unescaped quote in its path (the
+// character before it is the operator or white space, never a backslash), so
+// a scan never runs past the next same-quote match.
+func assignedValue(line string, rawStart, rawEnd int) (value string, quoted bool, start int) {
+	if q := line[rawStart]; isQuote(q) && capturedToTheBound(line, rawStart, rawEnd) {
+		start = rawStart + 1 // the opening quote is not part of the value
+		return line[start:closingQuote(line, start, q)], true, start
+	}
+	raw := line[rawStart:rawEnd]
+	value, quoted = cleanValue(raw)
+	// cleanValue only ever trims and unquotes, so the value it returns is a
+	// substring of the raw capture; locating it there recovers the offset
+	// without a second copy of the cleaning rules.
+	return value, quoted, rawStart + strings.Index(raw, value)
+}
+
+// closingQuote returns the index of the quote q that closes a value starting at
+// start, or len(line) when the line ends first. A backslash escapes the next
+// byte (not inside backticks).
+//
+// 🔴 IT WALKS FROM THE VALUE'S OWN START. A walk from wherever cleanValue's
+// fragment ended cannot see a backslash behind it, and once took the `"` of an
+// escaped `\"` as the close — after a `,` just before it, or when the cut fell
+// between `\` and `"` — and sent the rest of the value.
 // TestSpansFindTheRealClosingQuoteOfAnEscapedValue pins both shapes.
-func wholeValue(line string, rawStart int, sp Span) Span {
-	if q := line[rawStart]; q == '"' || q == '\'' || q == '`' {
-		sp.Start = rawStart + 1 // the opening quote is not part of the value
-		for i := sp.Start; i < len(line); i++ {
-			if line[i] == '\\' && q != '`' {
-				i++
-				continue
-			}
-			if line[i] == q {
-				sp.End = i
-				return sp
-			}
+func closingQuote(line string, start int, q byte) int {
+	for i := start; i < len(line); i++ {
+		if line[i] == '\\' && q != '`' {
+			i++
+			continue
 		}
-		sp.End = len(line)
-		return sp
+		if line[i] == q {
+			return i
+		}
 	}
-	for sp.End < len(line) && !strings.ContainsRune(" \t\r\n,}])", rune(line[sp.End])) {
-		sp.End++
+	return len(line)
+}
+
+// extendUnquoted moves the end of a cut unquoted value forward to white space
+// or to the first character that ends an unquoted value (endsUnquotedValue —
+// the same terminators cleanValue cuts at).
+func extendUnquoted(line string, end int) int {
+	for end < len(line) {
+		r, w := utf8.DecodeRuneInString(line[end:])
+		if r == ' ' || r == '\t' || r == '\r' || r == '\n' || endsUnquotedValue(r) {
+			break
+		}
+		end += w
 	}
-	return sp
+	return end
 }
 
 // mergeSpans sorts spans and joins any that overlap or touch, so a caller can

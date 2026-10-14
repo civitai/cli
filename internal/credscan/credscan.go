@@ -439,7 +439,7 @@ func matchAssignment(line string) (string, bool) {
 		}
 		key := line[pos+loc[2] : pos+loc[3]]
 		word := line[pos+loc[4] : pos+loc[5]]
-		value, quoted := cleanValue(line[pos+loc[8] : pos+loc[9]])
+		value, quoted, _ := assignedValue(line, pos+loc[8], pos+loc[9])
 		if valueLooksLikeSecret(value, quoted) {
 			return labelFor(key, word), true
 		}
@@ -558,7 +558,8 @@ func cleanValue(raw string) (value string, quoted bool) {
 		return closed, true
 	}
 	v := strings.TrimSpace(stripTrailingComment(raw))
-	// 🔴 AN UNQUOTED VALUE ENDS AT THE FIRST STRUCTURAL DELIMITER, and this
+	// 🔴 AN UNQUOTED VALUE ENDS AT THE FIRST STRUCTURAL DELIMITER (see
+	// endsUnquotedValue, which also ends it at CJK text), and this
 	// appeared the moment the value capture was bounded (see assignRe). While the
 	// capture ran to end of line, a JSON fragment inside prose swept up the
 	// spaces after it and the whitespace clause rejected it; a bounded non-space
@@ -567,7 +568,7 @@ func cleanValue(raw string) (value string, quoted bool) {
 	// in the corpus, caught by re-measuring rather than by any test. In JSON,
 	// JS, YAML and TOML alike an unquoted value ends at `,`/`}`/`]`/`)`, and no
 	// credential shape contains one.
-	if i := strings.IndexAny(v, ",}])"); i >= 0 {
+	if i := strings.IndexFunc(v, endsUnquotedValue); i >= 0 {
 		v = v[:i]
 	}
 	v = strings.TrimSpace(strings.TrimRight(v, ",;"))
@@ -625,8 +626,11 @@ func valueLooksLikeSecret(value string, quoted bool) bool {
 		return false
 	}
 	// 🔴 THERE IS NO WHITESPACE CLAUSE HERE ANY MORE, AND ITS ABSENCE IS THE
-	// POINT. assignRe's value group is `\S{1,512}` — a non-space run — so a
-	// value carrying a space cannot reach this function, and a mutation battery
+	// POINT. assignRe's value group is `\S{1,512}` — a non-space run — so an
+	// UNQUOTED value carrying a space cannot reach this function. (A QUOTED value
+	// cut at the bound is judged to its real closing quote — see assignedValue —
+	// and may carry spaces after its first 512 non-space characters; a quoted
+	// string may contain spaces, so that is not a reason to reject it.) A mutation battery
 	// scored the old `strings.ContainsAny(value, " \t")` SURVIVED because
 	// nothing could make it fire. Dead code in a gate reads as protection, so
 	// the invariant moved to where it is enforced: the regexp, pinned by
@@ -677,21 +681,54 @@ var publicByDesignRe = regexp.MustCompile(`^AIza[0-9A-Za-z_-]{35}$`)
 
 // unspacedScripts are the scripts written without spaces between words.
 //
-// 🔴 A VALUE CONTAINING ONE OF THEIR CHARACTERS IS PROSE, NOT A SECRET. assignRe's
-// value capture is a non-space run, which in English is one word — but in
-// these scripts it is a whole sentence (`token_expired: トークンの有効期限（24時間）が切れました`),
-// and a sentence with a digit in it passes the letter/digit/entropy gate. The
-// gate used to reject these lines only by accident (it knew no letter outside
-// ASCII); once it read every script, every such i18n string became a
-// "credential". The cost is a password containing one of these characters,
-// which is never reported — a KNOWN MISS of internal/redact.
-// TestProseInAScriptWithoutSpacesIsSilent pins both sides.
+// 🔴 IN THESE SCRIPTS A NON-SPACE RUN IS A SENTENCE, NOT A WORD. assignRe's
+// value capture is a non-space run — in English, one word; here, a whole
+// sentence (`token_expired: トークンの有効期限（24時間）が切れました`), and a sentence
+// with a digit in it passes the letter/digit/entropy gate. The gate used to
+// reject these lines only by accident (it knew no letter outside ASCII); once
+// it read every script, every such i18n string became a "credential". Two
+// rules answer it, one per value form:
+//
+//   - an UNQUOTED value ends at its first character of these scripts, or of
+//     CJK / full-width punctuation (endsUnquotedValue), and the part before it
+//     is judged as usual. An i18n sentence leaves nothing, or too little, to
+//     judge; an ASCII secret with CJK text glued to it is still caught.
+//     Reading the whole run as prose instead dropped
+//     `token=Wq8Zt3Lm6Xr1Bv5&lang=中文` and every other such ASCII secret.
+//   - a QUOTED value containing one of these characters is prose
+//     (valueLooksLikeSecret). A quoted string has a known end, so cutting it
+//     would judge a fragment the author never wrote as a unit.
+//
+// The cost of each is a KNOWN MISS of internal/redact: a quoted password
+// containing such a character, and whatever of an unquoted value follows its
+// first one. TestProseInAScriptWithoutSpacesIsSilent and
+// TestAnASCIISecretFollowedByCJKTextIsCaught pin both sides.
 var unspacedScripts = []*unicode.RangeTable{
 	unicode.Han, unicode.Hiragana, unicode.Katakana,
 	unicode.Thai, unicode.Lao, unicode.Khmer, unicode.Myanmar,
 }
 
 func inUnspacedScript(r rune) bool { return unicode.In(r, unspacedScripts...) }
+
+// cjkPunctuation is the CJK Symbols and Punctuation block (U+3000–U+303F,
+// including the ideographic space) and the Halfwidth and Fullwidth Forms block
+// (U+FF00–U+FFEF: full-width `，` `：` `（`, and full-width forms of ASCII
+// letters and digits). Nothing in either is ASCII, and U+FFFD — what an
+// invalid byte decodes to — lies outside both.
+var cjkPunctuation = &unicode.RangeTable{R16: []unicode.Range16{
+	{Lo: 0x3000, Hi: 0x303F, Stride: 1},
+	{Lo: 0xFF00, Hi: 0xFFEF, Stride: 1},
+}}
+
+// endsUnquotedValue reports whether r ends an unquoted value: a structural
+// delimiter (in JSON, JS, YAML and TOML an unquoted value ends at `,` `}` `]`
+// `)`, and no credential shape contains one), a character of a script written
+// without spaces, or CJK / full-width punctuation. It is the ONE definition:
+// cleanValue cuts the capture with it and Spans extends a cut capture with it,
+// so the value judged and the span located end at the same place.
+func endsUnquotedValue(r rune) bool {
+	return strings.ContainsRune(",}])", r) || inUnspacedScript(r) || unicode.Is(cjkPunctuation, r)
+}
 
 // hasDigit and hasLetter report whether s holds a decimal digit / a letter in
 // ANY script. Both used to accept only ASCII, so a password whose letters

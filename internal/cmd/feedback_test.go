@@ -700,10 +700,17 @@ func TestFeedbackSendDryRunRemovesALongSecretWhole(t *testing.T) {
 			`the config {"sessionSecret": "` + head + "," + tail + `"} is rejected`,
 			`the config {"sessionSecret": "<credential>"} is rejected`,
 			head + "," + tail},
-		{"JSON escaped into a string, secret past the bound",
-			`the log says {"credentials":"{\"client_id\":\"abc123def456\",\"client_secret\":\"` + tail + head + `\"}"} today`,
+	}
+	// JSON escaped into a string, with the secret past the bound: the client_id
+	// in front of it is what the gate once judged, so an id with no digit made
+	// the whole value pass through.
+	for _, id := range []string{"abc", "civitai-cli", "my-web-app", "abc123def456"} {
+		cases = append(cases, struct{ name, message, want, secret string }{
+			"escaped JSON in a string, client_id " + id,
+			`the log says {"credentials":"{\"client_id\":\"` + id + `\",\"client_secret\":\"` + tail + head + `\"}"} today`,
 			`the log says {"credentials":"<credential>"} today`,
-			tail + head},
+			tail + head,
+		})
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
