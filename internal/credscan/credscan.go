@@ -438,7 +438,7 @@ func matchAssignment(line string) (string, bool) {
 		}
 		key := line[pos+loc[2] : pos+loc[3]]
 		word := line[pos+loc[4] : pos+loc[5]]
-		if _, ok := assignment(line, pos+loc[8], pos+loc[9]); ok {
+		if _, ok, _ := assignment(line, pos+loc[8], pos+loc[9]); ok {
 			return labelFor(key, word), true
 		}
 		// Resume just past this match's OPERATOR, so the next credential word on

@@ -44,7 +44,7 @@ func Spans(line string) []Span {
 			break
 		}
 		rawStart, rawEnd := pos+loc[8], pos+loc[9]
-		if sp, ok := assignment(line, rawStart, rawEnd); ok {
+		if sp, ok, extend := assignment(line, rawStart, rawEnd); ok {
 			// 🔴 A CUT UNQUOTED CAPTURE IS EXTENDED WHEREVER cleanValue LEFT ITS END,
 			// not only when that end sat exactly at the cut: cleanValue trims a
 			// trailing `;`, so `SECRET=<511 chars>;<200 chars>` used to stop before
@@ -54,7 +54,7 @@ func Spans(line string) []Span {
 			// assignment read it to its closing quote.)
 			// TestSpansCoverACutValueWhoseEndTheCleanerMoved and
 			// TestSpansStopAtADelimiterThatEndsTheValue pin both sides.
-			if cutUnquoted(line, rawStart, rawEnd) {
+			if extend {
 				sp.End = extendUnquoted(line, sp.End)
 			}
 			out = append(out, sp)
@@ -101,8 +101,25 @@ func capturedToTheBound(line string, rawStart, rawEnd int) bool {
 	return utf8.RuneCountInString(line[rawStart:rawEnd]) == assignValueBound
 }
 
-func cutUnquoted(line string, rawStart, rawEnd int) bool {
-	return !isQuote(line[rawStart]) && capturedToTheBound(line, rawStart, rawEnd)
+// extendsPastCapture reports whether a value may run past assignRe's capture,
+// so its real end has to be read off the line. frag is cleanValue's reading of
+// the capture. It is the ONE cut test: assignment uses it for a quoted value
+// and Spans (through assignment) for an unquoted one.
+//
+// 🔴 EITHER CONDITION IS ENOUGH: the capture stopped at the 512-CHARACTER bound,
+// OR main's test holds — the capture is 512 BYTES and cleanValue's value ends
+// exactly at it. The character test is what the bound really is, and without
+// it a non-ASCII capture of 512 characters (more than 512 bytes) was never
+// seen as cut. main's byte test fires on a capture that is NOT cut — 512 bytes
+// of non-ASCII is under 512 characters, so it stopped at white space — and
+// that accident is what made main read `PASSWORD="中中<506 chars> second part
+// of value"` to its closing quote, and `SECRET=中中<506 chars>\fMore…` across
+// the `\f`. A character-only test sent both tails. Keeping main's test as well
+// means this never extends less than main did.
+// TestParityWithMain (internal/redact) pins both halves.
+func extendsPastCapture(line string, rawStart, rawEnd int, frag Span) bool {
+	return capturedToTheBound(line, rawStart, rawEnd) ||
+		(rawEnd-rawStart == assignValueBound && frag.End == rawEnd)
 }
 
 // assignment decides whether one assignRe match assigns a secret, and where
@@ -117,7 +134,8 @@ func cutUnquoted(line string, rawStart, rawEnd int) bool {
 //
 //   - 🔴 A CUT QUOTED VALUE IS A SECRET IF EITHER THE WHOLE VALUE OR main's
 //     FRAGMENT PASSES THE GATE, and the span is the WHOLE value, read to its
-//     real closing quote. Each reading misses what the other catches:
+//     real closing quote. "Cut" is extendsPastCapture. Each reading misses
+//     what the other catches:
 //   - the FRAGMENT is cleanValue's reading of the capture alone, which sends
 //     a quoted value whose close lies past the cut through the unquoted rules
 //     and ends it at its first `,`. In JSON escaped into a log line —
@@ -129,28 +147,30 @@ func cutUnquoted(line string, rawStart, rawEnd int) bool {
 //     character 512. main redacted those; a whole-only verdict sent them.
 //     TestACutQuotedValueIsJudgedWhole and TestParityWithMain
 //     (internal/redact) pin both directions.
-//   - everything else is cleanValue's reading of the capture; Spans extends a
-//     cut unquoted one afterwards (extendUnquoted).
+//   - everything else is cleanValue's reading of the capture; extend reports
+//     whether Spans must extend it over the line afterwards (extendUnquoted),
+//     by the same extendsPastCapture test.
 //
 // The quote scan stays linear across a line: every later match whose value
 // opens with the same quote character puts an unescaped quote in its path (the
 // character before it is the operator or white space, never a backslash), so
 // a scan never runs past the next same-quote match.
-func assignment(line string, rawStart, rawEnd int) (Span, bool) {
+func assignment(line string, rawStart, rawEnd int) (sp Span, ok, extend bool) {
 	raw := line[rawStart:rawEnd]
 	value, quoted := cleanValue(raw)
 	// cleanValue only ever trims and unquotes, so the value it returns is a
 	// substring of the raw capture; locating it there recovers the offset
 	// without a second copy of the cleaning rules.
 	start := rawStart + strings.Index(raw, value)
-	sp, ok := Span{start, start + len(value)}, valueLooksLikeSecret(value, quoted)
+	sp, ok = Span{start, start + len(value)}, valueLooksLikeSecret(value, quoted)
+	past := extendsPastCapture(line, rawStart, rawEnd, sp)
 
-	if q := line[rawStart]; isQuote(q) && capturedToTheBound(line, rawStart, rawEnd) {
+	if q := line[rawStart]; isQuote(q) && past {
 		whole := Span{rawStart + 1, closingQuote(line, rawStart+1, q)}
 		// Either reading passing is a secret; the span is the whole value.
-		return whole, ok || valueLooksLikeSecret(line[whole.Start:whole.End], true)
+		return whole, ok || valueLooksLikeSecret(line[whole.Start:whole.End], true), false
 	}
-	return sp, ok
+	return sp, ok, past
 }
 
 // closingQuote returns the index of the quote q that closes a value starting at
