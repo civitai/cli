@@ -117,6 +117,28 @@ type projectShape struct {
 // scratchDirName is the directory HasScratchDir looks for.
 const scratchDirName = "scratch"
 
+// hasDirNamedExactly reports whether dir holds a directory entry spelled
+// exactly name, by reading the entry names rather than calling os.Stat.
+//
+// 🔴 os.Stat IS CASE-INSENSITIVE ON A CASE-INSENSITIVE FILESYSTEM (macOS APFS
+// by default), so Stat("scratch") succeeds for a `Scratch/`. The packager
+// matches directory names by exact case and SHIPS `Scratch/`, so a Stat-based
+// check made the block say "left out of the package" about a directory that is
+// uploaded. Reading the names makes the two agree on every filesystem. An
+// unreadable dir answers false (see detectProjectShape on never failing).
+func hasDirNamedExactly(dir, name string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.Name() == name && e.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 // setupWizardMarker is the file whose presence means this project can mint its
 // own live-dev token from the browser, with no `export` and no hand-run command.
 //
@@ -197,7 +219,7 @@ func detectProjectShape(dir string) projectShape {
 	if _, err := os.Stat(filepath.Join(dir, setupWizardMarker)); err == nil {
 		shape.HasSetupWizard = true
 	}
-	if fi, err := os.Stat(filepath.Join(dir, scratchDirName)); err == nil && fi.IsDir() {
+	if hasDirNamedExactly(dir, scratchDirName) {
 		shape.HasScratchDir = true
 		if fi, err := os.Stat(filepath.Join(dir, scratchDirName, "README.md")); err == nil && fi.Mode().IsRegular() {
 			shape.HasScratchReadme = true

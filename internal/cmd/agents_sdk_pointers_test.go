@@ -164,4 +164,17 @@ func TestAgentsBlockNamesScratchOnlyWhereItExists(t *testing.T) {
 	if got := blockFor(money); !strings.Contains(got, scratchLine+scratchReadmePointer) {
 		t.Errorf("a scratch/README.md did not add the pointer to the block")
 	}
+
+	// A `Scratch/` is NOT the excluded directory: the packager matches by exact
+	// case and ships it, so the block must not say it is left out. ⚠ On a
+	// case-SENSITIVE filesystem (Linux CI) os.Stat("scratch") misses `Scratch/`
+	// too, so this row is an INVARIANT GUARD there; it bites only where the FS
+	// folds case (macOS), which is the case hasDirNamedExactly exists for.
+	other := render(scaffold.PageMoney)
+	if err := os.Mkdir(filepath.Join(other, "Scratch"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := blockFor(other); strings.Contains(got, "scratch/") {
+		t.Errorf("a `Scratch/` directory made the block claim the project-root scratch/ is left out of the package")
+	}
 }
