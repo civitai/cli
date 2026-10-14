@@ -477,8 +477,8 @@ func (r *Redactor) exactTokens(s string) string {
 var pemBlockRe = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\z)`)
 
 // authHeaderRe matches an `Authorization` header and its VALUE. Group 1 is the
-// name, its `:` or `=`, and any white space after it — line breaks included —
-// and is kept. Group 2 starts at the first non-blank character after that and
+// name, its `:` or `=` (on the SAME line as the name), and any white space
+// after it — line breaks included — and is kept. Group 2 starts at the first non-blank character after that and
 // runs to the end of the line it is on, and is removed.
 //
 // Two properties, each of which was once missing:
@@ -498,7 +498,7 @@ var pemBlockRe = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]
 //
 // It runs before the exact-token rule so that a header holding the configured
 // token is one redaction, not a placeholder taken in by another.
-var authHeaderRe = regexp.MustCompile("(?i)\\b(authorization[\"']?\\s*[:=]\\s*)(\\S[^\\r\\n]*)")
+var authHeaderRe = regexp.MustCompile("(?i)\\b(authorization[\"']?[ \\t]*[:=]\\s*)(\\S[^\\r\\n]*)")
 
 // apiKeyRe matches the value of an `x-api-key` / `api-key` / `apiKey` /
 // `api_key` header, parameter or assignment. Group 1 is kept; group 2 is

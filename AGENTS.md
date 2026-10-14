@@ -457,7 +457,7 @@ item must carry a trigger that is a routing question rather than a label
     the reporter fields, or what an empty inbox or a 403/409 claims?**
     → evidence: claudedocs/decisions/40-app-feedback-is-untrusted-input.md
 
-41. **Advertising `civitai feedback`, or changing its payload?**
+41. **Changing or exposing `civitai feedback`?**
     → evidence: claudedocs/decisions/41-platform-feedback.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with

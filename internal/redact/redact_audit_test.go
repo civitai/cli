@@ -256,6 +256,23 @@ func TestHeaderCredentialsAreRemoved(t *testing.T) {
 	}
 }
 
+// TestAuthorizationSeparatorMustBeOnTheHeaderLine (audit round 4): line breaks
+// are allowed AFTER the `:` or `=`, not before it. With them allowed before, a
+// setext heading underline and a definition on a later line were read as the
+// header's separator.
+func TestAuthorizationSeparatorMustBeOnTheHeaderLine(t *testing.T) {
+	for _, in := range []string{
+		"Authorization\n=====\nSome text",
+		"needs authorization\n\n: definition text",
+	} {
+		r := newTestRedactor()
+		if got := r.Apply(in); got != in {
+			t.Errorf("rewritten:\n in: %q\nout: %q", in, got)
+		}
+		assertCounts(t, r.Counts(), []Count{})
+	}
+}
+
 // --- counts describe what is SENT ----------------------------------------------
 
 // TestApplyClippedCountsOnlyWhatSurvivesTheCut: the error excerpt is cut after

@@ -214,6 +214,49 @@ func TestFeedbackSendReadCapDoesNotSplitACharacter(t *testing.T) {
 	if _, excerpt := pfSentStrings(t, pfSentBody(t, f)); !strings.HasPrefix(excerpt, "xééé") || strings.ContainsRune(excerpt, 0xFFFD) {
 		t.Errorf("unexpected excerpt start: %q", excerpt[:20])
 	}
+
+	// The same input on stdin: `--error -` has its own read and its own trim.
+	g := &pfFake{t: t, create: pfCreated(pfReceived)}
+	g.serve()
+	if _, _, err := runWithStdin(t, big, "feedback", "send", "--about", "cli", "--error", "-", "it broke"); err != nil {
+		t.Fatalf("valid UTF-8 on stdin longer than the read cap was refused: %v", err)
+	}
+	if _, excerpt := pfSentStrings(t, pfSentBody(t, g)); !strings.HasPrefix(excerpt, "xééé") || strings.ContainsRune(excerpt, 0xFFFD) {
+		t.Errorf("stdin: unexpected excerpt start: %q", excerpt[:20])
+	}
+}
+
+// TestFeedbackSendTrimsASplitCharacterOnlyAtTheReadCap: the trim exists for the
+// byte the read cap cut off, and for nothing else. A short excerpt that ENDS in
+// an incomplete multi-byte character is not UTF-8, and is refused.
+func TestFeedbackSendTrimsASplitCharacterOnlyAtTheReadCap(t *testing.T) {
+	short := "login printed " + pfTestToken + " at the caf\xc3"
+	for _, via := range []string{"--error-file", "--error -"} {
+		t.Run(via, func(t *testing.T) {
+			f := &pfFake{t: t, create: pfCreated(pfReceived)}
+			f.serve()
+			args := []string{"feedback", "send", "--about", "cli"}
+			stdin := ""
+			if via == "--error-file" {
+				p := filepath.Join(f.projectDir, "short.log")
+				if err := os.WriteFile(p, []byte(short), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, "--error-file", p)
+			} else {
+				stdin = short
+				args = append(args, "--error", "-")
+			}
+			_, _, err := runWithStdin(t, stdin, append(args, "it broke")...)
+			if n := len(f.seen()); n != 0 {
+				t.Fatalf("the server saw %d request(s) for an excerpt that is not valid UTF-8", n)
+			}
+			assertOnlyKind(t, err, "ErrUsage")
+			if !strings.Contains(err.Error(), "is not UTF-8 text") {
+				t.Errorf("the refusal does not say why: %v", err)
+			}
+		})
+	}
 }
 
 // TestFeedbackSendSanitisesTheMessage: the server rejects a NUL or an unpaired
