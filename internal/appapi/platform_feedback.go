@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/civitai/cli/pkg/civitai"
 )
@@ -114,6 +115,10 @@ type PlatformFeedbackSDK struct {
 }
 
 // PlatformFeedbackReport is the structured half of a report.
+//
+// Command, ExitCode and HTTPStatus are part of the contract and validated here,
+// and NO flag of `civitai feedback send` sets them yet: they are kept so that
+// the follow-up that attaches them from a failing command is not a wire change.
 //
 // 🔴 EVERY OPTIONAL FIELD IS ABSENT WHEN UNSET, NEVER A ZERO VALUE (AGENTS.md
 // item 14). ExitCode and HTTPStatus are pointers for that reason: 0 is a real
@@ -269,6 +274,19 @@ func (in PlatformFeedbackCreateInput) Validate() error {
 		return fieldErr("message", "must be 1 to %d characters, got %d", PlatformFeedbackMessageMax, n)
 	}
 	r := in.Report
+	// The server answers BAD_REQUEST for a NUL or an unpaired surrogate in any
+	// free-text field. In a Go string the latter can only exist as invalid UTF-8.
+	for _, c := range []struct{ field, value string }{
+		{"message", in.Message},
+		{"report.ref", r.Ref}, {"report.client.version", r.Client.Version},
+		{"report.agent", r.Agent}, {"report.os", r.OS}, {"report.arch", r.Arch},
+		{"report.command", r.Command}, {"report.docUrl", r.DocURL},
+		{"report.errorExcerpt", r.ErrorExcerpt}, {"report.appSlug", r.AppSlug},
+	} {
+		if strings.IndexByte(c.value, 0) >= 0 || !utf8.ValidString(c.value) {
+			return fieldErr(c.field, "must not contain a NUL or invalid text")
+		}
+	}
 	if !oneOf(PlatformFeedbackAbouts, r.About) {
 		return fieldErr("report.about", "must be one of %s, got %q", strings.Join(PlatformFeedbackAbouts, ", "), r.About)
 	}
@@ -407,12 +425,14 @@ type PlatformFeedbackOffError struct {
 }
 
 // PlatformFeedbackOffText is the stable lead of the collection-off error. A
-// named constant so the README and the tests quote it rather than paraphrase.
+// named constant so the tests quote it rather than paraphrase.
 const PlatformFeedbackOffText = "Civitai is not collecting platform feedback right now"
 
 func (e *PlatformFeedbackOffError) Error() string {
+	// Verb-neutral on purpose: one mapper serves `send` and `status`, and a
+	// caller of either must not be told to re-run the other.
 	return fmt.Sprintf("%s (403): %s — that is the server's answer, not a problem with your login; "+
-		"keep the report and re-run `civitai feedback send` later", PlatformFeedbackOffText, e.ServerMsg)
+		"try the same command again later", PlatformFeedbackOffText, e.ServerMsg)
 }
 
 // isCollectionOffMsg detects the server's collection-is-off refusal.
@@ -443,12 +463,11 @@ func isCollectionOffMsg(msg string) bool {
 //     with `civitai login`. Exit 1.
 //   - any other 403 — refused for a reason this CLI cannot name. Exit 3, with
 //     the server's words and no guess.
-//   - 404 — tRPC's answer for a procedure the server does not have: a Civitai
-//     that predates this API. Exit 4. Neither procedure throws NOT_FOUND itself
-//     (an unknown ref is `found: false` in a 200).
+//   - 404 — tRPC's answer for a procedure the server does not have. Exit 4.
+//     Neither procedure throws NOT_FOUND itself (an unknown ref is
+//     `found: false` in a 200).
 //   - 429 — rate limited. Exit 6.
-//   - 400 — the server's schema rejected the request. Exit 2. Validate should
-//     have refused it first, so this arm means the contract moved.
+//   - 400 — the server's schema rejected a request Validate accepted. Exit 2.
 func platformFeedbackError(status int, raw []byte) (err error) {
 	tagged := true
 	defer func() {
@@ -486,15 +505,20 @@ func platformFeedbackError(status int, raw []byte) (err error) {
 		return fmt.Errorf("the server refused this platform-feedback request (403): %s — this CLI cannot tell why "+
 			"beyond the server's own words; `civitai whoami` shows which account and credential are active", msg)
 	case http.StatusNotFound:
-		return fmt.Errorf("this server does not offer platform feedback (404): %s — the platform-feedback API is missing "+
-			"from it, which is what a Civitai that predates it (or a self-hosted one) answers "+
-			"(CIVITAI_BASE_URL selects the server)", msg)
+		// 🔴 A 404 SAYS THE PROCEDURE IS NOT THERE AND NOTHING ABOUT WHY. It is
+		// not worded as a server that is too old, or one that will have it later:
+		// the CLI shipped before any server had this API, so either guess would be
+		// a claim about history or the future that the status does not carry.
+		return fmt.Errorf("this server does not offer platform feedback (404): %s — "+
+			"the server has no such API, and that is all this CLI can tell (CIVITAI_BASE_URL selects the server)", msg)
 	case http.StatusBadRequest:
+		// The CLI validated the request against the limits it knows and the
+		// server still refused it. WHY is in the server's message or nowhere:
+		// naming a cause here (limits changed, upgrade) would be a guess.
 		return fmt.Errorf("the server rejected this platform-feedback request (400): %s — "+
-			"this CLI checked the request against the limits it knows, so the server's have probably changed; "+
-			"`civitai upgrade` gets the current ones, and `civitai feedback send --help` lists the accepted values", msg)
+			"it passed this CLI's own checks, so the server's message is all there is to go on", msg)
 	case http.StatusTooManyRequests:
-		return fmt.Errorf("rate limited (429): %s — wait before re-running the same `civitai feedback` command", msg)
+		return fmt.Errorf("rate limited (429): %s — wait before running the same command again", msg)
 	case http.StatusServiceUnavailable:
 		return fmt.Errorf("platform feedback unavailable (503): %s", msg)
 	default:

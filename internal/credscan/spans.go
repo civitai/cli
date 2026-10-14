@@ -49,7 +49,11 @@ func Spans(line string) []Span {
 			// a substring of the raw capture; locating it there recovers the
 			// offset without a second copy of the cleaning rules.
 			if i := strings.Index(raw, value); i >= 0 {
-				out = append(out, Span{rawStart + i, rawStart + i + len(value)})
+				sp := Span{rawStart + i, rawStart + i + len(value)}
+				if rawEnd-rawStart == assignValueBound && sp.End == rawEnd {
+					sp = wholeValue(line, rawStart, sp)
+				}
+				out = append(out, sp)
 			}
 		}
 		// The same advance matchAssignment makes, with the same floor: resume just
@@ -71,6 +75,48 @@ func Spans(line string) []Span {
 	}
 
 	return mergeSpans(out)
+}
+
+// assignValueBound is the length assignRe's value group stops at. It is restated
+// here, and TestSpansCoverAValueLongerThanTheCaptureBound fails if the two
+// disagree (a 700-byte value would come back short).
+const assignValueBound = 512
+
+// wholeValue extends a span that stopped at assignRe's capture bound to the
+// real end of the value.
+//
+// 🔴 THE BOUND IS A COMPLEXITY FIX FOR THE DETECTOR, NOT A STATEMENT ABOUT HOW
+// LONG A SECRET IS. Scan only needs to know the line holds one, so capturing
+// 512 bytes of it is enough there. A consumer that REMOVES the secret needs all
+// of it: redacting the first 512 bytes of a 700-byte value sends the rest. The
+// extension is one linear walk from the capture's end, so it costs nothing the
+// bound was protecting.
+//
+// Where the value ends follows cleanValue: a value that opened with a quote
+// runs to that quote's close (a backslash escapes the next byte), and an
+// unquoted one to white space or the first structural delimiter.
+func wholeValue(line string, rawStart int, sp Span) Span {
+	if q := line[rawStart]; q == '"' || q == '\'' || q == '`' {
+		if sp.Start == rawStart {
+			sp.Start++ // the opening quote is not part of the value
+		}
+		for i := sp.End; i < len(line); i++ {
+			if line[i] == '\\' && q != '`' {
+				i++
+				continue
+			}
+			if line[i] == q {
+				sp.End = i
+				return sp
+			}
+		}
+		sp.End = len(line)
+		return sp
+	}
+	for sp.End < len(line) && !strings.ContainsRune(" \t\r\n,}])", rune(line[sp.End])) {
+		sp.End++
+	}
+	return sp
 }
 
 // mergeSpans sorts spans and joins any that overlap or touch, so a caller can

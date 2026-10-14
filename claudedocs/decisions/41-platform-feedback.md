@@ -10,8 +10,9 @@ one file), `internal/redact` (what is removed before sending),
 `internal/credscan/spans.go` (the existing matchers, with locations),
 `internal/cmd/feedback.go` (the command). Guards:
 `internal/appapi/platform_feedback_test.go`, `internal/redact/redact_test.go`,
+`internal/redact/redact_audit_test.go`, `internal/redact/text_test.go`,
 `internal/credscan/spans_test.go`, `internal/cmd/feedback_test.go`,
-`cmd/civitai/feedback_exitcode_test.go`, three golden envelopes under
+`internal/cmd/feedback_audit_test.go`, `cmd/civitai/feedback_exitcode_test.go`, three golden envelopes under
 `internal/cmd/testdata/golden/feedback_*.json`, two rows in
 `safeTermCoveredBy`, one in the atomic-write callers ledger.
 
@@ -39,16 +40,46 @@ feedback in a platform report, gets a wrong answer from either merge.
 
 The message and the error excerpt go through `internal/redact` BEFORE the
 request is assembled, so there is no un-redacted copy in anything that reaches
-the wire, the `--dry-run` print or the `--json` echo. The rules, in order:
+the wire, the `--dry-run` print or the `--json` echo.
 
-| Kind | What is removed | Left in its place |
-|---|---|---|
-| `token` | each configured credential value, matched exactly (the stored token, the OAuth access and refresh tokens, `$CIVITAI_TOKEN`) | `<token>` |
-| `credential` | a PEM private-key block; a `Bearer <value>` header value; everything `credscan.Spans` locates (known token formats, a URL with an embedded password, the value of a strict `KEY=value` assignment) | `<credential>` |
-| `email` | an e-mail address | `<email>` |
-| `url-query` | a URL's `?query` (the fragment is kept) | nothing |
-| `home-path` | this machine's home directory | `~` |
-| `user-path` | the user segment of `/home/<u>`, `/Users/<u>`, `C:\Users\<u>` | `<user>` |
+🔴 **Bytes become text first.** `--error-file` and `--error -` are read as bytes
+and decoded by `redact.DecodeText` before any rule runs: UTF-8, and UTF-16 in
+either byte order, with a byte-order mark or without one when the NUL bytes make
+it unambiguous. Every rule below is a byte-oriented matcher, and a
+PowerShell-redirected log (UTF-16LE) is NUL-interleaved ASCII to all of them —
+measured on the first build of this command, such a file went out with the
+configured token in it and `redactions: []`. Content that is not text in an
+encoding `DecodeText` reads is REFUSED (exit `2`): what cannot be decoded cannot
+be redacted. The message is passed through `redact.CleanText` (NUL removed,
+invalid UTF-8 replaced), because the server rejects both.
+
+The rules, in the order they run:
+
+| Order | Kind | What is removed | Left in its place |
+|---|---|---|---|
+| 1 | `credential` | the userinfo of `scheme://user:pass@host` | `<credential>` |
+| 1 | `url-query` | a URL's `?query` (the fragment is kept) | nothing |
+| 2 | `token` | each configured credential value, matched exactly (the stored token, the OAuth access and refresh tokens, `$CIVITAI_TOKEN`) | `<token>` |
+| 3 | `credential` | a PEM private-key block; the value of an `Authorization:` header (Bearer, Basic, Token, Digest); an `x-api-key` / `api-key` value; a bare `Bearer <value>`; everything `credscan.Spans` locates (known token formats, the value of a strict `KEY=value` assignment) | `<credential>` |
+| 4 | `email` | an e-mail address | `<email>` |
+| 5 | `home-path` | this machine's home directory | `~` |
+| 6 | `user-path` | the user segment of `/home/<u>`, `/Users/<u>`, `C:\Users\<u>` (a Windows name may contain a space) | `<user>` |
+
+🔴 **URLs go first, on the original text, and that order is the fix for a
+measured defect.** Every later rule leaves a placeholder containing `<` and `>`,
+which a URL matcher must treat as "the URL ended". When the query strip ran
+after them, `?token=<configured token>&sig=…` became `?token=<token>&sig=…`, the
+strip stopped at the `<`, and `&sig=…` was sent while the count still said the
+query was dropped; and a URL with `user:pass@` lost its scheme to the credential
+span, so its query was never seen. A consequence, stated: a token inside a query
+string is counted under the `url-query` that removed it.
+
+🔴 **The counts describe what is SENT.** Each replacement leaves a marker (a
+Unicode noncharacter) in the working text, a replacement that swallows markers
+re-emits them, and the counts are read off the text finally returned —
+`ApplyClipped` counts nothing beyond its cut. A side counter could not see
+either case, which is how the counts once covered the megabyte that was read
+rather than the 500 characters sent.
 
 The output reports counts by kind and never the text removed.
 
@@ -72,15 +103,28 @@ list; item 28 and decision 40 record how those lose.
 Two fields are validated rather than redacted (`--ref`, `--app`) plus `--doc`,
 and a token is made of exactly the characters a site key allows. So the last
 gate does not reason about fields: `feedbackRefuseIfTokenInBody` searches the
-MARSHALLED body for every credential value the redactor knows and refuses to
-send if one is there.
+request for every credential value the redactor knows and refuses to send if
+one is there — the marshalled bytes, AND every string of the document after
+JSON decoding, since JSON escapes `<`, `&` and quotes and a byte search alone is
+defeated by encoding.
 
-Residuals, stated: the exact-token rule skips a credential shorter than 8
-characters (it is a substring replace, and a two-character "token" would shred
-ordinary words) and says so on stderr; a token that appears URL-encoded or
-otherwise transformed is not matched; `/home/<u>` is rewritten wherever it
-appears, including inside a URL path; a bare prose mention of a private-key
-header loses those words to credscan's pattern.
+NOT covered, each pinned by `TestStatedMissesAreStillMisses` so the list is a
+measurement:
+
+- a bare `Bearer <value>` (no `Authorization:` in front) whose value has no
+  digit, and an `x-api-key` value with no digit — the digit is what keeps
+  "Bearer authentication is required" from being rewritten;
+- the query of a URL written without a scheme (`cdn.example/f?sig=…`);
+- a credential that appears transformed (URL-encoded, base64 of itself, split
+  across lines);
+- a configured credential shorter than 8 characters — the exact rule is a
+  substring replace, and a two-character "token" would shred ordinary words;
+  stderr says when one was skipped.
+
+Over-redaction, also stated: `/home/<u>` is rewritten wherever it appears,
+including inside a URL path; a bare prose mention of a private-key header loses
+those words to credscan's pattern; a `>` closing a markdown autolink goes with
+the query in front of it.
 
 ## 3. Almost nothing is read from the project
 
@@ -98,6 +142,10 @@ ENVIRONMENT, and the version each `@civitai/*` package is DECLARED at in
 - **The app slug is never inferred.** `block.manifest.json` is not opened;
   `--app` is the only way a slug is sent
   (`TestFeedbackSendDefaultsAndAttachesOnlyWhatItSays`).
+
+A dependency KEY is held to the npm name shape (`@civitai/` then lower-case
+letters, digits, `.`, `_`, `-`): package.json is a JSON object, and a key is as
+free-form as its value.
 
 An auto-detected value that does not fit its bound is OMITTED, never clipped
 and never a reason to refuse the report. A value the user typed that does not
@@ -143,9 +191,9 @@ nobody asked about is dropped.
 | `403` with the token-scope sentence | the credential's scope does not cover the procedure | `3` |
 | `403` with the collection-off sentence | Civitai is not collecting platform feedback right now | `1` |
 | any other `403` | refused; the CLI reports the server's words and names no cause | `3` |
-| `404` on the procedure | a server without the API (tRPC's answer for an unknown procedure) | `4` |
+| `404` on the procedure | this server has no such API (tRPC's answer for an unknown procedure) | `4` |
 | `429` | rate limited | `6` |
-| `400` | the server's schema rejected what `Validate` accepted — the contract moved | `2` |
+| `400` | the server's schema rejected what `Validate` accepted | `2` |
 
 🔴 **Collection-off is HTTP 403 and exits `1`, not `3`.** Nothing about the
 caller's credential is wrong, and `3` is the code a script answers with
@@ -155,6 +203,14 @@ as the scope refusal is (`isInsufficientScopeMsg`), because tRPC gives both the
 same code — and it is deliberately narrow: a 403 that says neither is not
 called "collection is off".
 
+🔴 **The 404 and 400 messages name no cause.** A 404 says the procedure is not
+there; it is not worded as a server that "predates" the API or will have it
+"yet" — this CLI shipped before any server had it, so either would be a claim
+the status does not carry. A 400 passed the CLI's own checks, and its message
+does not guess that limits changed or that an upgrade would help. One mapper
+serves both verbs, so no arm tells a `status` caller to re-run `send`
+(`TestErrorsClaimOnlyWhatAStatusCodeCarries`).
+
 `feedback status <ref…>` exits `4` when EVERY ref named was not found — the
 same miss `civitai app status <unknown-slug>` reports, on the same code, per
 the README's exit-code table. A partly-found list exits `0`, and so does the
@@ -162,15 +218,27 @@ no-argument read (the user named no ref).
 
 ## 7. The verb is unadvertised until the server side is on
 
-The server endpoint did not exist when this shipped. So nothing outside the
-command's own help and README section points at it: the managed AGENTS.md
-template is untouched, no other command's error suggests it, and
-`agent-setup`'s output is unchanged. A pointer would send every agent that
-reads it at an endpoint that answers `404`.
+The server endpoint did not exist when this shipped. So the verb is genuinely
+unadvertised, as a set of states rather than an intention:
 
-`TestPlatformFeedbackVerbIsUnadvertised` makes that a set assertion over
-`internal/cmd`'s non-test sources and its templates. The PR that turns the verb
-on widens that set on purpose; until then a new mention is red.
+- the root `feedback` command is `Hidden`, so `civitai --help` does not list it;
+- the README does not document it — the section and the command-table rows ship
+  with the PR that turns the verb on;
+- the managed AGENTS.md template is untouched, no other command's error
+  suggests it, and `agent-setup`'s output is unchanged.
+
+`civitai feedback --help` itself works, for whoever is told the verb exists, and
+`civitai app feedback --help` keeps its one mirror-image clause (§1).
+
+A pointer on any of those surfaces would send every agent that reads it at an
+endpoint that answers `404`. `TestPlatformFeedbackVerbIsUnadvertised` asserts
+each state — the command's `Hidden` field, the RENDERED root help, the README,
+the template — rather than the absence of a spelling in some directory. The PR
+that turns the verb on flips them together.
+
+`--error` takes only `-` (stdin). It briefly also accepted the error text
+itself, which made `--error ./submit.log` send the path string; any other value
+is now a usage error naming `--error -` and `--error-file <path>`.
 
 ## Not established
 
@@ -191,8 +259,10 @@ on widens that set on purpose; until then a new mention is red.
   (`5123-3f9a01bc`). A ref outside `[A-Za-z0-9._-]{1,80}` would be printed but
   not stored, suggested or accepted by `feedback status`.
 - **`report.command`, `report.exitCode` and `report.httpStatus` are in the wire
-  type and validated, and no flag sets them.** The decided flag set has none;
-  they are there so adding one later is not a contract change.
+  type and validated, and no flag sets them.** Kept on purpose: the follow-up
+  that attaches them from a failing command is then not a contract change.
+- **The server's rejection of NUL and unpaired surrogates is taken from the
+  contract**, not observed. `CleanText` and `Validate` remove and refuse them.
 - **String bounds are counted in UTF-16 code units**, on the assumption that
   the server's schema is zod (`.max()` is JavaScript's `.length`). If it counts
   code points instead, the CLI is merely stricter.

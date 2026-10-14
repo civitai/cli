@@ -16,6 +16,7 @@ import (
 
 	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/pkg/civitai"
+	"github.com/spf13/cobra"
 )
 
 // Every expectation in this file is a LITERAL — a request body, a query input,
@@ -472,12 +473,14 @@ func TestFeedbackSendOnAServerWithoutTheAPISaysSoHonestly(t *testing.T) {
 		t.Fatalf("a tRPC 404 must classify as ErrNotFound (exit 4), got %v", err)
 	}
 	msg := err.Error()
-	for _, want := range []string{"this server does not offer platform feedback (404)", "the platform-feedback API is missing", "CIVITAI_BASE_URL"} {
+	for _, want := range []string{"this server does not offer platform feedback (404)", "CIVITAI_BASE_URL"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the 404 message does not say %q:\n%s", want, msg)
 		}
 	}
-	for _, claim := range []string{"sent", "queued", "retry", "received"} {
+	// Nor may it say WHY the API is absent: "predates", "older" and "not yet" are
+	// each a claim about the server's history or future that a 404 does not carry.
+	for _, claim := range []string{"sent", "queued", "retry", "received", "predates", "older", "self-hosted", "yet"} {
 		if strings.Contains(strings.ToLower(msg), claim) {
 			t.Errorf("the 404 message says %q, which nothing here can know:\n%s", claim, msg)
 		}
@@ -523,9 +526,6 @@ func TestFeedbackSendNeverSendsTheConfiguredToken(t *testing.T) {
 		}},
 		{"in --error - (stdin)", "CIVITAI_TOKEN=" + pfTestToken + " civitai app submit\nexit 1\n", func(string) []string {
 			return []string{"--about", "cli", "--error", "-", "submit exits 1"}
-		}},
-		{"in --error as literal text", "", func(string) []string {
-			return []string{"--about", "cli", "--error", "token " + pfTestToken + " rejected", "rejected"}
 		}},
 	}
 	for _, ch := range channels {
@@ -685,7 +685,7 @@ func TestFeedbackSendRefusesWhatTheServerWouldReject(t *testing.T) {
 		{"--app empty", []string{"--about", "cli", "--app", " ", "x"}, "--app needs an app slug"},
 		{"a message one past its bound", []string{"--about", "cli", long(2001)}, "the message must be 1 to 2000 characters, got 2001"},
 		{"a message that is only spaces", []string{"--about", "cli", "   "}, "the message must be 1 to 2000 characters, got 0"},
-		{"--error with --error-file", []string{"--about", "cli", "--error", "boom", "--error-file", "x.log", "x"}, "pass one or the other"},
+		{"--error with --error-file", []string{"--about", "cli", "--error", "-", "--error-file", "x.log", "x"}, "pass one or the other"},
 		{"--error-file that does not exist", []string{"--about", "cli", "--error-file", "no-such-file.log", "x"}, "does not exist"},
 		{"no message", []string{"--about", "cli"}, "a message is required"},
 		{"two messages", []string{"--about", "cli", "one", "two"}, "accepts 1 message, received 2"},
@@ -1399,60 +1399,85 @@ func TestAppFeedbackHelpPointsAtThePlatformLane(t *testing.T) {
 	}
 }
 
-// platformFeedbackMentionAllowed is every non-test source file, and every
-// template, that may name the `civitai feedback` verb.
+// TestPlatformFeedbackVerbIsUnadvertised asserts the STATE "nothing points an
+// agent at this verb", on each surface an agent actually reads — not the absence
+// of a spelling in some directory.
 //
 // 🔴 THE VERB IS UNADVERTISED ON PURPOSE (AGENTS.md item 41): the server side
-// was not live when it shipped, so nothing outside the command's own help — and
-// the one mirror-image clause in `app feedback`'s — points an agent at it. A
-// hint in another command's error, or a line in the managed AGENTS.md block,
-// would send every agent that reads it at an endpoint that answers 404. This is
-// a SET assertion: a new mention fails here, and the PR that turns the verb on
-// widens the set on purpose.
-var platformFeedbackMentionAllowed = map[string]bool{
-	"feedback.go":     true, // the command
-	"app_feedback.go": true, // the mirror-image clause
-}
-
+// was not live when it shipped. So the command is Hidden, the root help does not
+// list it, the README does not document it, and the managed AGENTS.md block
+// `agent-setup` writes does not mention it. `civitai feedback --help` itself
+// still works, for whoever is told the verb exists. The PR that turns it on
+// flips each of these on purpose.
 func TestPlatformFeedbackVerbIsUnadvertised(t *testing.T) {
-	mentions := func(src string) bool {
-		// `civitai feedback`, but not `civitai app feedback`.
+	// `civitai feedback`, but not `civitai app feedback`.
+	names := func(src string) bool {
 		return strings.Contains(strings.ReplaceAll(src, "civitai app feedback", ""), "civitai feedback")
 	}
-	var scanned, found int
-	check := func(dir string, allowed map[string]bool) {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatalf("read %s: %v", dir, err)
+	// Positive control on the matcher: it does see the verb where the verb is.
+	if !names("run `civitai feedback send`") || names("run `civitai app feedback my-app`") {
+		t.Fatal("CONTROL failure: the matcher cannot tell `civitai feedback` from `civitai app feedback`")
+	}
+
+	root := NewRootCmd()
+	var verb *cobra.Command
+	listed := 0
+	for _, c := range root.Commands() {
+		if c.Name() == "feedback" {
+			verb = c
 		}
-		for _, e := range entries {
-			if e.IsDir() || strings.HasSuffix(e.Name(), "_test.go") {
-				continue
-			}
-			raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
-			if err != nil {
-				t.Fatal(err)
-			}
-			scanned++
-			if !mentions(string(raw)) {
-				continue
-			}
-			found++
-			if !allowed[e.Name()] {
-				t.Errorf("%s names the `civitai feedback` verb. It is unadvertised until the server side is on — "+
-					"see platformFeedbackMentionAllowed before adding a pointer to it.", filepath.Join(dir, e.Name()))
-			}
+		if !c.Hidden {
+			listed++
 		}
 	}
-	check(".", platformFeedbackMentionAllowed)
-	check("templates", nil)
-	if scanned < 50 {
-		t.Fatalf("CONTROL failure: scanned only %d file(s) — the walk is not reading the package", scanned)
+	if verb == nil {
+		t.Fatal("CONTROL failure: the root has no `feedback` command, so there is nothing to keep hidden")
 	}
-	// Positive control on the matcher: the command's own file IS found, so a
-	// clean result elsewhere is not a pattern that matches nothing.
-	if found < len(platformFeedbackMentionAllowed) {
-		t.Fatalf("CONTROL failure: the matcher found the verb in %d file(s), fewer than the %d known to name it",
-			found, len(platformFeedbackMentionAllowed))
+	if listed < 10 {
+		t.Fatalf("CONTROL failure: only %d root command(s) are listed — the tree walk is broken", listed)
+	}
+	if !verb.Hidden {
+		t.Error("the root `feedback` command is not Hidden: `civitai --help` and shell completion now advertise a verb whose server side is not live")
+	}
+
+	// The rendered root help: no command row for it, and no mention anywhere.
+	help := renderRootHelp(t)
+	for _, line := range strings.Split(help, "\n") {
+		if f := strings.Fields(line); len(f) > 0 && f[0] == "feedback" {
+			t.Errorf("`civitai --help` lists the verb: %q", line)
+		}
+	}
+	if names(help) {
+		t.Error("`civitai --help` mentions `civitai feedback`")
+	}
+	// Positive control: that same rendering DOES list a visible command.
+	if !strings.Contains(help, "\n  whoami ") {
+		t.Fatalf("CONTROL failure: the rendered root help lists no `whoami` row, so a missing `feedback` row proves nothing:\n%s", help)
+	}
+
+	// Hidden hides the listing, not the command.
+	if out, _, err := run(t, "feedback", "--help"); err != nil || !strings.Contains(out, "send") || !strings.Contains(out, "status") {
+		t.Errorf("`civitai feedback --help` must still work and list its subcommands (err=%v):\n%s", err, out)
+	}
+
+	// The README — the published contract — does not document it yet.
+	readme := readREADME(t)
+	if len(readme) < 20000 || !names(strings.ReplaceAll(readme, "civitai app feedback", "civitai feedback")) {
+		t.Fatal("CONTROL failure: the README read is not the README (too short, or it has no `civitai app feedback` section to tell apart)")
+	}
+	if names(readme) {
+		t.Error("README.md documents `civitai feedback`. That section ships with the PR that advertises the verb.")
+	}
+
+	// The managed block agent-setup writes into a project's AGENTS.md.
+	tmpl, err := os.ReadFile(filepath.Join("templates", "agents-app.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(tmpl), "civitai app") {
+		t.Fatal("CONTROL failure: templates/agents-app.md does not look like the managed block")
+	}
+	if names(string(tmpl)) {
+		t.Error("the managed AGENTS.md template points agents at `civitai feedback`")
 	}
 }

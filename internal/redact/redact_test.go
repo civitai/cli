@@ -102,8 +102,8 @@ var redactionRows = []redactionRow{
 	{
 		name:      "a connection string with an embedded password",
 		in:        "connect ECONNREFUSED mysql://svc_blocks:Tq7Zw3Lp9Rc5@db-7.prod-internal.net:3306/blocks",
-		secret:    "Tq7Zw3Lp9Rc5",
-		wantOut:   "connect ECONNREFUSED <credential>/blocks",
+		secret:    "svc_blocks:Tq7Zw3Lp9Rc5",
+		wantOut:   "connect ECONNREFUSED mysql://<credential>@db-7.prod-internal.net:3306/blocks",
 		kind:      KindCredential,
 		wantCount: 1,
 	},

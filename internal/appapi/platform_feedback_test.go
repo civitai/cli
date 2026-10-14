@@ -517,3 +517,73 @@ func TestRefShapes(t *testing.T) {
 		}
 	}
 }
+
+// --- audit round 1 -------------------------------------------------------------
+
+// TestErrorsClaimOnlyWhatAStatusCodeCarries: a 400 does not say the limits
+// changed, a 404 does not say the server is old, and neither procedure's error
+// may tell the caller to re-run the OTHER verb — one mapper serves both.
+func TestErrorsClaimOnlyWhatAStatusCodeCarries(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		banned []string
+	}{
+		{"400", http.StatusBadRequest, pfTRPCError("Invalid input"),
+			[]string{"civitai upgrade", "changed", "probably", "feedback send"}},
+		{"404", http.StatusNotFound, pfTRPCError(`No "query"-procedure on path "platformFeedback.getStatus"`),
+			[]string{"predates", "older", "self-hosted", "yet", "feedback send"}},
+		{"403 collection off", http.StatusForbidden, pfTRPCError("Feedback is not being collected here right now."),
+			[]string{"feedback send", "keep the report"}},
+		{"429", http.StatusTooManyRequests, pfTRPCError("Too many requests"), []string{"feedback send"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := platformFeedbackError(tc.status, []byte(tc.body)).Error()
+			for _, b := range tc.banned {
+				if strings.Contains(msg, b) {
+					t.Errorf("the %s error says %q, which this status does not establish (or names the wrong verb):\n%s", tc.name, b, msg)
+				}
+			}
+			// The server's own words always survive.
+			var env struct {
+				Error struct {
+					JSON struct {
+						Message string `json:"message"`
+					} `json:"json"`
+				} `json:"error"`
+			}
+			_ = json.Unmarshal([]byte(tc.body), &env)
+			if !strings.Contains(msg, env.Error.JSON.Message) {
+				t.Errorf("the server's message was dropped:\n%s", msg)
+			}
+		})
+	}
+}
+
+// TestValidateRefusesWhatTheServerRejectsInFreeText: the server answers
+// BAD_REQUEST for a NUL or an unpaired surrogate in any free-text field, so the
+// last gate refuses both before the wire.
+func TestValidateRefusesWhatTheServerRejectsInFreeText(t *testing.T) {
+	fields := map[string]func(in *PlatformFeedbackCreateInput, v string){
+		"message":             func(in *PlatformFeedbackCreateInput, v string) { in.Message = v },
+		"report.errorExcerpt": func(in *PlatformFeedbackCreateInput, v string) { in.Report.ErrorExcerpt = v },
+		"report.command":      func(in *PlatformFeedbackCreateInput, v string) { in.Report.Command = v },
+		"report.agent":        func(in *PlatformFeedbackCreateInput, v string) { in.Report.Agent = v },
+		"report.appSlug":      func(in *PlatformFeedbackCreateInput, v string) { in.Report.AppSlug = v },
+	}
+	for field, set := range fields {
+		for name, bad := range map[string]string{"a NUL": "ab\x00cd", "an unpaired surrogate": "ab\xed\xa0\x80cd"} {
+			in := pfFullInput()
+			set(&in, bad)
+			var fe *PlatformFeedbackFieldError
+			if err := in.Validate(); !errors.As(err, &fe) || fe.Field != field {
+				t.Errorf("%s with %s: err = %v, want a field error on %q", field, name, err, field)
+			}
+		}
+	}
+	if err := pfFullInput().Validate(); err != nil {
+		t.Fatalf("CONTROL failure: the base input is invalid: %v", err)
+	}
+}

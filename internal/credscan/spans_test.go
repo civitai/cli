@@ -89,3 +89,35 @@ func TestSpansAgreeWithMatch(t *testing.T) {
 		t.Fatalf("CONTROL failure: %d line(s) fired and %d stayed quiet — the comparison needs both", fired, quiet)
 	}
 }
+
+// TestSpansCoverAValueLongerThanTheCaptureBound: assignRe bounds its value
+// capture at 512 bytes — a complexity fix (see assignRe) that is right for a
+// detector, which only needs to know the line holds a secret. A consumer that
+// REMOVES the secret needs all of it: redacting the first 512 bytes of a
+// 700-byte value sends the other 188.
+func TestSpansCoverAValueLongerThanTheCaptureBound(t *testing.T) {
+	var b strings.Builder
+	for i := 0; b.Len() < 700; i++ {
+		b.WriteString("Kq9Zx2Lm7Rb5Tn8Vc4Hd6Yw1Pf3Sg0Uj"[i%7:])
+	}
+	secret := b.String()[:700]
+	for name, line := range map[string]string{
+		"unquoted": "SESSION_SECRET=" + secret + " trailing words",
+		"quoted":   `{"sessionSecret": "` + secret + `", "other": 1}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			spans := Spans(line)
+			if len(spans) != 1 {
+				t.Fatalf("want 1 span, got %d: %+v", len(spans), spans)
+			}
+			if got := line[spans[0].Start:spans[0].End]; got != secret {
+				t.Errorf("the span covers %d of the value's %d bytes", len(got), len(secret))
+			}
+		})
+	}
+	// CONTROL: a value exactly at the bound is one whole span too.
+	at := secret[:512]
+	if spans := Spans("SESSION_SECRET=" + at + " x"); len(spans) != 1 || spans[0].End-spans[0].Start != 512 {
+		t.Errorf("a 512-byte value: %+v", spans)
+	}
+}
