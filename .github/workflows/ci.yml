@@ -214,6 +214,47 @@ jobs:
           path: ${{ steps.go.outputs.paths }}
           key: ${{ steps.go.outputs.primary-key }}
 
+  # Decides whether this event needs `dogfood-browser`. ONE implementation:
+  # scripts/dogfood/browser-suite-relevant.sh (table-tested in
+  # dogfood_browser_relevance_test.go). It FAILS OPEN: any event but a pull
+  # request, a failed or empty diff, and any path not positively classified
+  # irrelevant all run the suite — and so does this job failing outright (see
+  # `dogfood-browser`'s `if:`).
+  #
+  # The diff is the PR's merge commit against its first parent — exactly what
+  # merging would change on the base, whatever the base is. `fetch-depth: 2`
+  # is what makes HEAD^1 present.
+  #
+  # 🔴 `--no-renames` IS LOAD-BEARING. With rename detection, a file MOVED out
+  # of scripts/dogfood is listed under its NEW path only; if that path is
+  # irrelevant the classifier never sees that a harness file disappeared, and
+  # skips. Without it the move is a delete plus an add, and the old path is
+  # in the list.
+  dogfood-browser-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      reason: ${{ steps.decide.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: classify the change
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -uo pipefail
+          rc=0
+          : > "$RUNNER_TEMP/paths.txt"
+          if [ "$EVENT" = "pull_request" ]; then
+            git diff --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/paths.txt" || rc=$?
+          fi
+          echo "changed paths ($(wc -l < "$RUNNER_TEMP/paths.txt")):"
+          cat "$RUNNER_TEMP/paths.txt"
+          ./scripts/dogfood/browser-suite-relevant.sh "$EVENT" "$RUNNER_TEMP/paths.txt" "$rc"
+
   # ── the root package's BROWSER tier ──────────────────────────────────────
   #
   # The render-oracle tests (headless Chrome against a served block, through
@@ -230,9 +271,31 @@ jobs:
   # the top-level PASS lines to be EXACTLY the browser tier. With
   # `build-test`'s mirror-image check, always ∪ browser is the whole package,
   # each test once.
+  #
+  # 🔴 ON A PULL REQUEST IT RUNS ONLY WHEN ITS INPUTS CHANGED, AND IT FAILS
+  # OPEN. It is skipped ONLY on a positive "irrelevant" from a classifier job
+  # that SUCCEEDED; a classifier that failed, or published nothing, runs it.
+  # `!cancelled()` rather than `always()`, so a cancelled run does not start
+  # a browser job. A job skipped by its own `if:` reports "skipped", which
+  # branch protection counts as satisfied — so this name can be required.
+  # (The nightly run of the same suite, and its failure reporter, live in
+  # dogfood-browser-nightly.yml: this workflow requests no write permission.)
   dogfood-browser:
     runs-on: ubuntu-latest
+    needs: [dogfood-browser-changes]
+    if: ${{ !cancelled() && (needs.dogfood-browser-changes.result != 'success' || needs.dogfood-browser-changes.outputs.run != 'false') }}
     steps:
+      - name: why this job is running
+        env:
+          DECIDE_RESULT: ${{ needs.dogfood-browser-changes.result }}
+          DECIDE_RUN: ${{ needs.dogfood-browser-changes.outputs.run }}
+          DECIDE_REASON: ${{ needs.dogfood-browser-changes.outputs.reason }}
+        run: |
+          echo "decision: result=$DECIDE_RESULT run='$DECIDE_RUN' reason='$DECIDE_REASON'"
+          if [ "$DECIDE_RESULT" != "success" ]; then
+            echo "::warning title=dogfood-browser classifier failed::the change classifier did not succeed, so the suite is running (fail open). Fix the classifier."
+          fi
+
       - uses: actions/checkout@v4
 
       # Restore-only, like every job but build-test (see the action).

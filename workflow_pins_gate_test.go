@@ -270,6 +270,9 @@ func TestPinsGateWorkflowGuardCanGoRed(t *testing.T) {
 	const invocation = "-event \"$GITHUB_EVENT_NAME\" -pr-head \"$PR_HEAD_SHA\" 2>&1 \\\n            | tee \"$RUNNER_TEMP/pins.log\"\n"
 	const verdictRe = `'^pins-gate: mode=(gate|advise) verdict=(ok|stale|unreachable) pins=[1-9][0-9]* blocking=0 exit=0$'`
 	const stepHead = "      - name: check scaffold pins vs npm latest\n"
+	// Anchored on the job's own head: another job in ci.yml may set the same
+	// `fetch-depth: 2`, and a bare anchor would then mutate whichever came first.
+	const checkout = jobHead + "    steps:\n      - uses: actions/checkout@v4\n"
 
 	mutants := []struct {
 		name     string
@@ -285,8 +288,8 @@ func TestPinsGateWorkflowGuardCanGoRed(t *testing.T) {
 		{"job-level if", jobHead, jobHead + "    if: github.event_name == 'pull_request'\n", "has a job-level `if:`"},
 		{"step-level continue-on-error on the gate", stepHead, stepHead + "        continue-on-error: true\n", "sets `continue-on-error` — a failing step in this job must fail the job"},
 		{"step-level if on the gate", stepHead, stepHead + "        if: github.event_name != 'push'\n", "the pins-gate step has an `if:`"},
-		{"fetch-depth dropped", "        with:\n          fetch-depth: 2\n", "", "does not set `fetch-depth: 2`"},
-		{"fetch-depth: 1", "          fetch-depth: 2\n", "          fetch-depth: 1\n", "does not set `fetch-depth: 2`"},
+		{"fetch-depth dropped", checkout + "        with:\n          fetch-depth: 2\n", checkout, "does not set `fetch-depth: 2`"},
+		{"fetch-depth: 1", checkout + "        with:\n          fetch-depth: 2\n", checkout + "        with:\n          fetch-depth: 1\n", "does not set `fetch-depth: 2`"},
 		{"the command no longer runs", pinsGateCmd + " \\\n", "go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished \\\n", "0 step(s) of `pins-vs-published` run"},
 		{"event hardcoded to pull_request", `-event "$GITHUB_EVENT_NAME"`, `-event pull_request`, "must pass `-event \"$GITHUB_EVENT_NAME\"` exactly once"},
 		{"a second -event flag appended", invocation, strings.Replace(invocation, " 2>&1", " -event pull_request 2>&1", 1), "must pass `-event \"$GITHUB_EVENT_NAME\"` exactly once (found 2"},

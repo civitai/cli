@@ -1,0 +1,77 @@
+name: dogfood-browser nightly
+
+# The browser suite (the repo-root package's render-oracle tests: headless
+# Chrome through scripts/dogfood), every night, on its own.
+#
+# WHY NIGHTLY. Its inputs include things no commit changes — the runner
+# image's Chrome, the image's dbus/sandbox setup — and since ci.yml runs the
+# suite on a pull request only when the diff touches its inputs, a break there
+# would otherwise wait for the next PR that happens to touch scripts/dogfood.
+#
+# WHY ITS OWN WORKFLOW, AND NOT A `schedule:` ON ci.yml. Two reasons. A
+# schedule there would run EVERY ci.yml job nightly, with only this one's
+# colour reported. And the reporter below is a reusable workflow that needs
+# `issues: write`: calling it from ci.yml would make ci.yml a pull_request
+# workflow that requests a write permission, which a fork PR's read-only token
+# cannot grant. Here nothing runs on pull_request at all.
+#
+# ONE IMPLEMENTATION OF THE SUITE: the two scripts ci.yml's `dogfood-browser`
+# job runs (ci-browser.sh, then ci-browser-tests.sh with its exact-equality
+# check on the PASS lines). This file adds a trigger and a reporter, no logic.
+
+on:
+  schedule:
+    - cron: "37 7 * * *"
+  # Manual: the only way to exercise this workflow, reporter included, without
+  # waiting for the night.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Same form as readme-links.yml / docs-links.yml: one run at a time, and a
+# scheduled run is never cancelled by a manual dispatch (or vice versa) — a
+# cancelled run would file nothing, which is the silence this file exists to end.
+concurrency:
+  group: dogfood-browser-nightly
+  cancel-in-progress: false
+
+jobs:
+  dogfood-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Restore-only, the same as every ci.yml job but build-test: a scheduled
+      # run must not write the shared Go cache (.github/actions/setup-go).
+      - uses: ./.github/actions/setup-go
+        with:
+          go-version: "1.25"
+
+      - name: resolve and smoke-test a browser for the render-oracle tests
+        run: ./scripts/dogfood/ci-browser.sh
+
+      - name: browser tests
+        env:
+          CIVITAI_ASSERT_WAIT_LOG: ${{ runner.temp }}/dogfood-waits.jsonl
+        run: ./scripts/dogfood/ci-browser-tests.sh
+
+  # A scheduled run's failure mail reaches only whoever last edited the cron
+  # line (see failure-issue.yml), so the verdict is filed as an issue: one open
+  # issue per marker, rewritten on repeat, closed on green.
+  #
+  # `always()` so a red `dogfood-browser` job still reports; `!= 'cancelled'` so
+  # a hand cancellation is not filed as a defect.
+  report:
+    needs: [dogfood-browser]
+    if: always() && needs.dogfood-browser.result != 'cancelled'
+    uses: ./.github/workflows/failure-issue.yml
+    permissions:
+      contents: read
+      issues: write
+    with:
+      marker: "[dogfood-browser-nightly]"
+      failing: ${{ needs.dogfood-browser.result != 'success' }}
+      state: ${{ needs.dogfood-browser.result }}
+      title: "[dogfood-browser-nightly] the browser suite failed on main's nightly run"
+      body: "The nightly `dogfood-browser` run on `main` ended `${{ needs.dogfood-browser.result }}`. Nothing in the repo had to change for this: the usual suspects are the runner image's Chrome or its dbus/sandbox setup, which no commit touches. Read the `dogfood-browser` job of the linked run (it prints the browser version and its smoke-test launch) before changing any test."
