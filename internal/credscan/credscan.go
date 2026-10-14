@@ -117,6 +117,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Finding is one line that looks like it holds a credential.
@@ -670,41 +672,46 @@ func valueLooksLikeSecret(value string, quoted bool) bool {
 // shape, so it exempts nothing else.
 var publicByDesignRe = regexp.MustCompile(`^AIza[0-9A-Za-z_-]{35}$`)
 
+// hasDigit and hasLetter report whether s holds a decimal digit / a letter in
+// ANY script. Both used to accept only ASCII, so a password whose letters
+// (`Пароль2024Секрет`) or digits (`KqZxLmRbTnVc٢٠٢٤`) were all outside ASCII
+// failed the gate and was neither reported nor redacted.
 func hasDigit(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= '0' && s[i] <= '9' {
-			return true
-		}
-	}
-	return false
+	return strings.ContainsFunc(s, unicode.IsDigit)
 }
 
 func hasLetter(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if c := s[i] | 0x20; c >= 'a' && c <= 'z' {
-			return true
-		}
-	}
-	return false
+	return strings.ContainsFunc(s, unicode.IsLetter)
 }
 
-// shannonBitsPerChar is the Shannon entropy of s over its byte frequencies, in
-// bits per character. Empty is 0.
+// shannonBitsPerChar is the Shannon entropy of s over its CHARACTER
+// frequencies, in bits per character. Empty is 0.
+//
+// 🔴 CHARACTERS, NOT BYTES. Over bytes, a value in a non-Latin script is judged
+// by its UTF-8 encoding: every Cyrillic letter in `a1ЖЩЯФЫВАПРО` shares a lead
+// byte, so its byte entropy (~2.95) sits under the floor while its character
+// entropy is 3.58, and the password went out unredacted. A byte that is not
+// valid UTF-8 counts as its own symbol, as it did before, so distinct invalid
+// bytes do not collapse into one U+FFFD.
 func shannonBitsPerChar(s string) float64 {
 	if s == "" {
 		return 0
 	}
-	var counts [256]int
-	for i := 0; i < len(s); i++ {
-		counts[s[i]]++
+	counts := map[rune]int{}
+	n := 0
+	for i := 0; i < len(s); {
+		r, w := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && w == 1 {
+			r = -1 - rune(s[i]) // invalid byte: a key no real rune can take
+		}
+		counts[r]++
+		n++
+		i += w
 	}
-	n := float64(len(s))
+	total := float64(n)
 	var h float64
 	for _, c := range counts {
-		if c == 0 {
-			continue
-		}
-		p := float64(c) / n
+		p := float64(c) / total
 		h -= p * math.Log2(p)
 	}
 	return h

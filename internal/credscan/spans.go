@@ -51,7 +51,17 @@ func Spans(line string) []Span {
 			// offset without a second copy of the cleaning rules.
 			if i := strings.Index(raw, value); i >= 0 {
 				sp := Span{rawStart + i, rawStart + i + len(value)}
-				if utf8.RuneCountInString(raw) == assignValueBound && sp.End == rawEnd {
+				// 🔴 A CUT CAPTURE IS EXTENDED WHEREVER cleanValue LEFT ITS END.
+				// cleanValue can end the value before the cut — it trims a
+				// trailing `;`, and an unclosed quote (the closing one lies past
+				// the cut) sends a quoted value through the unquoted rules, which
+				// stop at `,` `}` `]` `)`. Extending only when the value ended
+				// exactly at the cut left the rest of the secret outside the span
+				// in every such shape. wholeValue re-derives the end from the
+				// LINE, so a delimiter that really ends the value still ends it.
+				// TestSpansCoverACutValueWhoseEndTheCleanerMoved and
+				// TestSpansStopAtADelimiterThatEndsTheValue pin both sides.
+				if utf8.RuneCountInString(raw) == assignValueBound {
 					sp = wholeValue(line, rawStart, sp)
 				}
 				out = append(out, sp)

@@ -1,8 +1,11 @@
 package credscan
 
 import (
+	"fmt"
+	"math"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -123,20 +126,42 @@ func TestSpansCoverAValueLongerThanTheCaptureBound(t *testing.T) {
 	}
 }
 
-// nonASCIISecret returns a value of exactly n CHARACTERS that passes A2's gate
-// and carries a two-byte character in every eighth position, so its byte length
-// is well above n.
-func nonASCIISecret(n int) string {
+// testSecret returns a value of exactly n CHARACTERS that passes A2's gate.
+// seed shifts where in its alphabet it starts, so two parts of one line differ.
+// With accented set, every eighth character is the two-byte `é`, so the value's
+// byte length is well above n.
+func testSecret(n, seed int, accented bool) string {
 	const alphabet = "Kq9Zx2Lm7Rb5Tn8Vc4Hd6Yw1Pf3Sg0Uj"
 	var b strings.Builder
 	for i := 0; i < n; i++ {
-		if i%8 == 7 {
+		if accented && i%8 == 7 {
 			b.WriteRune('é')
 			continue
 		}
-		b.WriteByte(alphabet[(i*7)%len(alphabet)])
+		b.WriteByte(alphabet[((i+seed)*7)%len(alphabet)])
 	}
 	return b.String()
+}
+
+// assertOneSpan requires Spans(line) to return exactly one span covering want.
+func assertOneSpan(t *testing.T, line, want string) {
+	t.Helper()
+	spans := Spans(line)
+	if len(spans) != 1 {
+		t.Fatalf("want 1 span covering %d characters, got %d: %+v", utf8.RuneCountInString(want), len(spans), spans)
+	}
+	got := line[spans[0].Start:spans[0].End]
+	if got == want {
+		return
+	}
+	if strings.HasPrefix(want, got) {
+		t.Errorf("the span covers the first %d of the value's %d characters; the other %d are left outside it",
+			utf8.RuneCountInString(got), utf8.RuneCountInString(want),
+			utf8.RuneCountInString(want)-utf8.RuneCountInString(got))
+		return
+	}
+	t.Errorf("the span covers %d characters (%.24q…), want the value's %d characters (%.24q…)",
+		utf8.RuneCountInString(got), got, utf8.RuneCountInString(want), want)
 }
 
 // TestSpansCoverANonASCIIValueLongerThanTheCaptureBound: assignRe's `{1,512}`
@@ -147,7 +172,7 @@ func nonASCIISecret(n int) string {
 // rest of the secret. The ASCII test above cannot see this: there, characters
 // and bytes are the same number.
 func TestSpansCoverANonASCIIValueLongerThanTheCaptureBound(t *testing.T) {
-	secret := nonASCIISecret(700)
+	secret := testSecret(700, 0, true)
 	if utf8.RuneCountInString(secret) != 700 || len(secret) <= 700 {
 		t.Fatalf("CONTROL failure: fixture is %d characters / %d bytes; it must be 700 characters and more bytes",
 			utf8.RuneCountInString(secret), len(secret))
@@ -156,25 +181,143 @@ func TestSpansCoverANonASCIIValueLongerThanTheCaptureBound(t *testing.T) {
 		"unquoted": "SECRET=" + secret + " trailing words",
 		"quoted":   `{"sessionSecret": "` + secret + `", "other": 1}`,
 	} {
-		t.Run(name, func(t *testing.T) {
-			spans := Spans(line)
-			if len(spans) != 1 {
-				t.Fatalf("want 1 span, got %d: %+v", len(spans), spans)
-			}
-			if got := line[spans[0].Start:spans[0].End]; got != secret {
-				t.Errorf("the span covers %d of the value's %d characters; %d characters of the secret are left outside it",
-					utf8.RuneCountInString(got), utf8.RuneCountInString(secret),
-					utf8.RuneCountInString(secret)-utf8.RuneCountInString(got))
-			}
-		})
+		t.Run(name, func(t *testing.T) { assertOneSpan(t, line, secret) })
 	}
 	// CONTROL: values exactly at the bound and one character either side of it
 	// are each one whole span.
 	for _, n := range []int{511, 512, 513} {
-		v := nonASCIISecret(n)
-		spans := Spans("SECRET=" + v + " x")
-		if len(spans) != 1 || spans[0].End-spans[0].Start != len(v) {
-			t.Errorf("a %d-character value (%d bytes): %+v", n, len(v), spans)
+		v := testSecret(n, 0, true)
+		t.Run(fmt.Sprintf("%d characters", n), func(t *testing.T) { assertOneSpan(t, "SECRET="+v+" x", v) })
+	}
+}
+
+// TestSpansCoverACutValueWhoseEndTheCleanerMoved: when assignRe's capture is
+// cut at the bound, cleanValue can still move the value's end BEFORE the cut —
+// it trims a trailing `;`, and an unclosed quote sends a quoted value through
+// the unquoted rules, which end it at `,` `}` `]` or `)`. Spans used to extend a
+// cut value only when its end sat exactly at the cut, so in each of these
+// shapes the rest of the secret was left outside the span and sent.
+func TestSpansCoverACutValueWhoseEndTheCleanerMoved(t *testing.T) {
+	for _, accented := range []bool{false, true} {
+		head511, head510, head300 := testSecret(511, 0, accented), testSecret(510, 0, accented), testSecret(300, 0, accented)
+		tail200, tail300 := testSecret(200, 11, accented), testSecret(300, 11, accented)
+		cases := []struct{ name, line, want string }{
+			{"(a) unquoted, `;` at the bound",
+				"SECRET=" + head511 + ";" + tail200 + " trailing words",
+				head511 + ";" + tail200},
+			{"(c) quoted, `;` at the bound",
+				`{"sessionSecret": "` + head510 + ";" + tail200 + `", "other": 1}`,
+				head510 + ";" + tail200},
+		}
+		for _, d := range []string{",", "}", "]", ")"} {
+			cases = append(cases, struct{ name, line, want string }{
+				"(b) quoted, `" + d + "` inside the first 512",
+				`{"sessionSecret": "` + head300 + d + tail300 + `", "other": 1}`,
+				head300 + d + tail300,
+			})
+		}
+		for _, tc := range cases {
+			t.Run(fmt.Sprintf("%s accented=%v", tc.name, accented), func(t *testing.T) {
+				assertOneSpan(t, tc.line, tc.want)
+			})
 		}
 	}
+}
+
+// TestSpansStopAtADelimiterThatEndsTheValue is the other side of the test
+// above: extending a cut value must not run past a delimiter that really ends
+// it, and a value under the bound is never extended at all.
+func TestSpansStopAtADelimiterThatEndsTheValue(t *testing.T) {
+	short, head511, next := testSecret(20, 0, false), testSecret(511, 0, false), testSecret(30, 11, false)
+	cases := []struct{ name, line, want string }{
+		{"short unquoted, trailing `;`", "SECRET=" + short + "; next", short},
+		{"short unquoted, `,` then more", "SECRET=" + short + ",next=" + next, short},
+		{"short unquoted, `}` then more", "{SECRET=" + short + "}" + next, short},
+		{"short quoted", `{"sessionSecret": "` + short + `", "next": "` + next + `"}`, short},
+		{"cut unquoted, `,` at the bound", "SECRET=" + head511 + ",next=" + next, head511},
+		// Minified JSON: the capture runs past the value's closing quote into
+		// the next key and is cut there, but the value itself is closed.
+		{"cut capture, quoted value closed before the cut",
+			`{"secret":"` + short + `","other":"` + testSecret(600, 11, false) + `"}`, short},
+		{"cut capture, unquoted value ended by `,` before the cut",
+			"{SECRET=" + short + ",other=" + testSecret(600, 11, false) + "}", short},
+		{"exactly at the bound, then a space", "SECRET=" + head511 + "Q " + next, head511 + "Q"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { assertOneSpan(t, tc.line, tc.want) })
+	}
+}
+
+// TestNonASCIIValuesPassTheGateLikeASCIIOnes: the A2 gate's letter and entropy
+// tests once read BYTES, so a password written in a non-Latin script was
+// judged by its UTF-8 encoding — no ASCII letter at all, or a byte entropy far
+// below its character entropy — and went unreported, and unredacted.
+func TestNonASCIIValuesPassTheGateLikeASCIIOnes(t *testing.T) {
+	cases := []struct{ name, value string }{
+		// 12 distinct characters (entropy 3.58 bits each), but every Cyrillic
+		// letter here shares its lead byte, so the BYTE entropy is ~2.95.
+		{"character entropy above the floor, byte entropy below it", "a1ЖЩЯФЫВАПРО"},
+		// No ASCII letter anywhere.
+		{"letters only outside ASCII", "Пароль2024Секрет"},
+		// No ASCII digit anywhere (Arabic-Indic digits).
+		{"digits only outside ASCII", "KqZxLmRbTnVc٢٠٢٤"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			line := "DB_PASSWORD=" + tc.value
+			if _, ok := match(line); !ok {
+				t.Errorf("match is silent about %q", line)
+			}
+			assertOneSpan(t, line, tc.value)
+		})
+	}
+
+	// CONTROL: the fixtures sit where they claim to, so the cases above exercise
+	// the byte/character difference rather than passing on some other ground.
+	if h := byteEntropy(cases[0].value); h >= minEntropyBitsPerChar {
+		t.Errorf("CONTROL failure: %q has byte entropy %.2f, not below the %.1f floor", cases[0].value, h, minEntropyBitsPerChar)
+	}
+	if strings.ContainsFunc(cases[1].value, func(r rune) bool { return r < utf8.RuneSelf && unicode.IsLetter(r) }) {
+		t.Errorf("CONTROL failure: %q has an ASCII letter", cases[1].value)
+	}
+	if strings.ContainsAny(cases[2].value, "0123456789") {
+		t.Errorf("CONTROL failure: %q has an ASCII digit", cases[2].value)
+	}
+	// CONTROL: a low-entropy value is still silent whatever its script.
+	for _, v := range []string{"a1ЖЖЖЖЖЖЖЖЖЖЖ", "a1aaaaaaaaaaa"} {
+		if _, ok := match("DB_PASSWORD=" + v); ok {
+			t.Errorf("a low-entropy value %q fired", v)
+		}
+	}
+}
+
+// TestEntropyCountsInvalidBytesApart: entropy is measured over characters, but
+// a byte that is not valid UTF-8 stays its own symbol, as it was when entropy
+// was measured over bytes — four distinct invalid bytes must not collapse into
+// one U+FFFD and read as zero entropy.
+func TestEntropyCountsInvalidBytesApart(t *testing.T) {
+	if h := shannonBitsPerChar("\xff\xfe\xfd\xfc"); h != 2 {
+		t.Errorf("four distinct invalid bytes: entropy %.2f, want 2", h)
+	}
+	// CONTROL: the same count of distinct CHARACTERS reads the same.
+	if h := shannonBitsPerChar("ЖЩЯФ"); h != 2 {
+		t.Errorf("four distinct Cyrillic letters: entropy %.2f, want 2", h)
+	}
+}
+
+// byteEntropy is Shannon entropy over BYTES — the measure the gate used to
+// apply — kept here only to show the fixture above sits below the floor on it.
+func byteEntropy(s string) float64 {
+	var counts [256]int
+	for i := 0; i < len(s); i++ {
+		counts[s[i]]++
+	}
+	var h float64
+	for _, c := range counts {
+		if c > 0 {
+			p := float64(c) / float64(len(s))
+			h -= p * math.Log2(p)
+		}
+	}
+	return h
 }
