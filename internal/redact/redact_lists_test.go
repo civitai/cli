@@ -26,8 +26,11 @@ type knownCase struct {
 	// tokens are the configured credentials for this case (nil = the usual two).
 	tokens []string
 	in     string
-	// want is the exact output. For a miss it equals in.
+	// want is the exact output. For a miss it defaults to in.
 	want string
+	// survives, for a miss whose output is not the input, is the part that was
+	// meant to go and is still there.
+	survives string
 }
 
 type knownEntry struct {
@@ -64,6 +67,18 @@ var knownMisses = []knownEntry{
 		doc:   "a configured credential shorter than 8 characters (stderr says when one was skipped)",
 		cases: []knownCase{{tokens: []string{"ab12cd3"}, in: "the key ab12cd3 failed"}},
 	},
+	{
+		doc: "a URL query that contains a literal space: the URL token ends at the space, so `?q=hello world&sig=…` keeps `world&sig=…`",
+		cases: []knownCase{{
+			in:       "GET https://h.fieldstone.dev/s?q=hello world&sig=Gh5Jk7Lm9Np1Qr3St failed",
+			want:     "GET https://h.fieldstone.dev/s world&sig=Gh5Jk7Lm9Np1Qr3St failed",
+			survives: "sig=Gh5Jk7Lm9Np1Qr3St",
+		}},
+	},
+	{
+		doc:   "a JSON-escaped URL (`https:\\/\\/…?sig=…`): it is not recognised as a URL, so its query is kept",
+		cases: []knownCase{{in: `{"url":"https:\/\/cdn.fieldstone.dev\/f.bin?sig=Uv2Wx4Yz6Ab8Cd0Ef"}`}},
+	},
 }
 
 // knownOverRedactions is what redaction removes that was not a secret. Every
@@ -74,6 +89,12 @@ var knownOverRedactions = []knownEntry{
 		cases: []knownCase{
 			{in: "Authorization: Bearer credentials missing", want: "Authorization: <credential>"},
 			{in: `curl -H "Authorization: Basic xyz" https://api.fieldstone.dev/v1`, want: `curl -H "Authorization: <credential>`},
+		},
+	},
+	{
+		doc: "the line after an `Authorization` header whose own line holds no value — the value is looked for across line breaks",
+		cases: []knownCase{
+			{in: "Authorization:\nHost: api.fieldstone.dev\nAccept: */*", want: "Authorization:\n<credential>\nAccept: */*"},
 		},
 	},
 	{
@@ -130,10 +151,17 @@ func TestKnownMissesAreStillMisses(t *testing.T) {
 		for _, c := range e.cases {
 			r := c.redactor()
 			got := r.Apply(c.in)
-			if got != c.in {
-				t.Errorf("documented as NOT covered, but it was rewritten.\n entry: %s\n    in: %q\n   out: %q", e.doc, c.in, got)
+			want := c.want
+			if want == "" {
+				want = c.in
 			}
-			if n := len(r.Counts()); n != 0 {
+			if got != want {
+				t.Errorf("the documented miss no longer behaves as documented.\n entry: %s\n    in: %q\n   got: %q\n  want: %q", e.doc, c.in, got, want)
+			}
+			if c.survives != "" && !strings.Contains(got, c.survives) {
+				t.Errorf("documented as NOT covered, but %q is gone — remove the entry.\n entry: %s\n   out: %q", c.survives, e.doc, got)
+			}
+			if n := len(r.Counts()); want == c.in && n != 0 {
 				t.Errorf("%q: nothing was removed, yet %+v was counted", c.in, r.Counts())
 			}
 		}

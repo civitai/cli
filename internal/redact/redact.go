@@ -12,10 +12,9 @@
 // was removed from the text that is RETURNED: ApplyClipped does not count a
 // redaction that fell beyond its cut.
 //
-// Input must already be text. DecodeText (text.go) is the read boundary: it
-// turns a UTF-16 file into UTF-8 and refuses what is not text in one encoding.
-// The rules below are byte-oriented matchers, and NUL-interleaved UTF-16 does
-// not match them.
+// Input must already be UTF-8 text. UTF8Text (text.go) is the read boundary
+// for file and pipe content: it accepts valid UTF-8 with no NUL and refuses
+// everything else. The rules below are byte-oriented matchers over UTF-8.
 //
 // # The rules, in the order they run
 //
@@ -24,8 +23,9 @@
 //     its LAST `@` (kind credential), and everything from its first `?` or `#`
 //     to its end (kind url-query, which therefore covers a fragment too). See
 //     urls for the one case where the rest of the token goes as well.
-//  2. credential  — the value of an `Authorization` header: everything after
-//     the `:` or `=` to the end of that line, whatever the scheme.
+//  2. credential  — the value of an `Authorization` header, whatever the
+//     scheme: from the first non-blank character after the `:` or `=` — on
+//     that line or a later one — to the end of the line that character is on.
 //  3. token       — each configured credential value, matched EXACTLY.
 //  4. credential  — a PEM private-key block; an `x-api-key` / `api-key` value
 //     that has a digit; a bare `Bearer <value>` that has a digit; and what
@@ -81,12 +81,18 @@
 //     split across lines
 //   - a configured credential shorter than 8 characters (stderr says when one
 //     was skipped)
+//   - a URL query that contains a literal space: the URL token ends at the
+//     space, so `?q=hello world&sig=…` keeps `world&sig=…`
+//   - a JSON-escaped URL (`https:\/\/…?sig=…`): it is not recognised as a URL,
+//     so its query is kept
 //
 // KNOWN OVER-REDACTIONS — removed although not a secret. Each is in the safe
 // direction and none gets a rule of its own:
 //
 //   - everything after `Authorization:` to the end of that line, whatever it is
 //     — prose included, and anything else that shares the line
+//   - the line after an `Authorization` header whose own line holds no value —
+//     the value is looked for across line breaks
 //   - an `api-key` / `apiKey` assignment whose value has a digit, even when the
 //     value is a variable name
 //   - any URL userinfo, even a bare user name (`ssh://git@host/…` is counted as
@@ -470,21 +476,29 @@ func (r *Redactor) exactTokens(s string) string {
 // credscan's pattern, which removes just the words.
 var pemBlockRe = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\z)`)
 
-// authHeaderRe matches an `Authorization` header and its VALUE: group 1 is the
-// name and its `:` or `=` (kept, so the line still reads as a header), group 2
-// is everything after it to the end of that line (removed).
+// authHeaderRe matches an `Authorization` header and its VALUE. Group 1 is the
+// name, its `:` or `=`, and any white space after it — line breaks included —
+// and is kept. Group 2 starts at the first non-blank character after that and
+// runs to the end of the line it is on, and is removed.
 //
-// 🔴 TO THE END OF THE LINE, FOR ANY SCHEME. It used to name four schemes and
-// take one space-free word after the scheme — which fits Bearer and Basic and
-// not Digest, whose value is a comma-separated list with spaces:
-// `Digest username="Mufasa", …, response="6629…"` lost `username=` and kept
-// the response hash, under docs that said Digest was redacted. A header's
-// value is the rest of its line. The cost — prose after the word, and anything else on that line — is in
-// KNOWN OVER-REDACTIONS.
+// Two properties, each of which was once missing:
+//
+//   - THE VALUE RUNS TO THE END OF ITS LINE, FOR ANY SCHEME. The first version
+//     named four schemes and took one space-free word after the scheme, which
+//     fits Bearer and Basic and not Digest: `Digest username="Mufasa", …,
+//     response="6629…"` lost `username=` and kept the response hash.
+//   - THE VALUE MAY BE ON A LATER LINE. The second version allowed only spaces
+//     and tabs before the value, so a pretty-printed JSON headers object
+//     (`"Authorization":` then the value on the next line) and a folded header
+//     went out untouched — which the first version had caught.
+//
+// The cost of both — prose after the word, anything else on the value's line,
+// and the NEXT line when the header's own line is empty — is in KNOWN
+// OVER-REDACTIONS.
 //
 // It runs before the exact-token rule so that a header holding the configured
-// token is one redaction, not a placeholder swallowed by another.
-var authHeaderRe = regexp.MustCompile("(?i)\\b(authorization[\"']?[ \\t]*[:=][ \\t]*)(\\S[^\\r\\n]*)")
+// token is one redaction, not a placeholder taken in by another.
+var authHeaderRe = regexp.MustCompile("(?i)\\b(authorization[\"']?\\s*[:=]\\s*)(\\S[^\\r\\n]*)")
 
 // apiKeyRe matches the value of an `x-api-key` / `api-key` / `apiKey` /
 // `api_key` header, parameter or assignment. Group 1 is kept; group 2 is

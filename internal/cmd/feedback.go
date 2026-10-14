@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/config"
@@ -185,9 +186,9 @@ sending anything sensitive.
 
 --error-file <path> (or --error -, to read stdin) attaches an error excerpt:
 the first ` + strconv.Itoa(appapi.PlatformFeedbackErrorExcerptMax) + ` characters that remain after redaction. Trim the file to
-the lines that matter. UTF-8 and UTF-16 files are read; one that is binary, or
-that mixes the two, is refused. --error takes no other value: it does not
-accept the error text or a path.
+the lines that matter. The excerpt must be UTF-8 text; anything else is refused
+(Windows PowerShell 5.1's > writes UTF-16 — convert it first). --error takes no
+other value: it does not accept the error text or a path.
 
 --dry-run prints the exact request and sends nothing. It needs no login.
 
@@ -305,17 +306,17 @@ func runFeedbackSend(cmd *cobra.Command, f feedbackSendFlags, message string) er
 	if err != nil {
 		return err
 	}
-	// 🔴 BYTES BECOME TEXT HERE, BEFORE REDACTION SEES THEM. A UTF-16 file is
-	// NUL-interleaved ASCII to the matchers; undecoded, it went out with the
-	// configured token in it and `redactions: []`. What is not text in ONE
-	// encoding DecodeText reads — binary, or UTF-8 and UTF-16 in one file — is
-	// refused: it cannot be redacted, so it is not sent.
+	// 🔴 THE EXCERPT MUST BE UTF-8, AND WHAT IS NOT IS REFUSED HERE — before
+	// redaction, before any request exists. It is not decoded and not repaired:
+	// the redaction rules match UTF-8, so text in any other encoding reaches
+	// the wire with its secrets intact (redact.UTF8Text records the three ways
+	// a decoder got that wrong).
 	excerpt := ""
 	if hasExcerpt {
-		if excerpt, err = redact.DecodeText(rawExcerpt); err != nil {
-			return asUsageError(fmt.Errorf("the error excerpt from %s is not text in a single encoding this CLI reads: it is binary, "+
-				"or it mixes UTF-8 and UTF-16 in one file (PowerShell's >> onto a UTF-8 log does that), or it is UTF-16 holding "+
-				"characters that cannot be told apart from that — nothing was sent; save it as UTF-8 and pass it again", excerptSrc))
+		if excerpt, err = redact.UTF8Text(rawExcerpt); err != nil {
+			return asUsageError(fmt.Errorf("the error excerpt from %s is not UTF-8 text: it contains a NUL byte, or bytes that are not "+
+				"valid UTF-8 — nothing was sent. Convert it to UTF-8 and pass it again; in PowerShell: "+
+				"`Get-Content <path> | Set-Content -Encoding utf8 <out>` (Windows PowerShell 5.1's `>` writes UTF-16)", excerptSrc))
 		}
 	}
 
@@ -598,8 +599,12 @@ type feedbackErrorSource string
 
 // readFeedbackErrorExcerpt returns the RAW BYTES of --error-file / --error -,
 // where they came from, and whether either was given. It reads at most
-// feedbackErrorReadMax bytes and decodes nothing: redact.DecodeText is the one
-// place bytes become text.
+// feedbackErrorReadMax bytes and validates nothing: redact.UTF8Text is the one
+// place those bytes are accepted as text or refused.
+//
+// When the read stops AT the cap, up to three trailing bytes of a character the
+// cap cut in half are dropped (trimSplitRune), so a large valid file is not
+// refused as "not UTF-8" for a byte this function itself cut off.
 //
 // A path that is not there, or is a directory, is a mistake about the
 // invocation (exit 2); a file that is there and cannot be read is a filesystem
@@ -635,7 +640,7 @@ func readFeedbackErrorExcerpt(cmd *cobra.Command, f feedbackSendFlags) ([]byte, 
 		if err != nil {
 			return nil, src, false, fmt.Errorf("could not read --error-file %s: %w", path, err)
 		}
-		return raw, src, true, nil
+		return trimSplitRune(raw), src, true, nil
 	case cmd.Flags().Changed("error"):
 		if f.errorStdin != "-" {
 			return nil, "", false, asUsageError(fmt.Errorf("--error takes only - (read the error excerpt from stdin) — " +
@@ -645,9 +650,30 @@ func readFeedbackErrorExcerpt(cmd *cobra.Command, f feedbackSendFlags) ([]byte, 
 		if err != nil {
 			return nil, "stdin", false, fmt.Errorf("could not read the error excerpt from stdin: %w", err)
 		}
-		return raw, "stdin (--error -)", true, nil
+		return trimSplitRune(raw), "stdin (--error -)", true, nil
 	}
 	return nil, "", false, nil
+}
+
+// trimSplitRune drops the incomplete UTF-8 sequence a read that stopped at
+// feedbackErrorReadMax can end with. It acts only on input that is exactly the
+// cap long, and removes only a trailing lead byte and the continuation bytes
+// after it when that sequence is shorter than its lead byte announces. Input
+// that is invalid anywhere else is left for redact.UTF8Text to refuse.
+func trimSplitRune(raw []byte) []byte {
+	if len(raw) != feedbackErrorReadMax {
+		return raw
+	}
+	for back := 1; back <= utf8.UTFMax && back <= len(raw); back++ {
+		i := len(raw) - back
+		if utf8.RuneStart(raw[i]) {
+			if !utf8.FullRune(raw[i:]) {
+				return raw[:i]
+			}
+			break
+		}
+	}
+	return raw
 }
 
 // feedbackFieldFlags maps a wire field the user controls to the flag (or
@@ -690,9 +716,8 @@ func feedbackFieldUsageError(err error) error {
 // 🔴 AND IT LOOKS AT THE DECODED REQUEST, NOT ONLY ITS BYTES. A byte search of
 // the marshalled body is defeated by encoding: JSON writes `<`, `>`, `&` and a
 // quote as escapes, so a credential containing one never appears byte-for-byte.
-// Every string in the document is therefore checked after JSON decoding, with
-// NULs removed (the shape an undecoded UTF-16 excerpt had). The raw search
-// stays as well; it costs nothing and needs no parse to succeed.
+// Each string in the document is therefore checked after JSON decoding, with
+// NULs removed. The raw search stays as well; it needs no parse to succeed.
 func feedbackRefuseIfTokenInBody(body []byte, tokens []string) error {
 	if len(tokens) == 0 {
 		return nil

@@ -204,6 +204,23 @@ func TestHeaderCredentialsAreRemoved(t *testing.T) {
 		{"an Authorization scheme this package has never heard of", "Authorization: AWS4-HMAC-SHA256 Credential=AKIDharbor/20261014, Signature=fe5f80f77d5fa3beca038a248ff027d0",
 			"fe5f80f77d5fa3beca038a248ff027d0", "Authorization: <credential>"},
 		{"only that line: the next one is kept", "Authorization: Bearer Hy6Tg5Rf4Ed3Ws2Qa1\nHost: api.harborlight.dev", "Hy6Tg5Rf4Ed3Ws2Qa1", "Authorization: <credential>\nHost: api.harborlight.dev"},
+		// Round 3: the round-2 rewrite allowed only spaces and tabs between the
+		// separator and the value, so a value on the NEXT line — how a
+		// pretty-printed JSON headers object and a folded header are written —
+		// went out untouched, where the round-1 rule had removed it.
+		{"the value on the next line, JSON-quoted, LF",
+			"  \"Authorization\":\n    \"Basic dXNlcjpwYXNzd29yZA==\",\n  \"Accept\": \"*/*\"", "dXNlcjpwYXNzd29yZA==",
+			"  \"Authorization\":\n    <credential>\n  \"Accept\": \"*/*\""},
+		{"the value on the next line, JSON-quoted, CRLF",
+			"  \"Authorization\":\r\n    \"Basic c3ZjOnRpZGVwb29sczEyMw==\",\r\n  \"Accept\": \"*/*\"", "c3ZjOnRpZGVwb29sczEyMw==",
+			"  \"Authorization\":\r\n    <credential>\r\n  \"Accept\": \"*/*\""},
+		{"the value on the next line, bare, no digit in it",
+			"Authorization:\n  Bearer ZxCvBnMaSdFgHjKlQwErTyUi\nHost: api.harborlight.dev", "ZxCvBnMaSdFgHjKlQwErTyUi",
+			"Authorization:\n  <credential>\nHost: api.harborlight.dev"},
+		{"the value on the next line, bare, CRLF",
+			"Authorization:\r\n\tBearer Lk8Jh7Gf6Ds5Aq4Pw3Oe2\r\nHost: api.harborlight.dev", "Lk8Jh7Gf6Ds5Aq4Pw3Oe2",
+			"Authorization:\r\n\t<credential>\r\nHost: api.harborlight.dev"},
+		{"the value after a blank line", "Authorization =\n\n  Token Mn2Bv3Cx4Zl5Kj6Hg7\ndone", "Mn2Bv3Cx4Zl5Kj6Hg7", "Authorization =\n\n  <credential>\ndone"},
 		{"x-api-key header", "< x-api-key: f3a91c07d2b84e65a0c9", "f3a91c07d2b84e65a0c9", "< x-api-key: <credential>"},
 		{"api-key in a form body", "body was api-key=7d1e4b9a2c6f8035e1d7 and nothing else", "7d1e4b9a2c6f8035e1d7", "body was api-key=<credential> and nothing else"},
 	}

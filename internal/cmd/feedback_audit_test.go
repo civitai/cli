@@ -48,32 +48,119 @@ func pfSentStrings(t *testing.T, body string) (message, excerpt string) {
 	return sent.JSON.Message, sent.JSON.Report.ErrorExcerpt
 }
 
-// pfPowerShellLog is what `civitai app submit *> err.log` leaves behind on
-// Windows: the configured token, an e-mail address and a user's home path.
+// pfPowerShellLog is what a failing run leaves in a log on Windows: the
+// configured token, an e-mail address and a user's home path.
 const pfPowerShellLog = "PS C:\\Users\\Ingrid Solberg\\tide-chart> civitai app submit\r\n" +
 	"login printed " + pfTestToken + "\r\n" +
 	"contact ingrid.solberg@northwind-labs.io\r\n"
 
-// TestFeedbackSendDecodesUTF16BeforeRedacting: a UTF-16 file is NUL-interleaved
-// ASCII as far as a byte-oriented matcher is concerned, so every rule — and the
-// token backstop — saw nothing, and the request carried the token, the e-mail
-// address and the user name with `redactions: []`.
-func TestFeedbackSendDecodesUTF16BeforeRedacting(t *testing.T) {
-	encodings := []struct {
-		name           string
-		bigEndian, bom bool
-	}{
-		{"UTF-16LE with a BOM", false, true},
-		{"UTF-16BE with a BOM", true, true},
-		{"UTF-16LE without a BOM", false, false},
-		{"UTF-16BE without a BOM", true, false},
+// pfNotUTF8 is every kind of excerpt that must be refused: the bytes are not
+// valid UTF-8, or they hold a NUL. Each carries the configured token, so a case
+// that is NOT refused shows up as a leak rather than as a tidy pass.
+func pfNotUTF8() map[string][]byte {
+	binary := make([]byte, 900)
+	for i := range binary {
+		binary[i] = byte(i*37 + 11)
 	}
-	for _, enc := range encodings {
+	copy(binary[100:], pfTestToken)
+
+	// Audit round 3: a byte-order-marked UTF-16 file with one stray byte in the
+	// middle (a lone LF, as a UTF-8 tool appending a newline writes), so
+	// everything after it is shifted by one: each ASCII character now reads as
+	// the HIGH byte of a unit over a zero low byte.
+	shifted := append(pfUTF16("header line\r\n", false, true), '\n')
+	shifted = append(shifted, pfUTF16(pfPowerShellLog, false, false)...)
+	shifted = append(shifted, '\n')
+
+	// Audit round 2: a UTF-8 log with a UTF-16LE tail appended (PowerShell 5.1 `>>`).
+	mixed := append([]byte("2026-10-14 login printed "+pfTestToken+"\n"),
+		pfUTF16(strings.Repeat("PS> civitai app submit failed with 401\r\n", 3), false, false)...)
+
+	return map[string][]byte{
+		"UTF-16LE with a BOM (PowerShell 5.1 redirect)":   pfUTF16(pfPowerShellLog, false, true),
+		"UTF-16BE with a BOM":                             pfUTF16(pfPowerShellLog, true, true),
+		"UTF-16LE without a BOM":                          pfUTF16(pfPowerShellLog, false, false),
+		"UTF-16BE without a BOM":                          pfUTF16(pfPowerShellLog, true, false),
+		"UTF-16LE with a BOM and no NUL byte anywhere":    pfUTF16("中文日本語中文日本語", false, true),
+		"a BOM'd UTF-16 file with a byte-shifted section": shifted,
+		"UTF-8 with a UTF-16 tail appended":               mixed,
+		"Latin-1":                                         []byte("caf\xe9 failed, login printed " + pfTestToken + "\n"),
+		"a lone NUL":                                      []byte("login printed " + pfTestToken + "\x00 and hung\n"),
+		"random binary":                                   binary,
+	}
+}
+
+// TestFeedbackSendRefusesAnExcerptThatIsNotUTF8: --error-file and --error -
+// take valid UTF-8 with no NUL, and nothing else. Whatever else arrives is
+// refused with exit 2 BEFORE a request is built — it is not decoded, and it is
+// not repaired.
+//
+// This replaces a UTF-16 decoder that was rewritten twice and leaked each time:
+// undecoded UTF-16 matched no rule (round 1); a UTF-8 file with a UTF-16 tail
+// was decoded whole as UTF-16 (round 2); a marked UTF-16 file with a
+// byte-shifted section passed the unit test (round 3). In every case the token
+// left as characters no rule and no backstop recognised.
+func TestFeedbackSendRefusesAnExcerptThatIsNotUTF8(t *testing.T) {
+	for name, raw := range pfNotUTF8() {
 		for _, via := range []string{"--error-file", "--error -"} {
-			t.Run(enc.name+" via "+via, func(t *testing.T) {
+			t.Run(name+" via "+via, func(t *testing.T) {
 				f := &pfFake{t: t, create: pfCreated(pfReceived)}
 				f.serve()
-				raw := pfUTF16(pfPowerShellLog, enc.bigEndian, enc.bom)
+				args := []string{"feedback", "send", "--about", "cli"}
+				stdin := ""
+				if via == "--error-file" {
+					p := filepath.Join(f.projectDir, "err.log")
+					if err := os.WriteFile(p, raw, 0o600); err != nil {
+						t.Fatal(err)
+					}
+					args = append(args, "--error-file", p)
+				} else {
+					stdin = string(raw)
+					args = append(args, "--error", "-")
+				}
+				_, _, err := runWithStdin(t, stdin, append(args, "submit fails on Windows")...)
+
+				// Zero requests is the property; it is asserted first and
+				// whatever the error turned out to be.
+				if reqs := f.seen(); len(reqs) != 0 {
+					_, excerpt := pfSentStrings(t, reqs[0].body)
+					var b []byte
+					for _, u := range utf16.Encode([]rune(excerpt)) {
+						b = append(b, byte(u), byte(u>>8))
+					}
+					t.Fatalf("the server saw %d request(s). Sent excerpt: %q\ntoken present as text: %v; token recoverable by re-encoding it as UTF-16: %v",
+						len(reqs), excerpt, strings.Contains(excerpt, pfTestToken),
+						strings.Contains(strings.ReplaceAll(string(b), "\x00", ""), pfTestToken))
+				}
+				assertOnlyKind(t, err, "ErrUsage")
+				for _, want := range []string{"is not UTF-8 text", "Set-Content -Encoding utf8", "PowerShell 5.1", "nothing was sent"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not say %q:\n%v", want, err)
+					}
+				}
+				if strings.Contains(err.Error(), pfTestToken) {
+					t.Errorf("the refusal echoes the excerpt: %v", err)
+				}
+			})
+		}
+	}
+}
+
+// TestFeedbackSendAcceptsUTF8WithOrWithoutABOM is the positive control for the
+// test above: UTF-8 is read, redacted and sent — including the characters an
+// earlier UTF-16 rule refused (… • ™ ❌ ═), a Han character, an accented letter
+// and an emoji — and a UTF-8 byte-order mark is dropped.
+func TestFeedbackSendAcceptsUTF8WithOrWithoutABOM(t *testing.T) {
+	const log = "… • ™ ❌ ═ 中 é 😀\r\nlogin printed " + pfTestToken + "\r\ncontact ingrid.solberg@northwind-labs.io\r\n"
+	const want = "… • ™ ❌ ═ 中 é 😀\r\nlogin printed <token>\r\ncontact <email>"
+	for name, raw := range map[string][]byte{
+		"UTF-8":            []byte(log),
+		"UTF-8 with a BOM": append([]byte{0xEF, 0xBB, 0xBF}, log...),
+	} {
+		for _, via := range []string{"--error-file", "--error -"} {
+			t.Run(name+" via "+via, func(t *testing.T) {
+				f := &pfFake{t: t, create: pfCreated(pfReceived)}
+				f.serve()
 				args := []string{"--no-color", "feedback", "send", "--about", "cli", "--json"}
 				stdin := ""
 				if via == "--error-file" {
@@ -86,31 +173,15 @@ func TestFeedbackSendDecodesUTF16BeforeRedacting(t *testing.T) {
 					stdin = string(raw)
 					args = append(args, "--error", "-")
 				}
-				out, _, err := runWithStdin(t, stdin, append(args, "submit fails on Windows")...)
+				out, _, err := runWithStdin(t, stdin, append(args, "submit fails")...)
 				if err != nil {
 					t.Fatalf("feedback send: %v", err)
 				}
-				body := pfSentBody(t, f)
-				_, excerpt := pfSentStrings(t, body)
-
-				// Asserted on the DECODED excerpt and with NULs removed, so
-				// neither JSON escaping nor interleaving can hide a survivor.
-				flat := strings.ReplaceAll(excerpt, "\x00", "")
-				for name, secret := range map[string]string{
-					"the configured token": pfTestToken, "the e-mail address": "ingrid.solberg@northwind-labs.io", "the user name": "Solberg",
-				} {
-					if strings.Contains(flat, secret) {
-						t.Errorf("%s is in the request: %q", name, excerpt)
-					}
-				}
-				if strings.Contains(body, `\u0000`) {
-					t.Errorf("the request body carries a NUL, which the server rejects:\n%s", body)
-				}
-				const want = "PS C:\\Users\\<user>\\tide-chart> civitai app submit\r\nlogin printed <token>\r\ncontact <email>"
+				_, excerpt := pfSentStrings(t, pfSentBody(t, f))
 				if excerpt != want {
 					t.Errorf("excerpt:\n got: %q\nwant: %q", excerpt, want)
 				}
-				for _, kind := range []string{`"kind": "token"`, `"kind": "email"`, `"kind": "user-path"`} {
+				for _, kind := range []string{`"kind": "token"`, `"kind": "email"`} {
 					if !strings.Contains(out, kind) {
 						t.Errorf("the envelope does not count %s:\n%s", kind, out)
 					}
@@ -120,41 +191,28 @@ func TestFeedbackSendDecodesUTF16BeforeRedacting(t *testing.T) {
 	}
 }
 
-// TestFeedbackSendRefusesAnExcerptThatIsNotText: what cannot be decoded cannot
-// be redacted, so it is refused before any request rather than sent as-is.
-func TestFeedbackSendRefusesAnExcerptThatIsNotText(t *testing.T) {
-	binary := make([]byte, 900)
-	for i := range binary {
-		binary[i] = byte(i*37 + 11)
+// TestFeedbackSendReadCapDoesNotSplitACharacter: only the first megabyte of an
+// excerpt is read. When that cut lands inside a multi-byte character the
+// incomplete tail is dropped, so a large valid UTF-8 log is not refused as
+// "not UTF-8" for a byte this command itself cut off.
+func TestFeedbackSendReadCapDoesNotSplitACharacter(t *testing.T) {
+	f := &pfFake{t: t, create: pfCreated(pfReceived)}
+	f.serve()
+	// One ASCII byte, then two-byte characters: every odd offset — the cap
+	// included — is the middle of a character.
+	big := "x" + strings.Repeat("é", feedbackErrorReadMax)
+	if feedbackErrorReadMax%2 != 0 {
+		t.Fatal("fixture defect: the read cap is odd, so this layout does not split a character")
 	}
-	// The token is inside, NUL-separated in no encoding's shape.
-	copy(binary[100:], "c7a1\x00\x00e94d2b6f4083a5d1c9e7b3f20846")
-
-	for _, via := range []string{"--error-file", "--error -"} {
-		t.Run(via, func(t *testing.T) {
-			f := &pfFake{t: t}
-			f.serve()
-			args := []string{"feedback", "send", "--about", "cli"}
-			stdin := ""
-			if via == "--error-file" {
-				p := filepath.Join(f.projectDir, "core.bin")
-				if err := os.WriteFile(p, binary, 0o600); err != nil {
-					t.Fatal(err)
-				}
-				args = append(args, "--error-file", p)
-			} else {
-				stdin = string(binary)
-				args = append(args, "--error", "-")
-			}
-			_, _, err := runWithStdin(t, stdin, append(args, "it crashed")...)
-			assertOnlyKind(t, err, "ErrUsage")
-			if !strings.Contains(err.Error(), "is not text") {
-				t.Errorf("the refusal must say why, got: %v", err)
-			}
-			if n := len(f.seen()); n != 0 {
-				t.Errorf("the server saw %d request(s); binary input is refused first", n)
-			}
-		})
+	p := filepath.Join(f.projectDir, "big.log")
+	if err := os.WriteFile(p, []byte(big), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := run(t, "feedback", "send", "--about", "cli", "--error-file", p, "it broke"); err != nil {
+		t.Fatalf("a valid UTF-8 file longer than the read cap was refused: %v", err)
+	}
+	if _, excerpt := pfSentStrings(t, pfSentBody(t, f)); !strings.HasPrefix(excerpt, "xééé") || strings.ContainsRune(excerpt, 0xFFFD) {
+		t.Errorf("unexpected excerpt start: %q", excerpt[:20])
 	}
 }
 
@@ -264,44 +322,5 @@ func TestFeedbackSDKNamesMustLookLikePackageNames(t *testing.T) {
 	}
 	if want := "@civitai/app-sdk @civitai/blocks-react_v2.x"; strings.Join(names, " ") != want {
 		t.Errorf("sent names = %q, want %q", strings.Join(names, " "), want)
-	}
-}
-
-// TestFeedbackSendRefusesAFileThatMixesEncodings (audit round 2): a UTF-8 log
-// with a UTF-16 tail appended used to be decoded whole as UTF-16; the UTF-8
-// part — token included — became characters no rule matches and was sent with
-// the backstop silent. It is refused, at every ratio of prefix to tail.
-func TestFeedbackSendRefusesAFileThatMixesEncodings(t *testing.T) {
-	prefix := "2026-10-14 login printed " + pfTestToken + "\n"
-	for _, tailLines := range []int{1, 3, 40} {
-		tail := strings.Repeat("PS> civitai app submit failed with 401\r\n", tailLines)
-		f := &pfFake{t: t, create: pfCreated(pfReceived)}
-		f.serve()
-		p := filepath.Join(f.projectDir, "mixed.log")
-		if err := os.WriteFile(p, append([]byte(prefix), pfUTF16(tail, false, false)...), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		_, _, err := run(t, "feedback", "send", "--about", "cli", "--error-file", p, "submit fails")
-		if !errors.Is(err, ErrUsage) {
-			// Show what went out, re-encoded the way a reader could recover it.
-			leaked := false
-			for _, req := range f.seen() {
-				_, excerpt := pfSentStrings(t, req.body)
-				var b []byte
-				for _, u := range utf16.Encode([]rune(excerpt)) {
-					b = append(b, byte(u), byte(u>>8))
-				}
-				leaked = leaked || strings.Contains(string(b), pfTestToken)
-			}
-			t.Errorf("%d tail line(s): want a usage error (exit 2), got %v; requests sent: %d; token recoverable from what was sent: %v",
-				tailLines, err, len(f.seen()), leaked)
-			continue
-		}
-		if !strings.Contains(err.Error(), "mixes") {
-			t.Errorf("the refusal must say the file mixes encodings, got: %v", err)
-		}
-		if n := len(f.seen()); n != 0 {
-			t.Errorf("%d tail line(s): the server saw %d request(s)", tailLines, n)
-		}
 	}
 }

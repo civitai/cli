@@ -43,43 +43,27 @@ The message and the error excerpt go through `internal/redact` BEFORE the
 request is assembled, so the wire, the `--dry-run` print and the `--json` echo
 are all built from the redacted text.
 
-🔴 **Bytes become text first, and a file is one encoding or it is refused.**
-`--error-file` and `--error -` are read as bytes and decoded by
-`redact.DecodeText` before any rule runs. The rules are byte-oriented matchers,
-and a PowerShell-redirected log (UTF-16LE) is NUL-interleaved ASCII to them —
-measured on the first build of this command, such a file went out with the
-configured token in it and `redactions: []`. What `DecodeText` reads, exactly:
+🔴 **The error excerpt must be UTF-8, and nothing else is read.**
+`--error-file` and `--error -` are read as bytes and handed to
+`redact.UTF8Text`, which accepts them when they are valid UTF-8 with no NUL
+byte (one leading UTF-8 byte-order mark is dropped) and refuses everything
+else — exit `2`, before redaction and before any request is built. A UTF-16 or
+UTF-32 file, Latin-1, a stray NUL and a binary file are all refused; an invalid
+byte is not turned into a replacement character. The error says how to convert
+a file, with a PowerShell example, and that Windows PowerShell 5.1's `>` writes
+UTF-16.
 
-- **UTF-8**, with or without a byte-order mark — chosen when the input has no
-  UTF-16 mark and contains no NUL byte.
-- **UTF-16 announced by a byte-order mark**, when every code unit passes the
-  unit test below for that byte order.
-- **UTF-16 with no byte-order mark** — considered only when the input contains
-  a NUL byte — when every code unit passes in exactly one of the two orders.
+There was a UTF-16 decoder here for three audit rounds, and each version let a
+credential out: with no decoding, UTF-16 matched no rule; with a proportion
+test, a UTF-8 log with a UTF-16 tail was decoded whole as UTF-16; with a
+per-code-unit test, a marked UTF-16 file with one stray byte still passed. Each
+time the secret left as characters no rule and no backstop recognised. Do not
+add a decoder back: telling encodings apart from bytes is guesswork, and UTF-8
+validity is not.
 
-The unit test (`utf16UnitOK`), for a unit's high and low bytes: it passes when
-the high byte is zero and the low byte is not (ASCII and Latin-1 — the
-NUL-interleave); or when the high byte is non-zero, the two bytes are not BOTH
-printable ASCII, and — if no mark established the order — it is not an ASCII
-high byte over a zero low byte. Anything else is refused (exit `2`): an odd byte count, a UTF-32
-mark, a failing unit, mark-less input that passes in both orders or neither,
-and content that decodes to mostly control characters.
-
-There is no "mostly UTF-16". The first version of this accepted mark-less input
-once enough of its bytes fitted the pattern, and PowerShell 5.1's `>>` onto a
-UTF-8 log produces a file that did: decoded whole as UTF-16, the UTF-8 head
-became CJK-range characters that still encode its bytes, matched no rule, and
-was sent with the token check silent. "Both bytes printable ASCII" is what a
-UTF-8 region looks like, which is why one such unit refuses the file.
-
-The cost, stated: genuine UTF-16 containing a character whose two bytes are
-both printable ASCII (中, U+4E2D, is `2D 4E`; many common CJK characters are in
-that range) is refused with or without a mark, and mark-less UTF-16 containing
-a character below U+8000 with a zero low byte (一, U+4E00) is refused too. The error says to
-save the log as UTF-8.
-
-The message is passed through `redact.CleanText` (NUL removed, invalid UTF-8
-replaced), because the server rejects both.
+The MESSAGE is a command-line argument, not a file, and is passed through
+`redact.CleanText` instead (NUL removed, invalid UTF-8 replaced), because the
+server rejects both.
 
 The rules, in the order they run:
 
@@ -87,7 +71,7 @@ The rules, in the order they run:
 |---|---|---|---|
 | 1 | `credential` | in a URL token (scheme to the next white space): everything between `://` and its last `@` | `<credential>` |
 | 1 | `url-query` | in a URL token: everything from its first `?` or `#` to its end | nothing |
-| 2 | `credential` | the value of an `Authorization` header: everything after the `:` or `=` to the end of that line | `<credential>` |
+| 2 | `credential` | the value of an `Authorization` header, whatever the scheme: from the first non-blank character after the `:` or `=` — on that line or a later one — to the end of the line that character is on | `<credential>` |
 | 3 | `token` | each configured credential value, matched exactly (the stored token, the OAuth access and refresh tokens, `$CIVITAI_TOKEN`) | `<token>` |
 | 4 | `credential` | a PEM private-key block; an `x-api-key` / `api-key` value that has a digit; a bare `Bearer <value>` that has a digit; what `credscan.Spans` locates (known token formats, the value of a strict `KEY=value` assignment) | `<credential>` |
 | 5 | `email` | an e-mail address | `<email>` |
@@ -161,12 +145,18 @@ KNOWN MISSES — sent as typed:
   split across lines
 - a configured credential shorter than 8 characters (stderr says when one was
   skipped)
+- a URL query that contains a literal space: the URL token ends at the space,
+  so `?q=hello world&sig=…` keeps `world&sig=…`
+- a JSON-escaped URL (`https:\/\/…?sig=…`): it is not recognised as a URL, so
+  its query is kept
 
 KNOWN OVER-REDACTIONS — removed although not a secret. Each is in the safe
 direction and none gets a rule of its own:
 
 - everything after `Authorization:` to the end of that line, whatever it is —
   prose included, and anything else that shares the line
+- the line after an `Authorization` header whose own line holds no value — the
+  value is looked for across line breaks
 - an `api-key` / `apiKey` assignment whose value has a digit, even when the
   value is a variable name
 - any URL userinfo, even a bare user name (`ssh://git@host/…` is counted as a
