@@ -91,8 +91,9 @@
 //     the first that passes the gate (every credential word on the line gets its
 //     turn — see matchAssignment — but the line stops at the first hit). A value
 //     is read as far as its closing quote, its first structural delimiter, or
-//     512 bytes, whichever comes first, so a secret longer than 512 bytes is
-//     seen only in part (it still fires — the gate has no upper length).
+//     512 characters, whichever comes first, so a secret longer than 512
+//     characters is seen only in part (it still fires — the gate has no upper
+//     length).
 //   - GOOGLE API KEYS are exempt by shape — see publicByDesignRe — so a Google
 //     *server* key is a deliberate false negative, and so is a headerless PKCS#8
 //     body (see knownFormats).

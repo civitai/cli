@@ -3,6 +3,7 @@ package credscan
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // Spans is Scan's two detectors with the LOCATION kept. These tests pin the two
@@ -91,7 +92,7 @@ func TestSpansAgreeWithMatch(t *testing.T) {
 }
 
 // TestSpansCoverAValueLongerThanTheCaptureBound: assignRe bounds its value
-// capture at 512 bytes — a complexity fix (see assignRe) that is right for a
+// capture at 512 characters — a complexity fix (see assignRe) that is right for a
 // detector, which only needs to know the line holds a secret. A consumer that
 // REMOVES the secret needs all of it: redacting the first 512 bytes of a
 // 700-byte value sends the other 188.
@@ -119,5 +120,61 @@ func TestSpansCoverAValueLongerThanTheCaptureBound(t *testing.T) {
 	at := secret[:512]
 	if spans := Spans("SESSION_SECRET=" + at + " x"); len(spans) != 1 || spans[0].End-spans[0].Start != 512 {
 		t.Errorf("a 512-byte value: %+v", spans)
+	}
+}
+
+// nonASCIISecret returns a value of exactly n CHARACTERS that passes A2's gate
+// and carries a two-byte character in every eighth position, so its byte length
+// is well above n.
+func nonASCIISecret(n int) string {
+	const alphabet = "Kq9Zx2Lm7Rb5Tn8Vc4Hd6Yw1Pf3Sg0Uj"
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		if i%8 == 7 {
+			b.WriteRune('é')
+			continue
+		}
+		b.WriteByte(alphabet[(i*7)%len(alphabet)])
+	}
+	return b.String()
+}
+
+// TestSpansCoverANonASCIIValueLongerThanTheCaptureBound: assignRe's `{1,512}`
+// counts CHARACTERS (Go's regexp matches runes), so the capture of a value
+// carrying non-ASCII text stops at 512 characters, which is more than 512 bytes.
+// A check that compared the capture's BYTE length to the bound never saw the
+// capture as cut, so the span ended at character 512 and redaction sent the
+// rest of the secret. The ASCII test above cannot see this: there, characters
+// and bytes are the same number.
+func TestSpansCoverANonASCIIValueLongerThanTheCaptureBound(t *testing.T) {
+	secret := nonASCIISecret(700)
+	if utf8.RuneCountInString(secret) != 700 || len(secret) <= 700 {
+		t.Fatalf("CONTROL failure: fixture is %d characters / %d bytes; it must be 700 characters and more bytes",
+			utf8.RuneCountInString(secret), len(secret))
+	}
+	for name, line := range map[string]string{
+		"unquoted": "SECRET=" + secret + " trailing words",
+		"quoted":   `{"sessionSecret": "` + secret + `", "other": 1}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			spans := Spans(line)
+			if len(spans) != 1 {
+				t.Fatalf("want 1 span, got %d: %+v", len(spans), spans)
+			}
+			if got := line[spans[0].Start:spans[0].End]; got != secret {
+				t.Errorf("the span covers %d of the value's %d characters; %d characters of the secret are left outside it",
+					utf8.RuneCountInString(got), utf8.RuneCountInString(secret),
+					utf8.RuneCountInString(secret)-utf8.RuneCountInString(got))
+			}
+		})
+	}
+	// CONTROL: values exactly at the bound and one character either side of it
+	// are each one whole span.
+	for _, n := range []int{511, 512, 513} {
+		v := nonASCIISecret(n)
+		spans := Spans("SECRET=" + v + " x")
+		if len(spans) != 1 || spans[0].End-spans[0].Start != len(v) {
+			t.Errorf("a %d-character value (%d bytes): %+v", n, len(v), spans)
+		}
 	}
 }

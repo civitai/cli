@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // Issue #464: the packager's exclusions are NAME rules, so a credential in an
@@ -1160,9 +1161,9 @@ func TestValueCaptureIsANonSpaceRun(t *testing.T) {
 			t.Errorf("the value capture for %q is %q, which carries whitespace. The gate no longer tests for "+
 				"that — this pattern is the only thing enforcing it.", line, m[4])
 		}
-		if len(m[4]) > 512 {
-			t.Errorf("the value capture for %q is %d bytes; the bound is 512, and that bound is what keeps "+
-				"the per-line scan linear", line, len(m[4]))
+		if n := utf8.RuneCountInString(m[4]); n > assignValueBound {
+			t.Errorf("the value capture for %q is %d characters; the bound is %d, and that bound is what keeps "+
+				"the per-line scan linear", line, n, assignValueBound)
 		}
 	}
 }

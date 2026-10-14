@@ -3,6 +3,7 @@ package credscan
 import (
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // Span is a half-open byte range [Start, End) of one line that this package's
@@ -50,7 +51,7 @@ func Spans(line string) []Span {
 			// offset without a second copy of the cleaning rules.
 			if i := strings.Index(raw, value); i >= 0 {
 				sp := Span{rawStart + i, rawStart + i + len(value)}
-				if rawEnd-rawStart == assignValueBound && sp.End == rawEnd {
+				if utf8.RuneCountInString(raw) == assignValueBound && sp.End == rawEnd {
 					sp = wholeValue(line, rawStart, sp)
 				}
 				out = append(out, sp)
@@ -80,6 +81,13 @@ func Spans(line string) []Span {
 // assignValueBound is the length assignRe's value group stops at. It is restated
 // here, and TestSpansCoverAValueLongerThanTheCaptureBound fails if the two
 // disagree (a 700-byte value would come back short).
+//
+// 🔴 IT IS A COUNT OF CHARACTERS (runes), NOT BYTES. Go's regexp matches runes,
+// so `\S{1,512}` stops after 512 characters — 512 bytes only when they are all
+// ASCII. Spans once compared the capture's BYTE length to it, so a value
+// carrying non-ASCII text was never seen as cut and everything past its 512th
+// character was left outside the span — and sent by the redactor.
+// TestSpansCoverANonASCIIValueLongerThanTheCaptureBound pins the unit.
 const assignValueBound = 512
 
 // wholeValue extends a span that stopped at assignRe's capture bound to the
@@ -87,8 +95,9 @@ const assignValueBound = 512
 //
 // 🔴 THE BOUND IS A COMPLEXITY FIX FOR THE DETECTOR, NOT A STATEMENT ABOUT HOW
 // LONG A SECRET IS. Scan only needs to know the line holds one, so capturing
-// 512 bytes of it is enough there. A consumer that REMOVES the secret needs all
-// of it: redacting the first 512 bytes of a 700-byte value sends the rest. The
+// 512 characters of it is enough there. A consumer that REMOVES the secret needs
+// all of it: redacting the first 512 characters of a 700-character value sends
+// the rest. The
 // extension is one linear walk from the capture's end — not the per-word rescan
 // of the line that the bound exists to limit.
 //

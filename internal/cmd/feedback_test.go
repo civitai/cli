@@ -661,6 +661,43 @@ func TestFeedbackSendDryRunNeedsNoLogin(t *testing.T) {
 	}
 }
 
+// TestFeedbackSendDryRunRemovesALongNonASCIISecretWhole: an assignment value
+// longer than credscan's 512-character capture that carries non-ASCII text was
+// once cut at character 512, and the dry run printed — and a send would have
+// sent — the rest of the secret.
+func TestFeedbackSendDryRunRemovesALongNonASCIISecretWhole(t *testing.T) {
+	f := &pfFake{t: t}
+	f.serve()
+	const alphabet = "Kq9Zx2Lm7Rb5Tn8Vc4Hd6Yw1Pf3Sg0Uj"
+	var b strings.Builder
+	for i := 0; i < 700; i++ {
+		if i%8 == 7 {
+			b.WriteRune('é')
+			continue
+		}
+		b.WriteByte(alphabet[(i*7)%len(alphabet)])
+	}
+	secret := b.String()
+
+	out, _, err := run(t, "--no-color", "feedback", "send", "--about", "mcp", "--dry-run",
+		"the server rejects SECRET="+secret+" on start")
+	if err != nil {
+		t.Fatalf("feedback send --dry-run: %v", err)
+	}
+	// encoding/json escapes `<` and `>` in the printed body.
+	jsonEsc := strings.NewReplacer("<", `\`+"u003c", ">", `\`+"u003e")
+	if !strings.Contains(out, jsonEsc.Replace(`"message": "the server rejects SECRET=<credential> on start"`)) {
+		t.Errorf("the dry run did not show the secret replaced whole:\n%s", out)
+	}
+	// The tail is the part a cut at the bound leaves behind.
+	if tail := string([]rune(secret)[600:]); strings.Contains(out, tail) {
+		t.Errorf("the dry run prints the last 100 characters of the secret")
+	}
+	if n := len(f.seen()); n != 0 {
+		t.Errorf("the server saw %d request(s)", n)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // send: bounds are enforced on this side of the wire
 // ---------------------------------------------------------------------------

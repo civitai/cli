@@ -413,3 +413,27 @@ func TestABareMentionOfAKeyHeaderDoesNotEatTheSentence(t *testing.T) {
 		t.Errorf("got  %q\nwant %q", got, want)
 	}
 }
+
+// TestALongNonASCIIAssignmentValueIsRemovedWhole: credscan's assignment capture
+// stops at 512 CHARACTERS. A value longer than that which carries non-ASCII text
+// was once cut there — its capture was measured in bytes against a bound in
+// characters — and the rest of the secret was sent after the placeholder.
+func TestALongNonASCIIAssignmentValueIsRemovedWhole(t *testing.T) {
+	const alphabet = "Kq9Zx2Lm7Rb5Tn8Vc4Hd6Yw1Pf3Sg0Uj"
+	var b strings.Builder
+	for i := 0; i < 700; i++ {
+		if i%8 == 7 {
+			b.WriteRune('é')
+			continue
+		}
+		b.WriteByte(alphabet[(i*7)%len(alphabet)])
+	}
+	secret := b.String()
+
+	got := newTestRedactor().Apply("SECRET=" + secret + " trailing words")
+	if want := "SECRET=<credential> trailing words"; got != want {
+		tail := strings.TrimSuffix(strings.TrimPrefix(got, "SECRET=<credential>"), " trailing words")
+		t.Errorf("got %q…, want %q; %d characters of the secret survived",
+			string([]rune(got)[:40]), want, len([]rune(tail)))
+	}
+}
