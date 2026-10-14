@@ -279,6 +279,44 @@ describe('host pushes after mount', () => {
   });
 });
 
+describe('the stock controls', () => {
+  // <civitai-text-input> and <civitai-button> are form-associated: they call
+  // attachInternals() when constructed, which happy-dom lacks. test/setup.ts
+  // supplies it; without that file this whole block fails to mount.
+  test('typing into <civitai-text-input> and clicking <civitai-button> echoes the text', async () => {
+    const mounted = mountBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+
+    const message = field('message')!;
+    const echo = field('echo')!;
+    expect(message).toBeInstanceOf(customElements.get('civitai-text-input')!);
+    expect(echo).toBeInstanceOf(customElements.get('civitai-button')!);
+    await (message as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+
+    // Type the way a viewer does: into the element's own inner <input>.
+    const inner = message.shadowRoot?.querySelector('input');
+    expect(inner).not.toBeNull();
+    inner!.value = 'hello';
+    inner!.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    expect((message as unknown as { value: string }).value).toBe('hello');
+
+    expect(field('echoed')?.textContent).toBe('');
+    echo.click();
+    expect(field('echoed')?.textContent).toBe('You said: hello');
+
+    // What the viewer typed survives a host push (onChange only updates).
+    fromHost({
+      type: 'TOKEN_REFRESH',
+      payload: {
+        token: { raw: 'rotated.token', scopes: [], expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() },
+      },
+    });
+    expect(field('message')).toBe(message);
+    expect((message as unknown as { value: string }).value).toBe('hello');
+  });
+});
+
 describe('an app that cannot start', () => {
   test('the entry module shows a visible error instead of leaving the skeleton up', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});

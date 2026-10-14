@@ -678,6 +678,31 @@ jobs:
         working-directory: ./_ci-page-elements
         run: go run ../cmd/civitai app validate
 
+      # The scaffold's scratch/ promise — a type error or a failing test there
+      # cannot fail `npm run typecheck` / `npm test` — is checked by a Go test
+      # that renders its own copy, npm-installs it and runs tsc + vitest. It
+      # SKIPS ITSELF unless CIVITAI_SCAFFOLD_TYPECHECK=1, so `build-test`'s plain
+      # `go test ./...` never executes it; this step is what does.
+      - name: scratch/ probes cannot fail typecheck or tests
+        env:
+          CIVITAI_SCAFFOLD_TYPECHECK: "1"
+        run: |
+          set -uo pipefail
+          T=TestPageElementsScratchProbesCannotFailTypecheckOrTests
+          go test ./internal/scaffold -run "^${T}\$" -count=1 -v 2>&1 | tee "$RUNNER_TEMP/scratch-typecheck.log"
+          # POSITIVE CONTROL: `go test -run` exits 0 when the pattern matches
+          # nothing, and a SKIP also prints `ok` — so require the test's own
+          # PASS line and name the SKIP case separately (a skip means the env
+          # gate above stopped reaching the test: a defect in this step).
+          if grep -q -- "--- SKIP: ${T}" "$RUNNER_TEMP/scratch-typecheck.log"; then
+            echo "::error::${T} SKIPPED itself — CIVITAI_SCAFFOLD_TYPECHECK did not reach it. NOTHING about scratch/ was verified."
+            exit 1
+          fi
+          if ! grep -q -- "--- PASS: ${T}" "$RUNNER_TEMP/scratch-typecheck.log"; then
+            echo "::error::${T} did not PASS (failed, or the -run pattern matched no test)."
+            exit 1
+          fi
+
   # Rot-guard: scaffold the page-money template and run its JS toolchain against
   # the PUBLISHED SDK (@civitai/blocks-react). Catches a template that renders
   # but no longer installs / typechecks / tests / builds after an SDK bump — the

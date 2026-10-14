@@ -102,6 +102,11 @@ func TestSubmitHelpRendersTheRealExclusionLists(t *testing.T) {
 				"a rule was added to pkgzip without updating the help", name)
 		}
 	}
+	for _, name := range pkgzip.RootExcludedNames() {
+		if !strings.Contains(block, name) {
+			t.Errorf("`app submit --help` does not name the root-only excluded directory %q", name)
+		}
+	}
 	for _, pat := range pkgzip.ExcludedFilePatterns() {
 		if !strings.Contains(block, pat) {
 			t.Errorf("`app submit --help` does not name the excluded file pattern %q", pat)
@@ -123,6 +128,7 @@ func TestSubmitHelpRendersTheRealExclusionLists(t *testing.T) {
 
 	// CONTROL: these loops assert nothing if the lists are empty.
 	if len(pkgzip.ExcludedNames()) == 0 || len(pkgzip.ExcludedFilePatterns()) == 0 ||
+		len(pkgzip.RootExcludedNames()) == 0 ||
 		len(pkgzip.KeptEnvFileNames()) == 0 {
 		t.Fatal("an exclusion list is empty, so its loop above iterated zero times")
 	}
