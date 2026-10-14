@@ -163,8 +163,8 @@ These go beyond the global defaults because this repo's release pipeline
   cost.
 - **Module root** (`package cli`, `main.go` + `schema.go`) exists *only* to
   `go:embed` the vendored `schema/` and `examples/`. It is not the executable.
-- `npm/` — the `@civitai/cli` wrapper (postinstall downloads the matching raw
-  binary from the GitHub Release). Not built by `make`; see the release section.
+- `npm/` — the `@civitai/cli` wrapper: the binary comes from a platform package
+  (`npm/lib/platforms.json`), else a GitHub Release download. Not built by `make`.
 - `flake.nix` / `flake.lock` — the Nix package. `vendorHash` pins the module set,
   so a dependency change breaks the flake build until `bump-flake-vendorhash.yml`
   updates it; `flake.yml` is what catches that.

@@ -25,6 +25,11 @@ directly:
 
 - Reference (manifest, scopes, message bridge, CLI):
   https://developer.civitai.com/apps/reference/
+- Capabilities include generation body kinds (a multi-step workflow is a
+  `kind`); the kinds are listed at
+  https://developer.civitai.com/apps/reference/generation.md
+- Multi-step workflow guide, which shows the call for this template:
+  https://developer.civitai.com/apps/guide/workflows.md
 {{- else }}
 Nothing in this repository is the API reference. The hooks, the message bridge,
 the manifest fields and the scopes are documented on the docs site, and the

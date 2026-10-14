@@ -93,6 +93,25 @@ const wantKindsPointer = `- Capabilities are hooks AND generation body kinds (a 
   ` + "`kind`" + `, not a hook); the kinds are listed at
   https://developer.civitai.com/apps/reference/generation.md`
 
+// The docs addresses the `@civitai/sdk` branch's generation pointer ships. They
+// are consts HERE, in a ledgered file, so the tests in other files can name them
+// without becoming a new unledgered spelling of a docs URL.
+const (
+	generationKindsURL = "https://developer.civitai.com/apps/reference/generation.md"
+	workflowsGuideURL  = "https://developer.civitai.com/apps/guide/workflows.md"
+)
+
+// wantElementsGenerationPointer is the `@civitai/sdk` branch's counterpart of
+// wantKindsPointer, whitespace-normalised (compare with normaliseMessage).
+//
+// That branch used to say nothing about generation at all, so an agent on the
+// DEFAULT template had no route to the body kinds and concluded multi-step
+// workflows did not exist. Two ADDRESSES and nothing else, per AGENTS.md item
+// 36: how to make the call is the guide's to say, and to correct.
+const wantElementsGenerationPointer = "- Capabilities include generation body kinds (a multi-step workflow is a `kind`); " +
+	"the kinds are listed at " + generationKindsURL + " " +
+	"- Multi-step workflow guide, which shows the call for this template: " + workflowsGuideURL
+
 // docsLinkRe pulls the link SET out of a section. The expected set is derived
 // from the golden above rather than written out again, so the two cannot
 // disagree. It exists for the failure MESSAGE: a whole-string mismatch reports a

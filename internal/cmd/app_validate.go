@@ -54,12 +54,16 @@ It also emits non-fatal WARNINGS the schema can't catch as hard errors:
     a page app until it acks BLOCK_INIT, so such an app renders fine locally and
     is replaced by a failure card in the real host — the shape of anything
     scaffolded before that was fixed. Advisory ONLY: it infers runtime behaviour
-    from static text. A dependency that ACKS ends the check, and that is an
-    EXACT SET, not the @civitai/ scope: @civitai/blocks-react acks internally
-    (its iframe transport does it for you), while @civitai/app-sdk is the
-    server-side SDK and @civitai/theme and @civitai/components are CSS — none
-    of those three silences it. It reads source only — never outputDir,
-    node_modules, markdown, or comments.
+    from static text. A dependency that ACKS replaces the emitter check, and
+    that is an EXACT SET, not the @civitai/ scope: @civitai/blocks-react acks
+    internally (its iframe transport does it for you), while @civitai/app-sdk
+    is the server-side SDK and @civitai/theme and @civitai/components are CSS —
+    none of those three silences it. When your lockfile resolves
+    @civitai/blocks-react to a release from before every hook connected at
+    mount, it also warns when nothing your index.html loads calls a hook that
+    connects at mount (in those releases useBuzzWorkflow alone never acks):
+    call useBlockContext() in your root component. It reads source only —
+    never outputDir, node_modules, markdown, or comments.
   - source that calls useAppStorage() or useSharedStorage() while the manifest
     declares NO scope for that store. The server gates storage by PRESENCE in the
     approved scope set, so an undeclared scope means every call 403s in
