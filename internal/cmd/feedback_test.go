@@ -661,6 +661,83 @@ func TestFeedbackSendDryRunNeedsNoLogin(t *testing.T) {
 	}
 }
 
+// longSecret returns a value of exactly n characters that credscan's
+// assignment gate accepts. seed shifts where it starts in its alphabet, so two
+// parts of one message differ; accented puts a two-byte `é` in every eighth
+// position.
+func longSecret(n, seed int, accented bool) string {
+	const alphabet = "Kq9Zx2Lm7Rb5Tn8Vc4Hd6Yw1Pf3Sg0Uj"
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		if accented && i%8 == 7 {
+			b.WriteRune('é')
+			continue
+		}
+		b.WriteByte(alphabet[((i+seed)*7)%len(alphabet)])
+	}
+	return b.String()
+}
+
+// TestFeedbackSendDryRunRemovesALongSecretWhole: an assignment value longer
+// than credscan's 512-character capture was once cut short, and the dry run
+// printed — and a send would have sent — the rest of the secret. Two causes:
+// the capture was measured in bytes against a bound in characters (a value
+// carrying non-ASCII text), and a cut was extended only when the cleaned value
+// ended exactly at the cut (a quoted value with `,` inside it).
+func TestFeedbackSendDryRunRemovesALongSecretWhole(t *testing.T) {
+	head, tail := longSecret(300, 0, false), longSecret(300, 11, false)
+	nonASCII := longSecret(700, 0, true)
+	cases := []struct {
+		name, message, want string
+		// secret is every character that must not be printed.
+		secret string
+	}{
+		{"non-ASCII value over the bound",
+			"the server rejects SECRET=" + nonASCII + " on start",
+			"the server rejects SECRET=<credential> on start",
+			nonASCII},
+		{"quoted value with `,` before the bound",
+			`the config {"sessionSecret": "` + head + "," + tail + `"} is rejected`,
+			`the config {"sessionSecret": "<credential>"} is rejected`,
+			head + "," + tail},
+	}
+	// JSON escaped into a string, with the secret past the bound: the client_id
+	// in front of it is what the gate once judged, so an id with no digit made
+	// the whole value pass through.
+	for _, id := range []string{"abc", "civitai-cli", "my-web-app", "abc123def456"} {
+		cases = append(cases, struct{ name, message, want, secret string }{
+			"escaped JSON in a string, client_id " + id,
+			`the log says {"credentials":"{\"client_id\":\"` + id + `\",\"client_secret\":\"` + tail + head + `\"}"} today`,
+			`the log says {"credentials":"<credential>"} today`,
+			tail + head,
+		})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &pfFake{t: t}
+			f.serve()
+			out, _, err := run(t, "--no-color", "feedback", "send", "--about", "mcp", "--dry-run", tc.message)
+			if err != nil {
+				t.Fatalf("feedback send --dry-run: %v", err)
+			}
+			want, err := json.Marshal(tc.want) // the body is printed as JSON
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out, `"message": `+string(want)) {
+				t.Errorf("the dry run did not show the secret replaced whole:\n%.400s", out)
+			}
+			// The end of the secret is the part a short span leaves behind.
+			if r := []rune(tc.secret); strings.Contains(out, string(r[len(r)-100:])) {
+				t.Errorf("the dry run prints the last 100 characters of the secret")
+			}
+			if n := len(f.seen()); n != 0 {
+				t.Errorf("the server saw %d request(s)", n)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // send: bounds are enforced on this side of the wire
 // ---------------------------------------------------------------------------

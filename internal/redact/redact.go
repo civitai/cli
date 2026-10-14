@@ -85,6 +85,9 @@
 //     space, so `?q=hello world&sig=…` keeps `world&sig=…`
 //   - a JSON-escaped URL (`https:\/\/…?sig=…`): it is not recognised as a URL,
 //     so its query is kept
+//   - a value after a credential key that has no ASCII letter, or no ASCII
+//     digit: it is not judged a secret, so `DB_PASSWORD=Пароль2024Секрет` is
+//     kept
 //
 // KNOWN OVER-REDACTIONS — removed although not a secret. Each is in the safe
 // direction and none gets a rule of its own:

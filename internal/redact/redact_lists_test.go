@@ -79,6 +79,14 @@ var knownMisses = []knownEntry{
 		doc:   "a JSON-escaped URL (`https:\\/\\/…?sig=…`): it is not recognised as a URL, so its query is kept",
 		cases: []knownCase{{in: `{"url":"https:\/\/cdn.fieldstone.dev\/f.bin?sig=Uv2Wx4Yz6Ab8Cd0Ef"}`}},
 	},
+	{
+		doc: "a value after a credential key that has no ASCII letter, or no ASCII digit: it is not judged a secret, so `DB_PASSWORD=Пароль2024Секрет` is kept",
+		cases: []knownCase{
+			{in: "DB_PASSWORD=Пароль2024Секрет"},     // no ASCII letter
+			{in: "DB_PASSWORD=KqZxLmRbTnVc٢٠٢٤"},     // no ASCII digit
+			{in: "DB_PASSWORD=QwErTyUiOpAsDfGhJkLz"}, // no digit at all
+		},
+	},
 }
 
 // knownOverRedactions is what redaction removes that was not a secret. Every
@@ -164,6 +172,17 @@ func TestKnownMissesAreStillMisses(t *testing.T) {
 			if n := len(r.Counts()); want == c.in && n != 0 {
 				t.Errorf("%q: nothing was removed, yet %+v was counted", c.in, r.Counts())
 			}
+		}
+	}
+	// The no-ASCII-letter/digit entry is a claim about WHICH rule drops those
+	// values: add the missing ASCII letter or digit and each one is removed.
+	for in, want := range map[string]string{
+		"DB_PASSWORD=Пароль2024Секретz":   "DB_PASSWORD=<credential>",
+		"DB_PASSWORD=KqZxLmRbTnVc٢٠٢٤7":   "DB_PASSWORD=<credential>",
+		"DB_PASSWORD=QwErTyUiOpAsDfGhJk3": "DB_PASSWORD=<credential>",
+	} {
+		if got := newTestRedactor().Apply(in); got != want {
+			t.Errorf("CONTROL failure: %q became %q, want %q — the miss is not the ASCII letter/digit rule's doing", in, got, want)
 		}
 	}
 	// The short-token entry's parenthesis is a claim too.
