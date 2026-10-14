@@ -41,6 +41,52 @@ func blocksByBranch(t *testing.T) (react, elements string) {
 	return render(scaffold.PageMoney), render(scaffold.PageElements)
 }
 
+// TestTheElementsBlockPointsAtWorkflowsAndTheBodyKinds: the `@civitai/sdk`
+// branch is the DEFAULT template's, and it must tell its reader that generation
+// body kinds exist, that a multi-step workflow is one, and where both are
+// documented. The pointer is pinned whole, exactly once, inside ### Docs.
+func TestTheElementsBlockPointsAtWorkflowsAndTheBodyKinds(t *testing.T) {
+	_, elements := blocksByBranch(t)
+
+	section, ok := docsSectionOf(elements)
+	if !ok {
+		t.Fatal("page-elements block has no `### Docs` section")
+	}
+	got := normaliseMessage(section)
+	if n := strings.Count(got, wantElementsGenerationPointer); n != 1 {
+		t.Errorf("page-elements `### Docs` carries the generation pointer %d time(s), want 1.\n--- want ---\n%s\n--- section ---\n%s\n"+
+			"Edit internal/cmd/templates/agents-app.md and wantElementsGenerationPointer together.",
+			n, wantElementsGenerationPointer, got)
+	}
+}
+
+// TestBothSDKBranchesSayMultiStepWorkflowsExist is the RELATIONSHIP guard: the
+// two branches are edited separately, and the defect was one of them saying
+// nothing. Both must name multi-step workflows and link the page that lists the
+// body kinds.
+//
+// The React side is not rendered again here: wantKindsPointer is pinned into
+// that branch by TestTheBlockPointsAtTheGenerationBodyKinds and by the
+// whole-section golden, so holding the PIN to the claim holds the branch to it.
+func TestBothSDKBranchesSayMultiStepWorkflowsExist(t *testing.T) {
+	_, elements := blocksByBranch(t)
+	section, ok := docsSectionOf(elements)
+	if !ok {
+		t.Fatal("page-elements block has no `### Docs` section")
+	}
+	for name, text := range map[string]string{
+		"page-money (@civitai/blocks-react), as pinned by wantKindsPointer": wantKindsPointer,
+		"page-elements (@civitai/sdk), as rendered":                         section,
+	} {
+		if !strings.Contains(strings.ToLower(normaliseMessage(text)), "multi-step workflow") {
+			t.Errorf("%s: never mentions a multi-step workflow, so its reader concludes there is none", name)
+		}
+		if !strings.Contains(text, generationKindsURL) {
+			t.Errorf("%s: does not link the generation body kinds (%s)", name, generationKindsURL)
+		}
+	}
+}
+
 func TestTheBlockPointsAtTheGenerationBodyKinds(t *testing.T) {
 	react, elements := blocksByBranch(t)
 
