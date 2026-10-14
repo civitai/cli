@@ -272,7 +272,7 @@ func TestBudgetShortfallNoticeRemedyIsAcceptable(t *testing.T) {
 					t.Errorf("notice omits %q; got:\n%s", w, got)
 				}
 			}
-			capNote := strings.Contains(got, "above the route's cap")
+			capNote := strings.Contains(got, "above the platform's per-call cap")
 			if tc.wantCapNote && !capNote {
 				t.Errorf("a declared figure over the cap must say so; got:\n%s", got)
 			}
@@ -280,5 +280,27 @@ func TestBudgetShortfallNoticeRemedyIsAcceptable(t *testing.T) {
 				t.Errorf("a reachable declared figure must NOT claim it is over the cap; got:\n%s", got)
 			}
 		})
+	}
+}
+
+// The over-cap shortfall notice is pinned WHOLE: every clause is a claim about
+// server behaviour, and two of them went false together when the dev-token cap
+// became the install-token cap ("the refusal names the ceiling, not the budget"
+// — upstream's refusal reads "… exceeds budget <M>"; "the cap does not limit your
+// SUBMITTED app" — a submitted app's tokens are clamped to the same cap). A
+// substring check on the remedy stayed green through both.
+func TestBudgetShortfallNoticeOverCapStatesOnlyTrueClaims(t *testing.T) {
+	declared := appapi.DevBuzzBudgetCap + 1
+	got := budgetShortfallNotice(ui.For(io.Discard), "my-block", declared, appapi.DevBuzzBudgetDefault, false)
+	want := "block.manifest.json declares page.buzzBudgetPerGen " + strconv.Itoa(declared) +
+		", but this token was granted " + strconv.Itoa(appapi.DevBuzzBudgetDefault) + "/generation.\n" +
+		"   A generation is REFUSED outright once its Buzz ceiling exceeds the token's budget.\n" +
+		"   Re-mint asking for it:\n" +
+		"     civitai app dev-token my-block --budget " + strconv.Itoa(appapi.DevBuzzBudgetCap) + " --env >> .env.development.local\n" +
+		"   (" + strconv.Itoa(declared) + " is above the platform's per-call cap of " + strconv.Itoa(appapi.DevBuzzBudgetCap) +
+		", so " + strconv.Itoa(appapi.DevBuzzBudgetCap) + " is the most a dev token can carry — " +
+		"and your SUBMITTED app's tokens are clamped to the same cap.)"
+	if !strings.Contains(got, want) {
+		t.Errorf("over-cap shortfall notice drifted; want (whole):\n%s\n\ngot:\n%s", want, got)
 	}
 }

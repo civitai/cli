@@ -320,12 +320,12 @@ func grantedClaimsNotice(claims devTokenClaims, ok bool, now time.Time) string {
 // that fixes it — the shape of spendFilteredNotice, which named `--spend` and was
 // the one message in this command that cost the developer nothing.
 //
-// Only the DECLARED-vs-GRANTED gap is reported. It is not an error: a dev token
-// deliberately carries a smaller budget than a submitted app's ceiling, and the
-// server never reads the local file at mint time (there is no server-side
-// manifest until the app is submitted). What makes the gap worth printing is that
-// nothing else surfaces it until a generation is REFUSED — and the refusal talks
-// about recipe ceilings, not about the budget.
+// Only the DECLARED-vs-GRANTED gap is reported. It is not an error: the server
+// never reads the local file at mint time (there is no server-side manifest until
+// the app is submitted), so an unsubmitted app's token carries the route default
+// or --budget, not what the file declares. What makes the gap worth printing is
+// that nothing else surfaces it until a generation is REFUSED — far from the
+// mint that caused it.
 //
 // 🔴 THE REMEDY MUST BE A COMMAND THAT WORKS. A manifest may declare more than
 // the route's cap (appapi.DevBuzzBudgetCap), and echoing such a figure back as
@@ -352,12 +352,12 @@ func budgetShortfallNotice(sty ui.Styler, slug string, declared, granted int, sp
 	msg := sty.Warn(fmt.Sprintf(
 		"%s declares page.buzzBudgetPerGen %d, but this token was granted %d/generation.",
 		manifest.Filename, declared, granted)) + "\n" +
-		"   A generation is REFUSED outright once the recipe's Buzz ceiling exceeds the token's budget,\n" +
-		"   and that refusal names the ceiling, not the budget. Re-mint asking for it:\n" +
+		"   A generation is REFUSED outright once its Buzz ceiling exceeds the token's budget.\n" +
+		"   Re-mint asking for it:\n" +
 		"     civitai app dev-token " + slug + remintFlags(spend) + fmt.Sprintf(" --budget %d", ask) + " --env >> .env.development.local"
 	if overCap {
-		msg += fmt.Sprintf("\n   (%d is above the route's cap of %d, so %d is the most a dev token can carry — "+
-			"the cap does not limit your SUBMITTED app.)",
+		msg += fmt.Sprintf("\n   (%d is above the platform's per-call cap of %d, so %d is the most a dev token can carry — "+
+			"and your SUBMITTED app's tokens are clamped to the same cap.)",
 			declared, appapi.DevBuzzBudgetCap, appapi.DevBuzzBudgetCap)
 	}
 	return msg

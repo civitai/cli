@@ -199,7 +199,7 @@ func TestAppDevTokenWarnsOnBudgetShortfall(t *testing.T) {
 					t.Errorf("stderr missing %q; got:\n%s", want, errOut)
 				}
 			}
-			if got := strings.Contains(errOut, "above the route's cap"); got != tc.wantNote {
+			if got := strings.Contains(errOut, "above the platform's per-call cap"); got != tc.wantNote {
 				t.Errorf("cap note present = %v, want %v; got:\n%s", got, tc.wantNote, errOut)
 			}
 		})
