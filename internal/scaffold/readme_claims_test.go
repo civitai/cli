@@ -278,10 +278,11 @@ var readmePinSpellingRe = regexp.MustCompile(`@civitai/[a-z0-9-]+@[~^]?\d+\.\d+`
 // treats it as a pin site.
 //
 // Two checks, because either alone is walkable: the pinned-package SPELLING
-// (`@pkg@^X.Y`), and the current pin's MAJOR.MINOR of every package page-money
-// pins (the exact X.Y.Z once a package is >= 1.0), matched on number
-// boundaries (pinMentionRe), so "`@civitai/app-sdk` 0.70.0", `^0.70`, `0.70.x`
-// and `v0.70` are all caught.
+// (`@pkg@^X.Y`), and a number-bounded mention of each page-money pin's version
+// (pinMentionRe). For a pre-1.0 pin that mention is MAJOR.MINOR, so
+// "`@civitai/app-sdk` 0.70.0", `^0.70`, `0.70.x` and `v0.70` are all caught. For
+// a >= 1.0 pin it is only the full X.Y.Z, and a patch-dropped spelling such as
+// `^1.2` is KNOWINGLY MISSED — see pinMentionRe for why.
 func TestPageMoneyREADMESpellsNoCaretPin(t *testing.T) {
 	// Positive control: the regex matches the spelling that shipped.
 	if !readmePinSpellingRe.MatchString("require `@civitai/app-sdk@^0.70.0` + `@civitai/blocks-react@^0.73.0`") {
@@ -323,19 +324,19 @@ func TestPageMoneyREADMESpellsNoCaretPin(t *testing.T) {
 	}
 }
 
-// pinMentionRe matches a mention of the part of a caret pin that MOVES on a
-// bump, as a whole number (not preceded by a digit or `.`, not followed by a
-// digit):
+// pinMentionRe matches a mention of a caret pin's version as a whole number
+// (not preceded by a digit or `.`, not followed by a digit):
 //
-//   - major 0 (`^0.70.0`): the caret locks the MINOR, so every bump moves
-//     major.minor. It matches `0.70`, `0.70.0`, `0.70.x`, `^0.70`, `v0.70` —
-//     but not `10.70`, `1.0.70` or `0.701`. Matching only the full `X.Y.Z` is
-//     walkable by any spelling that drops the patch.
-//   - major >= 1 (`^1.0.0`): the caret locks only the major, and major.minor is
-//     too common to own — the README says `SDXL 1.0`, which a `1.0` match
-//     flags as soon as a package reaches 1.0.0, reddening the bump bot on
-//     correct text. So it matches the exact `X.Y.Z` the pin names, still
-//     number-bounded.
+//   - major 0 (`^0.70.0`): it matches MAJOR.MINOR — `0.70`, `0.70.0`, `0.70.x`,
+//     `^0.70`, `v0.70` — but not `10.70`, `1.0.70` or `0.701`. Matching only the
+//     full `X.Y.Z` would be walkable by any spelling that drops the patch.
+//   - major >= 1 (`^1.2.0`): it matches ONLY the full `X.Y.Z`. The minor still
+//     moves here (`DesiredPin` writes `^X.Y.0` on every 1.x minor), so this
+//     KNOWINGLY MISSES patch-dropped spellings — `^1.2`, `1.2.x`, `v1.2`. That is
+//     the accepted limit: a major.minor match collides with fixed README text
+//     (`SDXL 1.0` matches `1.0` in 4 places), which would redden the bump bot on
+//     correct text as soon as a package reached 1.0.0. The limit is pinned by
+//     TestPinMentionReKnownGapFor1xPins.
 func pinMentionRe(pin string) (*regexp.Regexp, error) {
 	parts := strings.Split(strings.TrimLeft(pin, "^~"), ".")
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
@@ -383,8 +384,13 @@ func TestPinMentionReIsQuietOnTheREADMEWhenAPackageReaches1x(t *testing.T) {
 	readme := scaffoldedReadme(t)
 	// Positive control: the README really does carry the colliding `1.0` text,
 	// so a zero below is the matcher's answer, not an absent input.
-	if !strings.Contains(readme, "1.0") {
-		t.Fatal("CONTROL failure, not a finding: the rendered README no longer contains `1.0`; this case tests nothing")
+	// The control is a plain number-bounded MAJOR.MINOR match for `1.0` — the
+	// rule pinMentionRe deliberately does NOT apply at >= 1.0 — so it proves
+	// that rule WOULD fire here, not merely that the bytes `1.0` occur.
+	majorMinor := regexp.MustCompile(`(?:^|[^0-9.])1\.0(?:[^0-9]|$)`)
+	if n := len(majorMinor.FindAllString(readme, -1)); n < 1 {
+		t.Fatalf("CONTROL failure, not a finding: a major.minor match for `1.0` finds %d place(s) in the rendered "+
+			"README, so there is no colliding text and this case tests nothing", n)
 	}
 	re, err := pinMentionRe("^1.0.0")
 	if err != nil {
@@ -427,4 +433,42 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TestPinMentionReMatchesTheFullVersionOfANonZeroMinor1xPin uses a 1.x pin with
+// a NON-ZERO minor, so a matcher that hardcodes `1.0` (the case above) fails here.
+func TestPinMentionReMatchesTheFullVersionOfANonZeroMinor1xPin(t *testing.T) {
+	re, err := pinMentionRe("^1.2.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"1.2.0", "^1.2.0", "@civitai/app-sdk@^1.2.0"} {
+		if !re.MatchString(s) {
+			t.Errorf("pinMentionRe(^1.2.0) does NOT match %q — the exact pinned version must be caught", s)
+		}
+	}
+	for _, s := range []string{"1.0.0", "1.2", "11.2.0", "1.2.01", "1.20.0"} {
+		if re.MatchString(s) {
+			t.Errorf("pinMentionRe(^1.2.0) matches %q, which is not the pinned version", s)
+		}
+	}
+}
+
+// TestPinMentionReKnownGapFor1xPins PINS AN ACCEPTED LIMIT, not desired
+// behaviour: for a >= 1.0 pin, a spelling that drops the patch is NOT caught,
+// because a major.minor match collides with fixed README text (see
+// pinMentionRe). If this starts failing, the limit was changed — make that a
+// deliberate decision and re-check
+// TestPinMentionReIsQuietOnTheREADMEWhenAPackageReaches1x.
+func TestPinMentionReKnownGapFor1xPins(t *testing.T) {
+	re, err := pinMentionRe("^1.2.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"^1.2", "1.2.x", "v1.2"} {
+		if re.MatchString(s) {
+			t.Errorf("pinMentionRe(^1.2.0) now matches %q. The known 1.x gap was closed — if deliberate, update "+
+				"pinMentionRe's comment and delete this case; check the README-collision test still passes.", s)
+		}
+	}
 }
