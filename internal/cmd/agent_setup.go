@@ -175,8 +175,8 @@ func agentSetupTrackAPIRefusal() error {
 		fmt.Fprintf(&b, "  %-22s %s\n", srv.Name, srv.URL)
 	}
 	b.WriteString("\nRegister both with `civitai agent-setup --track app` (they are the same two servers) and read:\n")
-	b.WriteString("  https://developer.civitai.com/site/\n")
-	b.WriteString("  https://developer.civitai.com/orchestration/\n")
+	b.WriteString("  https://developer.civitai.com/site.md\n")
+	b.WriteString("  https://developer.civitai.com/orchestration.md\n")
 	b.WriteString("\nA dedicated API track is coming; until then nothing about the API is unsupported, only this command's setup for it")
 	return asUsageError(errors.New(b.String()))
 }

@@ -63,14 +63,13 @@ the manifest fields and the scopes are documented on the docs site, and the
 
 - **` + "`https://developer.civitai.com/apps/reference/hooks.md`" + `** — the COMPLETE
   hook reference. Fetch it first: a hook you cannot find here probably exists
-  under a name you have not guessed. It is over 100 KB, so page it rather than
-  giving up on it.
+  under a name you have not guessed.
 - Capabilities are hooks AND generation body kinds (a multi-step workflow is a
   ` + "`kind`" + `, not a hook); the kinds are listed at
   https://developer.civitai.com/apps/reference/generation.md
 - Reference (manifest, scopes, hooks, message bridge, CLI):
-  https://developer.civitai.com/apps/reference/
-- Guide: https://developer.civitai.com/apps/guide/
+  https://developer.civitai.com/apps/reference.md
+- Guide: https://developer.civitai.com/apps/guide.md
 - **` + "`https://developer.civitai.com/apps/guide/earning.md`" + `** — the three money
   rails. Fetch it before declaring a ` + "`goods`" + ` catalog. The three rules below are
   repeated in this file deliberately, because they are the ones a manifest can
@@ -79,8 +78,12 @@ the manifest fields and the scopes are documented on the docs site, and the
   most one** unlock per manifest, and MUST carry a ` + "`justification`" + `. All three are
   enforced at submit; the published JSON Schema does not declare them.
 - Example apps you can read end-to-end:
-  https://developer.civitai.com/apps/examples
+  https://developer.civitai.com/apps/examples.md
 - Full doc index for agents: https://developer.civitai.com/llms.txt
+- Some reference pages are long enough that a fetch tool cuts them off without
+  saying so. If what you need is not in what came back, it was probably
+  truncated, not missing: download the whole page and search it, or, if the
+  page links to a narrower page for that part, fetch that one.
 
 Reading ` + "`node_modules/@civitai/blocks-react/dist/*.d.ts`" + ` to find out what the
 SDK can do is the expensive way round. Fetch the reference.`
@@ -418,9 +421,25 @@ func TestEveryDocsURLSpellingIsLedgered(t *testing.T) {
 	// Match on host+path rather than the full URL: the header comment above names
 	// the examples page without a scheme, and that mention rots exactly like a
 	// link does.
-	needles := make([][]byte, 0, len(urls))
+	//
+	// 🔴 A `.md` URL ALSO CONTRIBUTES ITS DIRECTORY FORM, `<path>/`. The block
+	// links the `.md` rendering of each page (TestEveryDocsPageURLAnAgent-
+	// ReceivesIsMarkdown), while most ledgered files link pages UNDER it by their
+	// HTML route — README.md's `/apps/guide/local-dev`, the scaffolds'
+	// `/apps/guide/responsive`. When the block spelled `/apps/guide/`, that
+	// needle matched those as a PREFIX; `/apps/guide.md` matches none of them,
+	// and 12 ledger rows went "no longer spells ANY" in one edit without a single
+	// URL in those files changing. The directory form restores exactly that
+	// prefix match. It is deliberately not the bare `<path>`, which would also
+	// match unrelated fixtures (internal/redact's `/apps/guide#scopes`) that are
+	// not a place a moved page rots.
+	needles := make([][]byte, 0, 2*len(urls))
 	for _, u := range urls {
-		needles = append(needles, []byte(strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")))
+		hostPath := strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+		needles = append(needles, []byte(hostPath))
+		if page, ok := strings.CutSuffix(hostPath, ".md"); ok {
+			needles = append(needles, []byte(page+"/"))
+		}
 	}
 
 	root := repoRootDir(t)
