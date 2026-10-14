@@ -130,14 +130,16 @@ func TestGrantedClaimsNotice(t *testing.T) {
 			},
 		},
 		{
-			// 🔴 The absent-budget case must NOT print the server's default (50):
-			// stating a number the token does not carry is the exact
-			// misinformation this line exists to remove.
+			// 🔴 The absent-budget case must NOT print the server's default
+			// (appapi.DevBuzzBudgetDefault, 1000): stating a number the token does
+			// not carry is the exact misinformation this line exists to remove.
+			// The literal row also catches a notice hardcoding the default, even
+			// if the constant moves.
 			name:      "budget not stated",
 			claims:    devTokenClaims{Scopes: []string{"user:read:self"}},
 			ok:        true,
 			wantHas:   []string{"buzz budget not stated in the token"},
-			wantNotHa: []string{"50/generation", strconv.Itoa(appapi.DevBuzzBudgetDefault) + "/generation"},
+			wantNotHa: []string{"1000/generation", strconv.Itoa(appapi.DevBuzzBudgetDefault) + "/generation"},
 		},
 		{
 			// An explicit 0 is a real grant and must read as one, not as "absent".
@@ -217,10 +219,16 @@ var budgetFlagRE = regexp.MustCompile(`--budget (\d+)`)
 //
 // 🔴 It does not check the wording. It extracts the `--budget N` the notice tells
 // the developer to run and feeds N back through validateDevTokenBudget, the very
-// function the CLI would reject it with. The scaffold declares 300 against a cap
-// of 250, so echoing the declared figure verbatim would print a command that
-// exits 2 as a usage error — a guard on the sentence could not see that, and the
-// obvious implementation gets it wrong.
+// function the CLI would reject it with. A manifest declaring more than the cap
+// (appapi.DevBuzzBudgetCap) would, echoed verbatim, print a command that exits 2
+// as a usage error — a guard on the sentence could not see that, and the obvious
+// implementation gets it wrong.
+//
+// The cap rows are built FROM the cap so each keeps meaning what its name says if
+// the vendored bound moves again (the old rows typed 250/251 and the page-money
+// scaffold's 300 as the over-cap case; at a cap of 5000 the scaffold's 300 is an
+// ordinary under-cap declaration, so it is now a no-cap-note row, and the
+// over-cap rows are cap+1 and far over).
 func TestBudgetShortfallNoticeRemedyIsAcceptable(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -230,10 +238,12 @@ func TestBudgetShortfallNoticeRemedyIsAcceptable(t *testing.T) {
 		wantCapNote   bool
 		wantNoCapNote bool
 	}{
-		{name: "the scaffold's own 300 against the default 50", declared: 300, granted: 50, wantAsk: appapi.DevBuzzBudgetCap, wantCapNote: true},
-		{name: "declared exactly at the cap", declared: 250, granted: 50, wantAsk: 250, wantNoCapNote: true},
-		{name: "declared under the cap", declared: 120, granted: 50, wantAsk: 120, wantNoCapNote: true},
-		{name: "declared one over the cap", declared: 251, granted: 50, wantAsk: appapi.DevBuzzBudgetCap, wantCapNote: true},
+		// The page-money scaffold's 300 against an explicit smaller grant: under the
+		// cap, so the remedy is the declared figure itself and there is no cap note.
+		{name: "the scaffold's own 300 against a smaller explicit grant", declared: 300, granted: 120, wantAsk: 300, wantNoCapNote: true},
+		{name: "declared exactly at the cap", declared: appapi.DevBuzzBudgetCap, granted: appapi.DevBuzzBudgetDefault, wantAsk: appapi.DevBuzzBudgetCap, wantNoCapNote: true},
+		{name: "declared under the cap, above the default", declared: 1200, granted: appapi.DevBuzzBudgetDefault, wantAsk: 1200, wantNoCapNote: true},
+		{name: "declared one over the cap", declared: appapi.DevBuzzBudgetCap + 1, granted: appapi.DevBuzzBudgetDefault, wantAsk: appapi.DevBuzzBudgetCap, wantCapNote: true},
 		{name: "far over the cap", declared: 100000, granted: 1, wantAsk: appapi.DevBuzzBudgetCap, wantCapNote: true},
 	}
 	for _, tc := range cases {

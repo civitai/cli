@@ -35,8 +35,9 @@ func budgetRemintLines(s string) []string {
 //
 // The whole line is pinned rather than `Contains(line, "--spend")`: the remedy is
 // a command somebody pastes, so its flags, their values and the redirect are all
-// the claim. 120 is used because it is neither the server default (50) nor the cap
-// (250), so a notice that hardcoded either figure would not pass.
+// the claim. 120 is used because it is neither the server default nor the cap
+// (appapi.DevBuzzBudgetDefault / DevBuzzBudgetCap, 1000 / 5000), so a notice that
+// hardcoded either figure would not pass.
 func TestBudgetShortfallRemintCarriesTheSpendFlagItWasRunWith(t *testing.T) {
 	jwt := func(t *testing.T) string {
 		return makeJWTClaims(t, map[string]any{

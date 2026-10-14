@@ -1671,10 +1671,21 @@ func cloneInfoError(status int, raw []byte) (err error) {
 // Vendored dev-token Buzz-budget bounds. Both mirror
 // civitai/civitai src/server/services/blocks/dev-scoped-mint.service.ts:
 //
-//	export const DEV_BUZZ_BUDGET_CAP = 250;
-//	export const DEV_BUZZ_BUDGET_DEFAULT = 50;
+//	export const DEV_BUZZ_BUDGET_CAP = BUZZ_BUDGET_CAP;
+//	export const DEV_BUZZ_BUDGET_DEFAULT = BUZZ_BUDGET_DEFAULT;
 //
-// which that file's resolveDevBuzzBudget composes as
+// i.e. the INSTALL-token budget bounds, deliberately no lower, so an app is
+// developed at the budget it gets live. Their values live in
+// src/shared/constants/block-scope.constants.ts:
+//
+//	export const BUZZ_BUDGET_CAP = 5000;
+//	export const BUZZ_BUDGET_DEFAULT = 1000;
+//
+// (The dev bounds used to be separate, lower literals — 250 and 50 — and this
+// file kept vendoring those after the server aliased them to the install-token
+// bounds.)
+//
+// The dev mint resolves them in that service's resolveDevBuzzBudget as
 //
 //	Math.min(requestedBudget ?? manifestDefaultBudget ?? DEFAULT, CAP)
 //
@@ -1686,26 +1697,45 @@ func cloneInfoError(status int, raw []byte) (err error) {
 // itself rather than deferring:
 //   - Below 1 the route's zod schema (`z.number().int().positive()`) answers 400.
 //   - ABOVE the cap there is no schema bound at all — the request succeeds and
-//     `Math.min` silently clamps. A developer who asks for 400 gets a 250-budget
+//     `Math.min` silently clamps. A developer who asks for 6000 gets a 5000-budget
 //     token and no indication the number moved, which is the more expensive
 //     failure of the two and cannot be detected after the fact from the CLI.
 //
+// The budget is NOT the only ceiling on a generation: an INLINE customComfy
+// body's `maxBuzz` (which is also its step timeout in seconds) is capped by the
+// server's workflow schema at InlineMaxBuzz whatever the token's budget — see
+// that constant.
+//
 // Neither constant is observable from a minted token (the JWT's budget claim
-// reflects the RESOLVED value, so a clamped 250 and a requested 250 are
+// reflects the RESOLVED value, so a clamped 5000 and a requested 5000 are
 // byte-identical), so there is no sound live drift probe to write here — unlike
 // ListSubmissionsCap above, whose truncation asymmetry makes one possible. These
 // are pinned by TestDevBuzzBudgetBoundsMirrorServer and by the comment above;
 // re-read the server file when touching them.
 const (
 	// DevBuzzBudgetCap is the largest per-generation Buzz budget the dev-token
-	// route will issue. A larger request is clamped, not refused.
-	DevBuzzBudgetCap = 250
+	// route will issue (DEV_BUZZ_BUDGET_CAP = BUZZ_BUDGET_CAP). A larger
+	// request is clamped, not refused.
+	DevBuzzBudgetCap = 5000
 	// DevBuzzBudgetMin is the smallest budget the route's schema accepts.
 	DevBuzzBudgetMin = 1
 	// DevBuzzBudgetDefault is what the server resolves to when NEITHER the
-	// request nor the app's stored manifest names a budget.
-	DevBuzzBudgetDefault = 50
+	// request nor the app's stored manifest names a budget
+	// (DEV_BUZZ_BUDGET_DEFAULT = BUZZ_BUDGET_DEFAULT).
+	DevBuzzBudgetDefault = 1000
 )
+
+// InlineMaxBuzz mirrors civitai/civitai src/server/schema/blocks/workflow.schema.ts
+//
+//	export const INLINE_MAX_BUZZ = 250;
+//
+// the schema bound on an INLINE customComfy body's `maxBuzz`
+// (`z.number().int().min(1).max(INLINE_MAX_BUZZ)`). The server stamps the step
+// timeout from that same number, so it is also the most wall-clock seconds an
+// inline graph can be given. It applies REGARDLESS of the token's budget: a
+// DevBuzzBudgetCap token does not lift it. The CLI only states it in help text;
+// it never validates a graph against it (the server's schema does).
+const InlineMaxBuzz = 250
 
 // DevTokenMinter mints a short-lived dev block token for `npm run dev:live`.
 type DevTokenMinter interface {
@@ -1752,7 +1782,7 @@ type DevTokenMinter interface {
 //	value is the zero value; that is the whole argument.
 //
 //	Contrast BuzzBudget, a pointer for the mirror-image reason: there the
-//	server's absent-resolution (manifest default, then 50) is a value the CLI
+//	server's absent-resolution (manifest default, then DevBuzzBudgetDefault) is a value the CLI
 //	cannot name, so "say nothing" is a real, correct request. Here it is not.
 //
 // Compatibility: the route's zod schema is a non-strict `z.object`, so a
