@@ -41,13 +41,13 @@ const oracleDir = "scripts/dogfood"
 // 🔴 A SKIP IS A GREEN THAT CHECKED NOTHING. Same rule, and the same shape, as
 // dogfoodTool: on a contributor's machine a missing browser skips (with the
 // reason, under -v); under CI it FAILS, because there a skip and a pass are
-// indistinguishable in the log the merge gate is read from. ci.yml's build-test
-// job resolves a browser into CIVITAI_CHROME before `go test ./...` for exactly
-// this reason.
+// indistinguishable in the log the merge gate is read from. Every CI job that
+// runs these resolves a browser into CIVITAI_CHROME first
+// (scripts/dogfood/ci-browser.sh) for exactly this reason.
 //
 // 🔴 `oracleBrowserNames` IS ONE OF FOUR COPIES OF THE SAME PREFERENCE ORDER —
 // the others are in `scripts/dogfood/briefs/_cdp.mjs` (`BROWSER_NAMES`),
-// `scripts/dogfood/oracle.sh` and `.github/workflows/ci.yml`. They must agree,
+// `scripts/dogfood/oracle.sh` and `scripts/dogfood/ci-browser.sh`. They must agree,
 // or this suite resolves a different browser from the one the assertions it
 // drives will pick, and `TestEveryBrowserResolverAgreesOnTheSameOrder` in
 // dogfood_cdp_launch_test.go is what enforces that.

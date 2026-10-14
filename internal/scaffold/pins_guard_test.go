@@ -16,72 +16,80 @@ package scaffold
 // `latest`. When it doesn't, it fails loud with the stale pin, the current
 // published version, and the one-line fix.
 //
-// It is network-gated: it only runs when CIVITAI_CHECK_PUBLISHED_PINS=1 (a
-// dedicated CI job sets it), so the default `go test ./...` stays offline. When
+// It is network-gated: it only runs when CIVITAI_CHECK_PUBLISHED_PINS=1 (the
+// bump-scaffold-pins workflow sets it; ci.yml no longer runs this test), so the
+// default `go test ./...` stays offline. When
 // enabled but npm is unreachable it SKIPS (never a false failure).
 //
 // The shared pin logic (CivitaiPinRe / FetchNpmLatest / CaretAdmits /
-// ErrPkgNotFound) lives in pins.go — production code the bump-pins command
-// reuses so the guard and the bumper agree by construction.
+// ErrPkgNotFound, and TemplatePins / CheckPins — the walk and the verdict
+// themselves) lives in pins.go — production code the bump-pins and pins-gate
+// commands reuse so the guard, the bumper and the CI job agree by construction.
+//
+// 🔴 THIS TEST IS NO LONGER WHAT THE `pins-vs-published` CI JOB RUNS. That job
+// runs `internal/scaffold/cmd/pins-gate`, which asks the same CheckPins question
+// and then decides whether the answer should BLOCK the run it is in (a PR that
+// did not touch a pin input is warned, not blocked). This test is still the
+// bump bot's pre-PR check (`validate — pins now satisfy published`), and the
+// two deliberately differ on ONE row: this test SKIPS when npm is unreachable,
+// because a bot that withheld its PR over a blip would leave the pins stale;
+// the gate reports unreachable as its own verdict instead of a skip.
 
 import (
-	"errors"
-	"io/fs"
 	"os"
 	"testing"
 )
 
 func TestScaffoldPinsSatisfyPublished(t *testing.T) {
 	if os.Getenv("CIVITAI_CHECK_PUBLISHED_PINS") != "1" {
-		t.Skip("network guard; set CIVITAI_CHECK_PUBLISHED_PINS=1 to run (CI does)")
+		t.Skip("network guard; set CIVITAI_CHECK_PUBLISHED_PINS=1 to run (the bump-scaffold-pins workflow does)")
 	}
 
-	pins := collectCivitaiPins(t)
+	pins, err := TemplatePins()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(pins) == 0 {
 		t.Fatal("no @civitai/* pins found in any template package.json.tmpl — the extractor is broken")
 	}
 
-	// De-dupe the published lookups across templates.
-	latest := map[string]string{}
-	notFound := map[string]bool{} // packages npm returned 404/410 for
-	for _, p := range pins {
-		if _, ok := latest[p.pkg]; ok || notFound[p.pkg] {
+	findings := CheckPins(pins, FetchNpmLatest)
+
+	// NOT-FOUND FIRST, and it is a failure whatever else happened: the package
+	// genuinely does not exist on npm — a renamed/unpublished/typo'd pin. That
+	// is a REAL drift, not "can't tell right now", so fail loud (don't skip).
+	// Once per package.
+	reportedMissing := map[string]bool{}
+	for _, f := range findings {
+		if f.Status != PinNotFound || reportedMissing[f.Pkg] {
 			continue
 		}
-		v, err := FetchNpmLatest(p.pkg)
-		switch {
-		case errors.Is(err, ErrPkgNotFound):
-			// The package genuinely does not exist on npm — a renamed/
-			// unpublished/typo'd pin. This is a REAL drift, not "can't tell
-			// right now", so fail loud (don't skip).
-			notFound[p.pkg] = true
-			t.Errorf(
-				"NONEXISTENT PACKAGE — a template pins a package npm does not publish.\n"+
-					"  template: %s\n"+
-					"  package:  %s   (not found on npm — renamed, unpublished, or a typo in the pin?)\n"+
-					"  fix:      correct the @civitai/* package name in the template's package.json.tmpl",
-				p.file, p.pkg,
-			)
-		case err != nil:
-			// Transient/connectivity failure (DNS/timeout/connection-refused,
-			// or a 5xx / 429 rate-limit) — we can't tell right now, so skip
-			// rather than false-fail.
-			t.Skipf("npm unreachable for %s (%v) — skipping, not failing", p.pkg, err)
-		default:
-			latest[p.pkg] = v
+		reportedMissing[f.Pkg] = true
+		t.Errorf(
+			"NONEXISTENT PACKAGE — a template pins a package npm does not publish.\n"+
+				"  template: %s\n"+
+				"  package:  %s   (not found on npm — renamed, unpublished, or a typo in the pin?)\n"+
+				"  fix:      correct the @civitai/* package name in the template's package.json.tmpl",
+			f.File, f.Pkg,
+		)
+	}
+
+	// Unreachable NEXT, and it skips the rest: a transient/connectivity failure
+	// (DNS/timeout/connection-refused, or a 5xx / 429 rate-limit) means we can't
+	// tell right now, so skip rather than false-fail. It has to come before the
+	// staleness verdicts — "npm blipped on one package" must not be reported as
+	// a half-evaluated set of pins.
+	for _, f := range findings {
+		if f.Status == PinUnreachable {
+			t.Skipf("npm unreachable for %s (%v) — skipping, not failing", f.Pkg, f.Err)
 		}
 	}
 
-	for _, p := range pins {
-		if notFound[p.pkg] {
-			continue // already reported as a nonexistent package
-		}
-		published := latest[p.pkg]
-		ok, err := CaretAdmits(p.pin, published)
-		if err != nil {
-			t.Fatalf("%s: cannot evaluate pin %q against published %q: %v", p.file, p.pin, published, err)
-		}
-		if !ok {
+	for _, f := range findings {
+		switch f.Status {
+		case PinInvalid:
+			t.Fatalf("%s: cannot evaluate pin %q against published %q: %v", f.File, f.Pin, f.Published, f.Err)
+		case PinStale:
 			t.Errorf(
 				"STALE SCAFFOLD PIN — every app created from this template is born stale.\n"+
 					"  template: %s\n"+
@@ -89,41 +97,8 @@ func TestScaffoldPinsSatisfyPublished(t *testing.T) {
 					"  pinned:   %s   (does NOT admit the published version — pre-1.0 caret locks the minor)\n"+
 					"  published:%s   (npmjs.org/%s latest)\n"+
 					"  fix:      run `go run ./internal/scaffold/cmd/bump-pins` (or set the pin to \"^%s\" and update the matching assertion in scaffold_test.go)",
-				p.file, p.pkg, p.pin, published, p.pkg, published,
+				f.File, f.Pkg, f.Pin, f.Published, f.Pkg, f.Published,
 			)
 		}
 	}
-}
-
-type civitaiPin struct {
-	file string // template-relative path of the package.json.tmpl
-	pkg  string // e.g. @civitai/app-sdk
-	pin  string // e.g. ^0.24.0
-}
-
-// collectCivitaiPins walks the embedded templates for every package.json.tmpl
-// and extracts its @civitai/* pins.
-func collectCivitaiPins(t *testing.T) []civitaiPin {
-	t.Helper()
-	var out []civitaiPin
-	err := fs.WalkDir(templatesFS, "templates", func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || d.Name() != "package.json.tmpl" {
-			return nil
-		}
-		raw, err := templatesFS.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		for _, m := range CivitaiPinRe.FindAllStringSubmatch(string(raw), -1) {
-			out = append(out, civitaiPin{file: p, pkg: m[1], pin: m[2]})
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walking templates: %v", err)
-	}
-	return out
 }

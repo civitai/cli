@@ -36,7 +36,7 @@
 //
 // 🔴 The ledger is checked in on purpose. CI cannot reach npm reliably and the
 // offline guard is the one that gates every PR, so the guard never fetches; it
-// reads bytes a human (or the daily bumper) committed, and records which package
+// reads bytes a human (or the scheduled bumper) committed, and records which package
 // version they came from.
 package scaffold
 

@@ -339,7 +339,7 @@ func nodeMajorsIn(t *testing.T, file, jobName string, job wfJob) []int {
 // TestReadyAckDriftRunnerMatchesTheGatesNodeMajor pins the OTHER half of the
 // #530 drift, the half the scaffold-and-install rule above structurally cannot
 // see: `ready-ack-runtime` exists TWICE under the same name — as the merge GATE
-// in `ci.yml`, and as the daily DRIFT runner in `bump-scaffold-pins.yml`. That
+// in `ci.yml`, and as the scheduled DRIFT runner in `bump-scaffold-pins.yml`. That
 // job installs nothing, so the rule above never looks at it.
 //
 // Two tiers of the same check running on different node majors is a suite that
@@ -366,7 +366,7 @@ func TestReadyAckDriftRunnerMatchesTheGatesNodeMajor(t *testing.T) {
 		}
 		job, ok := wf.Jobs[jobName]
 		if !ok {
-			t.Fatalf("%s has no job %q. The gate and its daily drift runner are matched BY NAME; if one was "+
+			t.Fatalf("%s has no job %q. The gate and its scheduled drift runner are matched BY NAME; if one was "+
 				"renamed, re-point this guard at the pair rather than deleting it.", file, jobName)
 		}
 		m := nodeMajorsIn(t, file, jobName, job)
@@ -387,7 +387,7 @@ func TestReadyAckDriftRunnerMatchesTheGatesNodeMajor(t *testing.T) {
 	}
 
 	if fmt.Sprint(majors[gateFile]) != fmt.Sprint(majors[driftFile]) {
-		t.Errorf("the `%s` GATE in %s runs node %v, but its daily DRIFT runner in %s runs node %v.\n"+
+		t.Errorf("the `%s` GATE in %s runs node %v, but its scheduled DRIFT runner in %s runs node %v.\n"+
 			"  They must match. The drift runner's whole job is to catch, on `main` and between PRs, what the "+
 			"gate cannot see; running it on a different node major makes the two tiers able to disagree, so a "+
 			"regression can be red in one and structurally invisible in the other. That is exactly the shape of "+
