@@ -4,7 +4,7 @@
 # pre-1.0 carets that LOCK THE MINOR, so every new minor those packages publish
 # turns the `pins-vs-published` guard red until a human hand-bumps the pins.
 # This job runs `bump-pins` (which rewrites the literals in both templates'
-# package.json, the page-money README and each template's test canary),
+# package.json and each template's test canary),
 # validates the result IN THIS JOB, and opens a PR when anything changed — so
 # the hand-fix never recurs.
 #
@@ -474,7 +474,6 @@ jobs:
           literal pins wherever they appear:
 
           - `internal/scaffold/templates/page-money/package.json.tmpl`
-          - `internal/scaffold/templates/page-money/README.md.tmpl`
           - `internal/scaffold/scaffold_test.go` (page-money's `mustContain` canary)
           - `internal/scaffold/templates/page-elements/package.json.tmpl`
           - `internal/scaffold/page_elements_test.go` (page-elements' pin canary)
