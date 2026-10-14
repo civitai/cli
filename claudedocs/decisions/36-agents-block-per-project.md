@@ -418,7 +418,19 @@ measurement; run the probe.
   (`401`/`403`/`429`/`5xx`, which a blocked edge produces as readily as a broken
   page). A transport failure on one link is collected and the run continues; a
   run that could not reach every link reports **SKIP with the counts**, never a
-  pass.
+  pass. Its link list comes from ONE function, `blockDocsProbeCorpus`: the
+  `### Docs` links of every shape under **both** `{{ if .ElementsSDK }}` arms.
+  Until #835 it rendered `allProjectShapesForTest()[0]` alone — a blocks-react
+  shape — so the default `@civitai/sdk` template's own addresses (the workflow
+  guide pointer) were never fetched. The corpus fails a per-arm control when an
+  arm contributes no link the other lacks; a raw per-section count cannot, because
+  the shared tail outside the `{{ if }}` gives both arms four links.
+- `TestBlockDocsLinkCorpusCoversBothSDKBranches` — the OFFLINE half of that
+  probe, so the corpus claim is checked in `make ci`: it renders each arm
+  independently and asserts `blockDocsProbeCorpus`'s list contains every link of
+  both. A corpus that drops an arm fails here without network. It checks the
+  corpus the probe is built FROM, not the probe's loop — a filter added inside
+  the probe after that call would not be seen offline.
 
 #### The audit repairs (#549 follow-up)
 

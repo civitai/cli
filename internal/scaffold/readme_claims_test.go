@@ -257,6 +257,156 @@ func fetchPackageFile(pkg, version, name string) (string, error) {
 }
 
 // ---------------------------------------------------------------------------
+// The README does not restate the moving pins
+// ---------------------------------------------------------------------------
+
+// readmePinSpellingRe matches a version-pinned package spelling in prose —
+// `@civitai/<pkg>@^X.Y`, `@civitai/<pkg>@X.Y` — the shape the README used to
+// restate the template's pins in.
+var readmePinSpellingRe = regexp.MustCompile(`@civitai/[a-z0-9-]+@[~^]?\d+\.\d+`)
+
+// TestPageMoneyREADMESpellsNoCaretPin pins the RELATIONSHIP between the README
+// and package.json.tmpl: the README must not repeat a version the bump bot moves.
+//
+// 🔴 THE DEFECT. The README said its per-account Buzz features "require
+// `@civitai/app-sdk@^0.70.0` + `@civitai/blocks-react@^0.73.0`". Those were the
+// template's CURRENT pins, not a requirement: `spentAccountType` first appears
+// in app-sdk 0.14.0's typings (absent in 0.13.0) and `useBuzzBalance` in
+// blocks-react 0.16.0's (absent in 0.15.0). The sentence was false the moment it
+// was written and was rewritten by `bump-pins` on every bump to stay false in a
+// new way. The README now names those fixed minimums, and `bump-pins` no longer
+// treats it as a pin site.
+//
+// Two checks, because either alone is walkable: the pinned-package SPELLING
+// (`@pkg@^X.Y`), and a number-bounded mention of each page-money pin's version
+// (pinMentionRe). For a pre-1.0 pin that mention is MAJOR.MINOR, so
+// "`@civitai/app-sdk` 0.70.0", `^0.70`, `0.70.x` and `v0.70` are all caught. For
+// a >= 1.0 pin it is only the full X.Y.Z, and a patch-dropped spelling such as
+// `^1.2` is KNOWINGLY MISSED — see pinMentionRe for why.
+func TestPageMoneyREADMESpellsNoCaretPin(t *testing.T) {
+	// Positive control: the regex matches the spelling that shipped.
+	if !readmePinSpellingRe.MatchString("require `@civitai/app-sdk@^0.70.0` + `@civitai/blocks-react@^0.73.0`") {
+		t.Fatalf("CONTROL failure, not a finding: readmePinSpellingRe (%s) does not match the spelling it exists to catch",
+			readmePinSpellingRe)
+	}
+
+	readme := scaffoldedReadme(t)
+	if m := readmePinSpellingRe.FindAllString(readme, -1); len(m) > 0 {
+		t.Errorf("the scaffolded page-money README spells %d version-pinned package(s): %s.\n"+
+			"A version here restates package.json's pin, which bump-pins moves and this README does not. "+
+			"Name the MINIMUM version a feature needs (a fixed fact), or say \"the versions package.json pins\".",
+			len(m), strings.Join(m, ", "))
+	}
+
+	pins, err := TemplatePins()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, p := range pins {
+		if p.File != "templates/page-money/package.json.tmpl" {
+			continue
+		}
+		checked++
+		re, err := pinMentionRe(p.Pin)
+		if err != nil {
+			t.Fatalf("%s pin %q: %v", p.Pkg, p.Pin, err)
+		}
+		if m := re.FindString(readme); m != "" {
+			t.Errorf("the scaffolded page-money README contains %q, which names the moving part of the version package.json.tmpl "+
+				"currently pins %s to (%s). That number moves on every bump and the README does not; name the "+
+				"feature's minimum instead.", strings.TrimSpace(m), p.Pkg, p.Pin)
+		}
+	}
+	if checked < 2 {
+		t.Fatalf("CONTROL failure, not a finding: %d page-money @civitai/* pin(s) found, want >= 2 "+
+			"(app-sdk + blocks-react) — the version check above compared against nothing", checked)
+	}
+}
+
+// pinMentionRe matches a mention of a caret pin's version as a whole number
+// (not preceded by a digit or `.`, not followed by a digit):
+//
+//   - major 0 (`^0.70.0`): it matches MAJOR.MINOR — `0.70`, `0.70.0`, `0.70.x`,
+//     `^0.70`, `v0.70` — but not `10.70`, `1.0.70` or `0.701`. Matching only the
+//     full `X.Y.Z` would be walkable by any spelling that drops the patch.
+//   - major >= 1 (`^1.2.0`): it matches ONLY the full `X.Y.Z`. The minor still
+//     moves here (`DesiredPin` writes `^X.Y.0` on every 1.x minor), so this
+//     KNOWINGLY MISSES patch-dropped spellings — `^1.2`, `1.2.x`, `v1.2`. That is
+//     the accepted limit: a major.minor match collides with fixed README text
+//     (`SDXL 1.0` matches `1.0` in 4 places), which would redden the bump bot on
+//     correct text as soon as a package reached 1.0.0. The limit is pinned by
+//     TestPinMentionReKnownGapFor1xPins.
+func pinMentionRe(pin string) (*regexp.Regexp, error) {
+	parts := strings.Split(strings.TrimLeft(pin, "^~"), ".")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return nil, fmt.Errorf("not a X.Y[.Z] pin")
+	}
+	moving := parts[0] + "." + parts[1]
+	if parts[0] != "0" {
+		if len(parts) < 3 || parts[2] == "" {
+			return nil, fmt.Errorf("a >= 1.0 pin needs X.Y.Z")
+		}
+		moving += "." + parts[2]
+	}
+	return regexp.Compile(`(?:^|[^0-9.])` + regexp.QuoteMeta(moving) + `(?:[^0-9]|$)`)
+}
+
+// TestPinMentionReCatchesEverySpellingOfTheMovingVersion is the matcher's own
+// control: the spellings that walked the earlier exact-`X.Y.Z` check, and the
+// README's legitimate fixed minimums, which must NOT collide.
+func TestPinMentionReCatchesEverySpellingOfTheMovingVersion(t *testing.T) {
+	re, err := pinMentionRe("^0.70.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"0.70.0", "^0.70", "0.70.x", "v0.70", "@civitai/app-sdk@^0.70.0", "needs 0.70 or later", "(0.70)"} {
+		if !re.MatchString(s) {
+			t.Errorf("pinMentionRe(^0.70.0) does NOT match %q — a README spelling the moving pin that way passes the guard", s)
+		}
+	}
+	for _, s := range []string{"0.14.0", "0.16.0", "10.70", "1.0.70", "0.701", "0.7", "0.71.0"} {
+		if re.MatchString(s) {
+			t.Errorf("pinMentionRe(^0.70.0) matches %q, which is not the pinned version", s)
+		}
+	}
+	if _, err := pinMentionRe("^0"); err == nil {
+		t.Error("pinMentionRe accepted a pin with no minor")
+	}
+}
+
+// TestPinMentionReIsQuietOnTheREADMEWhenAPackageReaches1x is the 1.0 boundary.
+// `DesiredPin` turns a first 1.0.0 publish into `^1.0.0`, and the page-money
+// README legitimately says `SDXL 1.0` / `1.0`. A major.minor match there fires on
+// correct text, which reddens the bump bot's offline suite and leaves
+// `pins-vs-published` red until someone edits this guard.
+func TestPinMentionReIsQuietOnTheREADMEWhenAPackageReaches1x(t *testing.T) {
+	readme := scaffoldedReadme(t)
+	// Positive control: the README really does carry the colliding `1.0` text,
+	// so a zero below is the matcher's answer, not an absent input.
+	// The control is a plain number-bounded MAJOR.MINOR match for `1.0` — the
+	// rule pinMentionRe deliberately does NOT apply at >= 1.0 — so it proves
+	// that rule WOULD fire here, not merely that the bytes `1.0` occur.
+	majorMinor := regexp.MustCompile(`(?:^|[^0-9.])1\.0(?:[^0-9]|$)`)
+	if n := len(majorMinor.FindAllString(readme, -1)); n < 1 {
+		t.Fatalf("CONTROL failure, not a finding: a major.minor match for `1.0` finds %d place(s) in the rendered "+
+			"README, so there is no colliding text and this case tests nothing", n)
+	}
+	re, err := pinMentionRe("^1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := re.FindAllString(readme, -1); len(m) != 0 {
+		t.Errorf("a `^1.0.0` pin matches %d place(s) in the real README, all of which are correct text: %q", len(m), m)
+	}
+	for _, s := range []string{"1.0.0", "^1.0.0", "@civitai/app-sdk@^1.0.0"} {
+		if !re.MatchString(s) {
+			t.Errorf("pinMentionRe(^1.0.0) does NOT match %q — the exact pinned version must still be caught", s)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
@@ -283,4 +433,42 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TestPinMentionReMatchesTheFullVersionOfANonZeroMinor1xPin uses a 1.x pin with
+// a NON-ZERO minor, so a matcher that hardcodes `1.0` (the case above) fails here.
+func TestPinMentionReMatchesTheFullVersionOfANonZeroMinor1xPin(t *testing.T) {
+	re, err := pinMentionRe("^1.2.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"1.2.0", "^1.2.0", "@civitai/app-sdk@^1.2.0"} {
+		if !re.MatchString(s) {
+			t.Errorf("pinMentionRe(^1.2.0) does NOT match %q — the exact pinned version must be caught", s)
+		}
+	}
+	for _, s := range []string{"1.0.0", "1.2", "11.2.0", "1.2.01", "1.20.0"} {
+		if re.MatchString(s) {
+			t.Errorf("pinMentionRe(^1.2.0) matches %q, which is not the pinned version", s)
+		}
+	}
+}
+
+// TestPinMentionReKnownGapFor1xPins PINS AN ACCEPTED LIMIT, not desired
+// behaviour: for a >= 1.0 pin, a spelling that drops the patch is NOT caught,
+// because a major.minor match collides with fixed README text (see
+// pinMentionRe). If this starts failing, the limit was changed — make that a
+// deliberate decision and re-check
+// TestPinMentionReIsQuietOnTheREADMEWhenAPackageReaches1x.
+func TestPinMentionReKnownGapFor1xPins(t *testing.T) {
+	re, err := pinMentionRe("^1.2.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"^1.2", "1.2.x", "v1.2"} {
+		if re.MatchString(s) {
+			t.Errorf("pinMentionRe(^1.2.0) now matches %q. The known 1.x gap was closed — if deliberate, update "+
+				"pinMentionRe's comment and delete this case; check the README-collision test still passes.", s)
+		}
+	}
 }
