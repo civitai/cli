@@ -648,9 +648,10 @@ var blockDocsBranches = []struct {
 	{"@civitai/sdk (ElementsSDK=true, the DEFAULT page-elements template)", true, "wantElementsGenerationPointer"},
 }
 
-// blockDocsProbeCorpus is THE link list TestBlockDocsLinksResolve probes — the
-// probe calls this and nothing else, so the offline test can check the exact list
-// that goes over the network. It returns the sorted union of `### Docs` links over
+// blockDocsProbeCorpus is the corpus TestBlockDocsLinksResolve builds its probe
+// list from, and the offline test checks this corpus — not whatever the probe
+// does with it afterwards. The probe applies no filter today; one added there
+// would not be seen offline. It returns the sorted union of `### Docs` links over
 // every project shape × both SDK arms, and the arm names each link was seen in.
 //
 // 🔴 IT RENDERS BOTH ARMS BECAUSE THE PROBE USED TO RENDER ONE.
@@ -718,12 +719,15 @@ func blockDocsProbeCorpus(t *testing.T) (links []string, seenIn map[string][]str
 
 // TestBlockDocsLinkCorpusCoversBothSDKBranches is the OFFLINE half of the probe's
 // corpus guard: TestBlockDocsLinksResolve is network-gated and skips in `make ci`,
-// so the claim "it probes both arms" needs a check that runs everywhere.
+// so the claim "the corpus it probes from covers both arms" needs a check that
+// runs everywhere.
 //
 // It renders each arm INDEPENDENTLY of blockDocsProbeCorpus and asserts that the
-// probe's list contains every link of each — so a corpus function that drops an
-// arm (the original defect) fails here, offline, rather than only shrinking a
-// network run that skips in CI. It also asserts each independently rendered arm
+// corpus contains every link of each — so a corpus function that drops an arm
+// (the original defect) fails here, offline, rather than only shrinking a
+// network run that skips in CI. It checks the corpus the probe is built from,
+// not the probe's own loop: a filter applied inside the probe after the call is
+// outside what this test sees. It also asserts each independently rendered arm
 // has a link the other lacks, which is what makes "contains both" a stronger claim
 // than "contains one".
 func TestBlockDocsLinkCorpusCoversBothSDKBranches(t *testing.T) {
@@ -776,7 +780,7 @@ func TestBlockDocsLinkCorpusCoversBothSDKBranches(t *testing.T) {
 			}
 		}
 		if len(missing) > 0 {
-			t.Errorf("TestBlockDocsLinksResolve's link list (blockDocsProbeCorpus) is MISSING %d link(s) the %s "+
+			t.Errorf("the corpus TestBlockDocsLinksResolve probes from (blockDocsProbeCorpus) is MISSING %d link(s) the %s "+
 				"branch ships: %s. The live probe would never fetch them. Pinned by %s.",
 				len(missing), br.name, strings.Join(missing, ", "), br.golden)
 		}

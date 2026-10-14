@@ -428,7 +428,9 @@ measurement; run the probe.
 - `TestBlockDocsLinkCorpusCoversBothSDKBranches` — the OFFLINE half of that
   probe, so the corpus claim is checked in `make ci`: it renders each arm
   independently and asserts `blockDocsProbeCorpus`'s list contains every link of
-  both. A corpus that drops an arm fails here without network.
+  both. A corpus that drops an arm fails here without network. It checks the
+  corpus the probe is built FROM, not the probe's loop — a filter added inside
+  the probe after that call would not be seen offline.
 
 #### The audit repairs (#549 follow-up)
 

@@ -279,8 +279,9 @@ var readmePinSpellingRe = regexp.MustCompile(`@civitai/[a-z0-9-]+@[~^]?\d+\.\d+`
 //
 // Two checks, because either alone is walkable: the pinned-package SPELLING
 // (`@pkg@^X.Y`), and the current pin's MAJOR.MINOR of every package page-money
-// pins, matched on number boundaries (pinMinorRe), so "`@civitai/app-sdk`
-// 0.70.0", `^0.70`, `0.70.x` and `v0.70` are all caught.
+// pins (the exact X.Y.Z once a package is >= 1.0), matched on number
+// boundaries (pinMentionRe), so "`@civitai/app-sdk` 0.70.0", `^0.70`, `0.70.x`
+// and `v0.70` are all caught.
 func TestPageMoneyREADMESpellsNoCaretPin(t *testing.T) {
 	// Positive control: the regex matches the spelling that shipped.
 	if !readmePinSpellingRe.MatchString("require `@civitai/app-sdk@^0.70.0` + `@civitai/blocks-react@^0.73.0`") {
@@ -306,12 +307,12 @@ func TestPageMoneyREADMESpellsNoCaretPin(t *testing.T) {
 			continue
 		}
 		checked++
-		re, err := pinMinorRe(p.Pin)
+		re, err := pinMentionRe(p.Pin)
 		if err != nil {
 			t.Fatalf("%s pin %q: %v", p.Pkg, p.Pin, err)
 		}
 		if m := re.FindString(readme); m != "" {
-			t.Errorf("the scaffolded page-money README contains %q, which names the major.minor package.json.tmpl "+
+			t.Errorf("the scaffolded page-money README contains %q, which names the moving part of the version package.json.tmpl "+
 				"currently pins %s to (%s). That number moves on every bump and the README does not; name the "+
 				"feature's minimum instead.", strings.TrimSpace(m), p.Pkg, p.Pin)
 		}
@@ -322,39 +323,80 @@ func TestPageMoneyREADMESpellsNoCaretPin(t *testing.T) {
 	}
 }
 
-// pinMinorRe matches any mention of a caret pin's MAJOR.MINOR as a whole number:
-// `0.70`, `0.70.0`, `0.70.x`, `^0.70`, `v0.70` for pin `^0.70.0` — but not
-// `10.70`, `1.0.70` or `0.701`. A pre-1.0 caret locks the minor, so major.minor is
-// the part of the pin that moves on a bump; matching the full `X.Y.Z` only is
-// walkable by any spelling that drops the patch.
-func pinMinorRe(pin string) (*regexp.Regexp, error) {
+// pinMentionRe matches a mention of the part of a caret pin that MOVES on a
+// bump, as a whole number (not preceded by a digit or `.`, not followed by a
+// digit):
+//
+//   - major 0 (`^0.70.0`): the caret locks the MINOR, so every bump moves
+//     major.minor. It matches `0.70`, `0.70.0`, `0.70.x`, `^0.70`, `v0.70` —
+//     but not `10.70`, `1.0.70` or `0.701`. Matching only the full `X.Y.Z` is
+//     walkable by any spelling that drops the patch.
+//   - major >= 1 (`^1.0.0`): the caret locks only the major, and major.minor is
+//     too common to own — the README says `SDXL 1.0`, which a `1.0` match
+//     flags as soon as a package reaches 1.0.0, reddening the bump bot on
+//     correct text. So it matches the exact `X.Y.Z` the pin names, still
+//     number-bounded.
+func pinMentionRe(pin string) (*regexp.Regexp, error) {
 	parts := strings.Split(strings.TrimLeft(pin, "^~"), ".")
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
 		return nil, fmt.Errorf("not a X.Y[.Z] pin")
 	}
-	return regexp.Compile(`(?:^|[^0-9.])` + regexp.QuoteMeta(parts[0]+"."+parts[1]) + `(?:[^0-9]|$)`)
+	moving := parts[0] + "." + parts[1]
+	if parts[0] != "0" {
+		if len(parts) < 3 || parts[2] == "" {
+			return nil, fmt.Errorf("a >= 1.0 pin needs X.Y.Z")
+		}
+		moving += "." + parts[2]
+	}
+	return regexp.Compile(`(?:^|[^0-9.])` + regexp.QuoteMeta(moving) + `(?:[^0-9]|$)`)
 }
 
-// TestPinMinorReCatchesEverySpellingOfTheMovingVersion is the matcher's own
+// TestPinMentionReCatchesEverySpellingOfTheMovingVersion is the matcher's own
 // control: the spellings that walked the earlier exact-`X.Y.Z` check, and the
 // README's legitimate fixed minimums, which must NOT collide.
-func TestPinMinorReCatchesEverySpellingOfTheMovingVersion(t *testing.T) {
-	re, err := pinMinorRe("^0.70.0")
+func TestPinMentionReCatchesEverySpellingOfTheMovingVersion(t *testing.T) {
+	re, err := pinMentionRe("^0.70.0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, s := range []string{"0.70.0", "^0.70", "0.70.x", "v0.70", "@civitai/app-sdk@^0.70.0", "needs 0.70 or later", "(0.70)"} {
 		if !re.MatchString(s) {
-			t.Errorf("pinMinorRe(^0.70.0) does NOT match %q — a README spelling the moving pin that way passes the guard", s)
+			t.Errorf("pinMentionRe(^0.70.0) does NOT match %q — a README spelling the moving pin that way passes the guard", s)
 		}
 	}
 	for _, s := range []string{"0.14.0", "0.16.0", "10.70", "1.0.70", "0.701", "0.7", "0.71.0"} {
 		if re.MatchString(s) {
-			t.Errorf("pinMinorRe(^0.70.0) matches %q, which is not the pinned version", s)
+			t.Errorf("pinMentionRe(^0.70.0) matches %q, which is not the pinned version", s)
 		}
 	}
-	if _, err := pinMinorRe("^0"); err == nil {
-		t.Error("pinMinorRe accepted a pin with no minor")
+	if _, err := pinMentionRe("^0"); err == nil {
+		t.Error("pinMentionRe accepted a pin with no minor")
+	}
+}
+
+// TestPinMentionReIsQuietOnTheREADMEWhenAPackageReaches1x is the 1.0 boundary.
+// `DesiredPin` turns a first 1.0.0 publish into `^1.0.0`, and the page-money
+// README legitimately says `SDXL 1.0` / `1.0`. A major.minor match there fires on
+// correct text, which reddens the bump bot's offline suite and leaves
+// `pins-vs-published` red until someone edits this guard.
+func TestPinMentionReIsQuietOnTheREADMEWhenAPackageReaches1x(t *testing.T) {
+	readme := scaffoldedReadme(t)
+	// Positive control: the README really does carry the colliding `1.0` text,
+	// so a zero below is the matcher's answer, not an absent input.
+	if !strings.Contains(readme, "1.0") {
+		t.Fatal("CONTROL failure, not a finding: the rendered README no longer contains `1.0`; this case tests nothing")
+	}
+	re, err := pinMentionRe("^1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := re.FindAllString(readme, -1); len(m) != 0 {
+		t.Errorf("a `^1.0.0` pin matches %d place(s) in the real README, all of which are correct text: %q", len(m), m)
+	}
+	for _, s := range []string{"1.0.0", "^1.0.0", "@civitai/app-sdk@^1.0.0"} {
+		if !re.MatchString(s) {
+			t.Errorf("pinMentionRe(^1.0.0) does NOT match %q — the exact pinned version must still be caught", s)
+		}
 	}
 }
 
