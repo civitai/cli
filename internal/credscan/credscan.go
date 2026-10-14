@@ -438,8 +438,7 @@ func matchAssignment(line string) (string, bool) {
 		}
 		key := line[pos+loc[2] : pos+loc[3]]
 		word := line[pos+loc[4] : pos+loc[5]]
-		value, quoted, _ := assignedValue(line, pos+loc[8], pos+loc[9])
-		if valueLooksLikeSecret(value, quoted) {
+		if _, ok := assignment(line, pos+loc[8], pos+loc[9]); ok {
 			return labelFor(key, word), true
 		}
 		// Resume just past this match's OPERATOR, so the next credential word on
@@ -627,7 +626,7 @@ func valueLooksLikeSecret(value string, quoted bool) bool {
 	// 🔴 THERE IS NO WHITESPACE CLAUSE HERE ANY MORE, AND ITS ABSENCE IS THE
 	// POINT. assignRe's value group is `\S{1,512}` — a non-space run — so an
 	// UNQUOTED value carrying a space cannot reach this function. (A QUOTED value
-	// cut at the bound is judged to its real closing quote — see assignedValue —
+	// cut at the bound is judged to its real closing quote — see assignment —
 	// and may carry spaces after its first 512 non-space characters; a quoted
 	// string may contain spaces, so that is not a reason to reject it.) A mutation battery
 	// scored the old `strings.ContainsAny(value, " \t")` SURVIVED because
@@ -659,7 +658,7 @@ func valueLooksLikeSecret(value string, quoted bool) bool {
 	if publicByDesignRe.MatchString(value) {
 		return false
 	}
-	return shannonBitsPerChar(value) >= minEntropyBitsPerChar
+	return entropyClears(value, minEntropyBitsPerChar)
 }
 
 // publicByDesignRe is the one value shape this detector deliberately stays quiet
@@ -702,15 +701,52 @@ func hasLetter(s string) bool {
 	return false
 }
 
+// entropyClears reports whether s clears an entropy floor by EITHER measure:
+// per character or per byte. It is the ONE entropy test; the assignment gate
+// and the URL-password check both call it.
+//
+// 🔴 NEITHER MEASURE ALONE IS SAFE TO SWAP IN FOR THE OTHER. Over bytes, a
+// non-Latin value is judged by its UTF-8 encoding: every Cyrillic letter in
+// `a1ЖЩЯФЫВАПРО` shares a lead byte, so its byte entropy (2.95) is under the
+// floor while its character entropy (3.58) is not — main sent it. Over
+// characters, a repeated multi-byte character is one symbol where bytes see
+// three: `Kq9中中中中中密密密密密钥钥钥钥钥` is 3.41 per byte and 2.24 per
+// character — main redacted it, and a character-only measure sent it. Either
+// one passing is what makes this at least as strict as main and no stricter
+// than needed. For ASCII the two are the same number.
+// TestParityWithMain (internal/redact) pins both one-measure-only cases.
+func entropyClears(s string, floor float64) bool {
+	return shannonBitsPerChar(s) >= floor || shannonBitsPerByte(s) >= floor
+}
+
+// shannonBitsPerByte is the Shannon entropy of s over its BYTE frequencies —
+// the measure main applies. Empty is 0.
+func shannonBitsPerByte(s string) float64 {
+	if s == "" {
+		return 0
+	}
+	var counts [256]int
+	for i := 0; i < len(s); i++ {
+		counts[s[i]]++
+	}
+	n := float64(len(s))
+	var h float64
+	for _, c := range counts {
+		if c == 0 {
+			continue
+		}
+		p := float64(c) / n
+		h -= p * math.Log2(p)
+	}
+	return h
+}
+
 // shannonBitsPerChar is the Shannon entropy of s over its CHARACTER
 // frequencies, in bits per character. Empty is 0.
 //
-// 🔴 CHARACTERS, NOT BYTES. Over bytes, a value in a non-Latin script is judged
-// by its UTF-8 encoding: every Cyrillic letter in `a1ЖЩЯФЫВАПРО` shares a lead
-// byte, so its byte entropy (~2.95) sits under the floor while its character
-// entropy is 3.58, and the password went out unredacted. A byte that is not
-// valid UTF-8 counts as its own symbol, as it did before, so distinct invalid
-// bytes do not collapse into one U+FFFD.
+// It is one of entropyClears' two measures, never used alone. A byte that is
+// not valid UTF-8 counts as its own symbol, so distinct invalid bytes do not
+// collapse into one U+FFFD.
 func shannonBitsPerChar(s string) float64 {
 	if s == "" {
 		return 0
@@ -970,7 +1006,7 @@ func urlPasswordLooksReal(match string) bool {
 		return false
 	}
 	// And a repeated character is nobody's password: `aaaaaaaa`, `00000000`.
-	return shannonBitsPerChar(pw) >= minURLPasswordEntropy
+	return entropyClears(pw, minURLPasswordEntropy)
 }
 
 // matchKnownFormat implements B. Order is the table's order, so the label for a

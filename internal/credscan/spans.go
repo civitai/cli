@@ -44,15 +44,14 @@ func Spans(line string) []Span {
 			break
 		}
 		rawStart, rawEnd := pos+loc[8], pos+loc[9]
-		if value, quoted, start := assignedValue(line, rawStart, rawEnd); valueLooksLikeSecret(value, quoted) {
-			sp := Span{start, start + len(value)}
+		if sp, ok := assignment(line, rawStart, rawEnd); ok {
 			// 🔴 A CUT UNQUOTED CAPTURE IS EXTENDED WHEREVER cleanValue LEFT ITS END,
 			// not only when that end sat exactly at the cut: cleanValue trims a
 			// trailing `;`, so `SECRET=<511 chars>;<200 chars>` used to stop before
 			// the `;` and send the 200. extendUnquoted re-reads the LINE with the
 			// same terminators cleanValue cuts at, so a delimiter that really ends
 			// the value still ends it. (A cut QUOTED capture is already whole —
-			// assignedValue read it to its closing quote.)
+			// assignment read it to its closing quote.)
 			// TestSpansCoverACutValueWhoseEndTheCleanerMoved and
 			// TestSpansStopAtADelimiterThatEndsTheValue pin both sides.
 			if cutUnquoted(line, rawStart, rawEnd) {
@@ -106,24 +105,30 @@ func cutUnquoted(line string, rawStart, rawEnd int) bool {
 	return !isQuote(line[rawStart]) && capturedToTheBound(line, rawStart, rawEnd)
 }
 
-// assignedValue is the value one assignRe match assigns — what the gate judges
-// — with where it starts in line. matchAssignment and Spans both call it, so
-// the detector and the redactor cannot disagree about what a value is.
+// assignment decides whether one assignRe match assigns a secret, and where
+// that value is in line. It is the ONE verdict: matchAssignment (the
+// `app submit` warning) and Spans (the redactor) both call it, so the detector
+// and the redactor cannot disagree.
 //
 // 🔴 THE BOUND IS A COMPLEXITY FIX FOR THE DETECTOR, NOT A STATEMENT ABOUT HOW
 // LONG A SECRET IS. assignRe stops its capture at 512 characters so a line
 // costs linear time. A consumer that REMOVES the secret needs all of it, and a
-// cut capture can be the wrong thing to JUDGE as well:
+// cut capture can be the wrong thing to judge as well:
 //
-//   - 🔴 A CUT QUOTED VALUE IS JUDGED TO ITS REAL CLOSING QUOTE. Its close lies
-//     past the cut, so cleanValue (which sees only the capture) sends it
-//     through the unquoted rules, which end it at its first `,`. In JSON
-//     escaped into a log line — `{"credentials":"{\"client_id\":\"abc\",
-//     \"client_secret\":\"<600 chars>\"}"}` — that fragment is
-//     `{\"client_id\":\"abc\"`, which has no digit and fails the gate, so
-//     nothing was located and the client_secret was sent. Judging the whole
-//     quoted value fixes the verdict and the span together.
-//     TestACutQuotedValueIsJudgedWhole pins it.
+//   - 🔴 A CUT QUOTED VALUE IS A SECRET IF EITHER THE WHOLE VALUE OR main's
+//     FRAGMENT PASSES THE GATE, and the span is the WHOLE value, read to its
+//     real closing quote. Each reading misses what the other catches:
+//   - the FRAGMENT is cleanValue's reading of the capture alone, which sends
+//     a quoted value whose close lies past the cut through the unquoted rules
+//     and ends it at its first `,`. In JSON escaped into a log line —
+//     `{"credentials":"{\"client_id\":\"abc\",\"client_secret\":\"<600 chars>\"}"}`
+//     — the fragment is `{\"client_id\":\"abc\"`, which has no digit, so main
+//     located nothing and sent the client_secret.
+//   - the WHOLE value can fail where the fragment passed: a reject word
+//     (`test`), an interpolation marker (`${`), or a low-entropy tail past
+//     character 512. main redacted those; a whole-only verdict sent them.
+//     TestACutQuotedValueIsJudgedWhole and TestParityWithMain
+//     (internal/redact) pin both directions.
 //   - everything else is cleanValue's reading of the capture; Spans extends a
 //     cut unquoted one afterwards (extendUnquoted).
 //
@@ -131,17 +136,21 @@ func cutUnquoted(line string, rawStart, rawEnd int) bool {
 // opens with the same quote character puts an unescaped quote in its path (the
 // character before it is the operator or white space, never a backslash), so
 // a scan never runs past the next same-quote match.
-func assignedValue(line string, rawStart, rawEnd int) (value string, quoted bool, start int) {
-	if q := line[rawStart]; isQuote(q) && capturedToTheBound(line, rawStart, rawEnd) {
-		start = rawStart + 1 // the opening quote is not part of the value
-		return line[start:closingQuote(line, start, q)], true, start
-	}
+func assignment(line string, rawStart, rawEnd int) (Span, bool) {
 	raw := line[rawStart:rawEnd]
-	value, quoted = cleanValue(raw)
+	value, quoted := cleanValue(raw)
 	// cleanValue only ever trims and unquotes, so the value it returns is a
 	// substring of the raw capture; locating it there recovers the offset
 	// without a second copy of the cleaning rules.
-	return value, quoted, rawStart + strings.Index(raw, value)
+	start := rawStart + strings.Index(raw, value)
+	sp, ok := Span{start, start + len(value)}, valueLooksLikeSecret(value, quoted)
+
+	if q := line[rawStart]; isQuote(q) && capturedToTheBound(line, rawStart, rawEnd) {
+		whole := Span{rawStart + 1, closingQuote(line, rawStart+1, q)}
+		// Either reading passing is a secret; the span is the whole value.
+		return whole, ok || valueLooksLikeSecret(line[whole.Start:whole.End], true)
+	}
+	return sp, ok
 }
 
 // closingQuote returns the index of the quote q that closes a value starting at

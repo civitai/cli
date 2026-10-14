@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/civitai/cli/internal/credscan"
 )
 
-// THE NON-ASCII PARITY TABLE. Every CJK / i18n and non-ASCII line this PR
-// (#838) was audited on, with what origin/main did to it — MEASURED on a clean
+// THE PARITY TABLE. Every CJK / i18n and non-ASCII line this PR (#838) was
+// audited on, plus the cases where only ONE of two measures fires — byte vs
+// character entropy, and a cut quoted value's 512-character fragment vs the
+// whole value — with what origin/main did to each: MEASURED on a clean
 // origin/main worktree (8591fc4), never computed from the code under test.
 //
 // Each row is held to "the same as main, or better": main's warning and its
@@ -24,8 +27,9 @@ import (
 type parityVerdict int
 
 const (
-	same   parityVerdict = iota // head must equal main exactly
-	better                      // main leaked it; head must warn and redact
+	same     parityVerdict = iota // head must equal main exactly
+	better                        // main leaked it; head must warn and redact
+	warnsNow                      // main sent the same text but did not warn; head must warn
 )
 
 var parityRows = []struct {
@@ -107,9 +111,41 @@ var parityRows = []struct {
 	{"byte-entropy", "DB_PASSWORD=a1ЖЩЯФЫВАПРО",
 		false, "DB_PASSWORD=a1ЖЩЯФЫВАПРО",
 		better, "DB_PASSWORD=<credential>"},
+	{"byte-entropy-only", "DB_PASSWORD=Kq9中中中中中密密密密密钥钥钥钥钥",
+		true, "DB_PASSWORD=<credential>",
+		same, "DB_PASSWORD=<credential>"},
+	{"fragment-only-reject", `{"token": "` + paritySecret(520, 0) + `test"}`,
+		true, "{\"token\": \"<credential>\"}",
+		same, "{\"token\": \"<credential>\"}"},
+	{"fragment-only-interp", `{"token": "` + paritySecret(520, 0) + `${HOME}"}`,
+		true, "{\"token\": \"<credential>\"}",
+		same, "{\"token\": \"<credential>\"}"},
+	{"fragment-only-entropy", `{"token": "` + paritySecret(520, 0) + strings.Repeat("a", 3000) + `"}`,
+		true, "{\"token\": \"<credential>\"}",
+		same, "{\"token\": \"<credential>\"}"},
+	{"url-byte-entropy-only", "dial redis://cache_rw:密密密中中中钥钥@cache-3.fieldstone.dev:6379/0 timed out",
+		true, "dial redis://<credential>@cache-3.fieldstone.dev:6379/0 timed out",
+		same, "dial redis://<credential>@cache-3.fieldstone.dev:6379/0 timed out"},
+	{"url-char-entropy-only", "dial redis://cache_rw:ЖЩЯФЫВА@cache-3.fieldstone.dev:6379/0 timed out",
+		false, "dial redis://<credential>@cache-3.fieldstone.dev:6379/0 timed out",
+		warnsNow, "dial redis://<credential>@cache-3.fieldstone.dev:6379/0 timed out"},
+	{"whole-only-escaped-json", `{"credentials":"{\"client_id\":\"abc\",\"client_secret\":\"` + paritySecret(600, 11) + `\"}"}`,
+		false, `{"credentials":"{\"client_id\":\"abc\",\"client_secret\":\"` + paritySecret(600, 11) + `\"}"}`,
+		better, "{\"credentials\":\"<credential>\"}"},
 }
 
-func TestNonASCIIParityWithMain(t *testing.T) {
+// paritySecret returns n characters of a fixed high-entropy alphabet starting
+// seed steps in — the same S520 / S600 the measurement probe used.
+func paritySecret(n, seed int) string {
+	const alphabet = "Kq9Zx2Lm7Rb5Tn8Vc4Hd6Yw1Pf3Sg0Uj"
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		b.WriteByte(alphabet[((i+seed)*7)%len(alphabet)])
+	}
+	return b.String()
+}
+
+func TestParityWithMain(t *testing.T) {
 	dir := t.TempDir()
 	for i, r := range parityRows {
 		t.Run(r.id, func(t *testing.T) {
@@ -131,6 +167,13 @@ func TestNonASCIIParityWithMain(t *testing.T) {
 				}
 				if out != r.mainOut {
 					t.Errorf("sends %q\n main sent %q", out, r.mainOut)
+				}
+			case warnsNow:
+				if r.mainWarns {
+					t.Fatalf("row is marked warnsNow, but main already warned")
+				}
+				if !warns || out != r.mainOut {
+					t.Errorf("warns=%v and sends %q; want a warning and main's %q", warns, out, r.mainOut)
 				}
 			case better:
 				if r.mainWarns || r.mainOut != r.line {
