@@ -11,13 +11,19 @@ import (
 
 // --- a URL is handled on the ORIGINAL text, before any placeholder exists ----
 
-// TestURLQueryIsStrippedWholeWhateverItContains: the query strip used to run
-// AFTER the rules that leave `<token>` / `<email>` behind, and its terminator
-// class excluded `<`, so a placeholder inside a query ended the strip and the
-// rest of the query was sent — while the count still said the query was
-// dropped. And a URL carrying `user:pass@` lost its scheme to the credential
-// span, so the query rule never saw a URL at all.
-func TestURLQueryIsStrippedWholeWhateverItContains(t *testing.T) {
+// TestURLTokenLosesItsUserinfoAndEverythingFromItsFirstQueryOrFragmentMark: a
+// URL is one token — from its scheme to the next white space — and two cuts are
+// made on it: everything between `://` and its LAST `@`, and everything from
+// its first `?` or `#` to its end.
+//
+// Round 1 (the first five rows): the query strip ran after the rules that leave
+// `<token>` / `<email>` behind and stopped at the `<`; and a URL carrying
+// `user:pass@` lost its scheme to the credential span, so its query was never
+// seen. Round 2 (the rest): the rewritten rule still named the characters a
+// query and a userinfo "end" at, so a quote or backtick in a query, an `@` in a
+// password, or a `?` in one, each left the remainder in place under a count
+// that said it was gone.
+func TestURLTokenLosesItsUserinfoAndEverythingFromItsFirstQueryOrFragmentMark(t *testing.T) {
 	cases := []struct {
 		name    string
 		in      string
@@ -33,11 +39,13 @@ func TestURLQueryIsStrippedWholeWhateverItContains(t *testing.T) {
 			want:    []Count{{KindURLQuery, 1}},
 		},
 		{
+			// The `@` of the address is the token's last `@`, and a `?` precedes
+			// it — so (see the password rows below) the whole token goes.
 			name:    "an e-mail address is one of several query parameters",
 			in:      "open https://app.northwind-labs.io/reset?email=bo.tanaka@corp-mail.io&session=Hd5Yq8Lw2Zr6Tb0Vx3 now",
-			leaks:   []string{"bo.tanaka@corp-mail.io", "Hd5Yq8Lw2Zr6Tb0Vx3", "session="},
-			wantOut: "open https://app.northwind-labs.io/reset now",
-			want:    []Count{{KindURLQuery, 1}},
+			leaks:   []string{"bo.tanaka", "corp-mail.io", "Hd5Yq8Lw2Zr6Tb0Vx3", "session="},
+			wantOut: "open https://<credential>@ now",
+			want:    []Count{{KindCredential, 1}, {KindURLQuery, 1}},
 		},
 		{
 			name:    "a URL with userinfo AND a query",
@@ -54,11 +62,71 @@ func TestURLQueryIsStrippedWholeWhateverItContains(t *testing.T) {
 			want:    []Count{{KindURLQuery, 1}},
 		},
 		{
-			name:    "two URLs, each with a query, are two redactions",
+			name:    "two URLs, one with a query and one with a query and a fragment, are two redactions",
 			in:      "a https://one.saltmarsh.studio/x?p=Qa1Ws2Ed3Rf4 b https://two.saltmarsh.studio/y?q=Zx5Cv6Bn7Mm8#frag",
-			leaks:   []string{"Qa1Ws2Ed3Rf4", "Zx5Cv6Bn7Mm8"},
-			wantOut: "a https://one.saltmarsh.studio/x b https://two.saltmarsh.studio/y#frag",
+			leaks:   []string{"Qa1Ws2Ed3Rf4", "Zx5Cv6Bn7Mm8", "frag"},
+			wantOut: "a https://one.saltmarsh.studio/x b https://two.saltmarsh.studio/y",
 			want:    []Count{{KindURLQuery, 2}},
+		},
+		// ---- audit round 2 ----
+		{
+			name:    "a single quote inside the query",
+			in:      "fetch https://h.harborlight.dev/p?name='x'&sig=Rk3Vt9Wm2Xq7Zb5Lc1 failed",
+			leaks:   []string{"Rk3Vt9Wm2Xq7Zb5Lc1", "sig=", "'x'"},
+			wantOut: "fetch https://h.harborlight.dev/p failed",
+			want:    []Count{{KindURLQuery, 1}},
+		},
+		{
+			name:    "a double quote inside the query",
+			in:      `fetch https://h.harborlight.dev/q?name="y"&sig=Jn6Bh2Gy8Tf4Rd0Es3 failed`,
+			leaks:   []string{"Jn6Bh2Gy8Tf4Rd0Es3", "sig="},
+			wantOut: "fetch https://h.harborlight.dev/q failed",
+			want:    []Count{{KindURLQuery, 1}},
+		},
+		{
+			name:    "a backtick inside the query",
+			in:      "fetch https://h.harborlight.dev/r?name=`z`&sig=Pl9Ok8Ij7Uh6Yg5Tf4 failed",
+			leaks:   []string{"Pl9Ok8Ij7Uh6Yg5Tf4", "sig="},
+			wantOut: "fetch https://h.harborlight.dev/r failed",
+			want:    []Count{{KindURLQuery, 1}},
+		},
+		{
+			name:    "a secret in the fragment",
+			in:      "redirected to https://app.harborlight.dev/cb#access_token=Mz4Nx8Bc2Vd6Fg0Hj5 then closed",
+			leaks:   []string{"Mz4Nx8Bc2Vd6Fg0Hj5", "access_token"},
+			wantOut: "redirected to https://app.harborlight.dev/cb then closed",
+			want:    []Count{{KindURLQuery, 1}},
+		},
+		{
+			name:    "an @ inside the password",
+			in:      "dial postgres://svc_tides:p@ssw0rdQv7Lm3@db.harborlight.dev:5432/tides refused",
+			leaks:   []string{"ssw0rdQv7Lm3", "svc_tides"},
+			wantOut: "dial postgres://<credential>@db.harborlight.dev:5432/tides refused",
+			want:    []Count{{KindCredential, 1}},
+		},
+		{
+			// A `?` cannot legally sit in a userinfo, so once one precedes the
+			// last `@` nothing after that `@` can be trusted to be a host: the
+			// same shape is `…/p?to=a@SECRET`. The rest of the token goes too.
+			name:    "a ? inside the password",
+			in:      "dial postgres://deploy:Xk9?mQ2vLp7wHs4@db2.harborlight.dev:5432/app refused",
+			leaks:   []string{"Xk9", "mQ2vLp7wHs4", "deploy"},
+			wantOut: "dial postgres://<credential>@ refused",
+			want:    []Count{{KindCredential, 1}, {KindURLQuery, 1}},
+		},
+		{
+			name:    "a / and a # inside the password",
+			in:      "dial redis://cache:Aa1/Bb2#Cc3Dd4Ee5@cache.harborlight.dev:6379/0 refused",
+			leaks:   []string{"Aa1", "Bb2", "Cc3Dd4Ee5"},
+			wantOut: "dial redis://<credential>@ refused",
+			want:    []Count{{KindCredential, 1}, {KindURLQuery, 1}},
+		},
+		{
+			name:    "an @ after the ? keeps nothing that followed it",
+			in:      "GET https://api.harborlight.dev/v1/n?cc=@Ty5Ru3Ei1Ow9Pq7La done",
+			leaks:   []string{"Ty5Ru3Ei1Ow9Pq7La", "cc="},
+			wantOut: "GET https://<credential>@ done",
+			want:    []Count{{KindCredential, 1}, {KindURLQuery, 1}},
 		},
 	}
 	for _, tc := range cases {
@@ -124,9 +192,18 @@ func TestWindowsUserNameWithASpaceIsRemovedWhole(t *testing.T) {
 
 func TestHeaderCredentialsAreRemoved(t *testing.T) {
 	cases := []struct{ name, in, secret, want string }{
-		{"Authorization: Basic", "> Authorization: Basic ZGVwbG95OnN3b3JkZmlzaGJsdWU=", "ZGVwbG95OnN3b3JkZmlzaGJsdWU=", "> Authorization: Basic <credential>"},
-		{"Authorization: Bearer with no digit in the value", "authorization: Bearer QwErTyUiOpAsDfGhJkLzXcVbNm", "QwErTyUiOpAsDfGhJkLzXcVbNm", "authorization: Bearer <credential>"},
-		{"a JSON headers object", `{"Authorization":"Token k8Hs3Lq9Zx2Vb7Nm"}`, "k8Hs3Lq9Zx2Vb7Nm", `{"Authorization":"Token <credential>"}`},
+		{"Authorization: Basic", "> Authorization: Basic ZGVwbG95OnN3b3JkZmlzaGJsdWU=", "ZGVwbG95OnN3b3JkZmlzaGJsdWU=", "> Authorization: <credential>"},
+		{"Authorization: Bearer with no digit in the value", "authorization: Bearer QwErTyUiOpAsDfGhJkLzXcVbNm", "QwErTyUiOpAsDfGhJkLzXcVbNm", "authorization: <credential>"},
+		{"a JSON headers object", `{"Authorization":"Token k8Hs3Lq9Zx2Vb7Nm"}`, "k8Hs3Lq9Zx2Vb7Nm", `{"Authorization":<credential>`},
+		// Round 2: a Digest value is a comma-separated list with spaces. Stopping
+		// at the first space or comma removed `username=` and sent the response
+		// hash, under docs that said Digest was redacted.
+		{"Authorization: Digest, every parameter",
+			`Authorization: Digest username="Mufasa", realm="api@harborlight.dev", nonce="dcd98b7102dd2f0e8b11d0f6", response="6629fae49393a05397450978507c4ef1"`,
+			"6629fae49393a05397450978507c4ef1", "Authorization: <credential>"},
+		{"an Authorization scheme this package has never heard of", "Authorization: AWS4-HMAC-SHA256 Credential=AKIDharbor/20261014, Signature=fe5f80f77d5fa3beca038a248ff027d0",
+			"fe5f80f77d5fa3beca038a248ff027d0", "Authorization: <credential>"},
+		{"only that line: the next one is kept", "Authorization: Bearer Hy6Tg5Rf4Ed3Ws2Qa1\nHost: api.harborlight.dev", "Hy6Tg5Rf4Ed3Ws2Qa1", "Authorization: <credential>\nHost: api.harborlight.dev"},
 		{"x-api-key header", "< x-api-key: f3a91c07d2b84e65a0c9", "f3a91c07d2b84e65a0c9", "< x-api-key: <credential>"},
 		{"api-key in a form body", "body was api-key=7d1e4b9a2c6f8035e1d7 and nothing else", "7d1e4b9a2c6f8035e1d7", "body was api-key=<credential> and nothing else"},
 	}
@@ -148,7 +225,8 @@ func TestHeaderCredentialsAreRemoved(t *testing.T) {
 			assertCounts(t, r.Counts(), []Count{{KindCredential, 1}})
 		})
 	}
-	// And prose that merely names those headers is left alone.
+	// Text these rules do leave alone. (What they wrongly take is in
+	// knownOverRedactions, not asserted away here.)
 	for _, s := range []string{
 		"the x-api-key header is required but the docs never say so",
 		"api-key: required",
@@ -156,23 +234,7 @@ func TestHeaderCredentialsAreRemoved(t *testing.T) {
 	} {
 		r := newTestRedactor()
 		if got := r.Apply(s); got != s {
-			t.Errorf("prose was rewritten: %q -> %q", s, got)
-		}
-	}
-}
-
-// TestStatedMissesAreStillMisses pins the residual list in the package doc. If
-// one of these starts being redacted, the doc is stale in the safe direction —
-// update it. It exists so the list is a measurement and not a guess.
-func TestStatedMissesAreStillMisses(t *testing.T) {
-	for name, s := range map[string]string{
-		"a bare bearer value with no digit": "sent Bearer QwErTyUiOpAsDfGhJkLzXcVbNm to it",
-		"a scheme-less URL with a query":    "curl cdn.fieldstone.dev/f.bin?sig=Yt6Ru8Ei0Ow2Pq4La",
-		"an api key with no digit":          "x-api-key: QwErTyUiOpAsDfGhJk",
-	} {
-		r := newTestRedactor()
-		if got := r.Apply(s); got != s {
-			t.Errorf("%s is documented as NOT covered, but was rewritten (%q). Remove it from the residual list in the package doc.", name, got)
+			t.Errorf("rewritten: %q -> %q", s, got)
 		}
 	}
 }

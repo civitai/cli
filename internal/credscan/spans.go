@@ -89,8 +89,8 @@ const assignValueBound = 512
 // LONG A SECRET IS. Scan only needs to know the line holds one, so capturing
 // 512 bytes of it is enough there. A consumer that REMOVES the secret needs all
 // of it: redacting the first 512 bytes of a 700-byte value sends the rest. The
-// extension is one linear walk from the capture's end, so it costs nothing the
-// bound was protecting.
+// extension is one linear walk from the capture's end — not the per-word rescan
+// of the line that the bound exists to limit.
 //
 // Where the value ends follows cleanValue: a value that opened with a quote
 // runs to that quote's close (a backslash escapes the next byte), and an

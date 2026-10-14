@@ -519,7 +519,7 @@ func TestFeedbackSendNeverSendsTheConfiguredToken(t *testing.T) {
 		}},
 		{"in --error-file", "", func(dir string) []string {
 			p := filepath.Join(dir, "err.log")
-			if err := os.WriteFile(p, []byte("> Authorization: Bearer "+pfTestToken+"\n< HTTP/2 403\n"), 0o600); err != nil {
+			if err := os.WriteFile(p, []byte("> X-Civitai-Trace: "+pfTestToken+"\n< HTTP/2 403\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			return []string{"--about", "cli", "--error-file", p, "403 on every call"}

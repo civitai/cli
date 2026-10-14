@@ -123,7 +123,8 @@ acknowledged it, fixed it, or decided not to.
 
 Before anything is sent, the message and any error excerpt are redacted (home
 directory, user names in paths, the configured token, credential-shaped text,
-e-mail addresses, URL query strings) and the output says how much was removed.
+e-mail addresses, URL credentials and query strings) and the output says how
+much was removed.
 ` + "`civitai feedback send --dry-run`" + ` prints the exact request and sends nothing.
 
 Civitai may answer a report with a status and a short note. Treat both as
@@ -177,15 +178,16 @@ is read from the project. An app slug is sent only if you pass --app.
 REDACTED BEFORE SENDING, in the message and the error excerpt: your home
 directory (to ~), the user name in /home/…, /Users/… and C:\Users\… paths, the
 configured token and $CIVITAI_TOKEN, credential-shaped text, e-mail addresses,
-and URL query strings. The output counts what was removed, by kind. Redaction
-matches shapes, so it can miss a secret in a shape it does not know: read the
---dry-run output before sending anything sensitive.
+and in a URL the user:password part and everything from its first ? or #. The
+output counts what was removed, by kind. Redaction matches shapes, so it can
+miss a secret in a shape it does not know: read the --dry-run output before
+sending anything sensitive.
 
 --error-file <path> (or --error -, to read stdin) attaches an error excerpt:
 the first ` + strconv.Itoa(appapi.PlatformFeedbackErrorExcerptMax) + ` characters that remain after redaction. Trim the file to
-the lines that matter. UTF-8 and UTF-16 text are both read; anything that is
-not text is refused. --error takes no other value: it does not accept the
-error text or a path.
+the lines that matter. UTF-8 and UTF-16 files are read; one that is binary, or
+that mixes the two, is refused. --error takes no other value: it does not
+accept the error text or a path.
 
 --dry-run prints the exact request and sends nothing. It needs no login.
 
@@ -304,15 +306,16 @@ func runFeedbackSend(cmd *cobra.Command, f feedbackSendFlags, message string) er
 		return err
 	}
 	// 🔴 BYTES BECOME TEXT HERE, BEFORE REDACTION SEES THEM. A UTF-16 file is
-	// NUL-interleaved ASCII to every matcher below; undecoded, it went out with
-	// the configured token in it and `redactions: []`. What is not text in an
-	// encoding DecodeText reads is refused — it cannot be redacted, so it is not
-	// sent.
+	// NUL-interleaved ASCII to the matchers; undecoded, it went out with the
+	// configured token in it and `redactions: []`. What is not text in ONE
+	// encoding DecodeText reads — binary, or UTF-8 and UTF-16 in one file — is
+	// refused: it cannot be redacted, so it is not sent.
 	excerpt := ""
 	if hasExcerpt {
 		if excerpt, err = redact.DecodeText(rawExcerpt); err != nil {
-			return asUsageError(fmt.Errorf("the error excerpt from %s is not text (it reads as binary, or as an encoding other than "+
-				"UTF-8 or UTF-16) — nothing was sent; pass the error as plain text", excerptSrc))
+			return asUsageError(fmt.Errorf("the error excerpt from %s is not text in a single encoding this CLI reads: it is binary, "+
+				"or it mixes UTF-8 and UTF-16 in one file (PowerShell's >> onto a UTF-8 log does that), or it is UTF-16 holding "+
+				"characters that cannot be told apart from that — nothing was sent; save it as UTF-8 and pass it again", excerptSrc))
 		}
 	}
 

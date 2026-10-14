@@ -56,12 +56,12 @@ var redactionRows = []redactionRow{
 		wantCount: 2,
 	},
 	{
-		// The exact rule runs first, so a token inside a header is counted as the
-		// token it is, not as the bearer shape it also has.
-		name:      "the configured token inside an Authorization header",
-		in:        "> Authorization: Bearer " + testToken,
+		// A bare `Bearer` is not a header: the exact rule sees the token first
+		// and it is counted as the token it is.
+		name:      "the configured token after a bare Bearer",
+		in:        "sent Bearer " + testToken + " and got 403",
 		secret:    testToken,
-		wantOut:   "> Authorization: Bearer <token>",
+		wantOut:   "sent Bearer <token> and got 403",
 		kind:      KindToken,
 		wantCount: 1,
 	},
@@ -124,10 +124,10 @@ var redactionRows = []redactionRow{
 		wantCount: 1,
 	},
 	{
-		name:      "a bearer header carrying some other service's credential",
+		name:      "an authorization header carrying some other service's credential",
 		in:        "< authorization: bearer 8f2c61d09ab347e5b1c0d4f6a7e89321",
 		secret:    "8f2c61d09ab347e5b1c0d4f6a7e89321",
-		wantOut:   "< authorization: bearer <credential>",
+		wantOut:   "< authorization: <credential>",
 		kind:      KindCredential,
 		wantCount: 1,
 	},
@@ -180,10 +180,10 @@ var redactionRows = []redactionRow{
 		wantCount: 1,
 	},
 	{
-		name:      "a query string is dropped and the fragment kept",
+		name:      "a query string and the fragment after it are both dropped",
 		in:        "see https://developer.civitai.com/apps/guide?ref=ck_41d7e2#scopes",
 		secret:    "ck_41d7e2",
-		wantOut:   "see https://developer.civitai.com/apps/guide#scopes",
+		wantOut:   "see https://developer.civitai.com/apps/guide",
 		kind:      KindURLQuery,
 		wantCount: 1,
 	},
@@ -306,7 +306,7 @@ func TestOrdinaryTextIsLeftAlone(t *testing.T) {
 		"Bearer authentication is required, but the docs never say which scope",
 		"@civitai/app-sdk@0.69.0 has no typed helper for the buzz balance call",
 		"ssh: connect to host tunnel port 22: user@host is how the docs spell it",
-		"see https://developer.civitai.com/apps/guide#scopes for the page I mean",
+		"see https://developer.civitai.com/apps/guide for the page I mean",
 		"the token field is empty: token=\"\" in the generated config",
 		"exit code 3 from `civitai app status my-app --json`",
 		"~/work/my-app is where I ran it",

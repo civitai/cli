@@ -51,7 +51,7 @@ func pfSentStrings(t *testing.T, body string) (message, excerpt string) {
 // pfPowerShellLog is what `civitai app submit *> err.log` leaves behind on
 // Windows: the configured token, an e-mail address and a user's home path.
 const pfPowerShellLog = "PS C:\\Users\\Ingrid Solberg\\tide-chart> civitai app submit\r\n" +
-	"Authorization: Bearer " + pfTestToken + "\r\n" +
+	"login printed " + pfTestToken + "\r\n" +
 	"contact ingrid.solberg@northwind-labs.io\r\n"
 
 // TestFeedbackSendDecodesUTF16BeforeRedacting: a UTF-16 file is NUL-interleaved
@@ -106,7 +106,7 @@ func TestFeedbackSendDecodesUTF16BeforeRedacting(t *testing.T) {
 				if strings.Contains(body, `\u0000`) {
 					t.Errorf("the request body carries a NUL, which the server rejects:\n%s", body)
 				}
-				const want = "PS C:\\Users\\<user>\\tide-chart> civitai app submit\r\nAuthorization: Bearer <token>\r\ncontact <email>"
+				const want = "PS C:\\Users\\<user>\\tide-chart> civitai app submit\r\nlogin printed <token>\r\ncontact <email>"
 				if excerpt != want {
 					t.Errorf("excerpt:\n got: %q\nwant: %q", excerpt, want)
 				}
@@ -264,5 +264,44 @@ func TestFeedbackSDKNamesMustLookLikePackageNames(t *testing.T) {
 	}
 	if want := "@civitai/app-sdk @civitai/blocks-react_v2.x"; strings.Join(names, " ") != want {
 		t.Errorf("sent names = %q, want %q", strings.Join(names, " "), want)
+	}
+}
+
+// TestFeedbackSendRefusesAFileThatMixesEncodings (audit round 2): a UTF-8 log
+// with a UTF-16 tail appended used to be decoded whole as UTF-16; the UTF-8
+// part — token included — became characters no rule matches and was sent with
+// the backstop silent. It is refused, at every ratio of prefix to tail.
+func TestFeedbackSendRefusesAFileThatMixesEncodings(t *testing.T) {
+	prefix := "2026-10-14 login printed " + pfTestToken + "\n"
+	for _, tailLines := range []int{1, 3, 40} {
+		tail := strings.Repeat("PS> civitai app submit failed with 401\r\n", tailLines)
+		f := &pfFake{t: t, create: pfCreated(pfReceived)}
+		f.serve()
+		p := filepath.Join(f.projectDir, "mixed.log")
+		if err := os.WriteFile(p, append([]byte(prefix), pfUTF16(tail, false, false)...), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := run(t, "feedback", "send", "--about", "cli", "--error-file", p, "submit fails")
+		if !errors.Is(err, ErrUsage) {
+			// Show what went out, re-encoded the way a reader could recover it.
+			leaked := false
+			for _, req := range f.seen() {
+				_, excerpt := pfSentStrings(t, req.body)
+				var b []byte
+				for _, u := range utf16.Encode([]rune(excerpt)) {
+					b = append(b, byte(u), byte(u>>8))
+				}
+				leaked = leaked || strings.Contains(string(b), pfTestToken)
+			}
+			t.Errorf("%d tail line(s): want a usage error (exit 2), got %v; requests sent: %d; token recoverable from what was sent: %v",
+				tailLines, err, len(f.seen()), leaked)
+			continue
+		}
+		if !strings.Contains(err.Error(), "mixes") {
+			t.Errorf("the refusal must say the file mixes encodings, got: %v", err)
+		}
+		if n := len(f.seen()); n != 0 {
+			t.Errorf("%d tail line(s): the server saw %d request(s)", tailLines, n)
+		}
 	}
 }

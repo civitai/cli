@@ -99,3 +99,96 @@ func TestCleanTextRemovesWhatTheServerRejects(t *testing.T) {
 		t.Errorf("clean text was changed: %q", got)
 	}
 }
+
+// --- audit round 2: one file, two encodings ---------------------------------------
+
+// mixedSecret stands in for anything a matcher must see: here, a credential.
+const mixedSecret = "c1v1tai4f6b8d0a2c4e6f8091a2b3c4d5"
+
+// TestDecodeTextRefusesAFileThatMixesEncodings: PowerShell 5.1's `>>` appends
+// UTF-16LE to whatever is there, so a UTF-8 log gains a UTF-16 tail with no
+// byte-order mark. Decoded whole as UTF-16 — which a "most of the bytes look
+// like UTF-16" test did once the tail was long enough — the UTF-8 part becomes
+// CJK-looking characters that still ENCODE its bytes: no rule matches them, the
+// token backstop does not see the token, and the text is sent. So a file is
+// UTF-16 only when EVERY code unit says so, at every ratio of prefix to tail.
+func TestDecodeTextRefusesAFileThatMixesEncodings(t *testing.T) {
+	prefix := "2026-10-14 token=" + mixedSecret + " rejected\n"
+	line := "PS> civitai app submit failed with 401\r\n"
+
+	for _, tailLines := range []int{1, 2, 5, 20, 200} {
+		tail := strings.Repeat(line, tailLines)
+		cases := map[string][]byte{
+			"UTF-8 then UTF-16LE":            append([]byte(prefix), utf16Bytes(tail, false, false)...),
+			"UTF-8 then UTF-16BE":            append([]byte(prefix), utf16Bytes(tail, true, false)...),
+			"UTF-16LE then UTF-8":            append(utf16Bytes(tail, false, false), prefix...),
+			"UTF-16LE with a BOM then UTF-8": append(utf16Bytes(tail, false, true), prefix...),
+			"UTF-16BE with a BOM then UTF-8": append(utf16Bytes(tail, true, true), prefix...),
+			// An odd-length prefix shifts every later unit by one byte.
+			"odd-length UTF-8 then UTF-16LE": append([]byte("x"+prefix), utf16Bytes(tail, false, false)...),
+		}
+		for name, raw := range cases {
+			got, err := DecodeText(raw)
+			if !errors.Is(err, ErrNotText) {
+				// Say what a matcher would have been handed.
+				t.Errorf("%s, %d tail line(s) (%d%% of the bytes are the UTF-16 part): want ErrNotText, got err=%v and %d rune(s) of text; "+
+					"the secret is visible to a matcher: %v",
+					name, tailLines, 100*(len(raw)-len(prefix))/len(raw), err, len([]rune(got)), strings.Contains(got, mixedSecret))
+			}
+		}
+	}
+}
+
+// TestDecodeTextStillReadsPureUTF16: the positive controls for the test above.
+// Each is one encoding throughout, carries non-ASCII text (an accented letter, a
+// symbol outside Latin-1, an emoji that needs a surrogate pair), and decodes
+// exactly.
+func TestDecodeTextStillReadsPureUTF16(t *testing.T) {
+	want := "naïve café ☕ 😀 token=" + mixedSecret + "\r\nline two\r\n"
+	for name, raw := range map[string][]byte{
+		"UTF-16LE with a BOM":    utf16Bytes(want, false, true),
+		"UTF-16BE with a BOM":    utf16Bytes(want, true, true),
+		"UTF-16LE without a BOM": utf16Bytes(want, false, false),
+		"UTF-16BE without a BOM": utf16Bytes(want, true, false),
+	} {
+		got, err := DecodeText(raw)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("%s:\n got: %q\nwant: %q", name, got, want)
+		}
+	}
+}
+
+// TestDecodeTextUTF16RuleAtItsEdges pins the rule's stated limits, so the doc
+// comment on utf16Units is a measurement.
+func TestDecodeTextUTF16RuleAtItsEdges(t *testing.T) {
+	// 中 is U+4E2D: bytes 2D 4E, both printable ASCII ("-N"). It is refused in
+	// either form, because those two bytes are also two characters of UTF-8.
+	han := "error: 中 failed\n"
+	for name, raw := range map[string][]byte{
+		"with a BOM":    utf16Bytes(han, false, true),
+		"without a BOM": utf16Bytes(han, false, false),
+	} {
+		if _, err := DecodeText(raw); !errors.Is(err, ErrNotText) {
+			t.Errorf("a code unit whose two bytes are both printable ASCII, %s: want ErrNotText, got %v", name, err)
+		}
+	}
+	// 一 is U+4E00: a zero LOW byte. With a byte-order mark the order is known
+	// and it decodes; without one, the zero byte is in the wrong half and the
+	// order cannot be established.
+	one := "error: 一 failed\n"
+	if got, err := DecodeText(utf16Bytes(one, false, true)); err != nil || got != one {
+		t.Errorf("U+4E00 with a BOM: got %q, %v", got, err)
+	}
+	if _, err := DecodeText(utf16Bytes(one, false, false)); !errors.Is(err, ErrNotText) {
+		t.Errorf("U+4E00 without a BOM: want ErrNotText, got %v", err)
+	}
+	// An odd number of bytes is not UTF-16.
+	odd := append(utf16Bytes("abc\n", false, true), 'x')
+	if _, err := DecodeText(odd); !errors.Is(err, ErrNotText) {
+		t.Errorf("an odd-length UTF-16 file: want ErrNotText, got %v", err)
+	}
+}
