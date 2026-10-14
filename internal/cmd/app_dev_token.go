@@ -462,8 +462,9 @@ func validateDevTokenBudget(budget int) error {
 // spell the dev-token default and cap as literals (50 and 250), and kept teaching
 // them after the server raised both to the install-token bounds: appapi is where
 // a bound gets re-vendored, and nothing tied this text to it. Formatting from the
-// constants makes the help move with the vendored values;
-// TestAppDevTokenHelpStatesTheVendoredBudgetBounds pins the sentences.
+// constants makes the help move with the vendored values, so the values are
+// pinned where they are vendored (TestDevBuzzBudgetBoundsMirrorServer,
+// TestInlineMaxBuzzMirrorsServer). The help SENTENCES are not pinned by any test.
 func devTokenLongHelp() string {
 	return fmt.Sprintf(`Mint a short-lived dev block token so a scaffolded page-money app can run
 "npm run dev:live" against the REAL Civitai backend.

@@ -232,10 +232,11 @@ func TestAppDevTokenBudgetHelpTeachesTheTrap(t *testing.T) {
 		"customComfy",
 		"seconds",
 		"expired",
-		// The NUMBERS are TestAppDevTokenHelpStatesTheVendoredBudgetBounds's job:
-		// this test used to list "250" and "50" as substrings, which "5000" and
-		// "250" go on satisfying after both bounds moved — it could not see the
-		// help go stale, and did not.
+		// No NUMBERS here: this test used to list "250" and "50" as substrings,
+		// which "5000" and "250" go on satisfying after both bounds moved — it
+		// could not see the help go stale, and did not. The help is now formatted
+		// from the appapi constants, which TestDevBuzzBudgetBoundsMirrorServer and
+		// TestInlineMaxBuzzMirrorsServer pin.
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("`app dev-token --help` should mention %q:\n%s", want, out)
