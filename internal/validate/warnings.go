@@ -10,9 +10,14 @@ package validate
 //
 // The budgeted-page-without-budget case is the headline one the page-money
 // dogfood surfaced: a page declaring `ai:write:budgeted` but no
-// `page.buzzBudgetPerGen` is minted with the platform's 10-Buzz fallback budget,
-// which is below almost any real generation, so every submit is rejected
-// insufficient-budget before it runs — a silent, confusing dead end.
+// `page.buzzBudgetPerGen` is minted with the platform's DEFAULT per-call budget.
+// The author does not control that number, and civitai changes it without
+// re-reviewing apps. When the dogfood ran the default was so low that every
+// submit was rejected; it has since been raised far above what most calls
+// reserve, so the usual harm now runs the other way — an undeclared ceiling much
+// wider than the app needs, which a future raise widens with no review. The
+// message names both directions and no value: a number here goes stale the next
+// time the platform moves it.
 //
 // SIZING — `page.buzzBudgetPerGen` is a SAFETY CEILING, not a forecast. It caps
 // what ONE generation the app requests may cost, so a bug or a compromised
@@ -51,14 +56,17 @@ func warningChecks(generic any) []Finding {
 	_, hasTargets := m["targets"].([]any)
 
 	// (1) Budgeted scope but no per-gen budget on the page. The page's tokens
-	//     fall back to the platform's 10-Buzz default → every submit is rejected
-	//     before it runs. The headline footgun the dogfood found.
+	//     get the platform's default per-call budget, which the author does not
+	//     control (see the file comment). The headline footgun the dogfood found.
 	if hasBudgeted && hasPage {
 		if _, hasBudget := page["buzzBudgetPerGen"]; !hasBudget {
 			warns = append(warns, newFinding(childField("page", "buzzBudgetPerGen"),
 				"scopes include \"ai:write:budgeted\" but page.buzzBudgetPerGen is not set — "+
-					"tokens fall back to a 10 Buzz budget, below almost any real generation, so "+
-					"every submit is rejected with insufficient budget before it runs. Set "+
+					"tokens get the platform's default per-call budget instead of one you chose. You "+
+					"do not control that default and it can change without your app being re-reviewed: "+
+					"it can sit far above what your generations cost (a wider spend ceiling than your "+
+					"app needs), or below an expensive one (rejected with insufficient budget before "+
+					"it runs). Set "+
 					"page.buzzBudgetPerGen: it is a SAFETY CEILING on what one generation may "+
 					"cost, not a cost estimate — size it several times your worst-case run "+
 					"(headroom is free; you are charged the real price, and the server clamps "+
