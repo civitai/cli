@@ -1,0 +1,13 @@
+# `scratch/` — throwaway files
+
+Put probes, debug scripts and one-off experiments here, never in `src/` or
+`test/`.
+
+- **Git-ignored**: everything here except this README stays out of commits.
+- **Outside the typecheck**: `tsconfig.json` excludes `scratch/`, so a
+  half-finished file here cannot fail `npm run typecheck`.
+- **Outside the test run**: `vitest.config.ts` collects only `test/**/*.test.ts`
+  and excludes `scratch/**`, so a probe here cannot fail `npm test`.
+
+`civitai app submit` still packages this directory with the rest of the
+source, so do not leave secrets or large files here.

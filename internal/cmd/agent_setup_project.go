@@ -94,7 +94,16 @@ type projectShape struct {
 	// `.d.ts` points it at a package this project never installed. Read from the
 	// file, like Scripts, never assumed from a template name.
 	ElementsSDK bool
+	// HasScratchDir reports whether THIS project has a `scratch/` directory —
+	// the git-ignored home for probes that page-elements scaffolds, outside its
+	// tsconfig and vitest includes. The block tells an agent to put throwaway
+	// files there only when the directory exists, so it never names one a
+	// project does not have (the item-36 rule: render from the project).
+	HasScratchDir bool
 }
+
+// scratchDirName is the directory HasScratchDir looks for.
+const scratchDirName = "scratch"
 
 // setupWizardMarker is the file whose presence means this project can mint its
 // own live-dev token from the browser, with no `export` and no hand-run command.
@@ -175,6 +184,9 @@ func detectProjectShape(dir string) projectShape {
 	// rather than an error anybody sees.
 	if _, err := os.Stat(filepath.Join(dir, setupWizardMarker)); err == nil {
 		shape.HasSetupWizard = true
+	}
+	if fi, err := os.Stat(filepath.Join(dir, scratchDirName)); err == nil && fi.IsDir() {
+		shape.HasScratchDir = true
 	}
 
 	pkgPath := filepath.Join(dir, "package.json")

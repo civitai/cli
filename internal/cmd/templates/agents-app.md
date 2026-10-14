@@ -17,7 +17,17 @@ no UI framework. Their API reference ships with them, in `node_modules`:
   `app.storage` / `app.sharedStorage` are app storage; `app.host` is the host's
   own UI.
 - **`node_modules/@civitai/components/custom-elements.json`** — every
-  `<civitai-*>` element's tags, attributes, events and slots.
+  `<civitai-*>` element's tags, attributes, events and slots. Look up the one
+  element you need rather than reading it whole. The attributes every form
+  field shares (`label`, `name`, `value`, `description`, `error`, `required`,
+  `disabled`, `size`) come from a base class the file does not list, so a
+  `<civitai-text-input>` entry shows only its own.
+- **`node_modules/@civitai/components/README.md`**, section "Elements" — worked
+  `<civitai-*>` examples. 🔴 `node_modules/@civitai/components/MARKUP.md` is
+  NOT the elements' reference: it is the `data-civitai-ui` contract for
+  HAND-WRITTEN HTML (`<div data-civitai-ui="text-input"><label>…<input>`),
+  which the `<civitai-*>` elements do not use. Here, write
+  `<civitai-text-input>`.
 
 The manifest fields, the scopes and the message bridge are documented on the
 docs site, and the `.md` suffix serves the plain-text source an agent can read
@@ -68,9 +78,17 @@ SDK can do is the expensive way round. Fetch the reference.
 ### Commands
 
 🔴 **Every row below starts with `civitai`. If your shell answers
-`command not found`, the CLI is installed but its directory is not on this
-shell's PATH** — the usual cause is an install into a prefix whose `bin` was
-added to PATH for the installing shell only, which no later shell inherits. In
+`command not found`, run the same command through `npx` instead:
+`npx -y @civitai/cli@latest <command>`, for example
+`npx -y @civitai/cli@latest app validate`.** That is the same CLI, needs no
+install, and is what every `civitai …` command in this file means wherever no
+`civitai` is installed; in some environments `civitai` is itself a shim for
+exactly that `npx` command.
+
+If the CLI IS installed and a new shell still answers `command not found`, its
+directory is not on this shell's PATH — the usual cause is an install into a
+prefix whose `bin` was added to PATH for the installing shell only, which no
+later shell inherits. In
 a shell where `civitai` DOES work, `command -v civitai` prints its full path;
 add that directory to your shell profile so every later session can run these
 commands too. `civitai agent-setup --fix-path` does that for you on macOS and
@@ -140,6 +158,11 @@ Run `npm run` to list what this project does define.
 - **Do not hand-edit the `@civitai/*` versions.** `civitai app create` carries
   the pins that are known to work together; a hand-picked version is how the
   money path breaks silently.
+{{- if .HasScratchDir }}
+- **Put probes and debug files in `scratch/`, never in `src/` or `test/`.** It
+  is git-ignored and outside both the typecheck and the test run, so a
+  throwaway file there cannot fail `npm run typecheck` or `npm test`.
+{{- end }}
 {{ if .HasSetupWizard }}
 **The dev token for live mode: click the button. Nothing needs exporting.** This
 project ships the dev-only auto-setup wizard, so `npm run dev:live` serves it on
