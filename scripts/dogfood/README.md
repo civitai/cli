@@ -430,7 +430,7 @@ agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius brief_sou
 Tests: `go test . -run 'TestOracle|TestGrade|TestServeBlock'`. Docker is stubbed,
 so they need no daemon — but they do drive a **real** browser, and they FAIL
 rather than skip under `$CI` (a skip and a pass read the same in a merge log).
-`ci.yml`'s `build-test` resolves one into `CIVITAI_CHROME` before `go test ./...`.
+Every CI job that runs them (`build-test` and `dogfood-browser`) resolves one into `CIVITAI_CHROME` first, through `ci-browser.sh`.
 
 #### Launching the browser (`launch()` in `briefs/_cdp.mjs`)
 
@@ -451,14 +451,14 @@ What the launch does about it, and the standing of each part:
 | **Flags that skip startup work.** `--password-store=basic` plus the no-background-network group. | The runner's `DBUS_SESSION_BUS_ADDRESS` is unparseable — reproduce the exact CI stderr with `DBUS_SESSION_BUS_ADDRESS=bogus:path=/nope`. Measured: the flag removes one session-bus round trip (4 `dbus/bus.cc` errors → 3), the keyring probe, which is the last one before the DevTools line. Three of the four failures stalled after exactly three; **the fourth stalled after one, so this is not the whole mechanism.** ⚠ Null result worth not re-deriving: *clearing* the env var changes nothing (4 either way). |
 | **Release builds preferred.** `google-chrome` before `chromium`. | `ubuntu-latest` ships both, and `/usr/bin/chromium` there is a raw `chromium-browser-snapshots` build (152.0.7977.0) while `google-chrome` is a release (152.0.7977.82). ⚠ A determinism argument, **not** a measurement. |
 | **The process is killed when a launch fails.** | The old code walked away from it; all four CI logs end with the runner's own `Terminate orphan process: pid (…) (chrome)`. |
-| **A bounded retry** — `CIVITAI_ASSERT_LAUNCH_ATTEMPTS`, default 2. | The backstop, not the fix. 🔴 **It is loud on SUCCESS**: a launch that needed a second attempt prints `BROWSER LAUNCH RETRY` with the first attempt's diagnostics, and `ci.yml`'s browser-smoke step turns that string into a `::warning`. That is the only thing keeping it from being a way to stop noticing a browser that has started failing half the time. A browser that never works still fails, after exactly N attempts, with every attempt's output in the message. |
+| **A bounded retry** — `CIVITAI_ASSERT_LAUNCH_ATTEMPTS`, default 2. | The backstop, not the fix. 🔴 **It is loud on SUCCESS**: a launch that needed a second attempt prints `BROWSER LAUNCH RETRY` with the first attempt's diagnostics, and `ci-browser.sh`'s smoke step turns that string into a `::warning`. That is the only thing keeping it from being a way to stop noticing a browser that has started failing half the time. A browser that never works still fails, after exactly N attempts, with every attempt's output in the message. |
 
 ⚠ **The stall was never reproduced locally.** `TestCdpLaunch*` in
 `dogfood_cdp_launch_test.go` are therefore invariant guards on the launch's
 behaviour, driven by a fake browser, and only the orphan one is a regression
 test. Do not read them as evidence the flake is gone.
 
-`ci.yml` gained a **browser smoke step** that runs `launch()` before `go test`,
+CI runs a **browser smoke step** (`ci-browser.sh`) that runs `launch()` before `go test`,
 carrying both controls: it fails a binary that exits 3 without printing (so it
 can still go red) and it fails the job by name if the resolved browser cannot
 bind a debugging port, instead of that surfacing eighty lines into a Go test.
@@ -467,8 +467,8 @@ bind a debugging port, instead of that surfacing eighty lines into a Go test.
 append `{"what","ok","ms","budget"}` to `<file>`. The Go suite uses it to run
 its expected-timeout negative controls on a **short** `CIVITAI_ASSERT_WAIT_MS`
 and to refuse that short budget anywhere else (`dogfood_control_wait_test.go`);
-`build-test` publishes the distribution of the waits that succeeded
-(`wait-summary.sh`), which is the evidence the short budget rests on. A grading
+`dogfood-browser` publishes the distribution of the waits that succeeded
+(`wait-summary.sh`, via `ci-browser-tests.sh`), which is the evidence the short budget rests on. A grading
 run is unaffected: neither knob changes `WAIT_MS`'s 15 s default.
 
 - 🔴 **`scopes=` decides no verdict**, exactly like the validate gate. A manifest
