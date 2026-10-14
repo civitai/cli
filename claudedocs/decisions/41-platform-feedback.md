@@ -149,11 +149,8 @@ KNOWN MISSES — sent as typed:
   so `?q=hello world&sig=…` keeps `world&sig=…`
 - a JSON-escaped URL (`https:\/\/…?sig=…`): it is not recognised as a URL, so
   its query is kept
-- a value after a credential key that contains a character of a script
-  written without spaces (Chinese, Japanese, Thai, Lao, Khmer, Burmese): a
-  quoted one is read as prose, and an unquoted one is judged only up to that
-  character, so `"password": "Kq9Zx2Lm7Rb5Tn8Vc中"` and
-  `password=Wq8中Zt3Lm6Xr1Bv5Tn8Vc` are kept
+- a value after a credential key that has no ASCII letter, or no ASCII digit:
+  it is not judged a secret, so `DB_PASSWORD=Пароль2024Секрет` is kept
 
 KNOWN OVER-REDACTIONS — removed although not a secret. Each is in the safe
 direction and none gets a rule of its own:

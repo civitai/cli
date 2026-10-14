@@ -117,7 +117,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -559,7 +558,7 @@ func cleanValue(raw string) (value string, quoted bool) {
 	}
 	v := strings.TrimSpace(stripTrailingComment(raw))
 	// 🔴 AN UNQUOTED VALUE ENDS AT THE FIRST STRUCTURAL DELIMITER (see
-	// endsUnquotedValue, which also ends it at CJK text), and this
+	// endsUnquotedValue), and this
 	// appeared the moment the value capture was bounded (see assignRe). While the
 	// capture ran to end of line, a JSON fragment inside prose swept up the
 	// spaces after it and the whitespace clause rejected it; a bounded non-space
@@ -651,9 +650,6 @@ func valueLooksLikeSecret(value string, quoted bool) bool {
 	if !quoted && dottedRefRe.MatchString(value) {
 		return false
 	}
-	if strings.ContainsFunc(value, inUnspacedScript) {
-		return false
-	}
 	if !hasDigit(value) || !hasLetter(value) {
 		return false
 	}
@@ -679,67 +675,31 @@ func valueLooksLikeSecret(value string, quoted bool) bool {
 // shape, so it exempts nothing else.
 var publicByDesignRe = regexp.MustCompile(`^AIza[0-9A-Za-z_-]{35}$`)
 
-// unspacedScripts are the scripts written without spaces between words.
-//
-// 🔴 IN THESE SCRIPTS A NON-SPACE RUN IS A SENTENCE, NOT A WORD. assignRe's
-// value capture is a non-space run — in English, one word; here, a whole
-// sentence (`token_expired: トークンの有効期限（24時間）が切れました`), and a sentence
-// with a digit in it passes the letter/digit/entropy gate. The gate used to
-// reject these lines only by accident (it knew no letter outside ASCII); once
-// it read every script, every such i18n string became a "credential". Two
-// rules answer it, one per value form:
-//
-//   - an UNQUOTED value ends at its first character of these scripts, or of
-//     CJK / full-width punctuation (endsUnquotedValue), and the part before it
-//     is judged as usual. An i18n sentence leaves nothing, or too little, to
-//     judge; an ASCII secret with CJK text glued to it is still caught.
-//     Reading the whole run as prose instead dropped
-//     `token=Wq8Zt3Lm6Xr1Bv5&lang=中文` and every other such ASCII secret.
-//   - a QUOTED value containing one of these characters is prose
-//     (valueLooksLikeSecret). A quoted string has a known end, so cutting it
-//     would judge a fragment the author never wrote as a unit.
-//
-// The cost of each is a KNOWN MISS of internal/redact: a quoted password
-// containing such a character, and whatever of an unquoted value follows its
-// first one. TestProseInAScriptWithoutSpacesIsSilent and
-// TestAnASCIISecretFollowedByCJKTextIsCaught pin both sides.
-var unspacedScripts = []*unicode.RangeTable{
-	unicode.Han, unicode.Hiragana, unicode.Katakana,
-	unicode.Thai, unicode.Lao, unicode.Khmer, unicode.Myanmar,
-}
-
-func inUnspacedScript(r rune) bool { return unicode.In(r, unspacedScripts...) }
-
-// cjkPunctuation is the CJK Symbols and Punctuation block (U+3000–U+303F,
-// including the ideographic space) and the Halfwidth and Fullwidth Forms block
-// (U+FF00–U+FFEF: full-width `，` `：` `（`, and full-width forms of ASCII
-// letters and digits). Nothing in either is ASCII, and U+FFFD — what an
-// invalid byte decodes to — lies outside both.
-var cjkPunctuation = &unicode.RangeTable{R16: []unicode.Range16{
-	{Lo: 0x3000, Hi: 0x303F, Stride: 1},
-	{Lo: 0xFF00, Hi: 0xFFEF, Stride: 1},
-}}
-
 // endsUnquotedValue reports whether r ends an unquoted value: a structural
-// delimiter (in JSON, JS, YAML and TOML an unquoted value ends at `,` `}` `]`
-// `)`, and no credential shape contains one), a character of a script written
-// without spaces, or CJK / full-width punctuation. It is the ONE definition:
+// delimiter. In JSON, JS, YAML and TOML an unquoted value ends at `,` `}` `]`
+// `)`, and no credential shape contains one. It is the ONE definition:
 // cleanValue cuts the capture with it and Spans extends a cut capture with it,
 // so the value judged and the span located end at the same place.
 func endsUnquotedValue(r rune) bool {
-	return strings.ContainsRune(",}])", r) || inUnspacedScript(r) || unicode.Is(cjkPunctuation, r)
+	return strings.ContainsRune(",}])", r)
 }
 
-// hasDigit and hasLetter report whether s holds a decimal digit / a letter in
-// ANY script. Both used to accept only ASCII, so a password whose letters
-// (`Пароль2024Секрет`) or digits (`KqZxLmRbTnVc٢٠٢٤`) were all outside ASCII
-// failed the gate and was neither reported nor redacted.
 func hasDigit(s string) bool {
-	return strings.ContainsFunc(s, unicode.IsDigit)
+	for i := 0; i < len(s); i++ {
+		if s[i] >= '0' && s[i] <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 func hasLetter(s string) bool {
-	return strings.ContainsFunc(s, unicode.IsLetter)
+	for i := 0; i < len(s); i++ {
+		if c := s[i] | 0x20; c >= 'a' && c <= 'z' {
+			return true
+		}
+	}
+	return false
 }
 
 // shannonBitsPerChar is the Shannon entropy of s over its CHARACTER

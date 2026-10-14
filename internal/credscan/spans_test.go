@@ -5,7 +5,6 @@ import (
 	"math"
 	"strings"
 	"testing"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -235,7 +234,6 @@ func TestSpansStopAtADelimiterThatEndsTheValue(t *testing.T) {
 		{"short unquoted, `}` then more", "{SECRET=" + short + "}" + next, short},
 		{"short quoted", `{"sessionSecret": "` + short + `", "next": "` + next + `"}`, short},
 		{"cut unquoted, `,` at the bound", "SECRET=" + head511 + ",next=" + next, head511},
-		{"cut unquoted, CJK text at the bound", "SECRET=" + head511 + "中文说明" + next, head511},
 		// Minified JSON: the capture runs past the value's closing quote into
 		// the next key and is cut there, but the value itself is closed.
 		{"cut capture, quoted value closed before the cut",
@@ -249,40 +247,24 @@ func TestSpansStopAtADelimiterThatEndsTheValue(t *testing.T) {
 	}
 }
 
-// TestNonASCIIValuesPassTheGateLikeASCIIOnes: the A2 gate's letter and entropy
-// tests once read BYTES, so a password written in a non-Latin script was
-// judged by its UTF-8 encoding — no ASCII letter at all, or a byte entropy far
-// below its character entropy — and went unreported, and unredacted.
-func TestNonASCIIValuesPassTheGateLikeASCIIOnes(t *testing.T) {
-	cases := []struct{ name, value string }{
-		// 12 distinct characters (entropy 3.58 bits each), but every Cyrillic
-		// letter here shares its lead byte, so the BYTE entropy is ~2.95.
-		{"character entropy above the floor, byte entropy below it", "a1ЖЩЯФЫВАПРО"},
-		// No ASCII letter anywhere.
-		{"letters only outside ASCII", "Пароль2024Секрет"},
-		// No ASCII digit anywhere (Arabic-Indic digits).
-		{"digits only outside ASCII", "KqZxLmRbTnVc٢٠٢٤"},
+// TestEntropyIsMeasuredOverCharacters: the A2 gate's entropy test once read
+// BYTES, so a value carrying non-ASCII text was judged by its UTF-8 encoding.
+// Every Cyrillic letter in `a1ЖЩЯФЫВАПРО` shares a lead byte, so its byte
+// entropy sits under the floor while its character entropy does not, and the
+// password went unreported and unredacted.
+func TestEntropyIsMeasuredOverCharacters(t *testing.T) {
+	// 12 distinct characters (entropy 3.58 bits each); byte entropy ~2.95.
+	const value = "a1ЖЩЯФЫВАПРО"
+	line := "DB_PASSWORD=" + value
+	if _, ok := match(line); !ok {
+		t.Errorf("match is silent about %q", line)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			line := "DB_PASSWORD=" + tc.value
-			if _, ok := match(line); !ok {
-				t.Errorf("match is silent about %q", line)
-			}
-			assertOneSpan(t, line, tc.value)
-		})
-	}
+	assertOneSpan(t, line, value)
 
-	// CONTROL: the fixtures sit where they claim to, so the cases above exercise
+	// CONTROL: the fixture sits where it claims to, so the case above exercises
 	// the byte/character difference rather than passing on some other ground.
-	if h := byteEntropy(cases[0].value); h >= minEntropyBitsPerChar {
-		t.Errorf("CONTROL failure: %q has byte entropy %.2f, not below the %.1f floor", cases[0].value, h, minEntropyBitsPerChar)
-	}
-	if strings.ContainsFunc(cases[1].value, func(r rune) bool { return r < utf8.RuneSelf && unicode.IsLetter(r) }) {
-		t.Errorf("CONTROL failure: %q has an ASCII letter", cases[1].value)
-	}
-	if strings.ContainsAny(cases[2].value, "0123456789") {
-		t.Errorf("CONTROL failure: %q has an ASCII digit", cases[2].value)
+	if h := byteEntropy(value); h >= minEntropyBitsPerChar {
+		t.Errorf("CONTROL failure: %q has byte entropy %.2f, not below the %.1f floor", value, h, minEntropyBitsPerChar)
 	}
 	// CONTROL: a low-entropy value is still silent whatever its script.
 	for _, v := range []string{"a1ЖЖЖЖЖЖЖЖЖЖЖ", "a1aaaaaaaaaaa"} {
@@ -303,100 +285,6 @@ func TestEntropyCountsInvalidBytesApart(t *testing.T) {
 	// CONTROL: the same count of distinct CHARACTERS reads the same.
 	if h := shannonBitsPerChar("ЖЩЯФ"); h != 2 {
 		t.Errorf("four distinct Cyrillic letters: entropy %.2f, want 2", h)
-	}
-}
-
-// unspacedSample is one character from each script written without spaces
-// between words, keyed by its unicode table name.
-var unspacedSample = map[string]rune{
-	"Han": '中', "Hiragana": 'あ', "Katakana": 'ア', "Thai": 'ก',
-	"Lao": 'ກ', "Khmer": 'ក', "Myanmar": 'က',
-}
-
-// TestProseInAScriptWithoutSpacesIsSilent: Chinese, Japanese, Thai and the
-// other scripts written without spaces between words put a whole sentence in
-// one non-space run, so assignRe's value capture takes the sentence and a
-// letter/digit/entropy gate that reads every script passes it. So:
-//   - a QUOTED value containing any character of such a script is prose;
-//   - an UNQUOTED value ends at its first such character (or at CJK /
-//     full-width punctuation), and the part before it is judged as usual.
-//
-// An i18n sentence is then silent (nothing, or too little, comes before its
-// first CJK character), while an ASCII secret with CJK text glued after it is
-// still caught — and only the ASCII part is located.
-func TestProseInAScriptWithoutSpacesIsSilent(t *testing.T) {
-	silent := []string{
-		// Scripts written without spaces.
-		"token_expired: トークンの有効期限（24時間）が切れました",
-		`"password_hint": "密码长度至少8位，包含字母和数字",`,
-		"secret_note: 秘密鍵は2048ビット以上を推奨します",
-		"password_policy: รหัสผ่านต้องมีอย่างน้อย8ตัวอักษร",
-		// Spaced scripts: the capture is one word, as it is for English.
-		"password_hint: Пароль должен содержать не менее 8 символов",
-		"password_hint: يجب أن تحتوي كلمة المرور على 8 أحرف على الأقل",
-		"password_hint: Ο κωδικός πρέπει να έχει τουλάχιστον 8 χαρακτήρες",
-		"password_hint: must be at least 8 characters long",
-		"token: ${CIVITAI_TOKEN}",
-	}
-	for _, line := range silent {
-		if _, ok := match(line); ok {
-			t.Errorf("match fires on prose: %q", line)
-		}
-		if spans := Spans(line); len(spans) != 0 {
-			t.Errorf("Spans locates %+v in prose: %q", spans, line)
-		}
-	}
-
-	const secret = "Kq9Zx2Lm7Rb5Tn8Vc"
-	for script, r := range unspacedSample {
-		// QUOTED: one character of the script makes the value prose. CONTROL:
-		// the same quoted value without it is a secret.
-		quoted := `{"password": "` + secret + string(r) + `"}`
-		if _, ok := match(quoted); ok {
-			t.Errorf("%s: match fires on %q", script, quoted)
-		}
-		if spans := Spans(quoted); len(spans) != 0 {
-			t.Errorf("%s: Spans locates %+v in %q", script, spans, quoted)
-		}
-		// UNQUOTED: the value ends at that character; the ASCII before it is
-		// caught, and nothing after it is located.
-		unquoted := "DB_PASSWORD=" + secret + string(r) + "备注"
-		if _, ok := match(unquoted); !ok {
-			t.Errorf("%s: match is silent about %q", script, unquoted)
-		}
-		t.Run(script+" unquoted", func(t *testing.T) { assertOneSpan(t, unquoted, secret) })
-	}
-	assertOneSpan(t, `{"password": "`+secret+`"}`, secret)
-
-	// Still caught: spaced non-Latin scripts are judged like ASCII.
-	for _, v := range []string{"Пароль2024Секрет", "KqZxLmRbTnVc٢٠٢٤", "a1ЖЩЯФЫВАПРО"} {
-		assertOneSpan(t, "DB_PASSWORD="+v, v)
-	}
-}
-
-// TestAnASCIISecretFollowedByCJKTextIsCaught: an unquoted ASCII secret with CJK
-// text joined to it by something other than `,` `}` `]` `)` is still a secret.
-// Reading the whole run as prose dropped every one of these, which main caught.
-func TestAnASCIISecretFollowedByCJKTextIsCaught(t *testing.T) {
-	cases := []struct{ line, want string }{
-		{"登录失败 token=Wq8Zt3Lm6Xr1Bv5，请重试", "Wq8Zt3Lm6Xr1Bv5"}, // full-width comma
-		{"token=Wq8Zt3Lm6Xr1Bv5&lang=中文", "Wq8Zt3Lm6Xr1Bv5&lang="},
-		{"password=Wq8Zt3Lm6Xr1Bv5;备注", "Wq8Zt3Lm6Xr1Bv5"},
-		{"password: Wq8Zt3Lm6Xr1Bv5|用户", "Wq8Zt3Lm6Xr1Bv5|"},
-		{"DB_PASSWORD=Kq9Zx2Lm7Rb5Tn8Vc中", "Kq9Zx2Lm7Rb5Tn8Vc"},
-		// CJK and full-width punctuation end the value too.
-		{"token=Wq8Zt3Lm6Xr1Bv5、次へ", "Wq8Zt3Lm6Xr1Bv5"},  // U+3001
-		{"token=Wq8Zt3Lm6Xr1Bv5　次へ", "Wq8Zt3Lm6Xr1Bv5"},  // U+3000 ideographic space
-		{"token=Wq8Zt3Lm6Xr1Bv5：次へ", "Wq8Zt3Lm6Xr1Bv5"},  // U+FF1A
-		{"token=Wq8Zt3Lm6Xr1Bv5（説明）", "Wq8Zt3Lm6Xr1Bv5"}, // U+FF08
-	}
-	for _, tc := range cases {
-		t.Run(tc.line, func(t *testing.T) {
-			if _, ok := match(tc.line); !ok {
-				t.Errorf("match is silent about %q", tc.line)
-			}
-			assertOneSpan(t, tc.line, tc.want)
-		})
 	}
 }
 
