@@ -40,6 +40,12 @@ var (
 	// ErrNetwork marks a transport/service-availability failure — the gateway/
 	// overload family (HTTP 502/503/504) and exhausted transient retries.
 	ErrNetwork = errors.New("network or service unavailable")
+	// ErrUnreadableResponse marks a 2xx response whose body this client could
+	// not decode into the shape it asked for, even after repairing raw control
+	// characters — the server answered, and not in the contract's shape. It is
+	// not mapped to an exit code of its own (it exits 1, as it did untagged);
+	// the CLI uses it to suggest reporting the response to Civitai.
+	ErrUnreadableResponse = errors.New("unreadable response")
 )
 
 // taggedError attaches a classification sentinel (tag) to an underlying,

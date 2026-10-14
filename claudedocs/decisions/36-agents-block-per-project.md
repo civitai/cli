@@ -288,6 +288,20 @@ commands the recipe names as it spells them and asserts the `set-status` line
 makes exactly one request. As with the first exception: the next addition
 argues for itself.
 
+#### THIRD NAMED EXCEPTION — the platform-feedback channel (operator decision, 2026-10-14)
+
+`### Reporting a platform problem` names `civitai feedback send` and `civitai
+feedback status <ref>`, and says it is NOT `civitai app feedback`. A blind agent
+reading this block went looking for a way to report platform friction, found
+nothing here, and picked `civitai app feedback` — the inbound inbox of the
+app's own users — because nothing told it otherwise. A command name is not
+docs-site contents that rot here, but the sentence is guidance, so it is
+recorded rather than argued away. **Measured cost, paid every turn in a file
+nothing can recall: +298 bytes on every rendered block** — smallest shape
+8,390 → 8,688 B, **+3.6%**. Pinned whole, per shape, by
+`internal/cmd/feedback_hint_test.go`, which also runs both commands as the
+section spells them (decision 41 §7).
+
 #### NOT an exception — `### Before you submit` is a POINTER (civitai-app-starters#573, Zach, 2026-10-08)
 
 The block's `### Before you submit` section is one sentence and the

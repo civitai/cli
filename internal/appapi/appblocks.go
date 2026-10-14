@@ -781,6 +781,23 @@ var ErrBundleTooLarge = errors.New("bundle too large to upload")
 // doUpload's switch, so the two never compete.
 var ErrNothingSent = errors.New("the request never reached the connection")
 
+// SubmitRefusedError is the submit route ANSWERING with a non-200 status. It
+// carries that status so a caller can tell a refusal the platform caused (a
+// 5xx, or a 400 for a bundle the local validate passed) from one the caller can
+// fix (401/403, 409, 429) without parsing the message — `app submit` prints its
+// `civitai feedback send` hint on that distinction.
+//
+// It is a pure wrapper: Error() is the wrapped error's text byte-for-byte, and
+// Unwrap returns it, so the classification serverError attached (and therefore
+// the exit code) is exactly what it was before this type existed.
+type SubmitRefusedError struct {
+	Status int
+	Err    error
+}
+
+func (e *SubmitRefusedError) Error() string { return e.Err.Error() }
+func (e *SubmitRefusedError) Unwrap() error { return e.Err }
+
 const MaxSubmitBodyBytes = 10485760
 
 // submitRequestSentTrace returns the httptrace hook that records, into sent,
@@ -991,7 +1008,7 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 		return nil, err
 	}
 	if status != http.StatusOK {
-		return nil, serverError(status, raw)
+		return nil, &SubmitRefusedError{Status: status, Err: serverError(status, raw)}
 	}
 	var out SubmitResult
 	if err := json.Unmarshal(raw, &out); err != nil {

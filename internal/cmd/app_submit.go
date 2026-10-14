@@ -784,6 +784,12 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 		case !errors.Is(err, civitai.ErrUnauthorized) && !errors.Is(err, civitai.ErrRateLimited):
 			printSubmitSizeDiagnosis(cmd.ErrOrStderr(), zipBytes, prov)
 		}
+		// The platform refused a bundle the caller could not have known to fix
+		// (feedback_hint.go): one line on stderr, after the diagnosis, with
+		// the error returned unchanged.
+		if submitRefusalIsPlatformFriction(err) {
+			printFeedbackHint(cmd.ErrOrStderr(), feedbackHintSubmitRefused)
+		}
 		return err
 	}
 	base := strings.TrimRight(baseURL, "/")

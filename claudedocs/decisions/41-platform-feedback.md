@@ -1,4 +1,4 @@
-# `civitai feedback` reports platform friction to Civitai, and ships unadvertised
+# `civitai feedback` reports platform friction to Civitai, and is advertised at a whitelist of places
 
 `civitai feedback send` lets a developer — in practice, their coding agent —
 tell Civitai that the developer platform got in the way: the CLI, an SDK, the
@@ -267,25 +267,46 @@ same miss `civitai app status <unknown-slug>` reports, on the same code, per
 the README's exit-code table. A partly-found list exits `0`, and so does the
 no-argument read (the user named no ref).
 
-## 7. The verb is unadvertised until the server side is on
+## 7. The verb is advertised — at a whitelist of places, not everywhere
 
-The server endpoint did not exist when this shipped. So the verb is genuinely
-unadvertised, as a set of states rather than an intention:
+It shipped Hidden (cli#830, v0.1.122) because the server endpoint did not exist
+yet, and a pointer on any surface would have sent agents at a `404`. Once the
+server flag was on for every signed-in account it was turned on, as a set of
+states flipped together:
 
-- the root `feedback` command is `Hidden`, so `civitai --help` does not list it;
-- the README does not document it — the section and the command-table rows ship
-  with the PR that turns the verb on;
-- the managed AGENTS.md template is untouched, no other command's error
-  suggests it, and `agent-setup`'s output is unchanged.
+- the root `feedback` command is no longer `Hidden`, so `civitai --help` lists
+  it — with a Short that states the direction (TO Civitai, not your app's user
+  feedback), and `civitai app feedback`'s Short states the opposite one and
+  names `civitai feedback`. A blind agent picked `app feedback` from its
+  one-line Short; both Shorts are pinned whole
+  (`TestFeedbackShortsStateTheirLane`);
+- the README command table has a `feedback send` row and a `feedback status`
+  row;
+- the managed AGENTS.md block has a `### Reporting a platform problem` section
+  (decision 36, third named exception);
+- `TestPlatformFeedbackVerbIsAdvertised` (`internal/cmd/feedback_hint_test.go`)
+  asserts each, replacing `TestPlatformFeedbackVerbIsUnadvertised`.
 
-`civitai feedback --help` itself works, for whoever is told the verb exists, and
-`civitai app feedback --help` keeps its one mirror-image clause (§1).
+🔴 **Failure-point hints are a WHITELIST, not a rule.** Five places print one
+ready-to-run `civitai feedback send` line with `--about` (and, at a failure,
+`--ref`) prefilled. Each fires only on the platform's failure, never on the
+caller's (`internal/cmd/feedback_hint.go`):
 
-A pointer on any of those surfaces would send every agent that reads it at an
-endpoint that answers `404`. `TestPlatformFeedbackVerbIsUnadvertised` asserts
-each state — the command's `Hidden` field, the RENDERED root help, the README,
-the template — rather than the absence of a spelling in some directory. The PR
-that turns the verb on flips them together.
+| Site | `--ref` | Fires on | Does NOT fire on |
+|---|---|---|---|
+| `app submit` | `submit.server-refused` | the server ANSWERED 400, 413 or 5xx (`appapi.SubmitRefusedError`) | 401, 403, 404, 409, 429, the local size refusal, nothing sent |
+| `app doctor` | `doctor.rollout-unreadable` | the rollout probe got an answer with no readable verdict (`RolloutUnknown`) | enrolled, not enrolled, 401, 403, 429, unreachable |
+| `app dev-tunnel` | `tunnel.dial-failed` | the session was minted and the reverse tunnel would not open | no local dev server, keygen, a refused mint |
+| any command | `decode.unreadable-response` | a 2xx body `pkg/civitai` could not decode (`civitai.ErrUnreadableResponse`, printed by `cmd/civitai`'s main) | every other error |
+| `agent-setup` | (none) | the human report's footer, after `Next:` | `--json`, `--check` |
+
+The error-path hints go to stderr after the error is decided, and change
+neither the exit code nor stdout (`--json` included); the footer is on stdout
+because the rest of that report is. Every suggested command is run, as
+printed, under `--dry-run` by `TestEveryFeedbackHintCommandRuns`, and the set is
+pinned by `TestEveryFeedbackHintSiteIsLedgered` — adding a site is a test diff.
+Do not widen this to "any error": a hint on every failure is a line nobody
+reads, and one on a usage error files the reporter's mistake with Civitai.
 
 `--error` takes only `-` (stdin). It briefly also accepted the error text
 itself, which made `--error ./submit.log` send the path string; any other value

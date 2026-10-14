@@ -99,7 +99,7 @@ func newAppFeedbackCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "feedback <slug>",
-		Short: "Read the feedback users sent about your App, and triage it",
+		Short: "Your app's inbox: read what YOUR APP'S USERS wrote (to report a platform problem: civitai feedback)",
 		Long: `Read the private feedback users sent about one of YOUR Apps from inside the
 app, newest first. Only the app's owner and its accepted collaborators can.
 This is your app's inbox; to report a problem with the Civitai developer
