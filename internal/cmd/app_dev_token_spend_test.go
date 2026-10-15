@@ -524,6 +524,39 @@ func TestAppDevTokenSpendHelpNamesTheConsequence(t *testing.T) {
 	}
 }
 
+// TestAppDevTokenHelpStorageUnderDevLive pins what --help says about STORAGE
+// under dev:live. The help used to say a default-login dev token's dev:live
+// "shows your viewer + catalog/storage"; no credential makes storage work under
+// dev:live (the document store is not on the forwarded bridge, legacy App
+// Storage is refused 401 for want of a browser session, legacy shared storage
+// is refused for scope). A guard on a few words is walkable by rewording, so
+// the whole paragraph is pinned, whitespace-normalised so a re-wrap passes.
+func TestAppDevTokenHelpStorageUnderDevLive(t *testing.T) {
+	out, _, err := run(t, "app", "dev-token", "--help")
+	if err != nil {
+		t.Fatalf("--help: %v", err)
+	}
+	norm := strings.Join(strings.Fields(out), " ")
+	const want = "STORAGE DOES NOT WORK UNDER dev:live, whatever credential you mint with: " +
+		"- The document store (@civitai/sdk app.storage.collection) is not reached at all: " +
+		"@civitai/sdk calls it over HTTP, not over the block→host bridge the page-money harness " +
+		"forwards, and that template does not use @civitai/sdk. " +
+		"- Legacy App Storage (useAppStorage) is forwarded, and the server refuses it with 401: " +
+		"those calls need a civitai.com browser session, which a local harness never has. " +
+		"It says nothing about your account or your app. " +
+		"- Legacy shared storage (useSharedStorage) is refused for scope: its apps:storage:shared:* " +
+		"scopes are never minted on a dev token. " +
+		"Exercise the legacy stores under \"npm run dev:harness\", and the document store with " +
+		"createFakeStorage from @civitai/sdk/testing."
+	if !strings.Contains(norm, want) {
+		t.Errorf("dev-token --help must carry the storage paragraph verbatim (whitespace-normalised).\nwant: %s\ngot:  %s", want, norm)
+	}
+	// No other sentence may claim dev:live serves storage.
+	if strings.Contains(norm, "catalog/storage") {
+		t.Errorf("dev-token --help still claims dev:live shows storage:\n%s", norm)
+	}
+}
+
 // TestBuzzScopeHintNamesBothRoutes: BuzzRead ships inside the generate set, so
 // the "you can't read your balance" hint must no longer claim a personal API key
 // is the only fix.

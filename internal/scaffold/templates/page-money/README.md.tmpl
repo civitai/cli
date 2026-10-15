@@ -579,10 +579,12 @@ To use it:
      page-money app's manifest declares only `ai:write:budgeted`, and the server
      strips that budgeted-spend scope from a token minted by a bearer without AI
      Services, so what's left is **read/identity only**: `dev:live` shows your
-     **viewer** plus catalog/storage, but **estimate → submit → real generation
-     does NOT work**. Fix it by re-running **`civitai login --scopes generate`**
-     (the login is re-runnable and additive — you keep submit + dev-tunnel), or
-     by using the full-scope **personal API key** above.
+     **viewer** and the catalog, but **estimate → submit → real generation
+     does NOT work**. (Storage does not work under `dev:live` with any
+     credential — see "Live v1 scope" below.) Fix it by re-running
+     **`civitai login --scopes generate`** (the login is re-runnable and
+     additive — you keep submit + dev-tunnel), or by using the full-scope
+     **personal API key** above.
 2. If you printed the token instead of using `--env >> …`, paste it into
    `.env.development.local` as `VITE_LIVE_BLOCK_TOKEN=<token>`. Keep the secret in
    `.env.development.local` (git-ignored), NOT the committed `.env.development`.
@@ -643,14 +645,30 @@ The two reads use **different credentials** — by design, and security-critical
 > (`estimate`/`submit`/`poll`/`cancel`) AND the resource pickers — it serves a
 > protocol-identical in-harness picker overlay, so `useCheckpointPicker` /
 > `useResourcePicker` work in `dev:live`. It does **not** support
-> `SET_USER_CHECKPOINT` persistence, the App-Storage KV protocol, in-band Buzz
-> purchase, or the `GET_BUZZ_BALANCE` read (`useBuzzBalance`) — those reply "not
-> supported in live v1" (use mock mode for them). So in `dev:live` the balance
+> `SET_USER_CHECKPOINT` persistence, in-band Buzz purchase, or the
+> `GET_BUZZ_BALANCE` read (`useBuzzBalance`) — those reply "not supported in
+> live v1" (use mock mode for them). So in `dev:live` the balance
 > reads as unavailable and the "Spend from" picker simply drops its 0-Buzz
 > annotations — nothing else changes, and the host nav's own balance total (read
 > via your personal key through the proxy) still works. The balance resolves in
 > **`dev:harness`** (synthetic, wired to the `balance` scenario) and on the **real
 > platform** (the civitai host answers `GET_BUZZ_BALANCE` natively).
+>
+> **Storage does not work under `dev:live`**, whatever credential minted the
+> token:
+>
+> - The **document store** (`app.storage.collection` in `@civitai/sdk`) is not
+>   reached at all. `@civitai/sdk` calls it over HTTP, not over the block→host
+>   bridge this harness forwards, and this template does not use `@civitai/sdk`.
+> - **Legacy App Storage** (`useAppStorage`) is forwarded, and the server
+>   refuses it: those calls need a civitai.com browser session, which a local
+>   harness never has, so every developer gets `401` `Apps access is not enabled
+>   for this browser session`. It says nothing about your account or your app.
+> - **Legacy shared storage** (`useSharedStorage`) is refused for scope: its
+>   scopes are never minted on a dev token.
+>
+> Exercise the legacy stores under `dev:harness`, and the document store with
+> `createFakeStorage` from `@civitai/sdk/testing`.
 
 > **`dev:harness` is the wide one — do not infer its limits from `dev:live`'s.**
 > The mock host answers the whole block→host protocol, so hooks that `dev:live`

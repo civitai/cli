@@ -112,8 +112,14 @@ export function resolveLiveConfig(): LiveConfig {
  * catalog overlay backed by `/api/v1/blocks/models` and resolves a real
  * BlockCheckpointInfo / BlockResourceInfo), so `useCheckpointPicker` /
  * `useResourcePicker` work in `dev:live` exactly as in prod. It does NOT support
- * SET_USER_CHECKPOINT, the App-Storage KV protocol, or in-band Buzz purchase —
- * those reply "not supported in live v1" (use mock mode for them).
+ * SET_USER_CHECKPOINT or in-band Buzz purchase — those reply "not supported in
+ * live v1" (use mock mode for them).
+ *
+ * Storage does not work in `dev:live`: the live host forwards the App-Storage
+ * and shared-storage messages, and the server refuses them — App Storage with
+ * 401 (it needs a civitai.com browser session), shared storage for scope (a dev
+ * token never carries `apps:storage:shared:*`). The `@civitai/sdk` document
+ * store is not on this bridge at all. Use mock mode for storage.
  *
  * Returns the `uninstall()` teardown.
  */
