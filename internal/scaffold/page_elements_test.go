@@ -62,7 +62,7 @@ func TestRenderPageElements(t *testing.T) {
 	// `^X.Y.0` form bump-pins writes.
 	mustContain(t, pkg, `"@civitai/app-sdk": "^0.71.0"`)
 	mustContain(t, pkg, `"@civitai/components": "^0.10.0"`)
-	mustContain(t, pkg, `"@civitai/sdk": "^0.13.0"`)
+	mustContain(t, pkg, `"@civitai/sdk": "^0.14.0"`)
 	mustContain(t, pkg, `"@civitai/theme": "^0.5.0"`)
 
 	var doc struct {
