@@ -1,0 +1,1238 @@
+{
+  "schemaVersion": "1.0.0",
+  "modules": [
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-button.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiButton",
+          "members": [
+            {
+              "kind": "field",
+              "name": "formAssociated",
+              "type": {
+                "text": "boolean"
+              },
+              "static": true,
+              "default": "true"
+            },
+            {
+              "kind": "field",
+              "name": "variant",
+              "privacy": "public",
+              "type": {
+                "text": "ButtonVariant"
+              },
+              "description": "Visual style.",
+              "default": "'filled'",
+              "attribute": "variant",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "color",
+              "privacy": "public",
+              "type": {
+                "text": "Intent | ''"
+              },
+              "description": "Recolours every variant; absent keeps the primary accent.",
+              "default": "''",
+              "attribute": "color",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "href",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Renders an anchor instead. Navigation is a link, whatever it looks like.",
+              "default": "''",
+              "attribute": "href",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "size",
+              "privacy": "public",
+              "type": {
+                "text": "ButtonSize"
+              },
+              "description": "Size preset.",
+              "default": "'md'",
+              "attribute": "size",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "loading",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Shows a spinner and, like the React binding, disables the control.",
+              "default": "false",
+              "attribute": "loading",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "fullWidth",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "full-width",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "type",
+              "privacy": "public",
+              "type": {
+                "text": "'button' | 'submit' | 'reset'"
+              },
+              "description": "Matches the native attribute, including its `submit`/`reset` behaviour.",
+              "default": "'button'",
+              "attribute": "type",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "form",
+              "type": {
+                "text": "HTMLFormElement | null"
+              },
+              "description": "The form this button would submit, exactly as a native button reports it.",
+              "readonly": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "variant",
+              "type": {
+                "text": "ButtonVariant"
+              },
+              "description": "Visual style.",
+              "default": "'filled'",
+              "fieldName": "variant"
+            },
+            {
+              "name": "color",
+              "type": {
+                "text": "Intent | ''"
+              },
+              "description": "Recolours every variant; absent keeps the primary accent.",
+              "default": "''",
+              "fieldName": "color"
+            },
+            {
+              "name": "href",
+              "type": {
+                "text": "string"
+              },
+              "description": "Renders an anchor instead. Navigation is a link, whatever it looks like.",
+              "default": "''",
+              "fieldName": "href"
+            },
+            {
+              "name": "size",
+              "type": {
+                "text": "ButtonSize"
+              },
+              "description": "Size preset.",
+              "default": "'md'",
+              "fieldName": "size"
+            },
+            {
+              "name": "loading",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Shows a spinner and, like the React binding, disables the control.",
+              "default": "false",
+              "fieldName": "loading"
+            },
+            {
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "disabled"
+            },
+            {
+              "name": "full-width",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "fullWidth"
+            },
+            {
+              "name": "type",
+              "type": {
+                "text": "'button' | 'submit' | 'reset'"
+              },
+              "description": "Matches the native attribute, including its `submit`/`reset` behaviour.",
+              "default": "'button'",
+              "fieldName": "type"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-button",
+          "cssParts": [
+            {
+              "name": "button"
+            }
+          ],
+          "slots": [
+            {
+              "name": ""
+            },
+            {
+              "name": "left"
+            },
+            {
+              "name": "right"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-checkbox.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiCheckbox",
+          "members": [
+            {
+              "kind": "field",
+              "name": "checked",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "checked"
+            },
+            {
+              "kind": "field",
+              "name": "indeterminate",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "indeterminate"
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Submitted when checked, exactly as a native checkbox does.",
+              "default": "'on'",
+              "attribute": "value",
+              "reflects": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "description": "Submitted when checked, exactly as a native checkbox does.",
+              "default": "'on'",
+              "fieldName": "value"
+            },
+            {
+              "name": "checked",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "checked"
+            },
+            {
+              "name": "indeterminate",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "indeterminate"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiField",
+            "module": "/src/elements/field-base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-checkbox",
+          "cssParts": [
+            {
+              "name": "choice"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-confirm-dialog.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "The modal with its two buttons filled in. `ask()` is the reason it exists:\na confirmation reads as one awaited line rather than a pair of listeners.",
+          "name": "CivitaiConfirmDialog",
+          "members": [
+            {
+              "kind": "field",
+              "name": "message",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "message",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "confirmLabel",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Confirm'",
+              "attribute": "confirm-label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "cancelLabel",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Cancel'",
+              "attribute": "cancel-label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "destructive",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Paints the confirm button as a destructive action, and focuses cancel.",
+              "default": "false",
+              "attribute": "destructive",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "open",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "open",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "heading",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Not `title`: that attribute is global and would render a tooltip.",
+              "default": "''",
+              "attribute": "heading",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "size",
+              "privacy": "public",
+              "type": {
+                "text": "ModalSize"
+              },
+              "default": "'md'",
+              "attribute": "size",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "withCloseButton",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "attribute": "with-close-button",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "closeOnOverlayClick",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "attribute": "close-on-overlay-click",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "closeOnEscape",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "attribute": "close-on-escape",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "closeLabel",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Close'",
+              "attribute": "close-label",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            }
+          ],
+          "events": [
+            {
+              "name": "confirm",
+              "type": {
+                "text": "Event"
+              }
+            },
+            {
+              "name": "close",
+              "type": {
+                "text": "Event"
+              },
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "message",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "message"
+            },
+            {
+              "name": "confirm-label",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Confirm'",
+              "fieldName": "confirmLabel"
+            },
+            {
+              "name": "cancel-label",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Cancel'",
+              "fieldName": "cancelLabel"
+            },
+            {
+              "name": "destructive",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "Paints the confirm button as a destructive action, and focuses cancel.",
+              "default": "false",
+              "fieldName": "destructive"
+            },
+            {
+              "name": "open",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "open",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "heading",
+              "type": {
+                "text": "string"
+              },
+              "description": "Not `title`: that attribute is global and would render a tooltip.",
+              "default": "''",
+              "fieldName": "heading",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "size",
+              "type": {
+                "text": "ModalSize"
+              },
+              "default": "'md'",
+              "fieldName": "size",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "with-close-button",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "fieldName": "withCloseButton",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "close-on-overlay-click",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "fieldName": "closeOnOverlayClick",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "close-on-escape",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "fieldName": "closeOnEscape",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "close-label",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Close'",
+              "fieldName": "closeLabel",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiModal",
+            "module": "/src/elements/civitai-modal.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-confirm-dialog",
+          "cssParts": [
+            {
+              "name": "body",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "message"
+            },
+            {
+              "name": "actions"
+            },
+            {
+              "name": "cancel"
+            },
+            {
+              "name": "confirm"
+            },
+            {
+              "name": "dialog",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "panel",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "header",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "heading",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            },
+            {
+              "name": "close",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            }
+          ],
+          "slots": [
+            {
+              "name": "",
+              "inheritedFrom": {
+                "name": "CivitaiModal",
+                "module": "src/elements/civitai-modal.ts"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-image.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiImage",
+          "members": [
+            {
+              "kind": "field",
+              "name": "fit",
+              "privacy": "public",
+              "type": {
+                "text": "ImageFit"
+              },
+              "default": "'cover'",
+              "attribute": "fit",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "openable",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "The image becomes a button that emits `open`, for a viewer or a detail page.",
+              "default": "false",
+              "attribute": "openable",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names the open button when it should say more than `alt`.",
+              "default": "''",
+              "attribute": "label",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "loading",
+              "privacy": "public",
+              "type": {
+                "text": "ImageLoading"
+              },
+              "description": "`<img loading>`, passed straight through: `lazy` defers a tile that is still\nbelow the fold. Unset renders no attribute, so the default stays HTML's.\nThe `<img>` is built in this element's shadow root, so a consumer's markup\ncannot reach it — which is why this is a property rather than nothing.",
+              "default": "''",
+              "attribute": "loading",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "decoding",
+              "privacy": "public",
+              "type": {
+                "text": "ImageDecoding"
+              },
+              "description": "`<img decoding>`, passed straight through. Unset renders no attribute.",
+              "default": "''",
+              "attribute": "decoding",
+              "reflects": true
+            }
+          ],
+          "events": [
+            {
+              "name": "open",
+              "type": {
+                "text": "Event"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "fit",
+              "type": {
+                "text": "ImageFit"
+              },
+              "default": "'cover'",
+              "fieldName": "fit"
+            },
+            {
+              "name": "openable",
+              "type": {
+                "text": "boolean"
+              },
+              "description": "The image becomes a button that emits `open`, for a viewer or a detail page.",
+              "default": "false",
+              "fieldName": "openable"
+            },
+            {
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "description": "Names the open button when it should say more than `alt`.",
+              "default": "''",
+              "fieldName": "label"
+            },
+            {
+              "name": "loading",
+              "type": {
+                "text": "ImageLoading"
+              },
+              "description": "`<img loading>`, passed straight through: `lazy` defers a tile that is still\nbelow the fold. Unset renders no attribute, so the default stays HTML's.\nThe `<img>` is built in this element's shadow root, so a consumer's markup\ncannot reach it — which is why this is a property rather than nothing.",
+              "default": "''",
+              "fieldName": "loading"
+            },
+            {
+              "name": "decoding",
+              "type": {
+                "text": "ImageDecoding"
+              },
+              "description": "`<img decoding>`, passed straight through. Unset renders no attribute.",
+              "default": "''",
+              "fieldName": "decoding"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiMediaElement",
+            "module": "/src/elements/media-base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-image",
+          "cssParts": [
+            {
+              "name": "image"
+            },
+            {
+              "name": "open"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-modal.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "Native `<dialog>.showModal()`: the focus trap, the top layer, the inert\nbackground and focus restore all come from the platform. The React binding\ndocuments that it traps nothing, so this is a strict upgrade, not a port.",
+          "name": "CivitaiModal",
+          "members": [
+            {
+              "kind": "field",
+              "name": "open",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "open",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "heading",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Not `title`: that attribute is global and would render a tooltip.",
+              "default": "''",
+              "attribute": "heading",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "size",
+              "privacy": "public",
+              "type": {
+                "text": "ModalSize"
+              },
+              "default": "'md'",
+              "attribute": "size",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "withCloseButton",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "attribute": "with-close-button",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "closeOnOverlayClick",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "attribute": "close-on-overlay-click",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "closeOnEscape",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "attribute": "close-on-escape",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "closeLabel",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Close'",
+              "attribute": "close-label",
+              "reflects": true
+            }
+          ],
+          "events": [
+            {
+              "name": "close",
+              "type": {
+                "text": "Event"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "open",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "open"
+            },
+            {
+              "name": "heading",
+              "type": {
+                "text": "string"
+              },
+              "description": "Not `title`: that attribute is global and would render a tooltip.",
+              "default": "''",
+              "fieldName": "heading"
+            },
+            {
+              "name": "size",
+              "type": {
+                "text": "ModalSize"
+              },
+              "default": "'md'",
+              "fieldName": "size"
+            },
+            {
+              "name": "with-close-button",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "fieldName": "withCloseButton"
+            },
+            {
+              "name": "close-on-overlay-click",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "fieldName": "closeOnOverlayClick"
+            },
+            {
+              "name": "close-on-escape",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "true",
+              "fieldName": "closeOnEscape"
+            },
+            {
+              "name": "close-label",
+              "type": {
+                "text": "string"
+              },
+              "default": "'Close'",
+              "fieldName": "closeLabel"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiElement",
+            "module": "/src/elements/base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-modal",
+          "cssParts": [
+            {
+              "name": "dialog"
+            },
+            {
+              "name": "panel"
+            },
+            {
+              "name": "header"
+            },
+            {
+              "name": "heading"
+            },
+            {
+              "name": "close"
+            },
+            {
+              "name": "body"
+            }
+          ],
+          "slots": [
+            {
+              "name": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-switch.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "The checkbox wearing a track and a thumb. It stays a real\n`<input type=\"checkbox\">` because `role=\"switch\"` is defined on one, and a\ndiv pretending to be a control would lose the form and the keyboard.",
+          "name": "CivitaiSwitch",
+          "members": [
+            {
+              "kind": "field",
+              "name": "checked",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "checked",
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "indeterminate",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "indeterminate",
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "value",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "description": "Submitted when checked, exactly as a native checkbox does.",
+              "default": "'on'",
+              "attribute": "value",
+              "reflects": true,
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiCheckbox",
+            "module": "/src/elements/civitai-checkbox.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-switch",
+          "cssParts": [
+            {
+              "name": "choice",
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "value",
+              "type": {
+                "text": "string"
+              },
+              "description": "Submitted when checked, exactly as a native checkbox does.",
+              "default": "'on'",
+              "fieldName": "value",
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "name": "checked",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "checked",
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            },
+            {
+              "name": "indeterminate",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "indeterminate",
+              "inheritedFrom": {
+                "name": "CivitaiCheckbox",
+                "module": "src/elements/civitai-checkbox.ts"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/elements/civitai-text-input.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "description": "",
+          "name": "CivitaiTextInput",
+          "members": [
+            {
+              "kind": "field",
+              "name": "placeholder",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "placeholder",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "type",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "'text'",
+              "attribute": "type",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "readOnly",
+              "privacy": "public",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "readonly",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "maxLength",
+              "privacy": "public",
+              "type": {
+                "text": "number"
+              },
+              "description": "0 means unbounded, matching an absent native `maxlength`.",
+              "default": "0",
+              "attribute": "maxlength",
+              "reflects": true
+            },
+            {
+              "kind": "field",
+              "name": "autocomplete",
+              "privacy": "public",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "autocomplete",
+              "reflects": true
+            }
+          ],
+          "attributes": [
+            {
+              "name": "placeholder",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "placeholder"
+            },
+            {
+              "name": "type",
+              "type": {
+                "text": "string"
+              },
+              "default": "'text'",
+              "fieldName": "type"
+            },
+            {
+              "name": "readonly",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "fieldName": "readOnly"
+            },
+            {
+              "name": "maxlength",
+              "type": {
+                "text": "number"
+              },
+              "description": "0 means unbounded, matching an absent native `maxlength`.",
+              "default": "0",
+              "fieldName": "maxLength"
+            },
+            {
+              "name": "autocomplete",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "fieldName": "autocomplete"
+            }
+          ],
+          "superclass": {
+            "name": "CivitaiField",
+            "module": "/src/elements/field-base.js"
+          },
+          "customElement": true,
+          "tagName": "civitai-text-input"
+        }
+      ]
+    }
+  ]
+}
