@@ -327,6 +327,12 @@ Get started:
 	// flag-error propagation — cobra passes the command whose flags failed to
 	// parse, not the root.
 	root.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		// An unknown COMMAND followed by a flag (`civitai feedback send --about x`
+		// on a binary without `feedback`) must report the command, not the flag —
+		// see unknownGroupSubcommand.
+		if name, ok := unknownGroupSubcommand(c); ok {
+			return asUsageError(unknownSubcommandError(c, name))
+		}
 		return asUsageError(flagErrorWithHelpHint(c, err))
 	})
 
@@ -460,6 +466,12 @@ func enforceUsageExitCodes(cmd *cobra.Command) {
 	// Runnable() reflects the ORIGINAL Run/RunE (the Args set above doesn't
 	// affect it), so this correctly targets only the pure command groups.
 	if cmd.HasSubCommands() && !cmd.Runnable() {
+		// Marked so the flag-error path can recognise a group-only parent after
+		// the RunE below has made it Runnable() (see unknownGroupSubcommand).
+		if cmd.Annotations == nil {
+			cmd.Annotations = map[string]string{}
+		}
+		cmd.Annotations[groupOnlyAnnotation] = "true"
 		cmd.RunE = func(c *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				// Bare `civitai <parent>` — help, exit 0 (unchanged).
@@ -468,6 +480,45 @@ func enforceUsageExitCodes(cmd *cobra.Command) {
 			return asUsageError(unknownSubcommandError(c, args[0]))
 		}
 	}
+}
+
+// groupOnlyAnnotation marks a command enforceUsageExitCodes gave the
+// unknown-subcommand RunE, i.e. one that has no action of its own.
+const groupOnlyAnnotation = "civitai/group-only"
+
+// unknownGroupSubcommand reports the unknown subcommand name when a flag-parse
+// error happened on a group-only parent that was handed a positional argument.
+//
+// Cobra parses the flags of the deepest command Find resolved BEFORE any Args
+// or RunE runs, and Find stops at the parent when the next word is not one of
+// its subcommands. So `civitai feedback send --about x`, on a binary that has no
+// `feedback`, fails parsing `--about` against the ROOT's flags and reported
+// `unknown flag: --about` — true, but it hides the real problem (the command
+// does not exist here) and with it the upgrade hint. Cobra's own root-level
+// legacyArgs check (inside Find, before flag parsing) would have said "unknown
+// command" first; enforceUsageExitCodes turned that check off. This restores
+// that order at the root and extends it to every group-only parent.
+//
+// The positionals pflag collected before it hit the bad flag are in
+// c.Flags().Args(). A group-only parent takes no positionals at all, and the
+// first one cannot be a real subcommand: Find would have descended into it,
+// making THAT command c. That holds only while the root and every group-only
+// parent carry BOOLEAN flags alone (true at the time of writing): a flag that
+// takes a value lets Find and pflag disagree about which word is a positional,
+// e.g. a value-taking `-p` in `civitai -qp prod models search --nope` would
+// make `models` the first positional here. (A guard re-checking the subcommand names was tried and
+// mutation-tested unreachable on cobra v1.8.1 — `civitai --nope models` fails on
+// the root with no positional collected: Find reads `--nope` as taking `models`
+// as its value, and pflag stops at `--nope` before reaching it — so it is not
+// here.)
+func unknownGroupSubcommand(c *cobra.Command) (string, bool) {
+	if c == nil || c.Annotations[groupOnlyAnnotation] != "true" {
+		return "", false
+	}
+	if args := c.Flags().Args(); len(args) > 0 {
+		return args[0], true
+	}
+	return "", false
 }
 
 // unknownSubcommandError builds the error for an unrecognized subcommand on a
@@ -492,5 +543,29 @@ func unknownSubcommandError(c *cobra.Command, name string) error {
 		}
 	}
 	msg += fmt.Sprintf("\nRun '%s --help' for the available subcommands.", c.CommandPath())
+	msg += "\n" + unknownCommandUpgradeHint(c.CommandPath()+" "+name)
 	return errors.New(msg)
+}
+
+// unknownCommandUpgradeHint is the last thing an unknown-command error says: the
+// command may simply be NEWER than this binary. Docs and onboarding prompts name
+// commands from the latest release, so an agent or user on an older install hits
+// "unknown command" for something that does exist — measured with an agent on
+// 0.1.119 told to run `civitai feedback send` (added in 0.1.123), which got no
+// pointer at upgrading and worked around it instead.
+//
+// It is appended AFTER cobra's "Did you mean this?" suggestions and the --help
+// pointer, never instead of them: a near-miss typo is still the likelier cause,
+// so the fix for that reads first. It is shown for a near-miss too, because a
+// suggestion cannot tell a typo from a command this binary predates.
+//
+// Static on purpose: no update-cache read and no network call on an error path.
+// It names the running version so the reader can compare it with the docs.
+// `path` is quoted with %q, like the line above it, so a control byte in what
+// the user typed is escaped rather than echoed raw.
+func unknownCommandUpgradeHint(path string) string {
+	return fmt.Sprintf("%q is not in this CLI (civitai %s); if a doc or prompt told you to run it, "+
+		"this CLI may be older than that command.\n"+
+		"Upgrade with 'civitai upgrade', or get the latest release at "+
+		"https://github.com/civitai/cli/releases/latest", path, version)
 }
