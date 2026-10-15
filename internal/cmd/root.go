@@ -502,7 +502,11 @@ const groupOnlyAnnotation = "civitai/group-only"
 // The positionals pflag collected before it hit the bad flag are in
 // c.Flags().Args(). A group-only parent takes no positionals at all, and the
 // first one cannot be a real subcommand: Find would have descended into it,
-// making THAT command c. (A guard re-checking the subcommand names was tried and
+// making THAT command c. That holds only while the root and every group-only
+// parent carry BOOLEAN flags alone (true at the time of writing): a flag that
+// takes a value lets Find and pflag disagree about which word is a positional,
+// e.g. a value-taking `-p` in `civitai -qp prod models search --nope` would
+// make `models` the first positional here. (A guard re-checking the subcommand names was tried and
 // mutation-tested unreachable on cobra v1.8.1 — `civitai --nope models` fails on
 // the root with no positional collected: Find reads `--nope` as taking `models`
 // as its value, and pflag stops at `--nope` before reaching it — so it is not
