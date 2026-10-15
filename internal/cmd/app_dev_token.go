@@ -464,7 +464,9 @@ func validateDevTokenBudget(budget int) error {
 // a bound gets re-vendored, and nothing tied this text to it. Formatting from the
 // constants makes the help move with the vendored values, so the values are
 // pinned where they are vendored (TestDevBuzzBudgetBoundsMirrorServer,
-// TestInlineMaxBuzzMirrorsServer). The help SENTENCES are not pinned by any test.
+// TestInlineMaxBuzzMirrorsServer). The help SENTENCES are not pinned by any test,
+// with one exception: the STORAGE paragraph is pinned whole, whitespace-
+// normalised, by TestAppDevTokenHelpStorageUnderDevLive.
 func devTokenLongHelp() string {
 	return fmt.Sprintf(`Mint a short-lived dev block token so a scaffolded page-money app can run
 "npm run dev:live" against the REAL Civitai backend.
@@ -479,8 +481,20 @@ The minted token's CAPABILITIES depend on the credential you mint with:
     or an OAuth login that opted in with "civitai login --scopes generate".
     Confirm yours can spend with "civitai whoami".
   - A DEFAULT OAuth login ("civitai login", no --scopes) mints a
-    READ/IDENTITY-ONLY dev token (no spend) — dev:live shows your viewer +
-    catalog/storage, but estimate → submit → generation will NOT spend.
+    READ/IDENTITY-ONLY dev token (no spend) — dev:live shows your viewer and
+    the catalog, but estimate → submit → generation will NOT spend.
+
+STORAGE DOES NOT WORK UNDER dev:live, whatever credential you mint with:
+  - The document store (@civitai/sdk app.storage.collection) is not reached at
+    all: @civitai/sdk calls it over HTTP, not over the block→host bridge the
+    page-money harness forwards, and that template does not use @civitai/sdk.
+  - Legacy App Storage (useAppStorage) is forwarded, and the server refuses it
+    with 401: those calls need a civitai.com browser session, which a local
+    harness never has. It says nothing about your account or your app.
+  - Legacy shared storage (useSharedStorage) is refused for scope: its
+    apps:storage:shared:* scopes are never minted on a dev token.
+Exercise the legacy stores under "npm run dev:harness", and the document store
+with createFakeStorage from @civitai/sdk/testing.
 
 --spend is the explicit affirmation that this token may spend real Buzz. It does
 two things to the request: it adds ai:write:budgeted to the scopes REQUESTED from
