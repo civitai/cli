@@ -529,7 +529,10 @@ func TestAppDevTokenSpendHelpNamesTheConsequence(t *testing.T) {
 // "shows your viewer + catalog/storage"; no credential makes storage work under
 // dev:live (the document store is not on the forwarded bridge, legacy App
 // Storage is refused 401 for want of a browser session, legacy shared storage
-// is refused for scope). A guard on a few words is walkable by rewording, so
+// is refused as not-found / not-approved until the app is approved and for
+// scope after — `resolveSharedContext` checks approval FIRST, so "refused for
+// scope" alone was true only of an approved app). A guard on a few words is
+// walkable by rewording, so
 // the whole paragraph is pinned, whitespace-normalised so a re-wrap passes.
 func TestAppDevTokenHelpStorageUnderDevLive(t *testing.T) {
 	out, _, err := run(t, "app", "dev-token", "--help")
@@ -544,8 +547,9 @@ func TestAppDevTokenHelpStorageUnderDevLive(t *testing.T) {
 		"- Legacy App Storage (useAppStorage) is forwarded, and the server refuses it with 401: " +
 		"those calls need a civitai.com browser session, which a local harness never has. " +
 		"It says nothing about your account or your app. " +
-		"- Legacy shared storage (useSharedStorage) is refused for scope: its apps:storage:shared:* " +
-		"scopes are never minted on a dev token. " +
+		"- Legacy shared storage (useSharedStorage) is refused too. Until the app has an approved " +
+		"version the refusal is \"app block not found\" or \"app block is not approved\"; once it has " +
+		"one, it is for scope, because the apps:storage:shared:* scopes are never minted on a dev token. " +
 		"Exercise the legacy stores under \"npm run dev:harness\", and the document store with " +
 		"createFakeStorage from @civitai/sdk/testing."
 	if !strings.Contains(norm, want) {

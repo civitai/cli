@@ -117,9 +117,10 @@ export function resolveLiveConfig(): LiveConfig {
  *
  * Storage does not work in `dev:live`: the live host forwards the App-Storage
  * and shared-storage messages, and the server refuses them — App Storage with
- * 401 (it needs a civitai.com browser session), shared storage for scope (a dev
- * token never carries `apps:storage:shared:*`). The `@civitai/sdk` document
- * store is not on this bridge at all. Use mock mode for storage.
+ * 401 (it needs a civitai.com browser session), shared storage as "app block not
+ * found" / "not approved" until the app has an approved version and for scope
+ * after (a dev token never carries `apps:storage:shared:*`). The `@civitai/sdk`
+ * document store is not on this bridge at all. Use mock mode for storage.
  *
  * Returns the `uninstall()` teardown.
  */

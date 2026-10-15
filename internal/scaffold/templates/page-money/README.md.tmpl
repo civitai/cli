@@ -664,8 +664,10 @@ The two reads use **different credentials** — by design, and security-critical
 >   refuses it: those calls need a civitai.com browser session, which a local
 >   harness never has, so every developer gets `401` `Apps access is not enabled
 >   for this browser session`. It says nothing about your account or your app.
-> - **Legacy shared storage** (`useSharedStorage`) is refused for scope: its
->   scopes are never minted on a dev token.
+> - **Legacy shared storage** (`useSharedStorage`) is refused too. Until the
+>   app has an approved version the refusal is `app block not found` or `app
+>   block is not approved`; once it has one, it is for scope, because the
+>   `apps:storage:shared:*` scopes are never minted on a dev token.
 >
 > Exercise the legacy stores under `dev:harness`, and the document store with
 > `createFakeStorage` from `@civitai/sdk/testing`.

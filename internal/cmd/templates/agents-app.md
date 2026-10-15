@@ -14,8 +14,8 @@ no UI framework. Their API reference ships with them, in `node_modules`:
   fires on every snapshot change (theme, context, each token rotation — update
   the view in place, never rebuild it); `app.site` is the `/api/v1` REST API as
   the viewer; `app.requestGrants([...])` asks for a consent-gated scope;
-  `app.storage` / `app.sharedStorage` are app storage; `app.host` is the host's
-  own UI.
+  `app.storage.collection(name)` is app storage (section "Document storage");
+  `app.host` is the host's own UI.
 - **`node_modules/@civitai/components/custom-elements.json`** — every
   `<civitai-*>` element's tags, attributes, events and slots. Look up the one
   element you need rather than reading it whole. The attributes every form
@@ -229,15 +229,18 @@ fixed list. As of this CLI version:
 - **A hung {{ if .ElementsSDK }}`app.host` call{{ else }}hook{{ end }} is usually a missing HOST handler, not your bug.** The host
   silently drops messages it cannot handle, so an unanswered request looks
   exactly like a broken component. Check the host side before rewriting yours.
-- **Shared storage has a REST path, and it is the one to prefer.** There are 11
-  routes under `/api/v1/blocks/shared-storage/` (append, counts, increment, item,
-  list, report, top, unvote, update, vote, withdraw) and the platform is
-  consolidating on them; the {{ if .ElementsSDK }}`app.sharedStorage`{{ else }}`useSharedStorage()`{{ end }} postMessage bridge still works,
-  so both are valid. Each route is a thin adapter over the same server function
-  the bridge message called, so a REST read cannot diverge from a bridge read.
-  They authenticate with the **block token** and re-verify it as a block JWT — so
-  an `auth: "oauth"` app cannot use them, and declaring any `apps:storage:*`
-  scope alongside `auth: "oauth"` is refused when you submit.
+- **Store data in the document store, not the legacy stores.** Declare each
+  collection under the manifest's `storage` key, add the `apps:storage` scope
+  (and the consent-gated `apps:storage:publish` to create or edit shared
+  documents), and call `app.storage.collection<T>(name)` from `@civitai/sdk`
+  0.14.0 or later{{ if not .ElementsSDK }} — `@civitai/blocks-react` has no
+  document-store hook{{ end }}. Test against `createFakeStorage` from
+  `@civitai/sdk/testing`. {{ if .ElementsSDK }}`app.storage.get/set/delete/list`,
+  `app.sharedStorage`{{ else }}`useAppStorage()`, `useSharedStorage()`{{ end }} and the
+  `/api/v1/blocks/app-storage/` and `/shared-storage/` routes are deprecated:
+  they still work, but start nothing new on them. Any storage scope alongside
+  `auth: "oauth"` is refused at submit. Guide:
+  https://developer.civitai.com/apps/guide/storage.md
 - **Open the resource picker with NO base-model ecosystem by default.**
   `baseModelGroup` is a filter, so a hardcoded one hides every resource outside
   that family and the picker looks empty to the viewer. Pass it only when the
