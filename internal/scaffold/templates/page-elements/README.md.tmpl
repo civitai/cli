@@ -100,9 +100,11 @@ place from `app.onChange` — which also fires on every token rotation — so ne
 rebuild the view there, or a host push wipes whatever the viewer typed.
 `src/main.ts` calls `startBlock`, which shows an error in place of the skeleton
 if the app cannot start; keep that wiring. From the same `app` you also get `app.site`
-(the `/api/v1` REST API as the viewer), `app.storage` / `app.sharedStorage`,
+(the `/api/v1` REST API as the viewer), `app.storage.collection(name)` (the
+document store: declare each collection under the manifest's `storage` key),
 `app.requestGrants(scopes)`, and the host's own UI via `app.host`. The
-`@civitai/sdk` README documents each.
+`@civitai/sdk` README documents each; its legacy `app.storage.get/set/…` and
+`app.sharedStorage` stores are deprecated, so start nothing new on them.
 
 Every tag, attribute, event and slot of the `<civitai-*>` elements is listed in
 `@civitai/components`' `custom-elements.json` — but `@civitai/components/register`

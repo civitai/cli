@@ -102,6 +102,9 @@ const wantKindsPointer = `- Capabilities are hooks AND generation body kinds (a 
 const (
 	generationKindsURL = "https://developer.civitai.com/apps/reference/generation.md"
 	workflowsGuideURL  = "https://developer.civitai.com/apps/guide/workflows.md"
+	// storageGuideURL is the document-store guide the Gotchas section's storage
+	// bullet points at (agent_setup_storage_test.go pins that bullet).
+	storageGuideURL = "https://developer.civitai.com/apps/guide/storage.md"
 )
 
 // wantElementsGenerationPointer is the `@civitai/sdk` branch's counterpart of
