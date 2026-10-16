@@ -36,12 +36,12 @@ func newAppElementsCmd() *cobra.Command {
 
 With no tag, list every element with its one-line description. With a tag
 ("civitai-button" or "<civitai-button>"), print that element's attributes,
-properties, events, slots and CSS parts — INCLUDING the members it inherits.
-The package's custom-elements.json does not describe the shared base classes,
-so the attributes every form control takes (label, name, value, description,
-error, required, disabled, size) are read from the base class in the installed
-package's own compiled source. A base that cannot be read is listed as
-unresolved rather than silently omitted.
+properties, events, slots and CSS parts — INCLUDING the members it inherits,
+resolved from the package's custom-elements.json alone. A version whose
+manifest does not describe an element's base class (0.10.0 and earlier omit the
+shared form-field base, so label, name, value, … would be missing) prints the
+reference with an "Incomplete" warning naming the class; upgrade
+@civitai/components to fix it.
 
 The package is found the way Node resolves an import: the nearest
 node_modules/@civitai/components walking up from the current directory, so the
@@ -300,8 +300,9 @@ func printElementReference(w io.Writer, header string, r elementReference) {
 	printNamedSection(w, "CSS parts", r.Class, r.CSSParts)
 	printNamedSection(w, "CSS custom properties", r.Class, r.CSSProperties)
 	if len(r.Unresolved) > 0 {
-		fmt.Fprintf(w, "\n%s\n", ui.Warn("Incomplete: members inherited from "+strings.Join(r.Unresolved, ", ")+
-			" could not be read from the installed package, so they are not listed above."))
+		fmt.Fprintf(w, "\n%s\n", ui.Warn("Incomplete: this package's custom-elements.json does not describe "+
+			strings.Join(r.Unresolved, ", ")+", so members inherited from it are not listed above. "+
+			"Fix: upgrade @civitai/components."))
 	}
 }
 

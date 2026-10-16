@@ -7,37 +7,29 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 )
 
 // This file reads the Custom Elements Manifest (CEM) that `@civitai/components`
-// publishes, resolves one element's FULL member set — its own plus everything it
-// inherits — and nothing else. `app_elements.go` is the command that prints it.
+// publishes and resolves one element's FULL member set — its own plus everything
+// it inherits — from that manifest ALONE. `app_elements.go` is the command that
+// prints it.
 //
-// 🔴 WHY THERE IS A SOURCE READER HERE AND NOT JUST A JSON READER. The manifest
-// describes every module the analyzer was pointed at, and the analyzer was
-// pointed at the element files only. So an element whose superclass is ANOTHER
-// element (`<civitai-switch>` → `CivitaiCheckbox`, `<civitai-confirm-dialog>` →
-// `CivitaiModal`) arrives flattened, each inherited member carrying
-// `inheritedFrom`; but an element whose superclass is a shared BASE that is not
-// itself an element (`CivitaiField`, `CivitaiMediaElement`) arrives with only
-// its own members and a `superclass` reference to a module the manifest does not
-// contain. Measured on @civitai/components 0.10.0: 46 modules, none of them the
-// base modules, so `<civitai-text-input>` lists `placeholder`, `type`,
-// `readonly`, `maxlength`, `autocomplete` — and not `label`, `name`, `value`,
-// `description`, `error`, `required`, `disabled` or `size`, the attributes every
-// form control is used with.
-//
-// Those members are not invented here. They are read from the base class's
-// PUBLISHED compiled output in the same installed package — the `.js` file's Lit
-// `static properties` (which property is reactive, its attribute name, its
-// type converter), its constructor (the default), and the sibling `.d.ts` (the
-// declared type and its doc comment). Nothing about any element is hard-coded
-// in Go; a base the reader cannot find or parse is REPORTED as unresolved,
-// never silently dropped, so a gap in this reader shows up in the output rather
-// than as an element that looks complete.
+// 🔴 THE MANIFEST IS THE ONLY SOURCE, AND AN OLD ONE IS REPORTED, NOT PATCHED.
+// Up to and including 0.10.0 the analyzer was pointed at the element files only,
+// so an element whose superclass is a shared base that is not itself an element
+// (`CivitaiField`, `CivitaiMediaElement`, `CivitaiElement`) arrived with only
+// its own members and a `superclass` reference to a declaration the manifest
+// does not contain: `<civitai-text-input>` listed five attributes and none of
+// `label`, `name`, `value`, `description`, `error`, `required`, `disabled`,
+// `size`. The fix is upstream — the base modules are analyzed too, so their
+// members arrive flattened with `inheritedFrom` and the bases are declarations
+// in the manifest. This reader does not compensate for an old manifest by
+// parsing the package's compiled output: a superclass it cannot find in the
+// manifest is listed in `unresolved`, and the command says the reference is
+// incomplete and to upgrade the package. A second, heuristic source of truth
+// would be a parser to maintain against every future build layout.
 
 // cemManifest is the subset of the Custom Elements Manifest schema
 // (https://github.com/webcomponents/custom-elements-manifest) this command reads.
@@ -236,7 +228,10 @@ func moduleKey(p string) string {
 	return p
 }
 
-// findDecl finds a class declaration in the manifest by reference.
+// findDecl finds a class declaration in the manifest by reference: by module
+// path first, then — when that module is not in the manifest (a re-export
+// barrel such as `internals.js`) or no module is given — by class name, if
+// exactly one class in the manifest has it.
 func (p *elementsPackage) findDecl(ref cemRef) (elementDecl, bool) {
 	want := moduleKey(ref.Module)
 	var byName []elementDecl
@@ -251,31 +246,10 @@ func (p *elementsPackage) findDecl(ref cemRef) (elementDecl, bool) {
 			byName = append(byName, elementDecl{Module: m.Path, Decl: d})
 		}
 	}
-	if ref.Module == "" && len(byName) == 1 {
+	if len(byName) == 1 {
 		return byName[0], true
 	}
 	return elementDecl{}, false
-}
-
-// compiledFile maps a manifest module path (a SOURCE path) to the published
-// file with the given extension. The path is tried as written first; then with
-// its leading `src/` replaced by `dist/` — the TypeScript rootDir→outDir layout
-// @civitai/components is published with, where the manifest's
-// `src/elements/civitai-modal.ts` ships as `dist/elements/civitai-modal.js`.
-// It returns "" when neither exists.
-func (p *elementsPackage) compiledFile(module, ext string) string {
-	key := moduleKey(module)
-	cands := []string{key + ext}
-	if rest, ok := strings.CutPrefix(key, "src/"); ok {
-		cands = append(cands, "dist/"+rest+ext)
-	}
-	for _, c := range cands {
-		f := filepath.Join(p.Dir, filepath.FromSlash(c))
-		if st, err := os.Stat(f); err == nil && !st.IsDir() {
-			return f
-		}
-	}
-	return ""
 }
 
 // elementField is one attribute or property in the resolved reference.
@@ -305,8 +279,8 @@ type elementReference struct {
 	Class       string `json:"class"`
 	Description string `json:"description"`
 	Module      string `json:"module"`
-	// Extends is the superclass chain, nearest first, as far as it could be
-	// followed inside the package.
+	// Extends is the superclass chain, nearest first, as far as the manifest
+	// declares it.
 	Extends       []string       `json:"extends"`
 	Attributes    []elementField `json:"attributes"`
 	Properties    []elementField `json:"properties"`
@@ -314,7 +288,7 @@ type elementReference struct {
 	Slots         []elementNamed `json:"slots"`
 	CSSParts      []elementNamed `json:"cssParts"`
 	CSSProperties []elementNamed `json:"cssProperties"`
-	// Unresolved names each superclass whose members could not be read, so an
+	// Unresolved names each superclass the manifest does not declare, so an
 	// incomplete answer says so instead of looking complete.
 	Unresolved []string `json:"unresolved"`
 }
@@ -433,9 +407,10 @@ func (b *referenceBuilder) addManifestDecl(d cemDecl) {
 	}
 }
 
-// resolveElement builds the full reference for one element: its own members,
-// then each ancestor's, following `superclass` through the manifest and, where
-// the manifest stops, through the package's compiled source.
+// resolveElement builds the full reference for one element: its own members
+// (including any the analyzer already flattened, carrying `inheritedFrom`), then
+// each ancestor's, following `superclass` through the manifest's declarations.
+// The nearest declaration of a name wins.
 //
 // followSuperclasses=false is the seam the inheritance test uses to prove the
 // inherited assertions depend on this walk; production always passes true.
@@ -445,7 +420,6 @@ func (p *elementsPackage) resolveElement(e elementDecl, followSuperclasses bool)
 	if followSuperclasses {
 		p.walkSuperclasses(b, e.Decl.Superclass)
 	}
-	p.expandTypes(&b.ref)
 	return b.ref
 }
 
@@ -458,537 +432,33 @@ func (p *elementsPackage) walkSuperclasses(b *referenceBuilder, ref *cemRef) {
 		}
 		visited[key] = true
 		b.ref.Extends = append(b.ref.Extends, ref.Name)
-		if ref.Package != "" {
-			return // a class from another package (e.g. a framework base): out of scope
-		}
-		if d, ok := p.findDecl(*ref); ok {
-			b.addManifestDecl(d.Decl)
-			ref = d.Decl.Superclass
-			continue
-		}
-		// Not in the manifest: read it from the package's compiled output.
-		src := p.compiledFile(ref.Module, ".js")
-		if src == "" {
-			b.ref.Unresolved = append(b.ref.Unresolved, ref.Name)
+		if isRootSuperclass(*ref) {
 			return
 		}
-		next, ok := p.addSourceClass(b, src, ref.Name)
+		d, ok := p.findDecl(*ref)
 		if !ok {
 			b.ref.Unresolved = append(b.ref.Unresolved, ref.Name)
 			return
 		}
-		ref = next
+		b.addManifestDecl(d.Decl)
+		ref = d.Decl.Superclass
 	}
 }
 
-// ---- compiled-source reader -------------------------------------------------
-
-// sourceClass is what the reader extracts from one compiled class.
-type sourceClass struct {
-	file       string // the .js file the class body was found in
-	body       string // class body, between its braces
-	superName  string // the identifier after `extends`
-	superSpec  string // the import specifier it came from ("" if local/unknown)
-	properties []litProperty
-	defaults   map[string]string
-	events     []string
-}
-
-type litProperty struct {
-	Name      string
-	Attribute string // "" when attribute:false
-	Converter string // Lit `type:` (Boolean, Number, String, Array, Object) or ""
-}
-
-var (
-	reImportNamed = regexp.MustCompile(`import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]`)
-	reExportFrom  = regexp.MustCompile(`export\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]`)
-	reCtorAssign  = regexp.MustCompile(`this\.([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+);`)
-	reNewEvent    = regexp.MustCompile(`new\s+(Custom)?Event\(\s*['"]([\w:.-]+)['"]`)
-	reLitType     = regexp.MustCompile(`\btype\s*:\s*(Boolean|Number|String|Array|Object)\b`)
-	reLitAttrStr  = regexp.MustCompile(`\battribute\s*:\s*['"]([^'"]+)['"]`)
-	reLitAttrOff  = regexp.MustCompile(`\battribute\s*:\s*false\b`)
-	reLitState    = regexp.MustCompile(`\bstate\s*:\s*true\b`)
-	reIdent       = regexp.MustCompile(`^[A-Za-z_$][\w$]*$`)
-)
-
-// addSourceClass reads class `name` from the compiled file `file` (following a
-// re-export barrel if the file only re-exports it), adds its members to b, and
-// returns its superclass reference — nil when the superclass is imported from
-// another package. ok=false means the class could not be read.
-func (p *elementsPackage) addSourceClass(b *referenceBuilder, file, name string) (*cemRef, bool) {
-	sc, ok := readSourceClass(file, name, 0)
-	if !ok {
-		return nil, false
+// isRootSuperclass reports whether ref ends the chain WITHOUT anything missing:
+// a class from another package (`lit`'s LitElement) or a platform global
+// (`{name: "HTMLElement", package: "global:"}`). Neither is described by this
+// package's manifest, and neither has members an author sets on a
+// `<civitai-*>` tag, so reaching one is a complete answer — not "Incomplete".
+// The two names are also accepted bare, for a manifest that records them
+// without a `package`.
+func isRootSuperclass(ref cemRef) bool {
+	if ref.Package != "" {
+		return true
 	}
-	dts := p.declarationInfo(sc.file, name)
-	for _, lp := range sc.properties {
-		info := dts.fields[lp.Name]
-		typ := info.typ
-		if typ == "" {
-			typ = strings.ToLower(lp.Converter)
-		}
-		f := elementField{Name: lp.Attribute, Type: typ, Default: sc.defaults[lp.Name],
-			Description: info.doc, DeclaredBy: name}
-		if lp.Attribute == "" {
-			f.Name = lp.Name
-			b.addProp(f)
-			continue
-		}
-		b.addAttr(f)
-		b.props[lp.Name] = true // the attribute already documents this property
-	}
-	// Public fields and getters the .d.ts declares that are not reactive.
-	for _, fname := range dts.order {
-		info := dts.fields[fname]
-		if b.props[fname] || isReactive(sc.properties, fname) {
-			continue
-		}
-		b.addProp(elementField{Name: fname, Type: info.typ, Description: info.doc, DeclaredBy: name})
-	}
-	for _, ev := range sc.events {
-		addNamed(b.events, &b.ref.Events, elementNamed{Name: ev, Type: "Event", DeclaredBy: name})
-	}
-	if sc.superName == "" || sc.superSpec == "" || !isRelativeSpec(sc.superSpec) {
-		return nil, true // LitElement and friends: imported from another package
-	}
-	next := filepath.Join(filepath.Dir(sc.file), filepath.FromSlash(sc.superSpec))
-	rel, err := filepath.Rel(p.Dir, next)
-	if err != nil {
-		return nil, true
-	}
-	ref := &cemRef{Name: sc.superName, Module: filepath.ToSlash(rel)}
-	return ref, true
-}
-
-func isReactive(props []litProperty, name string) bool {
-	for _, lp := range props {
-		if lp.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-func isRelativeSpec(s string) bool { return strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") }
-
-// readSourceClass finds `class <name>` in file, or follows `export { name } from`
-// to the file that declares it.
-func readSourceClass(file, name string, depth int) (sourceClass, bool) {
-	if depth > 4 {
-		return sourceClass{}, false
-	}
-	b, err := os.ReadFile(file)
-	if err != nil {
-		return sourceClass{}, false
-	}
-	src := string(b)
-	reClass := regexp.MustCompile(`\bclass\s+` + regexp.QuoteMeta(name) + `\b(?:\s+extends\s+([A-Za-z_$][\w$.]*))?[^{]*\{`)
-	loc := reClass.FindStringSubmatchIndex(src)
-	if loc == nil {
-		for _, m := range reExportFrom.FindAllStringSubmatch(src, -1) {
-			if importListHas(m[1], name) && isRelativeSpec(m[2]) {
-				return readSourceClass(filepath.Join(filepath.Dir(file), filepath.FromSlash(m[2])), name, depth+1)
-			}
-		}
-		return sourceClass{}, false
-	}
-	open := loc[1] - 1
-	end := matchBrace(src, open)
-	if end < 0 {
-		return sourceClass{}, false
-	}
-	sc := sourceClass{file: file, body: src[open+1 : end], defaults: map[string]string{}}
-	if loc[2] >= 0 {
-		sc.superName = src[loc[2]:loc[3]]
-		for _, m := range reImportNamed.FindAllStringSubmatch(src, -1) {
-			if importListHas(m[1], sc.superName) {
-				sc.superSpec = m[2]
-				break
-			}
-		}
-	}
-	sc.properties = parseLitProperties(sc.body)
-	if i := strings.Index(sc.body, "constructor("); i >= 0 {
-		if open := strings.Index(sc.body[i:], "{"); open >= 0 {
-			if end := matchBrace(sc.body, i+open); end > 0 {
-				for _, m := range reCtorAssign.FindAllStringSubmatch(sc.body[i+open:end], -1) {
-					if _, seen := sc.defaults[m[1]]; !seen {
-						sc.defaults[m[1]] = strings.TrimSpace(m[2])
-					}
-				}
-			}
-		}
-	}
-	seenEv := map[string]bool{}
-	for _, m := range reNewEvent.FindAllStringSubmatch(sc.body, -1) {
-		if !seenEv[m[2]] {
-			seenEv[m[2]] = true
-			sc.events = append(sc.events, m[2])
-		}
-	}
-	return sc, true
-}
-
-// importListHas reports whether an `{ a, b as c }` import/export list binds name.
-func importListHas(list, name string) bool {
-	for _, part := range strings.Split(list, ",") {
-		fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(part), "type ")))
-		if len(fields) == 0 {
-			continue
-		}
-		bound := fields[len(fields)-1] // `a` or `a as c` → c
-		if bound == name {
-			return true
-		}
-	}
-	return false
-}
-
-// parseLitProperties reads `static properties = { … }` from a class body.
-// A `...Other.properties` spread is the superclass's set, which the superclass
-// walk reads from the superclass itself, so it is skipped here.
-func parseLitProperties(body string) []litProperty {
-	i := strings.Index(body, "static properties")
-	if i < 0 {
-		return nil
-	}
-	open := strings.Index(body[i:], "{")
-	if open < 0 {
-		return nil
-	}
-	open += i
-	end := matchBrace(body, open)
-	if end < 0 {
-		return nil
-	}
-	obj := stripJSComments(body[open+1 : end])
-	var out []litProperty
-	for _, entry := range splitTopLevel(obj) {
-		entry = strings.TrimSpace(entry)
-		if entry == "" || strings.HasPrefix(entry, "...") {
-			continue
-		}
-		colon := strings.Index(entry, ":")
-		if colon < 0 {
-			continue
-		}
-		key := strings.Trim(strings.TrimSpace(entry[:colon]), `'"`)
-		if !reIdent.MatchString(key) {
-			continue
-		}
-		opts := entry[colon+1:]
-		if reLitState.MatchString(opts) {
-			continue // internal reactive state, not public API
-		}
-		lp := litProperty{Name: key, Attribute: strings.ToLower(key)}
-		if m := reLitType.FindStringSubmatch(opts); m != nil {
-			lp.Converter = m[1]
-		}
-		if reLitAttrOff.MatchString(opts) {
-			lp.Attribute = ""
-		} else if m := reLitAttrStr.FindStringSubmatch(opts); m != nil {
-			lp.Attribute = m[1]
-		}
-		out = append(out, lp)
-	}
-	return out
-}
-
-// dtsInfo is what a .d.ts says about one class's public fields.
-type dtsInfo struct {
-	order  []string
-	fields map[string]dtsField
-}
-
-type dtsField struct{ typ, doc string }
-
-var (
-	reDtsField  = regexp.MustCompile(`^\s*((?:(?:public|readonly|declare)\s+)*)([A-Za-z_$][\w$]*)\??\s*:\s*(.+?);\s*$`)
-	reDtsGetter = regexp.MustCompile(`^\s*get\s+([A-Za-z_$][\w$]*)\(\)\s*:\s*(.+?);\s*$`)
-)
-
-// declarationInfo reads the .d.ts beside a compiled .js for class name.
-func (p *elementsPackage) declarationInfo(jsFile, name string) dtsInfo {
-	info := dtsInfo{fields: map[string]dtsField{}}
-	dtsFile := strings.TrimSuffix(jsFile, ".js") + ".d.ts"
-	b, err := os.ReadFile(dtsFile)
-	if err != nil {
-		return info
-	}
-	src := string(b)
-	loc := regexp.MustCompile(`\bclass\s+` + regexp.QuoteMeta(name) + `\b[^{]*\{`).FindStringIndex(src)
-	if loc == nil {
-		return info
-	}
-	end := matchBrace(src, loc[1]-1)
-	if end < 0 {
-		return info
-	}
-	var doc []string
-	inDoc := false
-	depth := 0 // brace depth inside the class body: a method's object-literal return type is not a field
-	for _, line := range strings.Split(src[loc[1]:end], "\n") {
-		t := strings.TrimSpace(line)
-		if !inDoc && !strings.HasPrefix(t, "/**") {
-			lineDepth := depth
-			depth += strings.Count(t, "{") - strings.Count(t, "}")
-			if lineDepth > 0 {
-				doc = nil
-				continue
-			}
-		}
-		switch {
-		case strings.HasPrefix(t, "/**"):
-			doc = nil
-			inDoc = !strings.HasSuffix(t, "*/")
-			doc = append(doc, cleanDocLine(t))
-			continue
-		case inDoc:
-			if strings.HasSuffix(t, "*/") {
-				inDoc = false
-			}
-			doc = append(doc, cleanDocLine(t))
-			continue
-		}
-		var fname, typ string
-		if m := reDtsField.FindStringSubmatch(line); m != nil && !strings.Contains(m[2], "(") {
-			fname, typ = m[2], m[3]
-		} else if m := reDtsGetter.FindStringSubmatch(line); m != nil {
-			fname, typ = m[1], m[2]
-		}
-		text := strings.Join(strings.Fields(strings.Join(doc, " ")), " ")
-		doc = nil
-		if fname == "" || strings.HasPrefix(t, "protected ") || strings.HasPrefix(t, "private ") ||
-			strings.HasPrefix(t, "static ") || strings.HasPrefix(t, "#") {
-			continue
-		}
-		if _, dup := info.fields[fname]; dup {
-			continue
-		}
-		info.order = append(info.order, fname)
-		info.fields[fname] = dtsField{typ: p.expandTypeIn(dtsFile, strings.TrimSpace(typ), 0), doc: text}
-	}
-	return info
-}
-
-func cleanDocLine(s string) string {
-	s = strings.TrimPrefix(s, "/**")
-	s = strings.TrimSuffix(s, "*/")
-	s = strings.TrimPrefix(strings.TrimSpace(s), "*")
-	return strings.TrimSpace(s)
-}
-
-// expandTypes replaces a named type alias (`ButtonSize`) with what it stands
-// for (`'sm' | 'md' | 'lg'`) where the declaring module's .d.ts defines it — the
-// manifest records the alias NAME, which tells a reader nothing about the
-// values an attribute accepts.
-func (p *elementsPackage) expandTypes(ref *elementReference) {
-	moduleOf := map[string]string{ref.Class: ref.Module}
-	for _, m := range p.Manifest.Modules {
-		for _, d := range m.Declarations {
-			if d.Kind == "class" {
-				if _, ok := moduleOf[d.Name]; !ok {
-					moduleOf[d.Name] = m.Path
-				}
-			}
-		}
-	}
-	expand := func(f *elementField) {
-		mod, ok := moduleOf[f.DeclaredBy]
-		if !ok {
-			return // read from source: declarationInfo already expanded it
-		}
-		if dts := p.compiledFile(mod, ".d.ts"); dts != "" {
-			f.Type = p.expandTypeIn(dts, f.Type, 0)
-		}
-	}
-	for i := range ref.Attributes {
-		expand(&ref.Attributes[i])
-	}
-	for i := range ref.Properties {
-		expand(&ref.Properties[i])
-	}
-}
-
-// expandTypeIn expands each bare identifier of a `|` union that file (or a file
-// it imports from, relatively) declares as a one-line `export type X = …;`
-// alias. Anything else is left exactly as written.
-func (p *elementsPackage) expandTypeIn(file, typ string, depth int) string {
-	if typ == "" || depth > 3 {
-		return typ
-	}
-	b, err := os.ReadFile(file)
-	if err != nil {
-		return typ
-	}
-	src := string(b)
-	parts := strings.Split(typ, "|")
-	changed := false
-	for i, part := range parts {
-		id := strings.TrimSpace(part)
-		if !reIdent.MatchString(id) || isBuiltinType(id) {
-			continue
-		}
-		if rhs, ok := aliasIn(src, id); ok {
-			parts[i] = " " + p.expandTypeIn(file, rhs, depth+1) + " "
-			changed = true
-			continue
-		}
-		for _, m := range reImportNamed.FindAllStringSubmatch(src, -1) {
-			if importListHas(m[1], id) && isRelativeSpec(m[2]) {
-				other := filepath.Join(filepath.Dir(file), filepath.FromSlash(strings.TrimSuffix(m[2], ".js")+".d.ts"))
-				if exp := p.expandTypeIn(other, id, depth+1); exp != id {
-					parts[i] = " " + exp + " "
-					changed = true
-				}
-				break
-			}
-		}
-	}
-	if !changed {
-		return typ
-	}
-	return strings.Join(strings.Fields(strings.Join(parts, "|")), " ")
-}
-
-func aliasIn(src, id string) (string, bool) {
-	m := regexp.MustCompile(`(?m)^\s*export\s+(?:declare\s+)?type\s+` + regexp.QuoteMeta(id) + `\s*=\s*([^;{}\n]+);`).FindStringSubmatch(src)
-	if m == nil {
-		return "", false
-	}
-	return strings.TrimSpace(m[1]), true
-}
-
-func isBuiltinType(id string) bool {
-	switch id {
-	case "string", "number", "boolean", "null", "undefined", "unknown", "any", "never", "void", "object":
+	switch ref.Name {
+	case "HTMLElement", "LitElement":
 		return true
 	}
 	return false
-}
-
-// matchBrace returns the index of the `}` closing the `{` at open, skipping
-// string literals, template literals (including `${…}` expressions) and
-// comments, or -1 when the source is unbalanced.
-func matchBrace(s string, open int) int {
-	depth := 0
-	var tmpl []int // depth at which each open `${` began
-	inTemplate := false
-	for i := open; i < len(s); i++ {
-		c := s[i]
-		if inTemplate {
-			switch {
-			case c == '\\':
-				i++
-			case c == '`':
-				inTemplate = false
-			case c == '$' && i+1 < len(s) && s[i+1] == '{':
-				tmpl = append(tmpl, depth)
-				depth++
-				inTemplate = false
-				i++
-			}
-			continue
-		}
-		switch c {
-		case '\'', '"':
-			for i++; i < len(s) && s[i] != c; i++ {
-				if s[i] == '\\' {
-					i++
-				}
-			}
-		case '`':
-			inTemplate = true
-		case '/':
-			if i+1 < len(s) && s[i+1] == '/' {
-				for i < len(s) && s[i] != '\n' {
-					i++
-				}
-			} else if i+1 < len(s) && s[i+1] == '*' {
-				if j := strings.Index(s[i+2:], "*/"); j >= 0 {
-					i += j + 3
-				} else {
-					return -1
-				}
-			}
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if n := len(tmpl); n > 0 && depth == tmpl[n-1] {
-				tmpl = tmpl[:n-1]
-				inTemplate = true
-				continue
-			}
-			if depth == 0 {
-				return i
-			}
-		}
-	}
-	return -1
-}
-
-// stripJSComments removes // and /* */ comments outside string literals.
-func stripJSComments(s string) string {
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c == '\'' || c == '"':
-			j := i + 1
-			for j < len(s) && s[j] != c {
-				if s[j] == '\\' {
-					j++
-				}
-				j++
-			}
-			if j >= len(s) {
-				j = len(s) - 1
-			}
-			b.WriteString(s[i : j+1])
-			i = j
-		case c == '/' && i+1 < len(s) && s[i+1] == '/':
-			for i < len(s) && s[i] != '\n' {
-				i++
-			}
-			b.WriteByte('\n')
-		case c == '/' && i+1 < len(s) && s[i+1] == '*':
-			j := strings.Index(s[i+2:], "*/")
-			if j < 0 {
-				return b.String()
-			}
-			i += j + 3
-		default:
-			b.WriteByte(c)
-		}
-	}
-	return b.String()
-}
-
-// splitTopLevel splits an object-literal body on commas at nesting depth 0.
-func splitTopLevel(s string) []string {
-	var out []string
-	depth, start := 0, 0
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '{', '[', '(':
-			depth++
-		case '}', ']', ')':
-			depth--
-		case '\'', '"':
-			q := s[i]
-			for i++; i < len(s) && s[i] != q; i++ {
-				if s[i] == '\\' {
-					i++
-				}
-			}
-		case ',':
-			if depth == 0 {
-				out = append(out, s[start:i])
-				start = i + 1
-			}
-		}
-	}
-	return append(out, s[start:])
 }

@@ -588,10 +588,11 @@ the interactive prompt pre-selects it and lists it first.
   [civitai-app-starters](https://github.com/civitai/civitai-app-starters),
   declared as a page rather than a model slot. Look an element up with
   `civitai app elements <tag>`: it prints every attribute the element takes —
-  inherited ones included, which the package's `custom-elements.json` omits for
-  every form control — with its events, slots and CSS parts, read offline from
-  the `@civitai/components` installed in the project (`--json` for scripts; no
-  tag lists them all).
+  inherited ones included — with its events, slots and CSS parts, read offline
+  from the `custom-elements.json` of the `@civitai/components` installed in the
+  project (`--json` for scripts; no tag lists them all). A package whose
+  manifest does not describe an element's base class (0.10.0 and earlier) gets
+  the reference with an "Incomplete" warning: upgrade `@civitai/components`.
 - **`page-money`** — the **React alternative**: a Vite + React + TypeScript
   full-page (W10) **money-path** app wired to the published App SDK
   (`@civitai/blocks-react` +

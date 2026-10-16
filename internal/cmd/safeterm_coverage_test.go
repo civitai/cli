@@ -552,7 +552,7 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"could be reverted with no behavioural test going red. Both are driven now, and the test was " +
 			"renamed off …RefusalCannotForgeALine because that name is what made a one-surface test read " +
 			"as a three-surface one"},
-	// --- app elements: an installed npm package's manifest and compiled source ---
+	// --- app elements: an installed npm package's custom-elements.json --------
 	// Not server text but third-party bytes from the registry, read by the
 	// coding agent the command exists for. Each row was measured by deleting
 	// every safeTerm call in that function alone: the named test went red each
