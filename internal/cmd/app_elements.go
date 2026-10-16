@@ -19,9 +19,10 @@ import (
 // coding agents at `custom-elements.json` and asked them to look up the one
 // element they needed rather than read the file whole; evaluation runs still
 // measured agents writing several ad-hoc `node -e` parsers per run to do that
-// lookup, and the shared form-field attributes are not in the file at all (see
-// app_elements_cem.go). A command answers the question in one call and answers
-// it completely.
+// lookup. And in 0.10.0 and earlier the shared form-field attributes are not in
+// the file at all; 0.10.1 flattens them onto each form control (see
+// app_elements_cem.go, which also says how the older shape is reported). A
+// command answers the question in one call.
 //
 // It lives under `app` because it is an authoring aid scoped to an App project,
 // like `app validate`: it reads the project's own node_modules, and has no
@@ -77,7 +78,7 @@ exits 1.`,
 			if err != nil {
 				return err
 			}
-			ref := pkg.resolveElement(e, true)
+			ref := pkg.resolveElement(e)
 			if jsonOut {
 				return writeJSON(out, map[string]any{"package": elementsPackageJSON(pkg), "element": ref})
 			}
@@ -116,7 +117,10 @@ func (p *elementsPackage) lookupElement(arg string) (elementDecl, error) {
 			}
 		}
 	}
-	msg := fmt.Sprintf("no element <%s> in %s %s", tag, p.Name, p.Version)
+	// The tag is what the user typed and is echoed as typed; the package name,
+	// version and near-match tags are the PACKAGE's bytes, and main prints this
+	// error raw, so those are gated (elementsPackageHeader, nearTags).
+	msg := fmt.Sprintf("no element <%s> in %s", tag, elementsPackageHeader(p))
 	if near := nearTags(tag, all); len(near) > 0 {
 		msg += " — did you mean: " + strings.Join(near, ", ") + "?"
 	}
@@ -150,7 +154,7 @@ func nearTags(tag string, all []elementDecl) []string {
 	})
 	var out []string
 	for i := 0; i < len(cands) && i < 5; i++ {
-		out = append(out, "<"+cands[i].tag+">")
+		out = append(out, "<"+safeTermSingle(cands[i].tag)+">") // package bytes, into an error printed raw
 	}
 	return out
 }

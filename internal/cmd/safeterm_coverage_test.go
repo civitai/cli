@@ -560,7 +560,11 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	"printElementsList": {"TestAppElementsTerminalOutputCannotCarryEscapes",
 		"`app elements` with no tag: each element's tag and first-sentence description"},
 	"elementsPackageHeader": {"TestAppElementsTerminalOutputCannotCarryEscapes",
-		"`app elements`: the package name and version from the installed package.json, on both views"},
+		"`app elements`: the package name and version from the installed package.json — in both views and in " +
+			"the unknown-tag error main prints raw"},
+	"nearTags": {"TestAppElementsTerminalOutputCannotCarryEscapes",
+		"`app elements <unknown>`: the near-match tags in the error, which main prints raw — red at 6d94ce7, " +
+			"where a hostile tag set the terminal title and cleared the screen through it"},
 	"terminalSafeReference": {"TestAppElementsTerminalOutputCannotCarryEscapes",
 		"`app elements <tag>`: every string of one element's reference — tag, class chain, descriptions, " +
 			"attribute names/types/defaults, events, slots, parts, CSS properties — gated once before rendering"},

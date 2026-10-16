@@ -12,24 +12,31 @@ import (
 )
 
 // This file reads the Custom Elements Manifest (CEM) that `@civitai/components`
-// publishes and resolves one element's FULL member set — its own plus everything
-// it inherits — from that manifest ALONE. `app_elements.go` is the command that
-// prints it.
+// publishes and builds one element's reference from it ALONE. `app_elements.go`
+// is the command that prints it.
 //
-// 🔴 THE MANIFEST IS THE ONLY SOURCE, AND AN OLD ONE IS REPORTED, NOT PATCHED.
-// Up to and including 0.10.0 the analyzer was pointed at the element files only,
-// so an element whose superclass is a shared base that is not itself an element
-// (`CivitaiField`, `CivitaiMediaElement`, `CivitaiElement`) arrived with only
-// its own members and a `superclass` reference to a declaration the manifest
-// does not contain: `<civitai-text-input>` listed five attributes and none of
-// `label`, `name`, `value`, `description`, `error`, `required`, `disabled`,
-// `size`. The fix is upstream — the base modules are analyzed too, so their
-// members arrive flattened with `inheritedFrom` and the bases are declarations
-// in the manifest. This reader does not compensate for an old manifest by
-// parsing the package's compiled output: a superclass it cannot find in the
-// manifest is listed in `unresolved`, and the command says the reference is
-// incomplete and to upgrade the package. A second, heuristic source of truth
-// would be a parser to maintain against every future build layout.
+// 🔴 MEMBERS COME FROM THE ELEMENT'S OWN MANIFEST ENTRY; THE SUPERCLASS WALK
+// ONLY NAMES THE CHAIN. The analyzer flattens every inherited member onto the
+// element that inherits it, carrying `inheritedFrom`, for each superclass it
+// analyzed. What differs by version is which superclasses it analyzed:
+//
+//   - 0.10.0 and earlier: the element modules only. A shared base that is not
+//     itself an element (`CivitaiField`, `CivitaiMediaElement`,
+//     `CivitaiElement`) is not in the manifest, so its members are not on the
+//     element: `<civitai-text-input>` lists five attributes and none of
+//     `label`, `name`, `value`, `description`, `error`, `required`,
+//     `disabled`, `size`.
+//   - 0.10.1 and later: the base modules too, so those members are on the
+//     element with `inheritedFrom`, and every `superclass` resolves to a
+//     manifest declaration or to a `package`-qualified root.
+//
+// So the walk follows `superclass` by module path only to fill `extends` (the
+// chain in the header) and `unresolved` (a superclass the manifest does not
+// declare, which the command reports as "Incomplete … upgrade
+// @civitai/components"). It adds no members: measured over all 47 elements of
+// 0.10.0 and 0.10.1, merging the ancestors' members added none the flattened
+// entries did not already carry. Nothing compensates for an old manifest — no
+// parsing of the package's compiled output, no second source of truth.
 
 // cemManifest is the subset of the Custom Elements Manifest schema
 // (https://github.com/webcomponents/custom-elements-manifest) this command reads.
@@ -146,8 +153,9 @@ func findElementsPackage(start string) (*elementsPackage, error) {
 			if !errors.Is(err, errElementsManifestNotFound) {
 				return nil, err
 			}
-			// A copy without a manifest (a version predating it) is skipped, as
-			// Node would still resolve it — but say so if nothing better is found.
+			// A copy without a manifest is skipped and the walk continues
+			// upward; if no copy anywhere has one, the caller reports the
+			// manifest as not found, without distinguishing this case.
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -228,26 +236,19 @@ func moduleKey(p string) string {
 	return p
 }
 
-// findDecl finds a class declaration in the manifest by reference: by module
-// path first, then — when that module is not in the manifest (a re-export
-// barrel such as `internals.js`) or no module is given — by class name, if
-// exactly one class in the manifest has it.
+// findDecl finds a class declaration in the manifest by its module path and
+// class name. A reference whose module is not in the manifest does not resolve.
 func (p *elementsPackage) findDecl(ref cemRef) (elementDecl, bool) {
 	want := moduleKey(ref.Module)
-	var byName []elementDecl
 	for _, m := range p.Manifest.Modules {
+		if ref.Module == "" || moduleKey(m.Path) != want {
+			continue
+		}
 		for _, d := range m.Declarations {
-			if d.Kind != "class" || d.Name != ref.Name {
-				continue
-			}
-			if ref.Module != "" && moduleKey(m.Path) == want {
+			if d.Kind == "class" && d.Name == ref.Name {
 				return elementDecl{Module: m.Path, Decl: d}, true
 			}
-			byName = append(byName, elementDecl{Module: m.Path, Decl: d})
 		}
-	}
-	if len(byName) == 1 {
-		return byName[0], true
 	}
 	return elementDecl{}, false
 }
@@ -293,28 +294,6 @@ type elementReference struct {
 	Unresolved []string `json:"unresolved"`
 }
 
-// referenceBuilder accumulates members nearest-class-first; the first
-// declaration of a name wins, so an override shadows what it overrides.
-type referenceBuilder struct {
-	ref                                     elementReference
-	attrs, props, events, slots, parts, css map[string]bool
-}
-
-func newReferenceBuilder(e elementDecl) *referenceBuilder {
-	b := &referenceBuilder{
-		attrs: map[string]bool{}, props: map[string]bool{}, events: map[string]bool{},
-		slots: map[string]bool{}, parts: map[string]bool{}, css: map[string]bool{},
-	}
-	b.ref = elementReference{
-		Tag: e.Decl.TagName, Class: e.Decl.Name, Module: e.Module,
-		Description: firstNonEmpty(e.Decl.Summary, e.Decl.Description),
-		Extends:     []string{}, Attributes: []elementField{}, Properties: []elementField{},
-		Events: []elementNamed{}, Slots: []elementNamed{}, CSSParts: []elementNamed{},
-		CSSProperties: []elementNamed{}, Unresolved: []string{},
-	}
-	return b
-}
-
 func firstNonEmpty(s ...string) string {
 	for _, v := range s {
 		if strings.TrimSpace(v) != "" {
@@ -338,127 +317,88 @@ func declaredBy(inh *cemRef, own string) string {
 	return own
 }
 
-func (b *referenceBuilder) addAttr(f elementField) {
-	if f.Name == "" || b.attrs[f.Name] {
-		return
+// resolveElement builds one element's reference: every member its manifest
+// entry lists (own and flattened-inherited), plus the superclass chain.
+func (p *elementsPackage) resolveElement(e elementDecl) elementReference {
+	d := e.Decl
+	r := elementReference{
+		Tag: d.TagName, Class: d.Name, Module: e.Module,
+		Description: firstNonEmpty(d.Summary, d.Description),
+		Extends:     []string{}, Attributes: []elementField{}, Properties: []elementField{},
+		Events: []elementNamed{}, Slots: []elementNamed{}, CSSParts: []elementNamed{},
+		CSSProperties: []elementNamed{}, Unresolved: []string{},
 	}
-	b.attrs[f.Name] = true
-	b.ref.Attributes = append(b.ref.Attributes, f)
-}
-
-func (b *referenceBuilder) addProp(f elementField) {
-	if f.Name == "" || b.props[f.Name] {
-		return
-	}
-	b.props[f.Name] = true
-	b.ref.Properties = append(b.ref.Properties, f)
-}
-
-func addNamed(seen map[string]bool, list *[]elementNamed, n elementNamed) {
-	key := n.Name // the default slot's name is "" and is a real, distinct slot
-	if seen[key] {
-		return
-	}
-	seen[key] = true
-	*list = append(*list, n)
-}
-
-// addManifestDecl adds one manifest class declaration's members.
-func (b *referenceBuilder) addManifestDecl(d cemDecl) {
-	// Properties whose attribute is listed are already covered by that
-	// attribute; mark their field names so the property list stays "distinct".
-	attrField := map[string]bool{}
 	for _, a := range d.Attributes {
-		b.addAttr(elementField{
+		r.Attributes = append(r.Attributes, elementField{
 			Name: a.Name, Type: typeText(a.Type), Default: a.Default,
 			Description: strings.TrimSpace(a.Description), DeclaredBy: declaredBy(a.InheritedFrom, d.Name),
 		})
-		if a.FieldName != "" {
-			attrField[a.FieldName] = true
-		}
 	}
 	for _, m := range d.Members {
-		if m.Kind != "field" || m.Static || m.Attribute != "" || attrField[m.Name] {
+		// A field with an attribute is documented by that attribute; the
+		// property list holds only the ones with none.
+		if m.Kind != "field" || m.Static || m.Attribute != "" {
 			continue
 		}
 		if m.Privacy == "private" || m.Privacy == "protected" || strings.HasPrefix(m.Name, "#") {
 			continue
 		}
-		b.addProp(elementField{
+		r.Properties = append(r.Properties, elementField{
 			Name: m.Name, Type: typeText(m.Type), Default: m.Default,
 			Description: strings.TrimSpace(m.Description), DeclaredBy: declaredBy(m.InheritedFrom, d.Name),
 		})
 	}
-	for _, e := range d.Events {
-		addNamed(b.events, &b.ref.Events, elementNamed{Name: e.Name, Type: typeText(e.Type),
-			Description: strings.TrimSpace(e.Description), DeclaredBy: declaredBy(e.InheritedFrom, d.Name)})
+	for _, ev := range d.Events {
+		r.Events = append(r.Events, elementNamed{Name: ev.Name, Type: typeText(ev.Type),
+			Description: strings.TrimSpace(ev.Description), DeclaredBy: declaredBy(ev.InheritedFrom, d.Name)})
 	}
 	for _, s := range d.Slots {
-		addNamed(b.slots, &b.ref.Slots, elementNamed{Name: s.Name,
+		r.Slots = append(r.Slots, elementNamed{Name: s.Name,
 			Description: strings.TrimSpace(s.Description), DeclaredBy: declaredBy(s.InheritedFrom, d.Name)})
 	}
 	for _, s := range d.CSSParts {
-		addNamed(b.parts, &b.ref.CSSParts, elementNamed{Name: s.Name,
+		r.CSSParts = append(r.CSSParts, elementNamed{Name: s.Name,
 			Description: strings.TrimSpace(s.Description), DeclaredBy: declaredBy(s.InheritedFrom, d.Name)})
 	}
 	for _, c := range d.CSSProperties {
-		addNamed(b.css, &b.ref.CSSProperties, elementNamed{Name: c.Name, Type: c.Syntax, Default: c.Default,
+		r.CSSProperties = append(r.CSSProperties, elementNamed{Name: c.Name, Type: c.Syntax, Default: c.Default,
 			Description: strings.TrimSpace(c.Description), DeclaredBy: d.Name})
 	}
+	r.Extends, r.Unresolved = p.superclassChain(d.Superclass)
+	return r
 }
 
-// resolveElement builds the full reference for one element: its own members
-// (including any the analyzer already flattened, carrying `inheritedFrom`), then
-// each ancestor's, following `superclass` through the manifest's declarations.
-// The nearest declaration of a name wins.
-//
-// followSuperclasses=false is the seam the inheritance test uses to prove the
-// inherited assertions depend on this walk; production always passes true.
-func (p *elementsPackage) resolveElement(e elementDecl, followSuperclasses bool) elementReference {
-	b := newReferenceBuilder(e)
-	b.addManifestDecl(e.Decl)
-	if followSuperclasses {
-		p.walkSuperclasses(b, e.Decl.Superclass)
-	}
-	return b.ref
-}
-
-func (p *elementsPackage) walkSuperclasses(b *referenceBuilder, ref *cemRef) {
+// superclassChain follows `superclass` through the manifest's declarations,
+// nearest first. It stops at a root (complete) or at a reference the manifest
+// does not declare (returned in unresolved). It reads no members.
+func (p *elementsPackage) superclassChain(ref *cemRef) (chain, unresolved []string) {
+	chain, unresolved = []string{}, []string{}
 	visited := map[string]bool{}
 	for ref != nil && ref.Name != "" {
 		key := ref.Name + "\x00" + moduleKey(ref.Module)
 		if visited[key] {
-			return
+			break
 		}
 		visited[key] = true
-		b.ref.Extends = append(b.ref.Extends, ref.Name)
+		chain = append(chain, ref.Name)
 		if isRootSuperclass(*ref) {
-			return
+			break
 		}
 		d, ok := p.findDecl(*ref)
 		if !ok {
-			b.ref.Unresolved = append(b.ref.Unresolved, ref.Name)
-			return
+			unresolved = append(unresolved, ref.Name)
+			break
 		}
-		b.addManifestDecl(d.Decl)
 		ref = d.Decl.Superclass
 	}
+	return chain, unresolved
 }
 
 // isRootSuperclass reports whether ref ends the chain WITHOUT anything missing:
-// a class from another package (`lit`'s LitElement) or a platform global
-// (`{name: "HTMLElement", package: "global:"}`). Neither is described by this
-// package's manifest, and neither has members an author sets on a
-// `<civitai-*>` tag, so reaching one is a complete answer — not "Incomplete".
-// The two names are also accepted bare, for a manifest that records them
-// without a `package`.
+// a `package`-qualified class — another package's (`lit`'s LitElement) or a
+// platform global (`{name: "HTMLElement", package: "global:"}`). Neither is
+// described by this package's manifest, and neither has members an author sets
+// on a `<civitai-*>` tag, so reaching one is a complete answer.
 func isRootSuperclass(ref cemRef) bool {
-	if ref.Package != "" {
-		return true
-	}
-	switch ref.Name {
-	case "HTMLElement", "LitElement":
-		return true
-	}
-	return false
+	return ref.Package != ""
 }

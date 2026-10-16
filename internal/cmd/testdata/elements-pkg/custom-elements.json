@@ -167,13 +167,30 @@
         ]
       }
     ]},
+    {"kind": "javascript-module", "path": "src/elements/civitai-tooltip.ts", "declarations": [
+      {
+        "kind": "class",
+        "name": "CivitaiTooltip",
+        "tagName": "civitai-tooltip",
+        "superclass": {"name": "HTMLElement", "package": "global:"},
+        "customElement": true,
+        "attributes": [
+          {"name": "label"}
+        ],
+        "members": [
+          {"kind": "field", "name": "label", "type": {"text": "string"}},
+          {"kind": "field", "name": "open", "type": {"text": "boolean"}, "description": "Forces the bubble open; hover and focus reveal it without this."},
+          {"kind": "field", "name": "trigger", "type": {"text": "HTMLElement | null"}, "description": "The element the tooltip describes: the first element child."}
+        ]
+      }
+    ]},
     {"kind": "javascript-module", "path": "src/sdk/civitai-sign-in-button.ts", "declarations": [
       {
         "kind": "class",
         "name": "CivitaiSignInButton",
         "tagName": "civitai-sign-in-button",
         "description": "Given a `signIn` from `createSignIn()`, leaves for Civitai itself; otherwise\nasks the host page, and stays inert until `BLOCK_INIT` lands, since there is\nno validated host origin before then.",
-        "superclass": {"name": "CivitaiElement", "module": "/src/elements/internals.js"},
+        "superclass": {"name": "CivitaiElement", "module": "/src/elements/base.js"},
         "customElement": true,
         "attributes": [
           {"name": "return-url", "type": {"text": "string"}, "default": "''", "description": "A path within this app; the host sanitises it.", "fieldName": "returnUrl"},
@@ -198,6 +215,7 @@
         "kind": "class",
         "name": "CivitaiElement",
         "superclass": {"name": "LitElement", "package": "lit"},
+        "customElement": true,
         "events": [
           {"name": "change", "type": {"text": "Event"}, "description": "A `change` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary."},
           {"name": "invalid", "type": {"text": "Event"}, "description": "A `invalid` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary."}
@@ -227,23 +245,6 @@
         "events": [
           {"name": "change", "type": {"text": "Event"}, "description": "A `change` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}},
           {"name": "invalid", "type": {"text": "Event"}, "description": "A `invalid` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}}
-        ]
-      }
-    ]},
-    {"kind": "javascript-module", "path": "src/elements/civitai-tooltip.ts", "declarations": [
-      {
-        "kind": "class",
-        "name": "CivitaiTooltip",
-        "tagName": "civitai-tooltip",
-        "superclass": {"name": "HTMLElement", "package": "global:"},
-        "customElement": true,
-        "attributes": [
-          {"name": "label"}
-        ],
-        "members": [
-          {"kind": "field", "name": "label", "type": {"text": "string"}},
-          {"kind": "field", "name": "open", "type": {"text": "boolean"}, "description": "Forces the bubble open; hover and focus reveal it without this."},
-          {"kind": "field", "name": "trigger", "type": {"text": "HTMLElement | null"}, "description": "The element the tooltip describes: the first element child."}
         ]
       }
     ]}

@@ -10,30 +10,28 @@ import (
 	"testing"
 )
 
-// Two fixtures, both TRIMMED copies of a real @civitai/components manifest —
-// class declarations only, attribute/event/slot/part entries kept, members
-// reduced to public fields with no attribute:
+// Two fixtures, both TRIMMED copies of a published @civitai/components
+// manifest — class declarations only, attribute/event/slot/part entries kept,
+// members reduced to public fields with no attribute:
 //
-//   - testdata/elements-pkg: the manifest regenerated with the base modules
-//     analyzed (base.ts, field-base.ts, media-base.ts), the upstream fix this
-//     command relies on. Seven elements plus the CivitaiElement and CivitaiField
-//     declarations; inherited members arrive flattened with `inheritedFrom`.
-//     <civitai-tooltip> is HAND-EDITED to the shape the same upstream change
-//     moves it to: its superclass, a cast alias of the global HTMLElement that
-//     the analyzer records as `HTMLElementBase`, becomes
-//     `{name: "HTMLElement", package: "global:"}`.
+//   - testdata/elements-pkg: 0.10.1, the first release whose manifest
+//     describes the base classes (base.ts, field-base.ts, media-base.ts).
+//     Seven elements plus the CivitaiElement and CivitaiField declarations;
+//     inherited members are flattened onto each element with `inheritedFrom`,
+//     and <civitai-tooltip>'s superclass is the `global:` HTMLElement root.
 //   - testdata/elements-pkg-0.10.0: the published 0.10.0 manifest, which does
 //     not describe the base classes. <civitai-text-input> and <civitai-button>
 //     only.
 
-// installElementsFixture copies a fixture package into
-// <tmp>/proj/node_modules/@civitai/components and returns the package dir and
-// a directory INSIDE the project (so the walk up is exercised, not skipped).
+// elementsTestdata is resolved once, at package init, so a test can install a
+// second fixture after runElements has changed directory.
+var elementsTestdata, _ = filepath.Abs("testdata")
+
 func installElementsFixture(t *testing.T, fixture string) (pkgDir, workDir string) {
 	t.Helper()
 	proj := filepath.Join(t.TempDir(), "proj")
 	pkgDir = filepath.Join(proj, "node_modules", "@civitai", "components")
-	src := filepath.Join("testdata", fixture)
+	src := filepath.Join(elementsTestdata, fixture)
 	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -110,47 +108,13 @@ func editManifest(t *testing.T, pkgDir string, fn func(d *cemDecl)) {
 	}
 }
 
-// unflatten strips every member the analyzer pre-flattened (the ones carrying
-// `inheritedFrom`), so the ONLY way an inherited member can reach the output is
-// the superclass walk.
-func unflatten(d *cemDecl) {
-	var attrs []cemAttr
-	for _, a := range d.Attributes {
-		if a.InheritedFrom == nil {
-			attrs = append(attrs, a)
-		}
-	}
-	d.Attributes = attrs
-	var members []cemMember
-	for _, m := range d.Members {
-		if m.InheritedFrom == nil {
-			members = append(members, m)
-		}
-	}
-	d.Members = members
-	var events []cemEvent
-	for _, e := range d.Events {
-		if e.InheritedFrom == nil {
-			events = append(events, e)
-		}
-	}
-	d.Events = events
-	var parts []cemNamed
-	for _, p := range d.CSSParts {
-		if p.InheritedFrom == nil {
-			parts = append(parts, p)
-		}
-	}
-	d.CSSParts = parts
-}
-
 func TestAppElementsListsEveryTag(t *testing.T) {
 	_, dir := installElementsFixture(t, "elements-pkg")
 	out, _, err := runElements(t, dir)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if !strings.Contains(out, "@civitai/components 0.11.0-test — 7 elements") {
+	if !strings.Contains(out, "@civitai/components 0.10.1 — 7 elements") {
 		t.Errorf("list header should name the package, its version and the count:\n%s", out)
 	}
 	for _, tag := range []string{"civitai-button", "civitai-checkbox", "civitai-modal", "civitai-sign-in-button",
@@ -209,58 +173,32 @@ func TestAppElementsFormControlIncludesInheritedAttributes(t *testing.T) {
 	}
 }
 
-// TestAppElementsInheritanceIsResolvedFromTheSuperclassGraph proves the walk is
-// what supplies inherited members: with every pre-flattened member stripped,
-// the inherited attributes must still arrive, through `superclass`, from the
-// CivitaiField / CivitaiCheckbox DECLARATIONS — and must not arrive without
-// the walk. Driven through the command, so the whole path is exercised.
-func TestAppElementsInheritanceIsResolvedFromTheSuperclassGraph(t *testing.T) {
-	pkgDir, dir := installElementsFixture(t, "elements-pkg")
-	editManifest(t, pkgDir, unflatten)
-
+// TestAppElementsInheritedMembersAndChainComeFromTheManifest: members come
+// from the element's own entry, where the analyzer flattened the inherited ones
+// with `inheritedFrom`; the superclass walk supplies the CHAIN (`extends`) and
+// nothing else. A chain through another element — switch → checkbox →
+// CivitaiField — shows checkbox's `value` override once, not CivitaiField's too.
+func TestAppElementsInheritedMembersAndChainComeFromTheManifest(t *testing.T) {
+	pkgDir, _ := installElementsFixture(t, "elements-pkg")
 	pkg, err := loadElementsPackage(pkgDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := pkg.lookupElement("civitai-text-input")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(attrNames(pkg.resolveElement(e, false).Attributes), ","); got != "placeholder,type,readonly,maxlength,autocomplete" {
-		t.Fatalf("control: unflattened text-input without the walk should carry its own 5 attributes, got %s", got)
-	}
-
-	out, _, err := runElements(t, dir, "civitai-text-input", "--json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got struct {
-		Element elementReference `json:"element"`
-	}
-	if err := json.Unmarshal([]byte(out), &got); err != nil {
-		t.Fatal(err)
-	}
-	ref := got.Element
+	ti, _ := pkg.lookupElement("civitai-text-input")
+	ref := pkg.resolveElement(ti)
 	want := "placeholder,type,readonly,maxlength,autocomplete,name,value,label,description,error,required,disabled,size"
 	if names := strings.Join(attrNames(ref.Attributes), ","); names != want {
-		t.Errorf("resolved attributes:\n got %s\nwant %s", names, want)
+		t.Errorf("text-input attributes:\n got %s\nwant %s", names, want)
 	}
 	if label, _ := findField(ref.Attributes, "label"); label.DeclaredBy != "CivitaiField" {
 		t.Errorf("`label` should be declared by CivitaiField, got %+v", label)
 	}
-	var evs []string
-	for _, ev := range ref.Events {
-		evs = append(evs, ev.Name+"@"+ev.DeclaredBy)
-	}
-	if strings.Join(evs, ",") != "change@CivitaiElement,invalid@CivitaiElement" {
-		t.Errorf("events should come from CivitaiElement via the walk, got %v", evs)
+	if chain := strings.Join(ref.Extends, ","); chain != "CivitaiField,CivitaiElement,LitElement" {
+		t.Errorf("text-input chain = %s", chain)
 	}
 
-	// A chain THROUGH another element: switch → checkbox → CivitaiField.
-	// Checkbox overrides `value`; the nearer declaration must win, and the
-	// farther one must not ALSO appear.
 	sw, _ := pkg.lookupElement("civitai-switch")
-	sref := pkg.resolveElement(sw, true)
+	sref := pkg.resolveElement(sw)
 	if chain := strings.Join(sref.Extends, ","); chain != "CivitaiCheckbox,CivitaiField,CivitaiElement,LitElement" {
 		t.Errorf("switch chain = %s", chain)
 	}
@@ -275,27 +213,57 @@ func TestAppElementsInheritanceIsResolvedFromTheSuperclassGraph(t *testing.T) {
 	}
 }
 
-// TestAppElementsResolvesASuperclassByNameWhenItsModuleIsABarrel: the SDK
-// elements import CivitaiElement through an `internals` re-export the manifest
-// does not contain. The declaration is still in the manifest, under base.ts,
-// so it resolves by class name rather than being reported missing.
-func TestAppElementsResolvesASuperclassByNameWhenItsModuleIsABarrel(t *testing.T) {
+// TestAppElementsPropertiesAreThePublicAPIOnly: the published manifest lists
+// protected, private, static and attribute-backed members too (the fixture is
+// trimmed of them, so they are put back here). None is something an author
+// sets on the element, so none may reach the property list.
+func TestAppElementsPropertiesAreThePublicAPIOnly(t *testing.T) {
 	pkgDir, _ := installElementsFixture(t, "elements-pkg")
-	editManifest(t, pkgDir, unflatten)
+	editManifest(t, pkgDir, func(d *cemDecl) {
+		if d.TagName == "civitai-text-input" {
+			d.Members = append(d.Members,
+				cemMember{Kind: "field", Name: "internals", Privacy: "protected"},
+				cemMember{Kind: "field", Name: "secret", Privacy: "private"},
+				cemMember{Kind: "field", Name: "#onInput"},
+				cemMember{Kind: "field", Name: "formAssociated", Static: true},
+				cemMember{Kind: "field", Name: "placeholder", Attribute: "placeholder"},
+				cemMember{Kind: "method", Name: "checkValidity"},
+			)
+		}
+	})
 	pkg, err := loadElementsPackage(pkgDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, _ := pkg.lookupElement("civitai-sign-in-button")
-	if e.Decl.Superclass == nil || !strings.HasSuffix(e.Decl.Superclass.Module, "internals.js") {
-		t.Fatalf("fixture drift: sign-in-button's superclass should point at the internals barrel, got %+v", e.Decl.Superclass)
+	e, _ := pkg.lookupElement("civitai-text-input")
+	if got := strings.Join(attrNames(pkg.resolveElement(e).Properties), ","); got != "form,validity" {
+		t.Errorf("properties = %s, want form,validity", got)
 	}
-	ref := pkg.resolveElement(e, true)
-	if len(ref.Unresolved) != 0 {
-		t.Errorf("CivitaiElement is declared in the manifest; it must resolve by name, got unresolved %v", ref.Unresolved)
+}
+
+// TestAppElementsResolvesASuperclassByModulePathOnly: a superclass reference
+// resolves only where its MODULE is in the manifest. The same class name under
+// a module the manifest does not contain (a re-export barrel) is unresolved —
+// reported, not guessed at by name.
+func TestAppElementsResolvesASuperclassByModulePathOnly(t *testing.T) {
+	pkgDir, _ := installElementsFixture(t, "elements-pkg")
+	editManifest(t, pkgDir, func(d *cemDecl) {
+		if d.TagName == "civitai-button" {
+			d.Superclass = &cemRef{Name: "CivitaiElement", Module: "/src/elements/internals.js"}
+		}
+	})
+	pkg, err := loadElementsPackage(pkgDir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(ref.Events) != 2 || ref.Events[0].DeclaredBy != "CivitaiElement" {
-		t.Errorf("sign-in-button should inherit change/invalid from CivitaiElement, got %+v", ref.Events)
+	e, _ := pkg.lookupElement("civitai-button")
+	if got := strings.Join(pkg.resolveElement(e).Unresolved, ","); got != "CivitaiElement" {
+		t.Errorf("a superclass under a module the manifest lacks must be unresolved, got %q", got)
+	}
+	// Control: the same name under its real module resolves.
+	m, _ := pkg.lookupElement("civitai-modal")
+	if got := pkg.resolveElement(m); len(got.Unresolved) != 0 || strings.Join(got.Extends, ",") != "CivitaiElement,LitElement" {
+		t.Errorf("modal: extends %v, unresolved %v", got.Extends, got.Unresolved)
 	}
 }
 
@@ -329,12 +297,12 @@ func TestAppElementsAGlobalOrFrameworkRootIsNotIncomplete(t *testing.T) {
 		t.Errorf("tooltip chain should end at HTMLElement:\n%s", tip)
 	}
 
-	// Each arm of the root rule on its own: ANY class from another package
-	// (whatever its name), and the two root names recorded with no package.
-	for _, root := range []cemRef{{Name: "SomeFrameworkBase", Package: "some-framework"}, {Name: "HTMLElement"}, {Name: "LitElement"}} {
+	// Any `package`-qualified class is a root, whatever its name.
+	resolveTooltip := func(sc cemRef) elementReference {
+		t.Helper()
 		editManifest(t, pkgDir, func(d *cemDecl) {
 			if d.TagName == "civitai-tooltip" {
-				r := root
+				r := sc
 				d.Superclass = &r
 			}
 		})
@@ -343,20 +311,17 @@ func TestAppElementsAGlobalOrFrameworkRootIsNotIncomplete(t *testing.T) {
 			t.Fatal(err)
 		}
 		e, _ := pkg.lookupElement("civitai-tooltip")
-		if ref := pkg.resolveElement(e, true); len(ref.Unresolved) != 0 {
-			t.Errorf("root %+v was reported unresolved: %v", root, ref.Unresolved)
-		}
+		return pkg.resolveElement(e)
 	}
-	// Control: a class that is neither a root nor in the manifest IS unresolved.
-	editManifest(t, pkgDir, func(d *cemDecl) {
-		if d.TagName == "civitai-tooltip" {
-			d.Superclass = &cemRef{Name: "HTMLElementBase", Module: "/src/elements/html-element.js"}
+	if ref := resolveTooltip(cemRef{Name: "SomeFrameworkBase", Package: "some-framework"}); len(ref.Unresolved) != 0 {
+		t.Errorf("a package-qualified superclass was reported unresolved: %v", ref.Unresolved)
+	}
+	// Controls: a root is recognised by its `package`, never by its name, and
+	// an undeclared non-root is unresolved.
+	for _, sc := range []cemRef{{Name: "HTMLElement"}, {Name: "HTMLElementBase", Module: "/src/elements/html-element.js"}} {
+		if ref := resolveTooltip(sc); strings.Join(ref.Unresolved, ",") != sc.Name {
+			t.Errorf("%+v must be unresolved, got %v", sc, ref.Unresolved)
 		}
-	})
-	pkg, _ := loadElementsPackage(pkgDir)
-	e, _ := pkg.lookupElement("civitai-tooltip")
-	if ref := pkg.resolveElement(e, true); strings.Join(ref.Unresolved, ",") != "HTMLElementBase" {
-		t.Errorf("an undeclared, non-root superclass must be unresolved, got %v", ref.Unresolved)
 	}
 }
 
@@ -473,7 +438,7 @@ func TestAppElementsJSONShape(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &raw); err != nil {
 		t.Fatalf("not JSON: %v\n%s", err, out)
 	}
-	if got := raw["package"]; got["name"] != "@civitai/components" || got["version"] != "0.11.0-test" {
+	if got := raw["package"]; got["name"] != "@civitai/components" || got["version"] != "0.10.1" {
 		t.Errorf("package = %v", got)
 	}
 	el := raw["element"]
@@ -576,7 +541,7 @@ func TestAppElementsTerminalOutputCannotCarryEscapes(t *testing.T) {
 		}
 	})
 	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"),
-		[]byte(`{"name":"@civitai/components","version":"0.10.0\u001b[2J"}`), 0o644); err != nil {
+		[]byte(`{"name":"@civitai/components","version":"0.10.1\u001b[2J"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -590,7 +555,7 @@ func TestAppElementsTerminalOutputCannotCarryEscapes(t *testing.T) {
 		}
 		// Positive control: the text around the escapes still arrives, so a
 		// renderer that printed NOTHING would not pass as "clean".
-		if !strings.Contains(out, "0.10.0") {
+		if !strings.Contains(out, "0.10.1") {
 			t.Errorf("app elements %v lost the package header:\n%s", args, out)
 		}
 	}
@@ -604,4 +569,60 @@ func TestAppElementsTerminalOutputCannotCarryEscapes(t *testing.T) {
 	if !strings.Contains(sw, "CivitaiCheckbox") {
 		t.Errorf("hostile switch reference lost its superclass name:\n%s", sw)
 	}
+
+	// The unknown-tag ERROR echoes package bytes too — the package name and
+	// version, and the near-match tag names — and main prints err.Error() raw.
+	// A payload that sets the terminal title and clears the screen must not
+	// survive into the error or onto stderr.
+	const payload = "\x1b]0;PWNED\x07\x1b[2J"
+	pkgDir2, dir2 := installElementsFixture(t, "elements-pkg")
+	editManifest(t, pkgDir2, func(d *cemDecl) {
+		if d.TagName == "civitai-tooltip" {
+			d.TagName = "civitai-tooltip" + payload
+		}
+	})
+	if err := os.WriteFile(filepath.Join(pkgDir2, "package.json"),
+		[]byte(`{"name":"@civitai/components`+"\\u001b[2J"+`","version":"0.10.1\u001b]0;PWNED\u0007\u001b[2J"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, err := runElements(t, dir2, "civitai-toolti")
+	if err == nil {
+		t.Fatal("unknown tag must fail")
+	}
+	if strings.ContainsAny(err.Error(), "\x1b\x07") || strings.ContainsAny(stderr, "\x1b\x07") {
+		t.Errorf("the unknown-tag error carries a raw escape:\nerr: %q\nstderr: %q", err.Error(), stderr)
+	}
+	// Positive control: the sanitised error still names the package version and
+	// the near match, so a message that dropped them would not pass.
+	if !strings.Contains(err.Error(), "0.10.1") || !strings.Contains(err.Error(), "<civitai-tooltip") {
+		t.Errorf("the unknown-tag error lost the version or the near match: %q", err.Error())
+	}
+
+	// The Incomplete warning names a superclass FROM the package, and a
+	// manifest that does not parse produces an error main prints raw. Neither
+	// may carry the payload.
+	pkgDir3, dir3 := installElementsFixture(t, "elements-pkg-0.10.0")
+	editManifest(t, pkgDir3, func(d *cemDecl) {
+		if d.TagName == "civitai-text-input" {
+			d.Superclass.Name = "CivitaiField" + payload
+		}
+	})
+	out3, _, err := runElements(t, dir3, "civitai-text-input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(out3, "\x1b\x07") || !strings.Contains(out3, "Incomplete: this package's custom-elements.json does not describe CivitaiField") {
+		t.Errorf("the Incomplete warning should name the class without its escapes:\n%q", out3)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir3, "custom-elements.json"), []byte("{"+payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr3, err := runElements(t, dir3, "civitai-text-input")
+	if err == nil {
+		t.Fatal("a manifest that does not parse must fail")
+	}
+	if strings.ContainsAny(err.Error(), "\x1b\x07") || strings.ContainsAny(stderr3, "\x1b\x07") {
+		t.Errorf("the parse error carries a raw escape: %q", err.Error())
+	}
+
 }
