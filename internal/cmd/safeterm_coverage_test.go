@@ -552,6 +552,22 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"could be reverted with no behavioural test going red. Both are driven now, and the test was " +
 			"renamed off …RefusalCannotForgeALine because that name is what made a one-surface test read " +
 			"as a three-surface one"},
+	// --- app elements: an installed npm package's custom-elements.json --------
+	// Not server text but third-party bytes from the registry, read by the
+	// coding agent the command exists for. Each row was measured by deleting
+	// every safeTerm call in that function alone: the named test went red each
+	// time, on its raw-escape assertion.
+	"printElementsList": {"TestAppElementsTerminalOutputCannotCarryEscapes",
+		"`app elements` with no tag: each element's tag and first-sentence description"},
+	"elementsPackageHeader": {"TestAppElementsTerminalOutputCannotCarryEscapes",
+		"`app elements`: the package name and version from the installed package.json — in both views and in " +
+			"the unknown-tag error main prints raw"},
+	"nearTags": {"TestAppElementsTerminalOutputCannotCarryEscapes",
+		"`app elements <unknown>`: the near-match tags in the error, which main prints raw — red at 6d94ce7, " +
+			"where a hostile tag set the terminal title and cleared the screen through it"},
+	"terminalSafeReference": {"TestAppElementsTerminalOutputCannotCarryEscapes",
+		"`app elements <tag>`: every string of one element's reference — tag, class chain, descriptions, " +
+			"attribute names/types/defaults, events, slots, parts, CSS properties — gated once before rendering"},
 	// --- app feedback: the one surface whose text ANY site user can write -----
 	"feedbackMessageLines": {"TestAppFeedbackMessageEscapeSequencesNeverReachTheTerminal",
 		"`app feedback`: the message body, written by an arbitrary site user and read by the owner's coding " +

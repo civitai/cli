@@ -31,6 +31,7 @@ func TestAgentsBlockPointsAtTheSDKTheProjectInstalled(t *testing.T) {
 	}
 
 	elements := render(scaffold.PageElements)
+	money := render(scaffold.PageMoney)
 	for _, react := range []string{"blocks-react", "hooks.md", "useSharedStorage", "Capabilities are hooks AND generation body kinds"} {
 		if strings.Contains(elements, react) {
 			t.Errorf("a page-elements project's AGENTS.md mentions %q — that project does not install @civitai/blocks-react", react)
@@ -38,25 +39,48 @@ func TestAgentsBlockPointsAtTheSDKTheProjectInstalled(t *testing.T) {
 	}
 	for _, want := range []string{
 		"@civitai/sdk", "initialize()", "app.onChange", "app.site", "app.requestGrants",
-		"@civitai/components", "custom-elements.json",
+		"@civitai/components",
 	} {
 		if !strings.Contains(elements, want) {
 			t.Errorf("a page-elements project's AGENTS.md should point at %q", want)
 		}
 	}
 
-	// The readable pointer, and the MARKUP.md trap. An eval run measured agents
-	// pointed only at custom-elements.json spending whole turns writing `node -e`
-	// parsers for it (16 in one run). @civitai/components also ships MARKUP.md,
-	// which LOOKS like the readable answer but documents the `data-civitai-ui`
-	// contract for hand-written HTML — a separate consumption path the
-	// `<civitai-*>` elements this template uses do not follow (its own intro says
-	// so). So the block adds the package README's "Elements" section as the
-	// readable pointer, and may name MARKUP.md only inside the warning that it is
-	// NOT the elements' reference — pinned as a relationship: strip the warning
-	// and no mention of MARKUP.md may remain. README.md, custom-elements.json and
-	// MARKUP.md are all in the `files` of @civitai/components 0.9.0 and 0.9.3 (the
-	// template's `^0.9.0` floor and the current release; `npm pack --dry-run`).
+	// The element reference is a COMMAND, not a file. Evaluation runs measured
+	// agents pointed at custom-elements.json writing `node -e` parsers for it
+	// (16 in one run), and still writing 4–14 per run after the block asked
+	// them to look up one element rather than read the file whole — and the
+	// file omits every form control's inherited attributes besides. So the
+	// block names `civitai app elements`, the name must resolve against THIS
+	// CLI's command tree (a pointer at a command that does not exist is worse
+	// than none), and the block must no longer name the JSON file at all: any
+	// mention of it is an invitation to parse it. Asserted on the command and
+	// the file NAME, not on the surrounding prose.
+	const elementsCmd = "civitai app elements"
+	if !strings.Contains(elements, "`"+elementsCmd+" <tag>`") {
+		t.Errorf("a page-elements project's AGENTS.md should name `%s <tag>` as the element reference", elementsCmd)
+	}
+	if err := resolveCommandRef(NewRootCmd(), elementsCmd); err != nil {
+		t.Errorf("the block names %q, which this CLI does not have: %v", elementsCmd, err)
+	}
+	if strings.Contains(elements, "custom-elements.json") {
+		t.Errorf("a page-elements project's AGENTS.md names custom-elements.json — an agent reads that as the " +
+			"thing to parse; `civitai app elements` is the reference")
+	}
+	if strings.Contains(money, elementsCmd) {
+		t.Errorf("a page-money project's AGENTS.md names %q — that project does not install @civitai/components", elementsCmd)
+	}
+
+	// The readable pointer, and the MARKUP.md trap. @civitai/components also
+	// ships MARKUP.md, which LOOKS like the readable answer but documents the
+	// `data-civitai-ui` contract for hand-written HTML — a separate consumption
+	// path the `<civitai-*>` elements this template uses do not follow (its own
+	// intro says so). So the block adds the package README's "Elements" section
+	// as the readable pointer, and may name MARKUP.md only inside the warning
+	// that it is NOT the elements' reference — pinned as a relationship: strip
+	// the warning and no mention of MARKUP.md may remain. README.md and MARKUP.md
+	// were in the `files` of @civitai/components 0.9.0 and 0.9.3 (`npm pack
+	// --dry-run`) and are in an installed 0.10.0, the template's current floor.
 	// Mirrors civitai/civitai-app-starters#648's starter AGENTS.md.
 	const markupWarning = "🔴 `node_modules/@civitai/components/MARKUP.md` is NOT the elements' reference: " +
 		"it is the `data-civitai-ui` contract for HAND-WRITTEN HTML " +
@@ -64,7 +88,6 @@ func TestAgentsBlockPointsAtTheSDKTheProjectInstalled(t *testing.T) {
 		"Here, write `<civitai-text-input>`."
 	norm := normaliseProseForTest(elements)
 	for _, want := range []string{
-		"node_modules/@civitai/components/custom-elements.json",
 		"`node_modules/@civitai/components/README.md`**, section \"Elements\"",
 		markupWarning,
 	} {
@@ -77,7 +100,6 @@ func TestAgentsBlockPointsAtTheSDKTheProjectInstalled(t *testing.T) {
 			"elements' reference — an agent would read it as the place to look:\n%s", rest)
 	}
 
-	money := render(scaffold.PageMoney)
 	for _, want := range []string{"blocks-react", "hooks.md"} {
 		if !strings.Contains(money, want) {
 			t.Errorf("a page-money project's AGENTS.md lost %q — it still installs @civitai/blocks-react", want)

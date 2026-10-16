@@ -16,12 +16,11 @@ no UI framework. Their API reference ships with them, in `node_modules`:
   the viewer; `app.requestGrants([...])` asks for a consent-gated scope;
   `app.storage.collection(name)` is app storage (section "Document storage");
   `app.host` is the host's own UI.
-- **`node_modules/@civitai/components/custom-elements.json`** — every
-  `<civitai-*>` element's tags, attributes, events and slots. Look up the one
-  element you need rather than reading it whole. The attributes every form
-  field shares (`label`, `name`, `value`, `description`, `error`, `required`,
-  `disabled`, `size`) come from a base class the file does not list, so a
-  `<civitai-text-input>` entry shows only its own.
+- **`civitai app elements <tag>`** — THE reference for one `<civitai-*>`
+  element: every attribute it takes, inherited ones included, with type and
+  default, plus its events, slots and CSS parts, read from the
+  `@civitai/components` installed here. With no tag it lists every element.
+  Run it for each element you use; there is nothing to parse.
 - **`node_modules/@civitai/components/README.md`**, section "Elements" — worked
   `<civitai-*>` examples. 🔴 `node_modules/@civitai/components/MARKUP.md` is
   NOT the elements' reference: it is the `data-civitai-ui` contract for
