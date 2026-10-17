@@ -135,6 +135,16 @@ func patternFixtures() []patternFixture {
 			field:    "page.path",
 			got:      "run",
 		},
+		{
+			// A HYPHEN: valid in JSON Pointer, refused here, and the likeliest
+			// thing an author pastes (a kebab-case field name).
+			name:    "storage.ownedModelVersions",
+			pattern: `^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$`,
+			manifest: `{"blockId":"ok-app","storage":{"collections":{"c":{"visibility":"shared","write":"own",` +
+				`"ownedModelVersions":["/model-version"]}}},` + base + `}`,
+			field: "storage.collections.c.ownedModelVersions[0]",
+			got:   "/model-version",
+		},
 	}
 }
 
@@ -257,6 +267,11 @@ func TestPatternGlossesAreTheRightWayRound(t *testing.T) {
 			"a scheme requirement and nothing else"},
 		{`^/`, `must start with a "/"`, "/",
 			"a leading-character requirement on a mount path"},
+		// "field path of 1 to 4 segments" rather than anything about "/": the
+		// page.path row owns the leading-slash wording, and this regex's
+		// distinguishing claim is the bounded segment count.
+		{`^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$`, "field path of 1 to 4 segments", "/workflow/modelVersionId",
+			"a bounded, index-free path into a stored document"},
 	}
 	if len(ledger) != len(patternRules) {
 		t.Fatalf("%d ledger rows for %d glossed patterns — the ledger must be total, "+

@@ -464,6 +464,19 @@ var SENSITIVE_BLOCK_SCOPES = map[string]struct{}{
 	// under the viewer's name: the "write data other users see" arm. Added by
 	// civitai PR #5511 (not yet on `release` at the time of this mirror).
 	"apps:store:items:write": {},
+	// apps:storage:publish is the document store's successor to
+	// apps:storage:shared:write — documents in a shared collection, authored
+	// under the viewer's identity and read by every viewer of the app. It is the
+	// scope a shared write:"own" collection (the only kind that may declare
+	// `ownedModelVersions`) requires.
+	"apps:storage:publish": {},
+	// social:react:self sets a public, reward-paying reaction under the viewer's
+	// name. Entered the vendored schema's scope enum in the same re-vendor as
+	// `ownedModelVersions` (civitai #6144).
+	//
+	// Both verified against the DEPLOYED constant (civitai `origin/release`,
+	// 2026-10-16), where the set is these ten.
+	"social:react:self": {},
 }
 
 // isSensitiveBlockScope reports whether scope is in SENSITIVE_BLOCK_SCOPES.
