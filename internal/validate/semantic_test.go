@@ -347,7 +347,7 @@ func TestSensitiveScopeJustificationChecks(t *testing.T) {
 	}
 }
 
-// TestIsSensitiveBlockScope pins the sensitive set to the server's 8 scopes.
+// TestIsSensitiveBlockScope pins the sensitive set to the server's 10 scopes.
 //
 // This list is spelled out rather than derived, and that is correct even though
 // the sibling enum guard in pattern_test.go now derives its content: the
@@ -366,6 +366,10 @@ func TestIsSensitiveBlockScope(t *testing.T) {
 		"goods:purchase:self",
 		// Publishes store cards every visitor sees, under the viewer's name.
 		"apps:store:items:write",
+		// Shared-collection documents under the viewer's identity.
+		"apps:storage:publish",
+		// A public, reward-paying reaction under the viewer's name.
+		"social:react:self",
 	}
 	if len(SENSITIVE_BLOCK_SCOPES) != len(sensitive) {
 		t.Fatalf("SENSITIVE_BLOCK_SCOPES has %d entries, want %d", len(SENSITIVE_BLOCK_SCOPES), len(sensitive))
