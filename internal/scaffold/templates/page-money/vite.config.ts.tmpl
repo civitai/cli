@@ -6,8 +6,8 @@ import react from '@vitejs/plugin-react';
 // `ajv` is in devDependencies because it is an optional peer of
 // @civitai/app-sdk). Not a substitute for `civitai app validate`.
 //
-// From the @civitai/app-sdk release carrying civitai/civitai-app-starters#711
-// it also exposes the manifest's `scopes` + `storage` to `@civitai/sdk`, on the
+// Since @civitai/app-sdk 0.76.0 (civitai/civitai-app-starters#711) it also
+// exposes the manifest's `scopes` + `storage` to `@civitai/sdk`, on the
 // DEV SERVER ONLY (`vite build` emits nothing extra). That is the only route by
 // which a dev-tunnel preview's document store (`app.storage.collection()`)
 // learns your collections; without this plugin those calls reject
