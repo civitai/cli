@@ -192,7 +192,7 @@ func TestRenderPageMoney(t *testing.T) {
 	// they fall behind npm, so bump BOTH assertions here in lockstep with the .tmpl
 	// (bump-pins does this).
 	mustContain(t, pkg, `"@civitai/blocks-react": "^0.76.0"`)
-	mustContain(t, pkg, `"@civitai/app-sdk": "^0.75.0"`)
+	mustContain(t, pkg, `"@civitai/app-sdk": "^0.76.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk"`)
 	mustContain(t, pkg, `"dev:harness"`)
 	mustContain(t, pkg, `"build"`)

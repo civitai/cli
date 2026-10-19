@@ -1,6 +1,19 @@
 /// <reference types="vitest/config" />
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+// Validates block.manifest.json on every dev-server boot and every build
+// against the CANONICAL schema (vendored inside the SDK, compiled with Ajv —
+// `ajv` is in devDependencies because it is an optional peer of
+// @civitai/app-sdk). Not a substitute for `civitai app validate`.
+//
+// Since @civitai/app-sdk 0.76.0 (civitai/civitai-app-starters#711) it also
+// exposes the manifest's `scopes` + `storage` to `@civitai/sdk`, on the
+// DEV SERVER ONLY (`vite build` emits nothing extra). That is the only route by
+// which a dev-tunnel preview's document store (`app.storage.collection()`)
+// learns your collections; without this plugin those calls reject
+// `local_preview_no_manifest`. This template does not use `@civitai/sdk` yet —
+// the plugin is registered so that adding it later needs no config change.
+import { blockManifestPlugin } from '@civitai/app-sdk/vite';
 
 import { civitaiSetupPlugin } from './vite-plugin-civitai-setup.js';
 import { DEV_ALLOWED_HOSTS, devServerSecurityHeaders } from './src/dev-embed.js';
@@ -46,7 +59,7 @@ export default defineConfig(({ mode }) => {
   // the dev token from the local manifest + merge-write .env.development.local).
   // It is NEVER active in `vite build`, so none of it (or the pasted key it
   // handles) reaches the client bundle.
-  plugins: [react(), civitaiSetupPlugin()],
+  plugins: [blockManifestPlugin(), react(), civitaiSetupPlugin()],
   server: {
     // The dev harness fires a fake BLOCK_INIT from window.location.origin and
     // the SDK IframeTransport drops any postMessage whose origin isn't its
