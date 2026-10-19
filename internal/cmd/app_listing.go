@@ -758,11 +758,8 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 	if err != nil {
 		return err
 	}
-	switch ref.Status {
-	case "rejected":
-		return fmt.Errorf("this listing was rejected — resubmit the app before editing its media")
-	case "removed":
-		return fmt.Errorf("this listing was removed by a moderator and can no longer be edited")
+	if err := refuseUneditableListing(ref.Status); err != nil {
+		return err
 	}
 	live := ref.Status == "approved"
 
@@ -771,6 +768,16 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 	if live {
 		changelog, err = confirmLiveRevision(cmd, subject, changelog, assumeYes)
 		if err != nil {
+			return err
+		}
+	}
+
+	// 3b. --red on an environment without the override slots: refuse before the
+	// upload and before the CLI's own beginListingRevision, for an edit that
+	// cannot be saved. (On a LIVE listing the read itself resolves the shadow
+	// server-side — see assertRedSlotsAvailable.)
+	if red {
+		if err := assertRedSlotsAvailable(ctx, client, ref.AppListingID); err != nil {
 			return err
 		}
 	}
@@ -882,6 +889,43 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 
 	// 8. Print the resulting floor state (best-effort — the attach already succeeded).
 	printFloorAfter(ctx, out, client, ref.AppListingID)
+	return nil
+}
+
+// assertRedSlotsAvailable refuses with appapi.ErrRedSlotsUnavailable when the
+// listing's edit view reports `redMedia.available: false`. An ABSENT flag (a
+// server that predates it) proceeds: setRedMedia's own refusal still covers that
+// case, just after the upload instead of before it.
+//
+// ⚠ On an APPROVED listing this read is not side-effect free: the server's
+// getMyListingForEdit idempotently resolves (minting if needed) the shadow
+// revision it reads — the same shadow the CLI's own beginListingRevision would
+// open a few steps later, and the same read `listing status` makes. It is NOT
+// submitted, so the live listing is unchanged; but an unsubmitted draft revision
+// can be left behind. The CLI has no side-effect-free owner read of the flag
+// (`getAssets` carries it but is deliberately not CLI-scoped).
+func assertRedSlotsAvailable(ctx context.Context, client *appapi.Client, listingID string) error {
+	view, err := client.GetMyListingForEdit(ctx, listingID)
+	if err != nil {
+		return err
+	}
+	if a := view.RedMedia.Available; a != nil && !*a {
+		return fmt.Errorf("%w (the listing editor reports the override slots unavailable)", appapi.ErrRedSlotsUnavailable)
+	}
+	return nil
+}
+
+// refuseUneditableListing is the ONE statement of which listing statuses no
+// media command may edit: a rejected listing (the app must be resubmitted) and a
+// moderator-removed one. set-icon / set-cover / add-screenshot, submit-revision
+// and clear-red all ask it before any write; nil means the status is editable.
+func refuseUneditableListing(status string) error {
+	switch status {
+	case "rejected":
+		return fmt.Errorf("this listing was rejected — resubmit the app before editing its media")
+	case "removed":
+		return fmt.Errorf("this listing was removed by a moderator and can no longer be edited")
+	}
 	return nil
 }
 
@@ -1386,13 +1430,10 @@ func runSubmitRevision(cmd *cobra.Command, lc listingCommon, changelog string) e
 	}
 	ctx := cmdCtx(cmd)
 
-	switch ref.Status {
-	case "rejected":
-		return fmt.Errorf("this listing was rejected — resubmit the app before editing its media")
-	case "removed":
-		return fmt.Errorf("this listing was removed by a moderator and can no longer be edited")
-	case "approved":
-	default:
+	if err := refuseUneditableListing(ref.Status); err != nil {
+		return err
+	}
+	if ref.Status != "approved" {
 		// A draft/pending listing IS the edit target: every listing command
 		// writes it directly, so there is no revision and nothing was staged
 		// behind a review gate.
@@ -1720,7 +1761,9 @@ func loadAndValidateImage(kind mediaKind, file string) ([]byte, appapi.ImageInfo
 // (pixel dimensions) instead of predicting the number, and why no local gate was
 // added. #286 recorded this reachability as unmeasured; it is now measured.
 func attachRejectionAdvice(err error, kind mediaKind, file string, srcBytes int, info appapi.ImageInfo) error {
-	if err == nil || !errors.Is(err, civitai.ErrBadRequest) {
+	// The environment refusal is tagged 400 too, but it says nothing about the
+	// file: relay it bare, without the image-bounds advice below.
+	if err == nil || !errors.Is(err, civitai.ErrBadRequest) || errors.Is(err, appapi.ErrRedSlotsUnavailable) {
 		return err
 	}
 	// Every value below comes from the source file, so this line is true whichever

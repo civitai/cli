@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -188,10 +189,38 @@ type ListingEditView struct {
 	// from the OWNER-ONLY edit view, and nowhere else: the public
 	// `GET /api/v1/apps/<slug>` detail never carries an override slot. The CLI
 	// reads it only to confirm, by image id, that a `--red` attach landed.
+	//
+	// Available is the server's `redMedia.available`: false while this
+	// environment has no override slots (a write would be refused). A POINTER on
+	// purpose: nil is a server that predates the flag, which must NOT read as
+	// "unavailable" — only an explicit false does.
 	RedMedia struct {
-		Icon  ListingAsset `json:"icon"`
-		Cover ListingAsset `json:"cover"`
+		Available *bool        `json:"available"`
+		Icon      ListingAsset `json:"icon"`
+		Cover     ListingAsset `json:"cover"`
 	} `json:"redMedia"`
+}
+
+// ErrRedSlotsUnavailable reports that the civitai.red-only icon / cover override
+// slots do not exist on the Civitai environment the CLI is talking to (the
+// server's columns for them are not applied there yet). It is a rollout limit of
+// that environment, never a property of the author's image, so no image advice
+// may be attached to it. Two sources produce it: setRedMedia's refusal (see
+// listingError) and an edit view reporting `redMedia.available: false`.
+var ErrRedSlotsUnavailable = errors.New("a civitai.red-only icon or cover is not available on this Civitai environment yet — this is a platform rollout limit, not a problem with your image, and the override was not written; the listing keeps showing its own icon and cover everywhere")
+
+// redSlotsUnavailablePrefix is the stable head of the server's
+// RED_SLOTS_UNAVAILABLE_MESSAGE (civitai/civitai#6343,
+// src/shared/constants/listing-media-split.constants.ts). The wire carries NO
+// distinct code for it — the server throws a plain TRPCError BAD_REQUEST with
+// that message — so, as with isModeratorTakedownMsg, the message is the only
+// discriminator. Only the clause naming the slots and "not available" is
+// matched; the trailing sentence ("The listing shows its own icon …") is prose
+// the server may reword, so it is deliberately not part of the match.
+const redSlotsUnavailablePrefix = "A civitai.red-only icon or cover is not available"
+
+func isRedSlotsUnavailableMsg(msg string) bool {
+	return strings.HasPrefix(strings.TrimSpace(msg), redSlotsUnavailablePrefix)
 }
 
 // AttachResult is the (loosely-parsed) union result of setIcon/setCover/
@@ -211,10 +240,9 @@ type AttachResult struct {
 	Status  string `json:"status"`
 	IconID  *int   `json:"iconId,omitempty"`
 	CoverID *int   `json:"coverId,omitempty"`
-	// ImageID / Slot are setRedMedia's echo: the slot written and the image now in
-	// it (absent with status "cleared").
+	// ImageID is setRedMedia's echo: the image now in the slot written (absent
+	// with status "cleared"). The echoed `slot` is not decoded — nothing reads it.
 	ImageID     *int   `json:"imageId,omitempty"`
-	Slot        string `json:"slot,omitempty"`
 	ID          string `json:"id,omitempty"` // screenshot id
 	Order       *int   `json:"order,omitempty"`
 	ScanPending bool   `json:"scanPending,omitempty"`
@@ -1092,6 +1120,13 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		// The default: arm below keeps the method name, which is where a
 		// genuinely unexpected status makes it worth reporting.
 		//
+		// The ONE 400 that is not about the request: setRedMedia refusing because
+		// the override slots do not exist on this environment yet. It must not
+		// reach the change arm below ("may have partially applied" is false — the
+		// server refuses before writing) nor the caller's image advice.
+		if route == trpcSetRedMedia && isRedSlotsUnavailableMsg(msg) {
+			return fmt.Errorf("%w (400: %s)", ErrRedSlotsUnavailable, msg)
+		}
 		// The SUBJECT comes from the ROUTE's op, not from the status and not
 		// from the HTTP verb: naming the operation keeps the error identifiable
 		// without the proc name, and a read or an image ingest must not be

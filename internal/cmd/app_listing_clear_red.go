@@ -48,11 +48,8 @@ revision is what you want. On a DRAFT listing it applies to the listing itself.`
 			if err != nil {
 				return err
 			}
-			switch ref.Status {
-			case "rejected":
-				return fmt.Errorf("this listing was rejected — resubmit the app before editing its media")
-			case "removed":
-				return fmt.Errorf("this listing was removed by a moderator and can no longer be edited")
+			if err := refuseUneditableListing(ref.Status); err != nil {
+				return err
 			}
 			if _, err := client.SetRedMedia(cmdCtx(cmd), ref.AppListingID, slot, nil); err != nil {
 				return err
