@@ -68,8 +68,11 @@ var (
 	// applied and must never be worded as "nothing changed".
 	trpcUpdateListing = listingRoute{"/api/trpc/appListings.updateListing", listingOpChange}
 
-	trpcSetIcon               = listingRoute{"/api/trpc/appListings.setIcon", listingOpChange}
-	trpcSetCover              = listingRoute{"/api/trpc/appListings.setCover", listingOpChange}
+	trpcSetIcon  = listingRoute{"/api/trpc/appListings.setIcon", listingOpChange}
+	trpcSetCover = listingRoute{"/api/trpc/appListings.setCover", listingOpChange}
+	// The civitai.red-only icon / cover override (one proc, a `slot` and an
+	// `imageId` that is null to clear) — `set-icon|set-cover --red`, `clear-red`.
+	trpcSetRedMedia           = listingRoute{"/api/trpc/appListings.setRedMedia", listingOpChange}
 	trpcAddScreenshot         = listingRoute{"/api/trpc/appListings.addScreenshot", listingOpChange}
 	trpcRemoveScreenshot      = listingRoute{"/api/trpc/appListings.removeScreenshot", listingOpChange}
 	trpcReorderScreenshots    = listingRoute{"/api/trpc/appListings.reorderScreenshots", listingOpChange}
@@ -180,6 +183,15 @@ type ListingEditView struct {
 		Cover       ListingAsset        `json:"cover"`
 		Screenshots []ListingScreenshot `json:"screenshots"`
 	} `json:"assets"`
+	// RedMedia is the civitai.red-only icon / cover override of the SAME edit
+	// target as Assets (the shadow revision on a live listing). It is read here,
+	// from the OWNER-ONLY edit view, and nowhere else: the public
+	// `GET /api/v1/apps/<slug>` detail never carries an override slot. The CLI
+	// reads it only to confirm, by image id, that a `--red` attach landed.
+	RedMedia struct {
+		Icon  ListingAsset `json:"icon"`
+		Cover ListingAsset `json:"cover"`
+	} `json:"redMedia"`
 }
 
 // AttachResult is the (loosely-parsed) union result of setIcon/setCover/
@@ -196,9 +208,13 @@ type ListingEditView struct {
 // `Status == "pending"` is the legacy `allowPending: false` variant and means
 // NOTHING was written; the live listing-media procs never return it.
 type AttachResult struct {
-	Status      string `json:"status"`
-	IconID      *int   `json:"iconId,omitempty"`
-	CoverID     *int   `json:"coverId,omitempty"`
+	Status  string `json:"status"`
+	IconID  *int   `json:"iconId,omitempty"`
+	CoverID *int   `json:"coverId,omitempty"`
+	// ImageID / Slot are setRedMedia's echo: the slot written and the image now in
+	// it (absent with status "cleared").
+	ImageID     *int   `json:"imageId,omitempty"`
+	Slot        string `json:"slot,omitempty"`
 	ID          string `json:"id,omitempty"` // screenshot id
 	Order       *int   `json:"order,omitempty"`
 	ScanPending bool   `json:"scanPending,omitempty"`
@@ -805,6 +821,23 @@ func (c *Client) SetIcon(ctx context.Context, listingID string, imageID int) (*A
 func (c *Client) SetCover(ctx context.Context, listingID string, imageID int) (*AttachResult, error) {
 	var out AttachResult
 	if err := c.trpcMutation(ctx, trpcSetCover, map[string]any{"listingId": listingID, "imageId": imageID}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SetRedMedia sets (imageID non-nil) or clears (nil) the listing's
+// civitai.red-only override in `slot` ("icon" or "cover"). The same owner and
+// live-listing revision rules as SetIcon / SetCover apply server-side; clearing
+// sends an explicit JSON null, which is how the server tells "clear" from a
+// missing field.
+func (c *Client) SetRedMedia(ctx context.Context, listingID, slot string, imageID *int) (*AttachResult, error) {
+	var out AttachResult
+	in := map[string]any{"listingId": listingID, "slot": slot, "imageId": nil}
+	if imageID != nil {
+		in["imageId"] = *imageID
+	}
+	if err := c.trpcMutation(ctx, trpcSetRedMedia, in, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
