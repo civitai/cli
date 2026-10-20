@@ -382,8 +382,11 @@ func TestDocStoreIgnoresTestFiles(t *testing.T) {
 		"export const y = () => useAppStorage();\n"
 	for _, path := range []string{"src/ghost.test.ts", "src/ghost.spec.tsx", "src/__tests__/ghost.ts"} {
 		t.Run(path, func(t *testing.T) {
+			// An ordinary source file beside it, so the tree scan reads SOMETHING:
+			// with the test file alone it would read nothing, go unobservable and
+			// stay silent for that reason instead — green with the rule deleted.
 			got := storageSourceWarnings(t, docManifest(oneCollection("kv", `{"visibility":"private"}`), "apps:storage"),
-				map[string]string{path: body})
+				map[string]string{path: body, "src/main.ts": "export const x = 1;\n"})
 			if len(got) != 0 {
 				t.Errorf("a test file produced warnings:%s", describe(got))
 			}
