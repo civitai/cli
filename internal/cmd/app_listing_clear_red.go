@@ -12,11 +12,11 @@ import (
 // newAppListingClearRedCmd removes the listing's civitai.red-only icon or cover
 // override — the inverse of `set-icon|set-cover --red`.
 //
-// Like rm-screenshot it changes media without uploading anything, and it follows
-// the same live-listing rule: the server writes the change into the open
-// revision (minting it if needed) and does NOT submit it, so the live listing
-// keeps showing the override until a moderator approves the revision. The
-// submit stays an explicit `submit-revision`, for the reason given on that
+// Like rm-screenshot it changes media without uploading anything and does NOT
+// submit: on a live listing the CLI opens (or reuses) the revision with
+// beginListingRevision and clears the override on the SHADOW, so the live
+// listing keeps showing the override until a moderator approves the revision.
+// The submit stays an explicit `submit-revision`, for the reason given on that
 // command.
 func newAppListingClearRedCmd() *cobra.Command {
 	var lc listingCommon
@@ -51,10 +51,29 @@ revision is what you want. On a DRAFT listing it applies to the listing itself.`
 			if err := refuseUneditableListing(ref.Status); err != nil {
 				return err
 			}
-			if _, err := client.SetRedMedia(cmdCtx(cmd), ref.AppListingID, slot, nil); err != nil {
+			ctx := cmdCtx(cmd)
+			live := ref.Status == "approved"
+			// 🔴 ON A LIVE LISTING THE CLI OPENS THE REVISION ITSELF AND WRITES THE
+			// SHADOW ID — the same path runSetMedia takes for `set-icon|set-cover
+			// --red`. Sending the PARENT id and relying on the server to redirect is
+			// true only for a non-moderator caller: the server's
+			// resolveOwnerAssetEditTarget returns the listing UNCHANGED for a
+			// moderator, so a parent-id clear was written straight onto the LIVE
+			// listing (no review) while this command printed "staged on an open
+			// revision". Addressing the shadow makes both callers land in the
+			// revision, and the message below true for both.
+			targetID := ref.AppListingID
+			if live {
+				shadowID, _, err := client.BeginListingRevision(ctx, ref.AppListingID)
+				if err != nil {
+					return err
+				}
+				targetID = shadowID
+			}
+			if _, err := client.SetRedMedia(ctx, targetID, slot, nil); err != nil {
 				return err
 			}
-			reportRedOverrideCleared(cmd.OutOrStdout(), slot, ref.Status == "approved")
+			reportRedOverrideCleared(cmd.OutOrStdout(), slot, live)
 			return nil
 		},
 	}
