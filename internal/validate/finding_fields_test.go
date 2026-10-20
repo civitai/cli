@@ -208,10 +208,15 @@ func findingFieldLedger() []fieldExpectation {
 			"the source is correct — using the store is the feature — and the single edit that fixes " +
 				"it is adding apps:storage to `scopes`. FieldProject would send a consumer to read their " +
 				"own app code looking for a bug that is not there"},
-		{"the legacy storage hooks", FieldProject,
-			"the remedy is a SOURCE change — move off the hook onto app.storage.collection(). Unlike the " +
-				"row above, no manifest edit resolves it: declaring the old scopes keeps a store that is " +
-				"being retired"},
+		{"but the manifest declares no storage scope", "scopes",
+			"🔴 THE DELIBERATE OPPOSITE OF THE readyack ROW ABOVE, and the contrast is the " +
+				"point. Both checks read src/, but they disagree about which side is wrong. " +
+				"readyack's remedy is in SOURCE (restore the emitter), so the manifest is " +
+				"not the place to send anyone. Here the SOURCE IS CORRECT — calling " +
+				"`useAppStorage()` is the whole feature — and the single edit that fixes it " +
+				"is adding two strings to `scopes` (plus their justifications). " +
+				"FieldProject would send a consumer to read their own app code looking for " +
+				"a bug that is not there, which is the mistake this ledger exists to catch"},
 	}
 }
 

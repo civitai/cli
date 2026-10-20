@@ -1,9 +1,14 @@
 package validate
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	cli "github.com/civitai/cli"
 )
 
 // docstore_test.go pins `civitai app validate`'s understanding of the DOCUMENT
@@ -84,19 +89,58 @@ func assertNoErrors(t *testing.T, label, manifest string) {
 	}
 }
 
-// TestStorageRefusesFeaturesNotYetAvailable — the five features the schema
+// manifestOnlyResult is manifestOnlyFindings with the WARNINGS kept too: the
+// feature gates below are advisories, so the errors alone cannot see them.
+func manifestOnlyResult(t *testing.T, body string) Result {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "block.manifest.json"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	res, err := ManifestOnly(dir)
+	if err != nil {
+		t.Fatalf("ManifestOnly: %v", err)
+	}
+	return res
+}
+
+// gateWarnings returns the "not available yet" advisories among fs.
+func gateWarnings(fs []Finding) []Finding {
+	var out []Finding
+	for _, f := range fs {
+		if strings.Contains(f.Message, "is not available yet") {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// featureGateSuffix is what the CLI adds to the server's own text: that the
+// server refuses the feature TODAY, and why this is a warning anyway.
+const featureGateSuffix = " civitai.com refuses this at submit today; it is a warning here, not an " +
+	"error, because the platform enables these features with a server-side switch and a CLI already " +
+	"installed must not refuse a manifest the server has started to accept."
+
+// TestStorageFeaturesNotYetAvailableAreWarnings — the five features the schema
 // ADMITS (it carries the whole declaration shape) and the server refuses today
-// through APP_STORAGE_ENABLED_FEATURES. Before this check every one of them
-// validated clean offline and was refused at submit.
-func TestStorageRefusesFeaturesNotYetAvailable(t *testing.T) {
+// through APP_STORAGE_ENABLED_FEATURES.
+//
+// 🔴 WARNINGS, NOT ERRORS. `app submit` blocks on validate ERRORS, and the server
+// turns each of these on with a one-line switch. A hard error baked into a CLI
+// that has already shipped would then refuse a manifest the server accepts,
+// until every author upgrades. The warning still carries the server's text, so
+// an author learns today that submit will refuse it.
+//
+// Every row also asserts NO error, so a gate that stayed an error fails here.
+func TestStorageFeaturesNotYetAvailableAreWarnings(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		collection string // the collection's name
-		decl       string // refused declaration
-		twin       string // the same collection without the refused feature
+		decl       string // gated declaration
+		twin       string // the same collection without the gated feature
 		scopes     []string
 		field      string
-		message    string
+		server     string // the server's own message, verbatim
 	}{
 		{
 			name: "kind log", collection: "chat_log",
@@ -104,8 +148,8 @@ func TestStorageRefusesFeaturesNotYetAvailable(t *testing.T) {
 			twin:   `{"visibility":"private","kind":"docs"}`,
 			scopes: []string{"apps:storage"},
 			field:  "storage.collections.chat_log.kind",
-			message: `storage.collections.chat_log.kind "log" is not available yet — append-only log ` +
-				`collections arrive in a later phase of App Storage; declare kind "docs" (or omit kind) for now`,
+			server: `storage.collections.chat_log.kind "log" is not available yet — append-only log ` +
+				`collections arrive in a later phase of App Storage; declare kind "docs" (or omit kind) for now.`,
 		},
 		{
 			name: "write anyone", collection: "wiki_pages",
@@ -113,8 +157,8 @@ func TestStorageRefusesFeaturesNotYetAvailable(t *testing.T) {
 			twin:   `{"visibility":"shared","write":"own"}`,
 			scopes: []string{"apps:storage", "apps:storage:publish"},
 			field:  "storage.collections.wiki_pages.write",
-			message: `storage.collections.wiki_pages.write "anyone" is not available yet — documents any ` +
-				`viewer may edit arrive in a later phase of App Storage; use "own" or "none" for now`,
+			server: `storage.collections.wiki_pages.write "anyone" is not available yet — documents any ` +
+				`viewer may edit arrive in a later phase of App Storage; use "own" or "none" for now.`,
 		},
 		{
 			name: "write owner", collection: "staff_picks",
@@ -122,8 +166,8 @@ func TestStorageRefusesFeaturesNotYetAvailable(t *testing.T) {
 			twin:   `{"visibility":"shared","write":"none","marks":["star"]}`,
 			scopes: []string{"apps:storage"},
 			field:  "storage.collections.staff_picks.write",
-			message: `storage.collections.staff_picks.write "owner" is not available yet — owner-written ` +
-				`documents arrive in a later phase of App Storage; use "own" or "none" for now`,
+			server: `storage.collections.staff_picks.write "owner" is not available yet — owner-written ` +
+				`documents arrive in a later phase of App Storage; use "own" or "none" for now.`,
 		},
 		{
 			name: "ttlSeconds", collection: "drafts",
@@ -131,8 +175,8 @@ func TestStorageRefusesFeaturesNotYetAvailable(t *testing.T) {
 			twin:   `{"visibility":"private"}`,
 			scopes: []string{"apps:storage"},
 			field:  "storage.collections.drafts.ttlSeconds",
-			message: `storage.collections.drafts.ttlSeconds is not available yet — expiring documents ` +
-				`arrive in a later phase of App Storage; remove ttlSeconds for now`,
+			server: `storage.collections.drafts.ttlSeconds is not available yet — expiring documents ` +
+				`arrive in a later phase of App Storage; remove ttlSeconds for now.`,
 		},
 		{
 			name: "dailyWritesPerAuthor", collection: "entries",
@@ -140,15 +184,142 @@ func TestStorageRefusesFeaturesNotYetAvailable(t *testing.T) {
 			twin:   `{"visibility":"shared","write":"own"}`,
 			scopes: []string{"apps:storage", "apps:storage:publish"},
 			field:  "storage.collections.entries.dailyWritesPerAuthor",
-			message: `storage.collections.entries.dailyWritesPerAuthor is not available yet — ` +
+			server: `storage.collections.entries.dailyWritesPerAuthor is not available yet — ` +
 				`per-collection write budgets arrive in a later phase of App Storage; remove ` +
-				`dailyWritesPerAuthor for now (the platform default applies)`,
+				`dailyWritesPerAuthor for now (the platform default applies).`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assertNoErrors(t, "accept twin", docManifest(oneCollection(tc.collection, tc.twin), tc.scopes...))
-			assertOnlyError(t, docManifest(oneCollection(tc.collection, tc.decl), tc.scopes...), tc.field, tc.message)
+			twin := manifestOnlyResult(t, docManifest(oneCollection(tc.collection, tc.twin), tc.scopes...))
+			if len(twin.Errors) != 0 || len(gateWarnings(twin.Warnings)) != 0 {
+				t.Errorf("accept twin: want nothing, got errors:%s\n warnings:%s",
+					describe(twin.Errors), describe(gateWarnings(twin.Warnings)))
+			}
+			res := manifestOnlyResult(t, docManifest(oneCollection(tc.collection, tc.decl), tc.scopes...))
+			if len(res.Errors) != 0 {
+				t.Errorf("a gated feature must not be an ERROR (submit blocks on errors), got:%s", describe(res.Errors))
+			}
+			got := gateWarnings(res.Warnings)
+			if len(got) != 1 {
+				t.Fatalf("want exactly 1 feature-gate warning, got %d:%s", len(got), describe(res.Warnings))
+			}
+			if want := tc.server + featureGateSuffix; got[0].Message != want {
+				t.Errorf("message drifted\n  got:  %s\n  want: %s", got[0].Message, want)
+			}
+			if got[0].Field != tc.field {
+				t.Errorf("field = %q, want %q", got[0].Field, tc.field)
+			}
 		})
+	}
+}
+
+// TestStorageScopeRulesRunPastAFeatureGateWarning — the deliberate consequence
+// of the gates being warnings. The server evaluates the scope rules only once
+// the declaration parsed; a gated feature fails that parse TODAY, so today's
+// server reports the gate alone. Here the gate is advisory, and the scope rules
+// are judged as the server will judge them the moment the switch is on — so an
+// author who passes validate with a gated feature is not then refused for a
+// missing scope that validate never mentioned.
+//
+// A manifest with no gated feature is unaffected: it drew no gate finding before
+// and draws none now, so the scope rules' gating (any ERROR under `storage`) is
+// exactly what it was.
+func TestStorageScopeRulesRunPastAFeatureGateWarning(t *testing.T) {
+	for _, tc := range []struct {
+		name, storage string
+		scopes        []string
+		field, msg    string
+	}{
+		{
+			name:    "kind log without apps:storage",
+			storage: oneCollection("chat_log", `{"visibility":"private","kind":"log"}`),
+			scopes:  []string{"user:read:self"},
+			field:   "scopes",
+			msg:     `storage declares chat_log but scopes does not include apps:storage — add it, or remove storage`,
+		},
+		{
+			name:    "write anyone without apps:storage:publish",
+			storage: oneCollection("wiki_pages", `{"visibility":"shared","write":"anyone"}`),
+			scopes:  []string{"apps:storage"},
+			field:   "scopes",
+			msg: `storage collection wiki_pages lets viewers write documents other users read, which requires ` +
+				`the apps:storage:publish scope — add it to scopes with a scopeJustifications entry`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := manifestOnlyResult(t, docManifest(tc.storage, tc.scopes...))
+			if len(res.Errors) != 1 || res.Errors[0].Message != tc.msg || res.Errors[0].Field != tc.field {
+				t.Errorf("want exactly the scope rule [%s] %s, got %d:%s", tc.field, tc.msg, len(res.Errors), describe(res.Errors))
+			}
+			if len(gateWarnings(res.Warnings)) != 1 {
+				t.Errorf("want the feature-gate warning beside it, got:%s", describe(res.Warnings))
+			}
+		})
+	}
+}
+
+// TestVendoredSchemaStillStatesTheFeatureGates is a DRIFT guard on the vendored
+// canonical schema, the one place this repository learns which storage features
+// the server refuses. The weekly re-vendor copies the server's schema in; when
+// the server enables a feature its description changes, this goes red on that
+// PR, and whoever lands it removes the matching warning in storagemanifest.go
+// in the same change.
+//
+// Every sentence is pinned WHOLE (whitespace-normalised): the claim is
+// machine-read, so a reword is a change to re-read, not noise to tolerate.
+func TestVendoredSchemaStillStatesTheFeatureGates(t *testing.T) {
+	var doc struct {
+		Properties struct {
+			Storage struct {
+				Description string `json:"description"`
+				Properties  struct {
+					Collections struct {
+						PatternProperties map[string]struct {
+							Properties map[string]struct {
+								Description string `json:"description"`
+							} `json:"properties"`
+						} `json:"patternProperties"`
+					} `json:"collections"`
+				} `json:"properties"`
+			} `json:"storage"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(cli.SchemaJSON, &doc); err != nil {
+		t.Fatalf("vendored schema: %v", err)
+	}
+	norm := func(s string) string { return strings.Join(strings.Fields(s), " ") }
+	coll, ok := doc.Properties.Storage.Properties.Collections.PatternProperties[`^[a-z][a-z0-9_]{0,31}$`]
+	if !ok {
+		t.Fatal("storage.collections no longer has the collection-name patternProperties this guard reads")
+	}
+	prop := func(name string) string { return norm(coll.Properties[name].Description) }
+
+	for _, tc := range []struct{ where, text, sentence string }{
+		{"storage", norm(doc.Properties.Storage.Description),
+			"This schema describes the WHOLE declaration, including features the platform does not " +
+				"accept yet: today the server's manifest validation refuses `kind` \"log\", `ttlSeconds`, " +
+				"`dailyWritesPerAuthor`, `write` \"anyone\" and `write` \"owner\" with a message saying they " +
+				"are not available yet, so those validate offline and are rejected at submit."},
+		{"kind", prop("kind"),
+			"RESERVED: civitai.com refuses \"log\" until log collections are enabled, so declare \"docs\" (or omit `kind`)."},
+		{"write (anyone)", prop("write"),
+			"\"anyone\": eligible signed-in viewers may update or delete any document — RESERVED: " +
+				"civitai.com refuses \"anyone\" until it is enabled."},
+		{"write (owner)", prop("write"),
+			"RESERVED: civitai.com refuses \"owner\" until owner-written documents are enabled."},
+		{"write (available)", prop("write"), "Available today: \"own\" and \"none\"."},
+		{"ttlSeconds", prop("ttlSeconds"),
+			"RESERVED — civitai.com refuses this field until expiring documents are enabled, so do not declare it yet."},
+		{"dailyWritesPerAuthor", prop("dailyWritesPerAuthor"),
+			"RESERVED — civitai.com refuses this field until per-collection write budgets are enabled, so do " +
+				"not declare it yet."},
+	} {
+		if !strings.Contains(tc.text, tc.sentence) {
+			t.Errorf("the vendored schema's %s description no longer says:\n  %s\n"+
+				"If the server now ACCEPTS that feature, remove its warning from storageFeatureGateWarnings "+
+				"(storagemanifest.go) and update this guard in the same change.\n  description now: %s",
+				tc.where, tc.sentence, tc.text)
+		}
 	}
 }
 
@@ -156,18 +327,18 @@ func TestStorageRefusesFeaturesNotYetAvailable(t *testing.T) {
 // RANGE (or applicability) before the feature switch, so an out-of-range value
 // gets the range error and never the "not available yet" one. Here the range
 // error is the schema's; the gate must stay quiet so the author is not told two
-// stories about one key.
+// stories about one key. The gate is a WARNING, so both lists are read.
 func TestStorageFeatureGateOrderMirrorsTheServer(t *testing.T) {
 	for _, tc := range []struct{ name, decl string }{
 		{"ttlSeconds below the minimum", `{"visibility":"private","ttlSeconds":59}`},
 		{"dailyWritesPerAuthor on write none", `{"visibility":"shared","write":"none","counters":["plays"],"dailyWritesPerAuthor":5}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fs := manifestOnlyFindings(t, docManifest(oneCollection("tallies", tc.decl), "apps:storage"))
-			if len(fs) == 0 {
+			res := manifestOnlyResult(t, docManifest(oneCollection("tallies", tc.decl), "apps:storage"))
+			if len(res.Errors) == 0 {
 				t.Fatal("the schema accepted it — this row no longer exercises the ordering")
 			}
-			for _, f := range fs {
+			for _, f := range append(append([]Finding{}, res.Errors...), res.Warnings...) {
 				if strings.Contains(f.Message, "is not available yet") {
 					t.Errorf("feature gate fired on a value the server rejects for another reason first: %s", f.Message)
 				}
@@ -187,6 +358,38 @@ func TestStorageCounterAndMarkMayNotShareAName(t *testing.T) {
 			`{"visibility":"shared","write":"none","counters":["plays","likes"],"marks":["likes"]}`), "apps:storage"),
 		"storage.collections.popular_plays",
 		`storage.collections.popular_plays declares "likes" as both a counter and a mark — use different names`)
+}
+
+// TestStorageCounterMarkCollisionSkipsListsTheServerRejects — the server's
+// parseTallyNames discards a WHOLE counters/marks list as soon as one entry is
+// unusable (not a string, not snake_case, the built-in `report`, a duplicate,
+// or more than 8), so its collision check compares against an empty list and
+// stays silent. The schema reports each of those defects; a collision finding
+// on top of it is a second story the server never tells. Every row carries the
+// collision (`likes` in both lists) AND one defect that voids a list.
+func TestStorageCounterMarkCollisionSkipsListsTheServerRejects(t *testing.T) {
+	nine := `"likes","a1","a2","a3","a4","a5","a6","a7","a8"`
+	for _, tc := range []struct{ name, counters, marks string }{
+		{"counters name the built-in report", `"likes","report"`, `"likes"`},
+		{"marks declare the built-in report", `"likes"`, `"likes","report"`},
+		{"a counter that is not snake_case", `"likes","Bad-Name"`, `"likes"`},
+		{"a mark that is not a string", `"likes"`, `"likes",5`},
+		{"a duplicated counter", `"likes","likes"`, `"likes"`},
+		{"more than 8 counters", nine, `"likes"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decl := `{"visibility":"shared","write":"none","counters":[` + tc.counters + `],"marks":[` + tc.marks + `]}`
+			fs := manifestOnlyFindings(t, docManifest(oneCollection("tallies", decl), "apps:storage"))
+			if len(fs) == 0 {
+				t.Fatal("no error at all — the list is not invalid, so this row measures nothing")
+			}
+			for _, f := range fs {
+				if strings.Contains(f.Message, "as both a counter and a mark") {
+					t.Errorf("collision reported on a list the server discards: %s", f.Message)
+				}
+			}
+		})
+	}
 }
 
 // TestStorageScopeRules — the four cross-field rules between `storage` and
@@ -227,10 +430,13 @@ func TestStorageScopeRules(t *testing.T) {
 // TestStorageScopeRulesWaitForAValidDeclaration — the server evaluates the scope
 // rules only when `storage` itself parsed, because an invalid declaration
 // declares nothing and a scope rule against it tells a second, misleading
-// story. Both arms: a refusal from the feature gate, and one from the schema.
+// story. Both arms: a refusal from this package's own imperative rules (the
+// counter/mark collision), and one from the schema. A feature-gate WARNING is
+// not a refusal here — see TestStorageScopeRulesRunPastAFeatureGateWarning.
 func TestStorageScopeRulesWaitForAValidDeclaration(t *testing.T) {
 	for _, tc := range []struct{ name, storage string }{
-		{"declaration refused by the feature gate", oneCollection("chat_log", `{"visibility":"private","kind":"log"}`)},
+		{"declaration refused by the counter/mark collision",
+			oneCollection("tallies", `{"visibility":"shared","write":"none","counters":["n"],"marks":["n"]}`)},
 		{"declaration refused by the schema", oneCollection("kv", `{"write":"own"}`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -335,6 +541,17 @@ func TestDocStoreCallShapes(t *testing.T) {
 		{"awaited client", `(await app()).storage.collection('hi_scores_await').list();`, "hi_scores_await"},
 		{"optional chaining", `app?.storage?.collection('hi_scores_opt').list();`, "hi_scores_opt"},
 		{"a renamed storage client", `const docStorage = app.storage; docStorage.collection('hi_scores_alias');`, "hi_scores_alias"},
+		// The DOMINANT real shape (every forgejo app's docstore port, and
+		// playable-collections' src/lib/kv-store.ts): the client is the result
+		// of an awaited call, so no receiver name ends in "storage".
+		{"awaited client call as the receiver", `(await docs()).collection('hi_scores_docs').list();`, "hi_scores_docs"},
+		{"awaited client call, typed", `const kv = async () => (await docs()).collection<KvDocument>('hi_scores_docs_t');`, "hi_scores_docs_t"},
+		{"awaited client call, optional chaining", "(await getStore())\n  ?.collection('hi_scores_docs_opt');", "hi_scores_docs_opt"},
+		// NESTED type arguments, one and two levels deep.
+		{"nested type argument", `app.storage.collection<Record<string, Row>>('hi_scores_nested').list();`, "hi_scores_nested"},
+		{"two-level nested type argument", `app.storage.collection<Map<string, Array<Row>>>('hi_scores_nested2');`, "hi_scores_nested2"},
+		{"nested type argument on an awaited client", `(await docs()).collection<Record<string, unknown>>('hi_scores_nested_docs');`, "hi_scores_nested_docs"},
+		{"object type argument", `(await docs()).collection<{ value: unknown }>('hi_scores_obj');`, "hi_scores_obj"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := storageSourceWarnings(t, docManifest(oneCollection("kv", `{"visibility":"private"}`), "apps:storage"),
@@ -357,7 +574,9 @@ func TestDocStoreDynamicNamesAreNotFlagged(t *testing.T) {
 		"export const c = (x: string) => app.storage.collection('pre_' + x).list();\n" +
 		"export const d = (id: number) => request(PATHS.collection(id));\n" +
 		"export const e = () => VIEW_PREF_KEYS.collection(101);\n" +
-		"export const f = () => api.collection('not_the_store');\n"
+		"export const f = () => api.collection('not_the_store');\n" +
+		"export const h = () => (await fetchPage(id)).collection('not_the_store_args');\n" +
+		"export const i = () => getApi().collection('not_the_store_unawaited');\n"
 	got := storageSourceWarnings(t, docManifest(oneCollection("kv", `{"visibility":"private"}`), "apps:storage"),
 		map[string]string{"src/dyn.ts": src})
 	if len(got) != 0 {
@@ -453,9 +672,69 @@ func TestDocStoreUseWithoutTheScope(t *testing.T) {
 	}
 }
 
-func legacyMessage(file, hook string) string {
-	return file + " calls `" + hook + "()` — the legacy storage hooks (useAppStorage, useSharedStorage) " +
-		"are deprecated and their routes are being retired; move this data to the document store: " +
-		"declare a collection under storage.collections, add apps:storage to scopes, and use " +
-		"`app.storage.collection()` from @civitai/sdk. ADVISORY: this reads source statically."
+// TestDocStoreUseWithoutTheScopeRealShape — the no-scope advisory on the shape
+// the real apps use: a constant name on an awaited client call, with a nested
+// type argument. Before the call-result receiver was matched, an app written
+// this way that dropped apps:storage got no advisory at all.
+func TestDocStoreUseWithoutTheScopeRealShape(t *testing.T) {
+	files := map[string]string{"src/kv-store.ts": "export const KV_COLLECTION = 'kv';\n" +
+		"const kv = async () =>\n  (await docs()).collection<Record<string, unknown>>(KV_COLLECTION);\n"}
+	got := storageSourceWarnings(t, docManifest("", "user:read:self"), files)
+	if len(got) != 1 || got[0].Message != noScopeMessage("src/kv-store.ts") {
+		t.Fatalf("want exactly the no-scope warning naming src/kv-store.ts, got %d:%s", len(got), describe(got))
+	}
+}
+
+// TestDocStoreIgnoresTestHelpers — test HELPERS that are not named *.test.* are
+// not the app's runtime either. The documented convention: a basename starting
+// `fake-`, `test-` or `mock-`, or anything under a `testing/`, `__mocks__/` or
+// `__tests__/` directory. The incident: every forgejo app's docstore port keeps
+// an in-memory store in `src/fake-doc-storage.ts`, which sorts before the real
+// client, so the no-scope advisory named the FAKE as the file to fix.
+func TestDocStoreIgnoresTestHelpers(t *testing.T) {
+	fake := "export const seed = (fake: FakeStorage) => fake.storage.collection('ghost_helper_tbl').put('k', {});\n" +
+		"export const y = () => useAppStorage();\n"
+	for _, path := range []string{
+		"src/fake-doc-storage.ts", "src/sheet/fake-doc-storage.ts", "src/test-doc-store.ts",
+		"src/test-setup.ts", "src/mock-host.ts", "src/testing/store.ts", "src/__mocks__/sdk.ts",
+	} {
+		t.Run(path, func(t *testing.T) {
+			got := storageSourceWarnings(t, docManifest(oneCollection("kv", `{"visibility":"private"}`), "apps:storage"),
+				map[string]string{path: fake, "src/main.ts": "export const x = 1;\n"})
+			if len(got) != 0 {
+				t.Errorf("a test helper produced warnings:%s", describe(got))
+			}
+		})
+	}
+	// TWIN: the convention is a PREFIX of the basename (or a directory), so a
+	// production file that merely contains the word is still read.
+	got := storageSourceWarnings(t, docManifest(oneCollection("kv", `{"visibility":"private"}`), "apps:storage"),
+		map[string]string{"src/board-fake-free.ts": fake})
+	if len(got) != 2 {
+		t.Errorf("twin: want 2 warnings from the same body in a production file, got %d:%s", len(got), describe(got))
+	}
+	// THE INCIDENT: a fake beside the real client, under a manifest with no
+	// storage at all. The no-scope advisory must name the PRODUCTION file.
+	got = storageSourceWarnings(t, docManifest("", "user:read:self"), map[string]string{
+		"src/fake-doc-storage.ts": "export const f = (fake: FakeStorage) => fake.storage.collection(KV).list();\n",
+		"src/sync.ts":             "export const s = (n: string) => app.storage.collection(n).list();\n",
+	})
+	if len(got) != 1 || got[0].Message != noScopeMessage("src/sync.ts") {
+		t.Errorf("want the no-scope warning naming src/sync.ts, got %d:%s", len(got), describe(got))
+	}
+}
+
+// legacyMessage is the legacy-hook advisory, pinned WHOLE. It is the pre-#856
+// text (cli #767) restored, with one edit: its last sentence used to warn that
+// "a hook imported but never called is a false positive", and the match now
+// needs a CALL, so that caveat is gone.
+func legacyMessage(hook, readScope, writeScope string) string {
+	return "this project's source calls `" + hook + "()` but the manifest declares no " +
+		"storage scope — add the ones it uses to `scopes` (`" + readScope + "` to read, `" +
+		writeScope + "` to write) each with a `scopeJustifications` entry. The server gates " +
+		"storage by PRESENCE in the approved scope set, so without them every call fails in " +
+		"production with a 403 (`storage set requires the " + writeScope + " scope`) while " +
+		"working locally — and an authorization failure is deliberately unclassified by the " +
+		"SDK, so a block usually surfaces it as an unexplained \"try again\". ADVISORY: this " +
+		"reads source statically."
 }

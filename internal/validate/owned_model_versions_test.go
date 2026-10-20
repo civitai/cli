@@ -127,10 +127,11 @@ func TestOwnedModelVersionsRejectedOutsideSharedOwn(t *testing.T) {
 		// manifest builds the fixture with the scopes the server requires for
 		// that collection: the publish scope only where a viewer authors.
 		manifest func(string) string
-		// gate is the field of the "not available yet" refusal the server
-		// ALSO returns for a write policy it does not accept yet, or "". Those
-		// two policies cannot have a clean twin at all today: the twin rows
-		// assert the refusal is that one and nothing else.
+		// gate is the field of the "not available yet" WARNING a write policy
+		// the server does not accept yet also draws, or "". It is advisory (see
+		// storagemanifest.go), so every twin is error-clean; the gate rows also
+		// assert the warning is there, so the row cannot pass by accident of a
+		// gate that stopped firing.
 		gate string
 	}{
 		{"private", `{"visibility":"private"}`, ownedVersionsManifestBaseScope, ""},
@@ -139,29 +140,22 @@ func TestOwnedModelVersionsRejectedOutsideSharedOwn(t *testing.T) {
 		{"shared write:none", `{"visibility":"shared","write":"none","counters":["plays"]}`, ownedVersionsManifestBaseScope, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// (a) accept twin: the collection is fine without the key — apart
-			// from the feature gate, where there is one.
-			twin := manifestOnlyFindings(t, tc.manifest(tc.collection))
-			if tc.gate == "" {
-				for _, f := range twin {
-					t.Errorf("twin without ownedModelVersions: unexpected finding on %q: %s", f.Field, f.Message)
+			// (a) accept twin: the collection is fine without the key.
+			twin := manifestOnlyResult(t, tc.manifest(tc.collection))
+			for _, f := range twin.Errors {
+				t.Errorf("twin without ownedModelVersions: unexpected error on %q: %s", f.Field, f.Message)
+			}
+			if tc.gate != "" {
+				if g := gateWarnings(twin.Warnings); len(g) != 1 || g[0].Field != tc.gate {
+					t.Errorf("twin: want the feature-gate warning at %q, got:%s", tc.gate, describe(twin.Warnings))
 				}
-			} else if len(twin) != 1 || twin[0].Field != tc.gate {
-				t.Fatalf("twin: want only the feature-gate refusal at %q, got %d: %v", tc.gate, len(twin), twin)
 			}
 
 			// (b) the key, with a pointer that is valid on shared/own.
 			with := strings.TrimSuffix(tc.collection, "}") + `,"ownedModelVersions":["/workflow/modelVersionId"]}`
-			var owned, other []Finding
-			for _, f := range manifestOnlyFindings(t, tc.manifest(with)) {
-				if f.Field == ownedField {
-					owned = append(owned, f)
-				} else if f.Field != tc.gate || tc.gate == "" {
-					other = append(other, f)
-				}
-			}
-			if len(owned) != 1 || len(other) != 0 {
-				t.Fatalf("want exactly one finding located at %q (plus the gate, if any), got %v and %v", ownedField, owned, other)
+			fs := manifestOnlyFindings(t, tc.manifest(with))
+			if len(fs) != 1 || fs[0].Field != ownedField {
+				t.Fatalf("want exactly one error located at %q, got %d: %v", ownedField, len(fs), fs)
 			}
 		})
 	}

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// storagescope_test.go pins the LEGACY-HOOK advisory and the tree walk every
+// storagescope_test.go pins the LEGACY-HOOK scope advisory and the tree walk every
 // source-reading storage check shares. The document-store findings themselves
 // (undeclared collection names, document store without `apps:storage`) are
 // pinned in docstore_test.go.
@@ -37,6 +37,9 @@ export function Save() { const s = useAppStorage(); return s; }`
 const usesShared = `import { useSharedStorage } from '@civitai/blocks-react';
 export function Board() { const s = useSharedStorage<Entry>(); return s; }`
 
+const usesSharedNested = `import { useSharedStorage } from '@civitai/blocks-react';
+export function Board() { const s = useSharedStorage<Entry<number>>(); return s; }`
+
 // legacyWarnings returns the legacy-hook advisories, keyed on the hook each
 // message names, with their fields.
 func legacyWarnings(t *testing.T, dir string) (app, shared bool, fields []string) {
@@ -57,23 +60,35 @@ func legacyWarnings(t *testing.T, dir string) (app, shared bool, fields []string
 			shared = true
 			fields = append(fields, w.Field)
 		case strings.Contains(w.Message, "useAppStorage") || strings.Contains(w.Message, "useSharedStorage"):
-			t.Errorf("a warning names a legacy hook but is not the deprecation advisory: %s", w.Message)
+			t.Errorf("a warning names a legacy hook but is not the legacy-scope advisory: %s", w.Message)
 		}
 	}
 	return app, shared, fields
 }
 
-// TestLegacyStorageHookIsDeprecated — `useAppStorage()` / `useSharedStorage()`
-// are being retired with their routes, so a CALL to either is reported as
-// deprecated, pointing at the document store. It no longer suggests the old
-// `apps:storage:read/write` / `apps:storage:shared:*` scopes: telling an author
-// to add scopes to a store that is going away sends them the wrong way.
+// privateKV is a valid declaration for the rows that need `apps:storage` (which
+// is refused without a collection to reach).
+var privateKV = oneCollection("kv", `{"visibility":"private"}`)
+
+// TestLegacyStorageHookNeedsItsScope — a CALL to `useAppStorage()` while the
+// manifest declares neither `apps:storage:read` nor `apps:storage:write`, or to
+// `useSharedStorage()` with neither shared scope, is the 2026-10-01 failure:
+// every save 403s in production. That is the whole claim. A manifest that
+// declares ONE of the store's scopes is someone who knows scopes exist and
+// chose, so it is silent; there is no unconditional "deprecated" warning.
 //
-// Both directions, as before: a check that warned unconditionally would pass
-// every "want" row, so the SILENT rows carry the weight.
-func TestLegacyStorageHookIsDeprecated(t *testing.T) {
+// 🔴 THE SCOPES ARE AN EXPLICIT SET, NOT A PREFIX. The pre-#856 check took any
+// `apps:storage:` scope outside the shared namespace as satisfying the
+// per-viewer store. `apps:storage:publish` (the document store's) has that
+// prefix and grants the legacy store nothing, so the prefix would now read a
+// document-store manifest as having declared the legacy one.
+//
+// Both directions: a check that warned unconditionally would pass every "want"
+// row, so the SILENT rows carry the weight.
+func TestLegacyStorageHookNeedsItsScope(t *testing.T) {
 	tests := []struct {
 		name       string
+		storage    string
 		scopes     []string
 		files      map[string]string
 		wantApp    bool
@@ -87,13 +102,30 @@ func TestLegacyStorageHookIsDeprecated(t *testing.T) {
 			wantApp: true,
 		},
 		{
-			// The behaviour change: the old advisory went quiet once a legacy
-			// scope was declared. Deprecation does not depend on scopes.
-			name:    "calls useAppStorage WITH the legacy scopes — still deprecated",
-			scopes:  []string{"apps:storage:read", "apps:storage:write"},
+			name:   "calls useAppStorage with apps:storage:read — silent",
+			scopes: []string{"apps:storage:read"},
+			files:  map[string]string{"src/App.tsx": usesApp},
+			why:    "one of the store's scopes is a choice this check does not second-guess",
+		},
+		{
+			name:   "calls useAppStorage with apps:storage:write — silent",
+			scopes: []string{"apps:storage:write"},
+			files:  map[string]string{"src/App.tsx": usesApp},
+		},
+		{
+			name:    "calls useAppStorage with only the SHARED scopes",
+			scopes:  []string{"apps:storage:shared:read", "apps:storage:shared:write"},
 			files:   map[string]string{"src/App.tsx": usesApp},
 			wantApp: true,
-			why:     "declaring the old scopes does not make the old store any less retired",
+			why:     "a shared scope does not satisfy the per-viewer store",
+		},
+		{
+			name:    "calls useAppStorage with only the DOCUMENT-STORE scopes",
+			storage: oneCollection("posts", `{"visibility":"shared","write":"own"}`),
+			scopes:  []string{"apps:storage", "apps:storage:publish"},
+			files:   map[string]string{"src/App.tsx": usesApp},
+			wantApp: true,
+			why:     "apps:storage / apps:storage:publish grant the legacy store nothing",
 		},
 		{
 			name:       "calls useSharedStorage with a type argument",
@@ -102,11 +134,36 @@ func TestLegacyStorageHookIsDeprecated(t *testing.T) {
 			wantShared: true,
 		},
 		{
-			name:       "both hooks — two findings",
+			name:       "calls useSharedStorage with a NESTED type argument",
+			scopes:     []string{"user:read:self"},
+			files:      map[string]string{"src/Board.tsx": usesSharedNested},
+			wantShared: true,
+		},
+		{
+			name:   "calls useSharedStorage with apps:storage:shared:read — silent",
+			scopes: []string{"apps:storage:shared:read"},
+			files:  map[string]string{"src/Board.tsx": usesShared},
+		},
+		{
+			name:       "calls useSharedStorage with only the PER-VIEWER scopes",
+			scopes:     []string{"apps:storage:read", "apps:storage:write"},
+			files:      map[string]string{"src/Board.tsx": usesShared},
+			wantShared: true,
+			why:        "the two stores are asked independently",
+		},
+		{
+			name:       "both hooks, no storage scope — two findings",
 			scopes:     []string{"user:read:self"},
 			files:      map[string]string{"src/App.tsx": usesApp, "src/Board.tsx": usesShared},
 			wantApp:    true,
 			wantShared: true,
+		},
+		{
+			name:    "the document store declared does not silence a legacy call",
+			storage: privateKV,
+			scopes:  []string{"apps:storage"},
+			files:   map[string]string{"src/App.tsx": usesApp},
+			wantApp: true,
 		},
 		{
 			name:   "IMPORTED but never called — silent",
@@ -162,7 +219,7 @@ func TestLegacyStorageHookIsDeprecated(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := storageProject(t, docManifest("", tc.scopes...), tc.files)
+			dir := storageProject(t, docManifest(tc.storage, tc.scopes...), tc.files)
 			app, shared, fields := legacyWarnings(t, dir)
 			if app != tc.wantApp {
 				t.Errorf("useAppStorage advisory = %v, want %v (%s)", app, tc.wantApp, tc.why)
@@ -170,30 +227,37 @@ func TestLegacyStorageHookIsDeprecated(t *testing.T) {
 			if shared != tc.wantShared {
 				t.Errorf("useSharedStorage advisory = %v, want %v (%s)", shared, tc.wantShared, tc.why)
 			}
-			// The remedy is a SOURCE change (move to the document store), so
-			// the finding is about the project, not a manifest key.
+			// The source is CORRECT (using storage is the point) and the
+			// manifest is what lacks the scope, so the finding names `scopes`.
 			for _, f := range fields {
-				if f != FieldProject {
-					t.Errorf("Field = %q, want %q", f, FieldProject)
+				if f != "scopes" {
+					t.Errorf("Field = %q, want %q", f, "scopes")
 				}
 			}
 		})
 	}
 }
 
-// TestLegacyStorageHookMessage pins the whole advisory text.
+// TestLegacyStorageHookMessage pins the whole advisory text, for each store.
 func TestLegacyStorageHookMessage(t *testing.T) {
-	res, err := Dir(storageProject(t, docManifest("", "user:read:self"), map[string]string{"src/App.tsx": usesApp}))
-	if err != nil {
-		t.Fatalf("Dir: %v", err)
-	}
-	want := legacyMessage("src/App.tsx", "useAppStorage")
-	for _, w := range res.Warnings {
-		if w.Message == want {
-			return
+	for _, tc := range []struct {
+		file, src, want string
+	}{
+		{"src/App.tsx", usesApp, legacyMessage("useAppStorage", "apps:storage:read", "apps:storage:write")},
+		{"src/Board.tsx", usesShared, legacyMessage("useSharedStorage", "apps:storage:shared:read", "apps:storage:shared:write")},
+	} {
+		res, err := Dir(storageProject(t, docManifest("", "user:read:self"), map[string]string{tc.file: tc.src}))
+		if err != nil {
+			t.Fatalf("Dir: %v", err)
+		}
+		var hit bool
+		for _, w := range res.Warnings {
+			hit = hit || w.Message == tc.want
+		}
+		if !hit {
+			t.Errorf("no warning with the legacy-scope text\n  want: %s\n  got:%s", tc.want, describe(res.Warnings))
 		}
 	}
-	t.Errorf("no warning with the deprecation text\n  want: %s\n  got:%s", want, describe(res.Warnings))
 }
 
 // TestStorageScanFollowsSymlinkedSource pins the hazard readyack recorded after

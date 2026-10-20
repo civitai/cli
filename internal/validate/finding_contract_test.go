@@ -1170,11 +1170,12 @@ func fieldCoverageCorpus() []fieldFixture {
 			},
 		},
 		{
-			// storageDeclarationChecks: every feature the server refuses today
-			// plus the counter/mark name collision, one collection each. The
-			// scope rules stay silent here BY DESIGN (an invalid declaration
-			// declares nothing), which the next fixture is what reaches.
-			name: "storage features not available yet, and a counter/mark collision (storageDeclarationChecks)",
+			// storageFeatureGateWarnings (every feature the server refuses
+			// today, as WARNINGS) and storageDeclarationChecks (the counter/mark
+			// name collision, an error), one collection each. The collision
+			// keeps the scope rules silent here BY DESIGN (an invalid
+			// declaration declares nothing); the next fixture reaches them.
+			name: "storage features not available yet, and a counter/mark collision (storageFeatureGateWarnings, storageDeclarationChecks)",
 			files: map[string]string{"block.manifest.json": `{
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
@@ -1223,8 +1224,8 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			// storageScopeChecks: the three SOURCE findings — an undeclared
 			// literal collection name, the document store with no apps:storage,
-			// and a legacy hook. The first two report manifest fields and the
-			// third FieldProject; this fixture is what makes that checkable.
+			// and a legacy hook with no legacy scope. All three report manifest
+			// fields; this fixture is what makes that checkable.
 			name: "source on the document store with nothing declared, plus a legacy hook (storageScopeChecks)",
 			files: map[string]string{
 				"block.manifest.json": `{
