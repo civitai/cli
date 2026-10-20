@@ -41,6 +41,19 @@ func ownedVersionsManifest(collection string) string {
 		`"storage":{"collections":{"c":` + collection + `}}}`
 }
 
+// ownedVersionsManifestBaseScope is ownedVersionsManifest with `apps:storage`
+// ALONE — the scopes the server requires for a collection no viewer authors
+// (private, or shared with write "owner"/"none"). Declaring the publish scope
+// there is itself refused ("scopes includes apps:storage:publish but no storage
+// collection is shared with write …"), so those twins cannot use the fixture
+// above.
+func ownedVersionsManifestBaseScope(collection string) string {
+	return `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
+		`"scopes":["apps:storage"],` +
+		`"kind":"page","iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
+		`"storage":{"collections":{"c":` + collection + `}}}`
+}
+
 // sharedOwnWith returns a shared/own collection declaring the given pointers.
 func sharedOwnWith(t *testing.T, pointers ...string) string {
 	t.Helper()
@@ -105,26 +118,44 @@ func TestOwnedModelVersionsAccepted(t *testing.T) {
 // reason: the check compares the version's owner against the viewer WRITING the
 // document, which is that document's author only under "own".
 func TestOwnedModelVersionsRejectedOutsideSharedOwn(t *testing.T) {
+	const writeField = "storage.collections.c.write"
 	for _, tc := range []struct {
 		name string
 		// collection is the declaration WITHOUT ownedModelVersions; it must be
 		// valid on its own so the finding is attributable to the key.
 		collection string
+		// manifest builds the fixture with the scopes the server requires for
+		// that collection: the publish scope only where a viewer authors.
+		manifest func(string) string
+		// gate is the field of the "not available yet" WARNING a write policy
+		// the server does not accept yet also draws, or "". It is advisory (see
+		// storagemanifest.go), so every twin is error-clean; the gate rows also
+		// assert the warning is there, so the row cannot pass by accident of a
+		// gate that stopped firing.
+		gate string
 	}{
-		{"private", `{"visibility":"private"}`},
-		{"shared write:anyone", `{"visibility":"shared","write":"anyone"}`},
-		{"shared write:owner", `{"visibility":"shared","write":"owner"}`},
-		{"shared write:none", `{"visibility":"shared","write":"none","counters":["plays"]}`},
+		{"private", `{"visibility":"private"}`, ownedVersionsManifestBaseScope, ""},
+		{"shared write:anyone", `{"visibility":"shared","write":"anyone"}`, ownedVersionsManifest, writeField},
+		{"shared write:owner", `{"visibility":"shared","write":"owner"}`, ownedVersionsManifestBaseScope, writeField},
+		{"shared write:none", `{"visibility":"shared","write":"none","counters":["plays"]}`, ownedVersionsManifestBaseScope, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// (a) accept twin: the collection is fine without the key.
-			assertClean(t, "twin without ownedModelVersions", ownedVersionsManifest(tc.collection))
+			twin := manifestOnlyResult(t, tc.manifest(tc.collection))
+			for _, f := range twin.Errors {
+				t.Errorf("twin without ownedModelVersions: unexpected error on %q: %s", f.Field, f.Message)
+			}
+			if tc.gate != "" {
+				if g := gateWarnings(twin.Warnings); len(g) != 1 || g[0].Field != tc.gate {
+					t.Errorf("twin: want the feature-gate warning at %q, got:%s", tc.gate, describe(twin.Warnings))
+				}
+			}
 
 			// (b) the key, with a pointer that is valid on shared/own.
 			with := strings.TrimSuffix(tc.collection, "}") + `,"ownedModelVersions":["/workflow/modelVersionId"]}`
-			fs := manifestOnlyFindings(t, ownedVersionsManifest(with))
+			fs := manifestOnlyFindings(t, tc.manifest(with))
 			if len(fs) != 1 || fs[0].Field != ownedField {
-				t.Fatalf("want exactly one finding located at %q, got %d: %v", ownedField, len(fs), fs)
+				t.Fatalf("want exactly one error located at %q, got %d: %v", ownedField, len(fs), fs)
 			}
 		})
 	}

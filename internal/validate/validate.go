@@ -138,6 +138,16 @@ func validateDir(dir string, projectState bool) (Result, error) {
 	res.Errors = append(res.Errors, semanticChecks(generic)...)
 	res.Errors = append(res.Errors, targetChecks(generic)...)
 
+	// Semantic: the server's storage refusals the schema admits (a counter/mark
+	// name collision), then the storage⇄scopes rules — which the server
+	// evaluates only against a declaration that parsed, so they wait until no
+	// ERROR so far is located under `storage`. The features the server has not
+	// enabled yet are WARNINGS, and deliberately do not hold the scope rules
+	// back. See storagemanifest.go.
+	res.Errors = append(res.Errors, storageDeclarationChecks(generic)...)
+	res.Errors = append(res.Errors, storageScopeRuleChecks(generic, !hasFindingUnder(res.Errors, "storage"))...)
+	res.Warnings = append(res.Warnings, storageFeatureGateWarnings(generic)...)
+
 	// Structural: buildCommand + outputDir coherence beyond what the schema
 	// can express (the schema enforces "outputDir required when buildCommand
 	// set"; here we also check the directory is declared/exists sanely).
@@ -161,10 +171,11 @@ func validateDir(dir string, projectState bool) (Result, error) {
 		// self-checks a template it just wrote. See readyack.go.
 		res.Warnings = append(res.Warnings, readyAckChecks(dir, generic)...)
 
-		// Project state: source that calls a storage hook while the manifest
-		// declares NO scope for that store. Same ADVISORY posture and the same
-		// reason for living here rather than in warningChecks — it reads src/.
-		// See storagescope.go for the production failure it exists to catch.
+		// Project state: the app's storage CALLS against its manifest — a
+		// literal collection name the manifest does not declare, the document
+		// store without `apps:storage`, and the deprecated legacy hooks. Same
+		// ADVISORY posture and the same reason for living here rather than in
+		// warningChecks — it reads src/. See storagescope.go.
 		res.Warnings = append(res.Warnings, storageScopeChecks(dir, generic)...)
 	}
 

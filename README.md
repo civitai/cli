@@ -806,9 +806,20 @@ usage error (exit `2`, no JSON).
 
 It checks `block.manifest.json` against a **vendored JSON Schema**
 ([`schema/app-block.manifest.schema.json`](schema/app-block.manifest.schema.json))
-plus the ported semantic rules, one **build-time** lockfile rule, and one
-**advisory** about the [host handshake](#the-host-handshake-block_ready) — a
-warning, never an error, because it infers runtime behaviour from static text.
+plus the ported semantic rules (including the server's checks of the
+`storage` declaration against `scopes`), one **build-time** lockfile rule, and
+**advisories** that read your source — the
+[host handshake](#the-host-handshake-block_ready), and storage calls
+(`app.storage.collection('<name>')` with a literal name `storage.collections`
+does not declare, the document store without `apps:storage`, and
+`useAppStorage()` / `useSharedStorage()` called with no scope for that store).
+Advisories are warnings, never errors, because they infer runtime behaviour
+from static text; test code (`*.test.*`, `*.spec.*`, files named `fake-*`,
+`test-*` or `mock-*`, and `__tests__/`, `__mocks__/`, `testing/`) is not read
+for the storage ones. The storage features civitai.com does not accept yet
+(`kind` "log", `write` "anyone"/"owner", `ttlSeconds`, `dailyWritesPerAuthor`)
+are also warnings: the server refuses them at submit today, but enables each
+with a server-side switch, so an installed CLI must not refuse them outright.
 
 📖 **What each of those checks actually proves, the lockfile rule in full, the
 two tiers of the `BLOCK_READY` advisory, and the `--json` result shape:

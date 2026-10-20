@@ -7,66 +7,10 @@ import (
 	"testing"
 )
 
-// storageManifest is a minimal VALID page manifest declaring `scopes`.
-//
-// It must pass the schema and the semantic rules, or a test asserting "no
-// warning" could pass because validation bailed earlier — and a test asserting
-// "warning" could be reading somebody else's finding.
-func storageManifest(t *testing.T, scopes ...string) string {
-	t.Helper()
-	quoted := make([]string, 0, len(scopes))
-	just := make([]string, 0, len(scopes))
-	for _, s := range scopes {
-		quoted = append(quoted, `"`+s+`"`)
-		// Every SENSITIVE scope needs a justification or the manifest is a hard
-		// error; supplying one for all of them is simpler than tracking which.
-		just = append(just, `"`+s+`": "exercised by a validate test"`)
-	}
-	return `{
-  "blockId": "storage-scope-fixture",
-  "version": "0.1.0",
-  "name": "Storage Scope Fixture",
-  "tagline": "a fixture",
-  "type": "block",
-  "scopes": [` + strings.Join(quoted, ", ") + `],
-  "scopeJustifications": {` + strings.Join(just, ", ") + `},
-  "page": { "path": "/", "title": "Storage Scope Fixture", "icon": "bolt" },
-  "iframe": { "minHeight": 600, "maxHeight": 4000, "resizable": true, "sandbox": "allow-scripts" },
-  "contentRating": "g",
-  "bootSkeleton": true,
-  "minApiVersion": "1.0"
-}`
-}
-
-// storageWarnings returns only this check's findings, keyed on the hook each
-// message names.
-//
-// 🔴 It filters by the SCOPE NAMES the advisory carries, not by a loose phrase:
-// this project also emits a ready-ack advisory for the same fixtures (a page app
-// whose source never acks), so a test that counted ALL warnings would pass on the
-// wrong finding entirely. Asked for and measured — the fixtures below DO carry a
-// ready-ack warning, and an unfiltered count read 2 where this check emitted 1.
-func storageWarnings(t *testing.T, dir string) (app, shared bool, fields []string) {
-	t.Helper()
-	res, err := Dir(dir)
-	if err != nil {
-		t.Fatalf("Dir: %v", err)
-	}
-	if len(res.Errors) != 0 {
-		t.Fatalf("fixture manifest must be VALID or the test measures nothing; errors: %v", res.Errors)
-	}
-	for _, w := range res.Warnings {
-		switch {
-		case strings.Contains(w.Message, "`useAppStorage()`"):
-			app = true
-			fields = append(fields, w.Field)
-		case strings.Contains(w.Message, "`useSharedStorage()`"):
-			shared = true
-			fields = append(fields, w.Field)
-		}
-	}
-	return app, shared, fields
-}
+// storagescope_test.go pins the LEGACY-HOOK scope advisory and the tree walk every
+// source-reading storage check shares. The document-store findings themselves
+// (undeclared collection names, document store without `apps:storage`) are
+// pinned in docstore_test.go.
 
 func storageProject(t *testing.T, manifestJSON string, files map[string]string) string {
 	t.Helper()
@@ -91,14 +35,60 @@ const usesApp = `import { useAppStorage } from '@civitai/blocks-react';
 export function Save() { const s = useAppStorage(); return s; }`
 
 const usesShared = `import { useSharedStorage } from '@civitai/blocks-react';
-export function Board() { const s = useSharedStorage(); return s; }`
+export function Board() { const s = useSharedStorage<Entry>(); return s; }`
 
-// TestStorageScopeWarning covers the check in BOTH directions. A gate that
-// warned unconditionally would pass every "wantApp: true" row, so the rows that
-// expect SILENCE are the ones carrying the weight.
-func TestStorageScopeWarning(t *testing.T) {
+const usesSharedNested = `import { useSharedStorage } from '@civitai/blocks-react';
+export function Board() { const s = useSharedStorage<Entry<number>>(); return s; }`
+
+// legacyWarnings returns the legacy-hook advisories, keyed on the hook each
+// message names, with their fields.
+func legacyWarnings(t *testing.T, dir string) (app, shared bool, fields []string) {
+	t.Helper()
+	res, err := Dir(dir)
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	if len(res.Errors) != 0 {
+		t.Fatalf("fixture manifest must be VALID or the test measures nothing:%s", describe(res.Errors))
+	}
+	for _, w := range res.Warnings {
+		switch {
+		case strings.Contains(w.Message, "calls `useAppStorage()`"):
+			app = true
+			fields = append(fields, w.Field)
+		case strings.Contains(w.Message, "calls `useSharedStorage()`"):
+			shared = true
+			fields = append(fields, w.Field)
+		case strings.Contains(w.Message, "useAppStorage") || strings.Contains(w.Message, "useSharedStorage"):
+			t.Errorf("a warning names a legacy hook but is not the legacy-scope advisory: %s", w.Message)
+		}
+	}
+	return app, shared, fields
+}
+
+// privateKV is a valid declaration for the rows that need `apps:storage` (which
+// is refused without a collection to reach).
+var privateKV = oneCollection("kv", `{"visibility":"private"}`)
+
+// TestLegacyStorageHookNeedsItsScope — a CALL to `useAppStorage()` while the
+// manifest declares neither `apps:storage:read` nor `apps:storage:write`, or to
+// `useSharedStorage()` with neither shared scope, is the 2026-10-01 failure:
+// every save 403s in production. That is the whole claim. A manifest that
+// declares ONE of the store's scopes is someone who knows scopes exist and
+// chose, so it is silent; there is no unconditional "deprecated" warning.
+//
+// 🔴 THE SCOPES ARE AN EXPLICIT SET, NOT A PREFIX. The pre-#856 check took any
+// `apps:storage:` scope outside the shared namespace as satisfying the
+// per-viewer store. `apps:storage:publish` (the document store's) has that
+// prefix and grants the legacy store nothing, so the prefix would now read a
+// document-store manifest as having declared the legacy one.
+//
+// Both directions: a check that warned unconditionally would pass every "want"
+// row, so the SILENT rows carry the weight.
+func TestLegacyStorageHookNeedsItsScope(t *testing.T) {
 	tests := []struct {
 		name       string
+		storage    string
 		scopes     []string
 		files      map[string]string
 		wantApp    bool
@@ -106,67 +96,101 @@ func TestStorageScopeWarning(t *testing.T) {
 		why        string
 	}{
 		{
-			// THE TARGET POPULATION — the 2026-10-01 incident, exactly: storage
-			// everywhere, the money scope only.
-			name:    "uses app storage, declares only the money scope",
-			scopes:  []string{"ai:write:budgeted"},
+			name:    "calls useAppStorage, no storage scope",
+			scopes:  []string{"user:read:self"},
 			files:   map[string]string{"src/App.tsx": usesApp},
 			wantApp: true,
-			why:     "this is the shape that shipped and 403'd in production",
 		},
 		{
-			name:    "declares both storage scopes — silent",
-			scopes:  []string{"apps:storage:read", "apps:storage:write"},
-			files:   map[string]string{"src/App.tsx": usesApp},
-			wantApp: false,
-			why:     "REACHABILITY: proves the check is not a blanket warn",
+			name:   "calls useAppStorage with apps:storage:read — silent",
+			scopes: []string{"apps:storage:read"},
+			files:  map[string]string{"src/App.tsx": usesApp},
+			why:    "one of the store's scopes is a choice this check does not second-guess",
 		},
 		{
-			// The deliberate narrowness: one storage scope is someone who knows
-			// scopes exist and chose. We do not second-guess WHICH.
-			name:    "declares only the READ scope — silent, by design",
-			scopes:  []string{"apps:storage:read"},
-			files:   map[string]string{"src/App.tsx": usesApp},
-			wantApp: false,
-			why:     "a read-only app that declared read must not be nagged about write",
+			name:   "calls useAppStorage with apps:storage:write — silent",
+			scopes: []string{"apps:storage:write"},
+			files:  map[string]string{"src/App.tsx": usesApp},
 		},
 		{
-			// 🔴 THE PREFIX TRAP, and the single most important row here.
-			// `apps:storage:shared:read` HAS `apps:storage:` as a prefix, so a
-			// plain HasPrefix test reads this manifest as having declared the
-			// per-viewer store and SUPPRESSES the finding — a false negative in
-			// the exact direction this check exists to remove.
-			name:    "declares only SHARED scopes but uses per-viewer storage",
+			name:    "calls useAppStorage with only the SHARED scopes",
 			scopes:  []string{"apps:storage:shared:read", "apps:storage:shared:write"},
 			files:   map[string]string{"src/App.tsx": usesApp},
 			wantApp: true,
 			why:     "a shared scope does not satisfy the per-viewer store",
 		},
 		{
-			name:       "declares only per-viewer scopes but uses SHARED storage",
+			name:    "calls useAppStorage with only the DOCUMENT-STORE scopes",
+			storage: oneCollection("posts", `{"visibility":"shared","write":"own"}`),
+			scopes:  []string{"apps:storage", "apps:storage:publish"},
+			files:   map[string]string{"src/App.tsx": usesApp},
+			wantApp: true,
+			why:     "apps:storage / apps:storage:publish grant the legacy store nothing",
+		},
+		{
+			name:       "calls useSharedStorage with a type argument",
+			scopes:     []string{"user:read:self"},
+			files:      map[string]string{"src/Board.tsx": usesShared},
+			wantShared: true,
+		},
+		{
+			name:       "calls useSharedStorage with a NESTED type argument",
+			scopes:     []string{"user:read:self"},
+			files:      map[string]string{"src/Board.tsx": usesSharedNested},
+			wantShared: true,
+		},
+		{
+			name:   "calls useSharedStorage with apps:storage:shared:read — silent",
+			scopes: []string{"apps:storage:shared:read"},
+			files:  map[string]string{"src/Board.tsx": usesShared},
+		},
+		{
+			name:       "calls useSharedStorage with only the PER-VIEWER scopes",
 			scopes:     []string{"apps:storage:read", "apps:storage:write"},
 			files:      map[string]string{"src/Board.tsx": usesShared},
 			wantShared: true,
-			why:        "the mirror of the row above; the two stores are independent",
+			why:        "the two stores are asked independently",
 		},
 		{
-			name:       "uses BOTH stores, declares neither — two findings",
-			scopes:     []string{"ai:write:budgeted"},
+			name:       "both hooks, no storage scope — two findings",
+			scopes:     []string{"user:read:self"},
 			files:      map[string]string{"src/App.tsx": usesApp, "src/Board.tsx": usesShared},
 			wantApp:    true,
 			wantShared: true,
 		},
 		{
+			name:    "the document store declared does not silence a legacy call",
+			storage: privateKV,
+			scopes:  []string{"apps:storage"},
+			files:   map[string]string{"src/App.tsx": usesApp},
+			wantApp: true,
+		},
+		{
+			name:   "IMPORTED but never called — silent",
+			scopes: []string{"user:read:self"},
+			files: map[string]string{
+				"src/App.tsx": "import { useAppStorage } from '@civitai/blocks-react';\nexport const x = 1;",
+			},
+			why: "the hook-NAME matcher this replaced fired here; a call is the claim",
+		},
+		{
+			// The playable-collections false positive, in a NON-test file: an
+			// object whose string values name hooks is data, not a call.
+			name:   "hook names as string VALUES — silent",
+			scopes: []string{"user:read:self"},
+			files: map[string]string{
+				"src/scope-ledger.ts": "export const LEDGER = { app: 'useAppStorage', shared: 'useSharedStorage' };",
+			},
+			why: "a string naming a hook is not a call to it",
+		},
+		{
 			name:   "no storage use at all — silent",
-			scopes: []string{"ai:write:budgeted"},
+			scopes: []string{"user:read:self"},
 			files:  map[string]string{"src/App.tsx": `export const x = 1;`},
 		},
 		{
-			// Comment stripping. The scaffolds DOCUMENT these hooks in prose, so
-			// without stripping the check fires at a project that only mentions
-			// storage in a comment.
 			name:   "the hook named only in a COMMENT — silent",
-			scopes: []string{"ai:write:budgeted"},
+			scopes: []string{"user:read:self"},
 			files: map[string]string{
 				"src/App.tsx": "// later: persist with useAppStorage()\n/* or useSharedStorage() */\nexport const x = 1;",
 			},
@@ -174,7 +198,7 @@ func TestStorageScopeWarning(t *testing.T) {
 		},
 		{
 			name:   "the hook named only in a NON-SOURCE file — silent",
-			scopes: []string{"ai:write:budgeted"},
+			scopes: []string{"user:read:self"},
 			files: map[string]string{
 				"README.md":   "we will use useAppStorage() eventually",
 				"notes.txt":   "useSharedStorage()",
@@ -183,10 +207,8 @@ func TestStorageScopeWarning(t *testing.T) {
 			why: "the extension filter: prose and data are not code",
 		},
 		{
-			// A dependency that mentions the hook is not THIS app using it, and a
-			// vendored tree would otherwise make the check fire at every app.
 			name:   "the hook only inside node_modules — silent",
-			scopes: []string{"ai:write:budgeted"},
+			scopes: []string{"user:read:self"},
 			files: map[string]string{
 				"node_modules/@civitai/blocks-react/dist/index.js": usesApp,
 				"src/App.tsx": `export const x = 1;`,
@@ -197,37 +219,54 @@ func TestStorageScopeWarning(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := storageProject(t, storageManifest(t, tc.scopes...), tc.files)
-			app, shared, fields := storageWarnings(t, dir)
+			dir := storageProject(t, docManifest(tc.storage, tc.scopes...), tc.files)
+			app, shared, fields := legacyWarnings(t, dir)
 			if app != tc.wantApp {
-				t.Errorf("app-storage warning = %v, want %v (%s)", app, tc.wantApp, tc.why)
+				t.Errorf("useAppStorage advisory = %v, want %v (%s)", app, tc.wantApp, tc.why)
 			}
 			if shared != tc.wantShared {
-				t.Errorf("shared-storage warning = %v, want %v (%s)", shared, tc.wantShared, tc.why)
+				t.Errorf("useSharedStorage advisory = %v, want %v (%s)", shared, tc.wantShared, tc.why)
 			}
-			// 🔴 The FIELD is part of the contract, not decoration. readyack
-			// reports `(project)` because its remedy is in source; this one must
-			// report `scopes`, because the source is correct and the MANIFEST is
-			// what needs the edit. Sending a consumer to `(project)` here would
-			// point them at the one place that is already right.
+			// The source is CORRECT (using storage is the point) and the
+			// manifest is what lacks the scope, so the finding names `scopes`.
 			for _, f := range fields {
 				if f != "scopes" {
-					t.Errorf("Field = %q, want \"scopes\"", f)
+					t.Errorf("Field = %q, want %q", f, "scopes")
 				}
 			}
 		})
 	}
 }
 
-// TestStorageScopeFollowsSymlinkedSource pins the hazard readyack recorded after
+// TestLegacyStorageHookMessage pins the whole advisory text, for each store.
+func TestLegacyStorageHookMessage(t *testing.T) {
+	for _, tc := range []struct {
+		file, src, want string
+	}{
+		{"src/App.tsx", usesApp, legacyMessage("useAppStorage", "apps:storage:read", "apps:storage:write")},
+		{"src/Board.tsx", usesShared, legacyMessage("useSharedStorage", "apps:storage:shared:read", "apps:storage:shared:write")},
+	} {
+		res, err := Dir(storageProject(t, docManifest("", "user:read:self"), map[string]string{tc.file: tc.src}))
+		if err != nil {
+			t.Fatalf("Dir: %v", err)
+		}
+		var hit bool
+		for _, w := range res.Warnings {
+			hit = hit || w.Message == tc.want
+		}
+		if !hit {
+			t.Errorf("no warning with the legacy-scope text\n  want: %s\n  got:%s", tc.want, describe(res.Warnings))
+		}
+	}
+}
+
+// TestStorageScanFollowsSymlinkedSource pins the hazard readyack recorded after
 // reproducing it live: filepath.WalkDir does NOT follow symlinked directories and
 // does not report them as directories either, so a monorepo whose `src` is a
-// symlink into a shared package had its ENTIRE source tree skipped. For THIS
-// check the consequence is the silent direction — storage use invisible, no
-// warning, the defect ships.
-func TestStorageScopeFollowsSymlinkedSource(t *testing.T) {
+// symlink into a shared package had its ENTIRE source tree skipped — the silent
+// direction, the defect ships.
+func TestStorageScanFollowsSymlinkedSource(t *testing.T) {
 	root := t.TempDir()
-	// The real source lives outside the project, as in a monorepo.
 	shared := filepath.Join(root, "packages", "shared")
 	if err := os.MkdirAll(shared, 0o755); err != nil {
 		t.Fatal(err)
@@ -235,102 +274,69 @@ func TestStorageScopeFollowsSymlinkedSource(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(shared, "App.tsx"), []byte(usesApp), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
 	proj := filepath.Join(root, "app")
 	if err := os.MkdirAll(proj, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(
-		filepath.Join(proj, "block.manifest.json"),
-		[]byte(storageManifest(t, "ai:write:budgeted")), 0o600,
-	); err != nil {
+	if err := os.WriteFile(filepath.Join(proj, "block.manifest.json"), []byte(docManifest("", "user:read:self")), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(shared, filepath.Join(proj, "src")); err != nil {
 		t.Skipf("symlinks unavailable on this platform: %v", err)
 	}
-
-	app, _, _ := storageWarnings(t, proj)
+	app, _, _ := legacyWarnings(t, proj)
 	if !app {
 		t.Error("storage use behind a symlinked src/ was not seen — the walk stopped following symlinks")
 	}
 }
 
-// TestStorageScopeUnobservableScanStaysSilent pins the posture readyack states:
-// reading only PART of a tree is not finding nothing. A scan that hits a cap must
-// not report against a project it did not finish reading.
-func TestStorageScopeUnobservableScanStaysSilent(t *testing.T) {
+// TestStorageScanUnobservableStaysSilent — reading only PART of a tree is not
+// finding nothing. A scan that hits a cap must not report against a project it
+// did not finish reading.
+func TestStorageScanUnobservableStaysSilent(t *testing.T) {
 	big := strings.Repeat("x", maxStorageFileBytes+1)
-	dir := storageProject(t, storageManifest(t, "ai:write:budgeted"), map[string]string{
-		// 🔴 THE ORDERING IS THE TEST. os.ReadDir returns entries SORTED, so the
-		// hook file must sort BEFORE the oversized one: the scan then sets
-		// `usesAppStorage` and only afterwards goes partial, leaving the partial
-		// guard as the single thing that can suppress the finding.
-		//
-		// Reversed — the big file first — this test passes whether the guard
-		// exists or not, because the hook is never read and `usesAppStorage`
-		// stays false. It was written that way, the mutation sweep scored the
-		// guard SURVIVED, and that is what exposed it. A fixture whose values
-		// make the guarded branch unreachable is the classic vacuous pass.
-		"src/aaa-App.tsx":   usesApp,
+	// 🔴 THE ORDERING IS THE TEST. os.ReadDir returns entries SORTED, so the
+	// call sites sort BEFORE the oversized file: the scan records them and only
+	// afterwards goes partial, leaving the partial guard as the single thing that
+	// can suppress the findings. Reversed, this passes with the guard deleted.
+	dir := storageProject(t, docManifest("", "user:read:self"), map[string]string{
+		"src/aaa-App.tsx":   usesApp + "\nexport const q = () => app.storage.collection('partial_scan_q');\n",
 		"src/zzz-bundle.js": big,
 	})
-	app, _, _ := storageWarnings(t, dir)
-	if app {
-		t.Error("warned from a scan that hit its byte cap — a partial read must stay silent")
+	res, err := Dir(dir)
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	for _, w := range res.Warnings {
+		t.Errorf("warned from a scan that hit its byte cap — a partial read must stay silent: %s", w.Message)
+	}
+	// CONTROL: without the oversized file the same source IS reported.
+	res, err = Dir(storageProject(t, docManifest("", "user:read:self"), map[string]string{
+		"src/aaa-App.tsx": usesApp + "\nexport const q = () => app.storage.collection('partial_scan_q');\n",
+	}))
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	if len(res.Warnings) == 0 {
+		t.Error("control: the same source without the oversized file produced no warning")
 	}
 }
 
-// TestStorageScopeDeclaresStore is the unit-level pin on the prefix logic, so a
-// regression names the predicate rather than surfacing as a confusing fixture
-// failure three layers up.
-func TestStorageScopeDeclaresStore(t *testing.T) {
-	cases := []struct {
-		name     string
-		declared []string
-		prefix   string
-		want     bool
-	}{
-		{"per-viewer read satisfies per-viewer", []string{"apps:storage:read"}, appStorageScopePrefix, true},
-		{"per-viewer write satisfies per-viewer", []string{"apps:storage:write"}, appStorageScopePrefix, true},
-		{"shared does NOT satisfy per-viewer", []string{"apps:storage:shared:write"}, appStorageScopePrefix, false},
-		{"shared satisfies shared", []string{"apps:storage:shared:read"}, sharedStorageScopePrefix, true},
-		{"per-viewer does NOT satisfy shared", []string{"apps:storage:write"}, sharedStorageScopePrefix, false},
-		{"money scope satisfies neither", []string{"ai:write:budgeted"}, appStorageScopePrefix, false},
-		{"empty satisfies neither", nil, sharedStorageScopePrefix, false},
+// TestStorageScanToleratesABadScopesField — a malformed `scopes` produces no
+// scope advisory from the source scan: the schema layer reports that defect,
+// and a second story about the same field is worse than none.
+func TestStorageScanToleratesABadScopesField(t *testing.T) {
+	m := `{"blockId":"x","name":"X","version":"0.1.0","contentRating":"g","scopes":"not-an-array",` +
+		`"iframe":{"sandbox":"allow-scripts","minHeight":400,"resizable":false}}`
+	res, err := Dir(storageProject(t, m, map[string]string{
+		"src/App.ts": "export const q = (n: string) => app.storage.collection(n).list();\n",
+	}))
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := declaresStore(tc.declared, tc.prefix); got != tc.want {
-				t.Errorf("declaresStore(%v, %q) = %v, want %v", tc.declared, tc.prefix, got, tc.want)
-			}
-		})
-	}
-}
-
-// TestStorageScopeTolerABadScopesField pins that a malformed `scopes` produces no
-// finding from THIS check — the schema layer reports that defect, and a second
-// confusing advisory about the same thing is worse than none.
-func TestStorageScopeToleratesABadScopesField(t *testing.T) {
-	for _, raw := range []string{`"scopes": "not-an-array"`, `"scopes": [1, 2]`, `"scopes": []`} {
-		t.Run(raw, func(t *testing.T) {
-			// Built by hand: storageManifest always emits a well-formed array.
-			m := `{"blockId":"x","version":"0.1.0","name":"X","tagline":"t","type":"block",` + raw +
-				`,"page":{"path":"/","title":"X","icon":"bolt"},` +
-				`"iframe":{"minHeight":600,"maxHeight":4000,"resizable":true,"sandbox":"allow-scripts"},` +
-				`"contentRating":"g","bootSkeleton":true,"minApiVersion":"1.0"}`
-			dir := storageProject(t, m, map[string]string{"src/App.tsx": usesApp})
-			// Dir may legitimately report schema errors here; we only assert this
-			// check does not PANIC and does not invent a second story.
-			res, err := Dir(dir)
-			if err != nil {
-				t.Fatalf("Dir: %v", err)
-			}
-			for _, w := range res.Warnings {
-				if strings.Contains(w.Message, "`useAppStorage()`") && raw == `"scopes": "not-an-array"` {
-					t.Error("warned about scopes on a manifest whose scopes field is not even an array")
-				}
-			}
-		})
+	for _, w := range res.Warnings {
+		if strings.Contains(w.Message, "calls the document store") {
+			t.Errorf("advised about scopes on a manifest whose scopes field is not even an array: %s", w.Message)
+		}
 	}
 }
