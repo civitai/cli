@@ -27,11 +27,16 @@
 //     Any call counts, literal or not. When `storage` IS declared, the missing
 //     scope is the manifest error storageScopeRuleChecks already reports, so
 //     this stays quiet rather than tell the same story twice.
-//  3. A CALL to a legacy hook (`useAppStorage()` / `useSharedStorage()`). Those
-//     stores are being retired with their routes, so the advice is to move to
-//     the document store — not, as this check used to say, to add the legacy
-//     `apps:storage:read/write` scopes, which sends an author further into a
-//     store that is going away.
+//  3. A CALL to a legacy hook while the manifest declares NO scope for that
+//     store: `useAppStorage()` without `apps:storage:read` or
+//     `apps:storage:write`, `useSharedStorage()` without
+//     `apps:storage:shared:read` or `apps:storage:shared:write`. Every save then
+//     403s in production — the 2026-10-01 failure, which is what this advisory
+//     was written for (cli #767). One of a store's scopes is someone who knows
+//     scopes exist and chose, so it is silent; the two stores are asked
+//     independently. The scopes are an explicit SET, not a prefix:
+//     `apps:storage:publish` starts with `apps:storage:` and grants the legacy
+//     store nothing.
 //
 // WHAT IT MATCHES, AND WHY THAT PRECISE SHAPE. This replaced HOOK-NAME matching
 // (cli #767), which fired on the bare names `useAppStorage` / `useSharedStorage`
@@ -40,28 +45,37 @@
 // not a call. Two changes close that class:
 //
 //   - a finding needs a CALL SHAPE: `useAppStorage(` (an optional type argument
-//     allowed), and for the document store `<…storage>.collection(` — a
-//     `.collection(` on a receiver whose name ends in `storage`/`Storage`
-//     (`app.storage`, `fake.storage`, `(await app()).storage`, a renamed
-//     `docStorage`). Any other `.collection(` — the same app's
-//     `PATHS.collection(id)` — is not the store;
-//   - TEST FILES ARE NOT READ (`*.test.*`, `*.spec.*`, anything under
-//     `__tests__/`). A test drives fakes, ledgers and deliberately wrong names;
-//     none of it is the app's runtime.
+//     allowed), and for the document store a `.collection(` on one of two
+//     receivers: a name ending in `storage`/`Storage` (`app.storage`,
+//     `fake.storage`, `(await app()).storage`, a renamed `docStorage`), or an
+//     AWAITED, ARGUMENT-LESS CALL — `(await docs()).collection(` — the shape
+//     every real port uses, where the client comes from a getter. Any other
+//     `.collection(` — the same app's `PATHS.collection(id)`, an un-awaited
+//     `getApi().collection(` — is not the store. Type arguments may nest two
+//     levels (`collection<Record<string, Array<Row>>>(`);
+//   - TEST CODE IS NOT READ. A test drives fakes, ledgers and deliberately wrong
+//     names; none of it is the app's runtime. THE CONVENTION (isTestFile): a
+//     basename containing `.test.` / `.spec.`, a basename STARTING `fake-`,
+//     `test-` or `mock-` (the scaffolds' `src/fake-doc-storage.ts`,
+//     `src/test-setup.ts`, `src/mock-buzz.ts`), or anything under a
+//     `__tests__/`, `__mocks__/` or `testing/` directory. Name a test helper
+//     that way and it is skipped; name it anything else and it is read as app
+//     code.
 //
 // The known residuals: a client held in a variable whose name does not end in
-// `storage` (`const s = app.storage; s.collection('x')`) is not seen — the
-// silent direction, accepted because widening the receiver is what produced
-// false positives; and a call spelled inside a string literal is matched.
+// `storage` (`const s = app.storage; s.collection('x')`), or reached through a
+// call that takes arguments or is not awaited, is not seen — the silent
+// direction, accepted because widening the receiver is what produced false
+// positives; a call spelled inside a string literal is matched; and a
+// production file whose name starts `fake-`/`test-`/`mock-` is skipped.
 //
 // ADVISORY, NOT FATAL, for the reason readyack is: it infers runtime behaviour
 // from static text. `--strict` promotes it. The manifest-only refusals in
 // storagemanifest.go ARE errors, because those are certain.
 //
 // FIELDS: (1) names the undeclared key, `storage.collections.<name>` — the
-// declaration is the usual edit; (2) is `scopes` — the source is right and the
-// manifest is what lacks the scope; (3) is FieldProject — the remedy is a source
-// change, and no manifest edit resolves it.
+// declaration is the usual edit; (2) and (3) are `scopes` — the source is right
+// (using storage is the point) and the manifest is what lacks the scope.
 package validate
 
 import (
@@ -81,16 +95,32 @@ const (
 	sharedStorageHook = "useSharedStorage"
 )
 
+// legacyHookScopes is, per hook, the scopes that reach its store. Declaring
+// ANY one of them silences that hook's advisory. An explicit set, never a
+// prefix: see the file comment.
+var legacyHookScopes = map[string][2]string{
+	appStorageHook:    {"apps:storage:read", "apps:storage:write"},
+	sharedStorageHook: {"apps:storage:shared:read", "apps:storage:shared:write"},
+}
+
+// typeArgRe is an optional TS type argument list, with up to two levels of
+// nesting (`<Row>`, `<Record<string, Row>>`, `<Map<string, Array<Row>>>`).
+// Parentheses end it, so a `<` that is really a comparison cannot swallow a
+// call.
+const typeArgRe = `(?:<(?:[^<>()]|<(?:[^<>()]|<[^<>()]*>)*>)*>\s*)?`
+
 // legacyHookCallRe matches a call to a legacy hook, with an optional TS type
-// argument (`useSharedStorage<Entry>()`). The leading boundary keeps
+// argument (`useSharedStorage<Entry<number>>()`). The leading boundary keeps
 // `myuseAppStorage(` out.
-var legacyHookCallRe = regexp.MustCompile(`\b(useAppStorage|useSharedStorage)\s*(?:<[^<>()]*>\s*)?\(`)
+var legacyHookCallRe = regexp.MustCompile(`\b(useAppStorage|useSharedStorage)\s*` + typeArgRe + `\(`)
 
 // docStoreCallRe matches the opening of a document-store call up to and
-// including its `(`: a receiver ending in `storage`/`Storage`, `.` or `?.`
-// (whitespace and newlines allowed, for a chain split across lines), then
+// including its `(`: a receiver — a name ending in `storage`/`Storage`, or an
+// awaited argument-less call in parentheses, `(await docs())` — then `.` or
+// `?.` (whitespace and newlines allowed, for a chain split across lines), then
 // `collection`, an optional type argument, and the paren.
-var docStoreCallRe = regexp.MustCompile(`[sS]torage\s*\??\.\s*collection\s*(?:<[^<>()]*>\s*)?\(`)
+var docStoreCallRe = regexp.MustCompile(
+	`(?:[sS]torage|\(\s*await\s+[A-Za-z_$][\w$]*\s*\(\s*\)\s*\))\s*\??\.\s*collection\s*` + typeArgRe + `\(`)
 
 // storageScopeChecks returns the source-reading storage advisories for the
 // project in dir.
@@ -153,15 +183,36 @@ func storageScopeChecks(dir string, generic any) []Finding {
 		}
 	}
 
-	// (3) Legacy hooks: deprecated whatever the scopes say.
+	// (3) Legacy hooks called while the manifest declares no scope for that
+	// store.
+	declaredScopes := stringSet(m["scopes"])
 	for _, hook := range sortedKeys(scan.legacyHooks) {
-		out = append(out, newFinding(FieldProject, scan.legacyHooks[hook]+" calls `"+hook+"()` — the "+
-			"legacy storage hooks ("+appStorageHook+", "+sharedStorageHook+") are deprecated and their "+
-			"routes are being retired; move this data to the document store: declare a collection under "+
-			"storage.collections, add apps:storage to scopes, and use `app.storage.collection()` from "+
-			"@civitai/sdk. ADVISORY: this reads source statically."))
+		scopes := legacyHookScopes[hook]
+		_, hasRead := declaredScopes[scopes[0]]
+		_, hasWrite := declaredScopes[scopes[1]]
+		if hasRead || hasWrite {
+			continue
+		}
+		out = append(out, newFinding("scopes", legacyHookScopeAdvice(hook, scopes[0], scopes[1])))
 	}
 	return out
+}
+
+// legacyHookScopeAdvice is the whole message, naming the hook found, both
+// scopes, and what the failure looks like if it ships. It names the FAILURE
+// because the defect is invisible until production: a developer who has only
+// ever run the mock host has no reason to connect "saving failed" to a manifest
+// field. The pre-#856 text, minus its old last clause ("a hook imported but
+// never called is a false positive"), which a call-shape match made untrue.
+func legacyHookScopeAdvice(hook, readScope, writeScope string) string {
+	return "this project's source calls `" + hook + "()` but the manifest declares no " +
+		"storage scope — add the ones it uses to `scopes` (`" + readScope + "` to read, `" +
+		writeScope + "` to write) each with a `scopeJustifications` entry. The server gates " +
+		"storage by PRESENCE in the approved scope set, so without them every call fails in " +
+		"production with a 403 (`storage set requires the " + writeScope + " scope`) while " +
+		"working locally — and an authorization failure is deliberately unclassified by the " +
+		"SDK, so a block usually surfaces it as an unexplained \"try again\". ADVISORY: this " +
+		"reads source statically."
 }
 
 func containsString(arr []any, want string) bool {
@@ -193,15 +244,24 @@ type storageScanResult struct {
 	partial      bool
 }
 
-// isTestFile reports whether a source file is a test, by the conventions the
-// JS toolchains use: `*.test.*` / `*.spec.*`, or anything under `__tests__/`.
+// isTestFile reports whether a source file is test code, by the documented
+// convention (see the file comment): `*.test.*` / `*.spec.*`; a basename
+// starting `fake-`, `test-` or `mock-`; or anything under `__tests__/`,
+// `__mocks__/` or `testing/`.
 func isTestFile(rel string) bool {
-	for _, seg := range strings.Split(rel, "/") {
-		if seg == "__tests__" {
+	segs := strings.Split(rel, "/")
+	for _, seg := range segs[:len(segs)-1] {
+		switch seg {
+		case "__tests__", "__mocks__", "testing":
 			return true
 		}
 	}
 	base := strings.ToLower(filepath.Base(rel))
+	for _, prefix := range []string{"fake-", "test-", "mock-"} {
+		if strings.HasPrefix(base, prefix) {
+			return true
+		}
+	}
 	return strings.Contains(base, ".test.") || strings.Contains(base, ".spec.")
 }
 

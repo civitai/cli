@@ -811,11 +811,15 @@ plus the ported semantic rules (including the server's checks of the
 **advisories** that read your source — the
 [host handshake](#the-host-handshake-block_ready), and storage calls
 (`app.storage.collection('<name>')` with a literal name `storage.collections`
-does not declare, the document store without `apps:storage`, and the
-deprecated `useAppStorage()` / `useSharedStorage()` hooks). Advisories are
-warnings, never errors, because they infer runtime behaviour from static text;
-test files (`*.test.*`, `*.spec.*`, `__tests__/`) are not read for the storage
-ones.
+does not declare, the document store without `apps:storage`, and
+`useAppStorage()` / `useSharedStorage()` called with no scope for that store).
+Advisories are warnings, never errors, because they infer runtime behaviour
+from static text; test code (`*.test.*`, `*.spec.*`, files named `fake-*`,
+`test-*` or `mock-*`, and `__tests__/`, `__mocks__/`, `testing/`) is not read
+for the storage ones. The storage features civitai.com does not accept yet
+(`kind` "log", `write` "anyone"/"owner", `ttlSeconds`, `dailyWritesPerAuthor`)
+are also warnings: the server refuses them at submit today, but enables each
+with a server-side switch, so an installed CLI must not refuse them outright.
 
 📖 **What each of those checks actually proves, the lockfile rule in full, the
 two tiers of the `BLOCK_READY` advisory, and the `--json` result shape:

@@ -138,13 +138,15 @@ func validateDir(dir string, projectState bool) (Result, error) {
 	res.Errors = append(res.Errors, semanticChecks(generic)...)
 	res.Errors = append(res.Errors, targetChecks(generic)...)
 
-	// Semantic: the server's storage refusals the schema admits (features not
-	// available yet, a counter/mark name collision), then the storage⇄scopes
-	// rules — which the server evaluates only against a declaration that parsed,
-	// so they wait until nothing so far is located under `storage`. See
-	// storagemanifest.go.
+	// Semantic: the server's storage refusals the schema admits (a counter/mark
+	// name collision), then the storage⇄scopes rules — which the server
+	// evaluates only against a declaration that parsed, so they wait until no
+	// ERROR so far is located under `storage`. The features the server has not
+	// enabled yet are WARNINGS, and deliberately do not hold the scope rules
+	// back. See storagemanifest.go.
 	res.Errors = append(res.Errors, storageDeclarationChecks(generic)...)
 	res.Errors = append(res.Errors, storageScopeRuleChecks(generic, !hasFindingUnder(res.Errors, "storage"))...)
+	res.Warnings = append(res.Warnings, storageFeatureGateWarnings(generic)...)
 
 	// Structural: buildCommand + outputDir coherence beyond what the schema
 	// can express (the schema enforces "outputDir required when buildCommand
