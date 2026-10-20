@@ -51,6 +51,14 @@ type redFake struct {
 	// ingests (either path) and CLI-issued beginListingRevision calls.
 	ingests int
 	begun   int
+	// moderator models the caller's role the way the server's
+	// resolveOwnerAssetEditTarget does: for a moderator a PARENT-id setRedMedia on
+	// a live listing is applied to the LIVE listing directly; for an owner it is
+	// redirected into the revision. liveRedWrites / revisionRedWrites count where
+	// each setRedMedia write actually landed.
+	moderator         bool
+	liveRedWrites     int
+	revisionRedWrites int
 }
 
 func (f *redFake) handler(t *testing.T) http.HandlerFunc {
@@ -87,6 +95,14 @@ func (f *redFake) handler(t *testing.T) http.HandlerFunc {
 			img, has := j["imageId"]
 			call := redCall{ListingID: str(j["listingId"]), Slot: str(j["slot"]), ImageID: img, HasImage: has}
 			f.red = append(f.red, call)
+			switch {
+			case call.ListingID == "shadow_8":
+				f.revisionRedWrites++
+			case call.ListingID == "listing_7" && f.status == "approved" && f.moderator:
+				f.liveRedWrites++
+			case call.ListingID == "listing_7" && f.status == "approved":
+				f.revisionRedWrites++
+			}
 			if f.setRed400 != "" {
 				trpcBadRequest(w, f.setRed400)
 				return
@@ -350,6 +366,9 @@ func TestClearRedSendsAnExplicitNullForTheNamedSlot(t *testing.T) {
 	if got.ListingID != "listing_7" || got.Slot != "cover" || !got.HasImage || got.ImageID != nil {
 		t.Errorf("setRedMedia = %+v, want listing_7 / cover / imageId: null", got)
 	}
+	if f.begun != 0 {
+		t.Errorf("a draft is edited directly — clear-red must not open a revision, got %d begins", f.begun)
+	}
 	if !strings.Contains(out, "civitai.red cover override removed") {
 		t.Errorf("expected the removed line: %q", out)
 	}
@@ -373,6 +392,44 @@ func TestClearRedOnALiveListingSaysItIsStagedNotDone(t *testing.T) {
 	}
 	if f.submitted {
 		t.Error("clear-red must not submit the revision on its own")
+	}
+}
+
+// The regression for clear-red on a LIVE listing: the CLI must open the revision
+// itself and clear the override on the SHADOW id, never the parent. The fake
+// server applies a parent-id write DIRECTLY to the live listing when the caller
+// is a moderator, as the real one does — so a parent-id clear by a moderator
+// changes the live listing with no review while the command says "staged on an
+// open revision". Run for both roles: the wire and the outcome must be identical.
+func TestClearRedOnALiveListingWritesTheShadowForModeratorAndOwner(t *testing.T) {
+	for _, mod := range []bool{true, false} {
+		t.Run(fmt.Sprintf("moderator=%v", mod), func(t *testing.T) {
+			f := &redFake{status: "approved", moderator: mod}
+			srv := httptest.NewServer(f.handler(t))
+			defer srv.Close()
+			listingEnv(t, srv.URL)
+
+			out, _, err := run(t, "app", "listing", "clear-red", "cover", "--slug", "my-app")
+			if err != nil {
+				t.Fatalf("clear-red live: %v", err)
+			}
+			if f.begun != 1 {
+				t.Errorf("clear-red on a live listing must call beginListingRevision once, got %d", f.begun)
+			}
+			if len(f.red) != 1 {
+				t.Fatalf("expected one setRedMedia call, got %+v", f.red)
+			}
+			got := f.red[0]
+			if got.ListingID != "shadow_8" || got.Slot != "cover" || !got.HasImage || got.ImageID != nil {
+				t.Errorf("setRedMedia = %+v, want shadow_8 / cover / imageId: null (never the parent listing_7)", got)
+			}
+			if f.liveRedWrites != 0 || f.revisionRedWrites != 1 {
+				t.Errorf("the clear must land on the revision only: live=%d revision=%d", f.liveRedWrites, f.revisionRedWrites)
+			}
+			if !strings.Contains(out, "staged on an open revision") || f.submitted {
+				t.Errorf("expected the staged (unsubmitted) outcome: submitted=%v out=%q", f.submitted, out)
+			}
+		})
 	}
 }
 
