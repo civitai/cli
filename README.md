@@ -806,9 +806,16 @@ usage error (exit `2`, no JSON).
 
 It checks `block.manifest.json` against a **vendored JSON Schema**
 ([`schema/app-block.manifest.schema.json`](schema/app-block.manifest.schema.json))
-plus the ported semantic rules, one **build-time** lockfile rule, and one
-**advisory** about the [host handshake](#the-host-handshake-block_ready) — a
-warning, never an error, because it infers runtime behaviour from static text.
+plus the ported semantic rules (including the server's checks of the
+`storage` declaration against `scopes`), one **build-time** lockfile rule, and
+**advisories** that read your source — the
+[host handshake](#the-host-handshake-block_ready), and storage calls
+(`app.storage.collection('<name>')` with a literal name `storage.collections`
+does not declare, the document store without `apps:storage`, and the
+deprecated `useAppStorage()` / `useSharedStorage()` hooks). Advisories are
+warnings, never errors, because they infer runtime behaviour from static text;
+test files (`*.test.*`, `*.spec.*`, `__tests__/`) are not read for the storage
+ones.
 
 📖 **What each of those checks actually proves, the lockfile rule in full, the
 two tiers of the `BLOCK_READY` advisory, and the `--json` result shape:

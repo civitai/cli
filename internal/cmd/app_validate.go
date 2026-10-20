@@ -34,6 +34,12 @@ plus the ported semantic rules and structural checks:
   - renderMode inline/hybrid is rejected (requires a verified tier the platform
     only assigns post-submit)
   - targets[].slotId must be a known registered slot
+  - the storage declaration, as the server checks it beyond the schema:
+    features the schema describes but the platform does not accept yet (kind
+    "log", write "anyone"/"owner", ttlSeconds, dailyWritesPerAuthor), a counter
+    and a mark sharing a name, collections declared without apps:storage, a
+    viewer-written shared collection without apps:storage:publish, and either
+    scope requested with nothing in storage for it to reach
   - the committed LOCKFILE matches the package manager the platform build
     derives from buildCommand (its first word): pnpm -> pnpm-lock.yaml,
     yarn -> yarn.lock, and npm/vite/npx/unset -> package-lock.json. The
@@ -64,18 +70,18 @@ It also emits non-fatal WARNINGS the schema can't catch as hard errors:
     connects at mount (in those releases useBuzzWorkflow alone never acks):
     call useBlockContext() in your root component. It reads source only —
     never outputDir, node_modules, markdown, or comments.
-  - source that calls useAppStorage() or useSharedStorage() while the manifest
-    declares NO scope for that store. The server gates storage by PRESENCE in the
-    approved scope set, so an undeclared scope means every call 403s in
-    production while working locally against the mock host — the exact shape of
-    an app that passed its whole suite, the dev harness and a submit, then failed
-    every save. The two stores are asked independently: declaring
-    apps:storage:shared:* says nothing about the per-viewer store. It does NOT
-    second-guess WHICH scope you picked — one storage scope is someone who knows
-    scopes exist and chose, so only a store with NONE is reported. Advisory ONLY:
-    it reads source statically, so a hook imported but never called is a false
-    positive. Same corpus rules as the ready-ack check — source only, comments
-    stripped, node_modules and build output skipped.
+  - source that calls the document store, app.storage.collection(<name>), with
+    a string-literal name the manifest does not declare under
+    storage.collections (every call on it is refused collection_not_declared),
+    or while the manifest has neither the apps:storage scope nor a storage
+    declaration (every call is refused insufficient_scope). A computed name is
+    not checked; a .collection( call on anything but a storage client is not
+    the document store.
+  - source that calls useAppStorage() or useSharedStorage(): those legacy stores
+    are deprecated and being retired, so the advice is to move to the document
+    store. Advisory ONLY: these read source statically. Same corpus rules as the
+    ready-ack check — source only, comments stripped, node_modules and build
+    output skipped — and test files (*.test.*, *.spec.*, __tests__/) are not read.
 Warnings do NOT fail validation (exit 0) unless --strict is passed.
 
 Defaults to the current directory.`,
