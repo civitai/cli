@@ -177,16 +177,41 @@ func findingFieldLedger() []fieldExpectation {
 			"the SDK-mount finding: same reasoning as the row above — the remedy is one " +
 				"call in the root component, and the manifest's `page` is correct"},
 
-		// --- storagescope.go --------------------------------------------
-		{"but the manifest declares no storage scope", "scopes",
-			"🔴 THE DELIBERATE OPPOSITE OF THE readyack ROW ABOVE, and the contrast is the " +
-				"point. Both checks read src/, but they disagree about which side is wrong. " +
-				"readyack's remedy is in SOURCE (restore the emitter), so the manifest is " +
-				"not the place to send anyone. Here the SOURCE IS CORRECT — calling " +
-				"`useAppStorage()` is the whole feature — and the single edit that fixes it " +
-				"is adding two strings to `scopes` (plus their justifications). " +
-				"FieldProject would send a consumer to read their own app code looking for " +
-				"a bug that is not there, which is the mistake this ledger exists to catch"},
+		// --- storagemanifest.go: the server's storage refusals -------------
+		{`.kind "log" is not available yet`, "storage.collections.cov_log.kind",
+			"the refused VALUE is the collection's kind; the remedy is to change that key"},
+		{`.write "anyone" is not available yet`, "storage.collections.cov_anyone.write",
+			"the refused value is that collection's write policy"},
+		{`.write "owner" is not available yet`, "storage.collections.cov_owner.write",
+			"same: the write policy is what is not available"},
+		{".ttlSeconds is not available yet", "storage.collections.cov_ttl.ttlSeconds",
+			"the remedy is to delete this key from the collection"},
+		{".dailyWritesPerAuthor is not available yet", "storage.collections.cov_daily.dailyWritesPerAuthor",
+			"the remedy is to delete this key from the collection"},
+		{"as both a counter and a mark", "storage.collections.cov_dup",
+			"a relationship between two keys OF ONE collection, either of which may be renamed — " +
+				"the collection is the smallest location that holds both"},
+		{"— add it, or remove storage", "scopes",
+			"pair rule: storage is SET, apps:storage is MISSING from scopes"},
+		{"lets viewers write documents other users read", "scopes",
+			"pair rule: the viewer-written collection is set, apps:storage:publish is missing from scopes"},
+		{"scopes includes apps:storage but storage declares no collections", "storage",
+			"pair rule, the mirror: the scope is set, the collections it reaches are missing"},
+		{"scopes includes apps:storage:publish but no storage collection", "storage",
+			"pair rule: the publish scope is set, the viewer-written collection it is for is missing"},
+
+		// --- storagescope.go: what the SOURCE does --------------------------
+		{"is refused with `collection_not_declared`", "storage.collections.cov_notes",
+			"per-key: the name the source uses is the key missing from storage.collections. " +
+				"The source is usually right (it names what it needs); the edit is the declaration"},
+		{"calls the document store", "scopes",
+			"the source is correct — using the store is the feature — and the single edit that fixes " +
+				"it is adding apps:storage to `scopes`. FieldProject would send a consumer to read their " +
+				"own app code looking for a bug that is not there"},
+		{"the legacy storage hooks", FieldProject,
+			"the remedy is a SOURCE change — move off the hook onto app.storage.collection(). Unlike the " +
+				"row above, no manifest edit resolves it: declaring the old scopes keeps a store that is " +
+				"being retired"},
 	}
 }
 
@@ -285,8 +310,8 @@ func TestEveryFindingCarriesItsDocumentedField(t *testing.T) {
 //
 // It is separate from the ledger above on purpose. The ledger says WHAT each
 // field is; this says WHY that set of values is not arbitrary, and it is the
-// test that fails with the right explanation when someone flips a pair. Four
-// pair rules exist across two files, and an inversion of any of them is a
+// test that fails with the right explanation when someone flips a pair. Ten
+// pair rules exist across four files, and an inversion of any of them is a
 // plausible-looking refactor that changes nothing else observable.
 func TestPairRuleNamesTheMissingField(t *testing.T) {
 	pairs := []struct {
@@ -300,6 +325,10 @@ func TestPairRuleNamesTheMissingField(t *testing.T) {
 		{"the budget is inert", "page.buzzBudgetPerGen", "scopes"},
 		{"page.buzzBudgetPerGen is not set", "scopes", "page.buzzBudgetPerGen"},
 		{"must also declare an iframe block", "page", "iframe"},
+		{"— add it, or remove storage", "storage", "scopes"},
+		{"lets viewers write documents other users read", "storage", "scopes"},
+		{"scopes includes apps:storage but storage declares no collections", "scopes", "storage"},
+		{"scopes includes apps:storage:publish but no storage collection", "scopes", "storage"},
 	}
 
 	found := corpusFindings(t)

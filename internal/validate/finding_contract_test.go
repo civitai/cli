@@ -1170,11 +1170,62 @@ func fieldCoverageCorpus() []fieldFixture {
 			},
 		},
 		{
-			// storageScopeChecks reports against `scopes`, NOT FieldProject — the
-			// deliberate opposite of readyAckChecks above, because here the source
-			// is correct and the manifest is what needs the edit. This fixture is
-			// what makes that assertion checkable rather than asserted.
-			name: "source calls a storage hook with no storage scope declared (storageScopeChecks)",
+			// storageDeclarationChecks: every feature the server refuses today
+			// plus the counter/mark name collision, one collection each. The
+			// scope rules stay silent here BY DESIGN (an invalid declaration
+			// declares nothing), which the next fixture is what reaches.
+			name: "storage features not available yet, and a counter/mark collision (storageDeclarationChecks)",
+			files: map[string]string{"block.manifest.json": `{
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": ["apps:storage", "apps:storage:publish"],
+			  "scopeJustifications": {"apps:storage:publish": "viewers publish entries"},
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+			  "storage": {"collections": {
+			    "cov_log": {"visibility": "private", "kind": "log"},
+			    "cov_anyone": {"visibility": "shared", "write": "anyone"},
+			    "cov_owner": {"visibility": "shared", "write": "owner", "marks": ["star"]},
+			    "cov_ttl": {"visibility": "private", "ttlSeconds": 120},
+			    "cov_daily": {"visibility": "shared", "write": "own", "dailyWritesPerAuthor": 10},
+			    "cov_dup": {"visibility": "shared", "write": "none", "counters": ["n"], "marks": ["n"]}
+			  }}
+			}`},
+		},
+		{
+			name: "collections declared without either storage scope (storageScopeRuleChecks)",
+			files: map[string]string{"block.manifest.json": `{
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": ["user:read:self"],
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+			  "storage": {"collections": {
+			    "cov_kv": {"visibility": "private"},
+			    "cov_posts": {"visibility": "shared", "write": "own"}
+			  }}
+			}`},
+		},
+		{
+			name: "both storage scopes with nothing declared for them (storageScopeRuleChecks)",
+			files: map[string]string{"block.manifest.json": `{
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": ["apps:storage", "apps:storage:publish"],
+			  "scopeJustifications": {"apps:storage:publish": "viewers publish entries"},
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false}
+			}`},
+		},
+		{
+			// storageScopeChecks: the three SOURCE findings — an undeclared
+			// literal collection name, the document store with no apps:storage,
+			// and a legacy hook. The first two report manifest fields and the
+			// third FieldProject; this fixture is what makes that checkable.
+			name: "source on the document store with nothing declared, plus a legacy hook (storageScopeChecks)",
 			files: map[string]string{
 				"block.manifest.json": `{
 				  "blockId": "cov-block",
@@ -1183,12 +1234,15 @@ func fieldCoverageCorpus() []fieldFixture {
 				  "description": "storage with no scope",
 				  "author": "tester",
 				  "contentRating": "g",
+				  "scopes": ["user:read:self"],
 				  "page": {"path": "/", "title": "App"},
 				  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
 				  "entry": "index.html"
 				}`,
-				"index.html":  `<!doctype html><script type="module" src="./src/App.tsx"></script>`,
-				"src/App.tsx": `import { useAppStorage } from '@civitai/blocks-react';` + "\n" + `export const S = () => useAppStorage();`,
+				"index.html": `<!doctype html><script type="module" src="./src/App.tsx"></script>`,
+				"src/App.tsx": `import { useAppStorage } from '@civitai/blocks-react';` + "\n" +
+					`export const S = () => useAppStorage();` + "\n" +
+					`export const N = () => app.storage.collection('cov_notes').list();`,
 			},
 		},
 	}
