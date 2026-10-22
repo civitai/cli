@@ -622,6 +622,61 @@ jobs:
           done
           exit "$rc"
 
+      # The REAL dev server, asked the question the dev tunnel asks. The tunnel
+      # serves it as `dev-<hex>.civit.ai`; a vite.config.js with no
+      # `server.allowedHosts` answers that Host with 403 and the app never
+      # renders through the tunnel. The Go guards read the config's text; this
+      # runs it. The disallowed-host control comes FIRST: if Vite's host check
+      # were off (or this curl were not reaching Vite), a 200 for the tunnel
+      # host would mean nothing.
+      - name: dev server admits the dev-tunnel host
+        working-directory: ./_ci-page-vite
+        run: |
+          set -uo pipefail
+          port=5199
+          npx vite --port "$port" --strictPort > "$RUNNER_TEMP/vite-dev.log" 2>&1 &
+          vite_pid=$!
+          trap 'kill "$vite_pid" 2>/dev/null || true' EXIT
+
+          code() { curl -s -o /dev/null -w '%{http_code}' -H "Host: $1" "http://localhost:$port/" || true; }
+
+          up=0
+          for _ in $(seq 1 60); do
+            if [ "$(code localhost)" = "200" ]; then up=1; break; fi
+            sleep 0.5
+          done
+          if [ "$up" -ne 1 ]; then
+            echo "::error::vite dev server never answered 200 on localhost:$port"
+            cat "$RUNNER_TEMP/vite-dev.log"
+            exit 1
+          fi
+
+          ctl=$(code not-allowed.example)
+          echo "control: Host not-allowed.example -> $ctl"
+          if [ "$ctl" != "403" ]; then
+            echo "::error::Vite did not 403 a disallowed Host ($ctl) — its host check is not active here, so a 200 for the tunnel host below would prove nothing"
+            exit 1
+          fi
+
+          tunnel=$(code dev-ci-probe.civit.ai)
+          echo "tunnel: Host dev-ci-probe.civit.ai -> $tunnel"
+          if [ "$tunnel" != "200" ]; then
+            echo "::error::the page-vite dev server answers the dev-tunnel Host with $tunnel — it must admit .civit.ai (server.allowedHosts)"
+            exit 1
+          fi
+
+          headers=$(curl -s -o /dev/null -D - -H "Host: dev-ci-probe.civit.ai" "http://localhost:$port/" || true)
+          printf '%s\n' "$headers"
+          rc=0
+          acao=$(printf '%s\n' "$headers" | grep -ic "^access-control-allow-origin: \*" || true)
+          csp=$(printf '%s\n' "$headers" | grep -ic "^content-security-policy: frame-ancestors 'self' https://civitai.com" || true)
+          xfo=$(printf '%s\n' "$headers" | grep -ic "^x-frame-options:" || true)
+          echo "ACAO *: $acao  CSP frame-ancestors: $csp  X-Frame-Options: $xfo"
+          if [ "$acao" -ne 1 ]; then echo "::error::no Access-Control-Allow-Origin: * — the sandboxed iframe cannot load the dev server's modules"; rc=1; fi
+          if [ "$csp" -ne 1 ]; then echo "::error::no frame-ancestors CSP admitting https://civitai.com"; rc=1; fi
+          if [ "$xfo" -ne 0 ]; then echo "::error::X-Frame-Options is set — it blocks civitai.com from framing the dev server"; rc=1; fi
+          exit "$rc"
+
       - name: validate
         working-directory: ./_ci-page-vite
         run: go run ../cmd/civitai app validate

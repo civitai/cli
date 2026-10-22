@@ -44,8 +44,8 @@ import (
 
 // ProdParentOrigin is the parent origin that embeds the dev tunnel — the
 // `/apps/dev/<blockId>` route iframes the tunneled child from here. Mirrors
-// PROD_PARENT_ORIGIN in the page-money and page-elements scaffolds' src/dev-embed.ts (the two are
-// pinned together by a drift guard in internal/scaffold).
+// PROD_PARENT_ORIGIN in the scaffolds' src/dev-embed.ts (page-money, page-elements) and
+// src/dev-embed.js (page-vite) — pinned together by drift guards in internal/scaffold.
 const ProdParentOrigin = "https://civitai.com"
 
 // tunnelHostSuffix is the host suffix the tunnel serves the dev server on
@@ -103,7 +103,7 @@ type Finding struct {
 }
 
 // viteConfigFix is the remediation block for a detected Vite dev server. Keep it
-// in lockstep with the page-money and page-elements scaffolds (src/dev-embed.ts + vite.config.ts) —
+// in lockstep with the scaffolds' src/dev-embed.{ts,js} + vite.config.{ts,js} —
 // this is the copy an author with an OLDER app pastes to catch up.
 func viteConfigFix() []string {
 	return []string{

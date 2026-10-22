@@ -1,0 +1,41 @@
+// Dev-server embeddability for `civitai app dev-tunnel`.
+//
+// The dev tunnel serves THIS local dev server as a `dev-<16hex>.civit.ai` host
+// that the real https://civitai.com/apps/dev/<blockId> page iframes. For that
+// embed to work the dev server must admit the tunnel host and be framable BY
+// civitai.com. vite.config.js imports these values into `server.*`, which is
+// DEV-ONLY: it never applies to `vite build`, so the production bundle is
+// untouched.
+//
+// The values are the same ones the page-elements and page-money scaffolds ship
+// in their src/dev-embed.ts (the CLI's dev-tunnel preflight checks for them).
+
+/** The production parent origin that embeds the dev tunnel. */
+export const PROD_PARENT_ORIGIN = 'https://civitai.com';
+
+/**
+ * The host suffix the tunnel serves the dev server on (`dev-<16hex>.civit.ai`).
+ * Vite's DNS-rebinding host check must allow it, or the tunneled request is
+ * 403'd before it reaches the app. A leading-dot entry matches any subdomain.
+ */
+export const DEV_TUNNEL_HOST_SUFFIX = '.civit.ai';
+
+/** Hosts the dev server accepts (Vite `server.allowedHosts`). */
+export const DEV_ALLOWED_HOSTS = ['localhost', DEV_TUNNEL_HOST_SUFFIX];
+
+/**
+ * Response headers that make the dev server iframe-embeddable from civitai.com:
+ *
+ * 1. A `frame-ancestors` CSP scoped to civitai.com (+ self) so civitai.com may
+ *    frame it. Do NOT add `X-Frame-Options` — it would block the cross-origin
+ *    embed whatever the CSP says.
+ * 2. `Access-Control-Allow-Origin: *` so the ES modules load: the host iframes
+ *    the app sandboxed at a null origin, and every module fetch from it is
+ *    CORS-checked. Module fetches are non-credentialed, so `*` is correct.
+ */
+export function devServerSecurityHeaders() {
+  return {
+    'Content-Security-Policy': `frame-ancestors 'self' ${PROD_PARENT_ORIGIN}`,
+    'Access-Control-Allow-Origin': '*',
+  };
+}
