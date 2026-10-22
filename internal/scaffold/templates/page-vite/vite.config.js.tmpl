@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+import { DEV_ALLOWED_HOSTS, devServerSecurityHeaders } from './src/dev-embed.js';
+
 // The platform builds the app with `npm run build` and serves the static
 // output from `dist/` (see block.manifest.json: buildCommand + outputDir).
 //
@@ -9,6 +11,15 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   base: './',
   plugins: [react()],
+  server: {
+    // `civitai app dev-tunnel` serves this dev server as a `dev-<hex>.civit.ai`
+    // host that civitai.com iframes. allowedHosts admits that host (Vite would
+    // otherwise 403 it) and the headers let civitai.com frame the app and load
+    // its modules. DEV-ONLY: `server.*` never applies to `vite build`.
+    // Values: src/dev-embed.js.
+    allowedHosts: DEV_ALLOWED_HOSTS,
+    headers: devServerSecurityHeaders(),
+  },
   build: {
     outDir: 'dist',
   },

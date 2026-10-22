@@ -10,8 +10,12 @@ import (
 )
 
 // devEmbedTemplates are the templates whose dev server `civitai app dev-tunnel`
-// must be able to embed: both SDK templates, page-elements being the default.
-// Every guard in this file and in dev_embed_contract_test.go runs over each.
+// must be able to embed AND that ship the SDK-side wiring (.env.development
+// parent origins, dev:tunnel + tunnel HMR, a vitest suite): both SDK templates,
+// page-elements being the default. Every guard in this file and the env guard in
+// dev_embed_contract_test.go runs over each. The dev-server half (allowedHosts +
+// headers) is guarded over EVERY Vite template, page-vite included, by
+// dev_embed_vite_templates_test.go and the header preflight seam test.
 var devEmbedTemplates = []Template{PageMoney, PageElements}
 
 // devEmbedTestPath is where each template's vitest suite for src/dev-embed.ts
