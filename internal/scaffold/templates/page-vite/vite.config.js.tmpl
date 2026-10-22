@@ -1,26 +1,36 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
-import { DEV_ALLOWED_HOSTS, devServerSecurityHeaders } from './src/dev-embed.js';
+import { DEV_ALLOWED_HOSTS, devServerSecurityHeaders, isDevTunnel } from './src/dev-embed.js';
 
 // The platform builds the app with `npm run build` and serves the static
 // output from `dist/` (see block.manifest.json: buildCommand + outputDir).
 //
 // base: './' makes all asset URLs relative so the bundle works regardless of
 // the path the host mounts it at.
-export default defineConfig({
-  base: './',
-  plugins: [react()],
-  server: {
-    // `civitai app dev-tunnel` serves this dev server as a `dev-<hex>.civit.ai`
-    // host that civitai.com iframes. allowedHosts admits that host (Vite would
-    // otherwise 403 it) and the headers let civitai.com frame the app and load
-    // its modules. DEV-ONLY: `server.*` never applies to `vite build`.
-    // Values: src/dev-embed.js.
-    allowedHosts: DEV_ALLOWED_HOSTS,
-    headers: devServerSecurityHeaders(),
-  },
-  build: {
-    outDir: 'dist',
-  },
+export default defineConfig(({ mode }) => {
+  // `npm run dev:tunnel` sets CIVITAI_DEV_TUNNEL_HMR=1; isDevTunnel
+  // (src/dev-embed.js) reads it. loadEnv with an empty prefix also sees a value
+  // exported in the shell.
+  const env = loadEnv(mode, process.cwd(), '');
+  const devTunnel = isDevTunnel(env);
+
+  return {
+    base: './',
+    plugins: [react()],
+    server: {
+      // `civitai app dev-tunnel` serves this dev server as a `dev-<hex>.civit.ai`
+      // host that civitai.com iframes. allowedHosts admits that host (Vite would
+      // otherwise 403 it). In a dev-tunnel session the embed headers let
+      // civitai.com frame the app and load its modules; a plain `npm run dev`
+      // does not send them, so no other page in the browser can read this dev
+      // server's source. DEV-ONLY: `server.*` never applies to `vite build`.
+      // Values: src/dev-embed.js.
+      allowedHosts: DEV_ALLOWED_HOSTS,
+      ...(devTunnel ? { headers: devServerSecurityHeaders() } : {}),
+    },
+    build: {
+      outDir: 'dist',
+    },
+  };
 });

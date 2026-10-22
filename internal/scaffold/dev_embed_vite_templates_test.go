@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -110,8 +111,40 @@ var (
 	// `export const DEV_ALLOWED_HOSTS = [...]` (JS).
 	reAllowedHosts   = regexp.MustCompile(`DEV_ALLOWED_HOSTS(?:\s*:\s*[^=]+)?\s*=\s*\[([^\]]*)\]`)
 	reDevEmbedImport = regexp.MustCompile(
-		`(?m)^import\s*\{\s*DEV_ALLOWED_HOSTS,\s*devServerSecurityHeaders\s*\}\s*from\s*'\./src/dev-embed\.js';`)
+		`(?m)^import\s*\{\s*DEV_ALLOWED_HOSTS,\s*devServerSecurityHeaders,\s*isDevTunnel\s*\}\s*from\s*'\./src/dev-embed\.js';`)
+	// The ONE env flag that marks a dev-tunnel session: `npm run dev:tunnel` sets
+	// it, and so does the App Assistant sandbox's `CIVITAI_DEV_TUNNEL_HMR=1 npm run
+	// dev`. Named for its first use (HMR over the tunnel).
+	reDevTunnelEnv = regexp.MustCompile(`DEV_TUNNEL_ENV\s*=\s*'([^']+)'`)
+	// The predicate's whole body, so '1' and 'true' both count and nothing else does.
+	reIsDevTunnel = regexp.MustCompile(
+		`(?s)export function isDevTunnel\(env[^)]*\)[^{]*\{\s*const v = env\[DEV_TUNNEL_ENV\];\s*return v === '1' \|\| v === 'true';\s*\}`)
+	reLineComment = regexp.MustCompile(`(?m)^\s*//.*$`)
 )
+
+// topLevel returns the parts of an object-literal body that sit at brace depth
+// 0, with whole-line `//` comments removed — so a key nested inside `proxy: {…}`
+// or inside a conditional spread `...(x ? { headers: … } : {})` is not seen as
+// one of the object's own keys.
+func topLevel(body string) string {
+	body = reLineComment.ReplaceAllString(body, "")
+	var b strings.Builder
+	depth := 0
+	for _, r := range body {
+		switch r {
+		case '{':
+			depth++
+			continue
+		case '}':
+			depth--
+			continue
+		}
+		if depth == 0 {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
 
 // extractAllowedHosts reads DEV_ALLOWED_HOSTS from a rendered dev-embed module,
 // resolving the DEV_TUNNEL_HOST_SUFFIX identifier it references. Any other
@@ -139,8 +172,11 @@ func extractAllowedHosts(t *testing.T, src, hostSuffix string) []string {
 }
 
 // TestEveryViteTemplateServesTheDevTunnel: every Vite template's dev server
-// admits the `.civit.ai` tunnel host and sends the same framing/CORS headers,
-// and those values are page-elements' (the default template's) exactly.
+// admits the `.civit.ai` tunnel host and sends the same framing/CORS headers —
+// only during a dev-tunnel session — and those values are page-elements' (the
+// default template's) exactly. The CI template jobs run the same contract
+// against each REAL dev server (scripts/ci/dev-tunnel-embed-probe.sh); this
+// test reads the rendered text, so it covers every Vite template without npm.
 func TestEveryViteTemplateServesTheDevTunnel(t *testing.T) {
 	templates := renderViteTemplates(t)
 
@@ -179,24 +215,61 @@ func TestEveryViteTemplateServesTheDevTunnel(t *testing.T) {
 
 			// 1. The config imports the shared values from the dev-embed module…
 			if !reDevEmbedImport.MatchString(cfg) {
-				t.Errorf("%s does not import { DEV_ALLOWED_HOSTS, devServerSecurityHeaders } from './src/dev-embed.js'", v.config)
+				t.Errorf("%s does not import { DEV_ALLOWED_HOSTS, devServerSecurityHeaders, isDevTunnel } from './src/dev-embed.js'", v.config)
 			}
 			// 2. …and wires them INTO `server` (dev-only). A server block that
-			//    exists but omits them is the 403 this guard exists for.
+			//    exists but omits allowedHosts is the 403 page-vite once shipped.
 			srv := serverBlock(cfg)
 			if srv == "" {
 				t.Fatalf("%s has no `server: { … }` block — Vite will 403 the dev-tunnel host `dev-<hex>.civit.ai`:\n%s", v.config, cfg)
 			}
+			// 3. The embed headers are sent ONLY in a dev-tunnel session. Sent on a
+			//    plain `npm run dev`, `Access-Control-Allow-Origin: *` lets any page
+			//    in the browser read the local dev server's source. The session
+			//    flag is read through loadEnv(…, '') so a value exported in the
+			//    shell (the App Assistant sandbox) counts as well as one in a script.
+			for _, re := range []string{
+				`(?m)^\s*const env = loadEnv\(mode, process\.cwd\(\), ''\);`,
+				`(?m)^\s*const devTunnel = isDevTunnel\(env\);`,
+			} {
+				if !regexp.MustCompile(re).MatchString(cfg) {
+					t.Errorf("%s does not match %s", v.config, re)
+				}
+			}
 			for _, re := range []string{
 				`(?m)^\s*allowedHosts: DEV_ALLOWED_HOSTS,`,
-				`(?m)^\s*headers: devServerSecurityHeaders\(\),`,
+				`(?m)^\s*\.\.\.\(devTunnel \? \{ headers: devServerSecurityHeaders\(\) \} : \{\}\),`,
 			} {
 				if !regexp.MustCompile(re).MatchString(srv) {
 					t.Errorf("%s `server` block does not match %s:\n%s", v.config, re, srv)
 				}
 			}
+			if regexp.MustCompile(`(?m)^\s*headers\s*:`).MatchString(topLevel(srv)) {
+				t.Errorf("%s sets `server.headers` UNCONDITIONALLY — the embed headers must be sent only when isDevTunnel(env):\n%s", v.config, srv)
+			}
+			// 4. The session flag: one name, one predicate, and a dev:tunnel script
+			//    that sets it while plain `dev` does not.
+			embed := v.read(t, v.devEmbed)
+			if m := reDevTunnelEnv.FindStringSubmatch(embed); m == nil || m[1] != "CIVITAI_DEV_TUNNEL_HMR" {
+				t.Errorf("%s DEV_TUNNEL_ENV = %v, want 'CIVITAI_DEV_TUNNEL_HMR' (the App Assistant sandbox sets exactly that name)", v.devEmbed, m)
+			}
+			if !reIsDevTunnel.MatchString(embed) {
+				t.Errorf("%s has no isDevTunnel(env) of the shared shape (env[DEV_TUNNEL_ENV] is '1' or 'true')", v.devEmbed)
+			}
+			var pkg struct {
+				Scripts map[string]string `json:"scripts"`
+			}
+			if err := json.Unmarshal([]byte(v.read(t, "package.json")), &pkg); err != nil {
+				t.Fatalf("parse package.json: %v", err)
+			}
+			if !strings.Contains(pkg.Scripts["dev:tunnel"], "CIVITAI_DEV_TUNNEL_HMR=1 ") {
+				t.Errorf("package.json dev:tunnel = %q, want it to set CIVITAI_DEV_TUNNEL_HMR=1", pkg.Scripts["dev:tunnel"])
+			}
+			if strings.Contains(pkg.Scripts["dev"], "CIVITAI_DEV_TUNNEL_HMR") {
+				t.Errorf("package.json dev = %q must NOT set CIVITAI_DEV_TUNNEL_HMR", pkg.Scripts["dev"])
+			}
 
-			// 3. The module behind those names carries page-elements' values.
+			// 5. The module behind those names carries page-elements' values.
 			src := v.read(t, v.devEmbed)
 			got := extractDevEmbedConstants(t, src)
 			if got != refConsts {

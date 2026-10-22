@@ -6,6 +6,7 @@
   "scripts": {
     "postinstall": "node -e \"console.log('\\n✓ Installed. Next: npm run dev   (local preview)\\n  When ready: civitai app submit (see README)')\"",
     "dev": "vite",
+    "dev:tunnel": "CIVITAI_DEV_TUNNEL_HMR=1 vite --host localhost --port 5186 --strictPort",
     "build": "vite build",
     "preview": "vite preview"
   },

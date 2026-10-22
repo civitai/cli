@@ -733,7 +733,9 @@ opaque `null` origin, so a dev server that is missing
 `allowedHosts`, or sending a framing header that excludes `civitai.com` loads as
 a **blank iframe with no error anywhere**. The findings are **warnings, never
 fatal** — the check reads your config statically and can be wrong — and apps
-scaffolded by `civitai app create` already satisfy all of it.
+scaffolded by `civitai app create` satisfy all of it when served with
+`npm run dev:tunnel`. They send the two headers only in that dev-tunnel session,
+so a plain `npm run dev` gets the CORS and framing warnings.
 
 **What the tunnel declares.** The command reads `scopes` and `auth` from the
 `block.manifest.json` it is standing in and sends them with the mint, printing

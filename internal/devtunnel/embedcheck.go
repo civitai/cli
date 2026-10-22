@@ -102,12 +102,23 @@ type Finding struct {
 	Fix      []string
 }
 
+// devTunnelEnvVar mirrors DEV_TUNNEL_ENV in the scaffolds' src/dev-embed.{ts,js}:
+// the flag `npm run dev:tunnel` sets, which turns the embed headers on.
+const devTunnelEnvVar = "CIVITAI_DEV_TUNNEL_HMR"
+
 // viteConfigFix is the remediation block for a detected Vite dev server. Keep it
 // in lockstep with the scaffolds' src/dev-embed.{ts,js} + vite.config.{ts,js} —
-// this is the copy an author with an OLDER app pastes to catch up.
+// the snippet is the copy an author with an OLDER app pastes to catch up. A
+// current scaffold sends the headers only in a dev-tunnel session, so on one of
+// those a plain `npm run dev` produces exactly these findings; the fix names
+// `npm run dev:tunnel` first for that reason.
 func viteConfigFix() []string {
 	return []string{
-		"Fix — in vite.config.ts (dev-only; `server.*` never affects `vite build`):",
+		"Fix — an app scaffolded by `civitai app init` sends these headers only in a",
+		"dev-tunnel session: serve it with `npm run dev:tunnel` (it sets " + devTunnelEnvVar + "=1),",
+		"not `npm run dev`.",
+		"",
+		"Otherwise, in vite.config.ts (dev-only; `server.*` never affects `vite build`):",
 		"",
 		"    server: {",
 		"      allowedHosts: ['localhost', '" + tunnelHostSuffix + "'],",

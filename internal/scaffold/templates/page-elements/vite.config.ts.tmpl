@@ -7,7 +7,7 @@ import { defineConfig, loadEnv } from 'vite';
 // a dev-loop gate, NOT a substitute for `civitai app validate`.
 import { blockManifestPlugin } from '@civitai/app-sdk/vite';
 
-import { DEV_ALLOWED_HOSTS, devServerSecurityHeaders } from './src/dev-embed.js';
+import { DEV_ALLOWED_HOSTS, devServerSecurityHeaders, isDevTunnel } from './src/dev-embed.js';
 
 // Block apps are pure SPAs — the host page hands the iframe everything it
 // needs via BLOCK_INIT. No BFF, no server-side rendering, and no UI framework:
@@ -17,15 +17,19 @@ import { DEV_ALLOWED_HOSTS, devServerSecurityHeaders } from './src/dev-embed.js'
 // the manifest).
 export default defineConfig(({ mode }) => {
   // `npm run dev:tunnel` (what `civitai app dev-tunnel` serves) sets
-  // CIVITAI_DEV_TUNNEL_HMR=1. Only then does Vite's injected `@vite/client` open
-  // its live-reload socket over the PUBLIC tunnel host (`wss://<host>:443`):
-  // the browser inside the `dev-<hex>.civit.ai` iframe cannot reach
-  // `ws://localhost:5186`. `ws.host` is left UNSET so the client takes the
-  // runtime-minted tunnel host from `location.hostname`. Plain `dev` and
-  // `dev:harness` keep Vite's default local socket — forcing wss:443 there would
-  // break local live reload.
+  // CIVITAI_DEV_TUNNEL_HMR=1, and isDevTunnel (src/dev-embed.ts) reads it. Only
+  // in that session does the dev server:
+  //   - send the embed headers (devServerSecurityHeaders) — on a plain `dev`,
+  //     `Access-Control-Allow-Origin: *` would let any page in the browser read
+  //     this dev server's source;
+  //   - open Vite's live-reload socket over the PUBLIC tunnel host
+  //     (`wss://<host>:443`): the browser inside the `dev-<hex>.civit.ai` iframe
+  //     cannot reach `ws://localhost:5186`. `ws.host` is left UNSET so the client
+  //     takes the runtime-minted tunnel host from `location.hostname`. Plain
+  //     `dev` and `dev:harness` keep Vite's default local socket — forcing
+  //     wss:443 there would break local live reload.
   const env = loadEnv(mode, process.cwd(), '');
-  const tunnelHmr = env.CIVITAI_DEV_TUNNEL_HMR === '1' || env.CIVITAI_DEV_TUNNEL_HMR === 'true';
+  const devTunnel = isDevTunnel(env);
 
   return {
     plugins: [blockManifestPlugin()],
@@ -45,11 +49,12 @@ export default defineConfig(({ mode }) => {
       //      sandboxed at a null origin and every ES module fetch is CORS-checked;
       //   3. a `frame-ancestors 'self' https://civitai.com` CSP and no
       //      X-Frame-Options, so civitai.com may frame it.
+      // 2 and 3 are sent only in a dev-tunnel session (see `devTunnel` above).
       // The parent-origin allowlist the bridge checks is in .env.development.
       // src/dev-embed.ts holds the values — the same file page-money ships.
       allowedHosts: DEV_ALLOWED_HOSTS,
-      headers: devServerSecurityHeaders(),
-      ...(tunnelHmr ? { ws: { clientPort: 443, protocol: 'wss' } } : {}),
+      ...(devTunnel ? { headers: devServerSecurityHeaders() } : {}),
+      ...(devTunnel ? { ws: { clientPort: 443, protocol: 'wss' } } : {}),
     },
     build: {
       target: 'es2022',

@@ -8,6 +8,8 @@ import {
   DEV_TUNNEL_HOST_SUFFIX,
   devServerSecurityHeaders,
   devAllowedParentOrigins,
+  DEV_TUNNEL_ENV,
+  isDevTunnel,
 } from './dev-embed.js';
 
 describe('dev-tunnel embeddability', () => {
@@ -63,5 +65,24 @@ describe('dev-tunnel embeddability', () => {
   it('handles an empty/undefined env value', () => {
     expect(devAllowedParentOrigins(undefined)).toEqual([PROD_PARENT_ORIGIN]);
     expect(devAllowedParentOrigins('')).toEqual([PROD_PARENT_ORIGIN]);
+  });
+});
+
+describe('dev-tunnel session gate', () => {
+  it('reads the flag the dev:tunnel script and the App Assistant sandbox set', () => {
+    expect(DEV_TUNNEL_ENV).toBe('CIVITAI_DEV_TUNNEL_HMR');
+  });
+
+  it("is on for '1' and 'true'", () => {
+    expect(isDevTunnel({ CIVITAI_DEV_TUNNEL_HMR: '1' })).toBe(true);
+    expect(isDevTunnel({ CIVITAI_DEV_TUNNEL_HMR: 'true' })).toBe(true);
+  });
+
+  it('is off when unset, empty or anything else — plain `npm run dev` sends no embed headers', () => {
+    expect(isDevTunnel({})).toBe(false);
+    expect(isDevTunnel({ CIVITAI_DEV_TUNNEL_HMR: '' })).toBe(false);
+    expect(isDevTunnel({ CIVITAI_DEV_TUNNEL_HMR: '0' })).toBe(false);
+    expect(isDevTunnel({ CIVITAI_DEV_TUNNEL_HMR: 'false' })).toBe(false);
+    expect(isDevTunnel({ SOME_OTHER_FLAG: '1' })).toBe(false);
   });
 });
