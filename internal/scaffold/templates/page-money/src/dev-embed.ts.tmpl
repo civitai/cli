@@ -31,8 +31,27 @@ export const DEV_TUNNEL_HOST_SUFFIX = '.civit.ai';
 export const DEV_ALLOWED_HOSTS: string[] = ['localhost', DEV_TUNNEL_HOST_SUFFIX];
 
 /**
+ * The env flag that marks a dev-tunnel session. `npm run dev:tunnel` sets it,
+ * and so does anything else that serves this dev server through the tunnel
+ * (e.g. `CIVITAI_DEV_TUNNEL_HMR=1 npm run dev`). Named for its first use —
+ * routing HMR over the tunnel — it also gates devServerSecurityHeaders().
+ * vite.config reads it with loadEnv(mode, cwd, ''), so a value exported in the
+ * shell counts as well as one set by an npm script.
+ */
+export const DEV_TUNNEL_ENV = 'CIVITAI_DEV_TUNNEL_HMR';
+
+/** True in a dev-tunnel session: DEV_TUNNEL_ENV is '1' or 'true'. */
+export function isDevTunnel(env: Record<string, string | undefined>): boolean {
+  const v = env[DEV_TUNNEL_ENV];
+  return v === '1' || v === 'true';
+}
+
+/**
  * Response headers that make the dev server iframe-embeddable from the prod
- * parent. Two headers, both DEV-ONLY:
+ * parent. vite.config sends them ONLY in a dev-tunnel session (isDevTunnel):
+ * on a plain `npm run dev`, `Access-Control-Allow-Origin: *` would let any page
+ * open in the same browser read this dev server's source. Two headers, both
+ * DEV-ONLY:
  *
  * 1. `frame-ancestors` CSP scoped to civitai.com (+ self for the plain local
  *    harness) so civitai.com may EMBED the dev server. Critically we DO NOT set
