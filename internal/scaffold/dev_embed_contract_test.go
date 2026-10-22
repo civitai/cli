@@ -132,22 +132,18 @@ func scaffoldHeaderServer(t *testing.T, c devEmbedConstants, emitHeaders bool) (
 // accepts. It reports a control PAIR — with the headers the preflight must be
 // silent, without them it must complain — so a preflight that degenerated into
 // "always returns nil" fails here instead of passing as a clean bill of health.
+//
+// It runs over EVERY template that renders a Vite config (renderViteTemplates,
+// derived from AllTemplates), not the SDK-only devEmbedTemplates list: page-vite
+// has no SDK but its dev server is tunneled all the same.
 func TestScaffoldHeadersSatisfyDevTunnelPreflight(t *testing.T) {
-	for _, tmpl := range devEmbedTemplates {
-		t.Run(string(tmpl), func(t *testing.T) { scaffoldHeadersSatisfyPreflight(t, tmpl) })
+	for _, v := range renderViteTemplates(t) {
+		t.Run(string(v.tmpl), func(t *testing.T) { scaffoldHeadersSatisfyPreflight(t, v) })
 	}
 }
 
-func scaffoldHeadersSatisfyPreflight(t *testing.T, tmpl Template) {
-	dir := t.TempDir()
-	if _, err := Render(tmpl, dir, Data{Slug: "my-block", Name: "My Block"}); err != nil {
-		t.Fatalf("render %s: %v", tmpl, err)
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, "src", "dev-embed.ts"))
-	if err != nil {
-		t.Fatalf("read dev-embed.ts: %v", err)
-	}
-	c := extractDevEmbedConstants(t, string(raw))
+func scaffoldHeadersSatisfyPreflight(t *testing.T, v viteTemplate) {
+	c := extractDevEmbedConstants(t, v.read(t, v.devEmbed))
 
 	t.Run("positive: scaffold headers pass the preflight", func(t *testing.T) {
 		host, port := scaffoldHeaderServer(t, c, true)
@@ -158,8 +154,8 @@ func scaffoldHeadersSatisfyPreflight(t *testing.T, tmpl Template) {
 			}
 			t.Fatalf("the scaffold's own dev-server config must satisfy the CLI preflight, but it reported:\n  %s\n"+
 				"either the template drifted or the preflight no longer recognises it — reconcile "+
-				"internal/scaffold/templates/page-money/src/dev-embed.ts with internal/devtunnel/embedcheck.go",
-				strings.Join(kinds, "\n  "))
+				"the template's %s with internal/devtunnel/embedcheck.go",
+				strings.Join(kinds, "\n  "), v.devEmbed)
 		}
 	})
 
