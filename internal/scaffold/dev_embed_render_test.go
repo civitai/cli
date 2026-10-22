@@ -61,8 +61,9 @@ func TestPageElementsSharesPageMoneyDevEmbed(t *testing.T) {
 		cfg := read("templates/" + string(tmpl) + "/vite.config.ts.tmpl")
 		for _, re := range []string{
 			`(?m)^\s*allowedHosts: DEV_ALLOWED_HOSTS,`,
-			`(?m)^\s*headers: devServerSecurityHeaders\(\),`,
-			`\.\.\.\(tunnelHmr \? \{ ws: \{ clientPort: 443, protocol: 'wss' \} \} : \{\}\),`,
+			`(?m)^\s*const devTunnel = isDevTunnel\(env\);`,
+			`\.\.\.\(devTunnel \? \{ headers: devServerSecurityHeaders\(\) \} : \{\}\),`,
+			`\.\.\.\(devTunnel \? \{ ws: \{ clientPort: 443, protocol: 'wss' \} \} : \{\}\),`,
 			`(?m)^\s*port: 5186,`,
 			`(?m)^\s*strictPort: true,`,
 		} {
@@ -111,7 +112,7 @@ func TestSDKTemplatesEmitEmbeddableDevServer(t *testing.T) {
 			// 2. vite.config wires the security headers + allowedHosts into the dev server.
 			viteCfg := read("vite.config.ts")
 			if !strings.Contains(viteCfg, "devServerSecurityHeaders()") {
-				t.Errorf("vite.config.ts should wire devServerSecurityHeaders() into server.headers")
+				t.Errorf("vite.config.ts should wire devServerSecurityHeaders() into server.headers (dev-tunnel sessions only)")
 			}
 			if !strings.Contains(viteCfg, "DEV_ALLOWED_HOSTS") {
 				t.Errorf("vite.config.ts should set server.allowedHosts from DEV_ALLOWED_HOSTS")
@@ -182,9 +183,14 @@ func TestSDKTemplatesRouteTunnelHmrOverTunnel(t *testing.T) {
 			//    emits clientPort:443 + wss on `server.ws` — WITHOUT hardcoding a `ws.host`
 			//    (the tunnel host is minted at runtime; the client must fall back to
 			//    location.hostname).
+			//    The flag is read in ONE place, src/dev-embed.ts's isDevTunnel (it
+			//    gates the embed headers too), and vite.config calls it.
 			viteCfg := read("vite.config.ts")
-			if !strings.Contains(viteCfg, "CIVITAI_DEV_TUNNEL_HMR") {
-				t.Errorf("vite.config.ts should gate tunnel HMR on CIVITAI_DEV_TUNNEL_HMR:\n%s", viteCfg)
+			if devEmbed := read("src/dev-embed.ts"); !strings.Contains(devEmbed, "DEV_TUNNEL_ENV = 'CIVITAI_DEV_TUNNEL_HMR'") {
+				t.Errorf("src/dev-embed.ts should name CIVITAI_DEV_TUNNEL_HMR as DEV_TUNNEL_ENV:\n%s", devEmbed)
+			}
+			if !strings.Contains(viteCfg, "isDevTunnel(env)") {
+				t.Errorf("vite.config.ts should gate tunnel HMR on isDevTunnel(env):\n%s", viteCfg)
 			}
 			if !strings.Contains(viteCfg, "clientPort: 443") {
 				t.Errorf("vite.config.ts should set ws.clientPort: 443 for the tunnel")
