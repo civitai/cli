@@ -23,6 +23,32 @@ on:
 permissions:
   contents: read
 
+# One group per ref, for pull requests AND pushes; added for runner savings
+# (same pattern as civitai/civitai#6718 and #6728). On a PR `github.ref` is
+# `refs/pull/N/merge`, so a new push to the branch cancels the in-flight run.
+# On a push to `main` it is `refs/heads/main`, so a newer commit on `main`
+# cancels the older one's run. Nothing downstream consumes a per-commit `main`
+# verdict (no workflow_run consumer, release.yml runs off tags), and the newest
+# run checks a tree containing every older commit; what is given up is a verdict
+# for intermediate commits, which show as `cancelled`. To pin a break to one,
+# push a branch at it and dispatch this workflow there. One side effect: the Go
+# cache save (build-test, push to main only) is skipped for a cancelled run and
+# happens in the run that superseded it.
+#
+# A dispatch gets its own `dispatch-` group per ref, so it neither cancels nor
+# is cancelled by a push or pull_request run (a re-dispatch on the same ref
+# cancels the older dispatch).
+#
+# ⚠ DOCS-ONLY CHANGES ARE NOT SKIPPED HERE, deliberately. Six of this file's
+# jobs are required contexts, so a workflow-level `paths:` filter would leave a
+# docs-only PR waiting forever on checks that never start; and there is no safe
+# "docs" set to skip at job level either: Go tests read README.md, AGENTS.md,
+# CLAUDE.md and claudedocs/** (grep the *_test.go files), and pins-vs-published
+# may carry no `if:` at all.
+concurrency:
+  group: ci-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  cancel-in-progress: true
+
 # ─────────────────────────────────────────────────────────────────────────────
 # VACUOUS GREEN — the shared rationale every positive control below points at.
 #
