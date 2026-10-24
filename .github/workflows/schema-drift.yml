@@ -48,6 +48,16 @@ on:
       - '.github/workflows/schema-drift.yml'
   workflow_dispatch:
 
+# One group per ref (same pattern as civitai/civitai#6718 / #6728, for runner
+# savings): a newer push to a PR, or to `main`, cancels the in-flight run for
+# the older commit. The question is about the published canonical, not the
+# commit, so only the newest run's answer matters. A dispatch gets its own
+# `dispatch-` group so it neither cancels nor is cancelled by a push run.
+# Not a required status check, and nothing consumes its per-commit verdict.
+concurrency:
+  group: schema-drift-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.ref) || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   schema-drift:
     runs-on: ubuntu-latest

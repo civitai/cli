@@ -18,10 +18,65 @@ on:
   # It cannot be back-applied — a dispatchable workflow must already exist on
   # the default branch — so it is only useful if it lands BEFORE the next
   # incident. Do not remove it because it looks unused.
+  #
+  # `only` runs one job instead of the whole fan-out, for a dispatch that cares
+  # about a single check (the job queue is shared org-wide, so a full run to
+  # re-check one context costs everyone). Every job's `if` reads it; on push and
+  # pull_request `inputs.only` is empty and every job runs exactly as before.
+  #   * `pins-vs-published` is the EXCEPTION: it has no `if:` and runs on every
+  #     dispatch, whatever `only` says. workflow_pins_gate_test.go forbids any
+  #     job-level `if:` on it (a skipped required job reports satisfied), and that
+  #     guard is worth more than the one cheap job it would save.
+  #   * `dogfood-browser` also runs its classifier, `dogfood-browser-changes`,
+  #     which always answers run=true on a dispatch.
   workflow_dispatch:
+    inputs:
+      only:
+        description: >-
+          Run only this job. all = every job (default). pins-vs-published runs on
+          every dispatch regardless (see the comment in ci.yml).
+        type: choice
+        default: all
+        options:
+          - all
+          - build-test
+          - dogfood-browser
+          - lint
+          - pins-vs-published
+          - ready-ack-runtime
+          - template-page-vite
+          - template-page-elements
+          - template-page-money
+          - scaffold-currency
 
 permissions:
   contents: read
+
+# One group per ref, for pull requests AND pushes; added for runner savings
+# (same pattern as civitai/civitai#6718 and #6728). On a PR `github.ref` is
+# `refs/pull/N/merge`, so a new push to the branch cancels the in-flight run.
+# On a push to `main` it is `refs/heads/main`, so a newer commit on `main`
+# cancels the older one's run. Nothing downstream consumes a per-commit `main`
+# verdict (no workflow_run consumer, release.yml runs off tags), and the newest
+# run checks a tree containing every older commit; what is given up is a verdict
+# for intermediate commits, which show as `cancelled`. To pin a break to one,
+# push a branch at it and dispatch this workflow there. One side effect: the Go
+# cache save (build-test, push to main only) is skipped for a cancelled run and
+# happens in the run that superseded it.
+#
+# A dispatch groups by ref AND `only`, so re-dispatching the same job on the same
+# branch cancels the stale run while different jobs run side by side. The
+# `dispatch-` prefix keeps those groups disjoint from the PR and push ones.
+#
+# ⚠ DOCS-ONLY CHANGES ARE NOT SKIPPED HERE, deliberately. Six of this file's
+# jobs are required contexts, so a workflow-level `paths:` filter would leave a
+# docs-only PR waiting forever on checks that never start; and there is no safe
+# "docs" set to skip at job level either: Go tests read README.md, AGENTS.md,
+# CLAUDE.md and claudedocs/** (grep the *_test.go files), and pins-vs-published
+# may carry no `if:` at all.
+concurrency:
+  group: ci-${{ github.event_name == 'workflow_dispatch' && format('dispatch-{0}-{1}', github.ref, inputs.only) || github.ref }}
+  cancel-in-progress: true
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VACUOUS GREEN — the shared rationale every positive control below points at.
@@ -71,6 +126,8 @@ permissions:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    # `only` selector (see `on.workflow_dispatch`); true on push and pull_request.
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'build-test' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -232,6 +289,8 @@ jobs:
   # in the list.
   dogfood-browser-changes:
     runs-on: ubuntu-latest
+    # Runs for `only: dogfood-browser` too: its consumer needs its outputs.
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'dogfood-browser' }}
     outputs:
       run: ${{ steps.decide.outputs.run }}
       reason: ${{ steps.decide.outputs.reason }}
@@ -283,7 +342,10 @@ jobs:
   dogfood-browser:
     runs-on: ubuntu-latest
     needs: [dogfood-browser-changes]
-    if: ${{ !cancelled() && (needs.dogfood-browser-changes.result != 'success' || needs.dogfood-browser-changes.outputs.run != 'false') }}
+    # The trailing `only` clause is the dispatch selector. It must be explicit
+    # here: with the classifier skipped by `only`, its result is not 'success',
+    # and the fail-open clause alone would run this job anyway.
+    if: ${{ !cancelled() && (needs.dogfood-browser-changes.result != 'success' || needs.dogfood-browser-changes.outputs.run != 'false') && (!inputs.only || inputs.only == 'all' || inputs.only == 'dogfood-browser') }}
     steps:
       - name: why this job is running
         env:
@@ -316,6 +378,8 @@ jobs:
   # misspell + gofmt). Runs on every PR. `make lint` mirrors this locally.
   lint:
     runs-on: ubuntu-latest
+    # `only` selector (see `on.workflow_dispatch`); true on push and pull_request.
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'lint' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -474,6 +538,8 @@ jobs:
   # exit code.
   ready-ack-runtime:
     runs-on: ubuntu-latest
+    # `only` selector (see `on.workflow_dispatch`); true on push and pull_request.
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'ready-ack-runtime' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -546,6 +612,8 @@ jobs:
   # both cases, proving the grep reads the bundle either way.
   template-page-vite:
     runs-on: ubuntu-latest
+    # `only` selector (see `on.workflow_dispatch`); true on push and pull_request.
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'template-page-vite' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -647,6 +715,8 @@ jobs:
   # protection (AGENTS.md item 11: measure, never infer, which jobs gate).
   template-page-elements:
     runs-on: ubuntu-latest
+    # `only` selector (see `on.workflow_dispatch`); true on push and pull_request.
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'template-page-elements' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -723,6 +793,8 @@ jobs:
   # out-of-the-box contract the template promises.
   template-page-money:
     runs-on: ubuntu-latest
+    # `only` selector (see `on.workflow_dispatch`); true on push and pull_request.
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'template-page-money' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -801,6 +873,8 @@ jobs:
   #       offline anti-pattern scan is hermetic and always runs.
   scaffold-currency:
     runs-on: ubuntu-latest
+    # `only` selector (see `on.workflow_dispatch`); true on push and pull_request.
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'scaffold-currency' }}
     steps:
       - uses: actions/checkout@v4
 
