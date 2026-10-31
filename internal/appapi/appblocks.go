@@ -454,6 +454,33 @@ type SubmitResult struct {
 	Slug             string `json:"slug"`
 	Version          string `json:"version"`
 	Status           string `json:"status"`
+	// Listing is the store listing's readiness for the submission just queued
+	// (civitai/civitai#7311). nil when the server sent `null` (it could not read
+	// it; the submit itself still succeeded) or no `listing` key at all (a server
+	// that predates it) — never a zero value, which would read as "not blocked".
+	Listing *SubmitListingReadiness `json:"listing,omitempty"`
+}
+
+// SubmitListingReadiness mirrors the server's SubmitListingReadiness
+// (publish-request.service.ts) returned with a submit.
+type SubmitListingReadiness struct {
+	// ApprovalBlocked is true when a moderator cannot approve this submission
+	// until the listing has an icon and a cover.
+	ApprovalBlocked bool `json:"approvalBlocked"`
+	// Missing names the publish-floor assets the listing lacks ("icon", "cover").
+	Missing []string `json:"missing"`
+	// NextStep is the server's plain-words next step; "" when it sent null.
+	NextStep string `json:"nextStep"`
+	// Problems is every listing problem, blocking and advisory.
+	Problems []SubmitListingProblem `json:"problems"`
+}
+
+// SubmitListingProblem is one entry of SubmitListingReadiness.Problems — the
+// server's computeListingProblems shape.
+type SubmitListingProblem struct {
+	Code     string `json:"code"`
+	Label    string `json:"label"`
+	Severity string `json:"severity"`
 }
 
 // DefaultSubmitPath is the token-authenticated submit-version route.
