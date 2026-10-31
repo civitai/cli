@@ -803,7 +803,11 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 	fmt.Fprintln(out, "\nTrack it:")
 	fmt.Fprintf(out, "  %s                          # review + deploy status\n", ui.Code("civitai app status"))
 	fmt.Fprintf(out, "  %s/apps/my-submissions               # your submissions\n", base)
-	printListingFloorHeadsUp(out)
+	// The server's readiness block above already says what the listing lacks;
+	// the fixed reminder is only for a server that sends no `listing`.
+	if r.Listing == nil {
+		printListingFloorHeadsUp(out)
+	}
 	printMoneyPathNote(out, m)
 	return nil
 }
@@ -811,6 +815,8 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 // printListingFloorHeadsUp is a non-fatal reminder (issue #186 point 4) that a
 // store listing won't publish without an icon + cover, with the exact commands
 // to add them. Kept static (no server call) so it works even pre-first-listing.
+// Printed only when the submit response has no `listing` (an older server);
+// otherwise printSubmitListingReadiness reports the same thing from the server.
 // This submit MINTED the store listing as a draft, so the media is settable NOW —
 // no need to wait for approval.
 //
