@@ -143,7 +143,7 @@ func TestSubmitListingReadinessCannotForgeALine(t *testing.T) {
 		ApprovalBlocked: true,
 		NextStep:        "Add art\x1b[2J\n" + forged,
 		Problems: []appapi.SubmitListingProblem{
-			{Code: "missing-icon\x1b[31m", Label: "Missing icon\r\n" + forged, Severity: "blocking"},
+			{Code: "missing-icon\x1b[31m", Label: "Missing icon\r\n" + forged, Severity: "blocking\x1b[0m"},
 		},
 	}))
 	if strings.Contains(s, "\x1b") {
