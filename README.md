@@ -869,6 +869,14 @@ When an upload fails, `app submit` prints what it sent — the compressed and
 decompressed sizes, the base64 JSON body size, and the largest entries the
 bundle was made of.
 
+When an upload succeeds and the server reports the store listing's readiness,
+`app submit` prints it right under the success line. If a moderator cannot
+approve the submission yet (a first version whose listing lacks an icon or a
+cover), it prints a `⚠ Approval blocked: …` line with the server's next step.
+Any other next step is printed as a plain `Listing: …` note, and any listing
+problems are listed by code and label. An older server that does not report
+readiness gets the same output as before.
+
 Entries are ranked by **compressed** size, because that is what the upload is
 made of — a large text file that deflates to nothing is not what to delete. The
 usual culprit is a directory of screenshots or sample assets that `app submit`

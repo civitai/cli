@@ -798,6 +798,7 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 	}
 	base := strings.TrimRight(baseURL, "/")
 	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Submitted — %s is pending moderator review.", r.PublishRequestID)))
+	printSubmitListingReadiness(out, r.Listing)
 	fmt.Fprintf(out, "\nWhat's next: a moderator reviews it; on approval it builds + deploys to %s (usually a few minutes).\n", ui.URL(fmt.Sprintf("https://%s.civit.ai", r.Slug)))
 	fmt.Fprintln(out, "\nTrack it:")
 	fmt.Fprintf(out, "  %s                          # review + deploy status\n", ui.Code("civitai app status"))
@@ -829,6 +830,49 @@ func printListingFloorHeadsUp(out io.Writer) {
 	fmt.Fprintf(out, "  %s\n", ui.Code("civitai app listing set-icon <file>"))
 	fmt.Fprintf(out, "  %s\n", ui.Code("civitai app listing set-cover <file>"))
 	fmt.Fprintf(out, "  %s   # what's attached vs. required\n", ui.Code("civitai app listing status"))
+}
+
+// printSubmitListingReadiness prints the store listing's readiness the server
+// returned with the submit (civitai/civitai#7311), directly under the success
+// line so it is not lost below the generic follow-up text.
+//
+//   - approvalBlocked with a next step: a WARNING line — a moderator cannot
+//     approve this submission until the author acts, and the submit having
+//     succeeded is exactly when that is easy to miss.
+//   - a next step without approvalBlocked (e.g. no listing row yet): a plain note.
+//   - problems: one `code  label [severity]` line each, in the server's order.
+//
+// nil (an older server, or `listing: null` when the server could not read it)
+// prints nothing, so the output is what it was before the field existed. Every
+// string here is SERVER text, so each goes through safeTermSingle: escape bytes
+// stripped and newlines flattened, so none can forge a line of its own.
+func printSubmitListingReadiness(out io.Writer, l *appapi.SubmitListingReadiness) {
+	if l == nil {
+		return
+	}
+	st := ui.For(out)
+	next := strings.TrimSpace(safeTermSingle(l.NextStep))
+	switch {
+	case l.ApprovalBlocked && next != "":
+		fmt.Fprintln(out, st.Warn("Approval blocked: "+next))
+	case l.ApprovalBlocked:
+		// The server sets nextStep whenever it blocks; this arm only keeps a
+		// blocked verdict from printing nothing if that ever changes.
+		fmt.Fprintln(out, st.Warn("Approval blocked: a moderator cannot approve this until the store listing has an icon and a cover."))
+	case next != "":
+		fmt.Fprintln(out, "Listing: "+next)
+	}
+	if len(l.Problems) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "Listing problems reported by the server:")
+	for _, p := range l.Problems {
+		line := "  " + safeTermSingle(p.Code) + "  " + safeTermSingle(p.Label)
+		if sev := safeTermSingle(p.Severity); sev != "" {
+			line += " [" + sev + "]"
+		}
+		fmt.Fprintln(out, line)
+	}
 }
 
 // manifestNeedsSpend reports whether the manifest declares a Buzz-spend scope

@@ -592,6 +592,11 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"`feedback send` / `feedback status`: every single-line server cell — the report ref, the status word, " +
 			"fixedIn's component and version, the two timestamps — all hostile at once, with a newline and an " +
 			"escape in each, and the line count of both views pinned"},
+	// --- app submit: the store listing's readiness (civitai/civitai#7311) -----
+	"printSubmitListingReadiness": {"TestSubmitListingReadinessCannotForgeALine",
+		"`app submit` success output: the server's listing nextStep and each problem's code, label and " +
+			"severity — the named test sends ESC, CR and a newline-led forged success line in nextStep and a " +
+			"problem, and asserts none reaches the terminal as such"},
 	"printAppMetrics": {"TestTabwriterRenderersCannotBeForged",
 		"the scope and endpoint tokens — kept RAW on purpose (AGENTS.md item 8), which makes the " +
 			"strip the ONLY thing between an uploader-shaped token and the terminal — plus the window " +
