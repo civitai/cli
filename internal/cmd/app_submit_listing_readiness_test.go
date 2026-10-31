@@ -196,3 +196,43 @@ func TestSubmitListingReadinessEndToEndThroughClient(t *testing.T) {
 		}
 	}
 }
+
+// The fixed "needs an icon AND a cover" reminder predates the server's
+// readiness block. When the response carries `listing`, the server's next step
+// and problems already say what the listing lacks, so printing the fixed
+// reminder as well shows two similar messages; it is kept only for a server
+// that sends no `listing`.
+const staticFloorReminder = "your listing needs an icon AND a cover before it can publish"
+
+func TestSubmitWithListingOmitsStaticFloorReminder(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		listing *appapi.SubmitListingReadiness
+	}{
+		{"approval blocked", &appapi.SubmitListingReadiness{
+			ApprovalBlocked: true,
+			Missing:         []string{"icon", "cover"},
+			NextStep:        readinessBlockedStep,
+		}},
+		{"nothing to report", &appapi.SubmitListingReadiness{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := submitOutput(t, readinessResult(tc.listing))
+			if strings.Contains(s, staticFloorReminder) {
+				t.Errorf("a response with `listing` must not also print the fixed reminder %q, got:\n%s", staticFloorReminder, s)
+			}
+			if !strings.Contains(s, "pr_7") {
+				t.Errorf("success output lost the publish request id, got:\n%s", s)
+			}
+		})
+	}
+}
+
+// Positive control for the test above: the same harness prints the reminder
+// when the server sends no `listing`.
+func TestSubmitWithoutListingKeepsStaticFloorReminder(t *testing.T) {
+	s := submitOutput(t, readinessResult(nil))
+	if !strings.Contains(s, staticFloorReminder) {
+		t.Errorf("a response without `listing` must keep the fixed reminder %q, got:\n%s", staticFloorReminder, s)
+	}
+}
