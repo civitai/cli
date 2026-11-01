@@ -109,6 +109,15 @@ func ParseTemplate(s string) (Template, error) {
 	}
 }
 
+// templateFuncs are the constants every template may call. Each returns the
+// same value on every render; anything that varies per app belongs on Data.
+var templateFuncs = template.FuncMap{
+	// The Civitai host origins, comma separated: a VITE_BLOCK_ALLOWED_PARENT_ORIGINS value.
+	"civitaiParentOriginsCSV": blockproto.CivitaiParentOriginsCSV,
+	// The same origins as JavaScript array elements, one per line.
+	"civitaiParentOriginsJS": blockproto.CivitaiParentOriginsJS,
+}
+
 // Data is the values passed to every template.
 type Data struct {
 	// Slug is the block slug (blockId): lowercase, hyphen-separated.
@@ -194,8 +203,8 @@ func RenderKeeping(tmpl Template, destDir string, data Data, keep [][]string) ([
 		return nil, err
 	}
 
-	// 🔴 THE TEMPLATES SEE `Data` AND NOTHING ELSE, and that is still the whole
-	// story. There used to be an unexported `renderData` WRAPPER carrying a
+	// 🔴 THE TEMPLATES SEE `Data` AND NOTHING ELSE that varies (they may also call
+	// the constant `templateFuncs`, see the end of this note). There used to be an unexported `renderData` WRAPPER carrying a
 	// derived `HookIndex` — a 36-row markdown table of every
 	// `@civitai/blocks-react` hook, generated from a Go table (`hooks.go`) and
 	// rendered into the page-money README. It was retired: the hosted developer
@@ -216,6 +225,11 @@ func RenderKeeping(tmpl Template, destDir string, data Data, keep [][]string) ([
 	// call site is what makes it ONE rule — every entry point, including the tests
 	// that render a template directly, gets a schema-valid tagline without
 	// knowing it has to ask for one.
+	//
+	// The templates also call `templateFuncs`, which are CONSTANTS, not data:
+	// the Civitai host origins, so that a dev server's frame-ancestors CSP and
+	// the app's postMessage allowlist are rendered from ONE list
+	// (blockproto.CivitaiParentOrigins) instead of each template spelling it.
 	view := data
 	if strings.TrimSpace(view.Tagline) == "" {
 		view.Tagline = TaglineFromName(view.Name)
@@ -239,7 +253,7 @@ func RenderKeeping(tmpl Template, destDir string, data Data, keep [][]string) ([
 		if err != nil {
 			return err
 		}
-		t, err := template.New(rel).Option("missingkey=error").Parse(string(raw))
+		t, err := template.New(rel).Option("missingkey=error").Funcs(templateFuncs).Parse(string(raw))
 		if err != nil {
 			return fmt.Errorf("parse template %s: %w", rel, err)
 		}

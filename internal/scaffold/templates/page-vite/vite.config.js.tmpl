@@ -20,9 +20,9 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       // `civitai app dev-tunnel` serves this dev server as a `dev-<hex>.civit.ai`
-      // host that civitai.com iframes. allowedHosts admits that host (Vite would
-      // otherwise 403 it). In a dev-tunnel session the embed headers let
-      // civitai.com frame the app and load its modules; a plain `npm run dev`
+      // host that a Civitai domain iframes. allowedHosts admits that host (Vite
+      // would otherwise 403 it). In a dev-tunnel session the embed headers let
+      // every Civitai domain frame the app and load its modules; a plain `npm run dev`
       // does not send them, so no other page in the browser can read this dev
       // server's source. DEV-ONLY: `server.*` never applies to `vite build`.
       // Values: src/dev-embed.js.

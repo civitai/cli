@@ -3,21 +3,20 @@
 import { describe, it, expect } from 'vitest';
 
 import {
-  PROD_PARENT_ORIGIN,
   DEV_ALLOWED_HOSTS,
   DEV_TUNNEL_HOST_SUFFIX,
   devServerSecurityHeaders,
-  devAllowedParentOrigins,
   DEV_TUNNEL_ENV,
   isDevTunnel,
 } from './dev-embed.js';
 
 describe('dev-tunnel embeddability', () => {
-  it('emits a frame-ancestors CSP that admits civitai.com', () => {
-    const headers = devServerSecurityHeaders();
-    const csp = headers['Content-Security-Policy'];
-    expect(csp).toContain('frame-ancestors');
-    expect(csp).toContain(PROD_PARENT_ORIGIN); // https://civitai.com
+  it('emits a frame-ancestors CSP that admits every Civitai domain', () => {
+    // Every Civitai domain serves App previews. Spelled out rather than built
+    // from CIVITAI_PARENT_ORIGINS, so the test cannot agree with a wrong list.
+    expect(devServerSecurityHeaders()['Content-Security-Policy']).toBe(
+      "frame-ancestors 'self' https://civitai.com https://civitai.red https://civitai.green",
+    );
   });
 
   it('sets Access-Control-Allow-Origin:* so the null-origin sandboxed iframe can load ES modules', () => {
@@ -47,24 +46,6 @@ describe('dev-tunnel embeddability', () => {
   it('allows the tunnel host suffix in the dev server host check', () => {
     expect(DEV_ALLOWED_HOSTS).toContain(DEV_TUNNEL_HOST_SUFFIX); // .civit.ai
     expect(DEV_TUNNEL_HOST_SUFFIX).toBe('.civit.ai');
-  });
-
-  it('adds civitai.com to the block parent-origin allowlist (merged, deduped)', () => {
-    // Local harness origin already present → civitai.com is appended once.
-    const merged = devAllowedParentOrigins('http://localhost:5186');
-    expect(merged).toContain('http://localhost:5186');
-    expect(merged).toContain(PROD_PARENT_ORIGIN);
-    expect(merged.filter((o) => o === PROD_PARENT_ORIGIN)).toHaveLength(1);
-  });
-
-  it('is idempotent when civitai.com is already in the env value', () => {
-    const merged = devAllowedParentOrigins('https://civitai.com');
-    expect(merged).toEqual(['https://civitai.com']);
-  });
-
-  it('handles an empty/undefined env value', () => {
-    expect(devAllowedParentOrigins(undefined)).toEqual([PROD_PARENT_ORIGIN]);
-    expect(devAllowedParentOrigins('')).toEqual([PROD_PARENT_ORIGIN]);
   });
 });
 

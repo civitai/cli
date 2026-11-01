@@ -231,6 +231,45 @@ describe('mountBlock over the real bridge', () => {
   });
 });
 
+// The allowlist this app's dev server ships, read from `.env.development` the
+// way Vite reads it, and handed to the REAL bridge, so these cases test the file
+// that ships and not a copy of it.
+const ENV_DEVELOPMENT = join(dirname(fileURLToPath(import.meta.url)), '..', '.env.development');
+const ALLOWLIST_KEY = 'VITE_BLOCK_ALLOWED_PARENT_ORIGINS=';
+
+function devAllowlist(): string[] {
+  const lines = readFileSync(ENV_DEVELOPMENT, 'utf8')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith(ALLOWLIST_KEY));
+  expect(lines).toHaveLength(1);
+  return lines[0]!
+    .slice(ALLOWLIST_KEY.length)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+describe('the dev allowlist admits every Civitai domain', () => {
+  // App previews run on every Civitai domain. Literal on purpose.
+  const accepted = ['https://civitai.com', 'https://civitai.red', 'https://civitai.green', 'http://localhost:5186'];
+
+  beforeEach(() => {
+    __resetTransport();
+    getTransport({ allowedParentOrigins: devAllowlist() });
+  });
+
+  for (const origin of accepted) {
+    test(`a BLOCK_INIT from ${origin} mounts the app and is answered there`, async () => {
+      const mounted = mountBlock(root);
+      fromHost({ type: 'BLOCK_INIT', payload: initPayload() }, origin);
+      await mounted;
+      expect(rendered()).toBe(true);
+      expect(posted.filter((p) => p.message.type === 'BLOCK_READY').map((p) => p.targetOrigin)).toEqual([origin]);
+    });
+  }
+});
+
 describe('host pushes after mount', () => {
   test('a TOKEN_REFRESH leaves the page and what the viewer typed intact', async () => {
     const mounted = mountBlock(root);

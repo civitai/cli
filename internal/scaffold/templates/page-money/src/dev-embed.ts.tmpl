@@ -1,21 +1,25 @@
 // Dev-server embeddability for `civitai app dev-tunnel` (P2).
 //
 // `dev:tunnel` serves THIS local dev server, through a hardened reverse tunnel,
-// as a `dev-<16hex>.civit.ai` host that the REAL production parent
-// (https://civitai.com/apps/dev/<blockId>) iframes. For that embed to work the
-// dev server must be framable BY civitai.com and the block bundle must ACCEPT
-// postMessages from the civitai.com parent origin.
+// as a `dev-<16hex>.civit.ai` host that the REAL Civitai host
+// (`/apps/dev/<blockId>` on civitai.com, civitai.red or civitai.green) iframes.
+// For that embed to work the dev server must be framable BY every Civitai domain
+// and the block bundle must ACCEPT postMessages from each of them.
 //
-// This is the single source of truth for both, imported by vite.config.ts. It is
-// DEV-ONLY: vite `server.*` options apply only to `vite dev`, never to
-// `vite build`, so the PRODUCTION bundle's framing is untouched (its allowlist
-// still comes from .env.production). Keep both halves in sync with the host CSP.
+// This file holds the framing half, imported by vite.config.ts; the allowlist
+// half is VITE_BLOCK_ALLOWED_PARENT_ORIGINS in .env.development, which must name
+// the same origins. It is DEV-ONLY: vite `server.*` options apply only to
+// `vite dev`, never to `vite build`, so the PRODUCTION bundle is untouched.
 
 /**
- * The production parent origin that embeds the dev tunnel. The `/apps/dev`
- * route iframes the tunneled child from civitai.com.
+ * The Civitai host origins that embed this app: every Civitai domain serves the
+ * `/apps/dev` preview route, which iframes the tunneled child. The ONE list the
+ * dev server's frame-ancestors CSP is built from below; `.env.development`'s
+ * VITE_BLOCK_ALLOWED_PARENT_ORIGINS (the postMessage allowlist) carries the same
+ * origins. To add a domain, add it here AND there.
  */
-export const PROD_PARENT_ORIGIN = 'https://civitai.com';
+export const CIVITAI_PARENT_ORIGINS: readonly string[] = [
+{{ civitaiParentOriginsJS }}];
 
 /**
  * The dev host suffix the tunnel serves the child on (`dev-<16hex>.civit.ai`).
@@ -53,8 +57,8 @@ export function isDevTunnel(env: Record<string, string | undefined>): boolean {
  * open in the same browser read this dev server's source. Two headers, both
  * DEV-ONLY:
  *
- * 1. `frame-ancestors` CSP scoped to civitai.com (+ self for the plain local
- *    harness) so civitai.com may EMBED the dev server. Critically we DO NOT set
+ * 1. `frame-ancestors` CSP scoped to the Civitai domains (+ self for the plain
+ *    local harness) so each may EMBED the dev server. Critically we DO NOT set
  *    `X-Frame-Options` — an `X-Frame-Options: DENY/SAMEORIGIN` would block the
  *    cross-origin embed regardless of the CSP. (Vite sets no XFO by default;
  *    this documents + asserts that invariant.)
@@ -75,24 +79,7 @@ export function isDevTunnel(env: Record<string, string | undefined>): boolean {
  */
 export function devServerSecurityHeaders(): Record<string, string> {
   return {
-    'Content-Security-Policy': `frame-ancestors 'self' ${PROD_PARENT_ORIGIN}`,
+    'Content-Security-Policy': `frame-ancestors 'self' ${CIVITAI_PARENT_ORIGINS.join(' ')}`,
     'Access-Control-Allow-Origin': '*',
   };
-}
-
-/**
- * The dev parent-origin allowlist baked into the block bundle for the SDK's
- * IframeTransport (`VITE_BLOCK_ALLOWED_PARENT_ORIGINS`). Merges whatever the dev
- * env already declares (e.g. the localhost harness origin) with the prod parent
- * so the SAME dev build works BOTH in the local harness AND embedded by the real
- * civitai.com host over the tunnel. De-duplicated; order-stable.
- */
-export function devAllowedParentOrigins(envValue: string | undefined): string[] {
-  const fromEnv = (envValue ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const merged = [...fromEnv];
-  if (!merged.includes(PROD_PARENT_ORIGIN)) merged.push(PROD_PARENT_ORIGIN);
-  return merged;
 }

@@ -17,9 +17,10 @@
 #           and a `dev-*.civit.ai` Host is 200 (allowedHosts admits the tunnel)
 #   plain   NO Access-Control-Allow-Origin and NO frame-ancestors CSP — a plain
 #           local dev server must not let any page in the browser read its source
-#   tunnel  Access-Control-Allow-Origin: * and a frame-ancestors CSP admitting
-#           https://civitai.com — the sandboxed (null-origin) iframe on
-#           civitai.com cannot load or frame the app without them
+#   tunnel  Access-Control-Allow-Origin: * and EXACTLY the frame-ancestors CSP
+#           admitting every Civitai domain (https://civitai.com, .red, .green) —
+#           the sandboxed (null-origin) iframe on any of them cannot load or
+#           frame the app without them
 #   both    no X-Frame-Options (it would block the embed whatever the CSP says)
 #
 # The header requests carry `Origin: null`, which is what the sandboxed iframe
@@ -110,7 +111,9 @@ probe() {
   h=$(headers)
   printf '%s\n' "$h" | sed 's/^/  /'
   acao=$(count_header "$h" "^access-control-allow-origin: \*\$")
-  csp=$(count_header "$h" "^content-security-policy: frame-ancestors 'self' https://civitai\.com\$")
+  csp=$(count_header "$h" "^content-security-policy: frame-ancestors 'self' https://civitai\.com https://civitai\.red https://civitai\.green\$")
+  local any_csp
+  any_csp=$(count_header "$h" "^content-security-policy:")
   xfo=$(count_header "$h" "^x-frame-options:")
   local any_acao
   any_acao=$(count_header "$h" "^access-control-allow-origin:")
@@ -118,10 +121,10 @@ probe() {
 
   if [ "$mode" = tunnel ]; then
     [ "$acao" -eq 1 ] || { echo "::error::[tunnel] no Access-Control-Allow-Origin: * — the sandboxed iframe cannot load the dev server's modules"; rc=1; }
-    [ "$csp" -eq 1 ] || { echo "::error::[tunnel] no frame-ancestors CSP admitting https://civitai.com"; rc=1; }
+    [ "$csp" -eq 1 ] || { echo "::error::[tunnel] the CSP is not exactly frame-ancestors 'self' https://civitai.com https://civitai.red https://civitai.green — a Civitai domain cannot frame the preview"; rc=1; }
   else
     [ "$any_acao" -eq 0 ] || { echo "::error::[plain] plain \`npm run dev\` sends Access-Control-Allow-Origin — any page in the browser can read the dev server's source; the header belongs to dev-tunnel sessions only"; rc=1; }
-    [ "$csp" -eq 0 ] || { echo "::error::[plain] plain \`npm run dev\` sends the dev-tunnel frame-ancestors CSP"; rc=1; }
+    [ "$any_csp" -eq 0 ] || { echo "::error::[plain] plain \`npm run dev\` sends a Content-Security-Policy — the dev-tunnel frame-ancestors CSP belongs to dev-tunnel sessions only"; rc=1; }
   fi
   [ "$xfo" -eq 0 ] || { echo "::error::[$mode] X-Frame-Options is set — it blocks civitai.com from framing the dev server"; rc=1; }
 

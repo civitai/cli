@@ -68,15 +68,15 @@ export default defineConfig(({ mode }) => {
     port: 5186,
     strictPort: true,
     // `civitai app dev-tunnel` serves THIS dev server, through a reverse tunnel,
-    // as a dev-*.civit.ai host that the real https://civitai.com/apps/dev/<id>
-    // parent iframes. Two things make that embed work (both DEV-ONLY — `server.*`
+    // as a dev-*.civit.ai host that the real /apps/dev/<id> parent iframes, on
+    // any Civitai domain. Two things make that embed work (both DEV-ONLY — `server.*`
     // never applies to `vite build`, so the production framing is untouched):
     //   1. allowedHosts admits the tunneled `.civit.ai` host (Vite's DNS-rebinding
     //      check would otherwise 403 it), and
-    //   2. a `frame-ancestors https://civitai.com` CSP + NO X-Frame-Options lets
-    //      civitai.com frame it, and `Access-Control-Allow-Origin: *` lets the
+    //   2. a frame-ancestors CSP naming every Civitai domain + NO X-Frame-Options
+    //      lets each frame it, and `Access-Control-Allow-Origin: *` lets the
     //      null-origin sandboxed iframe load its modules. (The block's
-    //      parent-origin ALLOWLIST also needs civitai.com — see
+    //      parent-origin ALLOWLIST needs the same domains — see
     //      .env.development's VITE_BLOCK_ALLOWED_PARENT_ORIGINS.)
     // 2 is sent ONLY in a dev-tunnel session (`devTunnel` above): on a plain
     // `dev`, `Access-Control-Allow-Origin: *` would let any page in the browser

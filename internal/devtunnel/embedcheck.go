@@ -12,13 +12,15 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/civitai/cli/internal/blockproto"
 )
 
 // Embeddability preflight for `civitai app dev-tunnel`.
 //
 // The tunnel can be perfectly healthy — ssh up, public host serving, local hop
 // verified — while the app still never appears, because the failure is in the
-// BROWSER: civitai.com/apps/dev/<blockId> iframes the tunneled dev server
+// BROWSER: /apps/dev/<blockId> on a Civitai domain iframes the tunneled dev server
 // SANDBOXED (`allow-scripts allow-forms`, deliberately no `allow-same-origin`),
 // so the child document runs at an opaque "null" origin. Three things silently
 // break that embed, none of which the existing probes can see (they read status
@@ -26,8 +28,8 @@ import (
 //
 //  1. no `Access-Control-Allow-Origin` — every ES module fetch from the null
 //     origin is CORS-blocked, so NO JavaScript runs at all;
-//  2. a `frame-ancestors` CSP (or any `X-Frame-Options`) that forbids
-//     civitai.com framing the dev server;
+//  2. a `frame-ancestors` CSP (or any `X-Frame-Options`) that forbids a
+//     Civitai domain framing the dev server;
 //  3. Vite's DNS-rebinding host check 403ing the tunneled `*.civit.ai` Host
 //     before the request ever reaches the app.
 //
@@ -42,11 +44,11 @@ import (
 // reverse proxy, a non-Vite dev server, or a deliberately exotic setup, and
 // hard-failing would regress flows that work today.
 
-// ProdParentOrigin is the parent origin that embeds the dev tunnel — the
-// `/apps/dev/<blockId>` route iframes the tunneled child from here. Mirrors
-// PROD_PARENT_ORIGIN in the scaffolds' src/dev-embed.ts (page-money, page-elements) and
-// src/dev-embed.js (page-vite) — pinned together by drift guards in internal/scaffold.
-const ProdParentOrigin = "https://civitai.com"
+// The parent origins that embed the dev tunnel are blockproto.CivitaiParentOrigins:
+// the `/apps/dev/<blockId>` route iframes the tunneled child from EVERY Civitai
+// domain, so the dev server and the app must admit each of them. The scaffolds
+// render the same list into CIVITAI_PARENT_ORIGINS in src/dev-embed.{ts,js} and
+// into .env.development, pinned together by guards in internal/scaffold.
 
 // tunnelHostSuffix is the host suffix the tunnel serves the dev server on
 // (`dev-<16hex>.civit.ai`). Mirrors DEV_TUNNEL_HOST_SUFFIX in the same file.
@@ -75,7 +77,7 @@ const (
 	// FindingCORS: the dev server sends no usable Access-Control-Allow-Origin,
 	// so module scripts are blocked for the sandboxed (null-origin) iframe.
 	FindingCORS FindingKind = "cors"
-	// FindingFrameAncestors: a CSP frame-ancestors directive excludes civitai.com.
+	// FindingFrameAncestors: a CSP frame-ancestors directive excludes a Civitai domain.
 	FindingFrameAncestors FindingKind = "frame-ancestors"
 	// FindingXFrameOptions: an X-Frame-Options header blocks the cross-origin embed
 	// regardless of any CSP.
@@ -83,8 +85,8 @@ const (
 	// FindingAllowedHosts: the dev server rejects the tunneled *.civit.ai Host
 	// (Vite's DNS-rebinding protection) before the app is reached.
 	FindingAllowedHosts FindingKind = "allowed-hosts"
-	// FindingParentOrigins: VITE_BLOCK_ALLOWED_PARENT_ORIGINS is unset or omits
-	// the prod parent origin, so IframeTransport rejects the host's BLOCK_INIT.
+	// FindingParentOrigins: VITE_BLOCK_ALLOWED_PARENT_ORIGINS is unset or omits a
+	// Civitai domain, so IframeTransport rejects that domain's BLOCK_INIT.
 	FindingParentOrigins FindingKind = "parent-origins"
 )
 
@@ -111,7 +113,9 @@ const devTunnelEnvVar = "CIVITAI_DEV_TUNNEL_HMR"
 // the snippet is the copy an author with an OLDER app pastes to catch up. A
 // current scaffold sends the headers only in a dev-tunnel session, so on one of
 // those a plain `npm run dev` produces exactly these findings; the fix names
-// `npm run dev:tunnel` first for that reason.
+// `npm run dev:tunnel` first for that reason. The snippet gates the headers on
+// the same flag: an ungated `Access-Control-Allow-Origin: *` would let any page
+// open in the browser read the dev server's source on a plain `npm run dev`.
 func viteConfigFix() []string {
 	return []string{
 		"Fix — an app scaffolded by `civitai app init` sends these headers only in a",
@@ -120,13 +124,38 @@ func viteConfigFix() []string {
 		"",
 		"Otherwise, in vite.config.ts (dev-only; `server.*` never affects `vite build`):",
 		"",
+		"    const devTunnel = process.env." + devTunnelEnvVar + " === '1';",
+		"    // …",
 		"    server: {",
 		"      allowedHosts: ['localhost', '" + tunnelHostSuffix + "'],",
-		"      headers: {",
+		"      ...(devTunnel ? { headers: {",
 		"        'Access-Control-Allow-Origin': '*',",
-		"        'Content-Security-Policy': \"frame-ancestors 'self' " + ProdParentOrigin + "\",",
-		"      },",
+		"        'Content-Security-Policy': \"frame-ancestors 'self' " + blockproto.CivitaiParentOriginsCSP() + "\",",
+		"      } } : {}),",
 		"    }",
+	}
+}
+
+// missingDomainsFix is the remediation for a Vite dev server whose frame-ancestors
+// CSP EXISTS but leaves out a Civitai domain: an app scaffolded before every
+// domain was listed, typically already running `npm run dev:tunnel`. Its headers
+// are wired correctly, so the fix is the origin list itself, in the two files
+// that hold it. It deliberately offers no `headers` block: that app already
+// gates its wildcard ACAO on the tunnel flag, and pasting one would send it on a
+// plain `npm run dev` too.
+func missingDomainsFix() []string {
+	return []string{
+		"Fix — add every Civitai domain where your app lists its parent origins.",
+		"",
+		"In src/dev-embed.ts (src/dev-embed.js for page-vite), the Content-Security-Policy line:",
+		"",
+		"    'Content-Security-Policy': \"frame-ancestors 'self' " + blockproto.CivitaiParentOriginsCSP() + "\",",
+		"",
+		"In .env.development, so the app accepts BLOCK_INIT from each of them:",
+		"",
+		"    " + ParentOriginsEnvVar + "=http://localhost:5186," + blockproto.CivitaiParentOriginsCSV(),
+		"",
+		"Then restart `npm run dev:tunnel`.",
 	}
 }
 
@@ -137,7 +166,7 @@ func genericServerFix() []string {
 		"Fix — your dev server must, in development, send:",
 		"",
 		"    Access-Control-Allow-Origin: *",
-		"    Content-Security-Policy: frame-ancestors 'self' " + ProdParentOrigin,
+		"    Content-Security-Policy: frame-ancestors 'self' " + blockproto.CivitaiParentOriginsCSP(),
 		"",
 		"  and it must accept requests whose Host is a " + tunnelHostSuffix + " subdomain.",
 	}
@@ -264,7 +293,11 @@ func CheckEmbeddable(host string, port int, timeout time.Duration) []Finding {
 	if f := checkCORS(resp, probed, serverDesc, fix); f != nil {
 		findings = append(findings, *f)
 	}
-	if f := checkFraming(resp, probed, fix); f != nil {
+	framingFix := fix
+	if isVite {
+		framingFix = missingDomainsFix()
+	}
+	if f := checkFraming(resp, probed, fix, framingFix); f != nil {
 		findings = append(findings, *f)
 	}
 	if f := checkAllowedHosts(client, authority, probed, fix); f != nil {
@@ -396,7 +429,7 @@ func checkCORS(resp *http.Response, probed, serverDesc string, fix []string) *Fi
 	}
 }
 
-// checkFraming reports headers that forbid civitai.com framing the dev server.
+// checkFraming reports headers that forbid a Civitai domain framing the dev server.
 // An ABSENT CSP is fine — no CSP means no framing restriction — so this warns
 // only when a frame-ancestors directive is present AND excludes the parent.
 //
@@ -411,7 +444,10 @@ func checkCORS(resp *http.Response, probed, serverDesc string, fix []string) *Fi
 // response may carry several, they combine RESTRICTIVELY, and Header.Get would
 // see only one — so a second policy saying `frame-ancestors 'none'` used to be
 // reported clean.
-func checkFraming(resp *http.Response, probed string, fix []string) *Finding {
+//
+// A CSP that is present but leaves out a domain gets missingFix, which names the
+// files that list the origins; an X-Frame-Options block gets fix.
+func checkFraming(resp *http.Response, probed string, fix, missingFix []string) *Finding {
 	sawFrameAncestors := false
 	for _, csp := range resp.Header.Values("Content-Security-Policy") {
 		ancestors, present := frameAncestors(csp)
@@ -419,7 +455,8 @@ func checkFraming(resp *http.Response, probed string, fix []string) *Finding {
 			continue
 		}
 		sawFrameAncestors = true
-		if frameAncestorsAllow(ancestors) {
+		missing := frameAncestorsMissing(ancestors)
+		if len(missing) == 0 {
 			continue
 		}
 		return &Finding{
@@ -428,10 +465,10 @@ func checkFraming(resp *http.Response, probed string, fix []string) *Finding {
 			Evidence: []string{
 				fmt.Sprintf("  GET %s  →  Content-Security-Policy: frame-ancestors %s", probed, strings.Join(ancestors, " ")),
 				"",
-				fmt.Sprintf("  That directive does not admit %s, so the browser refuses to render", ProdParentOrigin),
-				"  the iframe at all.",
+				fmt.Sprintf("  That directive does not admit %s, so the browser refuses to render", strings.Join(missing, ", ")),
+				"  the iframe there at all.",
 			},
-			Fix: fix,
+			Fix: missingFix,
 		}
 	}
 	if sawFrameAncestors {
@@ -473,12 +510,26 @@ func frameAncestors(csp string) (sources []string, present bool) {
 	return nil, false
 }
 
-// frameAncestorsAllow reports whether a frame-ancestors source list admits the
-// prod parent. Deliberately GENEROUS — it answers "could this plausibly allow
-// civitai.com?", because a false warning on an exotic-but-working CSP is worse
-// than a missed one (the browser console still shows a real violation). A
-// `'none'` list is the one unambiguous rejection.
-func frameAncestorsAllow(sources []string) bool {
+// frameAncestorsMissing returns the Civitai domains a frame-ancestors source
+// list does not admit, in blockproto.CivitaiParentOrigins order. A page open on
+// any one of them must be able to frame the preview, so one missing domain is a
+// finding.
+func frameAncestorsMissing(sources []string) []string {
+	var missing []string
+	for _, origin := range blockproto.CivitaiParentOrigins() {
+		if !frameAncestorsAdmit(sources, origin) {
+			missing = append(missing, origin)
+		}
+	}
+	return missing
+}
+
+// frameAncestorsAdmit reports whether a frame-ancestors source list admits
+// origin. Deliberately GENEROUS — it answers "could this plausibly allow
+// origin?", because a false warning on an exotic-but-working CSP is worse than
+// a missed one (the browser console still shows a real violation). A `'none'`
+// list is the one unambiguous rejection.
+func frameAncestorsAdmit(sources []string, origin string) bool {
 	nonEmpty := make([]string, 0, len(sources))
 	for _, src := range sources {
 		if s := strings.TrimSpace(src); s != "" {
@@ -500,7 +551,7 @@ func frameAncestorsAllow(sources []string) bool {
 		if s == "*" || strings.EqualFold(s, "https:") {
 			return true
 		}
-		if hostSourceAllows(s, ProdParentOrigin) {
+		if hostSourceAllows(s, origin) {
 			return true
 		}
 	}
@@ -584,17 +635,23 @@ func CheckParentOrigins(dir string) []Finding {
 		return nil
 	}
 	value, found := resolveViteEnv(dir, ParentOriginsEnvVar)
-	if found && originsInclude(value, ProdParentOrigin) {
+	var missing []string
+	for _, origin := range blockproto.CivitaiParentOrigins() {
+		if !found || !originsInclude(value, origin) {
+			missing = append(missing, origin)
+		}
+	}
+	if len(missing) == 0 {
 		return nil
 	}
 
 	observed := fmt.Sprintf("%s is not set", ParentOriginsEnvVar)
 	if found {
-		observed = fmt.Sprintf("%s=%s — no %s", ParentOriginsEnvVar, value, ProdParentOrigin)
+		observed = fmt.Sprintf("%s=%s — no %s", ParentOriginsEnvVar, value, strings.Join(missing, ", "))
 	}
-	suggested := ProdParentOrigin
+	suggested := strings.Join(missing, ",")
 	if found && strings.TrimSpace(value) != "" {
-		suggested = strings.TrimSpace(value) + "," + ProdParentOrigin
+		suggested = strings.TrimSpace(value) + "," + suggested
 	}
 	return []Finding{{
 		Kind:    FindingParentOrigins,
@@ -603,7 +660,7 @@ func CheckParentOrigins(dir string) []Finding {
 			"  " + observed,
 			"",
 			"  The App SDK's IframeTransport drops any postMessage whose origin is not",
-			fmt.Sprintf("  allowlisted, so BLOCK_INIT from %s is ignored and your app", ProdParentOrigin),
+			fmt.Sprintf("  allowlisted, so BLOCK_INIT from %s is ignored and your app", strings.Join(missing, ", ")),
 			"  never signals ready. The error is swallowed by the error boundary, so",
 			"  nothing appears in the terminal.",
 		},
