@@ -476,12 +476,6 @@ func frameAncestors(csp string) (sources []string, present bool) {
 	return nil, false
 }
 
-// frameAncestorsAllow reports whether a frame-ancestors source list admits
-// EVERY Civitai domain.
-func frameAncestorsAllow(sources []string) bool {
-	return len(frameAncestorsMissing(sources)) == 0
-}
-
 // frameAncestorsMissing returns the Civitai domains a frame-ancestors source
 // list does not admit, in blockproto.CivitaiParentOrigins order. A page open on
 // any one of them must be able to frame the preview, so one missing domain is a

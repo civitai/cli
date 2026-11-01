@@ -6,19 +6,14 @@ import {
   DEV_ALLOWED_HOSTS,
   DEV_TUNNEL_HOST_SUFFIX,
   devServerSecurityHeaders,
-  devAllowedParentOrigins,
   DEV_TUNNEL_ENV,
   isDevTunnel,
 } from './dev-embed.js';
 
-// Every Civitai domain serves App previews, so every one must be able to frame
-// the dev server and send it messages. Spelled out here rather than imported:
-// a test that reads its expectation from the code it tests passes whatever the
-// code says.
-const CIVITAI_DOMAINS = ['https://civitai.com', 'https://civitai.red', 'https://civitai.green'];
-
 describe('dev-tunnel embeddability', () => {
   it('emits a frame-ancestors CSP that admits every Civitai domain', () => {
+    // Every Civitai domain serves App previews. Spelled out rather than built
+    // from CIVITAI_PARENT_ORIGINS, so the test cannot agree with a wrong list.
     expect(devServerSecurityHeaders()['Content-Security-Policy']).toBe(
       "frame-ancestors 'self' https://civitai.com https://civitai.red https://civitai.green",
     );
@@ -51,21 +46,6 @@ describe('dev-tunnel embeddability', () => {
   it('allows the tunnel host suffix in the dev server host check', () => {
     expect(DEV_ALLOWED_HOSTS).toContain(DEV_TUNNEL_HOST_SUFFIX); // .civit.ai
     expect(DEV_TUNNEL_HOST_SUFFIX).toBe('.civit.ai');
-  });
-
-  it('adds every Civitai domain to the block parent-origin allowlist (merged, deduped)', () => {
-    // Local harness origin already present → each Civitai domain is appended once.
-    expect(devAllowedParentOrigins('http://localhost:5186')).toEqual(['http://localhost:5186', ...CIVITAI_DOMAINS]);
-  });
-
-  it('is idempotent when a Civitai domain is already in the env value', () => {
-    expect(devAllowedParentOrigins('https://civitai.com')).toEqual(CIVITAI_DOMAINS);
-    expect(devAllowedParentOrigins(CIVITAI_DOMAINS.join(','))).toEqual(CIVITAI_DOMAINS);
-  });
-
-  it('handles an empty/undefined env value', () => {
-    expect(devAllowedParentOrigins(undefined)).toEqual(CIVITAI_DOMAINS);
-    expect(devAllowedParentOrigins('')).toEqual(CIVITAI_DOMAINS);
   });
 });
 

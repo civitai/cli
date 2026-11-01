@@ -6,10 +6,10 @@
 // For that embed to work the dev server must be framable BY every Civitai domain
 // and the block bundle must ACCEPT postMessages from each of them.
 //
-// This is the single source of truth for both, imported by vite.config.ts. It is
-// DEV-ONLY: vite `server.*` options apply only to `vite dev`, never to
-// `vite build`, so the PRODUCTION bundle's framing is untouched (its allowlist
-// still comes from .env.production). Keep both halves in sync with the host CSP.
+// This file holds the framing half, imported by vite.config.ts; the allowlist
+// half is VITE_BLOCK_ALLOWED_PARENT_ORIGINS in .env.development, which must name
+// the same origins. It is DEV-ONLY: vite `server.*` options apply only to
+// `vite dev`, never to `vite build`, so the PRODUCTION bundle is untouched.
 
 /**
  * The Civitai host origins that embed this app: every Civitai domain serves the
@@ -82,23 +82,4 @@ export function devServerSecurityHeaders(): Record<string, string> {
     'Content-Security-Policy': `frame-ancestors 'self' ${CIVITAI_PARENT_ORIGINS.join(' ')}`,
     'Access-Control-Allow-Origin': '*',
   };
-}
-
-/**
- * The dev parent-origin allowlist baked into the block bundle for the SDK's
- * IframeTransport (`VITE_BLOCK_ALLOWED_PARENT_ORIGINS`). Merges whatever the dev
- * env already declares (e.g. the localhost harness origin) with every Civitai
- * domain, so the SAME dev build works BOTH in the local harness AND embedded by
- * the real host over the tunnel. De-duplicated; order-stable.
- */
-export function devAllowedParentOrigins(envValue: string | undefined): string[] {
-  const fromEnv = (envValue ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const merged = [...fromEnv];
-  for (const origin of CIVITAI_PARENT_ORIGINS) {
-    if (!merged.includes(origin)) merged.push(origin);
-  }
-  return merged;
 }

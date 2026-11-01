@@ -438,15 +438,15 @@ func TestFrameAncestors(t *testing.T) {
 			if !present {
 				return
 			}
-			if got := frameAncestorsAllow(sources); got != tc.wantAllow {
-				t.Fatalf("allow(%v): got %v want %v", sources, got, tc.wantAllow)
+			if missing := frameAncestorsMissing(sources); (len(missing) == 0) != tc.wantAllow {
+				t.Fatalf("missing(%v) = %v, want allow=%v", sources, missing, tc.wantAllow)
 			}
 		})
 	}
 }
 
 // TestHostSourceAllows exercises the host-source matcher directly, including the
-// `*.` wildcard branch — which frameAncestorsAllow can never reach a TRUE result
+// `*.` wildcard branch — which frameAncestorsMissing can never reach a TRUE result
 // through for the bare civitai.com parent, so without this it would be untested.
 func TestHostSourceAllows(t *testing.T) {
 	tests := []struct {
