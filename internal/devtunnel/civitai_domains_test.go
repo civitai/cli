@@ -78,8 +78,9 @@ func TestFramingFindingNamesTheMissingDomain(t *testing.T) {
 		t.Errorf("evidence does not name the missing domains (want %q):\n%s", want, ev)
 	}
 	fix := strings.Join(f.Fix, "\n")
-	// This server is not Vite, so the generic fix applies: one header line.
-	if want := "    Content-Security-Policy: frame-ancestors 'self' " + civitaiOriginsCSP + "\n"; !strings.Contains(fix+"\n", want) {
+	// startProbeServer answers every path 200, /@vite/client included, so this
+	// reads as a Vite dev server and gets the vite.config.ts snippet.
+	if want := `        'Content-Security-Policy': "frame-ancestors 'self' ` + civitaiOriginsCSP + `",`; !strings.Contains(fix, want) {
 		t.Errorf("the fix does not carry the full CSP line (want %q):\n%s", want, fix)
 	}
 }

@@ -492,7 +492,7 @@ func TestParseDotEnvLongUnrelatedLine(t *testing.T) {
 		manifest: true, pkg: sdkPkg,
 		envFiles: map[string]string{
 			".env.development": "VITE_BLOB=" + strings.Repeat("a", 70*1024) + "\n" +
-				ParentOriginsEnvVar + "=https://civitai.com\n",
+				ParentOriginsEnvVar + "=" + civitaiOriginsCSV + "\n",
 		},
 	})
 	if got := CheckParentOrigins(dir); len(got) != 0 {
