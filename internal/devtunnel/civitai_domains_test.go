@@ -77,11 +77,51 @@ func TestFramingFindingNamesTheMissingDomain(t *testing.T) {
 	if want := "That directive does not admit https://civitai.red, https://civitai.green, so the browser"; !strings.Contains(ev, want) {
 		t.Errorf("evidence does not name the missing domains (want %q):\n%s", want, ev)
 	}
-	fix := strings.Join(f.Fix, "\n")
 	// startProbeServer answers every path 200, /@vite/client included, so this
-	// reads as a Vite dev server and gets the vite.config.ts snippet.
-	if want := `        'Content-Security-Policy': "frame-ancestors 'self' ` + civitaiOriginsCSP + `",`; !strings.Contains(fix, want) {
-		t.Errorf("the fix does not carry the full CSP line (want %q):\n%s", want, fix)
+	// reads as a Vite dev server: an app whose CSP exists but predates the other
+	// domains, i.e. an old scaffold already running `npm run dev:tunnel`.
+	fix := strings.Join(f.Fix, "\n")
+	for _, want := range []string{
+		"src/dev-embed.ts",
+		`    'Content-Security-Policy': "frame-ancestors 'self' ` + civitaiOriginsCSP + `",`,
+		".env.development",
+		"    " + ParentOriginsEnvVar + "=http://localhost:5186," + civitaiOriginsCSV,
+	} {
+		if !strings.Contains(fix, want) {
+			t.Errorf("the fix for a CSP missing domains does not carry %q:\n%s", want, fix)
+		}
+	}
+	// That app already sends the embed headers in its tunnel session only. A
+	// vite.config.ts `headers` block with a wildcard ACAO would send it on plain
+	// `npm run dev` too, letting any page read the dev server's source.
+	for _, bad := range []string{"'Access-Control-Allow-Origin': '*'", "Access-Control-Allow-Origin: *"} {
+		if strings.Contains(fix, bad) {
+			t.Errorf("the fix for a CSP missing domains must not offer %q:\n%s", bad, fix)
+		}
+	}
+}
+
+// TestViteFixSendsEmbedHeadersOnlyInATunnelSession: the vite.config.ts snippet
+// (for a Vite server with no embed headers at all) must gate the headers on the
+// dev-tunnel flag, as the scaffold does. An ungated wildcard ACAO in
+// `server.headers` applies to plain `npm run dev` as well.
+func TestViteFixSendsEmbedHeadersOnlyInATunnelSession(t *testing.T) {
+	host, port := startProbeServer(t, stockViteHandler())
+	got := CheckEmbeddable(host, port, probeTimeout)
+	if len(got) == 0 {
+		t.Fatal("expected findings from a stock vite server")
+	}
+	fix := strings.Join(got[0].Fix, "\n")
+	gate := strings.Index(fix, "...(devTunnel ? { headers: {")
+	acao := strings.Index(fix, "'Access-Control-Allow-Origin': '*'")
+	if acao < 0 {
+		t.Fatalf("CONTROL failure: the vite snippet no longer carries the ACAO header at all:\n%s", fix)
+	}
+	if gate < 0 || acao < gate {
+		t.Errorf("the vite snippet sends Access-Control-Allow-Origin outside a devTunnel gate:\n%s", fix)
+	}
+	if want := "const devTunnel = process.env." + devTunnelEnvVar + " === '1';"; !strings.Contains(fix, want) {
+		t.Errorf("the vite snippet does not define the gate from %s (want %q):\n%s", devTunnelEnvVar, want, fix)
 	}
 }
 
