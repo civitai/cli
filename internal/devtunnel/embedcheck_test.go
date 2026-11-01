@@ -75,7 +75,7 @@ func scaffoldViteHandler() http.Handler {
 		}
 		w.Header().Set("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Content-Security-Policy", "frame-ancestors 'self' "+ProdParentOrigin)
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'self' "+civitaiOriginsCSP)
 		w.WriteHeader(http.StatusOK)
 	})
 }
@@ -181,7 +181,7 @@ func TestCheckEmbeddableCORS(t *testing.T) {
 		// `NULL` does NOT match `null` and the browser blocks the fetch.
 		{name: "uppercase NULL echo does NOT allow it", acao: "NULL", wantCORS: true},
 		{name: "specific localhost origin does not", acao: "http://localhost:5186", wantCORS: true},
-		{name: "the prod parent origin does not help a null-origin fetch", acao: ProdParentOrigin, wantCORS: true},
+		{name: "the prod parent origin does not help a null-origin fetch", acao: civitaiCom, wantCORS: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -208,16 +208,16 @@ func TestCheckEmbeddableFraming(t *testing.T) {
 		wantKind FindingKind // "" = no framing finding
 	}{
 		{name: "no framing headers is fine", csp: "", xfo: ""},
-		{name: "scaffold CSP is fine", csp: "frame-ancestors 'self' " + ProdParentOrigin},
+		{name: "scaffold CSP is fine", csp: "frame-ancestors 'self' " + civitaiOriginsCSP},
 		{name: "wildcard sources fine", csp: "frame-ancestors *"},
 		{name: "https: scheme source fine", csp: "frame-ancestors https:"},
 		// Per CSP, `*.civitai.com` matches SUBDOMAINS only — it does not match the
 		// bare civitai.com, which is the origin that actually frames the tunnel. So
 		// this is a genuine misconfiguration and must be flagged.
-		{name: "wildcard subdomain does not cover the bare parent", csp: "frame-ancestors *.civitai.com", wantKind: FindingFrameAncestors},
-		{name: "host without scheme fine", csp: "frame-ancestors civitai.com"},
+		{name: "wildcard subdomain does not cover the bare parent", csp: "frame-ancestors *.civitai.com https://civitai.red https://civitai.green", wantKind: FindingFrameAncestors},
+		{name: "host without scheme fine", csp: "frame-ancestors civitai.com civitai.red civitai.green"},
 		{name: "other directives ignored", csp: "default-src 'self'; script-src 'unsafe-inline'"},
-		{name: "case-insensitive directive name", csp: "FRAME-ANCESTORS " + ProdParentOrigin},
+		{name: "case-insensitive directive name", csp: "FRAME-ANCESTORS " + civitaiOriginsCSP},
 		{name: "self only excludes the parent", csp: "frame-ancestors 'self'", wantKind: FindingFrameAncestors},
 		{name: "none excludes the parent", csp: "frame-ancestors 'none'", wantKind: FindingFrameAncestors},
 		{name: "a different origin excludes the parent", csp: "frame-ancestors https://example.com", wantKind: FindingFrameAncestors},
@@ -230,7 +230,7 @@ func TestCheckEmbeddableFraming(t *testing.T) {
 		// This case previously asserted the opposite and pinned a false positive.
 		{
 			name: "a permissive frame-ancestors supersedes XFO",
-			csp:  "frame-ancestors " + ProdParentOrigin,
+			csp:  "frame-ancestors " + civitaiOriginsCSP,
 			xfo:  "DENY",
 		},
 		{
@@ -246,8 +246,8 @@ func TestCheckEmbeddableFraming(t *testing.T) {
 			xfo:      "DENY",
 			wantKind: FindingFrameAncestors,
 		},
-		{name: "explicit default port matches", csp: "frame-ancestors https://civitai.com:443"},
-		{name: "http source matches an https origin (CSP3 upgrade)", csp: "frame-ancestors http://civitai.com"},
+		{name: "explicit default port matches", csp: "frame-ancestors https://civitai.com:443 https://civitai.red https://civitai.green"},
+		{name: "http source matches an https origin (CSP3 upgrade)", csp: "frame-ancestors http://civitai.com https://civitai.red https://civitai.green"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -413,21 +413,21 @@ func TestFrameAncestors(t *testing.T) {
 	}{
 		{csp: "", wantPresent: false},
 		{csp: "default-src 'self'", wantPresent: false},
-		{csp: "frame-ancestors 'self' " + ProdParentOrigin, wantPresent: true, wantAllow: true},
+		{csp: "frame-ancestors 'self' " + civitaiOriginsCSP, wantPresent: true, wantAllow: true},
 		{csp: "frame-ancestors 'self'", wantPresent: true, wantAllow: false},
 		{csp: "frame-ancestors 'none'", wantPresent: true, wantAllow: false},
 		{csp: "frame-ancestors *", wantPresent: true, wantAllow: true},
 		{csp: "frame-ancestors https:", wantPresent: true, wantAllow: true},
-		{csp: "frame-ancestors https://civitai.com/", wantPresent: true, wantAllow: true},
-		{csp: "frame-ancestors *.civitai.com", wantPresent: true, wantAllow: false},
-		{csp: "default-src 'self'; frame-ancestors " + ProdParentOrigin, wantPresent: true, wantAllow: true},
+		{csp: "frame-ancestors https://civitai.com/ https://civitai.red https://civitai.green", wantPresent: true, wantAllow: true},
+		{csp: "frame-ancestors *.civitai.com https://civitai.red https://civitai.green", wantPresent: true, wantAllow: false},
+		{csp: "default-src 'self'; frame-ancestors " + civitaiOriginsCSP, wantPresent: true, wantAllow: true},
 		{csp: "frame-ancestors https://evil.com; default-src 'self'", wantPresent: true, wantAllow: false},
 		// `'none'` is decisive only as the SOLE source: the CSP grammar does not
 		// admit it beside others, so a browser ignores the invalid `'none'` and
 		// honours the rest.
-		{csp: "frame-ancestors 'none' " + ProdParentOrigin, wantPresent: true, wantAllow: true},
-		{csp: "frame-ancestors https://civitai.com:443", wantPresent: true, wantAllow: true},
-		{csp: "frame-ancestors http://civitai.com", wantPresent: true, wantAllow: true},
+		{csp: "frame-ancestors 'none' " + civitaiOriginsCSP, wantPresent: true, wantAllow: true},
+		{csp: "frame-ancestors https://civitai.com:443 https://civitai.red https://civitai.green", wantPresent: true, wantAllow: true},
+		{csp: "frame-ancestors http://civitai.com https://civitai.red https://civitai.green", wantPresent: true, wantAllow: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.csp, func(t *testing.T) {
@@ -480,10 +480,10 @@ func TestOriginsInclude(t *testing.T) {
 		want bool
 	}{
 		{list: "", want: false},
-		{list: ProdParentOrigin, want: true},
-		{list: "http://localhost:5186," + ProdParentOrigin, want: true},
-		{list: " http://localhost:5186 , " + ProdParentOrigin + " ", want: true},
-		{list: ProdParentOrigin + "/", want: true},
+		{list: civitaiCom, want: true},
+		{list: "http://localhost:5186," + civitaiCom, want: true},
+		{list: " http://localhost:5186 , " + civitaiCom + " ", want: true},
+		{list: civitaiCom + "/", want: true},
 		{list: "HTTPS://CIVITAI.COM", want: true},
 		{list: "http://localhost:5186", want: false},
 		{list: "https://www.civitai.com", want: false},
@@ -491,7 +491,7 @@ func TestOriginsInclude(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(fmt.Sprintf("%q", tc.list), func(t *testing.T) {
-			if got := originsInclude(tc.list, ProdParentOrigin); got != tc.want {
+			if got := originsInclude(tc.list, civitaiCom); got != tc.want {
 				t.Fatalf("originsInclude(%q) = %v want %v", tc.list, got, tc.want)
 			}
 		})
@@ -543,7 +543,7 @@ func TestCheckEmbeddableHostCheckStillCaught(t *testing.T) {
 func TestCheckEmbeddableAllCSPHeaders(t *testing.T) {
 	host, port := startProbeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Add("Content-Security-Policy", "frame-ancestors "+ProdParentOrigin)
+		w.Header().Add("Content-Security-Policy", "frame-ancestors "+civitaiOriginsCSP)
 		w.Header().Add("Content-Security-Policy", "frame-ancestors 'none'")
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -693,7 +693,7 @@ func TestCheckEmbeddableFollowsRedirect(t *testing.T) {
 				return
 			}
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Content-Security-Policy", "frame-ancestors 'self' "+ProdParentOrigin)
+			w.Header().Set("Content-Security-Policy", "frame-ancestors 'self' "+civitaiOriginsCSP)
 			w.WriteHeader(http.StatusOK)
 		}))
 		if got := CheckEmbeddable(host, port, probeTimeout); len(got) != 0 {
@@ -752,7 +752,7 @@ func TestHostSourceAllowsDefaultPorts(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.source, func(t *testing.T) {
-			if got := hostSourceAllows(tc.source, ProdParentOrigin); got != tc.want {
+			if got := hostSourceAllows(tc.source, civitaiCom); got != tc.want {
 				t.Fatalf("hostSourceAllows(%q) = %v want %v", tc.source, got, tc.want)
 			}
 		})

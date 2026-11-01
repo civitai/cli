@@ -3,7 +3,6 @@
 import { describe, it, expect } from 'vitest';
 
 import {
-  PROD_PARENT_ORIGIN,
   DEV_ALLOWED_HOSTS,
   DEV_TUNNEL_HOST_SUFFIX,
   devServerSecurityHeaders,
@@ -12,12 +11,17 @@ import {
   isDevTunnel,
 } from '../src/dev-embed.js';
 
+// Every Civitai domain serves App previews, so every one must be able to frame
+// the dev server and send it messages. Spelled out here rather than imported:
+// a test that reads its expectation from the code it tests passes whatever the
+// code says.
+const CIVITAI_DOMAINS = ['https://civitai.com', 'https://civitai.red', 'https://civitai.green'];
+
 describe('dev-tunnel embeddability', () => {
-  it('emits a frame-ancestors CSP that admits civitai.com', () => {
-    const headers = devServerSecurityHeaders();
-    const csp = headers['Content-Security-Policy'];
-    expect(csp).toContain('frame-ancestors');
-    expect(csp).toContain(PROD_PARENT_ORIGIN); // https://civitai.com
+  it('emits a frame-ancestors CSP that admits every Civitai domain', () => {
+    expect(devServerSecurityHeaders()['Content-Security-Policy']).toBe(
+      "frame-ancestors 'self' https://civitai.com https://civitai.red https://civitai.green",
+    );
   });
 
   it('sets Access-Control-Allow-Origin:* so the null-origin sandboxed iframe can load ES modules', () => {
@@ -49,22 +53,19 @@ describe('dev-tunnel embeddability', () => {
     expect(DEV_TUNNEL_HOST_SUFFIX).toBe('.civit.ai');
   });
 
-  it('adds civitai.com to the block parent-origin allowlist (merged, deduped)', () => {
-    // Local harness origin already present → civitai.com is appended once.
-    const merged = devAllowedParentOrigins('http://localhost:5186');
-    expect(merged).toContain('http://localhost:5186');
-    expect(merged).toContain(PROD_PARENT_ORIGIN);
-    expect(merged.filter((o) => o === PROD_PARENT_ORIGIN)).toHaveLength(1);
+  it('adds every Civitai domain to the block parent-origin allowlist (merged, deduped)', () => {
+    // Local harness origin already present → each Civitai domain is appended once.
+    expect(devAllowedParentOrigins('http://localhost:5186')).toEqual(['http://localhost:5186', ...CIVITAI_DOMAINS]);
   });
 
-  it('is idempotent when civitai.com is already in the env value', () => {
-    const merged = devAllowedParentOrigins('https://civitai.com');
-    expect(merged).toEqual(['https://civitai.com']);
+  it('is idempotent when a Civitai domain is already in the env value', () => {
+    expect(devAllowedParentOrigins('https://civitai.com')).toEqual(CIVITAI_DOMAINS);
+    expect(devAllowedParentOrigins(CIVITAI_DOMAINS.join(','))).toEqual(CIVITAI_DOMAINS);
   });
 
   it('handles an empty/undefined env value', () => {
-    expect(devAllowedParentOrigins(undefined)).toEqual([PROD_PARENT_ORIGIN]);
-    expect(devAllowedParentOrigins('')).toEqual([PROD_PARENT_ORIGIN]);
+    expect(devAllowedParentOrigins(undefined)).toEqual(CIVITAI_DOMAINS);
+    expect(devAllowedParentOrigins('')).toEqual(CIVITAI_DOMAINS);
   });
 });
 

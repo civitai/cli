@@ -202,7 +202,7 @@ func TestEveryViteTemplateServesTheDevTunnel(t *testing.T) {
 	if want := []string{"localhost", ".civit.ai"}; !reflect.DeepEqual(refHosts, want) {
 		t.Fatalf("page-elements DEV_ALLOWED_HOSTS = %q, want %q", refHosts, want)
 	}
-	if want := "frame-ancestors 'self' https://civitai.com"; refConsts.csp != want {
+	if want := "frame-ancestors 'self' https://civitai.com https://civitai.red https://civitai.green"; refConsts.csp != want {
 		t.Fatalf("page-elements Content-Security-Policy = %q, want %q", refConsts.csp, want)
 	}
 	if refConsts.acao != "*" {
@@ -312,7 +312,7 @@ func TestPageViteDevServerAdmitsTunnelHost(t *testing.T) {
 	if !reflect.DeepEqual(hosts, []string{"localhost", ".civit.ai"}) {
 		t.Errorf("page-vite DEV_ALLOWED_HOSTS = %q, want [localhost .civit.ai]", hosts)
 	}
-	if c.csp != "frame-ancestors 'self' https://civitai.com" || c.acao != "*" {
+	if c.csp != "frame-ancestors 'self' https://civitai.com https://civitai.red https://civitai.green" || c.acao != "*" {
 		t.Errorf("page-vite headers CSP=%q ACAO=%q, want page-elements' frame-ancestors + `*`", c.csp, c.acao)
 	}
 	if srv := serverBlock(vite.read(t, vite.config)); !strings.Contains(srv, "allowedHosts: DEV_ALLOWED_HOSTS") ||
