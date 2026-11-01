@@ -1,3 +1,5 @@
+//go:build !windows
+
 package cli_test
 
 import (
@@ -73,8 +75,6 @@ import (
 // and keeps them runnable on a machine with no browser at all. The one test
 // that needs a real browser says so and uses `oracleBrowser`, which skips
 // locally and FAILS under CI like everything else here.
-
-const cdpModule = "scripts/dogfood/briefs/_cdp.mjs"
 
 // fakeBrowser writes an executable that stands in for Chromium.
 //
