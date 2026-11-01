@@ -15,9 +15,11 @@ import "strings"
 //
 // It matches the host list the SDK falls back to when an app sets no allowlist
 // (civitai-app-starters, packages/civitai-sdk/src/core/get-transport.ts,
-// DEFAULT_ALLOWED_PARENT_ORIGINS), minus that list's `*.civitai.com` and
-// `*.civitaic.com` wildcards: these are exact origins, because the allowlist is
-// matched exactly and a CSP wildcard does not cover the bare domain.
+// DEFAULT_ALLOWED_PARENT_ORIGINS), minus that list's `https://*.civitai.com` and
+// `https://*.civitaic.com` wildcards. The SDK's allowlist accepts such wildcards,
+// as a CSP source list does, but in both a `*.` wildcard matches subdomains only,
+// never the bare domain the host pages are served on, so each domain is listed
+// as an exact origin.
 var civitaiParentOrigins = [...]string{
 	"https://civitai.com",
 	"https://civitai.red",

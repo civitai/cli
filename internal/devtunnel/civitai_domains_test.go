@@ -126,8 +126,9 @@ func TestViteFixSendsEmbedHeadersOnlyInATunnelSession(t *testing.T) {
 }
 
 // TestParentOriginsRequireEveryCivitaiDomain: the allowlist must name every
-// Civitai domain exactly. The SDK matches origins exactly, so a lookalike, the
-// http:// scheme or a subdomain of a Civitai domain does not count.
+// Civitai domain exactly. The SDK matches an exact entry exactly (and a `*.`
+// wildcard only on subdomains), so a lookalike, the http:// scheme or a
+// subdomain of a Civitai domain does not stand in for one.
 func TestParentOriginsRequireEveryCivitaiDomain(t *testing.T) {
 	tests := []struct {
 		name     string

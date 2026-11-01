@@ -113,7 +113,9 @@ const devTunnelEnvVar = "CIVITAI_DEV_TUNNEL_HMR"
 // the snippet is the copy an author with an OLDER app pastes to catch up. A
 // current scaffold sends the headers only in a dev-tunnel session, so on one of
 // those a plain `npm run dev` produces exactly these findings; the fix names
-// `npm run dev:tunnel` first for that reason.
+// `npm run dev:tunnel` first for that reason. The snippet gates the headers on
+// the same flag: an ungated `Access-Control-Allow-Origin: *` would let any page
+// open in the browser read the dev server's source on a plain `npm run dev`.
 func viteConfigFix() []string {
 	return []string{
 		"Fix — an app scaffolded by `civitai app init` sends these headers only in a",
@@ -122,13 +124,38 @@ func viteConfigFix() []string {
 		"",
 		"Otherwise, in vite.config.ts (dev-only; `server.*` never affects `vite build`):",
 		"",
+		"    const devTunnel = process.env." + devTunnelEnvVar + " === '1';",
+		"    // …",
 		"    server: {",
 		"      allowedHosts: ['localhost', '" + tunnelHostSuffix + "'],",
-		"      headers: {",
+		"      ...(devTunnel ? { headers: {",
 		"        'Access-Control-Allow-Origin': '*',",
 		"        'Content-Security-Policy': \"frame-ancestors 'self' " + blockproto.CivitaiParentOriginsCSP() + "\",",
-		"      },",
+		"      } } : {}),",
 		"    }",
+	}
+}
+
+// missingDomainsFix is the remediation for a Vite dev server whose frame-ancestors
+// CSP EXISTS but leaves out a Civitai domain: an app scaffolded before every
+// domain was listed, typically already running `npm run dev:tunnel`. Its headers
+// are wired correctly, so the fix is the origin list itself, in the two files
+// that hold it. It deliberately offers no `headers` block: that app already
+// gates its wildcard ACAO on the tunnel flag, and pasting one would send it on a
+// plain `npm run dev` too.
+func missingDomainsFix() []string {
+	return []string{
+		"Fix — add every Civitai domain where your app lists its parent origins.",
+		"",
+		"In src/dev-embed.ts (src/dev-embed.js for page-vite), the Content-Security-Policy line:",
+		"",
+		"    'Content-Security-Policy': \"frame-ancestors 'self' " + blockproto.CivitaiParentOriginsCSP() + "\",",
+		"",
+		"In .env.development, so the app accepts BLOCK_INIT from each of them:",
+		"",
+		"    " + ParentOriginsEnvVar + "=http://localhost:5186," + blockproto.CivitaiParentOriginsCSV(),
+		"",
+		"Then restart `npm run dev:tunnel`.",
 	}
 }
 
@@ -266,7 +293,11 @@ func CheckEmbeddable(host string, port int, timeout time.Duration) []Finding {
 	if f := checkCORS(resp, probed, serverDesc, fix); f != nil {
 		findings = append(findings, *f)
 	}
-	if f := checkFraming(resp, probed, fix); f != nil {
+	framingFix := fix
+	if isVite {
+		framingFix = missingDomainsFix()
+	}
+	if f := checkFraming(resp, probed, fix, framingFix); f != nil {
 		findings = append(findings, *f)
 	}
 	if f := checkAllowedHosts(client, authority, probed, fix); f != nil {
@@ -413,7 +444,10 @@ func checkCORS(resp *http.Response, probed, serverDesc string, fix []string) *Fi
 // response may carry several, they combine RESTRICTIVELY, and Header.Get would
 // see only one — so a second policy saying `frame-ancestors 'none'` used to be
 // reported clean.
-func checkFraming(resp *http.Response, probed string, fix []string) *Finding {
+//
+// A CSP that is present but leaves out a domain gets missingFix, which names the
+// files that list the origins; an X-Frame-Options block gets fix.
+func checkFraming(resp *http.Response, probed string, fix, missingFix []string) *Finding {
 	sawFrameAncestors := false
 	for _, csp := range resp.Header.Values("Content-Security-Policy") {
 		ancestors, present := frameAncestors(csp)
@@ -434,7 +468,7 @@ func checkFraming(resp *http.Response, probed string, fix []string) *Finding {
 				fmt.Sprintf("  That directive does not admit %s, so the browser refuses to render", strings.Join(missing, ", ")),
 				"  the iframe there at all.",
 			},
-			Fix: fix,
+			Fix: missingFix,
 		}
 	}
 	if sawFrameAncestors {
