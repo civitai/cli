@@ -602,7 +602,7 @@ func (c *OAuthClient) StartDevice(ctx context.Context) (*DeviceAuth, error) {
 	}
 	var d DeviceAuth
 	if err := json.Unmarshal(raw, &d); err != nil {
-		return nil, fmt.Errorf("unexpected device-init response: %s", string(raw))
+		return nil, credentialBodyError("unexpected device-init response", raw, err)
 	}
 	if d.DeviceCode == "" || d.UserCode == "" {
 		return nil, fmt.Errorf("device-init response missing device_code/user_code")
@@ -645,7 +645,7 @@ func (c *OAuthClient) pollOnce(ctx context.Context, deviceCode string) (pollOutc
 	if status == http.StatusOK {
 		var tr TokenResponse
 		if err := json.Unmarshal(raw, &tr); err != nil {
-			return pollPending, nil, fmt.Errorf("unexpected device-token response: %s", string(raw))
+			return pollPending, nil, credentialBodyError("unexpected device-token response", raw, err)
 		}
 		if tr.AccessToken == "" {
 			return pollPending, nil, fmt.Errorf("device-token success response had no access_token")
@@ -752,7 +752,7 @@ func (c *OAuthClient) Refresh(ctx context.Context, refreshToken string) (*TokenR
 	}
 	var tr TokenResponse
 	if err := json.Unmarshal(raw, &tr); err != nil {
-		return nil, fmt.Errorf("unexpected refresh response: %s", string(raw))
+		return nil, credentialBodyError("unexpected refresh response", raw, err)
 	}
 	if tr.AccessToken == "" {
 		return nil, fmt.Errorf("refresh response had no access_token")
