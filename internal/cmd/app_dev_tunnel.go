@@ -120,7 +120,7 @@ type tunnelSessionDeps struct {
 	// probeEmbeddable inspects the local dev server's RESPONSE HEADERS to catch the
 	// failures that leave a perfectly healthy tunnel serving an app the browser
 	// refuses to run: no wildcard CORS (so the sandboxed null-origin iframe can't
-	// fetch a single ES module), a framing header that forbids civitai.com, or a
+	// fetch a single ES module), a framing header that forbids a Civitai domain, or a
 	// host check that 403s the tunneled *.civit.ai Host. These are pure WARNINGS —
 	// unlike probeLocal they never abort the session, because one HTTP response
 	// can't rule out a proxy or an exotic-but-working setup. Nil skips the check.

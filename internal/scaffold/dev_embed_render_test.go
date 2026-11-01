@@ -76,7 +76,7 @@ func TestPageElementsSharesPageMoneyDevEmbed(t *testing.T) {
 
 // TestSDKTemplatesEmitEmbeddableDevServer asserts each scaffolded SDK project
 // ships an iframe-embeddable dev server for `civitai app dev-tunnel`: the dev
-// server sends a `frame-ancestors https://civitai.com` CSP, does NOT set
+// server sends a `frame-ancestors` CSP naming every Civitai domain, does NOT set
 // X-Frame-Options, admits the `.civit.ai` tunnel host, and the block's dev
 // parent-origin allowlist includes https://civitai.com — WITHOUT touching the
 // production build. This is the Go-verifiable companion to the scaffold's own

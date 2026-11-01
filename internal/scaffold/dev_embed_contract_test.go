@@ -42,11 +42,8 @@ type devEmbedConstants struct {
 
 var (
 	// `export const CIVITAI_PARENT_ORIGINS: readonly string[] = [ … ];` (TS) or
-	// `export const CIVITAI_PARENT_ORIGINS = [ … ];` (JS). The single-origin
-	// PROD_PARENT_ORIGIN it replaced is still read, so this guard reports the OLD
-	// template's value as a wrong value rather than as an unreadable file.
+	// `export const CIVITAI_PARENT_ORIGINS = [ … ];` (JS).
 	reParentOrigins = regexp.MustCompile(`CIVITAI_PARENT_ORIGINS(?:\s*:\s*[^=]+)?\s*=\s*\[([^\]]*)\]`)
-	reParentOrigin  = regexp.MustCompile(`PROD_PARENT_ORIGIN\s*=\s*'([^']+)'`)
 	reQuoted        = regexp.MustCompile(`'([^']*)'`)
 	reHostSuffix    = regexp.MustCompile(`DEV_TUNNEL_HOST_SUFFIX\s*=\s*'([^']+)'`)
 	// The header values are matched to END OF LINE, not with a character class:
@@ -83,18 +80,13 @@ func extractDevEmbedConstants(t *testing.T, src string) devEmbedConstants {
 		csp:        unquoteTSLiteral(grab(reCSP, "the Content-Security-Policy header")),
 		acao:       unquoteTSLiteral(grab(reACAO, "the Access-Control-Allow-Origin header")),
 	}
-	if m := reParentOrigins.FindStringSubmatch(src); m != nil {
-		var origins []string
-		for _, q := range reQuoted.FindAllStringSubmatch(m[1], -1) {
-			origins = append(origins, q[1])
-		}
-		c.parentOrigins = strings.Join(origins, " ")
-	} else {
-		c.parentOrigins = grab(reParentOrigin, "CIVITAI_PARENT_ORIGINS (or the older PROD_PARENT_ORIGIN)")
+	var origins []string
+	for _, q := range reQuoted.FindAllStringSubmatch(grab(reParentOrigins, "CIVITAI_PARENT_ORIGINS"), -1) {
+		origins = append(origins, q[1])
 	}
+	c.parentOrigins = strings.Join(origins, " ")
 	// Resolve the one interpolation the CSP template literal uses.
 	c.csp = strings.ReplaceAll(c.csp, "${CIVITAI_PARENT_ORIGINS.join(' ')}", c.parentOrigins)
-	c.csp = strings.ReplaceAll(c.csp, "${PROD_PARENT_ORIGIN}", c.parentOrigins)
 	if strings.Contains(c.csp, "${") {
 		t.Fatalf("unresolved interpolation in the CSP value %q — extend the guard", c.csp)
 	}
