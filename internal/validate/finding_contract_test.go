@@ -1271,6 +1271,24 @@ func fieldCoverageCorpus() []fieldFixture {
 			  }}
 			}`},
 		},
+		{
+			// storageManifestPatternCapChecks: 16 + 16 + 1 patterns across three
+			// collections that each parse, one over the manifest's cap of 32.
+			name: "collection schemas over the manifest's pattern cap (storageManifestPatternCapChecks)",
+			files: map[string]string{"block.manifest.json": `{
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": ["apps:storage"],
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+			  "storage": {"collections": {
+			    "cov_cap_a": {"visibility": "private", "schema": {"properties": {` + covPatternProps(16) + `}}},
+			    "cov_cap_b": {"visibility": "private", "schema": {"properties": {` + covPatternProps(16) + `}}},
+			    "cov_cap_c": {"visibility": "private", "schema": {"properties": {` + covPatternProps(1) + `}}}
+			  }}
+			}`},
+		},
 	}
 }
 

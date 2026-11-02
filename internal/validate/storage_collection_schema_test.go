@@ -362,3 +362,40 @@ func TestCollectionSchemaPatternRE2AcceptsIsNotParity(t *testing.T) {
 		})
 	}
 }
+
+// schemaCollections is a manifest whose private collections c0, c1, … each declare a schema
+// with counts[i] patterns, every pattern source distinct unless same is set.
+func schemaCollections(t *testing.T, same bool, counts ...int) string {
+	t.Helper()
+	cols := map[string]any{}
+	for i, n := range counts {
+		props := map[string]any{}
+		for j := 0; j < n; j++ {
+			src := "^c" + itoaTest(i) + "x" + itoaTest(j)
+			if same {
+				src = "^same"
+			}
+			props["p"+itoaTest(j)] = map[string]any{"pattern": src, "maxLength": 9}
+		}
+		cols["c"+itoaTest(i)] = map[string]any{"visibility": "private",
+			"schema": map[string]any{"type": "object", "properties": props}}
+	}
+	return docManifest(mustJSON(t, map[string]any{"collections": cols}), "apps:storage")
+}
+
+// TestCollectionSchemaManifestPatternCap — at most 32 patterns across ALL of a manifest's
+// collection schemas (APP_STORAGE_MANIFEST_MAX_PATTERNS). Every pattern SITE counts: a source
+// repeated in several places is counted each time. Only collections that parsed are counted,
+// so one already over its own cap of 16 is not added.
+func TestCollectionSchemaManifestPatternCap(t *testing.T) {
+	const field = "storage.collections"
+	assertCleanResult(t, "16 + 16", schemaCollections(t, false, 16, 16))
+	assertOnlyError(t, schemaCollections(t, false, 16, 16, 5), field,
+		"storage.collections declare 37 patterns across their schemas — a manifest may declare at most 32 in all")
+	// The same source 33 times is 33 patterns: the cap counts sites, not distinct sources.
+	assertOnlyError(t, schemaCollections(t, true, 11, 11, 11), field,
+		"storage.collections declare 33 patterns across their schemas — a manifest may declare at most 32 in all")
+	// c0 is refused on its own (17 > 16), so only c1 and c2 count: 32, under the cap.
+	assertOnlyError(t, schemaCollections(t, false, 17, 16, 16), "storage.collections.c0.schema",
+		"storage.collections.c0.schema declares 17 patterns — a collection schema may declare at most 16")
+}

@@ -216,6 +216,8 @@ func findingFieldLedger() []fieldExpectation {
 			"the server names the lower bound first; the pair lives in one schema object"},
 		{"must be a whole number of 0 or more", "storage.collections.cov_schema_bounds.schema.maxItems",
 			"the refused value is that keyword's own"},
+		{"patterns across their schemas", "storage.collections",
+			"a count over every collection's schema together; no one collection is the one to cut"},
 		{"can't be checked offline", "storage.collections.cov_schema_re2.schema.pattern",
 			"the advisory is about that pattern's own value"},
 
