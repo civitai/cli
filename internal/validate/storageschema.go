@@ -140,7 +140,7 @@ func walkCollectionSchema(cs collectionSchema) *schemaWalk {
 			cs.at, n, appStorageSchemaMaxBytes)))
 		return w
 	}
-	w.node(cs.at, cs.at, cs.raw, 1)
+	walkSchemaNode(w, cs.at, cs.at, cs.raw, 1)
 	if len(w.patterns) > appStorageSchemaMaxPatterns {
 		w.errors = append(w.errors, newFinding(cs.at, fmt.Sprintf(
 			"%s declares %d patterns — a collection schema may declare at most %d",
@@ -149,9 +149,9 @@ func walkCollectionSchema(cs collectionSchema) *schemaWalk {
 	return w
 }
 
-// node mirrors parseSchemaNode. `field` is the dotted location; `at` is the
+// walkSchemaNode mirrors parseSchemaNode. `field` is the dotted location; `at` is the
 // server's own text for it, which bounds a long property name (boundKey).
-func (w *schemaWalk) node(field, at string, node any, depth int) {
+func walkSchemaNode(w *schemaWalk, field, at string, node any, depth int) {
 	if depth > appStorageSchemaMaxDepth {
 		w.errors = append(w.errors, newFinding(field, fmt.Sprintf(
 			"%s is nested too deeply — a collection schema may nest at most %d schemas",
@@ -163,11 +163,11 @@ func (w *schemaWalk) node(field, at string, node any, depth int) {
 		return // "must be a schema object" — the schema's finding
 	}
 	child := func(key, label string, sub any) {
-		w.node(childField(field, key), at+"."+label, sub, depth+1)
+		walkSchemaNode(w, childField(field, key), at+"."+label, sub, depth+1)
 	}
 	if props, ok := n["properties"].(map[string]any); ok {
 		for _, name := range sortedSchemaKeys(props) {
-			w.node(childField(childField(field, "properties"), name),
+			walkSchemaNode(w, childField(childField(field, "properties"), name),
 				at+".properties."+boundKey(name), props[name], depth+1)
 		}
 	}
