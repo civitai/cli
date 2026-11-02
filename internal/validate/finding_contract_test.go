@@ -1246,5 +1246,40 @@ func fieldCoverageCorpus() []fieldFixture {
 					`export const N = () => app.storage.collection('cov_notes').list();`,
 			},
 		},
+		{
+			// storageCollectionSchemaChecks and storageCollectionSchemaWarnings:
+			// each server-only bound of a collection `schema`, one collection
+			// each, plus a pattern RE2 cannot compile (a WARNING). The write
+			// "none" collection also draws the vendored schema's own `false`.
+			name: "collection schemas past the server's bounds (storageCollectionSchemaChecks, storageCollectionSchemaWarnings)",
+			files: map[string]string{"block.manifest.json": `{
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": ["apps:storage"],
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+			  "storage": {"collections": {
+			    "cov_schema_none": {"visibility": "shared", "write": "none", "counters": ["n"], "schema": {}},
+			    "cov_schema_big": {"visibility": "private", "schema": {"description": "` + strings.Repeat("d", 16400) + `"}},
+			    "cov_schema_deep": {"visibility": "private", "schema": ` +
+				strings.Repeat(`{"items":`, 16) + `{}` + strings.Repeat(`}`, 16) + `},
+			    "cov_schema_many": {"visibility": "private", "schema": {"properties": {` +
+				covPatternProps(17) + `}}},
+			    "cov_schema_bounds": {"visibility": "private", "schema": {"minLength": 2, "maxLength": 1, "maxItems": 9007199254740992}},
+			    "cov_schema_re2": {"visibility": "private", "schema": {"pattern": "(?=a)", "maxLength": 3}}
+			  }}
+			}`},
+		},
 	}
+}
+
+// covPatternProps renders n more pattern-carrying properties (q0…) for the
+// corpus's pattern-count fixture, as JSON object members without braces.
+func covPatternProps(n int) string {
+	parts := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		parts = append(parts, `"q`+itoaTest(i)+`": {"pattern": "x", "maxLength": 3}`)
+	}
+	return strings.Join(parts, ", ")
 }
