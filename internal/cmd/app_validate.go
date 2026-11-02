@@ -39,6 +39,10 @@ plus the ported semantic rules and structural checks:
     apps:storage, a viewer-written shared collection without
     apps:storage:publish, and either scope requested with nothing in storage
     for it to reach
+  - a storage collection's document schema (storage.collections.<name>.schema)
+    within the server's bounds: at most 16384 bytes of JSON, 16 nested
+    schemas and 16 patterns, no minLength/minItems/minimum above its max, and
+    none on a write "none" collection
   - the committed LOCKFILE matches the package manager the platform build
     derives from buildCommand (its first word): pnpm -> pnpm-lock.yaml,
     yarn -> yarn.lock, and npm/vite/npx/unset -> package-lock.json. The
@@ -74,6 +78,10 @@ It also emits non-fatal WARNINGS the schema can't catch as hard errors:
     civitai.com refuses them at submit today; they are warnings, not errors,
     because the platform enables each with a server-side switch and an
     installed CLI must not refuse a manifest the server has started to accept.
+  - a collection schema pattern Go's regex engine (RE2) cannot compile. The
+    server compiles patterns as JavaScript regular expressions with the "u"
+    flag, a different language, so such a pattern may be valid; the server
+    decides at submit. A pattern RE2 compiles is not proven valid either.
   - source that calls the document store, app.storage.collection(<name>), with
     a string-literal name the manifest does not declare under
     storage.collections (every call on it is refused collection_not_declared),
