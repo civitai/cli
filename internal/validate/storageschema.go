@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
 )
@@ -25,7 +26,8 @@ import (
 //   - the size: at most 16384 bytes of the schema as UTF-8 JSON
 //     (`JSON.stringify`, so no whitespace — see jsonStringifyBytes);
 //   - the depth: at most 16 schemas nested in one another;
-//   - the pattern count: at most 16 `pattern`s per collection schema;
+//   - the pattern count: at most 16 `pattern`s per collection schema, and at most
+//     32 across all of the manifest's collection schemas together;
 //   - minLength/minItems/minimum not above its maxLength/maxItems/maximum;
 //   - a count keyword above 2^53-1 (the schema's `integer` admits it);
 //   - no schema on a `write: "none"` collection. The schema states this one too
@@ -53,8 +55,9 @@ import (
 // field (fieldPath), while the findings here keep it dotted.
 
 // Mirrors of APP_STORAGE_SCHEMA_MAX_DEPTH / _MAX_BYTES / _MAX_PATTERNS /
-// _PATTERN_MAX_LENGTH.
+// _PATTERN_MAX_LENGTH, and APP_STORAGE_MANIFEST_MAX_PATTERNS.
 const (
+	appStorageManifestMaxPatterns    = 32
 	appStorageSchemaMaxDepth         = 16
 	appStorageSchemaMaxBytes         = 16 * 1024
 	appStorageSchemaMaxPatterns      = 16
@@ -215,6 +218,33 @@ func storageCollectionSchemaChecks(generic any) []Finding {
 		}
 	}
 	return out
+}
+
+// storageManifestPatternCapChecks is the server's APP_STORAGE_MANIFEST_MAX_PATTERNS: at most
+// 32 `pattern`s across every collection schema together. It counts SITES (a source repeated
+// is counted each time), and only in the collections that parsed — the server counts its
+// parsed collections, so one already refused (for its own pattern count, or anything else)
+// adds nothing. `errs` is every error so far, the local stand-in for "did not parse".
+func storageManifestPatternCapChecks(generic any, errs []Finding) []Finding {
+	total := 0
+	for _, cs := range collectionSchemas(generic) {
+		if cs.writeNone || hasFindingUnder(errs, strings.TrimSuffix(cs.at, ".schema")) {
+			continue
+		}
+		if w := walkCollectionSchema(cs); w != nil {
+			for _, p := range w.patterns {
+				if _, ok := p.pattern.(string); ok {
+					total++
+				}
+			}
+		}
+	}
+	if total <= appStorageManifestMaxPatterns {
+		return nil
+	}
+	return []Finding{newFinding("storage.collections", fmt.Sprintf(
+		"storage.collections declare %d patterns across their schemas — a manifest may declare at most %d in all",
+		total, appStorageManifestMaxPatterns))}
 }
 
 // storageCollectionSchemaWarnings reports each `pattern` that Go's RE2 cannot

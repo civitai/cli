@@ -150,6 +150,7 @@ func validateDir(dir string, projectState bool) (Result, error) {
 	// storageschema.go.
 	res.Errors = append(res.Errors, storageDeclarationChecks(generic)...)
 	res.Errors = append(res.Errors, storageCollectionSchemaChecks(generic)...)
+	res.Errors = append(res.Errors, storageManifestPatternCapChecks(generic, res.Errors)...)
 	res.Errors = append(res.Errors, storageScopeRuleChecks(generic, !hasFindingUnder(res.Errors, "storage"))...)
 	res.Warnings = append(res.Warnings, storageFeatureGateWarnings(generic)...)
 	res.Warnings = append(res.Warnings, storageCollectionSchemaWarnings(generic)...)

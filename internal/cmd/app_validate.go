@@ -41,8 +41,9 @@ plus the ported semantic rules and structural checks:
     for it to reach
   - a storage collection's document schema (storage.collections.<name>.schema)
     within the server's bounds: at most 16384 bytes of JSON, 16 nested
-    schemas and 16 patterns, no minLength/minItems/minimum above its max, and
-    none on a write "none" collection
+    schemas and 16 patterns (32 across the manifest), no
+    minLength/minItems/minimum above its max, and none on a write "none"
+    collection
   - the committed LOCKFILE matches the package manager the platform build
     derives from buildCommand (its first word): pnpm -> pnpm-lock.yaml,
     yarn -> yarn.lock, and npm/vite/npx/unset -> package-lock.json. The
