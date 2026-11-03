@@ -218,7 +218,7 @@ func findingFieldLedger() []fieldExpectation {
 			"the refused value is that keyword's own"},
 		{"patterns across their schemas", "storage.collections",
 			"a count over every collection's schema together; no one collection is the one to cut"},
-		{"can't be checked offline", "storage.collections.cov_schema_re2.schema.pattern",
+		{"is likely refused at submit", "storage.collections.cov_schema_regex.schema.pattern",
 			"the advisory is about that pattern's own value"},
 
 		// --- storagescope.go: what the SOURCE does --------------------------

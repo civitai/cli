@@ -1249,7 +1249,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			// storageCollectionSchemaChecks and storageCollectionSchemaWarnings:
 			// each server-only bound of a collection `schema`, one collection
-			// each, plus a pattern RE2 cannot compile (a WARNING). The write
+			// each, plus a pattern JavaScript's "u" mode refuses (a WARNING). The write
 			// "none" collection also draws the vendored schema's own `false`.
 			name: "collection schemas past the server's bounds (storageCollectionSchemaChecks, storageCollectionSchemaWarnings)",
 			files: map[string]string{"block.manifest.json": `{
@@ -1267,7 +1267,7 @@ func fieldCoverageCorpus() []fieldFixture {
 			    "cov_schema_many": {"visibility": "private", "schema": {"properties": {` +
 				covPatternProps(17) + `}}},
 			    "cov_schema_bounds": {"visibility": "private", "schema": {"minLength": 2, "maxLength": 1, "maxItems": 9007199254740992}},
-			    "cov_schema_re2": {"visibility": "private", "schema": {"pattern": "(?=a)", "maxLength": 3}}
+			    "cov_schema_regex": {"visibility": "private", "schema": {"pattern": "(?i)a", "maxLength": 3}}
 			  }}
 			}`},
 		},

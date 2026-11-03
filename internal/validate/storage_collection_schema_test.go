@@ -274,33 +274,93 @@ func TestCollectionSchemaNotOnWriteNone(t *testing.T) {
 	}
 }
 
-// patternWarning is the advisory for a pattern RE2 cannot compile.
-func patternWarning(at, re2err string) string {
-	return at + ` can't be checked offline: civitai.com compiles it as a JavaScript regular expression ` +
-		`with the "u" flag, and the Go (RE2) engine this CLI uses does not accept it (` + re2err +
-		`). It may still be valid — the server decides at submit.`
+// patternWarning is the advisory for a pattern JavaScript's "u" mode refuses.
+func patternWarning(at, reason string) string {
+	return at + ` is likely refused at submit: civitai.com compiles it as a JavaScript regular expression ` +
+		`with the "u" flag, which does not accept ` + reason + `. The server has the final say (it also ` +
+		`refuses patterns open to catastrophic backtracking, which this CLI does not check).`
 }
 
-// TestCollectionSchemaPatternRE2IsAWarningNotAnError — the server compiles a
-// pattern as ECMAScript with the `u` flag; RE2 is a different language, so a
-// pattern RE2 refuses is a WARNING (never an error: the first two rows are
-// VALID ECMAScript, which the server accepts).
-func TestCollectionSchemaPatternRE2IsAWarningNotAnError(t *testing.T) {
+// patternManifest is cardsManifest with one schema whose pattern is p (the regex
+// itself, JSON-encoded here so the table reads as the pattern, not its escaping).
+func patternManifest(t *testing.T, p string) string {
+	t.Helper()
+	return cardsManifest(mustJSON(t, map[string]any{"pattern": p, "maxLength": 10}))
+}
+
+// Reason tails the table below pins. Literals, not storageschema.go's.
+const (
+	identityTail = ` (with "u", only ^ $ \ . * + ? ( ) [ ] { } | / may be escaped as themselves, and - only inside [...])`
+	classTail    = ` inside [...] (with "u", only ^ $ \ . * + ? ( ) [ ] { } | / - may be escaped as themselves there)`
+)
+
+// TestCollectionSchemaPatternJSUModeSyntax — the server compiles each pattern
+// with `new RegExp(p, "u")`. The CLI's check is a conservative syntax checker
+// for that language (not Go's RE2, which disagrees with it in both directions).
+// The REFUSED rows each throw a SyntaxError in Node 24 with "u" and draw exactly
+// one WARNING (never an error: the server stays authoritative, ReDoS included);
+// the ACCEPTED rows each compile in Node 24 with "u" and draw nothing. Several
+// accepted rows are ones RE2 refuses (lookaround, backreferences, \u{…}, \cA,
+// \k<n>), and several refused rows are ones RE2 accepts (\-, \_, lone braces,
+// (?i), \z, \pL, [[:alpha:]], \Q…\E, (?P<n>…)) — so an RE2-based check fails
+// both arms.
+func TestCollectionSchemaPatternJSUModeSyntax(t *testing.T) {
 	const at = schemaAt + ".pattern"
-	for _, tc := range []struct{ name, pattern, re2err string }{
-		{"lookahead (valid JavaScript)", `(?=a)b`, "error parsing regexp: invalid or unsupported Perl syntax: `(?=`"},
-		{"a \\u{…} escape (valid JavaScript with u)", `\\u{1F600}`, "error parsing regexp: invalid escape sequence: `\\u`"},
-		{"an unclosed group (invalid in both; the server refuses it)", `([a-z]`, "error parsing regexp: missing closing ): `([a-z]`"},
+	for _, tc := range []struct{ pattern, reason string }{
+		{`a\-b`, `the escape \-` + identityTail},
+		{`\_`, `the escape \_` + identityTail},
+		{`\:`, `the escape \:` + identityTail},
+		{`\#`, `the escape \#` + identityTail},
+		{`\@`, `the escape \@` + identityTail},
+		{`\z`, `the escape \z` + identityTail},
+		{`\Qa.b\E`, `the escape \Q` + identityTail},
+		{`{`, `a lone { (write \{ for the character itself)`},
+		{`}`, `a lone } (write \} for the character itself)`},
+		{`]`, `a lone ] (write \] for the character itself)`},
+		{`a{`, `a lone { (write \{ for the character itself)`},
+		{`a{,3}`, `a lone { (write \{ for the character itself)`},
+		{`[[:alpha:]]`, `a lone ] (write \] for the character itself)`},
+		{`(?i)x`, `the inline flag group (?i)`},
+		{`(?s)x`, `the inline flag group (?s)`},
+		{`\pL`, `\p not followed by {…} (a Unicode property is written \p{L})`},
+		{`\PL`, `\P not followed by {…} (a Unicode property is written \P{L})`},
+		{`(?P<n>x)`, `the Python-style named group (?P<…>) (JavaScript writes (?<name>…))`},
+		{`([a-z]`, `a ( with no matching )`},
+		{`a)`, `a ) with no matching (`},
+		{`[a`, `a [ with no matching ]`},
+		{`a\`, `a trailing \`},
+		{`\x4`, `\x not followed by two hex digits`},
+		{`\u12`, `\u not followed by four hex digits or a {…} code point`},
+		{`\u{110000}`, `\u not followed by four hex digits or a {…} code point`},
+		{`\c1`, `\c not followed by a letter`},
+		{`\k`, `\k not followed by <name>`},
+		{`\00`, `\0 followed by a digit`},
+		{`[\B]`, `the escape \B` + classTail},
+		{`[\z]`, `the escape \z` + classTail},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			res := manifestOnlyResult(t, cardsManifest(`{"pattern":"`+tc.pattern+`","maxLength":10}`))
+		t.Run("refused "+tc.pattern, func(t *testing.T) {
+			res := manifestOnlyResult(t, patternManifest(t, tc.pattern))
 			if len(res.Errors) != 0 {
 				t.Errorf("want no errors, got:%s", describe(res.Errors))
 			}
-			if len(res.Warnings) != 1 || res.Warnings[0].Field != at ||
-				res.Warnings[0].Message != patternWarning(at, tc.re2err) {
-				t.Errorf("want exactly the RE2 advisory at %s, got:%s", at, describe(res.Warnings))
+			want := patternWarning(at, tc.reason)
+			if len(res.Warnings) != 1 || res.Warnings[0].Field != at || res.Warnings[0].Message != want {
+				t.Errorf("want exactly the advisory at %s:\n %s\ngot:%s", at, want, describe(res.Warnings))
 			}
+		})
+	}
+	for _, p := range []string{
+		`(?=a)b`, `(?!a)b`, `(?<=a)b`, `(?<!a)b`,
+		`(a)\1`, `(?<n>a)\k<n>`,
+		`\u{1F600}`, `\u00e9`, `\x41`, `\cA`, `\0`,
+		`\p{L}`, `\P{Lu}`,
+		`[\-]`, `[a\-z]`, `[\b]`, `[{}()|]`, `[^]`,
+		`\d\w\s\b\B\D\W\S`, `\/`, `\.\*\+\?\(\)\|\^\$\\\{\}\[\]`,
+		`a{2,3}`, `a{2}`, `a{2,}?`,
+		`^[^<>]*$`, `(?:a|b)+?`,
+	} {
+		t.Run("accepted "+p, func(t *testing.T) {
+			assertCleanResult(t, p, patternManifest(t, p))
 		})
 	}
 }
@@ -312,14 +372,14 @@ func TestCollectionSchemaPatternRE2IsAWarningNotAnError(t *testing.T) {
 func TestCollectionSchemaPatternWarningsFollowTheServersWalk(t *testing.T) {
 	t.Run("nested patterns are each reported where they are", func(t *testing.T) {
 		res := manifestOnlyResult(t, cardsManifest(
-			`{"properties":{"a":{"pattern":"(?=a)","maxLength":3}},"items":{"pattern":"(?!b)","maxLength":3}}`))
+			`{"properties":{"a":{"pattern":"(?i)a","maxLength":3}},"items":{"pattern":"\\z","maxLength":3}}`))
 		got := map[string]bool{}
 		for _, w := range res.Warnings {
 			got[w.Field] = true
 		}
 		for _, f := range []string{schemaAt + ".properties.a.pattern", schemaAt + ".items.pattern"} {
 			if !got[f] {
-				t.Errorf("no RE2 advisory at %s:%s", f, describe(res.Warnings))
+				t.Errorf("no pattern advisory at %s:%s", f, describe(res.Warnings))
 			}
 		}
 		if len(res.Warnings) != 2 {
@@ -327,7 +387,7 @@ func TestCollectionSchemaPatternWarningsFollowTheServersWalk(t *testing.T) {
 		}
 	})
 	t.Run("none in a schema refused for its size", func(t *testing.T) {
-		big := `{"pattern":"(?=a)","maxLength":3,"description":"` + strings.Repeat("d", 16400) + `"}`
+		big := `{"pattern":"(?i)a","maxLength":3,"description":"` + strings.Repeat("d", 16400) + `"}`
 		res := manifestOnlyResult(t, cardsManifest(big))
 		if len(res.Warnings) != 0 {
 			t.Errorf("want no advisory, got:%s", describe(res.Warnings))
@@ -338,29 +398,12 @@ func TestCollectionSchemaPatternWarningsFollowTheServersWalk(t *testing.T) {
 	})
 	t.Run("none on write none", func(t *testing.T) {
 		res := manifestOnlyResult(t, docManifest(oneCollection("plays",
-			`{"visibility":"shared","write":"none","counters":["plays"],"schema":{"pattern":"(?=a)","maxLength":3}}`),
+			`{"visibility":"shared","write":"none","counters":["plays"],"schema":{"pattern":"(?i)a","maxLength":3}}`),
 			"apps:storage"))
 		if len(res.Warnings) != 0 {
 			t.Errorf("want no advisory, got:%s", describe(res.Warnings))
 		}
 	})
-}
-
-// TestCollectionSchemaPatternRE2AcceptsIsNotParity pins a KNOWN GAP, not a
-// feature: each of these compiles in RE2 and is REFUSED by the server
-// (`new RegExp(p, "u")` throws — measured on Node 24), and the CLI says nothing.
-// It is here so the gap is visible and so whoever closes it (a real ECMAScript
-// syntax check) has to update this test rather than discover the claim.
-func TestCollectionSchemaPatternRE2AcceptsIsNotParity(t *testing.T) {
-	for _, p := range []string{`(?i)x`, `\\z`, `\\pL`, `[[:alpha:]]`} {
-		t.Run(p, func(t *testing.T) {
-			res := manifestOnlyResult(t, cardsManifest(`{"pattern":"`+p+`","maxLength":10}`))
-			if len(res.Errors)+len(res.Warnings) != 0 {
-				t.Errorf("the CLI now reports %q (good) — update this known-gap test and storageschema.go's "+
-					"file comment:\n errors:%s\n warnings:%s", p, describe(res.Errors), describe(res.Warnings))
-			}
-		})
-	}
 }
 
 // schemaCollections is a manifest whose private collections c0, c1, … each declare a schema
