@@ -358,18 +358,12 @@ func isTestFile(rel string) bool {
 	return strings.Contains(base, ".test.") || strings.Contains(base, ".spec.")
 }
 
-// literalArg parses the argument that starts at code[i] (just past the call's
-// `(`). It returns the name and true only for a single string literal — '…',
-// "…" or a backtick template with no `${` — followed by `)` or `,`. Anything
-// else (an identifier, a concatenation, an interpolation, an escape) is a
-// computed name and returns false.
-func literalArg(code string, i int) (string, bool) {
-	name, _, ok := literalArgEnd(code, i)
-	return name, ok
-}
-
-// literalArgEnd is literalArg that also returns the index of the `)` or `,`
-// that ends the argument, so a caller can read what follows it.
+// literalArgEnd parses the argument that starts at code[i] (just past the
+// call's `(`). It returns the name and true only for a single string literal —
+// '…', "…" or a backtick template with no `${` — followed by `)` or `,`, plus
+// the index of that `)` or `,` so a caller can read what follows. Anything else
+// (an identifier, a concatenation, an interpolation, an escape) is a computed
+// name and returns false.
 func literalArgEnd(code string, i int) (string, int, bool) {
 	for i < len(code) && strings.ContainsRune(" \t\r\n", rune(code[i])) {
 		i++
@@ -456,7 +450,7 @@ func importSourceArg(code string, end int) (string, fromKind) {
 	if obj[loc[2]:loc[3]] != ":" {
 		return "", computedFrom // `{ from }` — a variable named from
 	}
-	// The value, read as literalArg reads a name; the appended `,` stands in for
+	// The value, read as literalArgEnd reads a name; the appended `,` stands in for
 	// the end of the object when `from` is its last member.
 	if from, _, ok := literalArgEnd(obj+",", loc[3]); ok {
 		return from, literalFrom
