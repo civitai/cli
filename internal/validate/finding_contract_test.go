@@ -1210,15 +1210,48 @@ func fieldCoverageCorpus() []fieldFixture {
 			}`},
 		},
 		{
-			name: "both storage scopes with nothing declared for them (storageScopeRuleChecks)",
+			name: "all three storage scopes with nothing declared for them (storageScopeRuleChecks)",
 			files: map[string]string{"block.manifest.json": `{
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
 			  "contentRating": "g",
-			  "scopes": ["apps:storage", "apps:storage:publish"],
-			  "scopeJustifications": {"apps:storage:publish": "viewers publish entries"},
+			  "scopes": ["apps:storage", "apps:storage:publish", "apps:storage:import"],
+			  "scopeJustifications": {"apps:storage:publish": "viewers publish entries", "apps:storage:import": "reads the parent app's entries"},
 			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false}
+			}`},
+		},
+		{
+			name: "imports with neither apps:storage nor apps:storage:import (storageScopeRuleChecks)",
+			files: map[string]string{"block.manifest.json": `{
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": ["user:read:self"],
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+			  "storage": {"imports": [{"from": "cov-parent", "collections": ["cov_kv"], "access": "read"}]}
+			}`},
+		},
+		{
+			// storageImportChecks: the two parseImports refusals the schema
+			// admits — an import from this app itself, and a second import from
+			// one source. Each keeps the scope rules silent (an invalid
+			// declaration declares nothing).
+			name: "an import from itself and a duplicate source (storageImportChecks)",
+			files: map[string]string{"block.manifest.json": `{
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": ["apps:storage", "apps:storage:import"],
+			  "scopeJustifications": {"apps:storage:import": "reads the parent app's entries"},
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+			  "storage": {"imports": [
+			    {"from": "cov-block", "collections": ["cov_kv"], "access": "read"},
+			    {"from": "cov-parent", "collections": ["cov_kv"], "access": "read"},
+			    {"from": "cov-parent", "collections": ["cov_kv"], "access": "readwrite"}
+			  ]}
 			}`},
 		},
 		{
@@ -1244,6 +1277,33 @@ func fieldCoverageCorpus() []fieldFixture {
 				"src/App.tsx": `import { useAppStorage } from '@civitai/blocks-react';` + "\n" +
 					`export const S = () => useAppStorage();` + "\n" +
 					`export const N = () => app.storage.collection('cov_notes').list();`,
+			},
+		},
+		{
+			// storageScopeChecks rule 1b: a `from` call checked against the
+			// import from that source — one collection the import does not
+			// list, and one source no import names. The listed call beside
+			// them is the accept twin.
+			name: "source reading another app's collections through imports (importedCollectionAdvisories)",
+			files: map[string]string{
+				"block.manifest.json": `{
+				  "blockId": "cov-block",
+				  "name": "Coverage Block",
+				  "version": "1.0.0",
+				  "description": "a fork reading its parent",
+				  "author": "tester",
+				  "contentRating": "g",
+				  "scopes": ["apps:storage", "apps:storage:import"],
+				  "scopeJustifications": {"apps:storage:import": "reads the parent app's entries"},
+				  "page": {"path": "/", "title": "App"},
+				  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+				  "storage": {"imports": [{"from": "cov-parent", "collections": ["cov_kv"], "access": "read"}]},
+				  "entry": "index.html"
+				}`,
+				"index.html": `<!doctype html><script type="module" src="./src/App.tsx"></script>`,
+				"src/App.tsx": `export const K = () => app.storage.collection('cov_kv', { from: 'cov-parent' }).list();` + "\n" +
+					`export const O = () => app.storage.collection('cov_other', { from: 'cov-parent' }).list();` + "\n" +
+					`export const S = () => app.storage.collection('cov_kv', { from: 'cov-stranger' }).list();`,
 			},
 		},
 		{

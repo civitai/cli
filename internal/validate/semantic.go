@@ -470,12 +470,18 @@ var SENSITIVE_BLOCK_SCOPES = map[string]struct{}{
 	// scope a shared write:"own" collection (the only kind that may declare
 	// `ownedModelVersions`) requires.
 	"apps:storage:publish": {},
+	// apps:storage:import reads (and with access "readwrite" writes) the viewer's
+	// documents in ANOTHER app, as the viewer — that app's private collections
+	// included. Verified in civitai packages/civitai-shared/src/sensitive-block-scopes.ts
+	// on both `main` and `release` (2026-11-03), where the set is these eleven.
+	"apps:storage:import": {},
 	// social:react:self sets a public, reward-paying reaction under the viewer's
 	// name. Entered the vendored schema's scope enum in the same re-vendor as
 	// `ownedModelVersions` (civitai #6144).
 	//
 	// Both verified against the DEPLOYED constant (civitai `origin/release`,
-	// 2026-10-16), where the set is these ten.
+	// 2026-10-16), where the set was then ten (apps:storage:import, above,
+	// made it eleven).
 	"social:react:self": {},
 }
 

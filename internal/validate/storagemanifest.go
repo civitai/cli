@@ -39,11 +39,24 @@ import (
 // DECLARATION order, this lists them SORTED. The manifest is decoded into a Go
 // map, which keeps no key order; same names, same rule.
 
-// The two document-store scopes (APP_STORAGE_BASE_SCOPE / APP_STORAGE_PUBLISH_SCOPE).
+// The three document-store scopes (APP_STORAGE_BASE_SCOPE /
+// APP_STORAGE_PUBLISH_SCOPE / APP_STORAGE_IMPORT_SCOPE).
 const (
 	appStorageBaseScope    = "apps:storage"
 	appStoragePublishScope = "apps:storage:publish"
+	appStorageImportScope  = "apps:storage:import"
 )
+
+// Mirrors of the server's import bounds and patterns (APP_STORAGE_MAX_IMPORTS,
+// APP_STORAGE_MAX_IMPORT_COLLECTIONS, APP_STORAGE_IMPORT_FROM_RE). The schema
+// states each of them; they are here only so storageImportChecks can tell which
+// import entries the server's parseImports keeps (see there).
+const (
+	appStorageMaxImports           = 8
+	appStorageMaxImportCollections = 16
+)
+
+var appStorageImportFromRe = regexp.MustCompile(`^[a-z][a-z0-9-]{1,38}[a-z0-9]$`)
 
 // appStorageCollectionNameRe mirrors APP_STORAGE_COLLECTION_NAME_RE. The server
 // skips a collection whose name fails it (the schema reports the name), so the
@@ -176,11 +189,11 @@ func storageFeatureGateWarnings(generic any) []Finding {
 // the schema already rejects (see tallyNames) is compared as empty here too,
 // and draws no second, collision finding.
 func storageDeclarationChecks(generic any) []Finding {
+	out := storageImportChecks(generic)
 	cols, ok := storageCollections(generic)
 	if !ok {
-		return nil
+		return out
 	}
-	var out []Finding
 	for _, c := range cols {
 		at := childField("storage.collections", c.name)
 		if vis, _ := c.decl["visibility"].(string); vis != "shared" {
@@ -194,6 +207,109 @@ func storageDeclarationChecks(generic any) []Finding {
 			if marks[counter] {
 				out = append(out, newFinding(at, fmt.Sprintf(
 					"%s declares %q as both a counter and a mark — use different names", at, counter)))
+			}
+		}
+	}
+	return out
+}
+
+// storageImportChecks reports the two refusals of `storage.imports` that the
+// schema admits and the server's parseImports (block-storage.constants.ts)
+// returns: an import FROM THIS APP ITSELF (`from === ownBlockId`), and a SECOND
+// import from a source already imported (`imports.has(from)`). Every other
+// parseImports refusal — not an array, 0 or more than 8 entries, an unknown
+// key, a bad `from`, `access` or collection name, a repeated collection — is
+// one the schema already states, so it stays the schema's.
+//
+// The duplicate rule is subtle on purpose: the server compares against the map
+// of imports it KEPT, and it keeps an entry only when that entry drew no error
+// at all. So `importEntryKept` mirrors the per-entry checks, and an entry the
+// schema already refuses does not make a later one a "duplicate". Messages are
+// the server's text.
+func storageImportChecks(generic any) []Finding {
+	m, ok := generic.(map[string]any)
+	if !ok {
+		return nil
+	}
+	storage, ok := m["storage"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	raw, ok := storage["imports"].([]any)
+	// The server stops at an unusable array before reading any entry.
+	if !ok || len(raw) == 0 || len(raw) > appStorageMaxImports {
+		return nil
+	}
+	own := m["blockId"]
+	kept := map[string]bool{}
+	var out []Finding
+	for i, e := range raw {
+		at := indexField("storage.imports", i)
+		entry, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		from, isString := entry["from"].(string)
+		fromErr := false
+		switch {
+		case !isString || !appStorageImportFromRe.MatchString(from):
+			fromErr = true // the schema's finding
+		case from == own:
+			// parseImports: `${at}.from names this app itself — …`
+			out = append(out, newFinding(childField(at, "from"),
+				at+".from names this app itself — declare its collections instead"))
+			fromErr = true
+		case kept[from]:
+			// parseImports: `${at} imports from ${quoteName(from)} again — …`
+			out = append(out, newFinding(at,
+				at+` imports from "`+from+`" again — declare one import per app`))
+			fromErr = true
+		}
+		if !fromErr && importEntryKept(entry) {
+			kept[from] = true
+		}
+	}
+	return out
+}
+
+// importEntryKept mirrors the parseImports checks other than `from`: an entry
+// with any of these errors is not added to the server's map of imports.
+func importEntryKept(entry map[string]any) bool {
+	for key := range entry {
+		if key != "from" && key != "collections" && key != "access" {
+			return false
+		}
+	}
+	if access, _ := entry["access"].(string); access != "read" && access != "readwrite" {
+		return false
+	}
+	names, ok := entry["collections"].([]any)
+	if !ok || len(names) == 0 || len(names) > appStorageMaxImportCollections {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, n := range names {
+		name, ok := n.(string)
+		if !ok || !appStorageCollectionNameRe.MatchString(name) || seen[name] {
+			return false
+		}
+		seen[name] = true
+	}
+	return true
+}
+
+// storageImportSources returns the `from` of every import, in declaration
+// order — the server's `[...parsed.imports.keys()]`. It is only read when the
+// declaration drew no error, so every entry is then one the server kept.
+func storageImportSources(generic any) []string {
+	m, _ := generic.(map[string]any)
+	storage, _ := m["storage"].(map[string]any)
+	raw, _ := storage["imports"].([]any)
+	var out []string
+	for _, e := range raw {
+		if entry, ok := e.(map[string]any); ok {
+			if from, ok := entry["from"].(string); ok {
+				out = append(out, from)
 			}
 		}
 	}
@@ -223,8 +339,8 @@ func tallyNames(v any, max int) []string {
 	return out
 }
 
-// storageScopeRuleChecks is the server's appStorageScopeErrors: the four rules
-// between `storage` and `scopes`.
+// storageScopeRuleChecks is the server's appStorageScopeErrors: the seven rules
+// between `storage` and `scopes` (three for imports, four for collections).
 //
 // storageValid must be false whenever the declaration itself drew ANY ERROR
 // (schema or imperative). The server evaluates these rules only against a
@@ -252,6 +368,7 @@ func storageScopeRuleChecks(generic any, storageValid bool) []Finding {
 	declared := stringSet(m["scopes"])
 	_, hasBase := declared[appStorageBaseScope]
 	_, hasPublish := declared[appStoragePublishScope]
+	_, hasImport := declared[appStorageImportScope]
 
 	cols, _ := storageCollections(generic)
 	var names, publishing []string
@@ -261,8 +378,26 @@ func storageScopeRuleChecks(generic any, storageValid bool) []Finding {
 			publishing = append(publishing, c.name)
 		}
 	}
+	sources := storageImportSources(generic)
 
+	// In the server's order (appStorageScopeErrors): the three import rules
+	// first, then the four collection rules.
 	var out []Finding
+	if len(names) == 0 && len(sources) > 0 && !hasBase {
+		out = append(out, newFinding("scopes", fmt.Sprintf(
+			"storage imports from %s but scopes does not include %s — add it, or remove storage",
+			strings.Join(sources, ", "), appStorageBaseScope)))
+	}
+	if len(sources) > 0 && !hasImport {
+		out = append(out, newFinding("scopes", fmt.Sprintf(
+			"storage imports from %s, which requires the %s scope — add it to scopes with a "+
+				"scopeJustifications entry", strings.Join(sources, ", "), appStorageImportScope)))
+	}
+	if len(sources) == 0 && hasImport {
+		out = append(out, newFinding("storage", fmt.Sprintf(
+			"scopes includes %s but storage declares no imports — declare them under storage.imports, "+
+				"or remove the scope", appStorageImportScope)))
+	}
 	if len(names) > 0 && !hasBase {
 		out = append(out, newFinding("scopes", fmt.Sprintf(
 			"storage declares %s but scopes does not include %s — add it, or remove storage",
@@ -274,7 +409,10 @@ func storageScopeRuleChecks(generic any, storageValid bool) []Finding {
 				"scope — add it to scopes with a scopeJustifications entry",
 			strings.Join(publishing, ", "), appStoragePublishScope)))
 	}
-	if len(names) == 0 && hasBase {
+	// An app that only imports declares no collections of its own and still
+	// needs apps:storage (the storage route requires it on every call), so the
+	// "nothing to reach" rule waits for no imports either.
+	if len(names) == 0 && len(sources) == 0 && hasBase {
 		out = append(out, newFinding("storage", fmt.Sprintf(
 			"scopes includes %s but storage declares no collections — declare them under "+
 				"storage.collections, or remove the scope", appStorageBaseScope)))

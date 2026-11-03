@@ -22,6 +22,12 @@
 //     runtime: every call on it is refused `collection_not_declared`. Only a
 //     literal is a claim about a name; a computed one (`collection(name)`, a
 //     template with `${}`, a concatenation) is unknowable here and not flagged.
+//     A call with a string-literal `from` option — `collection('kv', { from:
+//     'parent' })`, another app's collection through `storage.imports` — is
+//     checked against THAT import instead: warned when no import names the
+//     source, or when the import does not list the collection. A computed
+//     `from` is unknowable and not flagged; an options VARIABLE is read as an
+//     own collection, as it always was.
 //  2. The document store used while the manifest has neither `apps:storage`
 //     nor a `storage` declaration — every call is refused `insufficient_scope`.
 //     Any call counts, literal or not. When `storage` IS declared, the missing
@@ -169,6 +175,25 @@ func storageScopeChecks(dir string, generic any) []Finding {
 			scan.literalNames[name], name, name)))
 	}
 
+	// (1b) A literal name read through an import — `collection('kv', { from:
+	// 'parent' })` — is another app's collection, so it is checked against the
+	// import from that app, never against storage.collections. The runtime
+	// refuses both misses below with `import_not_declared` (civitai
+	// doc-store-access.ts). A malformed `storage.imports` is the schema's
+	// finding; stay quiet rather than call every import missing.
+	if len(scan.importNames) > 0 {
+		var rawImports []any
+		importsOK := true
+		if st, ok := m["storage"].(map[string]any); ok {
+			if v, present := st["imports"]; present {
+				rawImports, importsOK = v.([]any)
+			}
+		}
+		if importsOK {
+			out = append(out, importedCollectionAdvisories(scan.importNames, rawImports)...)
+		}
+	}
+
 	// (2) The document store with neither the scope nor a declaration. A
 	// malformed `scopes` (not an array) is the schema's finding; stay quiet.
 	if scan.docStoreFile != "" && m != nil {
@@ -194,6 +219,71 @@ func storageScopeChecks(dir string, generic any) []Finding {
 			continue
 		}
 		out = append(out, newFinding("scopes", legacyHookScopeAdvice(hook, scopes[0], scopes[1])))
+	}
+	return out
+}
+
+// importedCollectionAdvisories reports each `from` call whose source app the
+// manifest does not import from, or whose collection that import does not list.
+// FIELDS name the declaration to edit: `storage.imports` when no import names
+// the source, that import's own `collections` when it does.
+func importedCollectionAdvisories(calls map[string]map[string]string, rawImports []any) []Finding {
+	type decl struct {
+		index int
+		names map[string]bool
+	}
+	imports := map[string]decl{}
+	for i, e := range rawImports {
+		entry, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		from, ok := entry["from"].(string)
+		if !ok {
+			continue
+		}
+		if _, dup := imports[from]; dup {
+			continue // the first declaration is the one to edit; a second is refused anyway
+		}
+		names := map[string]bool{}
+		if cols, ok := entry["collections"].([]any); ok {
+			for _, c := range cols {
+				if s, ok := c.(string); ok {
+					names[s] = true
+				}
+			}
+		}
+		imports[from] = decl{index: i, names: names}
+	}
+
+	sources := make([]string, 0, len(calls))
+	for from := range calls {
+		sources = append(sources, from)
+	}
+	sort.Strings(sources)
+	var out []Finding
+	for _, from := range sources {
+		d, imported := imports[from]
+		for _, name := range sortedKeys(calls[from]) {
+			call := fmt.Sprintf("%s calls `storage.collection(%q, { from: %q })`", calls[from][name], name, from)
+			switch {
+			case !imported:
+				out = append(out, newFinding("storage.imports", fmt.Sprintf(
+					"%s but storage.imports declares no import from %q — an app reaches another app's "+
+						"collection only through an import it declares, so every call on it is refused with "+
+						"`import_not_declared`. Declare the import under storage.imports, or correct the "+
+						"source. ADVISORY: this reads source statically, so only string-literal names are checked.",
+					call, from)))
+			case !d.names[name]:
+				out = append(out, newFinding(childField(indexField("storage.imports", d.index), "collections"),
+					fmt.Sprintf(
+						"%s but the import from %q does not list %q — a collection an import does not list "+
+							"is not reachable, so every call on it is refused with `import_not_declared`. Add it "+
+							"to that import's collections, or correct the name. ADVISORY: this reads source "+
+							"statically, so only string-literal names are checked.",
+						call, from, name)))
+			}
+		}
 	}
 	return out
 }
@@ -238,7 +328,10 @@ func sortedKeys(m map[string]string) []string {
 // was seen in, relative to the project root with `/` separators. `partial` is
 // sticky and dominates: it means we stopped reading, so nothing else is a claim.
 type storageScanResult struct {
-	literalNames map[string]string // collection name -> first file
+	literalNames map[string]string // collection name -> first file (an own collection: no `from`)
+	// importNames is source blockId -> collection name -> first file, for calls
+	// with a string-literal `from` option: `collection('kv', { from: 'parent' })`.
+	importNames  map[string]map[string]string
 	docStoreFile string            // first file with any document-store call
 	legacyHooks  map[string]string // hook name -> first file
 	partial      bool
@@ -265,38 +358,104 @@ func isTestFile(rel string) bool {
 	return strings.Contains(base, ".test.") || strings.Contains(base, ".spec.")
 }
 
-// literalArg parses the argument that starts at code[i] (just past the call's
-// `(`). It returns the name and true only for a single string literal — '…',
-// "…" or a backtick template with no `${` — followed by `)` or `,`. Anything
-// else (an identifier, a concatenation, an interpolation, an escape) is a
-// computed name and returns false.
-func literalArg(code string, i int) (string, bool) {
+// literalArgEnd parses the argument that starts at code[i] (just past the
+// call's `(`). It returns the name and true only for a single string literal —
+// '…', "…" or a backtick template with no `${` — followed by `)` or `,`, plus
+// the index of that `)` or `,` so a caller can read what follows. Anything else
+// (an identifier, a concatenation, an interpolation, an escape) is a computed
+// name and returns false.
+func literalArgEnd(code string, i int) (string, int, bool) {
 	for i < len(code) && strings.ContainsRune(" \t\r\n", rune(code[i])) {
 		i++
 	}
 	if i >= len(code) {
-		return "", false
+		return "", 0, false
 	}
 	q := code[i]
 	if q != '\'' && q != '"' && q != '`' {
-		return "", false
+		return "", 0, false
 	}
 	end := strings.IndexByte(code[i+1:], q)
 	if end < 0 {
-		return "", false
+		return "", 0, false
 	}
 	name := code[i+1 : i+1+end]
 	if strings.ContainsAny(name, "\\\n") || (q == '`' && strings.Contains(name, "${")) {
-		return "", false
+		return "", 0, false
 	}
 	j := i + 1 + end + 1
 	for j < len(code) && strings.ContainsRune(" \t\r\n", rune(code[j])) {
 		j++
 	}
 	if j >= len(code) || (code[j] != ')' && code[j] != ',') {
-		return "", false
+		return "", 0, false
 	}
-	return name, true
+	return name, j, true
+}
+
+// fromKind classifies a collection call's options argument.
+type fromKind int
+
+const (
+	noFrom       fromKind = iota // no options, or an options object with no `from` key: an own collection
+	literalFrom                  // `{ from: 'parent' }`: the import from that app
+	computedFrom                 // `{ from: PARENT }` / `{ from }`: another app's, but which is unknowable
+)
+
+// fromKeyRe finds a `from` key in an options object literal, quoted or not.
+// The leading boundary keeps `fromCache:` / `datefrom:` out; the trailing one
+// accepts `:` (a value follows) and `,` / end (the `{ from }` shorthand).
+var fromKeyRe = regexp.MustCompile(`(?:^|[\s,{])(?:from|'from'|"from")\s*(:|,|$)`)
+
+// maxOptionsScan bounds how far importSourceArg reads for the options
+// object's closing brace.
+const maxOptionsScan = 2000
+
+// importSourceArg reads the options argument of a collection call whose name
+// argument ended at code[end] (`)` or `,`). Only an object LITERAL is read: an
+// options variable (`collection('kv', opts)`) is not, and keeps the own-
+// collection reading it always had — the documented residual.
+func importSourceArg(code string, end int) (string, fromKind) {
+	if end >= len(code) || code[end] != ',' {
+		return "", noFrom
+	}
+	k := end + 1
+	for k < len(code) && strings.ContainsRune(" \t\r\n", rune(code[k])) {
+		k++
+	}
+	if k >= len(code) || code[k] != '{' {
+		return "", noFrom
+	}
+	depth, close := 0, -1
+	for p := k; p < len(code) && p-k < maxOptionsScan; p++ {
+		switch code[p] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+		}
+		if depth == 0 {
+			close = p
+			break
+		}
+	}
+	if close < 0 {
+		return "", noFrom
+	}
+	obj := code[k+1 : close]
+	loc := fromKeyRe.FindStringSubmatchIndex(obj)
+	if loc == nil {
+		return "", noFrom
+	}
+	if obj[loc[2]:loc[3]] != ":" {
+		return "", computedFrom // `{ from }` — a variable named from
+	}
+	// The value, read as literalArgEnd reads a name; the appended `,` stands in for
+	// the end of the object when `from` is its last member.
+	if from, _, ok := literalArgEnd(obj+",", loc[3]); ok {
+		return from, literalFrom
+	}
+	return "", computedFrom
 }
 
 // Scan caps, deliberately the same values readyack uses — the hazard is
@@ -331,7 +490,11 @@ const (
 func scanForStorageUse(dir string) storageScanResult {
 	s := &storageScanner{
 		visited: map[string]bool{},
-		res:     storageScanResult{literalNames: map[string]string{}, legacyHooks: map[string]string{}},
+		res: storageScanResult{
+			literalNames: map[string]string{},
+			importNames:  map[string]map[string]string{},
+			legacyHooks:  map[string]string{},
+		},
 	}
 	s.walk(dir, "")
 	if s.files == 0 {
@@ -428,10 +591,25 @@ func (s *storageScanner) record(rel, code string) {
 		if s.res.docStoreFile == "" {
 			s.res.docStoreFile = rel
 		}
-		if name, ok := literalArg(code, m[1]); ok {
+		name, end, ok := literalArgEnd(code, m[1])
+		if !ok {
+			continue
+		}
+		switch from, kind := importSourceArg(code, end); kind {
+		case noFrom:
 			if _, seen := s.res.literalNames[name]; !seen {
 				s.res.literalNames[name] = rel
 			}
+		case literalFrom:
+			if s.res.importNames[from] == nil {
+				s.res.importNames[from] = map[string]string{}
+			}
+			if _, seen := s.res.importNames[from][name]; !seen {
+				s.res.importNames[from][name] = rel
+			}
+		case computedFrom:
+			// Another app's collection, but which app is unknowable here. NOT
+			// recorded as an own collection: it is not one.
 		}
 	}
 	for _, m := range legacyHookCallRe.FindAllStringSubmatch(code, -1) {
