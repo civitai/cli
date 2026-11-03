@@ -145,9 +145,9 @@ func validateDir(dir string, projectState bool) (Result, error) {
 	// enabled yet are WARNINGS, and deliberately do not hold the scope rules
 	// back. See storagemanifest.go.
 	// A collection's `schema` has its own server-only bounds (size, depth,
-	// pattern count, min above max); a pattern Go's RE2 cannot compile is a
-	// WARNING, because the server's regex language is not RE2's. See
-	// storageschema.go.
+	// pattern count, min above max); a pattern with a JavaScript "u"-mode
+	// syntax error is a WARNING, because the server compiles it and decides. See
+	// storageschema.go and jsregexp.go.
 	res.Errors = append(res.Errors, storageDeclarationChecks(generic)...)
 	res.Errors = append(res.Errors, storageCollectionSchemaChecks(generic)...)
 	res.Errors = append(res.Errors, storageManifestPatternCapChecks(generic, res.Errors)...)

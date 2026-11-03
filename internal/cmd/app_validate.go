@@ -79,10 +79,11 @@ It also emits non-fatal WARNINGS the schema can't catch as hard errors:
     civitai.com refuses them at submit today; they are warnings, not errors,
     because the platform enables each with a server-side switch and an
     installed CLI must not refuse a manifest the server has started to accept.
-  - a collection schema pattern Go's regex engine (RE2) cannot compile. The
-    server compiles patterns as JavaScript regular expressions with the "u"
-    flag, a different language, so such a pattern may be valid; the server
-    decides at submit. A pattern RE2 compiles is not proven valid either.
+  - a collection schema pattern with a syntax error in JavaScript regular
+    expressions with the "u" flag, which is how the server compiles it (an
+    escape like \- or \z, a lone { } or ], an inline flag like (?i)). The
+    check is conservative: a pattern it says nothing about is not proven
+    valid, and the server decides at submit.
   - source that calls the document store, app.storage.collection(<name>), with
     a string-literal name the manifest does not declare under
     storage.collections (every call on it is refused collection_not_declared),

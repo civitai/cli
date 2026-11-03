@@ -3,7 +3,6 @@ package validate
 import (
 	"fmt"
 	"math"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,15 +37,13 @@ import (
 // HARD ERRORS with the server's text, like storagemanifest.go.
 //
 // 🔴 `pattern` IS NOT CHECKED FOR PARITY, AND MUST NOT CLAIM IT. The server
-// compiles a pattern as an ECMAScript regular expression with the `u` flag;
-// this CLI has Go's RE2, which is a different language. Neither direction
-// implies the other: RE2 refuses valid ECMAScript (lookaround, backreferences,
-// `\u{…}`), and RE2 accepts what ECMAScript-`u` refuses (`(?i)`, `\z`, `\pL`,
-// `\Q…\E`). So a pattern RE2 cannot compile draws a WARNING that says the CLI
-// cannot check it and the server decides (storageCollectionSchemaWarnings),
-// and a pattern RE2 compiles draws nothing — which is NOT a statement that the
-// server will accept it. The server's submit-time ReDoS gate (recheck) has no
-// local counterpart either.
+// compiles a pattern as an ECMAScript regular expression with the `u` flag.
+// Go's RE2 is a different language and disagrees in BOTH directions, so it is
+// not used. Instead jsregexp.go is a conservative syntax checker for that
+// language: it reports only constructs `new RegExp(p, "u")` throws on, as a
+// WARNING (storageCollectionSchemaWarnings), and its silence is NOT a
+// statement that the server will accept the pattern. The server's submit-time
+// ReDoS gate (recheck) has no local counterpart either.
 //
 // KNOWN DIVERGENCES, each an edge no real schema reaches: the byte count of a
 // string holding a lone UTF-16 surrogate (Go's decoder has already replaced it
@@ -247,11 +244,11 @@ func storageManifestPatternCapChecks(generic any, errs []Finding) []Finding {
 		total, appStorageManifestMaxPatterns))}
 }
 
-// storageCollectionSchemaWarnings reports each `pattern` that Go's RE2 cannot
-// compile. A WARNING, never an error: the server's language is ECMAScript with
-// the `u` flag, and RE2 refusing a pattern says nothing certain about it (see
-// the file comment). Only the patterns the server would go on to compile are
-// considered — none in a schema it refuses for its size or on write "none".
+// storageCollectionSchemaWarnings reports each `pattern` jsUModePatternError
+// finds a JavaScript "u"-mode syntax error in. A WARNING, never an error: the
+// server compiles it and stays authoritative (see the file comment). Only the
+// patterns the server would go on to compile are considered — none in a schema
+// it refuses for its size or on write "none".
 func storageCollectionSchemaWarnings(generic any) []Finding {
 	var out []Finding
 	for _, cs := range collectionSchemas(generic) {
@@ -267,12 +264,13 @@ func storageCollectionSchemaWarnings(generic any) []Finding {
 			if !ok || utf8.RuneCountInString(src) > appStorageSchemaPatternMaxLength {
 				continue // the schema's finding
 			}
-			if _, err := regexp.Compile(src); err != nil {
+			if reason := jsUModePatternError(src); reason != "" {
 				out = append(out, newFinding(p.at, fmt.Sprintf(
-					"%s can't be checked offline: civitai.com compiles it as a JavaScript regular "+
-						"expression with the \"u\" flag, and the Go (RE2) engine this CLI uses does not "+
-						"accept it (%s). It may still be valid — the server decides at submit.",
-					p.at, err)))
+					"%s is likely refused at submit: civitai.com compiles it as a JavaScript regular "+
+						"expression with the \"u\" flag, which does not accept %s. The server has the "+
+						"final say (it also refuses patterns open to catastrophic backtracking, which "+
+						"this CLI does not check).",
+					p.at, reason)))
 			}
 		}
 	}
