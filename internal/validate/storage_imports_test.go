@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -109,4 +110,169 @@ func TestStorageImportScopeValidates(t *testing.T) {
 		},
 		"iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false}
 	}`)
+}
+
+// --- the server's import rules (civitai block-storage.constants.ts:
+// appStorageScopeErrors and parseImports), mirrored in storagemanifest.go.
+// Every message is the server's text, pinned whole. ---
+
+const importJustification = `"apps:storage:import": "reads and updates the entries you keep in the app this one was forked from"`
+
+// importsManifest is a manifest whose storage is `storage` and whose scopes are
+// `scopes`; apps:storage:import gets its justification when it is declared, so
+// a sensitive-scope or unknown-justification finding never stands in for the
+// one under test.
+func importsManifest(storage string, scopes ...string) string {
+	quoted := make([]string, 0, len(scopes))
+	just := ""
+	for _, s := range scopes {
+		quoted = append(quoted, `"`+s+`"`)
+		if s == "apps:storage:import" {
+			just = `"scopeJustifications": {` + importJustification + `},`
+		}
+	}
+	return `{"blockId": "imports-fixture", "name": "Imports Fixture", "version": "1.0.0", "contentRating": "g",
+		"scopes": [` + strings.Join(quoted, ", ") + `], ` + just + `
+		"storage": ` + storage + `,
+		"iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false}}`
+}
+
+const oneImport = `{"imports": [{"from": "parent-app", "collections": ["notes"], "access": "read"}]}`
+
+// TestStorageImportsOnlyValidates — an app that only reaches another app's data
+// declares NO collections of its own. The server requires apps:storage for it
+// all the same (the storage route checks it on every call), so "apps:storage
+// with nothing to reach" must wait for no imports either. Before the fix the
+// CLI refused this manifest with "scopes includes apps:storage but storage
+// declares no collections", which the server does not.
+func TestStorageImportsOnlyValidates(t *testing.T) {
+	assertNoErrors(t, "imports only, both scopes", importsManifest(oneImport, "apps:storage", "apps:storage:import"))
+}
+
+func TestStorageImportScopeRules(t *testing.T) {
+	t.Run("imports only, without apps:storage", func(t *testing.T) {
+		assertOnlyError(t, importsManifest(oneImport, "apps:storage:import"), "scopes",
+			"storage imports from parent-app but scopes does not include apps:storage — add it, or remove storage")
+	})
+	t.Run("imports without apps:storage:import", func(t *testing.T) {
+		assertOnlyError(t, importsManifest(oneImport, "apps:storage"), "scopes",
+			"storage imports from parent-app, which requires the apps:storage:import scope — add it to "+
+				"scopes with a scopeJustifications entry")
+	})
+	t.Run("apps:storage:import with no imports", func(t *testing.T) {
+		assertOnlyError(t, importsManifest(`{"collections": {"notes": {"visibility": "private"}}}`,
+			"apps:storage", "apps:storage:import"), "storage",
+			"scopes includes apps:storage:import but storage declares no imports — declare them under "+
+				"storage.imports, or remove the scope")
+	})
+	t.Run("collections AND imports, both scopes (accept twin)", func(t *testing.T) {
+		assertNoErrors(t, "collections and imports", importsManifest(
+			`{"collections": {"notes": {"visibility": "private"}}, "imports": [{"from": "parent-app", "collections": ["notes"], "access": "read"}]}`,
+			"apps:storage", "apps:storage:import"))
+	})
+}
+
+func TestStorageImportParseRefusals(t *testing.T) {
+	t.Run("an import from this app itself", func(t *testing.T) {
+		assertOnlyError(t, importsManifest(
+			`{"imports": [{"from": "imports-fixture", "collections": ["notes"], "access": "read"}]}`,
+			"apps:storage", "apps:storage:import"), "storage.imports[0].from",
+			"storage.imports[0].from names this app itself — declare its collections instead")
+	})
+	t.Run("a second import from one source", func(t *testing.T) {
+		assertOnlyError(t, importsManifest(
+			`{"imports": [{"from": "parent-app", "collections": ["notes"], "access": "read"},`+
+				`{"from": "other-app", "collections": ["notes"], "access": "read"},`+
+				`{"from": "parent-app", "collections": ["drafts"], "access": "readwrite"}]}`,
+			"apps:storage", "apps:storage:import"), "storage.imports[2]",
+			`storage.imports[2] imports from "parent-app" again — declare one import per app`)
+	})
+	// The server compares against the imports it KEPT, and it keeps no entry
+	// that drew an error: the first entry here is refused for its access, so
+	// the second one is not a duplicate of it. Only the schema's finding remains.
+	t.Run("no duplicate of an entry that was itself refused", func(t *testing.T) {
+		assertOnlyError(t, importsManifest(
+			`{"imports": [{"from": "parent-app", "collections": ["notes"], "access": "write"},`+
+				`{"from": "parent-app", "collections": ["drafts"], "access": "read"}]}`,
+			"apps:storage", "apps:storage:import"), "storage.imports[0].access",
+			"storage.imports[0].access: value must be one of 'read', 'readwrite'")
+	})
+}
+
+// TestStorageImportScopeIsSensitive — apps:storage:import is in the server's
+// SENSITIVE_BLOCK_SCOPES (civitai packages/civitai-shared/src/sensitive-block-scopes.ts),
+// so without a justification the manifest is refused at submit.
+func TestStorageImportScopeIsSensitive(t *testing.T) {
+	m := `{"blockId": "imports-fixture", "name": "Imports Fixture", "version": "1.0.0", "contentRating": "g",
+		"scopes": ["apps:storage", "apps:storage:import"],
+		"storage": ` + oneImport + `,
+		"iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false}}`
+	assertOnlyError(t, m, "scopeJustifications",
+		"sensitive scopes require a justification — add a non-empty scopeJustifications entry for: apps:storage:import")
+}
+
+// --- the SOURCE advisory for a `from` call (storagescope.go rule 1b) ---
+
+// forkSourceManifest declares one own collection (`kv`) and one import (of
+// `notes` from parent-app), so an own-collection reading and an import reading
+// of the same call give DIFFERENT answers.
+func forkSourceManifest() string {
+	return importsManifest(
+		`{"collections": {"kv": {"visibility": "private"}}, "imports": [{"from": "parent-app", "collections": ["notes"], "access": "readwrite"}]}`,
+		"apps:storage", "apps:storage:import")
+}
+
+func TestStorageImportedCollectionAdvisory(t *testing.T) {
+	for _, tc := range []struct {
+		name, src, field, message string
+	}{
+		{"listed by the import: silent",
+			`export const n = () => app.storage.collection('notes', { from: 'parent-app' }).list();`, "", ""},
+		{"double quotes, more options after from: silent",
+			`export const n = () => app.storage.collection("notes", { from: "parent-app", limit: 5 });`, "", ""},
+		{"not listed by the import",
+			`export const d = () => app.storage.collection('drafts_q7', { from: 'parent-app' }).list();`,
+			"storage.imports[0].collections",
+			"src/fork.ts calls `storage.collection(\"drafts_q7\", { from: \"parent-app\" })` but the import from " +
+				"\"parent-app\" does not list \"drafts_q7\" — a collection an import does not list is not reachable, " +
+				"so every call on it is refused with `import_not_declared`. Add it to that import's collections, or " +
+				"correct the name. ADVISORY: this reads source statically, so only string-literal names are checked."},
+		{"no import from that source",
+			`export const s = () => app.storage.collection('notes', { from: 'stranger-app' }).list();`,
+			"storage.imports",
+			"src/fork.ts calls `storage.collection(\"notes\", { from: \"stranger-app\" })` but storage.imports " +
+				"declares no import from \"stranger-app\" — an app reaches another app's collection only through an " +
+				"import it declares, so every call on it is refused with `import_not_declared`. Declare the import " +
+				"under storage.imports, or correct the source. ADVISORY: this reads source statically, so only " +
+				"string-literal names are checked."},
+		// The own-collection reading is unchanged for a call with NO from: the
+		// same name is an own collection here, and kv (declared) stays silent.
+		{"no from: still an own collection",
+			"export const n = () => app.storage.collection('notes').list();\n" +
+				"export const k = () => app.storage.collection('kv').list();",
+			"storage.collections.notes", undeclaredMessage("src/fork.ts", "notes")},
+		{"computed from: unknowable, silent",
+			`export const n = () => app.storage.collection('drafts_q7', { from: PARENT }).list();`, "", ""},
+		{"shorthand from: unknowable, silent",
+			`export const n = (from: string) => app.storage.collection('drafts_q7', { from }).list();`, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := storageSourceWarnings(t, forkSourceManifest(), map[string]string{"src/fork.ts": tc.src})
+			if tc.message == "" {
+				if len(got) != 0 {
+					t.Fatalf("want no storage advisory, got %d:%s", len(got), describe(got))
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("want exactly one storage advisory, got %d:%s", len(got), describe(got))
+			}
+			if got[0].Message != tc.message {
+				t.Errorf("message\n  got:  %s\n  want: %s", got[0].Message, tc.message)
+			}
+			if got[0].Field != tc.field {
+				t.Errorf("field = %q, want %q", got[0].Field, tc.field)
+			}
+		})
+	}
 }

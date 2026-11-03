@@ -191,7 +191,7 @@ func findingFieldLedger() []fieldExpectation {
 		{"as both a counter and a mark", "storage.collections.cov_dup",
 			"a relationship between two keys OF ONE collection, either of which may be renamed — " +
 				"the collection is the smallest location that holds both"},
-		{"— add it, or remove storage", "scopes",
+		{"storage declares cov_kv, cov_posts but scopes does not include", "scopes",
 			"pair rule: storage is SET, apps:storage is MISSING from scopes"},
 		{"lets viewers write documents other users read", "scopes",
 			"pair rule: the viewer-written collection is set, apps:storage:publish is missing from scopes"},
@@ -199,6 +199,17 @@ func findingFieldLedger() []fieldExpectation {
 			"pair rule, the mirror: the scope is set, the collections it reaches are missing"},
 		{"scopes includes apps:storage:publish but no storage collection", "storage",
 			"pair rule: the publish scope is set, the viewer-written collection it is for is missing"},
+		{"storage imports from cov-parent but scopes does not include", "scopes",
+			"pair rule: an import is SET, apps:storage is MISSING from scopes"},
+		{"which requires the apps:storage:import scope", "scopes",
+			"pair rule: an import is set, apps:storage:import is missing from scopes"},
+		{"scopes includes apps:storage:import but storage declares no imports", "storage",
+			"pair rule, the mirror: the import scope is set, the imports it reaches are missing"},
+		{"names this app itself", "storage.imports[0].from",
+			"the refused value is that import's `from`; the remedy is to change it (or declare collections)"},
+		{`imports from "cov-parent" again`, "storage.imports[2]",
+			"the SECOND import from one source is the offender — the first is legal — and either of its " +
+				"keys may be the edit (merge it into the first, or name another source), so the entry itself"},
 
 		// --- storageschema.go: a collection schema past the server's bounds ---
 		{`does not apply to write "none"`, "storage.collections.cov_schema_none.schema",
@@ -225,6 +236,11 @@ func findingFieldLedger() []fieldExpectation {
 		{"is refused with `collection_not_declared`", "storage.collections.cov_notes",
 			"per-key: the name the source uses is the key missing from storage.collections. " +
 				"The source is usually right (it names what it needs); the edit is the declaration"},
+		{"declares no import from", "storage.imports",
+			"per-source: no import names the app the source reads from, so the edit is a new entry in " +
+				"storage.imports — there is no existing entry to point at"},
+		{"Add it to that import's collections", "storage.imports[0].collections",
+			"the import from that source exists; its collections list is what lacks the name"},
 		{"calls the document store", "scopes",
 			"the source is correct — using the store is the feature — and the single edit that fixes " +
 				"it is adding apps:storage to `scopes`. FieldProject would send a consumer to read their " +
@@ -336,7 +352,7 @@ func TestEveryFindingCarriesItsDocumentedField(t *testing.T) {
 //
 // It is separate from the ledger above on purpose. The ledger says WHAT each
 // field is; this says WHY that set of values is not arbitrary, and it is the
-// test that fails with the right explanation when someone flips a pair. Ten
+// test that fails with the right explanation when someone flips a pair. Thirteen
 // pair rules exist across four files, and an inversion of any of them is a
 // plausible-looking refactor that changes nothing else observable.
 func TestPairRuleNamesTheMissingField(t *testing.T) {
@@ -351,10 +367,13 @@ func TestPairRuleNamesTheMissingField(t *testing.T) {
 		{"the budget is inert", "page.buzzBudgetPerGen", "scopes"},
 		{"page.buzzBudgetPerGen is not set", "scopes", "page.buzzBudgetPerGen"},
 		{"must also declare an iframe block", "page", "iframe"},
-		{"— add it, or remove storage", "storage", "scopes"},
+		{"storage declares cov_kv, cov_posts but scopes does not include", "storage", "scopes"},
 		{"lets viewers write documents other users read", "storage", "scopes"},
 		{"scopes includes apps:storage but storage declares no collections", "scopes", "storage"},
 		{"scopes includes apps:storage:publish but no storage collection", "scopes", "storage"},
+		{"storage imports from cov-parent but scopes does not include", "storage", "scopes"},
+		{"which requires the apps:storage:import scope", "storage", "scopes"},
+		{"scopes includes apps:storage:import but storage declares no imports", "scopes", "storage"},
 	}
 
 	found := corpusFindings(t)
