@@ -200,6 +200,27 @@ func findingFieldLedger() []fieldExpectation {
 		{"scopes includes apps:storage:publish but no storage collection", "storage",
 			"pair rule: the publish scope is set, the viewer-written collection it is for is missing"},
 
+		// --- storageschema.go: a collection schema past the server's bounds ---
+		{`does not apply to write "none"`, "storage.collections.cov_schema_none.schema",
+			"the remedy is to delete this key: the collection has no document bodies to check"},
+		{"cov_schema_none.schema: false schema", "storage.collections.cov_schema_none.schema",
+			"the vendored schema's own `false` for the same key, located at the key it forbids"},
+		{"bytes of JSON — a collection schema", "storage.collections.cov_schema_big.schema",
+			"a bound on the whole schema; no single keyword inside it is the one to shrink"},
+		{"is nested too deeply", "storage.collections.cov_schema_deep.schema" +
+			strings.Repeat(".items", 16),
+			"the innermost schema is the one past the limit, and the server's message names it"},
+		{"patterns — a collection schema may declare", "storage.collections.cov_schema_many.schema",
+			"a count over the whole schema; any of the patterns may be the one removed"},
+		{"is greater than maxLength", "storage.collections.cov_schema_bounds.schema.minLength",
+			"the server names the lower bound first; the pair lives in one schema object"},
+		{"must be a whole number of 0 or more", "storage.collections.cov_schema_bounds.schema.maxItems",
+			"the refused value is that keyword's own"},
+		{"patterns across their schemas", "storage.collections",
+			"a count over every collection's schema together; no one collection is the one to cut"},
+		{"is likely refused at submit", "storage.collections.cov_schema_regex.schema.pattern",
+			"the advisory is about that pattern's own value"},
+
 		// --- storagescope.go: what the SOURCE does --------------------------
 		{"is refused with `collection_not_declared`", "storage.collections.cov_notes",
 			"per-key: the name the source uses is the key missing from storage.collections. " +

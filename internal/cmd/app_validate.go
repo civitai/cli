@@ -39,6 +39,11 @@ plus the ported semantic rules and structural checks:
     apps:storage, a viewer-written shared collection without
     apps:storage:publish, and either scope requested with nothing in storage
     for it to reach
+  - a storage collection's document schema (storage.collections.<name>.schema)
+    within the server's bounds: at most 16384 bytes of JSON, 16 nested
+    schemas and 16 patterns (32 across the manifest), no
+    minLength/minItems/minimum above its max, and none on a write "none"
+    collection
   - the committed LOCKFILE matches the package manager the platform build
     derives from buildCommand (its first word): pnpm -> pnpm-lock.yaml,
     yarn -> yarn.lock, and npm/vite/npx/unset -> package-lock.json. The
@@ -74,6 +79,11 @@ It also emits non-fatal WARNINGS the schema can't catch as hard errors:
     civitai.com refuses them at submit today; they are warnings, not errors,
     because the platform enables each with a server-side switch and an
     installed CLI must not refuse a manifest the server has started to accept.
+  - a collection schema pattern with a syntax error in JavaScript regular
+    expressions with the "u" flag, which is how the server compiles it (an
+    escape like \- or \z, a lone { } or ], an inline flag like (?i)). The
+    check is conservative: a pattern it says nothing about is not proven
+    valid, and the server decides at submit.
   - source that calls the document store, app.storage.collection(<name>), with
     a string-literal name the manifest does not declare under
     storage.collections (every call on it is refused collection_not_declared),

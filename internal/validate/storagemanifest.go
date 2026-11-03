@@ -19,7 +19,8 @@ import (
 // manifest can still be refused. This file is the difference, and nothing more:
 // every shape rule the schema already states (names, enums, bounds, the
 // shared-only keys, write:"none" needing a tally, ownedModelVersions) stays the
-// schema's, so no rule lives in two places here.
+// schema's, so no rule lives in two places here. A collection's `schema` (its
+// document schema) has its own server-only bounds: storageschema.go.
 //
 // HARD ERRORS, like the other ported semantic rules (AGENTS.md item 1): each
 // one is a refusal the server returns, so a manifest that trips it cannot be

@@ -144,9 +144,16 @@ func validateDir(dir string, projectState bool) (Result, error) {
 	// ERROR so far is located under `storage`. The features the server has not
 	// enabled yet are WARNINGS, and deliberately do not hold the scope rules
 	// back. See storagemanifest.go.
+	// A collection's `schema` has its own server-only bounds (size, depth,
+	// pattern count, min above max); a pattern with a JavaScript "u"-mode
+	// syntax error is a WARNING, because the server compiles it and decides. See
+	// storageschema.go and jsregexp.go.
 	res.Errors = append(res.Errors, storageDeclarationChecks(generic)...)
+	res.Errors = append(res.Errors, storageCollectionSchemaChecks(generic)...)
+	res.Errors = append(res.Errors, storageManifestPatternCapChecks(generic, res.Errors)...)
 	res.Errors = append(res.Errors, storageScopeRuleChecks(generic, !hasFindingUnder(res.Errors, "storage"))...)
 	res.Warnings = append(res.Warnings, storageFeatureGateWarnings(generic)...)
+	res.Warnings = append(res.Warnings, storageCollectionSchemaWarnings(generic)...)
 
 	// Structural: buildCommand + outputDir coherence beyond what the schema
 	// can express (the schema enforces "outputDir required when buildCommand

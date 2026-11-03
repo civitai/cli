@@ -822,6 +822,13 @@ for the storage ones. The storage features civitai.com does not accept yet
 (`kind` "log", `write` "anyone"/"owner", `ttlSeconds`, `dailyWritesPerAuthor`)
 are also warnings: the server refuses them at submit today, but enables each
 with a server-side switch, so an installed CLI must not refuse them outright.
+A collection's document `schema` is checked against the server's bounds (size,
+depth, pattern count, min above max). Its `pattern`s are JavaScript regular
+expressions with the `u` flag; the CLI warns on the syntax errors of that
+language it knows (an escape like `\-` or `\z`, a lone `{` `}` or `]`, an
+inline flag like `(?i)`), and a pattern it says nothing about is not proven valid.
+civitai.com decides at submit, including its check for catastrophic
+backtracking, which has no local counterpart.
 
 📖 **What each of those checks actually proves, the lockfile rule in full, the
 two tiers of the `BLOCK_READY` advisory, and the `--json` result shape:
