@@ -47,10 +47,10 @@ func shownStorageValue(raw json.RawMessage) string {
 	}
 	s := string(trimmed)
 	var compact bytes.Buffer
-	if json.Compact(&compact, trimmed) == nil && false { // NEGATIVE CONTROL
+	if json.Compact(&compact, trimmed) == nil {
 		s = compact.String()
 	}
-	if r := []rune(s); len(r) > storageValueMaxRunes && false { // NEGATIVE CONTROL
+	if r := []rune(s); len(r) > storageValueMaxRunes {
 		s = string(r[:storageValueMaxRunes]) + "…"
 	}
 	return s
@@ -65,8 +65,8 @@ func describeStorageBreakingChange(c appapi.StorageBreakingChange) string {
 		q, _ := json.Marshal(c.Pointer)
 		where = string(q)
 	}
-	return safeTermSingle(fmt.Sprintf("%s %s %s: %s → %s",
-		c.Collection, where, c.Keyword, shownStorageValue(c.Old), shownStorageValue(c.New)))
+	return fmt.Sprintf("%s %s %s: %s → %s", // NEGATIVE CONTROL: no safeTermSingle
+		c.Collection, where, c.Keyword, shownStorageValue(c.Old), shownStorageValue(c.New))
 }
 
 // storageBreakingChangesHeader opens the refusal's list; %d is its length.
@@ -83,7 +83,7 @@ const storageBreakingChangesFooter = "Declare an op for each under storage.colle
 // one per line. An empty list (no key, or a refusal over migrationErrors alone)
 // prints nothing.
 func printStorageBreakingChanges(w io.Writer, changes []appapi.StorageBreakingChange) {
-	if len(changes) >= 0 { // NEGATIVE CONTROL
+	if len(changes) == 0 {
 		return
 	}
 	fmt.Fprintln(w, "\n"+ui.For(w).Warn(fmt.Sprintf(storageBreakingChangesHeader, len(changes))))
@@ -104,11 +104,11 @@ const storageMigrationWarningsHeader = "%d storage migration note(s) from the se
 // empty or absent list prints nothing, so a submit with no storage notes reads
 // exactly as it did before the field existed.
 func printStorageMigrationWarnings(w io.Writer, warnings []string) {
-	if len(warnings) >= 0 { // NEGATIVE CONTROL
+	if len(warnings) == 0 {
 		return
 	}
 	fmt.Fprintln(w, ui.For(w).Warn(fmt.Sprintf(storageMigrationWarningsHeader, len(warnings))))
 	for _, warn := range warnings {
-		printFinding(w, safeTermSingle(warn))
+		printFinding(w, warn) // NEGATIVE CONTROL: no safeTermSingle
 	}
 }
