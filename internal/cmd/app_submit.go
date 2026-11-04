@@ -393,6 +393,14 @@ Listing-completeness gate:
   Your FIRST submit is what creates the store listing, so there is nothing to
   check yet and nothing is refused; the gate applies from the second one on.
 
+Storage migration notes:
+  An app that declares App Storage collections is checked by the SERVER
+  against the previous approved version. An accepted submit prints the
+  server's migration notes under the success line — for example a
+  storage.collections.<name>.migrations op that covers nothing and so will
+  never run. They never block the submit. (A breaking change no migration
+  covers refuses the submit, and the server's error lists each one.)
+
 Defaults to the current directory.`,
 		Example: `  civitai app submit                    # validate + package + confirm + submit
   civitai app submit --yes              # skip the confirmation prompt (scripts/CI)
@@ -799,6 +807,7 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 	base := strings.TrimRight(baseURL, "/")
 	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Submitted — %s is pending moderator review.", r.PublishRequestID)))
 	printSubmitListingReadiness(out, r.Listing)
+	printStorageMigrationWarnings(out, r.StorageMigrationWarnings)
 	fmt.Fprintf(out, "\nWhat's next: a moderator reviews it; on approval it builds + deploys to %s (usually a few minutes).\n", ui.URL(fmt.Sprintf("https://%s.civit.ai", r.Slug)))
 	fmt.Fprintln(out, "\nTrack it:")
 	fmt.Fprintf(out, "  %s                          # review + deploy status\n", ui.Code("civitai app status"))

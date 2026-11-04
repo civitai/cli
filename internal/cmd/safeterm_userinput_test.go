@@ -141,6 +141,9 @@ var bareIdentArgs = map[string]string{
 	"serverReasonSuffix::reason":          "SERVER: an orchestrator failure reason",
 	"printWorkflow::r":                    "SERVER: an orchestrator failure reason (workflows get)",
 	"printWorkflowList::r":                "SERVER: an orchestrator failure reason (workflows list)",
+
+	// --- app submit: App Storage schema-migration notes ---------------------
+	"printStorageMigrationWarnings::warn": "SERVER: one storageMigrationWarnings string from the submit response",
 }
 
 // sanitizerComposers are the functions IN safeterm.go that may call safeTerm on

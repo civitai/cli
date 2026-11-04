@@ -884,6 +884,16 @@ Any other next step is printed as a plain `Listing: …` note, and any listing
 problems are listed by code and label. An older server that does not report
 readiness gets the same output as before.
 
+An app that declares **App Storage collections** is checked by the server
+against its previous approved version. An **accepted** submit prints the
+server's `storageMigrationWarnings` under the success line — for example a
+`storage.collections.<name>.migrations` op that covers nothing and so will never
+run; they never block the submit. A breaking schema change that no migration
+covers **refuses** the submit, and the server's error message lists each one.
+Neither has a local counterpart: `civitai app validate` checks only the shape of
+`migrations`, because whether an op covers a change needs the previous approved
+manifest, which only the server has.
+
 Entries are ranked by **compressed** size, because that is what the upload is
 made of — a large text file that deflates to nothing is not what to delete. The
 usual culprit is a directory of screenshots or sample assets that `app submit`

@@ -459,6 +459,15 @@ type SubmitResult struct {
 	// it; the submit itself still succeeded) or no `listing` key at all (a server
 	// that predates it) — never a zero value, which would read as "not blocked".
 	Listing *SubmitListingReadiness `json:"listing,omitempty"`
+	// StorageMigrationWarnings is the server's App Storage schema-migration notes
+	// for an ACCEPTED submit (civitai/civitai publish-request.service.ts
+	// `storageMigrationWarnings`, filled from checkStorageMigrations' `warnings`):
+	// a declared migration op that covers no breaking change since the previous
+	// approved version (it will not run), a collection no longer declared, an
+	// optional property newly declared on an open schema, or a previous version
+	// whose storage no longer parses. Reported, never refused. Empty or absent (a
+	// server that predates it) prints nothing.
+	StorageMigrationWarnings []string `json:"storageMigrationWarnings,omitempty"`
 }
 
 // SubmitListingReadiness mirrors the server's SubmitListingReadiness
