@@ -140,6 +140,9 @@ func TestPrintStorageMigrationWarnings(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var b bytes.Buffer
 			printStorageMigrationWarnings(&b, tc.warnings)
+			if tc.want == nil && b.String() != "" {
+				t.Errorf("want no output, got:\n%s", b.String())
+			}
 			assertInOrder(t, b.String(), tc.want)
 		})
 	}
@@ -168,21 +171,18 @@ func TestPrintStorageBreakingChanges(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var b bytes.Buffer
 			printStorageBreakingChanges(&b, tc.changes)
+			if tc.want == nil && b.String() != "" {
+				t.Errorf("want no output, got:\n%s", b.String())
+			}
 			assertInOrder(t, b.String(), tc.want)
 		})
 	}
 }
 
-// assertInOrder: want == nil means s must be empty; otherwise each substring
-// must appear, each after the previous.
+// assertInOrder: each substring of want must appear in s, each after the
+// previous. It asserts nothing about what else s holds.
 func assertInOrder(t *testing.T, s string, want []string) {
 	t.Helper()
-	if want == nil {
-		if s != "" {
-			t.Errorf("want no output, got:\n%s", s)
-		}
-		return
-	}
 	at := 0
 	for _, w := range want {
 		i := strings.Index(s[at:], w)
@@ -267,9 +267,6 @@ func TestSubmitStorageMigrationOutputThroughClient(t *testing.T) {
 				`  - cards "/title" maxLength: 120 → 80`,
 				"Declare an op for each",
 			},
-			// The server said why; the size block's "it cannot tell whether
-			// that is why" would be false, and this is no platform defect.
-			absent: []string{"What this CLI sent", "civitai feedback send"},
 		},
 		{
 			name: "(b) 200 prints storageMigrationWarnings", status: http.StatusOK, body: storageAcceptedBody,

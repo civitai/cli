@@ -854,19 +854,7 @@ func uploadAndReport(cmd *cobra.Command, client appapi.Submitter, zipBytes []byt
 		// ErrUnauthorized onto "no refresh token stored") lands on the arm above
 		// it now — same silence, but attributed to the fact rather than to
 		// vocabulary borrowed from a status code that never existed.
-		//
-		// 🔴 A STORAGE SCHEMA-MIGRATION REFUSAL SAYS WHY, SO NEITHER THE SIZE
-		// DIAGNOSIS NOR THE FEEDBACK HINT PRINTS. The server answers it with a
-		// structured `storageBreakingChanges` list (non-nil, possibly empty when the
-		// refusal is over an invalid migration op alone): the author's fix is a
-		// `migrations` entry in their own manifest, not the bundle's size and not a
-		// platform defect to report.
-		var refused *appapi.SubmitRefusedError
-		storageRefusal := errors.As(err, &refused) && refused.StorageBreakingChanges != nil
 		switch {
-		case storageRefusal:
-			printStorageBreakingChanges(cmd.ErrOrStderr(), refused.StorageBreakingChanges)
-			return err
 		case errors.Is(err, appapi.ErrBundleTooLarge):
 			printSubmitSizeRefusal(cmd.ErrOrStderr(), zipBytes, prov)
 		case errors.Is(err, appapi.ErrNothingSent):
@@ -881,6 +869,16 @@ func uploadAndReport(cmd *cobra.Command, client appapi.Submitter, zipBytes []byt
 		// the error returned unchanged.
 		if submitRefusalIsPlatformFriction(err) {
 			printFeedbackHint(cmd.ErrOrStderr(), feedbackHintSubmitRefused)
+		}
+		// A storage schema-migration refusal carries the structured list of
+		// breaking changes no migration covers. Printed LAST, directly above the
+		// `Error:` line main prints, because that is the text it itemises. It is
+		// an addition, not a branch of the switch above: the size block and the
+		// feedback hint still print exactly as README.md and the published
+		// troubleshooting row say they do for any answered 400.
+		var refused *appapi.SubmitRefusedError
+		if errors.As(err, &refused) {
+			printStorageBreakingChanges(cmd.ErrOrStderr(), refused.StorageBreakingChanges)
 		}
 		return err
 	}

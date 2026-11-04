@@ -889,7 +889,8 @@ against its previous approved version. A **breaking schema change** that no
 `storage.collections.<name>.migrations` op covers — a field made required, a
 `maxLength` tightened, a field removed — **refuses** the submit, and `app submit`
 lists each one on stderr as `<collection> "<pointer>" <keyword>: <old> → <new>`
-(from the server's `storageBreakingChanges`), in place of the size block below.
+(from the server's `storageBreakingChanges`), after the size block below and
+directly above the error, which carries the server's own remedy text.
 An **accepted** submit prints the server's `storageMigrationWarnings` under the
 success line — for example a migration op that covers nothing and so will never
 run. Neither has a local counterpart: `civitai app validate` checks only the
