@@ -459,6 +459,40 @@ type SubmitResult struct {
 	// it; the submit itself still succeeded) or no `listing` key at all (a server
 	// that predates it) — never a zero value, which would read as "not blocked".
 	Listing *SubmitListingReadiness `json:"listing,omitempty"`
+	// StorageMigrationWarnings is the server's App Storage schema-migration notes
+	// for an ACCEPTED submit (civitai/civitai publish-request.service.ts
+	// `storageMigrationWarnings`, filled from checkStorageMigrations' `warnings`):
+	// a declared migration op that covers no breaking change since the previous
+	// approved version (it will not run), a collection no longer declared, an
+	// optional property newly declared on an open schema, or a previous version
+	// whose storage no longer parses. Reported, never refused. Empty or absent (a
+	// server that predates it) prints nothing.
+	StorageMigrationWarnings []string `json:"storageMigrationWarnings,omitempty"`
+	// Raw is the response body exactly as the server sent it, for
+	// `civitai app submit --json`. nil when the result was not decoded from a
+	// submit response — the timeout-recovery path builds it from the
+	// submissions listing instead.
+	Raw json.RawMessage `json:"-"`
+}
+
+// StorageBreakingChange is one entry of a refused submit's
+// `storageBreakingChanges` — the server's BreakingChange
+// (src/server/services/apps/storage-schema-migrations.ts): a schema change since
+// the previous approved version that no declared migration op covers.
+//
+// Old and New are the keyword's values as JSON (`null` when the keyword was
+// absent on that side) and are kept RAW: their type depends on the keyword
+// (`required` is a list, `maxLength` a number, `type` a string or a list), and
+// the CLI only ever prints them.
+type StorageBreakingChange struct {
+	Collection string `json:"collection"`
+	// Pointer is a JSON Pointer into a document's `data`; "" is the document
+	// itself, and a `*` segment stands for every array element or undeclared
+	// property.
+	Pointer string          `json:"pointer"`
+	Keyword string          `json:"keyword"`
+	Old     json.RawMessage `json:"old"`
+	New     json.RawMessage `json:"new"`
 }
 
 // SubmitListingReadiness mirrors the server's SubmitListingReadiness
@@ -820,6 +854,28 @@ var ErrNothingSent = errors.New("the request never reached the connection")
 type SubmitRefusedError struct {
 	Status int
 	Err    error
+	// StorageBreakingChanges is the structured list a storage schema-migration
+	// refusal carries beside its message (the submit routes answer 400 with
+	// `storageBreakingChanges` when isStorageMigrationRefusal). nil for every
+	// other refusal. It can be EMPTY on a schema-migration refusal: the server
+	// refuses an invalid migration op (`migrationErrors`) with the same error
+	// type, and then lists no uncovered change.
+	StorageBreakingChanges []StorageBreakingChange
+	// Body is the refusal's response body exactly as the server sent it, for
+	// `civitai app submit --json`.
+	Body []byte
+}
+
+// refusalStorageBreakingChanges decodes `storageBreakingChanges` from a refused
+// submit's body. A body that is not JSON, or carries no such key, yields nil.
+func refusalStorageBreakingChanges(raw []byte) []StorageBreakingChange {
+	var body struct {
+		StorageBreakingChanges []StorageBreakingChange `json:"storageBreakingChanges"`
+	}
+	if json.Unmarshal(raw, &body) != nil {
+		return nil
+	}
+	return body.StorageBreakingChanges
 }
 
 func (e *SubmitRefusedError) Error() string { return e.Err.Error() }
@@ -1035,12 +1091,18 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 		return nil, err
 	}
 	if status != http.StatusOK {
-		return nil, &SubmitRefusedError{Status: status, Err: serverError(status, raw)}
+		return nil, &SubmitRefusedError{
+			Status:                 status,
+			Err:                    serverError(status, raw),
+			StorageBreakingChanges: refusalStorageBreakingChanges(raw),
+			Body:                   raw,
+		}
 	}
 	var out SubmitResult
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("unexpected response (status %d): %s", status, string(raw))
 	}
+	out.Raw = raw
 	return &out, nil
 }
 

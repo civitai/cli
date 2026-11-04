@@ -327,7 +327,7 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 | `civitai app dev-tunnel [blockId] [--block <id>] [--port <n>] [--local-host <host>] [--tunnel-endpoint <h:p>] [--idle-timeout <d>] [--ready-timeout <d>] [--no-wait]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>`. See [Preview in the real host](#preview-in-the-real-host-app-dev-tunnel). |
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json` — warnings are non-fatal unless `--strict`, and a `[dir]` that is missing or not a directory is a **usage error** (exit `2`, no JSON). See [Validate fidelity](#validate-fidelity). |
 | `civitai app elements [tag] [--json]` | **Look up a `<civitai-*>` element's attributes (inherited ones included), events, slots and CSS parts** — or, with no tag, list every element — from the `@civitai/components` installed in the current project. Offline: it reads `node_modules`, never the network. An unknown tag exits `2` and names the nearest matches; no installed package exits `1`. See [Templates](#templates). |
-| `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate] [--allow-downgrade] [--allow-dirty] [--allow-oversize] [--allow-incomplete-listing]` | Validate + package the source tree + upload it with your stored token (with no token it writes the bundle and prints next steps). A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`. It also refuses a version that is not strictly above the highest APPROVED version, a dirty git work tree, a body larger than the server can receive, and a store listing missing media or copy you can fix now — each waived by the matching flag above (`--yes` waives none of them), and **all four skipped on the routes that never reach the server**. See [Submit & auth](#submit--auth) and [Exit code 1](#exit-code-1), which maps each refusal to its flag. |
+| `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate] [--allow-downgrade] [--allow-dirty] [--allow-oversize] [--allow-incomplete-listing] [--json]` | Validate + package the source tree + upload it with your stored token (with no token it writes the bundle and prints next steps). A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`. It also refuses a version that is not strictly above the highest APPROVED version, a dirty git work tree, a body larger than the server can receive, and a store listing missing media or copy you can fix now — each waived by the matching flag above (`--yes` waives none of them), and **all four skipped on the routes that never reach the server**. See [Submit & auth](#submit--auth) and [Exit code 1](#exit-code-1), which maps each refusal to its flag. |
 | `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps.** ⚠ The clone URL embeds your access token and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
 | `civitai app listing status [--json]\|set-text [--tagline <t>] [--description <d>] [--category <c>] [--clear <fields>] [--yes]\|set-source-repo <url>\|--clear\|set-icon <file> [--red]\|set-cover <file> [--red]\|clear-red <icon\|cover>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots optional, up to 8), and `listing status` prints what the publish floor still requires. 🔴 **`listing status` is not a pure read — `--json` or not — so do not poll it**: on a live listing it opens a revision draft. On a LIVE listing a **material** change — the media commands, and `set-source-repo` — is **staged on a revision** and is not live until `submit-revision` is approved. 🔴 **`set-text` is the exception: it applies IN PLACE, immediately and publicly**, with no revision to review or abandon. **ON-SITE apps are refused** by `set-text` and `set-source-repo`. `--red` attaches a **civitai.red-only** icon or cover override instead, shown there in place of the listing's own to viewers whose browsing level allows it (never on civitai.com); `clear-red` removes it, staged on a revision like `rm-screenshot`. See [Store listing](https://developer.civitai.com/apps/guide/store-listing) and [Link your source code](#link-your-source-code-app-listing-set-source-repo). |
 | `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions — all of them, or one in detail by `blockId` (newest, plus the one **serving** when they differ) or `--id`, with a **SOURCE** column carrying the commit the submitting client claimed. Run from inside an app checkout it also warns on **stderr** when your `block.manifest.json` is **BEHIND** your highest approved version. See [Submission status](#submission-status). |
@@ -883,6 +883,27 @@ cover), it prints a `⚠ Approval blocked: …` line with the server's next step
 Any other next step is printed as a plain `Listing: …` note, and any listing
 problems are listed by code and label. An older server that does not report
 readiness gets the same output as before.
+
+An app that declares **App Storage collections** is checked by the server
+against its previous approved version. A **breaking schema change** that no
+`storage.collections.<name>.migrations` op covers — a field made required, a
+`maxLength` tightened, a field removed — **refuses** the submit, and `app submit`
+lists each one on stderr as `<collection> "<pointer>" <keyword>: <old> → <new>`
+(from the server's `storageBreakingChanges`), in place of the size block below.
+An **accepted** submit prints the server's `storageMigrationWarnings` under the
+success line — for example a migration op that covers nothing and so will never
+run. Neither has a local counterpart: `civitai app validate` checks only the
+shape of `migrations`, because whether an op covers a change needs the previous
+approved manifest, which only the server has.
+
+`--json` prints the server's submit response body on **stdout, verbatim** — the
+`200` body (`publishRequestId`, `slug`, `version`, `status`, `listing`,
+`storageMigrationWarnings`), or the body of a refusal the server answered in
+JSON (`message`, plus `storageBreakingChanges` on a schema-migration refusal) —
+and moves every other line to stderr. The exit code is the same as without it.
+A submit recovered after a timeout received no body, so it prints only what the
+submission it found carries: `publishRequestId`, `slug`, `version`, `status`. It needs a submit that really uploads: with `--package-only` it is a
+usage error, and with no token configured it refuses.
 
 Entries are ranked by **compressed** size, because that is what the upload is
 made of — a large text file that deflates to nothing is not what to delete. The
