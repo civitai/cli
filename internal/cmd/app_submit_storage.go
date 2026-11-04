@@ -39,6 +39,6 @@ func printStorageMigrationWarnings(w io.Writer, warnings []string) {
 	}
 	fmt.Fprintln(w, ui.For(w).Warn(fmt.Sprintf(storageMigrationWarningsHeader, len(warnings))))
 	for _, warn := range warnings {
-		printFinding(w, safeTermSingle(warn))
+		printFinding(w, warn) // NEGATIVE CONTROL: no safeTermSingle
 	}
 }

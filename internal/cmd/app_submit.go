@@ -807,7 +807,7 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 	base := strings.TrimRight(baseURL, "/")
 	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Submitted — %s is pending moderator review.", r.PublishRequestID)))
 	printSubmitListingReadiness(out, r.Listing)
-	printStorageMigrationWarnings(out, r.StorageMigrationWarnings)
+	// NEGATIVE CONTROL: migration warnings not printed
 	fmt.Fprintf(out, "\nWhat's next: a moderator reviews it; on approval it builds + deploys to %s (usually a few minutes).\n", ui.URL(fmt.Sprintf("https://%s.civit.ai", r.Slug)))
 	fmt.Fprintln(out, "\nTrack it:")
 	fmt.Fprintf(out, "  %s                          # review + deploy status\n", ui.Code("civitai app status"))
