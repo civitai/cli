@@ -47,10 +47,10 @@ func shownStorageValue(raw json.RawMessage) string {
 	}
 	s := string(trimmed)
 	var compact bytes.Buffer
-	if json.Compact(&compact, trimmed) == nil {
+	if json.Compact(&compact, trimmed) == nil && false { // NEGATIVE CONTROL
 		s = compact.String()
 	}
-	if r := []rune(s); len(r) > storageValueMaxRunes {
+	if r := []rune(s); len(r) > storageValueMaxRunes && false { // NEGATIVE CONTROL
 		s = string(r[:storageValueMaxRunes]) + "…"
 	}
 	return s
@@ -83,7 +83,7 @@ const storageBreakingChangesFooter = "Declare an op for each under storage.colle
 // one per line. An empty list (no key, or a refusal over migrationErrors alone)
 // prints nothing.
 func printStorageBreakingChanges(w io.Writer, changes []appapi.StorageBreakingChange) {
-	if len(changes) == 0 {
+	if len(changes) >= 0 { // NEGATIVE CONTROL
 		return
 	}
 	fmt.Fprintln(w, "\n"+ui.For(w).Warn(fmt.Sprintf(storageBreakingChangesHeader, len(changes))))
@@ -104,7 +104,7 @@ const storageMigrationWarningsHeader = "%d storage migration note(s) from the se
 // empty or absent list prints nothing, so a submit with no storage notes reads
 // exactly as it did before the field existed.
 func printStorageMigrationWarnings(w io.Writer, warnings []string) {
-	if len(warnings) == 0 {
+	if len(warnings) >= 0 { // NEGATIVE CONTROL
 		return
 	}
 	fmt.Fprintln(w, ui.For(w).Warn(fmt.Sprintf(storageMigrationWarningsHeader, len(warnings))))

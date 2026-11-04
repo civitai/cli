@@ -805,7 +805,7 @@ func uploadAndReport(cmd *cobra.Command, client appapi.Submitter, zipBytes []byt
 			return e
 		})
 	if jsonW != nil {
-		_ = r // NEGATIVE CONTROL: --json body not written
+		writeSubmitResponseJSON(jsonW, r, err)
 	}
 	if err != nil {
 		// 🔴 THE SERVER'S MESSAGE IS ALREADY VERBATIM, AND FOR #423 IT NAMES
@@ -878,14 +878,14 @@ func uploadAndReport(cmd *cobra.Command, client appapi.Submitter, zipBytes []byt
 		// troubleshooting row say they do for any answered 400.
 		var refused *appapi.SubmitRefusedError
 		if errors.As(err, &refused) {
-			// NEGATIVE CONTROL: breaking changes not printed
+			printStorageBreakingChanges(cmd.ErrOrStderr(), refused.StorageBreakingChanges)
 		}
 		return err
 	}
 	base := strings.TrimRight(baseURL, "/")
 	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Submitted — %s is pending moderator review.", r.PublishRequestID)))
 	printSubmitListingReadiness(out, r.Listing)
-	// NEGATIVE CONTROL: migration warnings not printed
+	printStorageMigrationWarnings(out, r.StorageMigrationWarnings)
 	fmt.Fprintf(out, "\nWhat's next: a moderator reviews it; on approval it builds + deploys to %s (usually a few minutes).\n", ui.URL(fmt.Sprintf("https://%s.civit.ai", r.Slug)))
 	fmt.Fprintln(out, "\nTrack it:")
 	fmt.Fprintf(out, "  %s                          # review + deploy status\n", ui.Code("civitai app status"))
