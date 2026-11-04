@@ -3,7 +3,6 @@ package cmd
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -298,7 +297,6 @@ func newAppSubmitCmd() *cobra.Command {
 	var allowDirty bool
 	var allowOversize bool
 	var allowIncompleteListing bool
-	var jsonOut bool
 
 	cmd := &cobra.Command{
 		Use:   "submit [dir]",
@@ -395,23 +393,13 @@ Listing-completeness gate:
   Your FIRST submit is what creates the store listing, so there is nothing to
   check yet and nothing is refused; the gate applies from the second one on.
 
-Storage schema migrations:
+Storage migration notes:
   An app that declares App Storage collections is checked by the SERVER
-  against the previous approved version: a breaking schema change (a field
-  made required, a maxLength tightened, a field removed, ...) that no
-  storage.collections.<name>.migrations op covers REFUSES the submit, and each
-  such change is listed. An accepted submit lists the server's migration
-  notes — for example an op that covers nothing and so will never run. The
-  local validate checks only the shape of "migrations": whether an op covers a
-  change needs the previous approved manifest, which only the server has.
-
---json:
-  Prints the server's submit response body on stdout, VERBATIM — on success
-  and on a refusal the server answered — so a script reads every field,
-  storageMigrationWarnings and storageBreakingChanges included. Every other
-  line this command prints moves to stderr; the exit code is unchanged. It
-  needs a submit that really uploads, so it refuses --package-only and a run
-  with no token.
+  against the previous approved version. An accepted submit prints the
+  server's migration notes under the success line — for example a
+  storage.collections.<name>.migrations op that covers nothing and so will
+  never run. They never block the submit. (A breaking change no migration
+  covers refuses the submit, and the server's error lists each one.)
 
 Defaults to the current directory.`,
 		Example: `  civitai app submit                    # validate + package + confirm + submit
@@ -421,26 +409,12 @@ Defaults to the current directory.`,
   civitai app submit --allow-dirty      # submit uncommitted working-tree changes on purpose
   civitai app submit --allow-oversize   # submit past the vendored body-size ceiling
   civitai app submit --allow-incomplete-listing  # submit before the store listing is finished
-  civitai app submit --yes --json       # the server's response body on stdout (scriptable)
   civitai app submit -o my-block.zip ./my-block`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."
 			if len(args) == 1 {
 				dir = args[0]
-			}
-			// --json: stdout carries the server's response body and nothing else,
-			// so every human line this command prints moves to stderr. Done by
-			// redirecting the command's own Out, which every print site below
-			// already writes through, rather than threading a writer into each.
-			var jsonW io.Writer
-			if jsonOut {
-				if packageOnly {
-					return asUsageError(fmt.Errorf("--json reports the server's answer to a submit, and --package-only never submits — drop one of them"))
-				}
-				jsonW = cmd.OutOrStdout()
-				cmd.SetOut(cmd.ErrOrStderr())
-				defer cmd.SetOut(jsonW)
 			}
 			out := cmd.OutOrStdout()
 
@@ -510,9 +484,6 @@ Defaults to the current directory.`,
 			// here, then packages + submits below. The --package-only / no-token
 			// fallback path never submits, so it skips the gate and just packages.
 			canUpload := !packageOnly && cfg.Token() != ""
-			if jsonOut && !canUpload {
-				return fmt.Errorf("--json reports the server's answer to a submit, and with no token configured nothing is submitted — run `civitai login` first, or drop --json")
-			}
 			// The provenance this run will claim. It stays ZERO on every path
 			// that does not upload (--package-only, the no-token fallback):
 			// those paths run no git at all, and the size line below then
@@ -663,7 +634,7 @@ Defaults to the current directory.`,
 			// 3a. Programmatic submit if we have a token (OAuth or personal key).
 			// The gate above already confirmed (or --yes bypassed) it.
 			if canUpload {
-				return uploadAndReport(cmd, client, pkg.Zip, m, cfg.BaseURL(), prov, jsonW)
+				return doUpload(cmd, client, pkg.Zip, m, cfg.BaseURL(), prov)
 			}
 
 			// 3b. Fallback: write the canonical .zip + print next steps.
@@ -698,8 +669,6 @@ Defaults to the current directory.`,
 	// to get past this gate is a retry that cannot work.
 	cmd.Flags().BoolVar(&allowIncompleteListing, "allow-incomplete-listing", false,
 		"submit even when the app's store listing is missing media or copy (--yes does NOT waive that gate)")
-	cmd.Flags().BoolVar(&jsonOut, "json", false,
-		"print the server's submit response body on stdout, verbatim; every other line goes to stderr (scriptable)")
 	return cmd
 }
 
@@ -754,40 +723,6 @@ func confirmSubmit(cmd *cobra.Command, m *manifest.Manifest, baseURL string, ass
 }
 
 func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *manifest.Manifest, baseURL string, prov appapi.Provenance) error {
-	return uploadAndReport(cmd, client, zipBytes, m, baseURL, prov, nil)
-}
-
-// writeSubmitResponseJSON is `app submit --json`'s stdout: the response body the
-// server sent, byte-for-byte, newline-terminated. A result the timeout-recovery
-// path built (no body was ever received) is encoded from the struct instead. A
-// refusal body is written only when it is JSON, so stdout never carries an HTML
-// error page; a failure that got no answer at all writes nothing.
-func writeSubmitResponseJSON(w io.Writer, r *appapi.SubmitResult, err error) {
-	var body []byte
-	switch {
-	case err == nil && r != nil && len(r.Raw) > 0:
-		body = r.Raw
-	case err == nil && r != nil:
-		_ = writeJSON(w, r)
-		return
-	default:
-		var refused *appapi.SubmitRefusedError
-		if errors.As(err, &refused) && json.Valid(refused.Body) {
-			body = refused.Body
-		}
-	}
-	if len(body) == 0 {
-		return
-	}
-	_, _ = w.Write(body)
-	if body[len(body)-1] != '\n' {
-		_, _ = io.WriteString(w, "\n")
-	}
-}
-
-// uploadAndReport is doUpload with `--json`'s writer: nil prints the human
-// report only; non-nil also writes the server's response body there.
-func uploadAndReport(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *manifest.Manifest, baseURL string, prov appapi.Provenance, jsonW io.Writer) error {
 	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
 	if ctx == nil {
@@ -804,9 +739,6 @@ func uploadAndReport(cmd *cobra.Command, client appapi.Submitter, zipBytes []byt
 			r, e = client.SubmitVersion(ctx, zipBytes, m.BlockID, m.Version, prov)
 			return e
 		})
-	if jsonW != nil {
-		writeSubmitResponseJSON(jsonW, r, err)
-	}
 	if err != nil {
 		// 🔴 THE SERVER'S MESSAGE IS ALREADY VERBATIM, AND FOR #423 IT NAMES
 		// NOTHING. appapi.serverError prints the response body as it arrived, so
@@ -869,16 +801,6 @@ func uploadAndReport(cmd *cobra.Command, client appapi.Submitter, zipBytes []byt
 		// the error returned unchanged.
 		if submitRefusalIsPlatformFriction(err) {
 			printFeedbackHint(cmd.ErrOrStderr(), feedbackHintSubmitRefused)
-		}
-		// A storage schema-migration refusal carries the structured list of
-		// breaking changes no migration covers. Printed LAST, directly above the
-		// `Error:` line main prints, because that is the text it itemises. It is
-		// an addition, not a branch of the switch above: the size block and the
-		// feedback hint still print exactly as README.md and the published
-		// troubleshooting row say they do for any answered 400.
-		var refused *appapi.SubmitRefusedError
-		if errors.As(err, &refused) {
-			printStorageBreakingChanges(cmd.ErrOrStderr(), refused.StorageBreakingChanges)
 		}
 		return err
 	}
