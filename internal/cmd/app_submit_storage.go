@@ -65,8 +65,8 @@ func describeStorageBreakingChange(c appapi.StorageBreakingChange) string {
 		q, _ := json.Marshal(c.Pointer)
 		where = string(q)
 	}
-	return fmt.Sprintf("%s %s %s: %s → %s", // NEGATIVE CONTROL: no safeTermSingle
-		c.Collection, where, c.Keyword, shownStorageValue(c.Old), shownStorageValue(c.New))
+	return safeTermSingle(fmt.Sprintf("%s %s %s: %s → %s",
+		c.Collection, where, c.Keyword, shownStorageValue(c.Old), shownStorageValue(c.New)))
 }
 
 // storageBreakingChangesHeader opens the refusal's list; %d is its length.
@@ -109,6 +109,6 @@ func printStorageMigrationWarnings(w io.Writer, warnings []string) {
 	}
 	fmt.Fprintln(w, ui.For(w).Warn(fmt.Sprintf(storageMigrationWarningsHeader, len(warnings))))
 	for _, warn := range warnings {
-		printFinding(w, warn) // NEGATIVE CONTROL: no safeTermSingle
+		printFinding(w, safeTermSingle(warn))
 	}
 }
