@@ -1,6 +1,8 @@
 {
   "_why": "Schema `pattern`s that have NO author-facing gloss in internal/validate/pattern.go, and whose absence has been ACKNOWLEDGED. A row here is a DEBT, not a decision: an author who trips this pattern gets the bare regex back. Clear a row by writing its gloss in patternRules. See the header of internal/validate/pattern.go and TestPatternRulesCoverTheVendoredSchema.",
   "owed": [
+    "^(/([^/~]|~[01])+){0,15}$",
+    "^(/([^/~]|~[01])+){1,15}$",
     "^[a-z][a-z0-9-]{1,38}[a-z0-9]$",
     "^[a-z][a-z0-9_]{0,31}$"
   ]
