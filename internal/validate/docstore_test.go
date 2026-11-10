@@ -358,6 +358,8 @@ func TestStorageFeatureGateOrderMirrorsTheServer(t *testing.T) {
 		{"hook with a malformed sha256", `{"visibility":"private","hook":{"file":"hooks/guard.js","sha256":"ABC"}}`},
 		{"hook with timeoutMs out of range", `{"visibility":"private","hook":{"file":"hooks/guard.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","timeoutMs":501}}`},
 		{"hook whose file is not a .js module", `{"visibility":"private","hook":{"file":"hooks/guard.ts","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}`},
+		// 201 characters, one over APP_STORAGE_HOOK_FILE_MAX_LENGTH, and otherwise a valid path.
+		{"hook whose file is longer than 200 characters", `{"visibility":"private","hook":{"file":"h/` + strings.Repeat("a", 196) + `.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}`},
 		{"hook inside node_modules", `{"visibility":"private","hook":{"file":"node_modules/x/guard.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}`},
 		{"hook with an unknown key", `{"visibility":"private","hook":{"file":"hooks/guard.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","decide":"x"}}`},
 		{"hook that is not an object", `{"visibility":"private","hook":"hooks/guard.js"}`},
