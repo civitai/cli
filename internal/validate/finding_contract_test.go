@@ -1190,6 +1190,8 @@ func fieldCoverageCorpus() []fieldFixture {
 			    "cov_owner": {"visibility": "shared", "write": "owner", "marks": ["star"]},
 			    "cov_ttl": {"visibility": "private", "ttlSeconds": 120},
 			    "cov_daily": {"visibility": "shared", "write": "own", "dailyWritesPerAuthor": 10},
+			    "cov_registry": {"visibility": "shared", "write": "own", "registry": "public"},
+			    "cov_hook": {"visibility": "private", "hook": {"file": "hooks/guard.js", "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}},
 			    "cov_dup": {"visibility": "shared", "write": "none", "counters": ["n"], "marks": ["n"]}
 			  }}
 			}`},

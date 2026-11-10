@@ -188,6 +188,10 @@ func findingFieldLedger() []fieldExpectation {
 			"the remedy is to delete this key from the collection"},
 		{".dailyWritesPerAuthor is not available yet", "storage.collections.cov_daily.dailyWritesPerAuthor",
 			"the remedy is to delete this key from the collection"},
+		{".registry is not available yet", "storage.collections.cov_registry.registry",
+			"the remedy is to delete this key from the collection"},
+		{".hook is not available yet", "storage.collections.cov_hook.hook",
+			"the remedy is to delete this key from the collection"},
 		{"as both a counter and a mark", "storage.collections.cov_dup",
 			"a relationship between two keys OF ONE collection, either of which may be renamed — " +
 				"the collection is the smallest location that holds both"},

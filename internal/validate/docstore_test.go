@@ -121,7 +121,7 @@ const featureGateSuffix = " civitai.com refuses this at submit today; it is a wa
 	"error, because the platform enables these features with a server-side switch and a CLI already " +
 	"installed must not refuse a manifest the server has started to accept."
 
-// TestStorageFeaturesNotYetAvailableAreWarnings — the five features the schema
+// TestStorageFeaturesNotYetAvailableAreWarnings — the seven features the schema
 // ADMITS (it carries the whole declaration shape) and the server refuses today
 // through APP_STORAGE_ENABLED_FEATURES.
 //
@@ -187,6 +187,25 @@ func TestStorageFeaturesNotYetAvailableAreWarnings(t *testing.T) {
 			server: `storage.collections.entries.dailyWritesPerAuthor is not available yet — ` +
 				`per-collection write budgets arrive in a later phase of App Storage; remove ` +
 				`dailyWritesPerAuthor for now (the platform default applies).`,
+		},
+		{
+			name: "registry", collection: "public_recipes",
+			decl:   `{"visibility":"shared","write":"own","registry":"public"}`,
+			twin:   `{"visibility":"shared","write":"own"}`,
+			scopes: []string{"apps:storage", "apps:storage:publish"},
+			field:  "storage.collections.public_recipes.registry",
+			server: `storage.collections.public_recipes.registry is not available yet — collections ` +
+				`published to registries arrive in a later phase of App Storage; remove it to keep the ` +
+				`collection on Civitai only.`,
+		},
+		{
+			name: "hook", collection: "guarded",
+			decl:   `{"visibility":"shared","write":"own","hook":{"file":"hooks/guard.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","timeoutMs":100}}`,
+			twin:   `{"visibility":"shared","write":"own"}`,
+			scopes: []string{"apps:storage", "apps:storage:publish"},
+			field:  "storage.collections.guarded.hook",
+			server: `storage.collections.guarded.hook is not available yet — permission hooks arrive in ` +
+				`a later phase of App Storage; remove hook (the collection schema still applies).`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -313,6 +332,10 @@ func TestVendoredSchemaStillStatesTheFeatureGates(t *testing.T) {
 		{"dailyWritesPerAuthor", prop("dailyWritesPerAuthor"),
 			"RESERVED — civitai.com refuses this field until per-collection write budgets are enabled, so do " +
 				"not declare it yet."},
+		{"registry", prop("registry"),
+			"RESERVED — civitai.com refuses this field until publishing to registries is enabled, so do not declare it yet."},
+		{"hook", prop("hook"),
+			"RESERVED — civitai.com refuses this field until permission hooks are enabled, so do not declare it yet."},
 	} {
 		if !strings.Contains(tc.text, tc.sentence) {
 			t.Errorf("the vendored schema's %s description no longer says:\n  %s\n"+
@@ -332,6 +355,12 @@ func TestStorageFeatureGateOrderMirrorsTheServer(t *testing.T) {
 	for _, tc := range []struct{ name, decl string }{
 		{"ttlSeconds below the minimum", `{"visibility":"private","ttlSeconds":59}`},
 		{"dailyWritesPerAuthor on write none", `{"visibility":"shared","write":"none","counters":["plays"],"dailyWritesPerAuthor":5}`},
+		{"hook with a malformed sha256", `{"visibility":"private","hook":{"file":"hooks/guard.js","sha256":"ABC"}}`},
+		{"hook with timeoutMs out of range", `{"visibility":"private","hook":{"file":"hooks/guard.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","timeoutMs":501}}`},
+		{"hook whose file is not a .js module", `{"visibility":"private","hook":{"file":"hooks/guard.ts","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}`},
+		{"hook inside node_modules", `{"visibility":"private","hook":{"file":"node_modules/x/guard.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}`},
+		{"hook with an unknown key", `{"visibility":"private","hook":{"file":"hooks/guard.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","decide":"x"}}`},
+		{"hook that is not an object", `{"visibility":"private","hook":"hooks/guard.js"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			res := manifestOnlyResult(t, docManifest(oneCollection("tallies", tc.decl), "apps:storage"))

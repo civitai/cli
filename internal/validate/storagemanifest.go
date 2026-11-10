@@ -27,7 +27,7 @@ import (
 // submitted. Messages are the server's text, so the CLI and the 400 agree.
 //
 // 🔴 THE ONE EXCEPTION: THE FEATURE GATES ARE WARNINGS (storageFeatureGateWarnings).
-// The server refuses five features today, but each is a one-line switch in
+// The server refuses seven features today, but each is a one-line switch in
 // APP_STORAGE_ENABLED_FEATURES, and `app submit` blocks on validate ERRORS. A
 // hard error here would outlive the switch in every CLI already installed and
 // refuse manifests the server has started to accept. The warning keeps the
@@ -133,12 +133,14 @@ func storageCollections(generic any) ([]declaredCollection, bool) {
 	return out, true
 }
 
-// storageFeatureGateWarnings reports the five features switched off in
+// storageFeatureGateWarnings reports the seven features switched off in
 // APP_STORAGE_ENABLED_FEATURES, as WARNINGS (see the file comment for why).
 //
 // Each gate fires under exactly the condition the server reaches it: after the
 // visibility parsed, and — for the two numeric keys — only once the value is
-// in range, because an out-of-range value gets the range refusal instead.
+// in range, because an out-of-range value gets the range refusal instead. The
+// same holds for `hook` (only a well-formed hook reaches its gate); `registry`
+// is the opposite, its gate coming before any check of its value.
 func storageFeatureGateWarnings(generic any) []Finding {
 	cols, ok := storageCollections(generic)
 	if !ok {
@@ -176,8 +178,73 @@ func storageFeatureGateWarnings(generic any) []Finding {
 				at+".dailyWritesPerAuthor", "per-collection write budgets",
 				"remove dailyWritesPerAuthor for now (the platform default applies)")))
 		}
+		// registryExport: the server checks the switch BEFORE the value and the
+		// shared-only rule, so any declared `registry` draws the gate.
+		if _, ok := c.decl["registry"]; ok {
+			out = append(out, newFinding(childField(at, "registry"), storageNotYet(
+				at+".registry", "collections published to registries",
+				"remove it to keep the collection on Civitai only")))
+		}
+		// hooks: the server checks the switch only AFTER parseHook accepted the
+		// hook's shape, so a malformed hook gets the shape error (the schema's,
+		// here) and never the gate.
+		if hookShapeAccepted(c.decl["hook"]) {
+			out = append(out, newFinding(childField(at, "hook"), storageNotYet(
+				at+".hook", "permission hooks",
+				"remove hook (the collection schema still applies)")))
+		}
 	}
 	return out
+}
+
+// Mirrors of the server's hook shape (APP_STORAGE_HOOK_FILE_PATTERN,
+// APP_STORAGE_HOOK_FILE_FORBIDDEN_SEGMENT_PATTERN, APP_STORAGE_HOOK_FILE_MAX_LENGTH,
+// APP_STORAGE_HOOK_SHA256_PATTERN, APP_STORAGE_HOOK_TIMEOUT_MIN_MS/MAX_MS). The
+// schema states each of them; they are here only so the hook gate fires when
+// the server's would (see hookShapeAccepted).
+var (
+	appStorageHookFileRe      = regexp.MustCompile(`^([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.m?js$`)
+	appStorageHookForbiddenRe = regexp.MustCompile(`(^|/)node_modules(/|$)`)
+	appStorageHookSHA256Re    = regexp.MustCompile(`^[0-9a-f]{64}$`)
+)
+
+const (
+	appStorageHookFileMaxLength = 200
+	appStorageHookTimeoutMinMs  = 1
+	appStorageHookTimeoutMaxMs  = 500
+)
+
+// hookShapeAccepted mirrors the shape checks of the server's parseHook: an
+// object holding only file, sha256 and timeoutMs, with each well-formed. It
+// reads no file and checks no digest — whether the file exists in the bundle
+// with that sha256 is the server's, at submit.
+//
+// ONE KNOWN DIVERGENCE: parseHook also refuses a `file` inside `outputDir`,
+// which the schema cannot state. That is not mirrored, so such a hook draws the
+// gate here where the server names outputDir. Both say the hook cannot be
+// submitted, and removing it clears both.
+func hookShapeAccepted(v any) bool {
+	h, ok := v.(map[string]any)
+	if !ok {
+		return false
+	}
+	for key := range h {
+		if key != "file" && key != "sha256" && key != "timeoutMs" {
+			return false
+		}
+	}
+	file, ok := h["file"].(string)
+	if !ok || len(file) > appStorageHookFileMaxLength ||
+		!appStorageHookFileRe.MatchString(file) || appStorageHookForbiddenRe.MatchString(file) {
+		return false
+	}
+	if sha, ok := h["sha256"].(string); !ok || !appStorageHookSHA256Re.MatchString(sha) {
+		return false
+	}
+	if t, present := h["timeoutMs"]; present && !isIntegerIn(t, appStorageHookTimeoutMinMs, appStorageHookTimeoutMaxMs) {
+		return false
+	}
+	return true
 }
 
 // storageDeclarationChecks reports the declaration refusal the schema admits
