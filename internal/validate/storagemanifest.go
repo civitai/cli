@@ -180,7 +180,7 @@ func storageFeatureGateWarnings(generic any) []Finding {
 		}
 		// registryExport: the server checks the switch BEFORE the value and the
 		// shared-only rule, so any declared `registry` draws the gate.
-		if _, ok := c.decl["registry"]; ok && false { // NEGATIVE CONTROL
+		if _, ok := c.decl["registry"]; ok {
 			out = append(out, newFinding(childField(at, "registry"), storageNotYet(
 				at+".registry", "collections published to registries",
 				"remove it to keep the collection on Civitai only")))
@@ -188,7 +188,7 @@ func storageFeatureGateWarnings(generic any) []Finding {
 		// hooks: the server checks the switch only AFTER parseHook accepted the
 		// hook's shape, so a malformed hook gets the shape error (the schema's,
 		// here) and never the gate.
-		if hookShapeAccepted(c.decl["hook"]) && false { // NEGATIVE CONTROL
+		if hookShapeAccepted(c.decl["hook"]) {
 			out = append(out, newFinding(childField(at, "hook"), storageNotYet(
 				at+".hook", "permission hooks",
 				"remove hook (the collection schema still applies)")))
@@ -234,8 +234,7 @@ func hookShapeAccepted(v any) bool {
 		}
 	}
 	file, ok := h["file"].(string)
-	if !ok || // NEGATIVE CONTROL: length rule removed
-
+	if !ok || len(file) > appStorageHookFileMaxLength ||
 		!appStorageHookFileRe.MatchString(file) || appStorageHookForbiddenRe.MatchString(file) {
 		return false
 	}
