@@ -75,7 +75,8 @@ It also emits non-fatal WARNINGS the schema can't catch as hard errors:
     call useBlockContext() in your root component. It reads source only —
     never outputDir, node_modules, markdown, or comments.
   - storage features the schema describes but the platform does not accept
-    yet (kind "log", write "anyone"/"owner", ttlSeconds, dailyWritesPerAuthor).
+    yet (kind "log", write "anyone"/"owner", ttlSeconds, dailyWritesPerAuthor,
+    registry, hook).
     civitai.com refuses them at submit today; they are warnings, not errors,
     because the platform enables each with a server-side switch and an
     installed CLI must not refuse a manifest the server has started to accept.

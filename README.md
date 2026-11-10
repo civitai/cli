@@ -819,7 +819,8 @@ Advisories are warnings, never errors, because they infer runtime behaviour
 from static text; test code (`*.test.*`, `*.spec.*`, files named `fake-*`,
 `test-*` or `mock-*`, and `__tests__/`, `__mocks__/`, `testing/`) is not read
 for the storage ones. The storage features civitai.com does not accept yet
-(`kind` "log", `write` "anyone"/"owner", `ttlSeconds`, `dailyWritesPerAuthor`)
+(`kind` "log", `write` "anyone"/"owner", `ttlSeconds`, `dailyWritesPerAuthor`,
+`registry`, `hook`)
 are also warnings: the server refuses them at submit today, but enables each
 with a server-side switch, so an installed CLI must not refuse them outright.
 A collection's document `schema` is checked against the server's bounds (size,
