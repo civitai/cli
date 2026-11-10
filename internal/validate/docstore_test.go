@@ -207,6 +207,26 @@ func TestStorageFeaturesNotYetAvailableAreWarnings(t *testing.T) {
 			server: `storage.collections.guarded.hook is not available yet — permission hooks arrive in ` +
 				`a later phase of App Storage; remove hook (the collection schema still applies).`,
 		},
+		// Exactly APP_STORAGE_HOOK_FILE_MAX_LENGTH (200) characters: the bound is inclusive.
+		{
+			name: "hook with a 200-character file", collection: "long_path",
+			decl:   `{"visibility":"private","hook":{"file":"h/` + strings.Repeat("a", 195) + `.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}`,
+			twin:   `{"visibility":"private"}`,
+			scopes: []string{"apps:storage"},
+			field:  "storage.collections.long_path.hook",
+			server: `storage.collections.long_path.hook is not available yet — permission hooks arrive in ` +
+				`a later phase of App Storage; remove hook (the collection schema still applies).`,
+		},
+		// The file pattern ends `\.m?js$`: an ES module may be .mjs.
+		{
+			name: "hook with a .mjs file", collection: "esm_hook",
+			decl:   `{"visibility":"private","hook":{"file":"hooks/guard.mjs","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}`,
+			twin:   `{"visibility":"private"}`,
+			scopes: []string{"apps:storage"},
+			field:  "storage.collections.esm_hook.hook",
+			server: `storage.collections.esm_hook.hook is not available yet — permission hooks arrive in ` +
+				`a later phase of App Storage; remove hook (the collection schema still applies).`,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			twin := manifestOnlyResult(t, docManifest(oneCollection(tc.collection, tc.twin), tc.scopes...))
@@ -360,6 +380,8 @@ func TestStorageFeatureGateOrderMirrorsTheServer(t *testing.T) {
 		{"hook whose file is not a .js module", `{"visibility":"private","hook":{"file":"hooks/guard.ts","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}`},
 		// 201 characters, one over APP_STORAGE_HOOK_FILE_MAX_LENGTH, and otherwise a valid path.
 		{"hook whose file is longer than 200 characters", `{"visibility":"private","hook":{"file":"h/` + strings.Repeat("a", 196) + `.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}`},
+		{"hook with timeoutMs 0", `{"visibility":"private","hook":{"file":"hooks/guard.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","timeoutMs":0}}`},
+		{"hook without sha256", `{"visibility":"private","hook":{"file":"hooks/guard.js"}}`},
 		{"hook inside node_modules", `{"visibility":"private","hook":{"file":"node_modules/x/guard.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}`},
 		{"hook with an unknown key", `{"visibility":"private","hook":{"file":"hooks/guard.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","decide":"x"}}`},
 		{"hook that is not an object", `{"visibility":"private","hook":"hooks/guard.js"}`},
@@ -375,6 +397,30 @@ func TestStorageFeatureGateOrderMirrorsTheServer(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestStorageRegistryGateFiresOnAPrivateCollection — the server checks the
+// registryExport switch BEFORE the value and the shared-only rule
+// (parseCollection: `if (!features.registryExport) … else if (!shared)`), so
+// today a private collection declaring registry gets the "not available yet"
+// refusal. The schema reports the shared-only rule as its own error; the gate
+// warning must still fire beside it, as the server's.
+func TestStorageRegistryGateFiresOnAPrivateCollection(t *testing.T) {
+	res := manifestOnlyResult(t, docManifest(oneCollection("private_notes",
+		`{"visibility":"private","registry":"public"}`), "apps:storage"))
+	if len(res.Errors) == 0 {
+		t.Error("the schema accepted registry on a private collection — this row no longer pairs the two stories")
+	}
+	got := gateWarnings(res.Warnings)
+	if len(got) != 1 {
+		t.Fatalf("want exactly 1 feature-gate warning, got %d:%s", len(got), describe(res.Warnings))
+	}
+	want := `storage.collections.private_notes.registry is not available yet — collections published to ` +
+		`registries arrive in a later phase of App Storage; remove it to keep the collection on Civitai only.` +
+		featureGateSuffix
+	if got[0].Message != want || got[0].Field != "storage.collections.private_notes.registry" {
+		t.Errorf("got [%s] %s\n want [storage.collections.private_notes.registry] %s", got[0].Field, got[0].Message, want)
 	}
 }
 
