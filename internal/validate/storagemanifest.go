@@ -180,7 +180,7 @@ func storageFeatureGateWarnings(generic any) []Finding {
 		}
 		// registryExport: the server checks the switch BEFORE the value and the
 		// shared-only rule, so any declared `registry` draws the gate.
-		if _, ok := c.decl["registry"]; ok {
+		if _, ok := c.decl["registry"]; ok && shared { // MUTANT 5
 			out = append(out, newFinding(childField(at, "registry"), storageNotYet(
 				at+".registry", "collections published to registries",
 				"remove it to keep the collection on Civitai only")))
@@ -203,7 +203,7 @@ func storageFeatureGateWarnings(generic any) []Finding {
 // schema states each of them; they are here only so the hook gate fires when
 // the server's would (see hookShapeAccepted).
 var (
-	appStorageHookFileRe      = regexp.MustCompile(`^([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.m?js$`)
+	appStorageHookFileRe      = regexp.MustCompile(`^([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.js$`) // MUTANT 2
 	appStorageHookForbiddenRe = regexp.MustCompile(`(^|/)node_modules(/|$)`)
 	appStorageHookSHA256Re    = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
@@ -234,14 +234,14 @@ func hookShapeAccepted(v any) bool {
 		}
 	}
 	file, ok := h["file"].(string)
-	if !ok || len(file) > appStorageHookFileMaxLength ||
+	if !ok || len(file) >= appStorageHookFileMaxLength /* MUTANT 1 */ ||
 		!appStorageHookFileRe.MatchString(file) || appStorageHookForbiddenRe.MatchString(file) {
 		return false
 	}
-	if sha, ok := h["sha256"].(string); !ok || !appStorageHookSHA256Re.MatchString(sha) {
+	if sha, ok := h["sha256"].(string); ok && !appStorageHookSHA256Re.MatchString(sha) { // MUTANT 4
 		return false
 	}
-	if t, present := h["timeoutMs"]; present && !isIntegerIn(t, appStorageHookTimeoutMinMs, appStorageHookTimeoutMaxMs) {
+	if t, present := h["timeoutMs"]; present && !isIntegerIn(t, 0 /* MUTANT 3 */, appStorageHookTimeoutMaxMs) {
 		return false
 	}
 	return true
