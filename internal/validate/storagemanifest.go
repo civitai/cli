@@ -234,7 +234,7 @@ func hookShapeAccepted(v any) bool {
 		}
 	}
 	file, ok := h["file"].(string)
-	if !ok || len(file) > 100000 /* NEGATIVE CONTROL: length rule removed */ ||
+	if !ok || len(file) > appStorageHookFileMaxLength ||
 		!appStorageHookFileRe.MatchString(file) || appStorageHookForbiddenRe.MatchString(file) {
 		return false
 	}
