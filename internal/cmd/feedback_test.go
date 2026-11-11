@@ -1336,8 +1336,8 @@ func TestPlatformFeedbackNoteIsCapped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(out, "word"); got != 120 {
-		t.Errorf("the human view printed %d words of the note; a 600-rune cap over 5-rune words is exactly 120", got)
+	if got := strings.Count(out, "word"); got != 200 {
+		t.Errorf("the human view printed %d words of the note; a 1000-rune cap over 5-rune words is exactly 200", got)
 	}
 
 	jsonOut, _, err := run(t, "feedback", "send", "--about", "cli", "--json", "x y z")
@@ -1353,8 +1353,8 @@ func TestPlatformFeedbackNoteIsCapped(t *testing.T) {
 	if env.CivitaiNote == nil {
 		t.Fatal("civitaiNote is null for a report that has a note")
 	}
-	if got := len([]rune(*env.CivitaiNote)); got != 601 {
-		t.Errorf("civitaiNote is %d runes; want the 600-rune cap plus its ellipsis", got)
+	if got := len([]rune(*env.CivitaiNote)); got != 1001 {
+		t.Errorf("civitaiNote is %d runes; want the 1000-rune cap plus its ellipsis", got)
 	}
 }
 

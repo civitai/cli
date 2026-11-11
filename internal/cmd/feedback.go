@@ -61,7 +61,7 @@ const platformFeedbackSchemaVersion = 1
 // platformNoteMaxRunes caps Civitai's note, in both views. A note is a sentence
 // or two; the cap exists so that a server-supplied string cannot become the
 // bulk of what an agent reads back from a command it ran to file a bug.
-const platformNoteMaxRunes = 600
+const platformNoteMaxRunes = 1000
 
 // platformFeedbackNoteLabel introduces the note in the human view. One
 // constant, so the test that pins "never presented as an instruction" quotes
