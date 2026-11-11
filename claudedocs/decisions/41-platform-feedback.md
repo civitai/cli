@@ -218,7 +218,7 @@ not dedupe.
 
 `note` is Civitai-authored, which makes it more trustworthy than a site user's
 message and changes nothing about how it is rendered: sanitised (`safeTerm`),
-capped at 600 runes in both views, printed behind the same `|` gutter as any
+capped at 1000 runes in both views, printed behind the same `|` gutter as any
 other server-supplied message, under a label that says it is information and
 not an instruction. `--json` names the field `civitaiNote` and escapes the
 runes a terminal would act on (`writeFeedbackJSON`, decision 40 §2). Every
