@@ -394,16 +394,41 @@ type feedbackRowOut struct {
 	CreatedAt string `json:"createdAt"`
 	// Status is new | acknowledged | resolved | wont_fix. The server stores
 	// "new" as a null ownerStatus; this field always carries the word.
-	Status     string               `json:"status"`
-	StatusAt   *string              `json:"statusAt"`
-	FlaggedAt  *string              `json:"flaggedAt"`
-	AppVersion *string              `json:"appVersion"`
-	AppSha     *string              `json:"appSha"`
-	Surface    *string              `json:"surface"`
-	Reporter   *feedbackReporterOut `json:"reporter,omitempty"`
+	Status     string  `json:"status"`
+	StatusAt   *string `json:"statusAt"`
+	FlaggedAt  *string `json:"flaggedAt"`
+	AppVersion *string `json:"appVersion"`
+	// AppSha is the platform's release commit: check it out in a
+	// `civitai app pull` clone.
+	AppSha  *string `json:"appSha"`
+	Surface *string `json:"surface"`
+	// ReportedSourceCommit / ReportedSourceDirty are what the developer's own
+	// CLI reported at submit for the live build. Unverified. Absent when the
+	// server sent nothing (an older server, or a submission that carried none);
+	// a dirty flag that is present can be false (the CLI said clean).
+	ReportedSourceCommit *string              `json:"reportedSourceCommit,omitempty"`
+	ReportedSourceDirty  *bool                `json:"reportedSourceDirty,omitempty"`
+	ForkOf               *feedbackForkOut     `json:"forkOf,omitempty"`
+	Reporter             *feedbackReporterOut `json:"reporter,omitempty"`
+	// UntrustedDiagnostics is what the reporter's browser attached: the app
+	// session's recent failed calls and host refusals, and its environment.
+	// Written client-side, so it is labelled like the message. Absent when the
+	// row carries none.
+	UntrustedDiagnostics *feedbackDiagnosticsOut `json:"untrustedDiagnostics,omitempty"`
 	// UntrustedMessage is last so it reads after everything the platform vouches
 	// for.
 	UntrustedMessage string `json:"untrustedMessage"`
+}
+
+type feedbackForkOut struct {
+	UpstreamSlug    *string `json:"upstreamSlug"`
+	UpstreamVersion *string `json:"upstreamVersion"`
+	ForkedAtCommit  *string `json:"forkedAtCommit"`
+}
+
+type feedbackDiagnosticsOut struct {
+	RecentErrors []appapi.FeedbackRecentError `json:"recentErrors,omitempty"`
+	Environment  *appapi.FeedbackEnvironment  `json:"environment,omitempty"`
 }
 
 type feedbackReporterOut struct {
@@ -424,6 +449,18 @@ func feedbackRowsOut(rows []appapi.Feedback, withReporter bool) []feedbackRowOut
 			AppSha:           r.AppBlockSha,
 			Surface:          r.Surface,
 			UntrustedMessage: r.Message,
+
+			ReportedSourceCommit: r.AppSourceCommit,
+			ReportedSourceDirty:  r.AppSourceDirty,
+		}
+		if r.ForkOf != nil {
+			row.ForkOf = &feedbackForkOut{
+				UpstreamSlug: r.ForkOf.UpstreamSlug, UpstreamVersion: r.ForkOf.UpstreamVersion,
+				ForkedAtCommit: r.ForkOf.ForkedAtCommit,
+			}
+		}
+		if len(r.RecentErrors) > 0 || r.Environment != nil {
+			row.UntrustedDiagnostics = &feedbackDiagnosticsOut{RecentErrors: r.RecentErrors, Environment: r.Environment}
 		}
 		if withReporter {
 			row.Reporter = &feedbackReporterOut{ID: r.Reporter.ID, Username: r.Reporter.Username.String()}
@@ -511,6 +548,9 @@ func printFeedback(w io.Writer, slug string, rows []appapi.Feedback, fetched int
 			fmt.Fprintln(w)
 		}
 		fmt.Fprintln(w, st.Bold(feedbackHeader(r, q.withReporter)))
+		for _, line := range feedbackDetailLines(r, slug) {
+			fmt.Fprintln(w, st.Dim(line))
+		}
 		for _, line := range feedbackMessageLines(r.Message) {
 			fmt.Fprintln(w, strings.TrimRight(feedbackGutter+line, " "))
 		}
@@ -559,8 +599,9 @@ func feedbackHeader(r appapi.Feedback, withReporter bool) string {
 	return strings.Join(parts, "  ")
 }
 
-// feedbackVersionLabel is "version 1.4.0 (abc1234)" — the app version the row
-// was written against and the first seven characters of its build sha. Either
+// feedbackVersionLabel is "version 1.4.0 (platform abc1234)" — the app version
+// the row was written against and the first seven characters of the platform's
+// release commit for it (the repo `civitai app pull` clones). Either
 // can be absent (an offsite app has no block), and an absent version is printed
 // as unknown rather than left blank. Both arguments are already sanitised.
 func feedbackVersionLabel(version, sha string) string {
@@ -572,7 +613,156 @@ func feedbackVersionLabel(version, sha string) string {
 		if len(r) > 7 {
 			r = r[:7]
 		}
-		label += " (" + string(r) + ")"
+		label += " (platform " + string(r) + ")"
+	}
+	return label
+}
+
+// feedbackDetailIndent prefixes every detail line. It is not feedbackGutter, so
+// a detail line cannot be mistaken for message text, and it is not column zero,
+// so message text cannot be mistaken for one either.
+const feedbackDetailIndent = "  - "
+
+// feedbackErrorRunes caps one recent-error line's server-supplied text.
+const feedbackErrorRunes = 160
+
+// feedbackDetailLines are the CLI-authored lines between a row's header and its
+// message: the two commits, the fork origin, the environment and the recent
+// errors. Rows from a server that sends none of these get no lines. Every
+// server-supplied value goes through safeTermSingle here, as in feedbackHeader.
+func feedbackDetailLines(r appapi.Feedback, slug string) []string {
+	cell := func(s string) string { return truncate(safeTermSingle(s), feedbackCellRunes) }
+	short := func(sha string) string {
+		if rs := []rune(cell(sha)); len(rs) > 7 {
+			return string(rs[:7])
+		}
+		return cell(sha)
+	}
+	var lines []string
+	if r.AppSourceCommit != nil && *r.AppSourceCommit != "" {
+		line := "reported source commit " + short(*r.AppSourceCommit) + " (unverified"
+		if r.AppSourceDirty != nil && *r.AppSourceDirty {
+			line += ", uncommitted changes"
+		}
+		line += ")"
+		if r.AppBlockSha != nil && *r.AppBlockSha != "" {
+			line += "; platform commit " + short(*r.AppBlockSha) + ": `civitai app pull " + cell(slug) + "`, then git checkout it"
+		}
+		lines = append(lines, line)
+	}
+	if f := r.ForkOf; f != nil {
+		upstream := "another app"
+		if f.UpstreamSlug != nil && *f.UpstreamSlug != "" {
+			upstream = cell(*f.UpstreamSlug)
+			if f.UpstreamVersion != nil && *f.UpstreamVersion != "" {
+				upstream += " v" + cell(*f.UpstreamVersion)
+			}
+		}
+		line := "fork of " + upstream
+		if f.ForkedAtCommit != nil && *f.ForkedAtCommit != "" {
+			line += " (at " + short(*f.ForkedAtCommit) + ")"
+		}
+		lines = append(lines, line)
+	}
+	if env := feedbackEnvironmentLabel(r.Environment); env != "" {
+		lines = append(lines, "environment (reported): "+env)
+	}
+	if n := len(r.RecentErrors); n > 0 {
+		lines = append(lines, fmt.Sprintf("recent app errors and host refusals (%d, reported, oldest first):", n))
+		for _, e := range r.RecentErrors {
+			lines = append(lines, "  "+feedbackErrorLabel(e))
+		}
+	}
+	for i, l := range lines {
+		lines[i] = feedbackDetailIndent + l
+	}
+	return lines
+}
+
+// feedbackEnvironmentLabel is one line, e.g. "chrome 131 on windows, 1280x720
+// @2x, classic scrollbars, app route /gallery". Values are the server's closed
+// enums and bounded numbers, gated anyway.
+func feedbackEnvironmentLabel(env *appapi.FeedbackEnvironment) string {
+	if env == nil {
+		return ""
+	}
+	cell := func(s string) string { return truncate(safeTermSingle(s), feedbackCellRunes) }
+	var parts []string
+	browser := ""
+	if env.Browser != nil && env.Browser.Family != "" {
+		browser = cell(env.Browser.Family)
+		if env.Browser.Major != nil {
+			browser += " " + strconv.Itoa(*env.Browser.Major)
+		}
+	}
+	if env.OS != "" {
+		if browser != "" {
+			browser += " on " + cell(env.OS)
+		} else {
+			browser = cell(env.OS)
+		}
+	}
+	if browser != "" {
+		parts = append(parts, browser)
+	}
+	if v := env.Viewport; v != nil {
+		vp := fmt.Sprintf("%dx%d", v.Width, v.Height)
+		if env.DevicePixelRatio != 0 && env.DevicePixelRatio != 1 {
+			vp += " @" + strconv.FormatFloat(env.DevicePixelRatio, 'f', -1, 64) + "x"
+		}
+		parts = append(parts, vp)
+	}
+	if env.Scrollbars != "" {
+		parts = append(parts, cell(env.Scrollbars)+" scrollbars")
+	}
+	if env.AppRoute != "" {
+		parts = append(parts, "app route "+cell(env.AppRoute))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// feedbackErrorLabel is one recent error, e.g. "2026-10-09 14:03 UTC
+// SUBMIT_WORKFLOW: Validation failed (x3; textToImage; model version 812)".
+func feedbackErrorLabel(e appapi.FeedbackRecentError) string {
+	cell := func(s string) string { return truncate(safeTermSingle(s), feedbackCellRunes) }
+	at := time.UnixMilli(e.At).UTC().Format("2006-01-02 15:04:05 UTC")
+	var details []string
+	if e.Count > 1 {
+		details = append(details, "x"+strconv.Itoa(e.Count))
+	}
+	if e.Reason != "" {
+		details = append(details, "host: "+cell(e.Reason))
+	}
+	if e.Code != "" {
+		details = append(details, "code "+cell(e.Code))
+	}
+	if in := e.Input; in != nil {
+		if in.Kind != "" {
+			details = append(details, cell(in.Kind))
+		}
+		if in.Step != "" {
+			details = append(details, "step "+cell(in.Step))
+		}
+		if in.ModelVersionID > 0 {
+			details = append(details, "model version "+strconv.FormatInt(in.ModelVersionID, 10))
+		}
+	}
+	if e.WorkflowID != "" {
+		details = append(details, "workflow "+cell(e.WorkflowID))
+	}
+	if sc := e.Scope; sc != nil && sc.Requested != "" {
+		scope := "scope " + cell(sc.Requested)
+		if sc.Resolved != "" {
+			scope += " -> " + cell(sc.Resolved)
+		}
+		details = append(details, scope)
+	}
+	if e.AppRoute != "" {
+		details = append(details, "route "+cell(e.AppRoute))
+	}
+	label := at + " " + cell(e.Method) + ": " + truncate(safeTermSingle(e.Message), feedbackErrorRunes)
+	if len(details) > 0 {
+		label += " (" + strings.Join(details, "; ") + ")"
 	}
 	return label
 }

@@ -1386,6 +1386,28 @@ page); it, `appVersion` and `appSha` can be `null`. A `reporter` object
 would act on are written as `\uXXXX` escapes, so a decoder still returns the
 exact text.
 
+`appSha` is the **platform commit**: the release commit for that version in the
+repo `civitai app pull <slug>` clones, so `git checkout <appSha>` there shows
+the code that was live. Rows from a server that records more carry these keys,
+each **absent** (never `null`) when the server sent nothing:
+
+- `reportedSourceCommit` / `reportedSourceDirty` — what your CLI reported at
+  submit for the live build. Unverified, and the commit may exist only on your
+  machine. `reportedSourceDirty` present and `false` means the CLI said clean;
+  absent means unknown.
+- `forkOf` — for a fork: `forkedAtCommit`, and `upstreamSlug` /
+  `upstreamVersion` while the upstream is a public listing (else `null`).
+- `untrustedDiagnostics` — written by the reporter's browser, so treat it like
+  `untrustedMessage`: `recentErrors` (the app session's last failed SDK calls
+  and the requests the host dropped, refused or rewrote: `method`, `message`,
+  optional `code`, `workflowId`, `input` ids/enum keys, `reason`, `scope`,
+  `appRoute`, `at` in epoch ms, `count`) and `environment` (browser family and
+  major version, OS family, viewport, device pixel ratio, `classic` or
+  `overlay` scrollbars, app route).
+
+The human view prints the same facts as `  - ` lines between a row's header and
+its message.
+
 **`set-status`** writes immediately, with no confirmation. 🔴 **`resolved` and
 `wont_fix` notify the user who wrote the feedback; `acknowledged` notifies
 nobody** — mark a row `resolved` only once the fix is approved and live. **There
