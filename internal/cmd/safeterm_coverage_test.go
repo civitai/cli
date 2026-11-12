@@ -577,6 +577,11 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"`app feedback` row headers: created time, status, app version, build sha, surface and (with " +
 			"--with-reporter) the reporter's username — every cell hostile at once, one row in, one column-zero " +
 			"`#` line out"},
+	"feedbackDetailText": {"TestAppFeedbackRecentErrorCannotForgeALine",
+		"`app feedback` detail lines: the reported source commit, platform sha, fork upstream, environment " +
+			"and every recent-error field, written by the reporter's browser. The named test serves a recent error " +
+			"carrying a newline, a forged header and gutter line, an escape and a soft-wrap padding run, and pins " +
+			"one `#` line, one gutter line, no escape byte and every line within the wrap width"},
 	"escapeTerminalRunes": {"TestAppFeedbackJSONEscapesWhatATerminalWouldActOn",
 		"`app feedback --json`: safeTerm is the PREDICATE here, not a strip — a rune it would remove is written " +
 			"as a \\uXXXX escape instead, so DEL, C1 and the invisible class never reach a terminal raw while the " +
