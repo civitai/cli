@@ -113,6 +113,7 @@ var bareIdentArgs = map[string]string{
 	"reportBaseModel::baseModel":     "SERVER: a base-model label",
 
 	// --- app feedback --------------------------------------------------------
+	"feedbackDetailText::s":         "SERVER: one value of a feedback row's diagnostics (source commit, platform sha, fork upstream, environment, recent-error fields); the slug the user typed is never passed here",
 	"feedbackHeader::s":             "SERVER: one header cell of a feedback row — created time, status, app version, build sha, surface, or the reporter's username — handed to the `cell` closure; never the slug the user typed",
 	"feedbackMessageLines::message": "SERVER, and the least trusted text this CLI prints: a feedback message any signed-in site user wrote (appapi.Feedback.Message)",
 
