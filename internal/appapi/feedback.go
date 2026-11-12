@@ -83,6 +83,81 @@ type Feedback struct {
 	OwnerStatus     *string          `json:"ownerStatus"`
 	OwnerStatusAt   *string          `json:"ownerStatusAt"`
 	OwnerFlaggedAt  *string          `json:"ownerFlaggedAt"`
+
+	// The diagnostics below are ABSENT from an older server's rows, and every
+	// one of them decodes to its zero value (nil / empty) then, which the
+	// command layer reads as "the report carries none".
+
+	// AppSourceCommit / AppSourceDirty are the developer's own CLI's claim, at
+	// submit, about the tree the live build came from. Unverified: nothing
+	// confirms the bundle was built from it. A nil AppSourceDirty is UNKNOWN,
+	// which is not false (clean). AppBlockSha, by contrast, is the platform's
+	// release commit in the repo `civitai app pull` clones.
+	AppSourceCommit *string `json:"appSourceCommit"`
+	AppSourceDirty  *bool   `json:"appSourceDirty"`
+	// RecentErrors are the app session's failed SDK calls and host refusals
+	// before the report, oldest first. Written by the reporter's browser, so as
+	// untrusted as Message.
+	RecentErrors []FeedbackRecentError `json:"recentErrors"`
+	// Environment is the reporter's browser window. Client-reported.
+	Environment *FeedbackEnvironment `json:"environment"`
+	// ForkOf is set when the app is a fork. Platform-derived.
+	ForkOf *FeedbackForkOrigin `json:"forkOf"`
+}
+
+// FeedbackRecentError is one entry of Feedback.RecentErrors (the server's
+// appFeedbackRecentErrorSchema). Every field but Method, Message, At and Count
+// is optional.
+type FeedbackRecentError struct {
+	Method     string              `json:"method"`
+	Message    string              `json:"message"`
+	Code       string              `json:"code,omitempty"`
+	WorkflowID string              `json:"workflowId,omitempty"`
+	Input      *FeedbackErrorInput `json:"input,omitempty"`
+	Reason     string              `json:"reason,omitempty"`
+	Scope      *FeedbackErrorScope `json:"scope,omitempty"`
+	AppRoute   string              `json:"appRoute,omitempty"`
+	At         int64               `json:"at"`
+	Count      int                 `json:"count"`
+}
+
+// FeedbackErrorInput is what an entry may say about the app's request: enum
+// keys and an id, never its content.
+type FeedbackErrorInput struct {
+	Kind           string `json:"kind,omitempty"`
+	Step           string `json:"step,omitempty"`
+	ModelVersionID int64  `json:"modelVersionId,omitempty"`
+}
+
+// FeedbackErrorScope is a NAVIGATE's requested scope and the one the host
+// resolved it in.
+type FeedbackErrorScope struct {
+	Requested string `json:"requested"`
+	Resolved  string `json:"resolved,omitempty"`
+}
+
+// FeedbackEnvironment is Feedback.Environment (appFeedbackEnvironmentSchema).
+type FeedbackEnvironment struct {
+	Browser *struct {
+		Family string `json:"family"`
+		Major  *int   `json:"major,omitempty"`
+	} `json:"browser,omitempty"`
+	OS         string `json:"os,omitempty"`
+	Scrollbars string `json:"scrollbars,omitempty"`
+	Viewport   *struct {
+		Width  int `json:"width"`
+		Height int `json:"height"`
+	} `json:"viewport,omitempty"`
+	DevicePixelRatio float64 `json:"devicePixelRatio,omitempty"`
+	AppRoute         string  `json:"appRoute,omitempty"`
+}
+
+// FeedbackForkOrigin is Feedback.ForkOf. UpstreamSlug / UpstreamVersion are
+// nil unless the parent is an approved, public listing.
+type FeedbackForkOrigin struct {
+	UpstreamSlug    *string `json:"upstreamSlug"`
+	UpstreamVersion *string `json:"upstreamVersion"`
+	ForkedAtCommit  *string `json:"forkedAtCommit"`
 }
 
 // Status is the row's owner status in the FILTER's vocabulary: a NULL
