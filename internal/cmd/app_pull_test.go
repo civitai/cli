@@ -523,3 +523,194 @@ func TestAppPullMigrationKeepsTheTokenOffArgv(t *testing.T) {
 		t.Fatalf("the migration must be reported: %s", errOut)
 	}
 }
+
+const okSourceURL = "https://forgejo.civitai.com/civitai-apps-src/my-block.git"
+
+func sourceCloneInfo() map[string]any {
+	info := okCloneInfo()
+	info["sourceHttpUrl"] = okSourceURL
+	return info
+}
+
+// pullWithStubs runs `app pull --app my-block` against info with git stubbed,
+// returning every git argv. existing makes ./my-block an existing checkout whose
+// origin (as `git config --get remote.origin.url` reads it) is origin.
+func pullWithStubs(t *testing.T, info map[string]any, existing bool, origin string) ([][]string, string, string) {
+	t.Helper()
+	srv := cloneInfoServer(t, info, http.StatusOK, nil)
+	t.Cleanup(srv.Close)
+	stubHelperExe(t)
+	stubGitOutput(t, func(dir string, args ...string) (string, error) {
+		if len(args) >= 4 && args[2] == "--get" && args[3] == "remote.origin.url" {
+			return origin + "\n", nil
+		}
+		return "", nil
+	})
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	if existing {
+		if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+	out, errOut, err := run(t, "app", "pull", "--app", "my-block")
+	if err != nil {
+		t.Fatalf("app pull: %v\n%s", err, errOut)
+	}
+	assertNoToken(t, gitCalls)
+	return gitCalls, out, errOut
+}
+
+// 🔴 Regression (red pre-change: sourceHttpUrl was ignored, so a fork's or an App
+// Assistant app's own history was never what `app pull` cloned).
+func TestAppPullClonesTheSourceRepoWhenTheAppHasOne(t *testing.T) {
+	calls, _, _ := pullWithStubs(t, sourceCloneInfo(), false, "")
+	want := append(append([]string{"clone"}, wantCloneConfig...), "--", okSourceURL, "my-block")
+	if len(calls) != 1 || !equalArgv(calls[0], want) {
+		t.Fatalf("git calls = %q, want one clone %q", calls, want)
+	}
+}
+
+// An app with no source repository still clones the build repository (the
+// pre-change behaviour, unchanged): an invariant guard.
+func TestAppPullClonesTheBuildRepoWithoutASource(t *testing.T) {
+	calls, _, _ := pullWithStubs(t, okCloneInfo(), false, "")
+	want := append(append([]string{"clone"}, wantCloneConfig...), "--", okHTTPURL, "my-block")
+	if len(calls) != 1 || !equalArgv(calls[0], want) {
+		t.Fatalf("git calls = %q, want one clone %q", calls, want)
+	}
+}
+
+func TestAppPullSyncsASourceCheckoutFromTheSource(t *testing.T) {
+	calls, _, errOut := pullWithStubs(t, sourceCloneInfo(), true, okSourceURL)
+	fetch := []string{"-C", "my-block", "fetch", "--", okSourceURL, "HEAD"}
+	if !equalArgv(calls[len(calls)-2], fetch) {
+		t.Fatalf("fetch = %q, want %q", calls[len(calls)-2], fetch)
+	}
+	if strings.Contains(errOut, "also has a SOURCE repository") {
+		t.Fatalf("a source checkout needs no pointer to itself: %s", errOut)
+	}
+}
+
+func TestAppPullKeepsABuildCheckoutOnTheBuildRepo(t *testing.T) {
+	calls, _, errOut := pullWithStubs(t, sourceCloneInfo(), true, okHTTPURL)
+	fetch := []string{"-C", "my-block", "fetch", "--", okHTTPURL, "HEAD"}
+	if !equalArgv(calls[len(calls)-2], fetch) {
+		t.Fatalf("fetch = %q, want %q", calls[len(calls)-2], fetch)
+	}
+	if !strings.Contains(errOut, "also has a SOURCE repository") || !strings.Contains(errOut, okSourceURL) {
+		t.Fatalf("the sync must name the source repository: %s", errOut)
+	}
+}
+
+// An old tokened clone of the SOURCE repository is migrated too (the migration
+// knows both of the app's repositories).
+func TestAppPullMigratesATokenedSourceRemote(t *testing.T) {
+	srv := cloneInfoServer(t, sourceCloneInfo(), http.StatusOK, nil)
+	defer srv.Close()
+	stubHelperExe(t)
+	tokened := strings.Replace(okSourceURL, "https://", "https://dev-7:tok-sha1@", 1)
+	stubGitOutput(t, func(dir string, args ...string) (string, error) {
+		if len(args) >= 3 && args[2] == "--get-regexp" {
+			return "remote.origin.url " + tokened + "\n", nil
+		}
+		return tokened + "\n", nil
+	})
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+	if _, errOut, err := run(t, "app", "pull", "--app", "my-block"); err != nil {
+		t.Fatalf("app pull: %v\n%s", err, errOut)
+	}
+	want := []string{"-C", "my-block", "config", "--local", "--replace-all", "remote.origin.url", okSourceURL, tokenedURLPattern(okSourceURL)}
+	if !equalArgv(gitCalls[0], want) {
+		t.Fatalf("first git call = %q, want the source remote's migration %q", gitCalls[0], want)
+	}
+	assertNoToken(t, gitCalls)
+}
+
+// The help states which repository is cloned and that pushing there submits
+// nothing — pinned WHOLE (whitespace-normalised), as the paragraphs above.
+func TestAppPullHelpStatesWhichRepository(t *testing.T) {
+	long := strings.Join(strings.Fields(newAppPullCmd().Long), " ")
+	want := "WHICH REPOSITORY: a forked app, or one App Assistant built, has a SOURCE repository " +
+		"(civitai-apps-src/<slug>) from its first day, before any approval: its git history, with " +
+		"App Assistant's saves as commits. When the app has one, this command clones it, and " +
+		"`git push` there keeps your history on the platform. Pushing to the source repository never " +
+		"builds or submits anything; submit a version with `civitai app submit`. An app without one " +
+		"gets its build repository (civitai-apps/<slug>), which holds the approved versions."
+	if !strings.Contains(long, want) {
+		t.Fatalf("app pull --help is missing:\n  %s\n\ngot:\n  %s", want, long)
+	}
+}
+
+// A build checkout of an app whose build repository the server does not name
+// right now (not approved: httpUrl is the source repository) is refused with
+// where the source repository is, instead of failing on unrelated history.
+func TestAppPullBuildCheckoutWithNoBuildRepoSaysWhere(t *testing.T) {
+	info := sourceCloneInfo()
+	info["httpUrl"] = okSourceURL
+	srv := cloneInfoServer(t, info, http.StatusOK, nil)
+	defer srv.Close()
+	stubHelperExe(t)
+	stubGitOutput(t, func(dir string, args ...string) (string, error) { return okHTTPURL + "\n", nil })
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+	_, _, err := run(t, "app", "pull", "--app", "my-block")
+	if err == nil || !strings.Contains(err.Error(), "which is not available right now") || !strings.Contains(err.Error(), okSourceURL) {
+		t.Fatalf("err = %v, want the not-available refusal naming the source repository", err)
+	}
+	if len(gitCalls) != 0 {
+		t.Fatalf("nothing may be written or fetched: %q", gitCalls)
+	}
+}
+
+// An origin written by hand still reads as the build repository.
+func TestOriginIsBuildRepoReadsThePath(t *testing.T) {
+	for origin, want := range map[string]bool{
+		okHTTPURL: true,
+		"https://forgejo.civitai.com/civitai-apps/my-block":               true,
+		"https://dev-7:tok@forgejo.civitai.com/civitai-apps/my-block.git": true,
+		"git@forgejo.civitai.com:civitai-apps/my-block.git":               true,
+		"https://forgejo.civitai.com/Civitai-Apps/My-Block.git":           true,
+		okSourceURL: false,
+		"https://forgejo.civitai.com/civitai-apps/other-block.git":     false,
+		"https://forgejo.civitai.com/civitai-apps-review/my-block.git": false,
+		"": false,
+	} {
+		o := origin
+		stubGitOutput(t, func(dir string, args ...string) (string, error) { return o + "\n", nil })
+		if got := originIsBuildRepo("my-block", "my-block"); got != want {
+			t.Errorf("originIsBuildRepo(%q) = %v, want %v", origin, got, want)
+		}
+	}
+}

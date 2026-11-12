@@ -48,13 +48,24 @@ type gitServer struct {
 	authedOK  atomic.Int32 // git requests that carried the right Basic credential
 	challenge atomic.Int32 // git requests answered 401 (no/wrong credential)
 	cloneInfo atomic.Int32 // clone-info queries (the helper's, and app pull's own)
+	// withSource: the app also has a SOURCE repository, which clone-info returns
+	// as sourceHttpUrl (a different history from the build repository's).
+	withSource atomic.Bool
 }
 
 func (g *gitServer) repoURL() string { return g.srv.URL + "/civitai-apps/" + gitSlug + ".git" }
+func (g *gitServer) sourceURL() string {
+	return g.srv.URL + "/civitai-apps-src/" + gitSlug + ".git"
+}
 
 // newGitServer serves a bare repo holding one commit at /civitai-apps/my-block.git
 // and the clone-info query at the CLI's tRPC path.
-func newGitServer(t *testing.T) *gitServer {
+func newGitServer(t *testing.T) *gitServer { return newGitServerOpts(t, false) }
+
+// newGitServerOpts is newGitServer; with withSource it also serves the app's
+// source repository at /civitai-apps-src/my-block.git (its own history, holding
+// SOURCE.md), open to an authenticated push, and returns it as sourceHttpUrl.
+func newGitServerOpts(t *testing.T, withSource bool) *gitServer {
 	t.Helper()
 	requireGit(t)
 	gitFixtureEnv(t)
@@ -71,6 +82,7 @@ func newGitServer(t *testing.T) *gitServer {
 	}
 
 	g := &gitServer{root: t.TempDir()}
+	g.withSource.Store(withSource)
 	work := filepath.Join(t.TempDir(), "work")
 	mustGit(t, "", "init", "-q", "-b", "main", work)
 	if err := os.WriteFile(filepath.Join(work, "block.manifest.json"), []byte(`{"blockId":"my-block"}`+"\n"), 0o644); err != nil {
@@ -80,6 +92,19 @@ func newGitServer(t *testing.T) *gitServer {
 	mustGit(t, work, "commit", "-q", "-m", "first")
 	bare := filepath.Join(g.root, "civitai-apps", gitSlug+".git")
 	mustGit(t, "", "clone", "-q", "--bare", work, bare)
+	if withSource {
+		src := filepath.Join(t.TempDir(), "src")
+		mustGit(t, "", "init", "-q", "-b", "main", src)
+		if err := os.WriteFile(filepath.Join(src, "SOURCE.md"), []byte("the developer's history\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mustGit(t, src, "add", "SOURCE.md")
+		mustGit(t, src, "commit", "-q", "-m", "App Assistant: add SOURCE.md")
+		srcBare := filepath.Join(g.root, "civitai-apps-src", gitSlug+".git")
+		mustGit(t, "", "clone", "-q", "--bare", src, srcBare)
+		// http-backend refuses a push unless the repository allows it.
+		mustGit(t, srcBare, "config", "http.receivepack", "true")
+	}
 
 	cgiHandler := &cgi.Handler{
 		Path: backend,
@@ -93,14 +118,18 @@ func newGitServer(t *testing.T) *gitServer {
 				_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"json": map[string]any{"message": "expired", "code": 401}}})
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"data": map[string]any{"json": map[string]any{
+			info := map[string]any{
 				"notYetAvailable": false,
 				"slug":            gitSlug,
 				"forgejoUsername": gitUser,
 				"token":           gitToken,
 				"httpUrl":         g.repoURL(),
 				"cloneUrl":        strings.Replace(g.repoURL(), "http://", "http://"+gitUser+":"+gitToken+"@", 1),
-			}}}})
+			}
+			if g.withSource.Load() {
+				info["sourceHttpUrl"] = g.sourceURL()
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"data": map[string]any{"json": info}}})
 			return
 		}
 		u, p, ok := r.BasicAuth()
@@ -369,5 +398,108 @@ func TestGitCredentialFillThroughRealGit(t *testing.T) {
 	_, stderr, err = gitOut(t, checkout, "protocol=http\nhost="+host+"\npath=civitai-apps/"+gitSlug+".git\n\n", "credential", "fill")
 	if err == nil || !strings.Contains(stderr, "no token configured") {
 		t.Fatalf("no login: err=%v stderr=%s", err, stderr)
+	}
+}
+
+// 🔴 Regression (red on the pre-change CLI, which ignored sourceHttpUrl and
+// cloned the build repository): an app with a SOURCE repository is cloned from
+// it, through the helper, with no token on disk — and a `git push` from the
+// checkout lands in the source repository.
+func TestAppPullRealGitClonesTheSourceRepoAndPushes(t *testing.T) {
+	g := newGitServerOpts(t, true)
+	leak := useRecordingGlobalHelper(t)
+	cwd := t.TempDir()
+	chdir(t, cwd)
+	checkout := filepath.Join(cwd, gitSlug)
+
+	out, errOut, err := run(t, "app", "pull", "--app", gitSlug)
+	if err != nil {
+		t.Fatalf("app pull: %v\n%s", err, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(checkout, "SOURCE.md")); err != nil {
+		t.Fatalf("the clone is not the source repository: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(checkout, "block.manifest.json")); !os.IsNotExist(err) {
+		t.Fatalf("the clone holds the build repository's file: %v", err)
+	}
+	origin, _, _ := gitOut(t, checkout, "", "config", "--get", "remote.origin.url")
+	if strings.TrimSpace(origin) != g.sourceURL() {
+		t.Fatalf("remote.origin.url = %q, want the source repository %q", strings.TrimSpace(origin), g.sourceURL())
+	}
+	if strings.Contains(readFileString(t, filepath.Join(checkout, ".git", "config")), gitToken) ||
+		strings.Contains(out+errOut, gitToken) {
+		t.Fatal("the token reached .git/config or the output")
+	}
+
+	// A developer commit pushed from the checkout reaches the source repository.
+	if err := os.WriteFile(filepath.Join(checkout, "dev.ts"), []byte("export {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, checkout, "add", "dev.ts")
+	mustGit(t, checkout, "commit", "-q", "-m", "dev change")
+	head, _, _ := gitOut(t, checkout, "", "rev-parse", "HEAD")
+	if _, stderr, err := gitOut(t, checkout, "", "push", "origin", "HEAD:main"); err != nil {
+		t.Fatalf("git push to the source repository: %v\n%s", err, stderr)
+	}
+	pushed, _, err := gitOut(t, filepath.Join(g.root, "civitai-apps-src", gitSlug+".git"), "", "rev-parse", "main")
+	if err != nil || strings.TrimSpace(pushed) != strings.TrimSpace(head) {
+		t.Fatalf("source main = %q, want the pushed %q (%v)", strings.TrimSpace(pushed), strings.TrimSpace(head), err)
+	}
+	if _, err := os.Stat(leak); !os.IsNotExist(err) {
+		t.Fatal("the global credential helper stored the token on push")
+	}
+}
+
+// The helper, run by git itself in a source-repository checkout: it answers for
+// the app's source and build repositories, and refuses the in-review repository
+// and another app's source repository on the same host.
+func TestGitCredentialFillAnswersForTheSourceRepo(t *testing.T) {
+	g := newGitServerOpts(t, true)
+	cwd := t.TempDir()
+	chdir(t, cwd)
+	if _, errOut, err := run(t, "app", "pull", "--app", gitSlug); err != nil {
+		t.Fatalf("app pull: %v\n%s", err, errOut)
+	}
+	checkout := filepath.Join(cwd, gitSlug)
+	host := strings.TrimPrefix(g.srv.URL, "http://")
+	fill := func(path string) (string, string, error) {
+		return gitOut(t, checkout, "protocol=http\nhost="+host+"\npath="+path+"\n\n", "credential", "fill")
+	}
+	for _, ok := range []string{"civitai-apps-src/" + gitSlug + ".git", "civitai-apps/" + gitSlug + ".git"} {
+		out, stderr, err := fill(ok)
+		if err != nil || !strings.Contains(out, "password="+gitToken+"\n") {
+			t.Fatalf("fill %s: out=%q err=%v\n%s", ok, out, err, stderr)
+		}
+	}
+	for _, bad := range []string{"civitai-apps-review/" + gitSlug + ".git", "civitai-apps-src/other-block.git"} {
+		out, _, err := fill(bad)
+		if err == nil || strings.Contains(out, gitToken) {
+			t.Fatalf("fill %s must fail without the token; out=%q err=%v", bad, out, err)
+		}
+	}
+}
+
+// An existing checkout of the BUILD repository keeps syncing from it (the source
+// repository is another history, which --ff-only cannot take) and is told where
+// the source repository is.
+func TestAppPullRealGitBuildCheckoutKeepsItsRepoAndNamesTheSource(t *testing.T) {
+	g := newGitServerOpts(t, false)
+	cwd := t.TempDir()
+	chdir(t, cwd)
+	if _, errOut, err := run(t, "app", "pull", "--app", gitSlug); err != nil {
+		t.Fatalf("first pull (build only): %v\n%s", err, errOut)
+	}
+	g.withSource.Store(true)
+	_, errOut, err := run(t, "app", "pull", "--app", gitSlug)
+	if err != nil {
+		t.Fatalf("sync after a source repo appeared: %v\n%s", err, errOut)
+	}
+	checkout := filepath.Join(cwd, gitSlug)
+	origin, _, _ := gitOut(t, checkout, "", "config", "--get", "remote.origin.url")
+	if strings.TrimSpace(origin) != g.repoURL() {
+		t.Fatalf("origin moved to %q", strings.TrimSpace(origin))
+	}
+	if !strings.Contains(errOut, "also has a SOURCE repository") || !strings.Contains(errOut, g.sourceURL()) {
+		t.Fatalf("the sync must name the source repository: %s", errOut)
 	}
 }

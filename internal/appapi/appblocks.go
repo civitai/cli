@@ -1643,6 +1643,12 @@ type ForgejoCloneInfo struct {
 	Token           string `json:"token"`
 	HTTPURL         string `json:"httpUrl"`
 	CloneURL        string `json:"cloneUrl"`
+	// SourceHTTPURL is the app's SOURCE repository (`civitai-apps-src/<slug>`):
+	// the developer's own git history of a fork or an App Assistant app, which
+	// `app pull` clones when the server returns one. Empty when the app has none.
+	// Pushing there never builds or submits anything. For an app with no build
+	// repository yet the server also returns it as HTTPURL.
+	SourceHTTPURL string `json:"sourceHttpUrl"`
 }
 
 // GetForgejoCloneInfo calls the owner-only getMyForgejoCloneInfo tRPC query for

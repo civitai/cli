@@ -32,6 +32,16 @@ func credInfo() *appapi.ForgejoCloneInfo {
 	}
 }
 
+const credSourceURL = "https://" + credHost + "/civitai-apps-src/my-block.git"
+
+func srcReq(path string) credentialRequest {
+	return credentialRequest{Protocol: "https", Host: credHost, Path: path}
+}
+
+func withSource(u string) func(*appapi.ForgejoCloneInfo) {
+	return func(i *appapi.ForgejoCloneInfo) { i.SourceHTTPURL = u }
+}
+
 func okReq() credentialRequest {
 	return credentialRequest{Protocol: "https", Host: credHost, Path: "civitai-apps/my-block.git"}
 }
@@ -90,6 +100,23 @@ func TestMatchCredentialRequest(t *testing.T) {
 			mutate: func(i *appapi.ForgejoCloneInfo) { i.HTTPURL = "http://127.0.0.1:3000/civitai-apps/my-block.git" }},
 		{name: "server URL not http(s)", req: okReq(), app: "my-block",
 			mutate: func(i *appapi.ForgejoCloneInfo) { i.HTTPURL = "ext::sh -c id" }, wantErr: "no usable repository URL"},
+		// SOURCE repositories (civitai-apps-src/<slug>).
+		{name: "the app's source repository, when the server returned it", req: srcReq("civitai-apps-src/my-block.git"), app: "my-block",
+			mutate: withSource(credSourceURL)},
+		{name: "the build repository still answered when the app has a source repository", req: okReq(), app: "my-block",
+			mutate: withSource(credSourceURL)},
+		{name: "a source path the server did NOT return (build-only app)", req: srcReq("civitai-apps-src/my-block.git"), app: "my-block",
+			wantErr: `git asked for repository "civitai-apps-src/my-block.git"`},
+		{name: "another app's source repository", req: srcReq("civitai-apps-src/other-block.git"), app: "my-block",
+			mutate: withSource(credSourceURL), wantErr: `git asked for repository "civitai-apps-src/other-block.git"`},
+		{name: "the in-review repository, even when the server names it as the source", req: srcReq("civitai-apps-review/my-block.git"), app: "my-block",
+			mutate: withSource("https://" + credHost + "/civitai-apps-review/my-block.git"), wantErr: `git asked for repository "civitai-apps-review/my-block.git"`},
+		{name: "a server build URL naming another repository", req: srcReq("civitai-apps/other-block.git"), app: "my-block",
+			mutate: func(i *appapi.ForgejoCloneInfo) { i.HTTPURL = "https://" + credHost + "/civitai-apps/other-block.git" }, wantErr: "is not that app's repository"},
+		{name: "a server build URL in another org", req: srcReq("someone/my-block.git"), app: "my-block",
+			mutate: func(i *appapi.ForgejoCloneInfo) { i.HTTPURL = "https://" + credHost + "/someone/my-block.git" }, wantErr: "is not that app's repository"},
+		{name: "a source repository on another host", req: credentialRequest{Protocol: "https", Host: "evil.example.test", Path: "civitai-apps-src/my-block.git"}, app: "my-block",
+			mutate: withSource("https://evil.example.test/civitai-apps-src/my-block.git"), wantErr: "git asked for https://evil.example.test"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -152,7 +179,9 @@ func TestRunGitCredentialGet(t *testing.T) {
 			i := credInfo()
 			i.HTTPURL = "https://" + credHost + "/civitai-apps/elsewhere.git"
 			return i, nil
-		}, "not answering"},
+			// Refused before the request is compared: a server URL naming another
+			// repository is not this app's (appRepoPathOK).
+		}, "is not that app's repository"},
 	}
 	for _, r := range refusals {
 		t.Run(r.name, func(t *testing.T) {
