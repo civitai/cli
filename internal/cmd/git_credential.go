@@ -85,22 +85,75 @@ func isLoopbackHost(hostport string) bool {
 
 // matchCredentialRequest decides whether a credential for `info` may be handed
 // to the git request `req`. It returns nil only when the request is for exactly
-// the repository the server issued the credential for: same scheme, same
-// host:port, same path. Every refusal names what differed, never the token.
+// one of the repositories the server issued the credential for: same scheme,
+// same host:port, same path. Those are the app's build repository (HTTPURL) and,
+// when it has one, its source repository (SourceHTTPURL). Every refusal names
+// what differed, never the token.
 //
 // 🔴 THE PATH IS REQUIRED. `app pull` sets credential.<origin>.useHttpPath so
 // git sends it; without it this helper could not tell this app's repository from
 // another one on the same host, and would answer for both.
+//
+// 🔴 AND EACH SERVER URL MUST NAME THIS APP'S OWN REPOSITORY: its path ends in
+// `civitai-apps/<app>.git` or `civitai-apps-src/<app>.git` (appRepoPathOK). A
+// server answer naming any other repository is refused, so the helper never
+// answers for a path outside the app's two repositories whatever the server says.
 func matchCredentialRequest(req credentialRequest, app string, info *appapi.ForgejoCloneInfo) error {
 	if info.Slug != app {
 		return fmt.Errorf("the server answered for app %q, not %q — refusing to hand its credential to git", info.Slug, app)
 	}
-	u, err := url.Parse(info.HTTPURL)
+	err := matchRepoURL(req, app, info.HTTPURL)
+	if err == nil {
+		return nil
+	}
+	// The source repository only on the build repository's own scheme and host:
+	// the two live on the one platform git host, so a source URL anywhere else is
+	// not an answer this helper trusts with the token.
+	if src := strings.TrimSpace(info.SourceHTTPURL); src != "" && sameOrigin(src, info.HTTPURL) {
+		if srcErr := matchRepoURL(req, app, src); srcErr == nil {
+			return nil
+		}
+	}
+	// The build repository's refusal: it names what git asked for and what this
+	// app's repository is, which is the useful message for either mismatch.
+	return err
+}
+
+// sameOrigin reports whether two URLs share scheme and host:port (host compared
+// case-insensitively).
+func sameOrigin(a, b string) bool {
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	return errA == nil && errB == nil && ua.Host != "" &&
+		ua.Scheme == ub.Scheme && strings.EqualFold(ua.Host, ub.Host)
+}
+
+// appRepoOrgs are the platform git host's orgs whose `<app>.git` repositories
+// the helper answers for: the build repository and the developer's source
+// repository. Not the in-review org, nor any other.
+var appRepoOrgs = map[string]bool{"civitai-apps": true, "civitai-apps-src": true}
+
+// appRepoPathOK reports whether a repository URL path names `app`'s own build or
+// source repository: its last two segments are one of appRepoOrgs and `<app>.git`.
+func appRepoPathOK(path, app string) bool {
+	segs := strings.Split(strings.Trim(path, "/"), "/")
+	if len(segs) < 2 {
+		return false
+	}
+	return appRepoOrgs[segs[len(segs)-2]] && segs[len(segs)-1] == app+".git"
+}
+
+// matchRepoURL is matchCredentialRequest against one server repository URL.
+func matchRepoURL(req credentialRequest, app, repoURL string) error {
+	u, err := url.Parse(repoURL)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return fmt.Errorf("the server returned no usable repository URL for %q", app)
 	}
 	if u.User != nil {
 		return fmt.Errorf("the server's repository URL for %q carries a credential; refusing to use it", app)
+	}
+	if !appRepoPathOK(u.Path, app) {
+		return fmt.Errorf("the server's repository URL for %q is not that app's repository; refusing to use it", app)
 	}
 	if u.Scheme == "http" && !isLoopbackHost(u.Host) {
 		return fmt.Errorf("the repository URL for %q is plain http on a non-local host; refusing to send a credential over it", app)

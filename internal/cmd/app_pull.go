@@ -130,10 +130,18 @@ func newAppPullCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pull [dir]",
 		Short: "Clone or sync your app's repository from Civitai",
-		Long: `Clone (or, if [dir] is already a checkout, pull) the canonical repository
-backing one of YOUR approved Apps. This is the read side of git authoring:
-it fetches the current block.manifest.json + source so you can edit locally and
-then submit (` + "`civitai app submit`" + `) or push.
+		Long: `Clone (or, if [dir] is already a checkout, pull) the repository backing one
+of YOUR Apps. This is the read side of git authoring: it fetches the current
+block.manifest.json + source so you can edit locally and then submit
+(` + "`civitai app submit`" + `) or push.
+
+WHICH REPOSITORY: a forked app, or one App Assistant built, has a SOURCE
+repository (civitai-apps-src/<slug>) from its first day, before any approval:
+its git history, with App Assistant's saves as commits. When the app has one,
+this command clones it, and ` + "`git push`" + ` there keeps your history on the
+platform. Pushing to the source repository never builds or submits anything;
+submit a version with ` + "`civitai app submit`" + `. An app without one gets its
+build repository (civitai-apps/<slug>), which holds the approved versions.
 
 Authentication uses your stored credential (` + "`civitai login`" + ` or a personal
 API key). The command calls an owner-only endpoint that lazily provisions your
@@ -164,8 +172,9 @@ that carries a credential but points elsewhere is left alone and the command
 prints the ` + "`git remote set-url`" + ` that would clean it. The token itself is not
 rotated by this.
 
-The repo only exists once your FIRST version has been submitted as a ZIP and
-approved; before then the command tells you so instead of failing obscurely.`,
+An app with no source repository has a build repository only once its FIRST
+version has been submitted as a ZIP and approved; before then the command tells
+you so instead of failing obscurely.`,
 		Example: `  civitai app pull --app my-block               # clone into ./my-block
   civitai app pull ./my-block --app my-block    # clone/sync into ./my-block
   civitai app pull . --app my-block             # sync the current directory`,
@@ -344,8 +353,11 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionListe
 
 	// The token-less repository URL. git reaches it through the credential helper
 	// installed below, so no token is ever passed on a command line or written to
-	// .git/config. (The tokened cloneUrl is no longer used at all.)
-	repoURL := strings.TrimSpace(info.HTTPURL)
+	// .git/config. (The tokened cloneUrl is no longer used at all.) The SOURCE
+	// repository when the app has one (pullRepoURL), else the build repository.
+	buildURL := strings.TrimSpace(info.HTTPURL)
+	sourceURL := strings.TrimSpace(info.SourceHTTPURL)
+	repoURL := pullRepoURL(info)
 	if repoURL == "" {
 		return fmt.Errorf("server returned no repository URL")
 	}
@@ -385,7 +397,18 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionListe
 		// creates a merge commit. It merges FETCH_HEAD into whatever branch is
 		// currently checked out (not a server-named branch).
 		fmt.Fprintf(out, "Syncing existing checkout in %s …\n", dir)
-		migrated, leftover, err := migrateTokenRemotes(dir, repoURL)
+		// A checkout of the BUILD repository keeps syncing from it: the source
+		// repository is a different history, which a fast-forward cannot take. The
+		// user is told where the source repository is instead.
+		buildCheckout := false
+		if sourceURL != "" && buildURL != "" && sourceURL != buildURL && originIs(dir, buildURL) {
+			repoURL = buildURL
+			buildCheckout = true
+			if helperCfg, err = credentialHelperConfig(repoURL, info.Slug); err != nil {
+				return err
+			}
+		}
+		migrated, leftover, err := migrateTokenRemotes(dir, buildURL, sourceURL)
 		if err != nil {
 			return err
 		}
@@ -399,6 +422,12 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionListe
 			return fmt.Errorf("git merge --ff-only failed: %w", err)
 		}
 		fmt.Fprintln(out, ui.Success(fmt.Sprintf("Synced %s.", info.Slug)))
+		if buildCheckout {
+			fmt.Fprintf(errOut, "\n%s\n", ui.For(errOut).Warn(fmt.Sprintf(
+				"%s also has a SOURCE repository with its git history (%s); this checkout tracks the build repository of approved versions. "+
+					"To work from the source repository, run `civitai app pull <new dir> --app %s`, or add it here with `git -C %s remote add source %s`.",
+				info.Slug, sourceURL, info.Slug, dir, sourceURL)))
+		}
 		for _, name := range migrated {
 			fmt.Fprintf(errOut, "\n%s\n", ui.For(errOut).Warn(fmt.Sprintf(
 				"Removed the access token from remote %q in %s/.git/config; git now gets it from `civitai git-credential`. "+
@@ -432,6 +461,30 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionListe
 	return nil
 }
 
+// pullRepoURL is the repository `app pull` clones for info: the app's SOURCE
+// repository when the server returned one, else HTTPURL (the build repository,
+// or for an app with no build repository yet, the source repository again).
+func pullRepoURL(info *appapi.ForgejoCloneInfo) string {
+	if src := strings.TrimSpace(info.SourceHTTPURL); src != "" {
+		return src
+	}
+	return strings.TrimSpace(info.HTTPURL)
+}
+
+// originIs reports whether dir's `origin` remote, without any credential in it,
+// is repoURL.
+func originIs(dir, repoURL string) bool {
+	got, err := gitOutput(dir, "config", "--local", "--get", "remote.origin.url")
+	if err != nil {
+		return false
+	}
+	got = strings.TrimSpace(got)
+	if stripped, serr := stripURLCredential(got); serr == nil {
+		got = stripped
+	}
+	return normalizeRepoURL(got) == normalizeRepoURL(repoURL)
+}
+
 // leftoverRemote is a remote whose URL carries a credential but points somewhere
 // other than this app's repository: reported, never rewritten.
 type leftoverRemote struct {
@@ -440,11 +493,12 @@ type leftoverRemote struct {
 }
 
 // migrateTokenRemotes removes the credential from every remote URL (fetch and
-// push) in dir whose credential-less form IS repoURL, i.e. a clone made by a CLI
-// that wrote the tokened URL. Returns the remotes it rewrote, and the ones that
-// carry a credential but point elsewhere (left alone, reported). Never prints or
-// returns the credential.
-func migrateTokenRemotes(dir, repoURL string) (migrated []string, leftover []leftoverRemote, err error) {
+// push) in dir whose credential-less form IS one of repoURLs (the app's build
+// and source repositories; an empty entry is ignored), i.e. a clone made by a
+// CLI that wrote the tokened URL. Returns the remotes it rewrote, and the ones
+// that carry a credential but point elsewhere (left alone, reported). Never
+// prints or returns the credential.
+func migrateTokenRemotes(dir string, repoURLs ...string) (migrated []string, leftover []leftoverRemote, err error) {
 	listing, lerr := gitOutput(dir, "config", "--local", "--get-regexp", `^remote\..*\.(url|pushurl)$`)
 	if lerr != nil {
 		// `--get-regexp` exits 1 when nothing matches: a checkout with no remotes
@@ -452,7 +506,12 @@ func migrateTokenRemotes(dir, repoURL string) (migrated []string, leftover []lef
 		// installCredentialHelper makes next.
 		return nil, nil, nil
 	}
-	want := normalizeRepoURL(repoURL)
+	ours := map[string]string{} // normalized → as the server wrote it
+	for _, u := range repoURLs {
+		if u = strings.TrimSpace(u); u != "" {
+			ours[normalizeRepoURL(u)] = u
+		}
+	}
 	seen := map[string]bool{}
 	for _, line := range strings.Split(listing, "\n") {
 		key, val, ok := strings.Cut(strings.TrimSpace(line), " ")
@@ -465,10 +524,12 @@ func migrateTokenRemotes(dir, repoURL string) (migrated []string, leftover []lef
 		}
 		name := strings.TrimPrefix(key, "remote.")
 		name = strings.TrimSuffix(strings.TrimSuffix(name, ".url"), ".pushurl")
-		if stripped != want {
+		repoURL, isOurs := ours[stripped]
+		if !isOurs {
 			leftover = append(leftover, leftoverRemote{name: name, stripped: stripped})
 			continue
 		}
+		want := stripped
 		// Replace only a TOKENED value for this repository, so a multi-URL remote
 		// keeps its other entries. The value-regex matches any userinfo rather
 		// than naming this one, so the token never appears in this git child's

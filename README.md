@@ -328,7 +328,7 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json` — warnings are non-fatal unless `--strict`, and a `[dir]` that is missing or not a directory is a **usage error** (exit `2`, no JSON). See [Validate fidelity](#validate-fidelity). |
 | `civitai app elements [tag] [--json]` | **Look up a `<civitai-*>` element's attributes (inherited ones included), events, slots and CSS parts** — or, with no tag, list every element — from the `@civitai/components` installed in the current project. Offline: it reads `node_modules`, never the network. An unknown tag exits `2` and names the nearest matches; no installed package exits `1`. See [Templates](#templates). |
 | `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate] [--allow-downgrade] [--allow-dirty] [--allow-oversize] [--allow-incomplete-listing]` | Validate + package the source tree + upload it with your stored token (with no token it writes the bundle and prints next steps). A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`. It also refuses a version that is not strictly above the highest APPROVED version, a dirty git work tree, a body larger than the server can receive, and a store listing missing media or copy you can fix now — each waived by the matching flag above (`--yes` waives none of them), and **all four skipped on the routes that never reach the server**. See [Submit & auth](#submit--auth) and [Exit code 1](#exit-code-1), which maps each refusal to its flag. |
-| `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps.** No token is written to disk: git authenticates through a repo-local `civitai git-credential` helper, and an older clone that stored the token in its remote URL is cleaned on the next pull. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
+| `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the git repository behind one of your Apps**: its source repository when it has one (forks and App Assistant apps, from day one), else the build repository of an approved app. No token is written to disk: git authenticates through a repo-local `civitai git-credential` helper, and an older clone that stored the token in its remote URL is cleaned on the next pull. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
 | `civitai app listing status [--json]\|set-text [--tagline <t>] [--description <d>] [--category <c>] [--clear <fields>] [--yes]\|set-source-repo <url>\|--clear\|set-icon <file> [--red]\|set-cover <file> [--red]\|clear-red <icon\|cover>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots optional, up to 8), and `listing status` prints what the publish floor still requires. 🔴 **`listing status` is not a pure read — `--json` or not — so do not poll it**: on a live listing it opens a revision draft. On a LIVE listing a **material** change — the media commands, and `set-source-repo` — is **staged on a revision** and is not live until `submit-revision` is approved. 🔴 **`set-text` is the exception: it applies IN PLACE, immediately and publicly**, with no revision to review or abandon. **ON-SITE apps are refused** by `set-text` and `set-source-repo`. `--red` attaches a **civitai.red-only** icon or cover override instead, shown there in place of the listing's own to viewers whose browsing level allows it (never on civitai.com); `clear-red` removes it, staged on a revision like `rm-screenshot`. See [Store listing](https://developer.civitai.com/apps/guide/store-listing) and [Link your source code](#link-your-source-code-app-listing-set-source-repo). |
 | `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions — all of them, or one in detail by `blockId` (newest, plus the one **serving** when they differ) or `--id`, with a **SOURCE** column carrying the commit the submitting client claimed. Run from inside an app checkout it also warns on **stderr** when your `block.manifest.json` is **BEHIND** your highest approved version. See [Submission status](#submission-status). |
 | `civitai app doctor [slug] [--json]` | **Diagnose what is incomplete or blocked on your App store listings, and how to fix it**, across every listing you own or hold an **accepted** collaborator seat on. 🔴 **Exits `1` when a blocking problem sits on a listing that can still publish, `0` otherwise**, so it gates a release script. It also reports whether your **account** is in the **App Blocks rollout** — the gate that answers `401 "Apps are not enabled"` to a running block regardless of the app's approval or the token's scopes — and 🔴 **that never sets the exit code**, nor does a check that could not reach the host (`rollout.enrolled` is `null`, not `false`). A pure read. See [Listing doctor](#listing-doctor-app-doctor). |
@@ -1185,9 +1185,20 @@ anywhere" reads the latter).
 ## Pull your app's repository (`app pull`)
 
 `civitai app pull` is the **read side of git authoring**: it clones (or, if
-`[dir]` is already a checkout, syncs) the canonical repository backing one of
-**your** approved Apps, so you can edit locally and then `civitai app submit` or
-push.
+`[dir]` is already a checkout, syncs) the repository backing one of **your**
+Apps, so you can edit locally and then `civitai app submit` or push.
+
+**Which repository.** A forked app, or one App Assistant built, has a **source
+repository** (`civitai-apps-src/<slug>`) from its first day, before any approval:
+its git history, with each App Assistant save as a commit. When the app has one,
+`app pull` clones it, and `git push` there keeps your history on the platform.
+**Pushing to the source repository never builds or submits anything**; submit a
+version with `civitai app submit`. If App Assistant saves while `main` holds a
+change of yours to the same file, its save goes to the `civitai-assistant` branch
+instead, so neither is overwritten; merge it when you choose. An app without a
+source repository gets its **build repository** (`civitai-apps/<slug>`), which
+holds the approved versions. An existing checkout of the build repository keeps
+syncing from it, and the command names the source repository when there is one.
 
 ```bash
 civitai app pull --app my-block                # clone into ./my-block
@@ -1208,7 +1219,7 @@ credential helper into the checkout's `.git/config`:
 
 On every fetch or push git runs `civitai git-credential`, which asks the platform
 for your git credential using your `civitai login` and answers only for this app's
-repository (same scheme, host and path). The empty `helper =` line stops a helper
+build or source repository (same scheme, host and path, on the platform git host). The empty `helper =` line stops a helper
 from your global git config (such as `store`) from saving the credential. The
 credential is a **write** token (`write:repository`) for every app repository you
 can write to, which is why it stays out of the checkout. A push is queued for
@@ -1224,8 +1235,9 @@ A pulled tree's `block.manifest.json` carries the platform-stamped
 `iframe.src` (`https://<blockId>.civit.ai/`); `civitai app validate` accepts that
 exact value with a warning, so pull → edit → submit works without editing it out.
 
-The repo only exists once your **first version has been submitted as a ZIP and
-approved**; before then the command says so — `app <slug> has no approved
+For an app with no source repository, the build repository only exists once your
+**first version has been submitted as a ZIP and approved**; before then the command
+says so — `app <slug> has no approved
 version yet …` — naming the latest submission's state and the next step for it:
 where it is in review, or, for a **rejected** or **withdrawn** submission, that
 nothing is in review and a new `civitai app submit` is what moves it. Exit `4`.
@@ -1412,8 +1424,9 @@ would act on are written as `\uXXXX` escapes, so a decoder still returns the
 exact text.
 
 `appSha` is the **platform commit**: the release commit for that version in the
-repo `civitai app pull <slug>` clones, so `git checkout <appSha>` there shows
-the code that was live. Rows from a server that records more carry these keys,
+app's build repository (`civitai-apps/<slug>`, the repo `civitai app pull <slug>`
+clones for an app without a source repository), so `git checkout <appSha>` there
+shows the code that was live. Rows from a server that records more carry these keys,
 each **absent** (never `null`) when the server sent nothing:
 
 - `reportedSourceCommit` / `reportedSourceDirty` — what your CLI reported at
