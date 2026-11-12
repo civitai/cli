@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -401,7 +402,14 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionListe
 		// repository is a different history, which a fast-forward cannot take. The
 		// user is told where the source repository is instead.
 		buildCheckout := false
-		if sourceURL != "" && buildURL != "" && sourceURL != buildURL && originIs(dir, buildURL) {
+		if sourceURL != "" && originIsBuildRepo(dir, info.Slug) {
+			if buildURL == "" || buildURL == sourceURL {
+				// The server named no build repository (the app is not approved right
+				// now): fetching the source into this checkout would only fail as
+				// unrelated history.
+				return fmt.Errorf("%s/ tracks the build repository of %q, which is not available right now (the app has no approved version); "+
+					"its source repository is %s — clone it with `civitai app pull <new dir> --app %s`", dir, info.Slug, sourceURL, info.Slug)
+			}
 			repoURL = buildURL
 			buildCheckout = true
 			if helperCfg, err = credentialHelperConfig(repoURL, info.Slug); err != nil {
@@ -471,18 +479,30 @@ func pullRepoURL(info *appapi.ForgejoCloneInfo) string {
 	return strings.TrimSpace(info.HTTPURL)
 }
 
-// originIs reports whether dir's `origin` remote, without any credential in it,
-// is repoURL.
-func originIs(dir, repoURL string) bool {
+// originIsBuildRepo reports whether dir's `origin` remote names app's BUILD
+// repository: a path ending in civitai-apps/<app>, with or without `.git`, in any
+// case, over any transport. Read from the path rather than compared with the
+// server's URL, so a checkout whose origin was written by hand still counts, and
+// so does one whose build repository the server does not name right now.
+func originIsBuildRepo(dir, app string) bool {
 	got, err := gitOutput(dir, "config", "--local", "--get", "remote.origin.url")
 	if err != nil {
 		return false
 	}
 	got = strings.TrimSpace(got)
-	if stripped, serr := stripURLCredential(got); serr == nil {
-		got = stripped
+	// scp-like ssh (`git@host:org/app.git`) has no scheme; its path follows the colon.
+	path := got
+	if u, perr := url.Parse(got); perr == nil && u.Scheme != "" {
+		path = u.Path
+	} else if _, after, ok := strings.Cut(got, ":"); ok {
+		path = after
 	}
-	return normalizeRepoURL(got) == normalizeRepoURL(repoURL)
+	segs := strings.Split(strings.Trim(path, "/"), "/")
+	if len(segs) < 2 {
+		return false
+	}
+	name := strings.TrimSuffix(strings.ToLower(segs[len(segs)-1]), ".git")
+	return strings.ToLower(segs[len(segs)-2]) == "civitai-apps" && name == strings.ToLower(app)
 }
 
 // leftoverRemote is a remote whose URL carries a credential but points somewhere

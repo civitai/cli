@@ -661,3 +661,56 @@ func TestAppPullHelpStatesWhichRepository(t *testing.T) {
 		t.Fatalf("app pull --help is missing:\n  %s\n\ngot:\n  %s", want, long)
 	}
 }
+
+// A build checkout of an app whose build repository the server does not name
+// right now (not approved: httpUrl is the source repository) is refused with
+// where the source repository is, instead of failing on unrelated history.
+func TestAppPullBuildCheckoutWithNoBuildRepoSaysWhere(t *testing.T) {
+	info := sourceCloneInfo()
+	info["httpUrl"] = okSourceURL
+	srv := cloneInfoServer(t, info, http.StatusOK, nil)
+	defer srv.Close()
+	stubHelperExe(t)
+	stubGitOutput(t, func(dir string, args ...string) (string, error) { return okHTTPURL + "\n", nil })
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+	_, _, err := run(t, "app", "pull", "--app", "my-block")
+	if err == nil || !strings.Contains(err.Error(), "which is not available right now") || !strings.Contains(err.Error(), okSourceURL) {
+		t.Fatalf("err = %v, want the not-available refusal naming the source repository", err)
+	}
+	if len(gitCalls) != 0 {
+		t.Fatalf("nothing may be written or fetched: %q", gitCalls)
+	}
+}
+
+// An origin written by hand still reads as the build repository.
+func TestOriginIsBuildRepoReadsThePath(t *testing.T) {
+	for origin, want := range map[string]bool{
+		okHTTPURL: true,
+		"https://forgejo.civitai.com/civitai-apps/my-block":               true,
+		"https://dev-7:tok@forgejo.civitai.com/civitai-apps/my-block.git": true,
+		"git@forgejo.civitai.com:civitai-apps/my-block.git":               true,
+		"https://forgejo.civitai.com/Civitai-Apps/My-Block.git":           true,
+		okSourceURL: false,
+		"https://forgejo.civitai.com/civitai-apps/other-block.git":     false,
+		"https://forgejo.civitai.com/civitai-apps-review/my-block.git": false,
+		"": false,
+	} {
+		o := origin
+		stubGitOutput(t, func(dir string, args ...string) (string, error) { return o + "\n", nil })
+		if got := originIsBuildRepo("my-block", "my-block"); got != want {
+			t.Errorf("originIsBuildRepo(%q) = %v, want %v", origin, got, want)
+		}
+	}
+}

@@ -1195,10 +1195,13 @@ its git history, with each App Assistant save as a commit. When the app has one,
 **Pushing to the source repository never builds or submits anything**; submit a
 version with `civitai app submit`. If App Assistant saves while `main` holds a
 change of yours to the same file, its save goes to the `civitai-assistant` branch
-instead, so neither is overwritten; merge it when you choose. An app without a
-source repository gets its **build repository** (`civitai-apps/<slug>`), which
-holds the approved versions. An existing checkout of the build repository keeps
-syncing from it, and the command names the source repository when there is one.
+instead, so neither is overwritten; `app pull` syncs only the checked-out branch,
+so fetch it with `git fetch origin civitai-assistant` and merge it when you choose.
+An app without a source repository gets its **build repository**
+(`civitai-apps/<slug>`), which holds the approved versions. An existing checkout of
+the build repository keeps syncing from it while the app has an approved version,
+and the command names the source repository; with no approved version it stops and
+says where the source repository is.
 
 ```bash
 civitai app pull --app my-block                # clone into ./my-block
