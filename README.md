@@ -1432,7 +1432,8 @@ shows the code that was live. For an app without a source repository,
 `civitai app pull <dir> --app <slug>` clones that repository. A clone of a source
 repository does not contain the commit: fetch the build repository into it first
 (`git fetch --tags <its origin URL with civitai-apps-src replaced by civitai-apps>`;
-the credential helper answers for both). Rows from a server that records more carry these keys,
+the credential helper answers for the build repository while the app has an
+approved version). Rows from a server that records more carry these keys,
 each **absent** (never `null`) when the server sent nothing:
 
 - `reportedSourceCommit` / `reportedSourceDirty` — what your CLI reported at

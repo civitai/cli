@@ -39,9 +39,6 @@ var appPullInvocation = regexp.MustCompile("civitai app pull([^`\\n]*)")
 // appPullInvocationOK reports whether the text after `civitai app pull` is a
 // correct invocation, or no invocation at all.
 func appPullInvocationOK(rest string) bool {
-	if rest != "" && !strings.ContainsAny(rest[:1], " \t\"'.,;:)") {
-		return true // a longer word, such as a hypothetical `app pull-request`: not this command
-	}
 	r := strings.TrimSpace(rest)
 	return r == "" || r == "--help" || strings.Contains(r, "--app")
 }
@@ -55,7 +52,6 @@ func TestAppPullInvocationRule(t *testing.T) {
 		{"civitai app pull --app my-block                # clone into ./my-block", true},
 		{"`civitai app pull . --app my-block`", true},
 		{"📖 `civitai app pull --help`.", true},
-		{"civitai app pull-request my-block", true},
 		// The two shapes that shipped.
 		{"the repo `civitai app pull <slug>` clones", false},
 		{`item += ": ` + "`civitai app pull \" + slug + \"`" + `, then git checkout it"`, false},
@@ -74,7 +70,7 @@ func TestAppPullInvocationRule(t *testing.T) {
 
 func TestEveryAppPullInvocationPassesTheAppFlag(t *testing.T) {
 	var bad []string
-	withFlag := 0
+	withFlag := map[string]int{} // correct invocations, by file extension
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -99,7 +95,7 @@ func TestEveryAppPullInvocationPassesTheAppFlag(t *testing.T) {
 				if !appPullInvocationOK(m[1]) {
 					bad = append(bad, filepath.ToSlash(path)+":"+strconv.Itoa(i+1)+": civitai app pull"+m[1])
 				} else if strings.Contains(m[1], "--app") {
-					withFlag++
+					withFlag[filepath.Ext(path)]++
 				}
 			}
 		}
@@ -108,10 +104,13 @@ func TestEveryAppPullInvocationPassesTheAppFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walking the tree: %v", err)
 	}
-	// POSITIVE CONTROL: the README and app pull's own help carry several correct
-	// invocations, so a walk that saw none observed nothing.
-	if withFlag == 0 {
-		t.Fatal("found no `civitai app pull … --app` invocation anywhere — the walk or the matcher is broken")
+	// POSITIVE CONTROL, per file type: the README and app pull's own Go help
+	// both carry correct invocations, and the shipped defect was in a .go file,
+	// so a walk that reached only the Markdown must not pass.
+	for _, ext := range []string{".md", ".go"} {
+		if withFlag[ext] == 0 {
+			t.Errorf("found no correct `civitai app pull … --app` invocation in any %s file — the walk or the matcher is broken", ext)
+		}
 	}
 	for _, b := range bad {
 		t.Errorf("%s\n    `civitai app pull` takes the app in --app; the positional is the DIRECTORY: civitai app pull [dir] --app <slug>", b)
