@@ -222,26 +222,26 @@ You do not normally run this yourself; git does.`,
 	return cmd
 }
 
-// helperExecutable is how the installed helper names this binary. A bare
-// `civitai` when that resolves on PATH to this same file, so an upgrade that
-// moves the binary keeps working; otherwise the absolute path of the running
-// executable (an `npx` or `./bin/civitai` run), shell-quoted because git runs a
-// `!` helper through sh. A package var so tests can point it at the test binary.
+// helperExecutable is how the installed helper names this binary: a bare
+// `civitai` whenever one is on PATH, else the absolute path of the running
+// executable, shell-quoted because git runs a `!` helper through sh.
+//
+// Bare whenever it resolves, NOT only when it is this same file: the npm
+// package puts a JS launcher on PATH, never the Go binary, and the absolute
+// path of the binary under an npx cache or node_modules disappears when that is
+// pruned or reinstalled — at which point every fetch and push in the checkout
+// fails. A `civitai` on PATH survives upgrades on every channel. The absolute
+// path is only for a run with no `civitai` on PATH at all (`./bin/civitai`).
+// A package var so tests can point it at the test binary.
 var helperExecutable = func() string {
+	if _, err := exec.LookPath("civitai"); err == nil {
+		return "civitai"
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return "civitai"
 	}
-	if onPath, lerr := exec.LookPath("civitai"); lerr == nil && sameFile(onPath, self) {
-		return "civitai"
-	}
 	return shellQuote(self)
-}
-
-func sameFile(a, b string) bool {
-	sa, errA := os.Stat(a)
-	sb, errB := os.Stat(b)
-	return errA == nil && errB == nil && os.SameFile(sa, sb)
 }
 
 // shellQuote single-quotes s for sh, closing and reopening the quote around
@@ -251,9 +251,15 @@ func shellQuote(s string) string {
 }
 
 // credentialContext is the git config URL context the helper is scoped to:
-// scheme://host[:port] of the repository URL. Scoping it there keeps the
-// helper (and the reset of inherited helpers) from touching any other remote
-// the developer adds to the checkout.
+// scheme://host[:port] of the repository URL. Remotes on OTHER hosts are
+// untouched. A remote on the SAME host that is not this app's repository is
+// not: the reset clears the developer's own helpers for it, and this helper
+// refuses it (path mismatch, quit=1), so git cannot authenticate to it from
+// this checkout. That is the price of answering for exactly one repository.
+//
+// Plain http only for a loopback host (a local development platform), the same
+// rule matchCredentialRequest applies, so the config never points the helper
+// at a cleartext remote it would refuse to answer.
 func credentialContext(httpURL string) (string, error) {
 	u, err := url.Parse(httpURL)
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
@@ -261,6 +267,9 @@ func credentialContext(httpURL string) (string, error) {
 	}
 	if u.User != nil {
 		return "", fmt.Errorf("the server's repository URL carries a credential; refusing to write it to .git/config")
+	}
+	if u.Scheme == "http" && !isLoopbackHost(u.Host) {
+		return "", fmt.Errorf("the server's repository URL is plain http on a non-local host; refusing to use it")
 	}
 	return u.Scheme + "://" + u.Host, nil
 }

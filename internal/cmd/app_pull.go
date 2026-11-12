@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/civitai/cli/internal/appapi"
@@ -343,14 +344,8 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionListe
 
 	// The token-less repository URL. git reaches it through the credential helper
 	// installed below, so no token is ever passed on a command line or written to
-	// .git/config. An older server that only returned the tokened URL still works:
-	// its credential is stripped here and the helper supplies it instead.
+	// .git/config. (The tokened cloneUrl is no longer used at all.)
 	repoURL := strings.TrimSpace(info.HTTPURL)
-	if repoURL == "" {
-		if stripped, err := stripURLCredential(info.CloneURL); err == nil {
-			repoURL = stripped
-		}
-	}
 	if repoURL == "" {
 		return fmt.Errorf("server returned no repository URL")
 	}
@@ -474,9 +469,11 @@ func migrateTokenRemotes(dir, repoURL string) (migrated []string, leftover []lef
 			leftover = append(leftover, leftoverRemote{name: name, stripped: stripped})
 			continue
 		}
-		// --fixed-value: replace exactly this value, so a multi-URL remote keeps
-		// its other entries.
-		if err := gitRunner("", "-C", dir, "config", "--local", "--fixed-value", "--replace-all", key, repoURL, val); err != nil {
+		// Replace only a TOKENED value for this repository, so a multi-URL remote
+		// keeps its other entries. The value-regex matches any userinfo rather
+		// than naming this one, so the token never appears in this git child's
+		// argv (and it needs no --fixed-value, which git < 2.30 lacks).
+		if err := gitRunner("", "-C", dir, "config", "--local", "--replace-all", key, repoURL, tokenedURLPattern(want)); err != nil {
 			return migrated, leftover, fmt.Errorf("could not remove the token from remote %q in %s/.git/config: %w — remove it with `git -C %s remote set-url %s %s`", name, dir, err, dir, name, repoURL)
 		}
 		if !seen[name] {
@@ -502,4 +499,12 @@ func installCredentialHelper(dir string, helperCfg [][2]string) error {
 		}
 	}
 	return nil
+}
+
+// tokenedURLPattern is a git config value-regex (POSIX ERE) matching
+// `<scheme>://<anything>@<rest of repoURL>` exactly: every credential-carrying
+// form of this one repository URL, and nothing else. Never contains the token.
+func tokenedURLPattern(repoURL string) string {
+	scheme, rest, _ := strings.Cut(repoURL, "://")
+	return "^" + regexp.QuoteMeta(scheme+"://") + "[^/@]+@" + regexp.QuoteMeta(rest) + "$"
 }

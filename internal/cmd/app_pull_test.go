@@ -484,3 +484,42 @@ func TestAppPullHelpStatesTheHelperAndTheWriteScope(t *testing.T) {
 		}
 	}
 }
+
+// Regression (audit round 1): migrating an old clone must not put the token on
+// a git command line either — the rewrite matches the tokened value with a
+// pattern, never by quoting it.
+func TestAppPullMigrationKeepsTheTokenOffArgv(t *testing.T) {
+	srv := cloneInfoServer(t, okCloneInfo(), http.StatusOK, nil)
+	defer srv.Close()
+	stubHelperExe(t)
+	stubGitOutput(t, func(dir string, args ...string) (string, error) {
+		return "remote.origin.url " + okCloneURL + "\n", nil
+	})
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	_, errOut, err := run(t, "app", "pull", "--app", "my-block")
+	if err != nil {
+		t.Fatalf("app pull: %v", err)
+	}
+	want := []string{"-C", "my-block", "config", "--local", "--replace-all", "remote.origin.url", okHTTPURL,
+		`^https://[^/@]+@forgejo\.civitai\.com/civitai-apps/my-block\.git$`}
+	if !equalArgv(gitCalls[0], want) {
+		t.Fatalf("migration call = %q, want %q", gitCalls[0], want)
+	}
+	assertNoToken(t, gitCalls)
+	if !strings.Contains(errOut, `Removed the access token from remote "origin"`) {
+		t.Fatalf("the migration must be reported: %s", errOut)
+	}
+}

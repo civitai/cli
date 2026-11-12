@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -286,6 +288,37 @@ func TestCredentialHelperConfig(t *testing.T) {
 	}
 	if _, err := credentialHelperConfig("https://u:p@"+credHost+"/x.git", "my-block"); err == nil {
 		t.Error("a repository URL carrying a credential must be refused")
+	}
+	// Same cleartext rule as the helper: http only on loopback.
+	if _, err := credentialHelperConfig("http://"+credHost+"/x.git", "my-block"); err == nil {
+		t.Error("a plain-http repository URL on a non-local host must be refused")
+	}
+	if _, err := credentialHelperConfig("http://127.0.0.1:3000/x.git", "my-block"); err != nil {
+		t.Errorf("plain http on loopback (local platform) must be allowed: %v", err)
+	}
+}
+
+// helperExecutable writes a bare `civitai` whenever one is on PATH — the npm
+// channel puts a JS launcher there, never this binary, and an absolute path
+// into an npx cache breaks when the cache is pruned — and this binary's
+// absolute, shell-quoted path only when none is.
+func TestHelperExecutableNaming(t *testing.T) {
+	binDir := t.TempDir()
+	launcher := filepath.Join(binDir, "civitai")
+	if err := os.WriteFile(launcher, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	if got := helperExecutable(); got != "civitai" {
+		t.Fatalf("with a civitai (not this binary) on PATH: got %q, want bare civitai", got)
+	}
+	t.Setenv("PATH", t.TempDir())
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := helperExecutable(); got != shellQuote(self) {
+		t.Fatalf("with no civitai on PATH: got %q, want %q", got, shellQuote(self))
 	}
 }
 
