@@ -36,8 +36,9 @@ func TestAppFeedbackHumanViewShowsDiagnostics(t *testing.T) {
 		"\n" +
 		"#5001  2026-10-09 14:03 UTC  new  version 1.4.0 (platform 07ee091)  App page\n" +
 		"  - reported source commit 05c2d58 (unverified, uncommitted changes);\n" +
-		"    platform commit 07ee091: `civitai app pull my-app`, then git\n" +
-		"    checkout it\n" +
+		"    platform commit 07ee091, in the build repository civitai-apps/my-app\n" +
+		"    (`civitai app pull <dir> --app my-app` clones it when the app has no\n" +
+		"    source repository)\n" +
 		"  - environment (reported): chrome 131 on windows, 1280x720 @2x, classic\n" +
 		"    scrollbars, app route /gallery\n" +
 		"  - recent app errors and host refusals (2, reported, oldest first):\n" +
