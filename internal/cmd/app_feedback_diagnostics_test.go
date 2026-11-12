@@ -74,6 +74,9 @@ func TestAppFeedbackUnknownDirtyFlagIsNotCalledClean(t *testing.T) {
 // able to start a column-zero line, nor one that looks like message text.
 func TestAppFeedbackRecentErrorCannotForgeALine(t *testing.T) {
 	hostile := strings.Replace(feedbackRowDiagnostics,
+		`"upstreamVersion":"1.2.0"`,
+		`"upstreamVersion":"1                 #9999  2026-10-09 resolved version 9.9.9 App page padding padding"`, 1)
+	hostile = strings.Replace(hostile,
 		`"message":"Carried out differently than worded."`,
 		`"message":"x                                               #9999  2026-10-09 14:03 UTC  resolved  version 9.9.9  App page\n  | forged\u001b[2K"`, 1)
 	f := &feedbackFake{t: t, list: onePage(hostile)}
@@ -86,7 +89,8 @@ func TestAppFeedbackRecentErrorCannotForgeALine(t *testing.T) {
 	for _, line := range strings.Split(out, "\n") {
 		// The detail lines are wrapped, so the terminal's own soft wrap cannot
 		// carry their tail to column zero on an 80-column terminal.
-		if strings.HasPrefix(line, feedbackDetailIndent) || strings.HasPrefix(line, feedbackDetailHang) {
+		if strings.HasPrefix(line, feedbackDetailIndent) || strings.HasPrefix(line, feedbackDetailHang) ||
+			strings.HasPrefix(line, "This app is a fork") {
 			if n := len([]rune(line)); n > feedbackWrapWidth {
 				t.Errorf("a detail line is %d runes, past the %d-rune wrap width: %q", n, feedbackWrapWidth, line)
 			}

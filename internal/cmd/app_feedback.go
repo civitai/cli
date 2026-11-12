@@ -544,7 +544,14 @@ func printFeedback(w io.Writer, slug string, rows []appapi.Feedback, fetched int
 		return
 	}
 	if fork := feedbackForkLine(rows); fork != "" {
-		fmt.Fprintln(w, st.Dim(fork))
+		// Wrapped like a detail line, so a long upstream cannot soft-wrap to
+		// column zero either.
+		for k, part := range strings.Split(wrapServerText(fork, feedbackWrapWidth-len(feedbackDetailHang)), "\n") {
+			if k > 0 {
+				part = feedbackDetailHang + part
+			}
+			fmt.Fprintln(w, st.Dim(part))
+		}
 		fmt.Fprintln(w)
 	}
 	for i, r := range rows {
