@@ -32,6 +32,12 @@ import (
 // Port 1 on loopback: privileged, nothing listens, and the refusal is immediate —
 // no timeout is spent.
 func TestMain(m *testing.M) {
+	// The real-git credential tests (git_credential_git_test.go) install THIS
+	// test binary as the `!` credential helper, so git runs it as the CLI. Under
+	// that variable it is the CLI: run the command git asked for, never the suite.
+	if os.Getenv(testBinaryIsCLIEnv) == "1" {
+		os.Exit(runAsCLI(os.Args[1:]))
+	}
 	stdinIsTTY = func() bool { return false }
 	latestReleaseURL = "http://127.0.0.1:1/no-release-endpoint-in-tests"
 	os.Exit(m.Run())

@@ -128,7 +128,9 @@ func validateDir(dir string, projectState bool) (Result, error) {
 	// Structural: server-owned fields must not be set by the developer. The
 	// JSON Schema can express this with `not`, but its error message ("not
 	// failed", no field path) is useless — do it in Go for a clear message.
-	res.Errors = append(res.Errors, serverOwnedFieldChecks(generic)...)
+	ownedErrs, ownedWarns := serverOwnedFieldChecks(generic)
+	res.Errors = append(res.Errors, ownedErrs...)
+	res.Warnings = append(res.Warnings, ownedWarns...)
 
 	// Semantic: the cross-field / tier-gated rules the server runs at approve
 	// time (BlockManifestValidator) that the JSON Schema cannot express —
@@ -198,25 +200,51 @@ func validateDir(dir string, projectState bool) (Result, error) {
 	return res, nil
 }
 
+// CanonicalAppsDomain is the production per-app subdomain root. The platform
+// serves every app from https://<blockId>.<CanonicalAppsDomain>/ and stamps
+// exactly that value into iframe.src (civitai/civitai
+// src/server/services/blocks/manifest-normalize.ts canonicalIframeSrc).
+const CanonicalAppsDomain = "civit.ai"
+
+// canonicalIframeSrc is the one iframe.src the platform itself writes.
+func canonicalIframeSrc(blockID string) string {
+	return "https://" + blockID + "." + CanonicalAppsDomain + "/"
+}
+
 // serverOwnedFieldChecks rejects manifest fields the platform assigns. Devs
 // must not set them; doing so is a hard error with a clear, actionable message.
-func serverOwnedFieldChecks(generic any) []Finding {
-	var errs []Finding
+//
+// ONE EXCEPTION, a WARNING: an iframe.src equal to EXACTLY the canonical value
+// for this blockId. The platform writes that value into the repository it
+// serves (`civitai app pull` hands you that tree), so a pulled checkout always
+// carries it; refusing it made pull → edit → validate → submit impossible
+// without hand-editing a file the developer never wrote. The value is inert —
+// submit and approve overwrite iframe.src with the same string — so accepting it
+// cannot change what ships. Any OTHER value is still an error: it is a developer
+// trying to point the app somewhere, which the platform will silently undo.
+func serverOwnedFieldChecks(generic any) (errs []Finding, warns []Finding) {
 	m, ok := generic.(map[string]any)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	if _, set := m["trustTier"]; set {
 		errs = append(errs, newFinding("trustTier",
 			"trustTier is server-owned — remove it from your manifest; the platform assigns the trust tier during review"))
 	}
 	if iframe, ok := m["iframe"].(map[string]any); ok {
-		if _, set := iframe["src"]; set {
-			errs = append(errs, newFinding(childField("iframe", "src"),
-				"iframe.src is server-owned — remove it; the platform stamps the canonical bundle URL during build/approve"))
+		if src, set := iframe["src"]; set {
+			blockID, _ := m["blockId"].(string)
+			if s, isStr := src.(string); isStr && blockID != "" && s == canonicalIframeSrc(blockID) {
+				warns = append(warns, newFinding(childField("iframe", "src"),
+					"iframe.src is the platform-stamped canonical value (a pulled checkout carries it) — accepted; "+
+						"you may remove it, the platform sets it on submit either way"))
+			} else {
+				errs = append(errs, newFinding(childField("iframe", "src"),
+					"iframe.src is server-owned — remove it; the platform stamps the canonical bundle URL during build/approve"))
+			}
 		}
 	}
-	return errs
+	return errs, warns
 }
 
 // buildCoherence checks buildCommand/outputDir.

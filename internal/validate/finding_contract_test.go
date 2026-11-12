@@ -852,6 +852,19 @@ func fieldCoverageCorpus() []fieldFixture {
 			}`},
 		},
 		{
+			name: "the platform-stamped canonical iframe.src (serverOwnedFieldChecks warning)",
+			files: map[string]string{"block.manifest.json": `{
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "description": "a pulled checkout",
+			  "author": "tester",
+			  "contentRating": "g",
+			  "scopes": [],
+			  "iframe": {"src": "https://cov-block.civit.ai/", "sandbox": "allow-scripts", "minHeight": 400, "resizable": false}
+			}`},
+		},
+		{
 			name: "buildCommand not on the allowlist, and no outputDir (buildCoherence)",
 			files: map[string]string{"block.manifest.json": `{
 			  "blockId": "cov-block",

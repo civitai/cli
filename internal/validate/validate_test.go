@@ -339,6 +339,59 @@ func TestValidateRejectsDevSetIframeSrc(t *testing.T) {
 	}`, "iframe.src is server-owned")
 }
 
+// 🔴 Regression (red on the pre-change CLI, which refused ANY iframe.src): a
+// checkout from `civitai app pull` carries the platform-stamped canonical
+// iframe.src, and validate must not refuse the tree the platform itself wrote.
+// It is a WARNING naming the field, never an error.
+func TestValidateAcceptsCanonicalIframeSrcFromAPulledTree(t *testing.T) {
+	res := validateManifest(t, `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": [],
+		"iframe": {"src": "https://ok-block.civit.ai/", "minHeight": 400, "maxHeight": 4000, "resizable": true, "sandbox": "allow-scripts"}
+	}`)
+	if !res.OK() {
+		t.Fatalf("the canonical iframe.src must not be an error: %v", res.Errors)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if w.Field == "iframe.src" && strings.Contains(w.Message, "platform-stamped canonical value") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected an iframe.src warning, got %v", res.Warnings)
+	}
+}
+
+// Every value that is NOT exactly the canonical one for THIS blockId stays an
+// error. Each row is one edit away from canonical, so a check loosened to a
+// prefix, a suffix, a host match or "any https URL" turns one of them green.
+func TestValidateRejectsNearCanonicalIframeSrc(t *testing.T) {
+	for _, src := range []string{
+		"https://other-block.civit.ai/", // another app's host
+		"https://ok-block.civit.ai",     // no trailing slash
+		"http://ok-block.civit.ai/",     // downgraded scheme
+		"https://ok-block.civit.ai/x",   // a path
+		"https://ok-block.civit.ai.evil.example/",
+		"https://ok-block.example.com/", // another apps domain
+		"",
+	} {
+		t.Run(src, func(t *testing.T) {
+			mustReject(t, "near-canonical iframe.src", `{
+				"blockId": "ok-block", "version": "0.1.0", "name": "X",
+				"contentRating": "g", "scopes": [],
+				"iframe": {"src": "`+src+`", "minHeight": 400, "maxHeight": 4000, "resizable": true, "sandbox": "allow-scripts"}
+			}`, "iframe.src is server-owned")
+		})
+	}
+	// A non-string src is refused too, not ignored.
+	mustReject(t, "numeric iframe.src", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": [],
+		"iframe": {"src": 1, "minHeight": 400, "maxHeight": 4000, "resizable": true, "sandbox": "allow-scripts"}
+	}`, "iframe.src is server-owned")
+}
+
 func TestValidateRejectsDevSetTrustTier(t *testing.T) {
 	mustReject(t, "dev-set trustTier", `{
 		"blockId": "ok-block", "version": "0.1.0", "name": "X",

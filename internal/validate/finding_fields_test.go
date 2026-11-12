@@ -79,6 +79,8 @@ func findingFieldLedger() []fieldExpectation {
 			"the remedy is to delete this key; it is the key that must not be there"},
 		{"iframe.src is server-owned", "iframe.src",
 			"same, nested — the sub-key is what must be deleted, not the iframe block"},
+		{"iframe.src is the platform-stamped canonical value", "iframe.src",
+			"the advisory is about that sub-key's own value; deleting it is the optional edit"},
 
 		// --- validate.go: buildCoherence --------------------------------
 		{"buildCommand is too long", "buildCommand",

@@ -346,6 +346,8 @@ Get started:
 	// the same help listing.
 	root.AddCommand(newFeedbackCmd())
 	root.AddCommand(newLoginCmd())
+	// Hidden: git runs it, as the credential helper `app pull` installs.
+	root.AddCommand(newGitCredentialCmd())
 	root.AddCommand(newWhoAmICmd())
 	root.AddCommand(newBuzzCmd())
 	root.AddCommand(newVersionCmd())
