@@ -179,7 +179,9 @@ func TestRunGitCredentialGet(t *testing.T) {
 			i := credInfo()
 			i.HTTPURL = "https://" + credHost + "/civitai-apps/elsewhere.git"
 			return i, nil
-		}, "not answering"},
+			// Refused before the request is compared: a server URL naming another
+			// repository is not this app's (appRepoPathOK).
+		}, "is not that app's repository"},
 	}
 	for _, r := range refusals {
 		t.Run(r.name, func(t *testing.T) {
