@@ -445,3 +445,42 @@ func TestAppHelpListsPull(t *testing.T) {
 		t.Errorf("app help should list the pull subcommand:\n%s", out)
 	}
 }
+
+// 🔴 Regression (red on the pre-change CLI, whose help called the identity
+// "read-only" and documented a token in .git/config). The help is the published
+// contract for what the token can do and where it lives, so the security
+// paragraphs are pinned WHOLE (whitespace-normalised): a reword that drops the
+// write scope or the reset line fails here instead of passing a keyword check.
+func TestAppPullHelpStatesTheHelperAndTheWriteScope(t *testing.T) {
+	norm := func(s string) string { return strings.Join(strings.Fields(s), " ") }
+	long := norm(newAppPullCmd().Long)
+	for _, want := range []string{
+		"Authentication uses your stored credential (`civitai login` or a personal API key). " +
+			"The command calls an owner-only endpoint that lazily provisions your platform git identity, " +
+			"then clones the TOKEN-LESS repository URL. That identity's token is a WRITE token " +
+			"(scope write:repository): it can push to every app repository you have write access to, " +
+			"not only this one, which is why it is kept out of the checkout. " +
+			"(A push never deploys: it is queued for review.)",
+		"NO TOKEN ON DISK: the clone's .git/config gets a repo-local git credential helper, scoped to " +
+			"the platform git host, instead of a token in the remote URL: " +
+			"[credential \"https://<git host>\"] helper = helper = !civitai git-credential --app <slug> useHttpPath = true " +
+			"git runs `civitai git-credential` on each fetch/push; it asks the platform for your git " +
+			"credential with your stored Civitai login and hands it to git only for this app's repository. " +
+			"The empty `helper =` line stops any helper from your global git config (e.g. `store`) from " +
+			"saving that credential to disk.",
+		"OLDER CLONES: a checkout made by an earlier CLI stored the token in its remote URL. Running " +
+			"`civitai app pull` in it removes the token from every remote that points at this app's " +
+			"repository, installs the helper, and says so; a remote that carries a credential but points " +
+			"elsewhere is left alone and the command prints the `git remote set-url` that would clean it. " +
+			"The token itself is not rotated by this.",
+	} {
+		if !strings.Contains(long, want) {
+			t.Errorf("app pull --help is missing the paragraph:\n  %s\n\ngot:\n  %s", want, long)
+		}
+	}
+	for _, gone := range []string{"read-only", "TOKEN-IN-URL", "token lands on disk"} {
+		if strings.Contains(long, gone) {
+			t.Errorf("app pull --help still says %q", gone)
+		}
+	}
+}
