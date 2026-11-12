@@ -92,7 +92,7 @@ type Feedback struct {
 	// submit, about the tree the live build came from. Unverified: nothing
 	// confirms the bundle was built from it. A nil AppSourceDirty is UNKNOWN,
 	// which is not false (clean). AppBlockSha, by contrast, is the platform's
-	// release commit in the repo `civitai app pull` clones.
+	// release commit, in the app's BUILD repository (civitai-apps/<slug>).
 	AppSourceCommit *string `json:"appSourceCommit"`
 	AppSourceDirty  *bool   `json:"appSourceDirty"`
 	// RecentErrors are the app session's failed SDK calls and host refusals

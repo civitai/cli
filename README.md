@@ -1427,9 +1427,13 @@ would act on are written as `\uXXXX` escapes, so a decoder still returns the
 exact text.
 
 `appSha` is the **platform commit**: the release commit for that version in the
-app's build repository (`civitai-apps/<slug>`, the repo `civitai app pull <slug>`
-clones for an app without a source repository), so `git checkout <appSha>` there
-shows the code that was live. Rows from a server that records more carry these keys,
+app's build repository (`civitai-apps/<slug>`), so `git checkout <appSha>` there
+shows the code that was live. For an app without a source repository,
+`civitai app pull <dir> --app <slug>` clones that repository. A clone of a source
+repository does not contain the commit: fetch the build repository into it first
+(`git fetch --tags <its origin URL with civitai-apps-src replaced by civitai-apps>`;
+the credential helper answers for the build repository while the app has an
+approved version). Rows from a server that records more carry these keys,
 each **absent** (never `null`) when the server sent nothing:
 
 - `reportedSourceCommit` / `reportedSourceDirty` — what your CLI reported at

@@ -26,7 +26,9 @@ plus the ported semantic rules and structural checks:
   - the manifest is present at the project root
   - buildCommand and outputDir are coherent (outputDir set when buildCommand is);
     outputDir must be a safe relative path (no leading "/", no ".." traversal)
-  - server-owned fields (iframe.src, trustTier) are REJECTED if set
+  - server-owned fields (iframe.src, trustTier) are REJECTED if set, except
+    an iframe.src of exactly https://<blockId>.civit.ai/ (what a pulled
+    checkout carries), which is accepted with a warning
   - sandbox tokens are limited to the unverified-tier allowlist
     (allow-scripts, allow-forms); allow-same-origin+allow-scripts is rejected
   - a "page" manifest must declare an iframe block; renderMode=iframe needs one too
