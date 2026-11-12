@@ -328,7 +328,7 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json` — warnings are non-fatal unless `--strict`, and a `[dir]` that is missing or not a directory is a **usage error** (exit `2`, no JSON). See [Validate fidelity](#validate-fidelity). |
 | `civitai app elements [tag] [--json]` | **Look up a `<civitai-*>` element's attributes (inherited ones included), events, slots and CSS parts** — or, with no tag, list every element — from the `@civitai/components` installed in the current project. Offline: it reads `node_modules`, never the network. An unknown tag exits `2` and names the nearest matches; no installed package exits `1`. See [Templates](#templates). |
 | `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate] [--allow-downgrade] [--allow-dirty] [--allow-oversize] [--allow-incomplete-listing]` | Validate + package the source tree + upload it with your stored token (with no token it writes the bundle and prints next steps). A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`. It also refuses a version that is not strictly above the highest APPROVED version, a dirty git work tree, a body larger than the server can receive, and a store listing missing media or copy you can fix now — each waived by the matching flag above (`--yes` waives none of them), and **all four skipped on the routes that never reach the server**. See [Submit & auth](#submit--auth) and [Exit code 1](#exit-code-1), which maps each refusal to its flag. |
-| `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps.** ⚠ The clone URL embeds your access token and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
+| `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps.** No token is written to disk: git authenticates through a repo-local `civitai git-credential` helper, and an older clone that stored the token in its remote URL is cleaned on the next pull. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
 | `civitai app listing status [--json]\|set-text [--tagline <t>] [--description <d>] [--category <c>] [--clear <fields>] [--yes]\|set-source-repo <url>\|--clear\|set-icon <file> [--red]\|set-cover <file> [--red]\|clear-red <icon\|cover>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots optional, up to 8), and `listing status` prints what the publish floor still requires. 🔴 **`listing status` is not a pure read — `--json` or not — so do not poll it**: on a live listing it opens a revision draft. On a LIVE listing a **material** change — the media commands, and `set-source-repo` — is **staged on a revision** and is not live until `submit-revision` is approved. 🔴 **`set-text` is the exception: it applies IN PLACE, immediately and publicly**, with no revision to review or abandon. **ON-SITE apps are refused** by `set-text` and `set-source-repo`. `--red` attaches a **civitai.red-only** icon or cover override instead, shown there in place of the listing's own to viewers whose browsing level allows it (never on civitai.com); `clear-red` removes it, staged on a revision like `rm-screenshot`. See [Store listing](https://developer.civitai.com/apps/guide/store-listing) and [Link your source code](#link-your-source-code-app-listing-set-source-repo). |
 | `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions — all of them, or one in detail by `blockId` (newest, plus the one **serving** when they differ) or `--id`, with a **SOURCE** column carrying the commit the submitting client claimed. Run from inside an app checkout it also warns on **stderr** when your `block.manifest.json` is **BEHIND** your highest approved version. See [Submission status](#submission-status). |
 | `civitai app doctor [slug] [--json]` | **Diagnose what is incomplete or blocked on your App store listings, and how to fix it**, across every listing you own or hold an **accepted** collaborator seat on. 🔴 **Exits `1` when a blocking problem sits on a listing that can still publish, `0` otherwise**, so it gates a release script. It also reports whether your **account** is in the **App Blocks rollout** — the gate that answers `401 "Apps are not enabled"` to a running block regardless of the app's approval or the token's scopes — and 🔴 **that never sets the exit code**, nor does a check that could not reach the host (`rollout.enrolled` is `null`, not `false`). A pure read. See [Listing doctor](#listing-doctor-app-doctor). |
@@ -1195,9 +1195,34 @@ civitai app pull ./my-block --app my-block     # clone/sync into ./my-block
 civitai app pull . --app my-block              # sync the current directory
 ```
 
-⚠ **The clone URL embeds your access token, and a fresh clone persists it into
-`.git/config`.** The endpoint lazily provisions a scoped, read-only Forgejo
-identity and returns a URL with a pull token in it.
+**No token on disk.** The endpoint lazily provisions your platform git identity;
+`app pull` clones the token-less repository URL and writes a repo-local, host-scoped
+credential helper into the checkout's `.git/config`:
+
+```ini
+[credential "https://<git host>"]
+    helper =
+    helper = !civitai git-credential --app my-block
+    useHttpPath = true
+```
+
+On every fetch or push git runs `civitai git-credential`, which asks the platform
+for your git credential using your `civitai login` and answers only for this app's
+repository (same scheme, host and path). The empty `helper =` line stops a helper
+from your global git config (such as `store`) from saving the credential. The
+credential is a **write** token (`write:repository`) for every app repository you
+can write to, which is why it stays out of the checkout. A push is queued for
+review; it never deploys by itself.
+
+**Older clones.** A checkout made by an earlier CLI has the token in its remote
+URL. Running `civitai app pull` in it removes the token from every remote that
+points at this app's repository and installs the helper, and says so. A remote
+that carries a credential but points somewhere else is left alone, and the command
+prints the `git remote set-url` that cleans it. The token itself is not rotated.
+
+A pulled tree's `block.manifest.json` carries the platform-stamped
+`iframe.src` (`https://<blockId>.civit.ai/`); `civitai app validate` accepts that
+exact value with a warning, so pull → edit → submit works without editing it out.
 
 The repo only exists once your **first version has been submitted as a ZIP and
 approved**; before then the command says so — `app <slug> has no approved

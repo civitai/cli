@@ -135,20 +135,33 @@ it fetches the current block.manifest.json + source so you can edit locally and
 then submit (` + "`civitai app submit`" + `) or push.
 
 Authentication uses your stored credential (` + "`civitai login`" + ` or a personal
-API key). The command calls an owner-only endpoint that lazily provisions a
-scoped, read-only Forgejo identity for you and returns a clone URL with a push/
-pull token embedded.
+API key). The command calls an owner-only endpoint that lazily provisions your
+platform git identity, then clones the TOKEN-LESS repository URL. That
+identity's token is a WRITE token (scope write:repository): it can push to every
+app repository you have write access to, not only this one, which is why it is
+kept out of the checkout. (A push never deploys: it is queued for review.)
 
-⚠  SECURITY — TOKEN-IN-URL LEAKAGE: the clone URL embeds your access token as
-HTTP-Basic credentials (https://<user>:<token>@...). On a fresh CLONE, git
-stores the remote URL in .git/config, so the token lands on disk in the clone;
-treat the checkout as sensitive: do NOT commit .git/config or share the
-directory, and consider clearing the remote URL (or replacing it with the
-credential-less HTTPS URL ` + "`git remote set-url origin <httpUrl>`" + `) after the
-clone if you rely on a git credential helper. On a SYNC (pull into an existing
-checkout) the URL is passed explicitly and is NOT persisted to .git/config, but
-the token still transiently appears in the git child process's arguments, so it
-is briefly visible to other processes via ` + "`ps`" + ` / /proc/<pid>/cmdline.
+NO TOKEN ON DISK: the clone's .git/config gets a repo-local git credential
+helper, scoped to the platform git host, instead of a token in the remote URL:
+
+  [credential "https://<git host>"]
+      helper =
+      helper = !civitai git-credential --app <slug>
+      useHttpPath = true
+
+git runs ` + "`civitai git-credential`" + ` on each fetch/push; it asks the platform
+for your git credential with your stored Civitai login and hands it to git
+only for this app's repository. The empty ` + "`helper =`" + ` line stops any helper from
+your global git config (e.g. ` + "`store`" + `) from saving that credential to disk. So
+the checkout is safe to copy, and a ` + "`git push`" + ` keeps working for as long as
+your ` + "`civitai login`" + ` does.
+
+OLDER CLONES: a checkout made by an earlier CLI stored the token in its remote
+URL. Running ` + "`civitai app pull`" + ` in it removes the token from every remote that
+points at this app's repository, installs the helper, and says so; a remote
+that carries a credential but points elsewhere is left alone and the command
+prints the ` + "`git remote set-url`" + ` that would clean it. The token itself is not
+rotated by this.
 
 The repo only exists once your FIRST version has been submitted as a ZIP and
 approved; before then the command tells you so instead of failing obscurely.`,
@@ -327,8 +340,19 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionListe
 		}
 		return fmt.Errorf("%s", msg)
 	}
-	if info.CloneURL == "" {
-		return fmt.Errorf("server returned no clone URL")
+
+	// The token-less repository URL. git reaches it through the credential helper
+	// installed below, so no token is ever passed on a command line or written to
+	// .git/config. An older server that only returned the tokened URL still works:
+	// its credential is stripped here and the helper supplies it instead.
+	repoURL := strings.TrimSpace(info.HTTPURL)
+	if repoURL == "" {
+		if stripped, err := stripURLCredential(info.CloneURL); err == nil {
+			repoURL = stripped
+		}
+	}
+	if repoURL == "" {
+		return fmt.Errorf("server returned no repository URL")
 	}
 
 	// Target dir: explicit [dir] arg, else ./<slug>. The slug is server-controlled,
@@ -341,16 +365,22 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionListe
 		dir = strings.TrimSpace(args[0])
 	} else {
 		if dir != filepath.Base(dir) || dir == "." || dir == ".." || strings.ContainsRune(dir, filepath.Separator) || strings.Contains(dir, "..") {
-			return fmt.Errorf("server returned an unsafe slug %q for the target directory — pass an explicit [dir] instead", info.Slug)
+			return fmt.Errorf("server returned an unsafe slug %q — refusing to use it as the target directory (or in the git credential helper)", info.Slug)
 		}
+	}
+
+	helperCfg, err := credentialHelperConfig(repoURL, info.Slug)
+	if err != nil {
+		return err
 	}
 
 	out := cmd.OutOrStdout()
 	errOut := cmd.ErrOrStderr()
 
 	if isGitRepo(dir) {
-		// Existing checkout → sync. We don't trust the stored remote (it may be
-		// stale or credential-less), so pass the tokened URL explicitly. Done as an
+		// Existing checkout → sync. First take any token out of the checkout's
+		// remotes (a clone made by an older CLI stored it in .git/config), then
+		// (re)install the helper, then fetch the token-less URL. Done as an
 		// explicit fetch+merge rather than `git pull <url>`: the `--` before the URL
 		// neutralizes a dash-leading URL (argument-injection hardening — a bare
 		// positional URL beginning with `-` would otherwise be parsed by git as an
@@ -358,38 +388,118 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionListe
 		// `merge --ff-only FETCH_HEAD` keeps the fast-forward-only semantics: it
 		// blocks DIVERGED history and aborts on a CONFLICTING dirty tree, and never
 		// creates a merge commit. It merges FETCH_HEAD into whatever branch is
-		// currently checked out (not a server-named branch) — same as the prior
-		// no-refspec pull, just made injection-safe.
+		// currently checked out (not a server-named branch).
 		fmt.Fprintf(out, "Syncing existing checkout in %s …\n", dir)
-		if err := gitRunner("", "-C", dir, "fetch", "--", info.CloneURL, "HEAD"); err != nil {
+		migrated, leftover, err := migrateTokenRemotes(dir, repoURL)
+		if err != nil {
+			return err
+		}
+		if err := installCredentialHelper(dir, helperCfg); err != nil {
+			return err
+		}
+		if err := gitRunner("", "-C", dir, "fetch", "--", repoURL, "HEAD"); err != nil {
 			return fmt.Errorf("git fetch failed: %w", err)
 		}
 		if err := gitRunner("", "-C", dir, "merge", "--ff-only", "FETCH_HEAD"); err != nil {
 			return fmt.Errorf("git merge --ff-only failed: %w", err)
 		}
 		fmt.Fprintln(out, ui.Success(fmt.Sprintf("Synced %s.", info.Slug)))
-		// On the sync path the tokened URL is passed explicitly to `git fetch` and is
-		// NOT written to .git/config — so there's nothing to scrub from disk. The only
-		// exposure is the transient one: the token appeared in the git fetch child
-		// process's arguments while the fetch ran.
-		fmt.Fprintf(errOut, "\n%s\n", ui.For(errOut).Warn(
-			"The fetch URL embedded your access token in the git command line — it was "+
-				"briefly visible to other local processes (via `ps` / /proc/<pid>/cmdline) "+
-				"while syncing. It was NOT persisted to .git/config."))
+		for _, name := range migrated {
+			fmt.Fprintf(errOut, "\n%s\n", ui.For(errOut).Warn(fmt.Sprintf(
+				"Removed the access token from remote %q in %s/.git/config; git now gets it from `civitai git-credential`. "+
+					"The token itself is unchanged — if this checkout's .git/config was ever copied or shared, treat it as exposed.",
+				name, dir)))
+		}
+		for _, l := range leftover {
+			fmt.Fprintf(errOut, "\n%s\n", ui.For(errOut).Warn(fmt.Sprintf(
+				"Remote %q in %s/.git/config still carries a credential in its URL (it does not point at this app's repository, so it was left alone). "+
+					"Remove it with `git -C %s remote set-url %s %s`.",
+				l.name, dir, dir, l.name, l.stripped)))
+		}
 		return nil
 	}
 
 	// Fresh dir → clone. git refuses to clone into a non-empty existing dir, so a
-	// pre-existing-but-not-a-repo dir surfaces git's own clear error.
+	// pre-existing-but-not-a-repo dir surfaces git's own clear error. `-c` writes
+	// each helper setting into the NEW repository's config before the fetch, so the
+	// clone itself authenticates through the helper.
 	fmt.Fprintf(out, "Cloning %s into %s …\n", info.Slug, dir)
-	if err := gitRunner("", "clone", "--", info.CloneURL, dir); err != nil {
+	cloneArgs := []string{"clone"}
+	for _, kv := range helperCfg {
+		cloneArgs = append(cloneArgs, "-c", kv[0]+"="+kv[1])
+	}
+	cloneArgs = append(cloneArgs, "--", repoURL, dir)
+	if err := gitRunner("", cloneArgs...); err != nil {
 		return fmt.Errorf("git clone failed: %w", err)
 	}
 	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Cloned %s into %s.", info.Slug, dir)))
-	// On the clone path git persists the tokened remote URL to .git/config, so the
-	// token now lives on disk. Surface the config-persistence caveat + the remedy.
-	fmt.Fprintf(errOut, "\n%s\n", ui.For(errOut).Warn(
-		"The clone URL embeds your access token. git stored it in .git/config — "+
-			"do not commit or share it. To drop it: `git -C "+dir+" remote set-url origin "+info.HTTPURL+"`."))
+	fmt.Fprintf(out, "git authenticates through `civitai git-credential` (configured in %s/.git/config); no token is stored there.\n", dir)
+	return nil
+}
+
+// leftoverRemote is a remote whose URL carries a credential but points somewhere
+// other than this app's repository: reported, never rewritten.
+type leftoverRemote struct {
+	name     string
+	stripped string
+}
+
+// migrateTokenRemotes removes the credential from every remote URL (fetch and
+// push) in dir whose credential-less form IS repoURL, i.e. a clone made by a CLI
+// that wrote the tokened URL. Returns the remotes it rewrote, and the ones that
+// carry a credential but point elsewhere (left alone, reported). Never prints or
+// returns the credential.
+func migrateTokenRemotes(dir, repoURL string) (migrated []string, leftover []leftoverRemote, err error) {
+	listing, lerr := gitOutput(dir, "config", "--local", "--get-regexp", `^remote\..*\.(url|pushurl)$`)
+	if lerr != nil {
+		// `--get-regexp` exits 1 when nothing matches: a checkout with no remotes
+		// has nothing to migrate. Any other failure surfaces on the config writes
+		// installCredentialHelper makes next.
+		return nil, nil, nil
+	}
+	want := normalizeRepoURL(repoURL)
+	seen := map[string]bool{}
+	for _, line := range strings.Split(listing, "\n") {
+		key, val, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		stripped, serr := stripURLCredential(val)
+		if serr != nil {
+			continue
+		}
+		name := strings.TrimPrefix(key, "remote.")
+		name = strings.TrimSuffix(strings.TrimSuffix(name, ".url"), ".pushurl")
+		if stripped != want {
+			leftover = append(leftover, leftoverRemote{name: name, stripped: stripped})
+			continue
+		}
+		// --fixed-value: replace exactly this value, so a multi-URL remote keeps
+		// its other entries.
+		if err := gitRunner("", "-C", dir, "config", "--local", "--fixed-value", "--replace-all", key, repoURL, val); err != nil {
+			return migrated, leftover, fmt.Errorf("could not remove the token from remote %q in %s/.git/config: %w — remove it with `git -C %s remote set-url %s %s`", name, dir, err, dir, name, repoURL)
+		}
+		if !seen[name] {
+			seen[name] = true
+			migrated = append(migrated, name)
+		}
+	}
+	return migrated, leftover, nil
+}
+
+// installCredentialHelper writes helperCfg into dir's own config, replacing any
+// earlier copy so a re-run converges instead of stacking helpers.
+func installCredentialHelper(dir string, helperCfg [][2]string) error {
+	done := map[string]bool{}
+	for _, kv := range helperCfg {
+		if !done[kv[0]] {
+			done[kv[0]] = true
+			// Exit 5 = "no such key": nothing to replace on a first install.
+			_ = gitRunner("", "-C", dir, "config", "--local", "--unset-all", kv[0])
+		}
+		if err := gitRunner("", "-C", dir, "config", "--local", "--add", kv[0], kv[1]); err != nil {
+			return fmt.Errorf("could not install the git credential helper in %s/.git/config: %w", dir, err)
+		}
+	}
 	return nil
 }
