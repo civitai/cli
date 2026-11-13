@@ -37,7 +37,7 @@ func ownedVersionsManifest(collection string) string {
 	return `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
 		`"scopes":["apps:storage","apps:storage:publish"],` +
 		`"scopeJustifications":{"apps:storage:publish":"viewers publish their own workflows"},` +
-		`"kind":"page","iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
+		`"kind":"page","page":{"path":"/","title":"x"},"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
 		`"storage":{"collections":{"c":` + collection + `}}}`
 }
 
@@ -50,7 +50,7 @@ func ownedVersionsManifest(collection string) string {
 func ownedVersionsManifestBaseScope(collection string) string {
 	return `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
 		`"scopes":["apps:storage"],` +
-		`"kind":"page","iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
+		`"kind":"page","page":{"path":"/","title":"x"},"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
 		`"storage":{"collections":{"c":` + collection + `}}}`
 }
 

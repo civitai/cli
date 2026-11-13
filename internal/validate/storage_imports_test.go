@@ -104,6 +104,7 @@ func TestStorageImportScopeValidates(t *testing.T) {
 		"blockId": "imports-fixture", "name": "Imports Fixture", "version": "1.0.0", "contentRating": "g",
 		"scopes": ["apps:storage", "apps:storage:import"],
 		"scopeJustifications": {"apps:storage:import": "reads and updates the entries you keep in the app this one was forked from"},
+		"page": {"path": "/", "title": "Imports Fixture"},
 		"storage": {
 			"collections": {"notes": {"visibility": "private", "exportable": false}},
 			"imports": [{"from": "parent-app", "collections": ["notes"], "access": "read"}]
@@ -122,6 +123,9 @@ const importJustification = `"apps:storage:import": "reads and updates the entri
 // `scopes`; apps:storage:import gets its justification when it is declared, so
 // a sensitive-scope or unknown-justification finding never stands in for the
 // one under test.
+// The schema requires a surface; it is a slot target, not a `page`, because
+// Dir() runs readyAckChecks on a page app and its advisory would join the
+// warnings the source-reading tests count.
 func importsManifest(storage string, scopes ...string) string {
 	quoted := make([]string, 0, len(scopes))
 	just := ""
@@ -133,6 +137,7 @@ func importsManifest(storage string, scopes ...string) string {
 	}
 	return `{"blockId": "imports-fixture", "name": "Imports Fixture", "version": "1.0.0", "contentRating": "g",
 		"scopes": [` + strings.Join(quoted, ", ") + `], ` + just + `
+		"targets": [{"slotId": "model.sidebar_top"}],
 		"storage": ` + storage + `,
 		"iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false}}`
 }
@@ -205,6 +210,7 @@ func TestStorageImportParseRefusals(t *testing.T) {
 func TestStorageImportScopeIsSensitive(t *testing.T) {
 	m := `{"blockId": "imports-fixture", "name": "Imports Fixture", "version": "1.0.0", "contentRating": "g",
 		"scopes": ["apps:storage", "apps:storage:import"],
+		"page": {"path": "/", "title": "Imports Fixture"},
 		"storage": ` + oneImport + `,
 		"iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false}}`
 	assertOnlyError(t, m, "scopeJustifications",

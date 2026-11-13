@@ -71,6 +71,7 @@ func TestWarnBudgetedScopeWithoutPage(t *testing.T) {
   "scopes": ["ai:write:budgeted"],
   "scopeJustifications": { "ai:write:budgeted": "spends the page's per-gen Buzz budget to run generations" },
   "iframe": { "minHeight": 600, "resizable": true, "sandbox": "allow-scripts allow-forms" },
+  "targets": [{ "slotId": "model.sidebar_top" }],
   "contentRating": "g"
 }`
 	res := validateManifest(t, m)

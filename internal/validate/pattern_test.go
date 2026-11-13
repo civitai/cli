@@ -561,7 +561,7 @@ func TestPostsWriteSelfScopeAccepted(t *testing.T) {
 	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
 		`"scopes":["models:read:self","posts:write:self"],` +
 		`"scopeJustifications":{"posts:write:self":"lets the viewer publish the images this app generated for them"},` +
-		`"kind":"page",` +
+		`"kind":"page","page":{"path":"/","title":"x"},` +
 		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
 	for _, f := range manifestOnlyFindings(t, body) {
 		t.Errorf("unexpected finding on %q: %s", f.Field, f.Message)
@@ -572,7 +572,7 @@ func TestPostsWriteSelfScopeAccepted(t *testing.T) {
 	// reason. Without this, a fixture that silently stopped reaching the
 	// validator would pass the loop above by producing nothing.
 	const unjustified = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
-		`"scopes":["models:read:self","posts:write:self"],"kind":"page",` +
+		`"scopes":["models:read:self","posts:write:self"],"kind":"page","page":{"path":"/","title":"x"},` +
 		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
 	var hit bool
 	for _, f := range manifestOnlyFindings(t, unjustified) {
@@ -597,14 +597,14 @@ func TestAppsStoreItemsWriteScopeAccepted(t *testing.T) {
 	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
 		`"scopes":["models:read:self","apps:store:items:write"],` +
 		`"scopeJustifications":{"apps:store:items:write":"lets the viewer list the presets they built as their own store cards"},` +
-		`"kind":"page",` +
+		`"kind":"page","page":{"path":"/","title":"x"},` +
 		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
 	for _, f := range manifestOnlyFindings(t, body) {
 		t.Errorf("unexpected finding on %q: %s", f.Field, f.Message)
 	}
 
 	const unjustified = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
-		`"scopes":["models:read:self","apps:store:items:write"],"kind":"page",` +
+		`"scopes":["models:read:self","apps:store:items:write"],"kind":"page","page":{"path":"/","title":"x"},` +
 		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
 	var hit bool
 	for _, f := range manifestOnlyFindings(t, unjustified) {

@@ -347,6 +347,7 @@ func TestValidateAcceptsCanonicalIframeSrcFromAPulledTree(t *testing.T) {
 	res := validateManifest(t, `{
 		"blockId": "ok-block", "version": "0.1.0", "name": "X",
 		"contentRating": "g", "scopes": [],
+		"page": {"path": "/", "title": "X"},
 		"iframe": {"src": "https://ok-block.civit.ai/", "minHeight": 400, "maxHeight": 4000, "resizable": true, "sandbox": "allow-scripts"}
 	}`)
 	if !res.OK() {
@@ -624,6 +625,7 @@ func buildManifest(buildCommand string) string {
 	return `{
 		"blockId": "ok-block", "version": "0.1.0", "name": "X",
 		"contentRating": "g", "scopes": [],
+		"page": {"path": "/", "title": "X"},
 		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts"},
 		"buildCommand": ` + strconv.Quote(buildCommand) + `, "outputDir": "dist"
 	}`
