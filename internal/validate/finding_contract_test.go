@@ -810,6 +810,7 @@ const goodBase = `{
   "description": "a manifest used by the field-coverage corpus",
   "author": "tester",
   "contentRating": "g",
+  "targets": [{"slotId": "model.sidebar_top"}],
   "renderMode": "iframe",
   "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
   "entry": "index.html"
@@ -831,6 +832,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "schema violations at the root and inside an array (schemaErrors)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "Bad_Id",
 			  "name": "x",
 			  "version": "1.0.0",
@@ -841,6 +843,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "server-owned fields set (serverOwnedFieldChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -854,6 +857,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "the platform-stamped canonical iframe.src (serverOwnedFieldChecks warning)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -867,6 +871,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "buildCommand not on the allowlist, and no outputDir (buildCoherence)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -880,6 +885,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "outputDir escapes the project root, with no buildCommand (buildCoherence)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -893,6 +899,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "outputDir is absolute (buildCoherence)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -907,6 +914,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "buildCommand set with no outputDir (buildCoherence)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -920,6 +928,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "buildCommand over the length cap (buildCoherence)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -934,6 +943,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "renderMode tier gate, and no iframe block (semanticChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -958,6 +968,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "iframe missing minHeight and resizable (iframeRequiredFields)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -970,6 +981,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "iframe minHeight above the ceiling (iframeRequiredFields)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -982,6 +994,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "sandbox escape combination and a disallowed token (sandboxChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -994,6 +1007,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "sandbox is whitespace only (sandboxChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1006,6 +1020,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "justification for a scope that is not declared (scopeJustificationChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1020,6 +1035,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "sensitive scope with no justification (sensitiveScopeJustificationChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1040,6 +1056,7 @@ func fieldCoverageCorpus() []fieldFixture {
 			// oversized payload.
 			name: "all three goods rules (goodsChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1090,6 +1107,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "budgeted scope with no page at all (warningChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1190,6 +1208,7 @@ func fieldCoverageCorpus() []fieldFixture {
 			// declaration declares nothing); the next fixture reaches them.
 			name: "storage features not available yet, and a counter/mark collision (storageFeatureGateWarnings, storageDeclarationChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1212,6 +1231,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "collections declared without either storage scope (storageScopeRuleChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1227,6 +1247,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "all three storage scopes with nothing declared for them (storageScopeRuleChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1239,6 +1260,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "imports with neither apps:storage nor apps:storage:import (storageScopeRuleChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1255,6 +1277,7 @@ func fieldCoverageCorpus() []fieldFixture {
 			// declaration declares nothing).
 			name: "an import from itself and a duplicate source (storageImportChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1328,6 +1351,7 @@ func fieldCoverageCorpus() []fieldFixture {
 			// "none" collection also draws the vendored schema's own `false`.
 			name: "collection schemas past the server's bounds (storageCollectionSchemaChecks, storageCollectionSchemaWarnings)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1351,6 +1375,7 @@ func fieldCoverageCorpus() []fieldFixture {
 			// collections that each parse, one over the manifest's cap of 32.
 			name: "collection schemas over the manifest's pattern cap (storageManifestPatternCapChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",

@@ -33,6 +33,9 @@ import (
 // `scopes` make of it. Sensitive scopes get a justification automatically, so a
 // sensitive-scope finding never stands in for the one under test. storage == ""
 // omits the key.
+// The schema requires a surface; it is a slot target, not a `page`, because
+// Dir() runs readyAckChecks on a page app and its advisory would join the
+// warnings the source-reading tests count.
 func docManifest(storage string, scopes ...string) string {
 	quoted := make([]string, 0, len(scopes))
 	var just []string
@@ -43,6 +46,7 @@ func docManifest(storage string, scopes ...string) string {
 		}
 	}
 	m := `{"blockId":"docstore-fixture","name":"Doc Store Fixture","version":"1.0.0","contentRating":"g",` +
+		`"targets":[{"slotId":"model.sidebar_top"}],` +
 		`"scopes":[` + strings.Join(quoted, ",") + `],`
 	if len(just) > 0 {
 		m += `"scopeJustifications":{` + strings.Join(just, ",") + `},`

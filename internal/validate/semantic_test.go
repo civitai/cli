@@ -868,7 +868,7 @@ func TestGoodsFindingsCarryTheOffendingFieldPath(t *testing.T) {
 // still pass.
 func TestGoodsChecksReachTheRealValidator(t *testing.T) {
 	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"g","scopes":[],` +
-		`"kind":"page","iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
+		`"kind":"page","page":{"path":"/","title":"x"},"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
 		`"goods":[{"id":"credits","title":"A","priceBuzz":10},{"id":"credits","title":"B","priceBuzz":10}]}`
 	var hit bool
 	for _, f := range manifestOnlyFindings(t, body) {
@@ -885,7 +885,7 @@ func TestGoodsChecksReachTheRealValidator(t *testing.T) {
 	// ids must validate with NO findings at all, or the row above could be
 	// passing because this fixture fails for some unrelated reason.
 	const ok = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"g","scopes":[],` +
-		`"kind":"page","iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
+		`"kind":"page","page":{"path":"/","title":"x"},"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
 		`"goods":[{"id":"credits","title":"A","priceBuzz":10},{"id":"boosts","title":"B","priceBuzz":10}]}`
 	for _, f := range manifestOnlyFindings(t, ok) {
 		t.Errorf("unexpected finding on the legal manifest: %s: %s", f.Field, f.Message)
