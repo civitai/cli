@@ -841,6 +841,17 @@ func fieldCoverageCorpus() []fieldFixture {
 			}`},
 		},
 		{
+			name: "no surface declared: neither page nor targets (schemaErrors, surface clause)",
+			files: map[string]string{"block.manifest.json": `{
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": [],
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false}
+			}`},
+		},
+		{
 			name: "server-owned fields set (serverOwnedFieldChecks)",
 			files: map[string]string{"block.manifest.json": `{
 			  "targets": [{"slotId": "model.sidebar_top"}],

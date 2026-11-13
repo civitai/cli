@@ -4,6 +4,7 @@ package validate
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -57,6 +58,74 @@ func (r Result) HasWarnings() bool { return len(r.Warnings) > 0 }
 
 var compiled *jsonschema.Schema
 
+// schemaURL is the id the vendored schema is compiled under; every
+// ValidationError.SchemaURL is rooted at it.
+const schemaURL = "https://civitai.com/schemas/app-block/v1.json"
+
+// surfaceClauseURL is the SchemaURL the validator reports when the schema's
+// surface clause fails — the top-level `allOf` entry whose `anyOf` requires a
+// non-empty `targets` array or a `page` object. Empty when the vendored schema
+// has no such clause. Set by schema(); see surfaceClauseIndex.
+var surfaceClauseURL string
+
+// surfaceMessage replaces the schema's two generic `anyOf` leaves ("missing
+// property 'page'" + "missing property 'targets'" / "targets: minItems") with
+// one sentence that names the fix. The wording follows the platform's own
+// submit-time refusal (manifestSurfaceError in civitai's
+// block-manifest-validator.service.ts), so the CLI and the server say the same
+// thing. The slot id in the example is the platform's first model slot
+// (MODEL_SLOT_IDS[0]); a test pins it as a known, non-page slot here.
+const surfaceMessage = `manifest must declare at least one surface: add a "page" object for a full-page app ` +
+	`(e.g. "page": { "path": "/", "title": "My App" }), or a non-empty "targets" array for a ` +
+	`model-page slot app (e.g. "targets": [{ "slotId": "model.sidebar_top" }])`
+
+// surfaceClauseIndex finds the surface clause in the vendored schema: the
+// index of the top-level `allOf` entry whose `anyOf` has exactly two branches,
+// one requiring only "targets" and one requiring only "page". -1 if absent.
+//
+// The schema stays the single source of the RULE: this only lets
+// schemaErrors recognise that clause's failure so it can reword it. It never
+// adds or removes a failure — when the clause is absent (or reshaped), the
+// schema's own messages pass through unchanged.
+func surfaceClauseIndex(doc any) int {
+	root, ok := doc.(map[string]any)
+	if !ok {
+		return -1
+	}
+	allOf, _ := root["allOf"].([]any)
+	for i, entry := range allOf {
+		e, _ := entry.(map[string]any)
+		anyOf, _ := e["anyOf"].([]any)
+		if len(anyOf) != 2 {
+			continue
+		}
+		seen := map[string]bool{}
+		for _, br := range anyOf {
+			b, _ := br.(map[string]any)
+			req, _ := b["required"].([]any)
+			if len(req) != 1 {
+				break
+			}
+			s, _ := req[0].(string)
+			if s == "targets" {
+				// The message promises "a non-empty targets array"; only
+				// match a clause that actually demands one.
+				props, _ := b["properties"].(map[string]any)
+				tg, _ := props["targets"].(map[string]any)
+				if n, ok := tg["minItems"].(json.Number); !ok || n.String() != "1" {
+					break
+				}
+			}
+			seen[s] = true
+		}
+		// Two branches and both keys seen means one branch each.
+		if seen["targets"] && seen["page"] {
+			return i
+		}
+	}
+	return -1
+}
+
 func schema() (*jsonschema.Schema, error) {
 	if compiled != nil {
 		return compiled, nil
@@ -65,8 +134,11 @@ func schema() (*jsonschema.Schema, error) {
 	if err != nil {
 		return nil, fmt.Errorf("vendored schema is not valid JSON: %w", err)
 	}
+	if i := surfaceClauseIndex(doc); i >= 0 {
+		surfaceClauseURL = fmt.Sprintf("%s#/allOf/%d", schemaURL, i)
+	}
 	c := jsonschema.NewCompiler()
-	const url = "https://civitai.com/schemas/app-block/v1.json"
+	const url = schemaURL
 	if err := c.AddResource(url, doc); err != nil {
 		return nil, fmt.Errorf("add schema resource: %w", err)
 	}
@@ -318,6 +390,15 @@ func schemaErrors(err error) []Finding {
 	var out []Finding
 	var walk func(e *jsonschema.ValidationError)
 	walk = func(e *jsonschema.ValidationError) {
+		// The surface clause's `anyOf` fails as two leaves that each name one
+		// missing key and neither says "either one will do". Collapse the
+		// branch into one finding that names both fixes. Matched by the
+		// clause's schema location, so only THAT anyOf is reworded; the
+		// failure itself is still the schema's verdict.
+		if _, isAnyOf := e.ErrorKind.(*kind.AnyOf); isAnyOf && surfaceClauseURL != "" && e.SchemaURL == surfaceClauseURL {
+			out = append(out, newFinding(fieldPath(e.InstanceLocation), surfaceMessage))
+			return
+		}
 		// Only emit leaf errors (those with no children carry the concrete
 		// reason); intermediate nodes just describe the path.
 		if len(e.Causes) == 0 {
