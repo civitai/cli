@@ -73,6 +73,8 @@ func findingFieldLedger() []fieldExpectation {
 			"the schema locates this `not` violation at outputDir"},
 		{"iframe.minHeight: maximum", "iframe.minHeight",
 			"the range constraint is on iframe.minHeight's own value"},
+		{"manifest must declare at least one surface", FieldDocument,
+			"the schema's surface anyOf is located at the object that declares neither page nor targets"},
 
 		// --- validate.go: serverOwnedFieldChecks ------------------------
 		{"trustTier is server-owned", "trustTier",
