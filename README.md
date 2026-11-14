@@ -515,7 +515,8 @@ it lives on each OS.
 then **uploads it with your stored token**. With **no token configured** (and
 not `--package-only`) it instead writes the `.zip` and prints the next steps.
 Its four refusals — a version not above the highest **approved** one, a
-**dirty** work tree, an **oversize** body, an **incomplete listing** — are each
+**dirty** work tree, a body over **10485760 bytes** of base64 JSON, an
+**incomplete listing** — are each
 waived by their own flag, never by `--yes`; [Exit code 1](#exit-code-1) maps
 each to its flag.
 
