@@ -258,6 +258,27 @@ func TestAppCreateFromIsNotWired(t *testing.T) {
 	}
 }
 
+// TestScaffoldHelpDoesNotAdvertiseFrom: `--from` fails 100% of the time, so it
+// is hidden from `app create` / `app init` help until it works (it still parses —
+// see TestAppCreateFromIsNotWired). The control flag `--slug` must still be
+// listed, so an empty help text cannot pass.
+func TestScaffoldHelpDoesNotAdvertiseFrom(t *testing.T) {
+	for _, sub := range []string{"create", "init"} {
+		t.Run(sub, func(t *testing.T) {
+			out, _, err := run(t, "app", sub, "--help")
+			if err != nil {
+				t.Fatalf("app %s --help: %v", sub, err)
+			}
+			if !strings.Contains(out, "--slug") {
+				t.Fatalf("control: app %s --help does not list --slug:\n%s", sub, out)
+			}
+			if strings.Contains(out, "--from") || strings.Contains(out, "NOT AVAILABLE YET") {
+				t.Errorf("app %s --help still advertises --from:\n%s", sub, out)
+			}
+		})
+	}
+}
+
 // TestAppInitStaticViaFlag keeps the no-build template reachable by name. It was
 // TestAppInitStillDefaultsToStatic until page-elements became init's default.
 func TestAppInitStaticViaFlag(t *testing.T) {

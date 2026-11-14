@@ -1190,8 +1190,8 @@ func downloadStatusError(status int, name string) (err error) {
 	case status >= 200 && status < 300:
 		return nil
 	case status == http.StatusUnauthorized:
-		// Civitai requires a token to download ANY model file — even public ones —
-		// so an anonymous download 401s. Point the user straight at login.
+		// Most model files need a token (some public ones do not), and this one
+		// answered 401 to the request as sent. Point the user straight at login.
 		return fmt.Errorf("downloading %s requires authentication (401) — run `civitai login` (or set CIVITAI_TOKEN); this file needs a token (most model files do; some public files don't)", name)
 	case status == http.StatusForbidden:
 		// Authenticated but refused: the file is gated, not a login problem.

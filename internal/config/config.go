@@ -1,6 +1,8 @@
 // Package config handles the CLI's persisted configuration (API base URL and
-// token) via Viper. Config lives at ~/.config/civitai/config.yaml and is
-// overridable by CIVITAI_* environment variables.
+// token) via Viper. Config lives at <os.UserConfigDir()>/civitai/config.yaml —
+// ~/.config/civitai on Linux (or $XDG_CONFIG_HOME/civitai), ~/Library/Application
+// Support/civitai on macOS, %AppData%\civitai on Windows — and is overridable by
+// CIVITAI_* environment variables.
 package config
 
 import (
@@ -42,8 +44,10 @@ type Config struct {
 	path string
 }
 
-// Dir returns the config directory (~/.config/civitai), honouring
-// XDG_CONFIG_HOME.
+// Dir returns the config directory, <os.UserConfigDir()>/civitai: on Linux and
+// other Unix $XDG_CONFIG_HOME/civitai, else ~/.config/civitai; on macOS
+// ~/Library/Application Support/civitai (XDG_CONFIG_HOME is NOT consulted
+// there); on Windows %AppData%\civitai.
 func Dir() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {

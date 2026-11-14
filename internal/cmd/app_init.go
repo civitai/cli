@@ -86,6 +86,7 @@ the directory is a refusal — nothing is overwritten and there is no --force.`,
 
 	cmd.Flags().StringVarP(&templateFlag, "template", "t", string(scaffold.DefaultTemplate), templateFlagUsage)
 	cmd.Flags().StringVar(&fromSlug, "from", "", fromFlagUsage)
+	hideFromFlag(cmd)
 	cmd.Flags().StringVar(&dirFlag, "dir", "", "output directory (default ./<slug>)")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "display name (default derived from the name argument)")
 	cmd.Flags().StringVar(&slugFlag, "slug", "", slugFlagUsage)
@@ -99,12 +100,20 @@ const (
 	templateFlagUsage = "project template: page-elements | page-money | page-vite | static"
 
 	slugFlagUsage = "explicit blockId (bypasses derivation from the name; 3-40 chars, starts with a letter, lowercase a-z/0-9/hyphens)"
-	// The flag stays discoverable — it is a real roadmap item and hiding it
-	// would only move the surprise to a user who read about it elsewhere — but
-	// the usage string says up front that it cannot work yet, so the failure is
-	// predictable BEFORE the command is run rather than after.
+	// The flag is HIDDEN (hideFromFlag) until it works: advertising a flag in
+	// --help that fails 100% of the time is an invitation to try it. It is still
+	// parsed, so a user who read about it elsewhere gets runAppScaffold's plain
+	// "not available yet" refusal rather than "unknown flag".
 	fromFlagUsage = "fork from an existing published app slug (NOT AVAILABLE YET — the CLI cannot fetch app source)"
 )
+
+// hideFromFlag hides `--from` from `app init` / `app create` help. One function
+// so the two commands cannot drift; remove it when --from can fetch app source.
+func hideFromFlag(cmd *cobra.Command) {
+	if err := cmd.Flags().MarkHidden("from"); err != nil {
+		panic(err) // the flag is registered on the line above every call site
+	}
+}
 
 // runAppScaffold is the shared scaffold body behind both `app init` and
 // `app create`. The two commands differ only in the default template; all of

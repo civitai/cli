@@ -106,6 +106,7 @@ the AI Services scopes: ` + spendCredentialRoutes + `.`,
 	// Every flag matches init exactly, the default template included.
 	cmd.Flags().StringVarP(&templateFlag, "template", "t", string(scaffold.DefaultTemplate), templateFlagUsage)
 	cmd.Flags().StringVar(&fromSlug, "from", "", fromFlagUsage)
+	hideFromFlag(cmd)
 	cmd.Flags().StringVar(&dirFlag, "dir", "", "output directory (default ./<slug>)")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "display name (default derived from the name argument)")
 	cmd.Flags().StringVar(&slugFlag, "slug", "", slugFlagUsage)
