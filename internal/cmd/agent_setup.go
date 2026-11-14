@@ -529,7 +529,7 @@ and the output names the exact header to add yourself.
 
 THE TWO SERVERS DIFFER ON ANONYMOUS ACCESS. https://mcp.civitai.com/mcp answers
 without a credential, so a header-less config browses models, images and
-articles as it stands. https://orchestration.civitai.com/mcp returns 401 until
+articles as it stands. https://orchestration.civitai.com/mcp/v2 returns 401 until
 an Authorization header is present, so generation tools need one either way.
 
 AUTHENTICATION IS YOURS TO RUN. The servers are registered before login on

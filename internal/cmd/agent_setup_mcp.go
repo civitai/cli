@@ -43,6 +43,11 @@ type mcpServer struct {
 	//	https://mcp.civitai.com/mcp            -> 200, serverInfo civitai-mcp-server
 	//	https://orchestration.civitai.com/mcp  -> 401, empty body, NO WWW-Authenticate
 	//
+	// The orchestration entry now points at `/mcp/v2` (see its URL below), and
+	// that route answers the same way: re-measured 2026-11-14, POST `initialize`
+	// with no credential -> 401, empty body, no WWW-Authenticate (a path that does
+	// not exist, `/mcp/zz-nonexistent`, answers 404, so the 401 is the route's own).
+	//
 	// The missing `WWW-Authenticate` matters twice over: it is why no MCP client
 	// can discover an auth flow from that 401 (every
 	// `/.well-known/oauth-*` variant 404s as well), and it is why the failure
@@ -63,8 +68,14 @@ var civitaiMCPServers = []mcpServer{
 		Anonymous: true,
 	},
 	{
-		Name:  "civitai-orchestration",
-		URL:   "https://orchestration.civitai.com/mcp",
+		Name: "civitai-orchestration",
+		// 🔴 `/mcp/v2`, NOT `/mcp`. The bare `/mcp` route serves the FROZEN v1
+		// tool set; v2 is the maintained one. A re-run of `agent-setup` rewrites
+		// the url key of an existing entry (mergeEntryKeys / mergeTOMLBlock), so
+		// an install registered with `/mcp` moves to v2 the next time it is run
+		// — and not before: `--check` keys on the entry NAME, so an old `/mcp`
+		// entry still reports `mcp-orch` ok.
+		URL:   "https://orchestration.civitai.com/mcp/v2",
 		What:  "the generation orchestrator — workflows and image generation",
 		Check: "mcp-orch",
 		// 🔴 401 WITHOUT A TOKEN. Not a read/write split: the anonymous
@@ -79,6 +90,18 @@ var civitaiMCPServers = []mcpServer{
 // a third server is described correctly the moment it is added.
 func anonymousServerNames() []string    { return mcpServerNames(true) }
 func authRequiredServerNames() []string { return mcpServerNames(false) }
+
+// authRequiredServerURLs is the URL column of the same split, so a message
+// naming the server that 401s carries the URL this command actually writes.
+func authRequiredServerURLs() []string {
+	var out []string
+	for _, srv := range civitaiMCPServers {
+		if !srv.Anonymous {
+			out = append(out, srv.URL)
+		}
+	}
+	return out
+}
 
 func mcpServerNames(anonymous bool) []string {
 	var out []string
