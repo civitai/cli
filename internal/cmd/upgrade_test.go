@@ -809,10 +809,11 @@ func readReleaseArchivePlan(t *testing.T) releaseArchivePlan {
 //  3. `extractBinaryFromArchive` can actually OPEN that format — so an override
 //     naming a format the CLI has no reader for fails here rather than on a
 //     user's machine after a verified download.
-//  4. The three surfaces that STATE the format in prose — the README's
-//     `## Upgrading` section, the README's `civitai upgrade` command-reference
-//     row, and the command's own `Long` — name the same format this GOOS
-//     really publishes. Measured before this leg existed: inverting all three
+//  4. The surfaces that STATE the format in prose — the README's
+//     `## Upgrading` section and the command's own `Long` (the README's
+//     command-reference row was the third, until that hand-maintained table
+//     was replaced by the generated CLI reference) — name the same format this
+//     GOOS really publishes. Measured before this leg existed: inverting all three
 //     to "a .tar.gz on Windows, a .zip everywhere else" left the whole suite
 //     green (21 packages, 0 FAIL), because every guard read code and none read
 //     the prose.
@@ -826,11 +827,11 @@ func readReleaseArchivePlan(t *testing.T) releaseArchivePlan {
 //   - a `format_overrides` entry upgrade.go does not honour (e.g. adding
 //     `darwin: [zip]`) → legs (1) AND (4), on darwin: the same `continue` hides
 //     (2) and (3), but the RELEASE moved, so all three prose surfaces are now
-//     wrong about darwin too. A release change is a code AND a prose defect.
+//     wrong about darwin too (two surfaces now; see leg 4). A release change is a code AND a prose defect.
 //   - `releaseAssetName` dropping the extension → leg (2), on every GOOS.
 //   - the zip case deleted from `extractBinaryFromArchive`'s switch → leg (3),
 //     on windows.
-//   - any of the three prose surfaces inverted, release and code untouched →
+//   - any of the prose surfaces inverted, release and code untouched →
 //     leg (4) alone. It runs in its OWN pass, after the loop below, so leg (1)'s
 //     `continue` cannot suppress it.
 //
@@ -994,22 +995,6 @@ func readmeUpgradingSection(t *testing.T, readme string) string {
 	return body
 }
 
-// readmeUpgradeCommandRow returns the command-reference table row for
-// `civitai upgrade`, Fataling on a miss for the same reason.
-func readmeUpgradeCommandRow(t *testing.T, readme string) string {
-	t.Helper()
-	const prefix = "| `civitai upgrade [--force]`"
-	for _, line := range strings.Split(readme, "\n") {
-		if strings.HasPrefix(line, prefix) {
-			return line
-		}
-	}
-	t.Fatalf("CONTROL failure: README.md has no command-reference row starting %q. Either the row "+
-		"moved, the flag list changed, or the command was renamed — leg (4) cannot check a row it "+
-		"cannot find", prefix)
-	return ""
-}
-
 // assertArchiveFormatProseMatchesPlan is leg (4): every surface that STATES the
 // archive format in prose must name, for every GOOS the release builds, the
 // format `.goreleaser.yaml` really publishes for it.
@@ -1019,7 +1004,6 @@ func assertArchiveFormatProseMatchesPlan(t *testing.T, plan releaseArchivePlan) 
 
 	for _, s := range []struct{ name, text string }{
 		{"README.md's `## Upgrading` section", readmeUpgradingSection(t, readme)},
-		{"README.md's `civitai upgrade` command-reference row", readmeUpgradeCommandRow(t, readme)},
 		{"`civitai upgrade --help` (upgrade.go's Long)", newUpgradeCmd().Long},
 	} {
 		claim := parseArchiveFormatClaim(t, s.name, s.text)
