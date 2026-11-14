@@ -2,18 +2,16 @@ package cmd
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/civitai/cli/internal/genapi"
 )
 
-// ⚠ RETIRED IN PART (README trim toward npm's 64 KB cap). The `--no-download`
-// bullet was cut from README.md's `## Generate` (it lives on
-// the docs site's generate guide), and its string+behaviour pin,
-// TestREADMENoDownloadListingClaimMatchesTheRenderer, went with it. Only the
-// wait-path test below remains.
-//
-// readme_generate_wait_claims_test.go pinned the two README sentences
+// readme_generate_wait_claims_test.go pins the two README sentences
 // civitai/cli#604 added, because both of them shipped FALSE and nothing could
 // say so.
 //
@@ -39,6 +37,116 @@ import (
 // the renderer and the behavioural half does. A string pin alone would freeze a
 // sentence without ever asking whether it is TRUE, which is the state both of
 // these were in.
+
+// readmeText returns README.md as one string.
+func readmeText(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(repoRootDir(t), "README.md"))
+	if err != nil {
+		t.Fatalf("CONTROL failure, not a finding: read README.md: %v", err)
+	}
+	return string(b)
+}
+
+// normaliseProse collapses every run of whitespace — the line wrapping included
+// — to a single space, so the pinned literals below are about the WORDS and a
+// re-wrap is not a false failure.
+func normaliseProse(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// readmeBullet extracts the top-level `- ` list item that starts with marker,
+// up to the next top-level `- ` or a blank line followed by a non-indented line.
+//
+// It fails rather than returning "" on a miss: an extractor that silently found
+// nothing satisfies every "the text does not contain X" check and reports a
+// serene pass, which is the reassuring zero this repo keeps hitting.
+func readmeBullet(t *testing.T, readme, marker string) string {
+	t.Helper()
+	lines := strings.Split(readme, "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, marker) {
+			if start >= 0 {
+				t.Fatalf("CONTROL failure, not a finding: README.md holds more than one bullet starting %q "+
+					"(lines %d and %d), so this test cannot say which one it pinned", marker, start+1, i+1)
+			}
+			start = i
+		}
+	}
+	if start < 0 {
+		t.Fatalf("CONTROL failure, not a finding: README.md holds no bullet starting %q. The claim this "+
+			"test pins was moved, reworded past its opening words, or deleted — and an extractor that "+
+			"finds nothing would otherwise pass every assertion below.", marker)
+	}
+	end := start + 1
+	for end < len(lines) {
+		l := lines[end]
+		if strings.HasPrefix(l, "- ") || strings.TrimSpace(l) == "" || !strings.HasPrefix(l, "  ") {
+			break
+		}
+		end++
+	}
+	return strings.Join(lines[start:end], "\n")
+}
+
+// wantNoDownloadBullet is README.md's `--no-download` bullet, normalised.
+//
+// Pinned WHOLE rather than by keyword: the defect it guards against is a
+// sentence that over-claims, and any keyword subset of it can be over-claimed
+// around.
+const wantNoDownloadBullet = "- `--no-download` waits and prints the output URLs instead of writing files. " +
+	"One row on **stdout** per output that came back **with a URL**, the CLI's own number and the URL " +
+	"separated by a tab, so `cut -f2` is the intended read. The number is that output's position among " +
+	"the run's kept outputs, so it skips an output the server returned without one — a gap in the " +
+	"numbering is the CLI's own, not a dropped row. The URL is the **server's**, so it is flattened to " +
+	"one line and one tab-separated field first: a presigned URL cannot add a numbered row of its own, " +
+	"or an extra field, to that listing."
+
+// TestREADMENoDownloadListingClaimMatchesTheRenderer pins the `--no-download`
+// bullet against what printOutputURLs really writes.
+func TestREADMENoDownloadListingClaimMatchesTheRenderer(t *testing.T) {
+	got := normaliseProse(readmeBullet(t, readmeText(t), "- `--no-download` waits"))
+	if got != wantNoDownloadBullet {
+		t.Errorf("README.md's `--no-download` bullet has changed.\n--- README.md says ---\n%s\n"+
+			"--- this test pins ---\n%s\n\nIf the RENDERER changed, change both. If only the wording "+
+			"changed, update the literal — but re-read the behavioural half below first: the sentence this "+
+			"replaced said \"one row per output\", which is false whenever an output arrives with no URL.",
+			got, wantNoDownloadBullet)
+	}
+
+	// The behavioural half: a kept set whose middle output has no URL.
+	urlOf := func(s string) *string { return &s }
+	kept := []genapi.Output{
+		{Blob: genapi.Blob{ID: "a", URL: urlOf("https://example.invalid/o/a.jpeg")}},
+		{Blob: genapi.Blob{ID: "b", URL: nil}},
+		{Blob: genapi.Blob{ID: "c", URL: urlOf("https://example.invalid/o/c.jpeg")}},
+	}
+	var out, errw bytes.Buffer
+	printOutputURLs(&out, &errw, kept)
+	rows := gfsLines(out.String())
+
+	// (a) The README's narrowed claim: one row per output THAT HAS A URL.
+	if len(rows) != 2 {
+		t.Errorf("README.md promises one stdout row per output that came back WITH A URL. Three kept "+
+			"outputs, two of them with a URL, rendered %d row(s):\n%s", len(rows), out.String())
+	}
+	// (b) The claim the README used to make, shown FALSE — so the old wording
+	// cannot be restored as if it were merely shorter. This is the assertion that
+	// makes the pin above a statement about the code rather than about the text.
+	if len(rows) == len(kept) {
+		t.Errorf("printOutputURLs wrote one row per KEPT output (%d of %d), which is the claim #604 round 0 "+
+			"found false and this bullet was narrowed away from. If the renderer genuinely now emits a row "+
+			"for a URL-less output, widen the bullet back — but say what that row CONTAINS:\n%s",
+			len(rows), len(kept), out.String())
+	}
+	// (c) The gap the README describes: the numbers are positions in `kept`, so
+	// the second row is numbered 3, not 2.
+	if len(rows) == 2 {
+		if n, _, _ := strings.Cut(rows[1], "\t"); n != "3" {
+			t.Errorf("README.md says the number is the output's position among the kept outputs, so the row "+
+				"after a URL-less output is numbered 3. It is numbered %q:\n%s", n, out.String())
+		}
+	}
+}
 
 // 🔴 THE `wantFlattenedFieldsSentence` CONSTANT WAS DELETED HERE, NOT KEPT AS A
 // RECORD. It held the `label: value` bullet's enumeration sentence, compared by

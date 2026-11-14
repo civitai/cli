@@ -779,7 +779,7 @@ func TestReadmeDocumentsAppListing(t *testing.T) {
 		"civitai app listing status",
 		"civitai app listing set-icon",
 		"civitai app listing set-cover",
-		"an icon AND a cover are REQUIRED",
+		"An icon AND a cover are REQUIRED",
 	} {
 		if !strings.Contains(quick, want) {
 			t.Errorf("the README quickstart should show %q in the publication flow:\n%s", want, quick)

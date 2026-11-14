@@ -3,20 +3,15 @@ package cmd
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
 
-// ⚠ RETIRED IN PART (README trim toward npm's 64 KB cap). The `## Submit & auth`
-// entry-table paragraph this file pinned was cut from README.md; that detail now
-// lives on the docs site's packaging guide. TestREADMESubmitEntryBlock-
-// SentinelLedger and TestREADMEEntryBlockClaimsArePinned went with it. What is
-// left is the BEHAVIOURAL half below (a pre-upload refusal prints no entry
-// block), which asserts the code, not the README. The history below is kept as
-// the record of why the claims were pinned.
-//
-// This file pinned the four contract claims that #635's FOUR audit rounds
-// repaired, and it existed because nothing pinned them while they were wrong.
+// This file pins the four contract claims that #635's FOUR audit rounds
+// repaired, and it exists because nothing pinned them while they were wrong.
 //
 // 🔴 THE MEASURED GAP. Every behavioural sentence in the `## Submit & auth`
 // entry-table paragraph, and in its troubleshooting row, was unasserted.
@@ -56,6 +51,96 @@ import (
 // SHRINKS, which is the moment the prose needs rewriting. RULES.md: "A seam
 // guard must pin a RELATIONSHIP, not a component."
 
+// entryBlockSentinel is one `errors.Is` case in doUpload's switch, together
+// with what the README is obliged to say about it. `name` is the sentinel
+// expression AS WRITTEN in the switch, qualifier included — that is what
+// errorsIsRe captures, and matching on the qualified form is what stops a
+// same-named sentinel from a different package reading as covered.
+//
+// 🔴 THIS IS A LEDGER, NOT A COUNT. Membership is the assertion: adding a
+// sentinel without a row here is red, and so is deleting one. A count would let
+// add-one/delete-one swap a case silently — the exact defeat
+// symptomAttributionsFloor was converted away from in #605.
+type entryBlockSentinel struct {
+	name string // the sentinel expression as written in the switch
+	// paragraphSays and rowSays are text the `## Submit & auth` paragraph and
+	// the Troubleshooting row's CAUSE CELL must each contain while this case
+	// exists. Empty means that surface deliberately does not name the case.
+	//
+	// 🔴 BOTH SURFACES, BECAUSE ONE OF THEM WAS UNPINNED AND ROUND 1 INVERTED
+	// IT. This struct carried only the paragraph. The row's exception list —
+	// the half that actually drifted in #635 round 1 — was reachable only by
+	// two keyword checks, so rewriting the cell to "including a 401/403/429",
+	// the exact inverse of doUpload's second case, left the whole package
+	// green. A ledger that covers one of the two surfaces it exists to keep in
+	// sync is the narrower-than-its-docstring defect this file was written to
+	// catch, committed inside the file itself.
+	paragraphSays string
+	rowSays       string
+	why           string
+}
+
+var entryBlockSentinels = []entryBlockSentinel{
+	{
+		name:          "appapi.ErrBundleTooLarge",
+		paragraphSays: "The ceiling refusal above is the one refusal with an entry list of its own",
+		// No `**` here: troubleshootingEntryBlockCause strips bold markers before
+		// comparing, so the expectation is about the cell's WORDS and not about
+		// which of them an author bolded.
+		rowSays: "`What this CLI would have sent` is the ceiling refusal alone — it sends nothing " +
+			"either, and says so — and that one is exact too: nothing was uploaded.",
+		why: "it takes the FIRST case and diverts to printSubmitSizeRefusal, so it is an " +
+			"exception to the past-tense block rather than an instance of it. Round 0 of #635 " +
+			"found the README claiming the block printed here",
+	},
+	{
+		name: "appapi.ErrNothingSent",
+		// 🔴 TWO FALSE VERSIONS OF THIS SENTENCE SHIPPED FOR ONE COMMIT EACH, IN
+		// OPPOSITE DIRECTIONS, AND BOTH ARE WHY THE WORDING IS THIS EXACT.
+		//
+		// "prints nothing" — false for the CEILING REFUSAL, which sends nothing
+		// and prints a full would-have-sent block, named three lines later in the
+		// same paragraph. A universal with its counterexample already on the page.
+		// Hence "never prints the PAST TENSE".
+		//
+		// "so `sent` is a fact about bytes that left this machine" — false for a
+		// write CUT SHORT. A submit timing out mid-body had delivered ~200 KB on
+		// every measured run while the CLI called it nothing sent; the fix keys the
+		// tag on the request reaching the connection, and the printed byte count is
+		// then an upper bound rather than a receipt. Hence "a request that really
+		// went out, not one the CLI only built".
+		//
+		// The #635 ladder's own lesson, in claudedocs/handoff-readme-reduction.md:
+		// a fix that makes a sentence more specific can make it false, and it reads
+		// as an improvement because specificity looks like rigour.
+		paragraphSays: "A failure that never reached the connection never prints the past tense — " +
+			"no usable credential, an unwritable config, a connection that never opened — so `sent` " +
+			"means a request that really went out, not one the CLI only built.",
+		rowSays: "A failure that never reached the connection never prints the past tense: no " +
+			"usable credential, an unwritable config and a connection that never opened print " +
+			"neither block.",
+		why: "issue #637 — appapi.SubmitVersion sets this from httptrace's WroteRequest, so the arm " +
+			"is a WIRE FACT and not a classification. It is what lets both surfaces state the past " +
+			"tense as true instead of hedging it, and #635 spent four audit rounds on that hedge",
+	},
+	{
+		name:          "civitai.ErrUnauthorized",
+		paragraphSays: "except a `401`/`403`",
+		rowSays:       "and not on a `401`/`403`/`429`.",
+		why: "401 and 403 both map to this sentinel in pkg/civitai/errkind.go, and both suppress " +
+			"the block. Since #637 this arm is reached ONLY when the server answered, so those " +
+			"numbers mean on the page what they mean on the wire — a credential refused LOCALLY " +
+			"(internal/auth tags ErrUnauthorized onto \"no refresh token stored\") lands on the " +
+			"ErrNothingSent arm above it",
+	},
+	{
+		name:          "civitai.ErrRateLimited",
+		paragraphSays: "or a `429`",
+		rowSays:       "and not on a `401`/`403`/`429`.",
+		why:           "429 maps to this sentinel, and it suppresses the block",
+	},
+}
+
 // 🔴 WHY EVERY PROSE COMPARISON BELOW GOES THROUGH collapseWS (declared in
 // generate_dryrun_label_test.go — one rule, one place; do not add a second).
 //
@@ -65,6 +150,226 @@ import (
 // — which is precisely the habit that would have waved through all four of the
 // false claims this file exists to pin. Normalised, a reflow passes and a
 // REWORD fails, and the reword is where a claim changes meaning.
+
+// readmeEntryBlockParagraph returns the paragraph that documents the entry
+// table, located by a heading-independent anchor so a reorder does not silently
+// retarget it at prose that happens to match. The result is NOT normalised —
+// callers that compare prose should wrap it in collapseWS.
+func readmeEntryBlockParagraph(t *testing.T) string {
+	t.Helper()
+	md := readREADME(t)
+	const anchor = "Entries are ranked by **compressed** size"
+	i := strings.Index(md, anchor)
+	if i < 0 {
+		t.Fatalf("CONTROL failure: the entry-table paragraph's anchor %q is not in README.md, "+
+			"so every assertion in this file is vacuous. If the paragraph was deliberately "+
+			"reworded, move this anchor to a sentence it still contains — do not delete the anchor.", anchor)
+	}
+	rest := md[i:]
+	if j := strings.Index(rest, "\n#### "); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest
+}
+
+// doUploadSwitch returns the source text of the switch in doUpload that decides
+// which entry block prints. It is anchored on the literal `switch {` + first
+// case, which is specific enough not to drift onto an unrelated switch.
+func doUploadSwitch(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("app_submit.go"))
+	if err != nil {
+		t.Fatalf("CONTROL failure: cannot read app_submit.go: %v", err)
+	}
+	src := string(b)
+	// Bound it at the `switch {` plus its first case — NOT at either printer's
+	// call site — and close at the first line that is exactly three tabs and a
+	// brace, which is the switch's own closing brace. A nested block inside a
+	// case closes deeper than that and cannot match.
+	//
+	// (This comment previously described both bounds wrongly, naming the printer
+	// call site and a following `return err`. Round 1 of #639 caught it. A
+	// comment is a claim like any other.)
+	start := strings.Index(src, "switch {\n\t\tcase errors.Is(err, appapi.")
+	if start < 0 {
+		t.Fatalf("CONTROL failure: could not locate doUpload's entry-block switch in app_submit.go.\n" +
+			"This guard reads the sentinel set out of that switch; if the switch was restructured, " +
+			"retarget this locator rather than deleting the ledger — the ledger is what keeps the " +
+			"README's exception list honest.")
+	}
+	rest := src[start:]
+	end := strings.Index(rest, "\n\t\t}")
+	if end < 0 {
+		t.Fatal("CONTROL failure: found the switch but not its closing brace")
+	}
+	return rest[:end]
+}
+
+// errorsIsRe matches ANY errors.Is sentinel, qualified or bare.
+//
+// 🔴 IT WAS `(?:appapi|civitai)\.(\w+)` AND THAT MADE THE LEDGER SPELLED
+// RATHER THAN STRUCTURAL. Round 1 of #639 added
+// `case errors.Is(err, os.ErrDeadlineExceeded)` to the switch — `os` is already
+// imported by app_submit.go — and the whole package stayed green. The doc above
+// said flatly that a new sentinel is red; for any package outside that
+// two-name allowlist it was invisible, and the `len(found) >= 2` control could
+// not see it either because the three known sentinels still matched.
+//
+// The switch is package-local code, so a bare `errFoo` or a `context.` /
+// `pkgzip.` sentinel are all realistic. Matching the whole expression and
+// ledgering the QUALIFIED name means a new branch is red whatever it is
+// spelled.
+var errorsIsRe = regexp.MustCompile(`errors\.Is\(err,\s*([\w.]+)\)`)
+
+// TestREADMESubmitEntryBlockSentinelLedger is the primary guard: it pins the
+// RELATIONSHIP between doUpload's switch and what the README says about it.
+//
+// 🔴 It fails in BOTH directions on purpose. A sentinel added to the switch
+// without a ledger row is red (the README is now silently incomplete); a ledger
+// row whose sentinel left the switch is red (the README is now describing a
+// branch that does not exist). Either way the prose needs rewriting, and this is
+// the only thing in the tree that says so.
+func TestREADMESubmitEntryBlockSentinelLedger(t *testing.T) {
+	sw := doUploadSwitch(t)
+
+	found := map[string]bool{}
+	for _, m := range errorsIsRe.FindAllStringSubmatch(sw, -1) {
+		found[m[1]] = true
+	}
+	// POSITIVE CONTROL: an extractor that has stopped seeing errors.Is calls
+	// would make every comparison below trivially "matching" at zero. The
+	// switch has three sentinel references today; fewer than two means the
+	// regex is reading the wrong text, not that the code got simpler.
+	if len(found) < 2 {
+		t.Fatalf("CONTROL failure: extracted %d sentinel(s) from doUpload's switch (want >= 2). "+
+			"The assertions below are vacuous at this count — the regex %q is not matching the "+
+			"switch source:\n%s", len(found), errorsIsRe, sw)
+	}
+
+	ledgered := map[string]entryBlockSentinel{}
+	for _, s := range entryBlockSentinels {
+		ledgered[s.name] = s
+	}
+
+	for name := range found {
+		if _, ok := ledgered[name]; !ok {
+			t.Errorf("doUpload's switch branches on %s, but no row in entryBlockSentinels covers it.\n"+
+				"A new case changes WHICH failures print the entry block, which is exactly what the "+
+				"README paragraph and the published troubleshooting row promise a reader. Add a row here "+
+				"naming what both must now say — and update BOTH: the `## Submit & auth` paragraph in "+
+				"README.md, and the row at "+
+				publishedTroubleshootingURL+" whose cause cell is vendored in "+
+				"publishedTroubleshootingRows. They went out of sync for a commit in #635.", name)
+		}
+	}
+	for name, s := range ledgered {
+		if !found[name] {
+			t.Errorf("entryBlockSentinels still carries %s, but doUpload's switch no longer branches on it.\n"+
+				"Reason it was ledgered: %s.\n"+
+				"The README paragraph currently tells readers %q, and the vendored troubleshooting cause "+
+				"cell tells them %q. If the branch is genuinely gone, delete both claims in the same "+
+				"commit (the second one on the published page too), then drop this row.",
+				name, s.why, s.paragraphSays, s.rowSays)
+		}
+	}
+
+	// And BOTH README surfaces must carry what each live sentinel obliges.
+	para := collapseWS(readmeEntryBlockParagraph(t))
+	cause := collapseWS(troubleshootingEntryBlockCause(t))
+	for _, s := range entryBlockSentinels {
+		if !found[s.name] {
+			continue
+		}
+		for _, surface := range []struct{ where, text, want string }{
+			{"the `## Submit & auth` paragraph", para, s.paragraphSays},
+			{"the Troubleshooting row's cause cell", cause, s.rowSays},
+		} {
+			if surface.want == "" || strings.Contains(surface.text, surface.want) {
+				continue
+			}
+			t.Errorf("doUpload branches on %s, but %s no longer says %q.\n"+
+				"Why that matters: %s.\n"+
+				"Do not satisfy this by pasting the string back — check the surface still describes "+
+				"the branch correctly, then update the expectation here if the wording moved. Both "+
+				"surfaces are ledgered because the row's exception list is the half that drifted in "+
+				"#635 round 1.", s.name, surface.where, surface.want, s.why)
+		}
+	}
+}
+
+// readmeEntryBlockClaims are the four repairs, pinned as WHOLE normalised
+// sentences.
+//
+// 🔴 PINNED WHOLE, NOT BY KEYWORD, and that is deliberate. A guard on words is
+// walkable by rewording — the exact failure mode RULES.md names — and each of
+// these claims was replaced by a DIFFERENTLY WRONG one at least once during the
+// ladder, which a keyword pin would have waved through. The cost is real: a
+// cosmetic reword fails this test. Pay it. The repo already pays it for the
+// #389 shadow-write bullet and for row 20's nine spans.
+var readmeEntryBlockClaims = []struct {
+	claim, want, verifyAt string
+}{
+	{
+		claim:    "R1 — the block is about the UPLOAD CALL, and about one that actually went out",
+		want:     "That block prints under **any error the upload call reports once the request has gone out**",
+		verifyAt: "internal/cmd/app_submit.go — the switch is inside the `if err != nil` for client.SubmitVersion, so nine earlier `return err` sites never reach it, and its appapi.ErrNothingSent arm drops every failure that wrote no bytes",
+	},
+	{
+		claim: "R1b — the pre-upload refusals print nothing, named so a reader can tell which case they are in",
+		want: "A refusal that stops the submit **before** the upload step prints nothing at all: no `--yes`, " +
+			"a dirty work tree, the version guard, the listing-completeness gate, a validation failure.",
+		verifyAt: "internal/cmd/app_submit.go — those FIVE all return before doUpload. The listing-completeness gate (civitai/cli#762) joined the list as a fifth pre-upload refusal; it is step 2c, above `pkgzip.Build`, so like the other four it cannot reach printSubmitSizeDiagnosis",
+	},
+	// 🔴 THERE IS NO R3 OR R3b HERE, AND THE ABSENCE IS THE DECISION.
+	//
+	// #635's pair was the HEDGE that ladder had to publish because the code could
+	// not support the strong version: "keyed on how the error *classifies*, not on
+	// whether bytes left the machine" and "read `sent` as the CLI's account and
+	// not a guarantee". #637 made the code compute the property, so the hedge is
+	// now itself false and both strings are gone from README.md.
+	//
+	// The claim that REPLACED them is pinned by the ledger above, not here —
+	// entryBlockSentinels' appapi.ErrNothingSent row carries the paragraph's whole
+	// sentence AND the row's whole sentence, and it is CONDITIONAL on that arm
+	// still existing in doUpload's switch, which a copy here would not be. A
+	// second pin on the same string in the same surface adds no failure mode and
+	// teaches the next maintainer that duplicating a claim is how this file works.
+	// The weaker of two overlapping assertions is the one to delete; here they
+	// were byte-identical, so the one that also checks the code is the keeper.
+}
+
+// TestREADMEEntryBlockClaimsArePinned pins the four repaired claims themselves.
+//
+// The ledger above pins the relationship; this pins the DISCLOSURES, which no
+// amount of source-reading can derive — R3 in particular is a statement about
+// what the CLI does NOT promise, and nothing in the code says that.
+func TestREADMEEntryBlockClaimsArePinned(t *testing.T) {
+	para := collapseWS(readmeEntryBlockParagraph(t))
+	// POSITIVE CONTROL: a paragraph that shrank to nothing would satisfy no
+	// Contains check and every failure below would read as four separate
+	// regressions rather than one lost section.
+	if len(para) < 400 {
+		t.Fatalf("CONTROL failure: the entry-table paragraph is %d bytes (want >= 400). "+
+			"It is too short to carry these claims. Two causes, and check which: the locator may be "+
+			"reading the wrong region (retarget the anchor), OR the paragraph really was trimmed — "+
+			"this repo is mid-way through a documented README-reduction effort, so that is a live "+
+			"possibility and not a remote one. If it was trimmed, the four claim-specific failures "+
+			"below are the ones to read.", len(para))
+	}
+	for _, c := range readmeEntryBlockClaims {
+		if !strings.Contains(para, c.want) {
+			t.Errorf("the README no longer makes this claim: %s\n\nwant verbatim:\n%q\n\n"+
+				"🔴 Before you re-paste it: this claim was WRONG on main and was repaired across four "+
+				"audit rounds of #635, and three of those rounds were fixing the previous round's fix. "+
+				"Re-verify it at: %s\n"+
+				"If it is genuinely being reworded, change the expectation here in the SAME commit, "+
+				"and change the published troubleshooting row too — its cause cell is vendored in "+
+				"publishedTroubleshootingRows and the page is "+publishedTroubleshootingURL+". The two "+
+				"surfaces disagreed for one commit during that ladder, which is why they move together.",
+				c.claim, c.want, c.verifyAt)
+		}
+	}
+}
 
 // R4 — "the two surfaces stating this contract must not drift apart" — used to
 // be TestREADMEEntryBlockSurfacesAgree, and it is now the LEDGER's job.
@@ -83,6 +388,42 @@ import (
 // rowSays. Two surfaces, checked together, per branch. The drift #635 shipped —
 // the row keeping wording the paragraph had just called wrong — is red under
 // that, and is the mutation matrix's M6.
+
+// troubleshootingEntryBlockCause returns the CAUSE cell — column two — of the
+// troubleshooting row documenting the entry block.
+//
+// 🔴 COLUMN TWO, NOT THE WHOLE ROW, AND THAT IS THE POINT. Column one is the
+// symptom index and is pinned verbatim against non-test source by a sibling
+// guard, so any assertion made against the full line can be satisfied by text
+// that cannot change. The cause cell is the half that carries the claim.
+//
+// 🔴 RE-POINTED AT THE VENDORED MIRROR, NOT RETIRED, AND THE FILE HEADER IS WHY.
+// This row's cell used to be parsed out of README.md's `## Troubleshooting`
+// table, which is now a pointer to the published index. Retiring the `rowSays`
+// half would have left entryBlockSentinels covering ONE of the two surfaces it
+// exists to keep in sync — precisely the "narrower than its docstring" defect
+// this file's header says it was written to catch, committed inside the file
+// itself. So the cell is vendored in troubleshooting_published_test.go and read
+// from there. Its 80-byte anti-vacuity floor moved with it into
+// publishedCauseFor.
+//
+// ⚠ The `## Submit & auth` paragraph half is UNCHANGED: that section is still in
+// README.md, so readmeEntryBlockParagraph still reads live prose. One surface
+// live, one vendored.
+func troubleshootingEntryBlockCause(t *testing.T) string {
+	t.Helper()
+	// Strip markdown emphasis before returning.
+	//
+	// 🔴 NOT COSMETIC — WITHOUT THIS THE ASSERTION IS WRONG, AND IT WAS.
+	// The cell writes the tense as `What this CLI **would have** sent`, so
+	// the literal substring "would have sent" does not occur: the bold
+	// markers sit INSIDE the phrase. The first reachable run of this guard
+	// failed on exactly that — which is also the cleanest evidence that
+	// making it reachable changed something. Stripping `**` makes the check
+	// about the WORDS the cell uses rather than which of them an author
+	// bolded, for the same reason prose here goes through collapseWS.
+	return strings.ReplaceAll(publishedCauseFor(t, "largest entries in the bundle"), "**", "")
+}
 
 // TestREADMEPreUploadRefusalPrintsNoEntryBlock is the BEHAVIOURAL half of R1.
 //

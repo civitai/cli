@@ -543,9 +543,18 @@ const listing389IssueLink = "https://github.com/civitai/cli/issues/389"
 // the claim is machine-readable and its edits are visible in review.
 const wantREADMEListingWriteWarning = "- 🔴 **`listing status` is NOT a pure read — `--json` or not — so do not poll it in a loop.** On " +
 	"a LIVE (approved) listing the read behind it (`getMyListingForEdit`) opens the revision draft " +
-	"server-side, idempotently, so a watch loop is a writer; a call that FAILS leaves none behind " +
-	"([#389](https://github.com/civitai/cli/issues/389)). ⚠ **This applies to OFFSITE apps too**, since " +
-	"[#422](https://github.com/civitai/cli/issues/422) made `app listing` resolve them by slug."
+	"server-side, idempotently — the same one each time — so a script calling it repeatedly keeps a " +
+	"revision open on your listing. [#389](https://github.com/civitai/cli/issues/389) asked the " +
+	"narrower question of whether a call that FAILS could leave a revision behind; it cannot, because " +
+	"every refusal the server can return here is raised before the revision is opened. **That settles " +
+	"the error path only — the write on success is unchanged.** Reading it once per change is " +
+	"fine; a watch loop is a writer. ⚠ **This now applies to OFFSITE apps too.** Before " +
+	"[#422](https://github.com/civitai/cli/issues/422) every `app listing` subcommand refused for an " +
+	"offsite app and therefore could not write anything; now that they resolve by slug, `app listing " +
+	"status` against an **approved** offsite listing mints that shadow revision like any other. Every " +
+	"offsite app measured on civitai.com is approved, so this is the *normal* state there, not an " +
+	"edge case. #422 retired the \"cannot be addressed\" refusal, and #389 retired nothing about the " +
+	"write — the shadow is a property of `getMyListingForEdit`, not of how the listing id was obtained."
 
 // readmeTopLevelBullets splits md into its top-level markdown bullets: a line
 // beginning `- ` at column 0, plus every indented continuation line under it.
