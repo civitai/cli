@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/civitai/cli/internal/validate"
+	"github.com/spf13/cobra"
 )
 
 // simulateInstall writes the lockfile a scaffolded npm project gets from its
@@ -243,28 +245,30 @@ func TestAppCreateRefusesNonEmptyDir(t *testing.T) {
 	}
 }
 
-// TestAppCreateFromIsNotWired pins the `--from` refusal for `app create`; the
-// message contract itself (no internal TODO, an actionable next command) is
-// asserted for BOTH commands in TestScaffoldFromErrorShipsNoEngineeringNote.
-func TestAppCreateFromIsNotWired(t *testing.T) {
-	tmp := t.TempDir()
-	dest := filepath.Join(tmp, "out")
-	_, errOut, err := run(t, "app", "create", "my-block", dest, "--from", "some-slug")
-	if err == nil {
-		t.Fatal("expected --from to error (not available yet)")
-	}
-	if !strings.Contains(err.Error()+errOut, "--from is not available yet") {
-		t.Errorf("--from should report it is unavailable: err=%v stderr=%s", err, errOut)
-	}
-}
-
-// TestScaffoldHelpDoesNotAdvertiseFrom: `--from` fails 100% of the time, so it
-// is hidden from `app create` / `app init` help until it works (it still parses —
-// see TestAppCreateFromIsNotWired). The control flag `--slug` must still be
-// listed, so an empty help text cannot pass.
-func TestScaffoldHelpDoesNotAdvertiseFrom(t *testing.T) {
+// TestScaffoldHasNoFromFlag: `--from` ("fork from an existing published app
+// slug") was declared on `app create` / `app init` but failed 100% of the time,
+// because the CLI cannot fetch a published app's source. It is deleted, not
+// hidden: passing it is an unknown-flag usage error (exit 2), it is not
+// registered, help does not name it, and nothing is scaffolded.
+func TestScaffoldHasNoFromFlag(t *testing.T) {
 	for _, sub := range []string{"create", "init"} {
 		t.Run(sub, func(t *testing.T) {
+			tmp := t.TempDir()
+			dest := filepath.Join(tmp, "out")
+			_, errOut, err := run(t, "app", sub, "forked-app", "--from", "some-published-app", "--dir", dest)
+			if err == nil {
+				t.Fatal("expected --from to be refused as an unknown flag")
+			}
+			if !errors.Is(err, ErrUsage) {
+				t.Errorf("--from should be a usage error (exit 2), got: %v", err)
+			}
+			if blob := err.Error() + errOut; !strings.Contains(blob, "unknown flag: --from") {
+				t.Errorf("error should name the unknown flag:\n%s", blob)
+			}
+			if _, statErr := os.Stat(dest); !os.IsNotExist(statErr) {
+				t.Errorf("a refused --from must scaffold nothing; %s exists (stat err %v)", dest, statErr)
+			}
+
 			out, _, err := run(t, "app", sub, "--help")
 			if err != nil {
 				t.Fatalf("app %s --help: %v", sub, err)
@@ -273,9 +277,14 @@ func TestScaffoldHelpDoesNotAdvertiseFrom(t *testing.T) {
 				t.Fatalf("control: app %s --help does not list --slug:\n%s", sub, out)
 			}
 			if strings.Contains(out, "--from") || strings.Contains(out, "NOT AVAILABLE YET") {
-				t.Errorf("app %s --help still advertises --from:\n%s", sub, out)
+				t.Errorf("app %s --help still names --from:\n%s", sub, out)
 			}
 		})
+	}
+	for name, c := range map[string]*cobra.Command{"create": newAppCreateCmd(), "init": newAppInitCmd()} {
+		if c.Flags().Lookup("from") != nil {
+			t.Errorf("app %s still registers a --from flag", name)
+		}
 	}
 }
 

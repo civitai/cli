@@ -258,11 +258,11 @@ func TestDogfoodHeredocStrippingDoesNotHideARealInvocation(t *testing.T) {
 // ── the narrowing must not reopen #698 ───────────────────────────────────────
 
 // 🔴 THIS IS A NARROWING OF A SECURITY CHECK, so the flags that DO carry an app
-// identity are pinned in BOTH spellings. `--slug` is the obvious one; `--from`
-// ("fork from an existing published app slug"), `--name` (slugified into the
-// blockId when --slug is absent) and `--dir` (on `app listing`, selects the
-// directory whose block.manifest.json supplies the blockId) are the three that
-// are less obvious and equally load-bearing.
+// identity are pinned in BOTH spellings. `--slug` is the obvious one; `--name`
+// (slugified into the blockId when --slug is absent) and `--dir` (on
+// `app listing`, selects the directory whose block.manifest.json supplies the
+// blockId) are the two that are less obvious and equally load-bearing. (`--from`
+// was a third until it was deleted from `app create` / `app init`.)
 //
 // ⚠ INVARIANT GUARD, NOT REGRESSION COVERAGE. Every arm is already refused at
 // origin/main — the old classifier collected every non-flag token and every
@@ -270,7 +270,7 @@ func TestDogfoodHeredocStrippingDoesNotHideARealInvocation(t *testing.T) {
 // That is exactly why they need pinning now: the fix removes the accident.
 func TestDogfoodSlugBearingFlagsStillRefuseAForeignApp(t *testing.T) {
 	credPath, _ := credentialFile(t)
-	for _, flag := range []string{"--slug", "--from", "--name", "--dir"} {
+	for _, flag := range []string{"--slug", "--name", "--dir"} {
 		for _, spelling := range []string{flag + " some-other-app", flag + "=some-other-app"} {
 			t.Run(spelling, func(t *testing.T) {
 				cmd := "civitai app create ab-thing " + spelling
@@ -524,7 +524,6 @@ cases = [
     # slug flags, both spellings, are candidates
     (["app", "create", "--slug", "foo"], 2, [["foo", "--slug"]]),
     (["app", "create", "--slug=foo"], 2, [["foo", "--slug"]]),
-    (["app", "create", "--from", "foo"], 2, [["foo", "--from"]]),
     (["app", "create", "--name", "foo"], 2, [["foo", "--name"]]),
     (["app", "listing", "status", "--dir=foo"], 3, [["foo", "--dir"]]),
     # an empty attached value contributes nothing
