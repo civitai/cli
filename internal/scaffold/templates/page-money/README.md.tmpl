@@ -662,8 +662,8 @@ The two reads use **different credentials** — by design, and security-critical
 >   bridge this harness forwards, and this template does not use `@civitai/sdk`.
 > - **The legacy stores** (`useAppStorage`, `useSharedStorage`) are removed:
 >   civitai.com refuses every call to them, in production too
->   (`legacy_store_removed`, since 2026-11-10), and `@civitai/blocks-react`
->   0.81.0 no longer exports the two hooks. Do not build on them. Under
+>   (`legacy_store_removed`, since 2026-11-10), and the `@civitai/blocks-react`
+>   this template pins no longer exports the two hooks. Do not build on them. Under
 >   `dev:live` the refusal you see may not be `legacy_store_removed`: a
 >   `useAppStorage` call is refused first with `401` `Apps access is not
 >   enabled for this browser session`, because that check runs before the
