@@ -95,14 +95,12 @@ It also emits non-fatal WARNINGS the schema can't catch as hard errors:
     not checked; a .collection( call on anything but a storage client (a name
     ending in storage, or an awaited call such as (await docs())) is not the
     document store.
-  - source that calls useAppStorage() or useSharedStorage() while the manifest
-    declares NO scope for that store (apps:storage:read / apps:storage:write,
-    or apps:storage:shared:read / apps:storage:shared:write). Both legacy
-    stores are removed: civitai.com refuses every call with
-    legacy_store_removed, and @civitai/blocks-react 0.81.0 no longer exports
-    the hooks. Move the data to the document store. One scope for the store
-    silences the warning but not the refusal; the two stores are asked
-    independently.
+  - source that calls useAppStorage() or useSharedStorage(), whatever scopes
+    the manifest declares. Both legacy stores are removed: civitai.com refuses
+    every call with legacy_store_removed, and @civitai/blocks-react 0.81.0 no
+    longer exports the hooks, so adding apps:storage:read / :write or
+    apps:storage:shared:read / :write does not help. Move the data to the
+    document store.
     Advisory ONLY: these read source statically. Same corpus rules as the
     ready-ack check — source only, comments stripped, node_modules and build
     output skipped — and test code is not read: *.test.*, *.spec.*, a file

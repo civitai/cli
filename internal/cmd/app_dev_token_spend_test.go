@@ -531,7 +531,11 @@ func TestAppDevTokenSpendHelpNamesTheConsequence(t *testing.T) {
 // Storage is refused 401 for want of a browser session, legacy shared storage
 // is refused as not-found / not-approved until the app is approved and for
 // scope after — `resolveSharedContext` checks approval FIRST, so "refused for
-// scope" alone was true only of an approved app). A guard on a few words is
+// scope" alone was true only of an approved app). Since the 2026-11-10 removal
+// a legacy call is refused `legacy_store_removed`, EXCEPT that a useAppStorage
+// call under dev:live still gets the 401 first: civitai `apps.router.ts` runs
+// `enforceAppBlocksFlag` before `assertLegacyStoreAvailable`, so the help must
+// not imply the code is always `legacy_store_removed`. A guard on a few words is
 // walkable by rewording, so
 // the whole paragraph is pinned, whitespace-normalised so a re-wrap passes.
 func TestAppDevTokenHelpStorageUnderDevLive(t *testing.T) {
@@ -547,6 +551,10 @@ func TestAppDevTokenHelpStorageUnderDevLive(t *testing.T) {
 		"- The legacy stores (useAppStorage, useSharedStorage) are removed: civitai.com refuses " +
 		"every call to them, in production too (legacy_store_removed, since 2026-11-10), and " +
 		"@civitai/blocks-react 0.81.0 no longer exports the hooks. " +
+		"Under dev:live the refusal you see may not be legacy_store_removed: a useAppStorage call " +
+		"is refused first with 401 \"Apps access is not enabled for this browser session\", because " +
+		"that check runs before the removal check and a local harness never has a civitai.com " +
+		"browser session. " +
 		"Exercise the document store with createFakeStorage from @civitai/sdk/testing."
 	if !strings.Contains(norm, want) {
 		t.Errorf("dev-token --help must carry the storage paragraph verbatim (whitespace-normalised).\nwant: %s\ngot:  %s", want, norm)

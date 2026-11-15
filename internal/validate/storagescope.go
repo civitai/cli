@@ -33,17 +33,16 @@
 //     Any call counts, literal or not. When `storage` IS declared, the missing
 //     scope is the manifest error storageScopeRuleChecks already reports, so
 //     this stays quiet rather than tell the same story twice.
-//  3. A CALL to a legacy hook while the manifest declares NO scope for that
-//     store: `useAppStorage()` without `apps:storage:read` or
-//     `apps:storage:write`, `useSharedStorage()` without
-//     `apps:storage:shared:read` or `apps:storage:shared:write`. Written for
-//     the 2026-10-01 failure, where every save 403'd in production (cli #767);
-//     since 2026-11-10 the stores are removed and every call is refused
-//     whatever the scopes, which is what the message now says. One of a store's scopes is someone who knows
-//     scopes exist and chose, so it is silent; the two stores are asked
-//     independently. The scopes are an explicit SET, not a prefix:
-//     `apps:storage:publish` starts with `apps:storage:` and grants the legacy
-//     store nothing.
+//  3. ANY CALL to a legacy hook — `useAppStorage()` or `useSharedStorage()` —
+//     WHATEVER THE MANIFEST DECLARES. Written for the 2026-10-01 failure, where
+//     every save 403'd in production without the store's scopes (cli #767), so
+//     it used to stay silent once one of that store's scopes was declared.
+//     Since 2026-11-10 the stores are removed: civitai.com refuses every call
+//     with `legacy_store_removed` whatever the scopes, so a declared
+//     `apps:storage:read` / `apps:storage:shared:write` is no longer a sign the
+//     call works, and silencing on it hid exactly the apps that still depend
+//     on the store. Each hook called is reported once; the fix it names is the
+//     document store.
 //
 // WHAT IT MATCHES, AND WHY THAT PRECISE SHAPE. This replaced HOOK-NAME matching
 // (cli #767), which fired on the bare names `useAppStorage` / `useSharedStorage`
@@ -81,8 +80,10 @@
 // storagemanifest.go ARE errors, because those are certain.
 //
 // FIELDS: (1) names the undeclared key, `storage.collections.<name>` — the
-// declaration is the usual edit; (2) and (3) are `scopes` — the source is right
-// (using storage is the point) and the manifest is what lacks the scope.
+// declaration is the usual edit; (2) is `scopes` — the source is right (using
+// storage is the point) and the manifest is what lacks the scope; (3) stays
+// `scopes` too (a stable field for consumers), though its fix is a source move
+// to the document store plus `apps:storage` and a `storage` declaration.
 package validate
 
 import (
@@ -102,9 +103,9 @@ const (
 	sharedStorageHook = "useSharedStorage"
 )
 
-// legacyHookScopes is, per hook, the scopes that reach its store. Declaring
-// ANY one of them silences that hook's advisory. An explicit set, never a
-// prefix: see the file comment.
+// legacyHookScopes is, per hook, the scopes that USED to reach its store. They
+// no longer gate the advisory (it fires on any call, see the file comment);
+// the message names them only to say that adding them does not help.
 var legacyHookScopes = map[string][2]string{
 	appStorageHook:    {"apps:storage:read", "apps:storage:write"},
 	sharedStorageHook: {"apps:storage:shared:read", "apps:storage:shared:write"},
@@ -209,16 +210,10 @@ func storageScopeChecks(dir string, generic any) []Finding {
 		}
 	}
 
-	// (3) Legacy hooks called while the manifest declares no scope for that
-	// store.
-	declaredScopes := stringSet(m["scopes"])
+	// (3) Legacy hooks, on ANY call: the stores are removed, so no declared
+	// scope makes a call work and none silences the advisory.
 	for _, hook := range sortedKeys(scan.legacyHooks) {
 		scopes := legacyHookScopes[hook]
-		_, hasRead := declaredScopes[scopes[0]]
-		_, hasWrite := declaredScopes[scopes[1]]
-		if hasRead || hasWrite {
-			continue
-		}
 		out = append(out, newFinding("scopes", legacyHookScopeAdvice(hook, scopes[0], scopes[1])))
 	}
 	return out
@@ -295,8 +290,9 @@ func importedCollectionAdvisories(calls map[string]map[string]string, rawImports
 // refuses every legacy-store call with `legacy_store_removed` whatever the
 // scopes, and `@civitai/blocks-react` 0.81.0 removed both hooks
 // (civitai-app-starters#831), so adding a scope fixes nothing: the message says
-// the store is removed and points at the document store instead. The detection
-// is unchanged on purpose: a call to a removed hook is exactly what to flag.
+// the store is removed and points at the document store instead, and it fires
+// whatever scopes are declared. The detection (a CALL to the hook) is unchanged
+// on purpose: a call to a removed hook is exactly what to flag.
 func legacyHookScopeAdvice(hook, readScope, writeScope string) string {
 	return "this project's source calls `" + hook + "()`, a legacy store that has been removed: " +
 		"civitai.com refuses every call to it with `legacy_store_removed` (since 2026-11-10), " +

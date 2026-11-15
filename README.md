@@ -814,7 +814,9 @@ plus the ported semantic rules (including the server's checks of the
 [host handshake](#the-host-handshake-block_ready), and storage calls
 (`app.storage.collection('<name>')` with a literal name `storage.collections`
 does not declare, the document store without `apps:storage`, and
-`useAppStorage()` / `useSharedStorage()` called with no scope for that store).
+any call to `useAppStorage()` / `useSharedStorage()`, whatever scopes are
+declared: both legacy stores are removed, so the fix is the document store, not
+a scope).
 Advisories are warnings, never errors, because they infer runtime behaviour
 from static text; test code (`*.test.*`, `*.spec.*`, files named `fake-*`,
 `test-*` or `mock-*`, and `__tests__/`, `__mocks__/`, `testing/`) is not read

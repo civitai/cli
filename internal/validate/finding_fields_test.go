@@ -255,9 +255,10 @@ func findingFieldLedger() []fieldExpectation {
 				"own app code looking for a bug that is not there"},
 		{"a legacy store that has been removed", "scopes",
 			"STILL `scopes`, though the store is now removed (civitai.com answers " +
-				"`legacy_store_removed`; @civitai/blocks-react 0.81.0 dropped the hooks). The advisory " +
-				"fires on a SCOPES condition (no scope for that store), and the move it names lands in " +
-				"the manifest too: a `storage` declaration and the `apps:storage` scope. The source edit " +
+				"`legacy_store_removed`; @civitai/blocks-react 0.81.0 dropped the hooks) and the advisory " +
+				"now fires on ANY call, whatever scopes are declared. Kept for a stable consumer contract, " +
+				"and because the move it names lands in the manifest too: a `storage` declaration and the " +
+				"`apps:storage` scope. The source edit " +
 				"(the call itself) is named in the message. Until the removal the source was correct and " +
 				"the whole fix was two strings in `scopes`, the contrast with the readyack row above"},
 	}

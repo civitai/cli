@@ -70,22 +70,19 @@ func legacyWarnings(t *testing.T, dir string) (app, shared bool, fields []string
 // is refused without a collection to reach).
 var privateKV = oneCollection("kv", `{"visibility":"private"}`)
 
-// TestLegacyStorageHookNeedsItsScope — a CALL to `useAppStorage()` while the
-// manifest declares neither `apps:storage:read` nor `apps:storage:write`, or to
-// `useSharedStorage()` with neither shared scope, is the 2026-10-01 failure:
-// every save 403s in production. That is the whole claim. A manifest that
-// declares ONE of the store's scopes is someone who knows scopes exist and
-// chose, so it is silent; there is no unconditional "deprecated" warning.
+// TestLegacyStorageHookWarnsOnAnyCall — a CALL to `useAppStorage()` or
+// `useSharedStorage()` is reported WHATEVER THE MANIFEST DECLARES. The stores
+// are removed: civitai.com refuses every call with `legacy_store_removed`
+// (since 2026-11-10) and `@civitai/blocks-react` drops both hooks
+// (civitai-app-starters#831), so a declared legacy scope no longer means the
+// call works. The check used to stay silent once one of the store's scopes was
+// declared (cli #767, written when the failure was a missing-scope 403); the
+// SCOPED rows below are the ones that changed, and they were the apps still
+// depending on the store.
 //
-// 🔴 THE SCOPES ARE AN EXPLICIT SET, NOT A PREFIX. The pre-#856 check took any
-// `apps:storage:` scope outside the shared namespace as satisfying the
-// per-viewer store. `apps:storage:publish` (the document store's) has that
-// prefix and grants the legacy store nothing, so the prefix would now read a
-// document-store manifest as having declared the legacy one.
-//
-// Both directions: a check that warned unconditionally would pass every "want"
-// row, so the SILENT rows carry the weight.
-func TestLegacyStorageHookNeedsItsScope(t *testing.T) {
+// Both directions: a check that warned on every file would pass every "want"
+// row, so the SILENT rows (no call, only a name) carry the weight there.
+func TestLegacyStorageHookWarnsOnAnyCall(t *testing.T) {
 	tests := []struct {
 		name       string
 		storage    string
@@ -102,22 +99,24 @@ func TestLegacyStorageHookNeedsItsScope(t *testing.T) {
 			wantApp: true,
 		},
 		{
-			name:   "calls useAppStorage with apps:storage:read — silent",
-			scopes: []string{"apps:storage:read"},
-			files:  map[string]string{"src/App.tsx": usesApp},
-			why:    "one of the store's scopes is a choice this check does not second-guess",
+			name:    "calls useAppStorage with apps:storage:read — still warns",
+			scopes:  []string{"apps:storage:read"},
+			files:   map[string]string{"src/App.tsx": usesApp},
+			wantApp: true,
+			why:     "the store is removed; its own scope no longer makes the call work",
 		},
 		{
-			name:   "calls useAppStorage with apps:storage:write — silent",
-			scopes: []string{"apps:storage:write"},
-			files:  map[string]string{"src/App.tsx": usesApp},
+			name:    "calls useAppStorage with apps:storage:read AND :write — still warns",
+			scopes:  []string{"apps:storage:read", "apps:storage:write"},
+			files:   map[string]string{"src/App.tsx": usesApp},
+			wantApp: true,
+			why:     "both of the store's scopes are the fully-scoped legacy app",
 		},
 		{
 			name:    "calls useAppStorage with only the SHARED scopes",
 			scopes:  []string{"apps:storage:shared:read", "apps:storage:shared:write"},
 			files:   map[string]string{"src/App.tsx": usesApp},
 			wantApp: true,
-			why:     "a shared scope does not satisfy the per-viewer store",
 		},
 		{
 			name:    "calls useAppStorage with only the DOCUMENT-STORE scopes",
@@ -125,7 +124,6 @@ func TestLegacyStorageHookNeedsItsScope(t *testing.T) {
 			scopes:  []string{"apps:storage", "apps:storage:publish"},
 			files:   map[string]string{"src/App.tsx": usesApp},
 			wantApp: true,
-			why:     "apps:storage / apps:storage:publish grant the legacy store nothing",
 		},
 		{
 			name:       "calls useSharedStorage with a type argument",
@@ -140,16 +138,23 @@ func TestLegacyStorageHookNeedsItsScope(t *testing.T) {
 			wantShared: true,
 		},
 		{
-			name:   "calls useSharedStorage with apps:storage:shared:read — silent",
-			scopes: []string{"apps:storage:shared:read"},
-			files:  map[string]string{"src/Board.tsx": usesShared},
+			name:       "calls useSharedStorage with apps:storage:shared:read — still warns",
+			scopes:     []string{"apps:storage:shared:read"},
+			files:      map[string]string{"src/Board.tsx": usesShared},
+			wantShared: true,
+			why:        "the store is removed; its own scope no longer makes the call work",
+		},
+		{
+			name:       "calls useSharedStorage with apps:storage:shared:write — still warns",
+			scopes:     []string{"apps:storage:shared:write"},
+			files:      map[string]string{"src/Board.tsx": usesShared},
+			wantShared: true,
 		},
 		{
 			name:       "calls useSharedStorage with only the PER-VIEWER scopes",
 			scopes:     []string{"apps:storage:read", "apps:storage:write"},
 			files:      map[string]string{"src/Board.tsx": usesShared},
 			wantShared: true,
-			why:        "the two stores are asked independently",
 		},
 		{
 			name:       "both hooks, no storage scope — two findings",
@@ -157,6 +162,15 @@ func TestLegacyStorageHookNeedsItsScope(t *testing.T) {
 			files:      map[string]string{"src/App.tsx": usesApp, "src/Board.tsx": usesShared},
 			wantApp:    true,
 			wantShared: true,
+		},
+		{
+			name: "both hooks, EVERY legacy scope declared — two findings",
+			scopes: []string{"apps:storage:read", "apps:storage:write",
+				"apps:storage:shared:read", "apps:storage:shared:write"},
+			files:      map[string]string{"src/App.tsx": usesApp, "src/Board.tsx": usesShared},
+			wantApp:    true,
+			wantShared: true,
+			why:        "no scope set silences a call to a removed store",
 		},
 		{
 			name:    "the document store declared does not silence a legacy call",
@@ -227,8 +241,8 @@ func TestLegacyStorageHookNeedsItsScope(t *testing.T) {
 			if shared != tc.wantShared {
 				t.Errorf("useSharedStorage advisory = %v, want %v (%s)", shared, tc.wantShared, tc.why)
 			}
-			// The source is CORRECT (using storage is the point) and the
-			// manifest is what lacks the scope, so the finding names `scopes`.
+			// The field stays `scopes`, a stable contract for consumers (see
+			// finding_fields_test.go for why).
 			for _, f := range fields {
 				if f != "scopes" {
 					t.Errorf("Field = %q, want %q", f, "scopes")
