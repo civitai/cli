@@ -235,9 +235,10 @@ fixed list. As of this CLI version:
   0.14.0 or later{{ if not .ElementsSDK }} — `@civitai/blocks-react` has no
   document-store hook{{ end }}. Test against `createFakeStorage` from
   `@civitai/sdk/testing`. {{ if .ElementsSDK }}`app.storage.get/set/delete/list`,
-  `app.sharedStorage`{{ else }}`useAppStorage()`, `useSharedStorage()`{{ end }} and the
-  `/api/v1/blocks/app-storage/` and `/shared-storage/` routes are deprecated:
-  they still work, but start nothing new on them. Any storage scope alongside
+  `app.sharedStorage`{{ else }}`useAppStorage()`, `useSharedStorage()` (removed in
+  `@civitai/blocks-react` 0.81.0){{ end }} and the `/api/v1/blocks/app-storage/`
+  and `/shared-storage/` routes are shut down: civitai.com refuses every call
+  with `legacy_store_removed`. Any storage scope alongside
   `auth: "oauth"` is refused at submit. Guide:
   https://developer.civitai.com/apps/guide/storage.md
 - **Open the resource picker with NO base-model ecosystem by default.**

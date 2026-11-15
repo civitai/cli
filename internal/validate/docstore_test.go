@@ -805,17 +805,17 @@ func TestDocStoreIgnoresTestHelpers(t *testing.T) {
 	}
 }
 
-// legacyMessage is the legacy-hook advisory, pinned WHOLE. It is the pre-#856
-// text (cli #767) restored, with one edit: its last sentence used to warn that
-// "a hook imported but never called is a false positive", and the match now
-// needs a CALL, so that caveat is gone.
+// legacyMessage is the legacy-hook advisory, pinned WHOLE. It used to tell the
+// author to add the store's scopes (cli #767); since the legacy stores were
+// removed (civitai.com answers `legacy_store_removed` from 2026-11-10, and
+// `@civitai/blocks-react` 0.81.0 dropped both hooks) it says the store is gone
+// and names the document store, and that adding a scope does not help.
 func legacyMessage(hook, readScope, writeScope string) string {
-	return "this project's source calls `" + hook + "()` but the manifest declares no " +
-		"storage scope — add the ones it uses to `scopes` (`" + readScope + "` to read, `" +
-		writeScope + "` to write) each with a `scopeJustifications` entry. The server gates " +
-		"storage by PRESENCE in the approved scope set, so without them every call fails in " +
-		"production with a 403 (`storage set requires the " + writeScope + " scope`) while " +
-		"working locally — and an authorization failure is deliberately unclassified by the " +
-		"SDK, so a block usually surfaces it as an unexplained \"try again\". ADVISORY: this " +
-		"reads source statically."
+	return "this project's source calls `" + hook + "()`, a legacy store that has been removed: " +
+		"civitai.com refuses every call to it with `legacy_store_removed` (since 2026-11-10), " +
+		"whatever the manifest declares, and `@civitai/blocks-react` 0.81.0 no longer exports the " +
+		"hook. Move the data to the document store: declare a collection under `storage`, add the " +
+		"`apps:storage` scope, and call `app.storage.collection(name)` from `@civitai/sdk` " +
+		"(the storage guide's \"Moving from the legacy stores\"). Adding `" +
+		readScope + "` or `" + writeScope + "` does not help. ADVISORY: this reads source statically."
 }

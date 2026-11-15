@@ -1306,7 +1306,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			// storageScopeChecks: the three SOURCE findings — an undeclared
 			// literal collection name, the document store with no apps:storage,
-			// and a legacy hook with no legacy scope. All three report manifest
+			// and a legacy hook call. All three report manifest
 			// fields; this fixture is what makes that checkable.
 			name: "source on the document store with nothing declared, plus a legacy hook (storageScopeChecks)",
 			files: map[string]string{
