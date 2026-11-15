@@ -253,15 +253,13 @@ func findingFieldLedger() []fieldExpectation {
 			"the source is correct — using the store is the feature — and the single edit that fixes " +
 				"it is adding apps:storage to `scopes`. FieldProject would send a consumer to read their " +
 				"own app code looking for a bug that is not there"},
-		{"but the manifest declares no storage scope", "scopes",
-			"🔴 THE DELIBERATE OPPOSITE OF THE readyack ROW ABOVE, and the contrast is the " +
-				"point. Both checks read src/, but they disagree about which side is wrong. " +
-				"readyack's remedy is in SOURCE (restore the emitter), so the manifest is " +
-				"not the place to send anyone. Here the SOURCE IS CORRECT — calling " +
-				"`useAppStorage()` is the whole feature — and the single edit that fixes it " +
-				"is adding two strings to `scopes` (plus their justifications). " +
-				"FieldProject would send a consumer to read their own app code looking for " +
-				"a bug that is not there, which is the mistake this ledger exists to catch"},
+		{"a legacy store that has been removed", "scopes",
+			"STILL `scopes`, though the store is now removed (civitai.com answers " +
+				"`legacy_store_removed`; @civitai/blocks-react 0.81.0 dropped the hooks). The advisory " +
+				"fires on a SCOPES condition (no scope for that store), and the move it names lands in " +
+				"the manifest too: a `storage` declaration and the `apps:storage` scope. The source edit " +
+				"(the call itself) is named in the message. Until the removal the source was correct and " +
+				"the whole fix was two strings in `scopes`, the contrast with the readyack row above"},
 	}
 }
 

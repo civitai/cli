@@ -17,7 +17,10 @@ import (
 // `useAppStorage`, `useSharedStorage`, the SDK's `app.storage.get/set/…` and
 // `app.sharedStorage`, and the `app-storage` / `shared-storage` REST routes — is
 // deprecated in its favour (the SDK 0.14.0 README marks them so). An agent
-// following the old bullet started new code on a deprecated store.
+// following the old bullet started new code on a deprecated store. Since
+// 2026-11-10 those stores are shut down (civitai.com answers
+// `legacy_store_removed`) and `@civitai/blocks-react` 0.81.0 removed the two
+// hooks, so the bullet now says that instead of "they still work".
 //
 // This bullet is CONTENTS, not just an address, which AGENTS.md item 36 argues
 // against. It REPLACES a contents bullet of the same kind rather than adding
@@ -34,7 +37,7 @@ const (
 		"`apps:storage:publish` to create or edit shared documents), and call " +
 		"`app.storage.collection<T>(name)` from `@civitai/sdk` 0.14.0 or later"
 	wantStorageBulletTail = "and the `/api/v1/blocks/app-storage/` and `/shared-storage/` routes are " +
-		"deprecated: they still work, but start nothing new on them. Any storage scope alongside " +
+		"shut down: civitai.com refuses every call with `legacy_store_removed`. Any storage scope alongside " +
 		"`auth: \"oauth\"` is refused at submit. Guide: " + storageGuideURL
 )
 
@@ -49,7 +52,7 @@ func wantStorageBullet(elementsSDK bool) string {
 	}
 	return wantStorageBulletHead + " — `@civitai/blocks-react` has no document-store hook. Test against " +
 		"`createFakeStorage` from `@civitai/sdk/testing`. `useAppStorage()`, `useSharedStorage()` " +
-		wantStorageBulletTail
+		"(removed in `@civitai/blocks-react` 0.81.0) " + wantStorageBulletTail
 }
 
 // TestTheBlockPointsStorageAtTheDocumentStore pins the bullet for every project
@@ -75,7 +78,7 @@ func TestTheBlockPointsStorageAtTheDocumentStore(t *testing.T) {
 				t.Errorf("kind %q sdk=%t: the block does not carry the storage bullet WHOLE.\nwant: %s\nblock: %s",
 					shape.Kind, sdk, want, norm)
 			}
-			for _, retired := range []string{"the one to prefer", "consolidating on them"} {
+			for _, retired := range []string{"the one to prefer", "consolidating on them", "they still work"} {
 				if strings.Contains(norm, retired) {
 					t.Errorf("kind %q sdk=%t: the block still says %q about the legacy shared-storage routes",
 						shape.Kind, sdk, retired)

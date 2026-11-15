@@ -97,10 +97,12 @@ It also emits non-fatal WARNINGS the schema can't catch as hard errors:
     document store.
   - source that calls useAppStorage() or useSharedStorage() while the manifest
     declares NO scope for that store (apps:storage:read / apps:storage:write,
-    or apps:storage:shared:read / apps:storage:shared:write). The server gates
-    storage by PRESENCE in the approved scope set, so every call 403s in
-    production while working locally against the mock host. One scope for the
-    store is enough to silence it; the two stores are asked independently.
+    or apps:storage:shared:read / apps:storage:shared:write). Both legacy
+    stores are removed: civitai.com refuses every call with
+    legacy_store_removed, and @civitai/blocks-react 0.81.0 no longer exports
+    the hooks. Move the data to the document store. One scope for the store
+    silences the warning but not the refusal; the two stores are asked
+    independently.
     Advisory ONLY: these read source statically. Same corpus rules as the
     ready-ack check — source only, comments stripped, node_modules and build
     output skipped — and test code is not read: *.test.*, *.spec.*, a file

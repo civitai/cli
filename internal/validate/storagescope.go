@@ -36,9 +36,10 @@
 //  3. A CALL to a legacy hook while the manifest declares NO scope for that
 //     store: `useAppStorage()` without `apps:storage:read` or
 //     `apps:storage:write`, `useSharedStorage()` without
-//     `apps:storage:shared:read` or `apps:storage:shared:write`. Every save then
-//     403s in production — the 2026-10-01 failure, which is what this advisory
-//     was written for (cli #767). One of a store's scopes is someone who knows
+//     `apps:storage:shared:read` or `apps:storage:shared:write`. Written for
+//     the 2026-10-01 failure, where every save 403'd in production (cli #767);
+//     since 2026-11-10 the stores are removed and every call is refused
+//     whatever the scopes, which is what the message now says. One of a store's scopes is someone who knows
 //     scopes exist and chose, so it is silent; the two stores are asked
 //     independently. The scopes are an explicit SET, not a prefix:
 //     `apps:storage:publish` starts with `apps:storage:` and grants the legacy
@@ -288,21 +289,22 @@ func importedCollectionAdvisories(calls map[string]map[string]string, rawImports
 	return out
 }
 
-// legacyHookScopeAdvice is the whole message, naming the hook found, both
-// scopes, and what the failure looks like if it ships. It names the FAILURE
-// because the defect is invisible until production: a developer who has only
-// ever run the mock host has no reason to connect "saving failed" to a manifest
-// field. The pre-#856 text, minus its old last clause ("a hook imported but
-// never called is a false positive"), which a call-shape match made untrue.
+// legacyHookScopeAdvice is the whole message, naming the hook found and what
+// happens if it ships. Until 2026-11-10 it told the author to add the store's
+// scopes (cli #767: every call 403'd without them). Since then civitai.com
+// refuses every legacy-store call with `legacy_store_removed` whatever the
+// scopes, and `@civitai/blocks-react` 0.81.0 removed both hooks
+// (civitai-app-starters#831), so adding a scope fixes nothing: the message says
+// the store is removed and points at the document store instead. The detection
+// is unchanged on purpose: a call to a removed hook is exactly what to flag.
 func legacyHookScopeAdvice(hook, readScope, writeScope string) string {
-	return "this project's source calls `" + hook + "()` but the manifest declares no " +
-		"storage scope — add the ones it uses to `scopes` (`" + readScope + "` to read, `" +
-		writeScope + "` to write) each with a `scopeJustifications` entry. The server gates " +
-		"storage by PRESENCE in the approved scope set, so without them every call fails in " +
-		"production with a 403 (`storage set requires the " + writeScope + " scope`) while " +
-		"working locally — and an authorization failure is deliberately unclassified by the " +
-		"SDK, so a block usually surfaces it as an unexplained \"try again\". ADVISORY: this " +
-		"reads source statically."
+	return "this project's source calls `" + hook + "()`, a legacy store that has been removed: " +
+		"civitai.com refuses every call to it with `legacy_store_removed` (since 2026-11-10), " +
+		"whatever the manifest declares, and `@civitai/blocks-react` 0.81.0 no longer exports the " +
+		"hook. Move the data to the document store: declare a collection under `storage`, add the " +
+		"`apps:storage` scope, and call `app.storage.collection(name)` from `@civitai/sdk` " +
+		"(the storage guide's \"Moving from the legacy stores\"). Adding `" +
+		readScope + "` or `" + writeScope + "` does not help. ADVISORY: this reads source statically."
 }
 
 func containsString(arr []any, want string) bool {

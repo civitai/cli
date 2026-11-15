@@ -544,20 +544,20 @@ func TestAppDevTokenHelpStorageUnderDevLive(t *testing.T) {
 		"- The document store (@civitai/sdk app.storage.collection) is not reached at all: " +
 		"@civitai/sdk calls it over HTTP, not over the block→host bridge the page-money harness " +
 		"forwards, and that template does not use @civitai/sdk. " +
-		"- Legacy App Storage (useAppStorage) is forwarded, and the server refuses it with 401: " +
-		"those calls need a civitai.com browser session, which a local harness never has. " +
-		"It says nothing about your account or your app. " +
-		"- Legacy shared storage (useSharedStorage) is refused too. Until the app has an approved " +
-		"version the refusal is \"app block not found\" or \"app block is not approved\"; once it has " +
-		"one, it is for scope, because the apps:storage:shared:* scopes are never minted on a dev token. " +
-		"Exercise the legacy stores under \"npm run dev:harness\", and the document store with " +
-		"createFakeStorage from @civitai/sdk/testing."
+		"- The legacy stores (useAppStorage, useSharedStorage) are removed: civitai.com refuses " +
+		"every call to them, in production too (legacy_store_removed, since 2026-11-10), and " +
+		"@civitai/blocks-react 0.81.0 no longer exports the hooks. " +
+		"Exercise the document store with createFakeStorage from @civitai/sdk/testing."
 	if !strings.Contains(norm, want) {
 		t.Errorf("dev-token --help must carry the storage paragraph verbatim (whitespace-normalised).\nwant: %s\ngot:  %s", want, norm)
 	}
 	// No other sentence may claim dev:live serves storage.
 	if strings.Contains(norm, "catalog/storage") {
 		t.Errorf("dev-token --help still claims dev:live shows storage:\n%s", norm)
+	}
+	// No sentence may send an author to the removed stores.
+	if strings.Contains(norm, "Exercise the legacy stores") {
+		t.Errorf("dev-token --help still tells authors to exercise the removed legacy stores:\n%s", norm)
 	}
 }
 

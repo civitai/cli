@@ -660,25 +660,20 @@ The two reads use **different credentials** — by design, and security-critical
 > - The **document store** (`app.storage.collection` in `@civitai/sdk`) is not
 >   reached at all. `@civitai/sdk` calls it over HTTP, not over the block→host
 >   bridge this harness forwards, and this template does not use `@civitai/sdk`.
-> - **Legacy App Storage** (`useAppStorage`) is forwarded, and the server
->   refuses it: those calls need a civitai.com browser session, which a local
->   harness never has, so every developer gets `401` `Apps access is not enabled
->   for this browser session`. It says nothing about your account or your app.
-> - **Legacy shared storage** (`useSharedStorage`) is refused too. Until the
->   app has an approved version the refusal is `app block not found` or `app
->   block is not approved`; once it has one, it is for scope, because the
->   `apps:storage:shared:*` scopes are never minted on a dev token.
+> - **The legacy stores** (`useAppStorage`, `useSharedStorage`) are removed:
+>   civitai.com refuses every call to them, in production too
+>   (`legacy_store_removed`, since 2026-11-10), and `@civitai/blocks-react`
+>   0.81.0 no longer exports the two hooks. Do not build on them.
 >
-> Exercise the legacy stores under `dev:harness`, and the document store with
-> `createFakeStorage` from `@civitai/sdk/testing`.
+> Exercise the document store with `createFakeStorage` from
+> `@civitai/sdk/testing`.
 
 > **`dev:harness` is the wide one — do not infer its limits from `dev:live`'s.**
 > The mock host answers the whole block→host protocol, so hooks that `dev:live`
 > refuses work there, INCLUDING posting: `CREATE_POST_FROM_APP`
 > (`useCreatePostFromApp()`), `PUBLISH_GENERATION_OUTPUTS`, `SAVE_IMAGE`,
-> `GET_IMAGES_BY_IDS`, `SET_COLLECTION_FOLLOW`, `OPEN_IMAGE_UPLOAD`,
-> `GET_WILDCARD_PACK` and the App-Storage + shared-storage message families are
-> all mocked. You do not need to read `mockHost.js` to find that out, and you do
+> `GET_IMAGES_BY_IDS`, `SET_COLLECTION_FOLLOW`, `OPEN_IMAGE_UPLOAD` and
+> `GET_WILDCARD_PACK` are all mocked. You do not need to read `mockHost.js` to find that out, and you do
 > not need beta access or Buzz to exercise any of them. The authority is the set
 > of message types `createMockHost` handles in
 > `@civitai/blocks-react/testing` — this list is checked against it.
