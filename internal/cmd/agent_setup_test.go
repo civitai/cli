@@ -592,7 +592,7 @@ func TestAgentSetupTrackAPIRefuses(t *testing.T) {
 	msg := err.Error()
 	for _, want := range []string{
 		"https://mcp.civitai.com/mcp",
-		"https://orchestration.civitai.com/mcp",
+		"https://orchestration.civitai.com/mcp/v2",
 		"https://developer.civitai.com/site.md",
 		"https://developer.civitai.com/orchestration.md",
 		"coming",

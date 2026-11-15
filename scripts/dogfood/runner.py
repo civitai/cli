@@ -624,8 +624,6 @@ GATED_FLAGS = {
     # --- Flags whose value names or selects an app. ---
     # The blockId itself.
     "slug": "slug",
-    # "fork from an existing published app slug".
-    "from": "slug",
     # `app init`/`app create` SLUGIFY the display name into the blockId when
     # --slug is absent, so this names an app just as directly.
     "name": "slug",

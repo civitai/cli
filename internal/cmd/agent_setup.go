@@ -529,7 +529,7 @@ and the output names the exact header to add yourself.
 
 THE TWO SERVERS DIFFER ON ANONYMOUS ACCESS. https://mcp.civitai.com/mcp answers
 without a credential, so a header-less config browses models, images and
-articles as it stands. https://orchestration.civitai.com/mcp returns 401 until
+articles as it stands. https://orchestration.civitai.com/mcp/v2 returns 401 until
 an Authorization header is present, so generation tools need one either way.
 
 AUTHENTICATION IS YOURS TO RUN. The servers are registered before login on
@@ -540,7 +540,10 @@ WHAT --check REPORTS. It writes nothing and probes no credential. Seven rows:
 cli-version, agents-md, claude-md, mcp-site, mcp-orch, authenticated,
 agent-token. EVERY FILESYSTEM ROW REPORTS PRESENCE, NEVER ACCEPTANCE: an
 mcp-site row is 'ok' because the entry is in your config, not because any
-server accepted it. An ABSENT Authorization header gets no row of its own —
+server accepted it. mcp-orch checks the entry's NAME, not its URL, so an entry
+an older release registered at the frozen v1 /mcp URL still reports 'ok':
+existing installs stay on v1 until you re-run 'civitai agent-setup', which moves
+the entry to /mcp/v2. An ABSENT Authorization header gets no row of its own —
 that is by design, since a header-less setup still reaches the site server. A
 config file that will not parse maps to the mcp-site/mcp-orch rows, carrying
 the parse failure in 'detail'.
