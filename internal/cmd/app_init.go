@@ -18,7 +18,6 @@ import (
 
 func newAppInitCmd() *cobra.Command {
 	var templateFlag string
-	var fromSlug string
 	var dirFlag string
 	var nameFlag string
 	var slugFlag string
@@ -80,12 +79,11 @@ the directory is a refusal — nothing is overwritten and there is no --force.`,
   civitai app init my-block ./apps/foo --name "My Block"`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAppScaffold(cmd, args, templateFlag, fromSlug, dirFlag, nameFlag, slugFlag, noInput)
+			return runAppScaffold(cmd, args, templateFlag, dirFlag, nameFlag, slugFlag, noInput)
 		},
 	}
 
 	cmd.Flags().StringVarP(&templateFlag, "template", "t", string(scaffold.DefaultTemplate), templateFlagUsage)
-	cmd.Flags().StringVar(&fromSlug, "from", "", fromFlagUsage)
 	cmd.Flags().StringVar(&dirFlag, "dir", "", "output directory (default ./<slug>)")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "display name (default derived from the name argument)")
 	cmd.Flags().StringVar(&slugFlag, "slug", "", slugFlagUsage)
@@ -93,34 +91,20 @@ the directory is a refusal — nothing is overwritten and there is no --force.`,
 	return cmd
 }
 
-// slugFlagUsage / fromFlagUsage / templateFlagUsage are shared by `app init`
+// slugFlagUsage / templateFlagUsage are shared by `app init`
 // and `app create` so the two commands cannot drift on the same flag.
 const (
 	templateFlagUsage = "project template: page-elements | page-money | page-vite | static"
 
 	slugFlagUsage = "explicit blockId (bypasses derivation from the name; 3-40 chars, starts with a letter, lowercase a-z/0-9/hyphens)"
-	// The flag stays discoverable — it is a real roadmap item and hiding it
-	// would only move the surprise to a user who read about it elsewhere — but
-	// the usage string says up front that it cannot work yet, so the failure is
-	// predictable BEFORE the command is run rather than after.
-	fromFlagUsage = "fork from an existing published app slug (NOT AVAILABLE YET — the CLI cannot fetch app source)"
 )
 
 // runAppScaffold is the shared scaffold body behind both `app init` and
 // `app create`. The two commands differ only in the default template; all of
 // the slug/display derivation, dir resolution, rendering, self-validation, and
 // next-steps output lives here so there is a single code path.
-func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, dirFlag, nameFlag, slugFlag string, noInput bool) error {
+func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, dirFlag, nameFlag, slugFlag string, noInput bool) error {
 	out := cmd.OutOrStdout()
-
-	// TODO(server): expose a read endpoint that returns a published app's
-	// canonical source tree by slug, then --from can scaffold from it. Until
-	// then the flag has a 100% failure rate, so the message a user sees is a
-	// plain actionable CLI error — the engineering context stays HERE. An
-	// end-user error is not the place to ship an internal ticket.
-	if fromSlug != "" {
-		return fmt.Errorf("--from is not available yet: this CLI cannot fetch a published app's source. Scaffold a plain project with `%s <name>` and copy the upstream files in by hand", cmd.CommandPath())
-	}
 
 	// An explicit --slug bypasses derivation entirely, so it is checked against
 	// the same server contract a derived slug is. A bad VALUE is a usage error

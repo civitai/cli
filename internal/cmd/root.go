@@ -236,8 +236,9 @@ It does three things from one static binary:
 
   • Browse & download the public catalog — search models, list images and
     articles, and fetch model files. Reading the PUBLIC catalog is anonymous;
-    downloading a model file needs a token (civitai login). --layout routes
-    each file into the right folder for ComfyUI / A1111.
+    most model-file downloads need a token (civitai login), though some
+    public files download without one. --layout routes each file into the
+    right folder for ComfyUI / A1111.
   • Build & submit Apps — small, sandboxed web apps that run inside Civitai
     surfaces. Scaffold a correct project, validate it against the platform
     contract, and package it for submission. EVERY civitai app command needs a

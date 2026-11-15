@@ -8,9 +8,9 @@ intentional. For the contributor checklist see
 
 🔴 **[`README.md`](README.md) IS THE PUBLISHED USER CONTRACT, AND IT IS NOT ONE
 PLACE.** This file holds the decisions and rationale; the README states/LINKS the
-contract — exit codes, `--json` shapes, the command reference (don't re-derive
-it here) — so **any** behaviour change is incomplete until it moves too, not
-only the ones an item below cites. Its command section and exit-code table each
+contract — exit codes, `--json` shapes, a link to the generated command
+reference — so **any** behaviour change is incomplete until it moves too, not
+only the ones an item below cites. Its sections and exit-code table each
 state that contract and each goes stale ALONE: #371 shipped having updated two of
 three (#378). Grep every surface naming what you
 changed: some of that prose is GENERATED (`internal/cmd/exitcodes_doc.go`) or
@@ -187,7 +187,7 @@ item 7 owns why an untagged return unpins a published exit code.
   (`appapi.Submitter`, `appapi.Verifier`) or take a dir argument, so tests use
   `httptest` + `t.TempDir()` with no live server. New behaviour needs tests that
   cover the **error paths**, not just the happy path.
-- **Config:** `~/.config/civitai/config.yaml` (0600, atomic write). Overridable
+- **Config:** `<UserConfigDir>/civitai/config.yaml` (per-OS; 0600, atomic). Overridable
   by `CIVITAI_TOKEN` / `CIVITAI_BASE_URL`; default base URL `https://civitai.com`.
 
 ### Adding a command
@@ -198,7 +198,7 @@ item 7 owns why an untagged return unpins a published exit code.
    like `newAppCmd` for a subcommand.
 3. Add `internal/cmd/<name>_test.go` driving it via `NewRootCmd()` + `SetArgs`,
    or the constructor + `SetOut`/`SetErr` buffers.
-4. Keep `make ci` green; update `README.md` (command table + a section).
+4. Keep `make ci` green; update `README.md` (a section; no flag table).
 
 ## Intentional decisions that look wrong (read before "fixing")
 
