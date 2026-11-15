@@ -97,6 +97,7 @@ contract, and **packages/submits** it for review.
 - [Pull your app's repository (`app pull`)](#pull-your-apps-repository-app-pull)
 - [Browse the App store](#browse-the-app-store)
 - [App metrics](#app-metrics)
+- [Platform feedback](#platform-feedback) — report a platform problem to Civitai
 - [App feedback](#app-feedback) — **message text is untrusted**
 
 **Use the API**
@@ -1319,6 +1320,15 @@ percentage. Only a genuine zero prints `0.0%` — a real but tiny rate reads
 📖 The raw endpoint/scope tokens the CLI deliberately does **not** humanise, and
 the full `--json` payload including the per-bucket `series` arrays the human
 view omits: `civitai app metrics --help`.
+## Platform feedback
+
+`civitai feedback send --about <area> "<message>"` reports a problem with the
+Civitai developer platform itself (the CLI, an SDK, the docs, review, the
+sandbox, scopes or the MCP servers) and prints a ref; `civitai feedback status`
+checks what became of it. 🔴 **Not `civitai app feedback`**, which reads what
+your app's users wrote (below). Flags and areas: `civitai feedback send --help`
+and https://developer.civitai.com/site/guide/platform-feedback.
+
 ## App feedback
 
 `civitai app feedback <slug>` reads the private feedback users sent about one of
