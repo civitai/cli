@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -66,11 +68,19 @@ func WithheldBody(raw []byte) string {
 // blockId, and a 200-rune cap made a long slug's 404 read as a slug collision.
 // Branch on ErrorMessage, never on what this returns.
 //
-// 🔴 THIS IS A SHAPE CHECK, NOT A SECRET DETECTOR. A bare token is short plain
-// text and passes. It is applied only to a FIELD whose meaning is "error
-// message" (an OAuth `error`/`error_description`, a tRPC `error.json.message`)
-// or to a body the route documents as error text — never to a body the caller
-// did not recognise, which is withheld whatever it looks like.
+// In place of the cap it refuses two TOKEN SHAPES, wherever they sit in the
+// text: a JWT (three dot-separated base64url segments opening `eyJ`, the third
+// may be empty), and a run of 40 or more base64/base64url characters that is
+// all hex or mixes upper- and lower-case letters. The second condition is what lets a long lowercase slug or path
+// through — the 30-char-slug 404 above is all lowercase runs — while a random
+// token of that length is, in practice, never single-case.
+//
+// 🔴 THIS IS A SHAPE CHECK, NOT A SECRET DETECTOR. A short token, or a long one
+// that is single-case and not hex, is plain text and passes. It is applied only
+// to a FIELD whose meaning is "error message" (an OAuth
+// `error`/`error_description`, a tRPC `error.json.message`) or to a body the
+// route documents as error text — never to a body the caller did not
+// recognise, which is withheld whatever it looks like.
 func ServerText(s string) (string, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" || !utf8.ValidString(s) {
@@ -84,7 +94,39 @@ func ServerText(s string) (string, bool) {
 			return "", false
 		}
 	}
+	if hasTokenShape(s) {
+		return "", false
+	}
 	return s, true
+}
+
+// tokenRunMin is the shortest unbroken base64/base64url/hex run hasTokenShape
+// treats as a possible token. 40 is a SHA-1 hex digest, and shorter than every
+// bearer credential this CLI handles.
+const tokenRunMin = 40
+
+var (
+	jwtShape = regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*`)
+	tokenRun = regexp.MustCompile(`[A-Za-z0-9_\-+/=]{` + strconv.Itoa(tokenRunMin) + `,}`)
+	hexRun   = regexp.MustCompile(`^[0-9A-Fa-f]+$`)
+)
+
+// hasTokenShape reports whether s holds a JWT, or a run of tokenRunMin+
+// token characters that is all hex or holds both an upper- and a lower-case
+// letter. See ServerText for why single-case runs pass.
+func hasTokenShape(s string) bool {
+	if jwtShape.MatchString(s) {
+		return true
+	}
+	for _, run := range tokenRun.FindAllString(s, -1) {
+		if hexRun.MatchString(run) {
+			return true
+		}
+		if strings.ContainsAny(run, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") && strings.ContainsAny(run, "abcdefghijklmnopqrstuvwxyz") {
+			return true
+		}
+	}
+	return false
 }
 
 // ErrorMessage returns a JSON error body's MESSAGE field, unfiltered: a tRPC
@@ -135,6 +177,32 @@ func CredentialRouteMessage(raw []byte) string {
 		return msg
 	}
 	return WithheldBody(raw)
+}
+
+// CredentialRouteProblem is CredentialRouteMessage for a route that may answer
+// in RFC 7807 problem-details form: a body with no message field shows its
+// `title` and `detail`, each only when ServerText accepts it, as "title: detail".
+// No other problem-details member is read — `type` and `instance` are URIs, and
+// an `instance` can be a signed URL.
+func CredentialRouteProblem(raw []byte) string {
+	if ErrorMessage(raw) == "" {
+		var p struct {
+			Title  string `json:"title"`
+			Detail string `json:"detail"`
+		}
+		if json.Unmarshal(raw, &p) == nil {
+			var parts []string
+			for _, f := range []string{p.Title, p.Detail} {
+				if s, ok := ServerText(f); ok {
+					parts = append(parts, s)
+				}
+			}
+			if len(parts) > 0 {
+				return strings.Join(parts, ": ")
+			}
+		}
+	}
+	return CredentialRouteMessage(raw)
 }
 
 // CredentialRouteText is CredentialRouteMessage for a route documented to

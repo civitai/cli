@@ -141,10 +141,11 @@ func (c *Client) UploadImageBlob(ctx context.Context, up civitai.PresignedUpload
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		// The reply can carry the blob's url, which can be a signed read URL —
 		// the same reason the decode-failure arm below withholds it — so only an
-		// error message field is shown.
+		// error message field is shown — or, for an RFC 7807 reply, its
+		// title/detail.
 		out := fmt.Sprintf("the image upload was rejected (%d)", resp.StatusCode)
 		if len(bytes.TrimSpace(raw)) > 0 {
-			out += ": " + redact.CredentialRouteMessage(raw)
+			out += ": " + redact.CredentialRouteProblem(raw)
 		}
 		// A presigned URL that has expired reads as a 401/403 here and a token
 		// would not fix it — say what actually helps.
