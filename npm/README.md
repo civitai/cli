@@ -2,8 +2,10 @@
 
 The Civitai CLI — author and ship [Civitai App Blocks](https://github.com/civitai/cli).
 
-This npm package is a **thin wrapper** over the Go CLI. On install it downloads
-the prebuilt binary for your platform from the project's
+This npm package is a **thin wrapper** over the Go CLI. On linux/x64 the
+prebuilt binary arrives as an npm package of its own
+(`@civitai/cli-linux-x64`), so installing needs only the npm registry. On other
+platforms the wrapper downloads the binary from the project's
 [GitHub Releases](https://github.com/civitai/cli/releases) and verifies its
 sha256 checksum.
 
@@ -22,7 +24,11 @@ npx @civitai/cli app create my-app
 
 ## How it works
 
-- On `npm install`, a `postinstall` step downloads
+- On linux/x64, npm installs `@civitai/cli-linux-x64` (an optional dependency
+  pinned to the same version), which contains the binary. Nothing is
+  downloaded outside the npm registry.
+- Everywhere else — or if optional dependencies were skipped
+  (`--omit=optional`) — a `postinstall` step downloads
   `civitai_<version>_<os>_<arch>` from the matching GitHub Release and verifies
   it against `checksums.txt`.
 - The `civitai` command then execs that binary, forwarding all arguments and

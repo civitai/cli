@@ -113,8 +113,12 @@ var bareIdentArgs = map[string]string{
 	"reportBaseModel::baseModel":     "SERVER: a base-model label",
 
 	// --- app feedback --------------------------------------------------------
+	"feedbackDetailText::s":         "SERVER: one value of a feedback row's diagnostics (source commit, platform sha, fork upstream, environment, recent-error fields); the slug the user typed is never passed here",
 	"feedbackHeader::s":             "SERVER: one header cell of a feedback row — created time, status, app version, build sha, surface, or the reporter's username — handed to the `cell` closure; never the slug the user typed",
 	"feedbackMessageLines::message": "SERVER, and the least trusted text this CLI prints: a feedback message any signed-in site user wrote (appapi.Feedback.Message)",
+
+	// --- feedback (platform) -------------------------------------------------
+	"feedbackServerCell::s": "SERVER: one single-line value platformFeedback.create / getStatus returned — the report ref, the status word, fixedIn.component, fixedIn.version, firstSeenAt, updatedAt. Never the ref the user typed: printFeedbackStatus prints the ASKED-FOR ref raw and passes only the server's fields here",
 
 	// --- read path ----------------------------------------------------------
 	"printImageResources::w":  "SERVER: an image-metadata WEIGHT (r.WeightString()). Nothing to do with the download warnings also spelled `w` — which is exactly why this ledger is keyed per function",
@@ -138,6 +142,9 @@ var bareIdentArgs = map[string]string{
 	"serverReasonSuffix::reason":          "SERVER: an orchestrator failure reason",
 	"printWorkflow::r":                    "SERVER: an orchestrator failure reason (workflows get)",
 	"printWorkflowList::r":                "SERVER: an orchestrator failure reason (workflows list)",
+
+	// --- app submit: App Storage schema-migration notes ---------------------
+	"printStorageMigrationWarnings::warn": "SERVER: one storageMigrationWarnings string from the submit response",
 }
 
 // sanitizerComposers are the functions IN safeterm.go that may call safeTerm on

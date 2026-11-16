@@ -82,6 +82,7 @@
 
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
+import { appendFileSync } from 'node:fs';
 import { readFile, mkdtemp, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, extname, normalize, sep } from 'node:path';
@@ -90,6 +91,27 @@ import { join, extname, normalize, sep } from 'node:path';
  * download, parse and mount before its first element exists; a static file is
  * there at first paint. */
 export const WAIT_MS = Number(process.env.CIVITAI_ASSERT_WAIT_MS || 15000);
+
+/**
+ * Opt-in: a file every in-page wait appends one JSON line to —
+ * `{"what","ok","ms","budget"}`. Unset (the default) nothing is written.
+ *
+ * It exists because `WAIT_MS` is now shortened for the negative controls (see
+ * `dogfoodControlWaitMS` in dogfood_control_wait_test.go), and the only honest
+ * basis for "how short" is how long the waits that SUCCEED take on the machine
+ * in question. A passing assertion prints none of that, so without this the
+ * margin under a shortened wait is a guess the next runner image can falsify
+ * silently. `ok:true` rows are the distribution; `ok:false` rows are the
+ * timeouts. A write failure is swallowed: this is a measurement of the harness
+ * and must never be able to change a verdict about a block.
+ */
+export const WAIT_LOG = process.env.CIVITAI_ASSERT_WAIT_LOG || '';
+const logWait = (what, ok, ms) => {
+  if (!WAIT_LOG) return;
+  try {
+    appendFileSync(WAIT_LOG, JSON.stringify({ what, ok, ms, budget: WAIT_MS }) + '\n');
+  } catch { /* a measurement, never a verdict */ }
+};
 
 /**
  * The deadline the BROWSER LAUNCH gets — deliberately NOT `WAIT_MS`.
@@ -133,13 +155,13 @@ export const LAUNCH_MS = Number(process.env.CIVITAI_ASSERT_LAUNCH_MS || 30000);
  * What keeps it honest is that a retry is never silent. Every attempt prints a
  * line naming the attempt number, the elapsed ms and the browser's own output,
  * and a launch that needed a retry prints a `BROWSER LAUNCH RETRY` warning even
- * though it SUCCEEDED — which is the half a retry normally hides. `ci.yml`'s
- * browser-smoke step greps for exactly that string and raises a `::warning` on
+ * though it SUCCEEDED — which is the half a retry normally hides. CI's
+ * browser-smoke step (`scripts/dogfood/ci-browser.sh`) greps for exactly that string and raises a `::warning` on
  * it, so "the browser has started failing half the time" is visible in the run
  * rather than absorbed into a green.
  *
  * Set `CIVITAI_ASSERT_LAUNCH_ATTEMPTS=1` to take the retry away — which is what
- * the negative control in `ci.yml` does, so the failing path stays measured.
+ * the negative control in `scripts/dogfood/ci-browser.sh` does, so the failing path stays measured.
  */
 export const LAUNCH_ATTEMPTS = Math.max(
   1, Number(process.env.CIVITAI_ASSERT_LAUNCH_ATTEMPTS || 2) || 1);
@@ -1310,7 +1332,7 @@ export async function serve(dir) {
  * because it is the mechanism.
  *
  * 🔴 THIS LIST EXISTS FOUR TIMES AND THEY MUST AGREE: here, in
- * `scripts/dogfood/oracle.sh`, in `.github/workflows/ci.yml`'s resolve step,
+ * `scripts/dogfood/oracle.sh`, in `scripts/dogfood/ci-browser.sh`,
  * and in `dogfood_oracle_test.go`'s `oracleBrowser`. One rule, four places, so
  * it is pinned by `TestEveryBrowserResolverAgreesOnTheSameOrder` rather than by
  * a comment asking nicely.
@@ -1437,7 +1459,7 @@ export async function launch() {
       if (attempt > 1) {
         // 🔴 LOUD ON SUCCESS. This is the line that stops the retry from being
         // a way to stop noticing a browser that has started failing: a green
-        // run whose browser needed two goes SAYS SO. ci.yml greps for
+        // run whose browser needed two goes SAYS SO. ci-browser.sh greps for
         // `BROWSER LAUNCH RETRY`.
         console.error(
           `[cdp] ⚠ BROWSER LAUNCH RETRY: ${bin} launched on attempt ${attempt} of ` +
@@ -1683,10 +1705,16 @@ export async function openPage(c, url, { scopes = [] } = {}) {
     return r.result.value;
   };
   const waitFor = async (expr, what) => {
-    const deadline = Date.now() + WAIT_MS;
+    const started = Date.now();
+    const deadline = started + WAIT_MS;
     for (;;) {
-      try { if (await evalJs(expr)) return true; } catch { /* pre-navigation */ }
-      if (Date.now() > deadline) throw new Error(`timed out after ${WAIT_MS}ms waiting for ${what}`);
+      try {
+        if (await evalJs(expr)) { logWait(what, true, Date.now() - started); return true; }
+      } catch { /* pre-navigation */ }
+      if (Date.now() > deadline) {
+        logWait(what, false, Date.now() - started);
+        throw new Error(`timed out after ${WAIT_MS}ms waiting for ${what}`);
+      }
       await sleep(100);
     }
   };

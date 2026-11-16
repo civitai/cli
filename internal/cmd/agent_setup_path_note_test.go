@@ -148,3 +148,49 @@ func TestEveryBlockTellsYouWhatToDoWhenTheCLIIsNotOnPATH(t *testing.T) {
 		}
 	}
 }
+
+// npxFallbackClaim is the managed block's answer to "there is no `civitai` on
+// this machine at all", pinned whole for the same reason as pathNoteWindowsClaim.
+//
+// 🔴 THE MEASURED DEFECT: the App Assistant sandbox has no global `civitai`
+// (`civitai --version` → not found), yet `npx -y @civitai/cli@latest` works
+// there — it is how the agent scaffolded the project. The block read "command
+// not found" ONLY as a PATH problem ("the CLI is installed but its directory is
+// not on this shell's PATH"), which is false when nothing is installed and sends
+// the agent to repair a PATH that has nothing to find. Every row still starts
+// with `civitai` (the rows are true wherever it IS installed); this sentence
+// says what each one means where it is not.
+const npxFallbackClaim = "**Every row below starts with `civitai`. If your shell answers " +
+	"`command not found`, run the same command through `npx` instead: " +
+	"`npx -y @civitai/cli@latest <command>`, for example " +
+	"`npx -y @civitai/cli@latest app validate`.** That is the same CLI, needs no install, and is " +
+	"what every `civitai …` command in this file means wherever no `civitai` is installed; in some " +
+	"environments `civitai` is itself a shim for exactly that `npx` command."
+
+// TestEveryBlockSaysHowToRunTheCLIWithNothingInstalled pins npxFallbackClaim in
+// every project shape, and pins that it comes BEFORE the PATH-repair advice: an
+// agent that hits `command not found` must read the no-install answer first,
+// not a diagnosis that assumes an install.
+func TestEveryBlockSaysHowToRunTheCLIWithNothingInstalled(t *testing.T) {
+	shapes := allProjectShapesForTest()
+	if len(shapes) < 2 {
+		t.Fatalf("PREMISE BROKEN: only %d project shape(s)", len(shapes))
+	}
+	for _, shape := range shapes {
+		block, err := agentsManagedBlock(shape)
+		if err != nil {
+			t.Fatalf("rendering for kind %q: %v", shape.Kind, err)
+		}
+		got := normaliseProseForTest(block)
+		at := strings.Index(got, npxFallbackClaim)
+		if at < 0 {
+			t.Errorf("the %q block does not carry the npx fallback verbatim.\nwant (normalised): %s\n"+
+				"If you reworded it on purpose, restate it in npxFallbackClaim.", shape.Kind, npxFallbackClaim)
+			continue
+		}
+		if pathAt := strings.Index(got, "command -v civitai"); pathAt < 0 || pathAt < at {
+			t.Errorf("the %q block gives the PATH-repair advice (at %d) before the npx fallback (at %d) — "+
+				"an agent with no CLI installed reads a diagnosis that assumes one", shape.Kind, pathAt, at)
+		}
+	}
+}

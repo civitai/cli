@@ -768,6 +768,14 @@ func runAppDoctor(out, errOut io.Writer, rows []appapi.MyListing, rollout appapi
 	// on the JSON path too: a script reading `ok: true` from a truncated page is
 	// exactly who this caveat is for.
 	warnDoctorTruncated(errOut, payload)
+	// The host ANSWERED the rollout probe in a shape this CLI cannot read a
+	// verdict from — the one rollout outcome that is the platform's, not the
+	// caller's (unreachable, 401, 403 and 429 are not). STDERR, after both
+	// renderings, so --json stdout and the exit code are untouched
+	// (feedback_hint.go).
+	if rollout.State == appapi.RolloutUnknown {
+		printFeedbackHint(errOut, feedbackHintDoctorRollout)
+	}
 	// 🔴 `Gating`, NOT `Blocking`. See doctorGates: a delisted listing's blocking
 	// problems are printed and do not set the exit code.
 	if payload.Summary.Gating > 0 {

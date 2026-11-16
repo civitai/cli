@@ -80,6 +80,12 @@ var notAPage = map[string]string{
 	// why it was reverted rather than reworded.
 	"https://orchestration.civitai.com/mcp": "MCP transport endpoint; measured 405 to a GET from a developer host (CI is answered 401 and skips it)",
 
+	// The v2 route the orchestration server is now registered at (the `/mcp`
+	// entry above stays because the README still names it, as the URL an older
+	// install was registered with). Same transport class, same caller-dependent
+	// status: MEASURED 405 to a plain GET from a developer host, 2026-11-14.
+	"https://orchestration.civitai.com/mcp/v2": "MCP transport endpoint (v2); measured 405 to a GET from a developer host",
+
 	// MEASURED RED on the guard's first live run.
 	"https://github.com/me/my-app": "placeholder repo URL in a command example",
 }

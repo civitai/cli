@@ -181,6 +181,12 @@ func listingWordingRows() []listingWordingRow {
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 		{
+			name:    "setRedMedia sets or clears the listing's civitai.red override",
+			route:   trpcSetRedMedia,
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
+		},
+		{
 			name:    "addScreenshot appends to the listing",
 			route:   trpcAddScreenshot,
 			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},

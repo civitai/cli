@@ -4,6 +4,11 @@ dist/
 .DS_Store
 .vite/
 
+# Throwaway probes and debug files (see scratch/README.md). Only the README is
+# tracked, so the directory exists in every clone.
+scratch/*
+!scratch/README.md
+
 # Local overrides. `.env.development` and `.env.example` ARE tracked and, as
 # scaffolded, hold only non-secret VITE_ values. `civitai app submit` UPLOADS
 # .env.example verbatim, so keep secrets out of it.

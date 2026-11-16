@@ -1,6 +1,9 @@
 package cmd
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // The `cli-version` row's FRESHNESS half, and the one network call `--check`
 // makes.
@@ -193,6 +196,6 @@ func agentTokenCheck(env agentEnv, agent string) agentCheckJSON {
 	}
 	return agentCheckJSON{Name: checkAgentToken, OK: false,
 		Detail: tokenEnvVar + " is NOT set in this environment, and " + agent + "'s MCP entries reference it by " +
-			"name — so " + agent + " resolves it to an empty string and https://orchestration.civitai.com/mcp " +
-			"401s. That is the only thing it affects. " + appTrackTokenNote}
+			"name — so " + agent + " resolves it to an empty string and " +
+			strings.Join(authRequiredServerURLs(), ", ") + " 401s. That is the only thing it affects. " + appTrackTokenNote}
 }

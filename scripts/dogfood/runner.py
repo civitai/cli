@@ -624,8 +624,6 @@ GATED_FLAGS = {
     # --- Flags whose value names or selects an app. ---
     # The blockId itself.
     "slug": "slug",
-    # "fork from an existing published app slug".
-    "from": "slug",
     # `app init`/`app create` SLUGIFY the display name into the blockId when
     # --slug is absent, so this names an app just as directly.
     "name": "slug",
@@ -661,6 +659,9 @@ GATED_FLAGS = {
     # `app submit`'s waiver for the listing-completeness gate. It consumes
     # nothing, so it can never hide an app name from the prefix cap.
     "allow-incomplete-listing": "bool",
+    # `app listing set-icon|set-cover --red`: picks the civitai.red override slot.
+    # It consumes nothing (the file stays positional).
+    "red": "bool",
     "json": "bool",
     # root's persistent flags, which every gated command also accepts.
     "no-update-check": "bool",

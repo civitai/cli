@@ -552,6 +552,22 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"could be reverted with no behavioural test going red. Both are driven now, and the test was " +
 			"renamed off …RefusalCannotForgeALine because that name is what made a one-surface test read " +
 			"as a three-surface one"},
+	// --- app elements: an installed npm package's custom-elements.json --------
+	// Not server text but third-party bytes from the registry, read by the
+	// coding agent the command exists for. Each row was measured by deleting
+	// every safeTerm call in that function alone: the named test went red each
+	// time, on its raw-escape assertion.
+	"printElementsList": {"TestAppElementsTerminalOutputCannotCarryEscapes",
+		"`app elements` with no tag: each element's tag and first-sentence description"},
+	"elementsPackageHeader": {"TestAppElementsTerminalOutputCannotCarryEscapes",
+		"`app elements`: the package name and version from the installed package.json — in both views and in " +
+			"the unknown-tag error main prints raw"},
+	"nearTags": {"TestAppElementsTerminalOutputCannotCarryEscapes",
+		"`app elements <unknown>`: the near-match tags in the error, which main prints raw — red at 6d94ce7, " +
+			"where a hostile tag set the terminal title and cleared the screen through it"},
+	"terminalSafeReference": {"TestAppElementsTerminalOutputCannotCarryEscapes",
+		"`app elements <tag>`: every string of one element's reference — tag, class chain, descriptions, " +
+			"attribute names/types/defaults, events, slots, parts, CSS properties — gated once before rendering"},
 	// --- app feedback: the one surface whose text ANY site user can write -----
 	"feedbackMessageLines": {"TestAppFeedbackMessageEscapeSequencesNeverReachTheTerminal",
 		"`app feedback`: the message body, written by an arbitrary site user and read by the owner's coding " +
@@ -561,12 +577,35 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"`app feedback` row headers: created time, status, app version, build sha, surface and (with " +
 			"--with-reporter) the reporter's username — every cell hostile at once, one row in, one column-zero " +
 			"`#` line out"},
+	"feedbackDetailText": {"TestAppFeedbackRecentErrorCannotForgeALine",
+		"`app feedback` detail lines: the reported source commit, platform sha, fork upstream, environment " +
+			"and every recent-error field, written by the reporter's browser. The named test serves a recent error " +
+			"carrying a newline, a forged header and gutter line, an escape and a soft-wrap padding run, and pins " +
+			"one `#` line, one gutter line, no escape byte and every line within the wrap width"},
 	"escapeTerminalRunes": {"TestAppFeedbackJSONEscapesWhatATerminalWouldActOn",
 		"`app feedback --json`: safeTerm is the PREDICATE here, not a strip — a rune it would remove is written " +
 			"as a \\uXXXX escape instead, so DEL, C1 and the invisible class never reach a terminal raw while the " +
 			"decoded string is unchanged"},
 	"runAppFeedbackCount": {"TestAppFeedbackCountAcrossEveryApp",
 		"`app feedback --count` with no slug: the slug and listing id of every listing listMine returned"},
+	// --- feedback (platform): what Civitai answers a report with ---------------
+	"feedbackNoteLines": {"TestPlatformFeedbackNoteEscapeSequencesNeverReachTheTerminal",
+		"`feedback send` / `feedback status`: Civitai's note about a report. Civitai-authored, and still text " +
+			"from the network read by an agent — the named test drives a note carrying CSI, a bidi override, a " +
+			"forged success line and a forged status row through BOTH commands"},
+	"feedbackServerCell": {"TestPlatformFeedbackServerCellsCannotForgeALine",
+		"`feedback send` / `feedback status`: every single-line server cell — the report ref, the status word, " +
+			"fixedIn's component and version, the two timestamps — all hostile at once, with a newline and an " +
+			"escape in each, and the line count of both views pinned"},
+	// --- app submit: the store listing's readiness (civitai/civitai#7311) -----
+	"printSubmitListingReadiness": {"TestSubmitListingReadinessCannotForgeALine",
+		"`app submit` success output: the server's listing nextStep and each problem's code, label and " +
+			"severity — the named test sends ESC, CR and a newline-led forged success line in nextStep and a " +
+			"problem, and asserts none reaches the terminal as such"},
+	// --- app submit: App Storage schema-migration notes ----------------------
+	"printStorageMigrationWarnings": {"TestSubmitStorageMigrationTextCannotForgeALine",
+		"`app submit` success output: each storageMigrationWarnings string — the named test sends ESC and a " +
+			"newline-led forged line in one"},
 	"printAppMetrics": {"TestTabwriterRenderersCannotBeForged",
 		"the scope and endpoint tokens — kept RAW on purpose (AGENTS.md item 8), which makes the " +
 			"strip the ONLY thing between an uploader-shaped token and the terminal — plus the window " +

@@ -29,7 +29,8 @@ default to the page-elements template (web components, no UI framework).
   civitai app metrics my-block
   civitai app feedback my-block
   civitai app withdraw pubreq_01H
-  civitai app dev-token my-block`,
+  civitai app dev-token my-block
+  civitai app elements civitai-text-input`,
 	}
 	cmd.AddCommand(newAppListCmd())
 	cmd.AddCommand(newAppViewCmd())
@@ -46,5 +47,6 @@ default to the page-elements template (web components, no UI framework).
 	cmd.AddCommand(newAppDevTunnelCmd())
 	cmd.AddCommand(newAppPullCmd())
 	cmd.AddCommand(newAppListingCmd())
+	cmd.AddCommand(newAppElementsCmd())
 	return cmd
 }

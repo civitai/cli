@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,18 +19,23 @@ import (
 // follow-up WhoAmI (/api/v1/me), which would otherwise clobber the recorders.
 const startDevTunnelRoute = "/api/trpc/blocks.startDevTunnel"
 
-// listenLocal opens a listener on an ephemeral 127.0.0.1 port and returns the
-// port, so a full-path dev-tunnel test can pass `--port <port>` and satisfy the
-// pre-flight local-dev-server probe (which TCP-dials 127.0.0.1:<port> before the
-// mint). The listener is closed at test end.
+// listenLocal stands in for a local dev server in a full-path dev-tunnel test
+// and returns its port for `--port <port>`. It satisfies the pre-flight
+// local-dev-server probe (a TCP dial before the mint) and then never answers
+// the embeddability probe that follows, so every test using it takes that
+// probe's timeout path. Two things follow, both done here: the timeout is
+// shortened for the test, and the test fails unless the silent server saw
+// exactly one probe request arrive and be abandoned by the client — see
+// app_dev_tunnel_probe_timeout_test.go.
 func listenLocal(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("open local listener: %v", err)
-	}
-	t.Cleanup(func() { _ = l.Close() })
-	return l.Addr().(*net.TCPAddr).Port
+	setProbeTimeout(t, &embedProbeTimeout, testEmbedProbeTimeout)
+	srv, wait := startSilentDevServer(t)
+	t.Cleanup(func() {
+		wait()
+		srv.assertOneProbeTimedOut(t)
+	})
+	return srv.port
 }
 
 // TestAppDevTunnelMissingBlockErrors: no blockId (positional, --block, or a
@@ -509,19 +513,22 @@ func TestAppHelpListsDevTunnel(t *testing.T) {
 // endpoint the code actually dials, and must not contradict the command's own
 // claim that the endpoint is live.
 //
-// 🔴 SCOPE: "the README" here is the row PLUS the section(s) the row links to.
-// The detail used to sit inside the table cell — 222 words in one markdown
-// column, which GitHub renders unreadably — and moved into a dedicated section
-// (issue #260). Keeping the assertions pinned to the CELL would have made the
-// relocation look like deletion; following the row's own cross-reference keeps
-// the anti-drift claim intact AND fails if that link ever breaks.
+// 🔴 SCOPE: "the README" here is the `## Preview in the real host` section. It
+// used to be the command-reference table row plus the sections that row linked
+// to; the hand-maintained table was deleted in favour of the generated CLI
+// reference on developer.civitai.com, so the section is the README's one
+// remaining statement about the endpoint and the gate.
 func TestReadmeDevTunnelRowMatchesTheCommandHelp(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRootDir(t), "README.md"))
 	if err != nil {
 		t.Fatalf("read README.md: %v", err)
 	}
-	row := readmeRowPlusLinkedSections(t, string(raw),
-		readmeCommandRefRow(t, string(raw), "civitai app dev-tunnel"))
+	row := readmeSectionSlice(t, string(raw), "\n## Preview in the real host (`app dev-tunnel`)\n")
+	// Positive control on the extractor: an empty slice would pass the
+	// "must not say" checks below vacuously.
+	if len(row) < 300 {
+		t.Fatalf("the dev-tunnel section is only %d bytes — the extractor is reading the wrong block:\n%s", len(row), row)
+	}
 
 	// The command's Long is the surface that was kept current; it is the anchor.
 	long := newAppDevTunnelCmd().Long

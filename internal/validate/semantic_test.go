@@ -347,7 +347,7 @@ func TestSensitiveScopeJustificationChecks(t *testing.T) {
 	}
 }
 
-// TestIsSensitiveBlockScope pins the sensitive set to the server's 8 scopes.
+// TestIsSensitiveBlockScope pins the sensitive set to the server's 11 scopes.
 //
 // This list is spelled out rather than derived, and that is correct even though
 // the sibling enum guard in pattern_test.go now derives its content: the
@@ -366,6 +366,12 @@ func TestIsSensitiveBlockScope(t *testing.T) {
 		"goods:purchase:self",
 		// Publishes store cards every visitor sees, under the viewer's name.
 		"apps:store:items:write",
+		// Shared-collection documents under the viewer's identity.
+		"apps:storage:publish",
+		// Another app's documents, as the viewer, through storage.imports.
+		"apps:storage:import",
+		// A public, reward-paying reaction under the viewer's name.
+		"social:react:self",
 	}
 	if len(SENSITIVE_BLOCK_SCOPES) != len(sensitive) {
 		t.Fatalf("SENSITIVE_BLOCK_SCOPES has %d entries, want %d", len(SENSITIVE_BLOCK_SCOPES), len(sensitive))
@@ -862,7 +868,7 @@ func TestGoodsFindingsCarryTheOffendingFieldPath(t *testing.T) {
 // still pass.
 func TestGoodsChecksReachTheRealValidator(t *testing.T) {
 	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"g","scopes":[],` +
-		`"kind":"page","iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
+		`"kind":"page","page":{"path":"/","title":"x"},"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
 		`"goods":[{"id":"credits","title":"A","priceBuzz":10},{"id":"credits","title":"B","priceBuzz":10}]}`
 	var hit bool
 	for _, f := range manifestOnlyFindings(t, body) {
@@ -879,7 +885,7 @@ func TestGoodsChecksReachTheRealValidator(t *testing.T) {
 	// ids must validate with NO findings at all, or the row above could be
 	// passing because this fixture fails for some unrelated reason.
 	const ok = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"g","scopes":[],` +
-		`"kind":"page","iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
+		`"kind":"page","page":{"path":"/","title":"x"},"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false},` +
 		`"goods":[{"id":"credits","title":"A","priceBuzz":10},{"id":"boosts","title":"B","priceBuzz":10}]}`
 	for _, f := range manifestOnlyFindings(t, ok) {
 		t.Errorf("unexpected finding on the legal manifest: %s: %s", f.Field, f.Message)

@@ -1,0 +1,252 @@
+{
+  "schemaVersion": "1.0.0",
+  "modules": [
+    {"kind": "javascript-module", "path": "src/elements/civitai-button.ts", "declarations": [
+      {
+        "kind": "class",
+        "name": "CivitaiButton",
+        "tagName": "civitai-button",
+        "superclass": {"name": "CivitaiElement", "module": "/src/elements/base.js"},
+        "customElement": true,
+        "attributes": [
+          {"name": "variant", "type": {"text": "ButtonVariant"}, "default": "'filled'", "description": "Visual style.", "fieldName": "variant"},
+          {"name": "color", "type": {"text": "Intent | ''"}, "default": "''", "description": "Recolours every variant; absent keeps the primary accent.", "fieldName": "color"},
+          {"name": "href", "type": {"text": "string"}, "default": "''", "description": "Renders an anchor instead. Navigation is a link, whatever it looks like.", "fieldName": "href"},
+          {"name": "size", "type": {"text": "ButtonSize"}, "default": "'md'", "description": "Size preset.", "fieldName": "size"},
+          {"name": "loading", "type": {"text": "boolean"}, "default": "false", "description": "Shows a spinner and, like the React binding, disables the control.", "fieldName": "loading"},
+          {"name": "disabled", "type": {"text": "boolean"}, "default": "false", "fieldName": "disabled"},
+          {"name": "full-width", "type": {"text": "boolean"}, "default": "false", "fieldName": "fullWidth"},
+          {"name": "type", "type": {"text": "'button' | 'submit' | 'reset'"}, "default": "'button'", "description": "Matches the native attribute, including its `submit`/`reset` behaviour.", "fieldName": "type"}
+        ],
+        "members": [
+          {"kind": "field", "name": "form", "type": {"text": "HTMLFormElement | null"}, "description": "The form this button would submit, exactly as a native button reports it."}
+        ],
+        "events": [
+          {"name": "change", "type": {"text": "Event"}, "description": "A `change` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}},
+          {"name": "invalid", "type": {"text": "Event"}, "description": "A `invalid` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}}
+        ],
+        "slots": [
+          {"name": ""},
+          {"name": "left"},
+          {"name": "right"}
+        ],
+        "cssParts": [
+          {"name": "button"}
+        ]
+      }
+    ]},
+    {"kind": "javascript-module", "path": "src/elements/civitai-checkbox.ts", "declarations": [
+      {
+        "kind": "class",
+        "name": "CivitaiCheckbox",
+        "tagName": "civitai-checkbox",
+        "superclass": {"name": "CivitaiField", "module": "/src/elements/field-base.js"},
+        "customElement": true,
+        "attributes": [
+          {"name": "value", "type": {"text": "string"}, "default": "'on'", "description": "Submitted when checked, exactly as a native checkbox does.", "fieldName": "value"},
+          {"name": "checked", "type": {"text": "boolean"}, "default": "false", "fieldName": "checked"},
+          {"name": "indeterminate", "type": {"text": "boolean"}, "default": "false", "fieldName": "indeterminate"},
+          {"name": "name", "type": {"text": "string"}, "default": "''", "fieldName": "name", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "label", "type": {"text": "string"}, "default": "''", "fieldName": "label", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "description", "type": {"text": "string"}, "default": "''", "fieldName": "description", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "error", "type": {"text": "string"}, "default": "''", "description": "Message to show; also marks the control invalid.", "fieldName": "error", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "required", "type": {"text": "boolean"}, "default": "false", "fieldName": "required", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "disabled", "type": {"text": "boolean"}, "default": "false", "fieldName": "disabled", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "size", "type": {"text": "FieldSize"}, "default": "'md'", "fieldName": "size", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}}
+        ],
+        "members": [
+          {"kind": "field", "name": "form", "type": {"text": "HTMLFormElement | null"}, "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"kind": "field", "name": "validity", "type": {"text": "ValidityState"}, "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}}
+        ],
+        "events": [
+          {"name": "change", "type": {"text": "Event"}, "description": "A `change` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}},
+          {"name": "invalid", "type": {"text": "Event"}, "description": "A `invalid` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}}
+        ],
+        "cssParts": [
+          {"name": "choice"}
+        ]
+      }
+    ]},
+    {"kind": "javascript-module", "path": "src/elements/civitai-modal.ts", "declarations": [
+      {
+        "kind": "class",
+        "name": "CivitaiModal",
+        "tagName": "civitai-modal",
+        "description": "Native `<dialog>.showModal()`: the focus trap, the top layer, the inert\nbackground and focus restore all come from the platform. The React binding\ndocuments that it traps nothing, so this is a strict upgrade, not a port.",
+        "superclass": {"name": "CivitaiElement", "module": "/src/elements/base.js"},
+        "customElement": true,
+        "attributes": [
+          {"name": "open", "type": {"text": "boolean"}, "default": "false", "fieldName": "open"},
+          {"name": "heading", "type": {"text": "string"}, "default": "''", "description": "Not `title`: that attribute is global and would render a tooltip.", "fieldName": "heading"},
+          {"name": "size", "type": {"text": "ModalSize"}, "default": "'md'", "fieldName": "size"},
+          {"name": "with-close-button", "type": {"text": "boolean"}, "default": "true", "fieldName": "withCloseButton"},
+          {"name": "close-on-overlay-click", "type": {"text": "boolean"}, "default": "true", "fieldName": "closeOnOverlayClick"},
+          {"name": "close-on-escape", "type": {"text": "boolean"}, "default": "true", "fieldName": "closeOnEscape"},
+          {"name": "close-label", "type": {"text": "string"}, "default": "'Close'", "fieldName": "closeLabel"}
+        ],
+        "events": [
+          {"name": "close", "type": {"text": "Event"}},
+          {"name": "change", "type": {"text": "Event"}, "description": "A `change` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}},
+          {"name": "invalid", "type": {"text": "Event"}, "description": "A `invalid` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}}
+        ],
+        "slots": [
+          {"name": ""}
+        ],
+        "cssParts": [
+          {"name": "dialog"},
+          {"name": "panel"},
+          {"name": "header"},
+          {"name": "heading"},
+          {"name": "close"},
+          {"name": "body"}
+        ]
+      }
+    ]},
+    {"kind": "javascript-module", "path": "src/elements/civitai-switch.ts", "declarations": [
+      {
+        "kind": "class",
+        "name": "CivitaiSwitch",
+        "tagName": "civitai-switch",
+        "description": "The checkbox wearing a track and a thumb. It stays a real\n`<input type=\"checkbox\">` because `role=\"switch\"` is defined on one, and a\ndiv pretending to be a control would lose the form and the keyboard.",
+        "superclass": {"name": "CivitaiCheckbox", "module": "/src/elements/civitai-checkbox.js"},
+        "customElement": true,
+        "attributes": [
+          {"name": "value", "type": {"text": "string"}, "default": "'on'", "description": "Submitted when checked, exactly as a native checkbox does.", "fieldName": "value", "inheritedFrom": {"name": "CivitaiCheckbox", "module": "src/elements/civitai-checkbox.ts"}},
+          {"name": "checked", "type": {"text": "boolean"}, "default": "false", "fieldName": "checked", "inheritedFrom": {"name": "CivitaiCheckbox", "module": "src/elements/civitai-checkbox.ts"}},
+          {"name": "indeterminate", "type": {"text": "boolean"}, "default": "false", "fieldName": "indeterminate", "inheritedFrom": {"name": "CivitaiCheckbox", "module": "src/elements/civitai-checkbox.ts"}},
+          {"name": "name", "type": {"text": "string"}, "default": "''", "fieldName": "name", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "label", "type": {"text": "string"}, "default": "''", "fieldName": "label", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "description", "type": {"text": "string"}, "default": "''", "fieldName": "description", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "error", "type": {"text": "string"}, "default": "''", "description": "Message to show; also marks the control invalid.", "fieldName": "error", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "required", "type": {"text": "boolean"}, "default": "false", "fieldName": "required", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "disabled", "type": {"text": "boolean"}, "default": "false", "fieldName": "disabled", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "size", "type": {"text": "FieldSize"}, "default": "'md'", "fieldName": "size", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}}
+        ],
+        "members": [
+          {"kind": "field", "name": "form", "type": {"text": "HTMLFormElement | null"}, "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"kind": "field", "name": "validity", "type": {"text": "ValidityState"}, "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}}
+        ],
+        "events": [
+          {"name": "change", "type": {"text": "Event"}, "description": "A `change` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}},
+          {"name": "invalid", "type": {"text": "Event"}, "description": "A `invalid` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}}
+        ],
+        "cssParts": [
+          {"name": "choice", "inheritedFrom": {"name": "CivitaiCheckbox", "module": "src/elements/civitai-checkbox.ts"}}
+        ]
+      }
+    ]},
+    {"kind": "javascript-module", "path": "src/elements/civitai-text-input.ts", "declarations": [
+      {
+        "kind": "class",
+        "name": "CivitaiTextInput",
+        "tagName": "civitai-text-input",
+        "superclass": {"name": "CivitaiField", "module": "/src/elements/field-base.js"},
+        "customElement": true,
+        "attributes": [
+          {"name": "placeholder", "type": {"text": "string"}, "default": "''", "fieldName": "placeholder"},
+          {"name": "type", "type": {"text": "string"}, "default": "'text'", "fieldName": "type"},
+          {"name": "readonly", "type": {"text": "boolean"}, "default": "false", "fieldName": "readOnly"},
+          {"name": "maxlength", "type": {"text": "number"}, "default": "0", "description": "0 means unbounded, matching an absent native `maxlength`.", "fieldName": "maxLength"},
+          {"name": "autocomplete", "type": {"text": "string"}, "default": "''", "fieldName": "autocomplete"},
+          {"name": "name", "type": {"text": "string"}, "default": "''", "fieldName": "name", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "value", "type": {"text": "string"}, "default": "''", "description": "Current value. The `value` ATTRIBUTE is the default, as on a native input.", "fieldName": "value", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "label", "type": {"text": "string"}, "default": "''", "fieldName": "label", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "description", "type": {"text": "string"}, "default": "''", "fieldName": "description", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "error", "type": {"text": "string"}, "default": "''", "description": "Message to show; also marks the control invalid.", "fieldName": "error", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "required", "type": {"text": "boolean"}, "default": "false", "fieldName": "required", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "disabled", "type": {"text": "boolean"}, "default": "false", "fieldName": "disabled", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"name": "size", "type": {"text": "FieldSize"}, "default": "'md'", "fieldName": "size", "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}}
+        ],
+        "members": [
+          {"kind": "field", "name": "form", "type": {"text": "HTMLFormElement | null"}, "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}},
+          {"kind": "field", "name": "validity", "type": {"text": "ValidityState"}, "inheritedFrom": {"name": "CivitaiField", "module": "src/elements/field-base.ts"}}
+        ],
+        "events": [
+          {"name": "change", "type": {"text": "Event"}, "description": "A `change` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}},
+          {"name": "invalid", "type": {"text": "Event"}, "description": "A `invalid` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}}
+        ]
+      }
+    ]},
+    {"kind": "javascript-module", "path": "src/elements/civitai-tooltip.ts", "declarations": [
+      {
+        "kind": "class",
+        "name": "CivitaiTooltip",
+        "tagName": "civitai-tooltip",
+        "superclass": {"name": "HTMLElement", "package": "global:"},
+        "customElement": true,
+        "attributes": [
+          {"name": "label"}
+        ],
+        "members": [
+          {"kind": "field", "name": "label", "type": {"text": "string"}},
+          {"kind": "field", "name": "open", "type": {"text": "boolean"}, "description": "Forces the bubble open; hover and focus reveal it without this."},
+          {"kind": "field", "name": "trigger", "type": {"text": "HTMLElement | null"}, "description": "The element the tooltip describes: the first element child."}
+        ]
+      }
+    ]},
+    {"kind": "javascript-module", "path": "src/sdk/civitai-sign-in-button.ts", "declarations": [
+      {
+        "kind": "class",
+        "name": "CivitaiSignInButton",
+        "tagName": "civitai-sign-in-button",
+        "description": "Given a `signIn` from `createSignIn()`, leaves for Civitai itself; otherwise\nasks the host page, and stays inert until `BLOCK_INIT` lands, since there is\nno validated host origin before then.",
+        "superclass": {"name": "CivitaiElement", "module": "/src/elements/base.js"},
+        "customElement": true,
+        "attributes": [
+          {"name": "return-url", "type": {"text": "string"}, "default": "''", "description": "A path within this app; the host sanitises it.", "fieldName": "returnUrl"},
+          {"name": "variant", "type": {"text": "string"}, "default": "'filled'", "fieldName": "variant"},
+          {"name": "size", "type": {"text": "string"}, "default": "'md'", "fieldName": "size"},
+          {"name": "full-width", "type": {"text": "boolean"}, "default": "false", "description": "Passes through to the button this wraps.", "fieldName": "fullWidth"},
+          {"name": "ready", "type": {"text": "boolean"}, "default": "false", "fieldName": "ready"},
+          {"name": "signedIn", "type": {"text": "boolean"}, "default": "false", "fieldName": "signedIn"}
+        ],
+        "members": [
+          {"kind": "field", "name": "signIn", "type": {"text": "SignIn | undefined"}, "description": "An app of its own signs the viewer in itself; without one, the host does."},
+          {"kind": "field", "name": "transport", "type": {"text": "BlockTransport | undefined"}, "description": "Injectable so a test can drive it without a real parent frame."}
+        ],
+        "events": [
+          {"name": "change", "type": {"text": "Event"}, "description": "A `change` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}},
+          {"name": "invalid", "type": {"text": "Event"}, "description": "A `invalid` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}}
+        ]
+      }
+    ]},
+    {"kind": "javascript-module", "path": "src/elements/base.ts", "declarations": [
+      {
+        "kind": "class",
+        "name": "CivitaiElement",
+        "superclass": {"name": "LitElement", "package": "lit"},
+        "customElement": true,
+        "events": [
+          {"name": "change", "type": {"text": "Event"}, "description": "A `change` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary."},
+          {"name": "invalid", "type": {"text": "Event"}, "description": "A `invalid` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary."}
+        ]
+      }
+    ]},
+    {"kind": "javascript-module", "path": "src/elements/field-base.ts", "declarations": [
+      {
+        "kind": "class",
+        "name": "CivitaiField",
+        "description": "A labelled control that participates in its form. Subclasses render the\ncontrol itself; everything around it — ids, `aria-describedby`, validity and\nthe value the form sees — is the same for all of them.",
+        "superclass": {"name": "CivitaiElement", "module": "/src/elements/base.js"},
+        "attributes": [
+          {"name": "name", "type": {"text": "string"}, "default": "''", "fieldName": "name"},
+          {"name": "value", "type": {"text": "string"}, "default": "''", "description": "Current value. The `value` ATTRIBUTE is the default, as on a native input.", "fieldName": "value"},
+          {"name": "label", "type": {"text": "string"}, "default": "''", "fieldName": "label"},
+          {"name": "description", "type": {"text": "string"}, "default": "''", "fieldName": "description"},
+          {"name": "error", "type": {"text": "string"}, "default": "''", "description": "Message to show; also marks the control invalid.", "fieldName": "error"},
+          {"name": "required", "type": {"text": "boolean"}, "default": "false", "fieldName": "required"},
+          {"name": "disabled", "type": {"text": "boolean"}, "default": "false", "fieldName": "disabled"},
+          {"name": "size", "type": {"text": "FieldSize"}, "default": "'md'", "fieldName": "size"}
+        ],
+        "members": [
+          {"kind": "field", "name": "form", "type": {"text": "HTMLFormElement | null"}},
+          {"kind": "field", "name": "validity", "type": {"text": "ValidityState"}}
+        ],
+        "events": [
+          {"name": "change", "type": {"text": "Event"}, "description": "A `change` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}},
+          {"name": "invalid", "type": {"text": "Event"}, "description": "A `invalid` from inside the shadow root, re-dispatched from the host (bubbling, composed) so it crosses the boundary.", "inheritedFrom": {"name": "CivitaiElement", "module": "src/elements/base.ts"}}
+        ]
+      }
+    ]}
+  ]
+}

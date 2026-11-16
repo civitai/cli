@@ -76,7 +76,28 @@ package validate
 // A source scan alone therefore warns at every correct page-money app on the
 // platform, which is the worst possible outcome for advisory output: it teaches
 // authors that this warning is noise. So package.json is read first and a
-// dependency that ACKS ends the check.
+// dependency that ACKS ends the BLOCK_READY scan.
+//
+// 🔴 BUT A DEPENDENCY THAT ACKS IS NOT AN ACK THAT FIRES, AND FOR
+// `@civitai/blocks-react` THE GAP SHIPPED TO PRODUCTION. Before
+// civitai/civitai-app-starters#632 the SDK constructed its transport lazily, on
+// the first `getTransport()`; an app whose only SDK use was `useBuzzWorkflow`
+// reached it only inside callbacks, so nothing answered BLOCK_INIT and the host
+// showed "This app didn't load in time" after 10 s. That app passed
+// `validate` and `submit` because the dependency used to END the check. So when
+// the ack comes from blocks-react — and from no other acking package — the
+// entry graph must ALSO reference an export that constructs the transport at
+// mount (blockproto.ReferencesMountConnectingAPI; the set and its source
+// derivation live there). That is the SDK-MOUNT finding, and it is a
+// reachability-tier finding: it fires ONLY on a COMPLETE graph, never on a
+// presence fallback, because "we did not see the call" from a graph we could
+// not finish is the manufactured wiring finding item 20 forbids. The dependency
+// check stays first and still carries its weight: it is what keeps a correct
+// SDK app from ever being asked to ship the emitter. And the finding is
+// VERSION-GATED: it fires only when the lockfile resolves blocks-react to a
+// release at or below the last one measured without #632, because on a release
+// carrying it every hook connects at mount and the finding would be false
+// (blocksreactversion.go).
 //
 // 🔴 "A dependency that acks" is an EXACT SET (blockproto.PackageAcksReady), not
 // the `@civitai/` scope. Four of the six published first-party packages do not
@@ -202,8 +223,10 @@ func readyAckChecks(dir string, generic any) []Finding {
 	// that decides whether any source reading is meaningful.
 	deps, state := packageDeps(dir)
 	switch state {
-	case sdkPresent, sdkUnknown:
+	case sdkUnknown:
 		return nil
+	case sdkPresent:
+		return sdkMountChecks(dir, deps, buildCommandOf(generic))
 	}
 
 	// The whole-tree presence scan runs FIRST and gates everything: if we could
@@ -267,6 +290,78 @@ func resolveLoadedFiles(dir string, deps map[string]bool) (*blockproto.EntryGrap
 		},
 	})
 	return g, found
+}
+
+// sdkMountChecks is the SDK-MOUNT finding for a project whose ack comes from an
+// acking dependency: does anything the browser loads construct that
+// dependency's transport at mount? See the file header.
+//
+// It answers ONLY for `@civitai/blocks-react`, and only when that is the SOLE
+// acking dependency. Another acking package (`@civitai/sdk`) has its own
+// connection semantics this check has not measured, and may be the thing that
+// acks — so its presence keeps the old answer: silence.
+//
+// 🔴 AN INCOMPLETE GRAPH IS SILENCE, NOT A FINDING (item 20's doctrine). There
+// is deliberately no presence-tier fallback here: the emitter checks fall back
+// to a whole-tree scan because "nothing in the tree mentions BLOCK_READY" is
+// still a meaningful absence, but "nothing in the tree calls a hook" over a tree
+// we could not resolve is exactly the guess the doctrine refuses. For the same
+// reason the whole-tree scan is not run: the graph's own gaps decide.
+//
+// Either kind of evidence ends it: a reference to a mount-connecting export, OR
+// a loaded file that posts BLOCK_READY itself (a hand-written emitter beside an
+// unused SDK dependency acks without the SDK's help).
+//
+// 🔴 VERSION-GATED. The finding is only true for blocks-react versions before
+// civitai/civitai-app-starters#632; on a release carrying it every hook
+// connects at mount. blocksReactPreFix requires the LOCKFILE-resolved version
+// to be <= blocksReactLastPreFixVersion, a known pre-fix release — see
+// blocksreactversion.go for why the bound is the last measured pre-fix release
+// rather than the (not yet published) fix release.
+func sdkMountChecks(dir string, deps map[string]bool, buildCommand string) []Finding {
+	// Under today's only caller (state == sdkPresent, so SOME acking package is
+	// declared) this gate is implied by the loop below — deleting it is a
+	// measured EQUIVALENT mutant. It stays so the function is correct on its
+	// own terms rather than by its caller's precondition.
+	if !deps[blockproto.BlocksReactPackage] {
+		return nil
+	}
+	for name := range deps {
+		if name != blockproto.BlocksReactPackage && blockproto.PackageAcksReady(name) {
+			return nil
+		}
+	}
+	if !blocksReactPreFix(dir, buildCommand, blocksReactLastPreFixVersion) {
+		return nil
+	}
+	connects := false
+	g := blockproto.ResolveEntryGraph(dir, blockproto.EntryGraphOptions{
+		MaxFiles:     maxAckGraphFiles,
+		MaxFileBytes: maxAckFileBytes,
+		Dependencies: deps,
+		Inspect: func(f blockproto.EntryFile, code string) {
+			// The same extension gate as the emitter tiers: a stylesheet the
+			// entry imports is loaded but cannot call a hook.
+			if !readyAckSourceExts[strings.ToLower(filepath.Ext(f.Rel))] {
+				return
+			}
+			if blockproto.ReferencesMountConnectingAPI(code) || strings.Contains(code, readyAckType) {
+				connects = true
+			}
+		},
+	})
+	if !g.Complete || connects {
+		return nil
+	}
+	return []Finding{newFinding(FieldProject, readyAckAdviceSDKNotConnected)}
+}
+
+// buildCommandOf returns the manifest's buildCommand, or "" — the same input
+// lockfileChecks derives the package manager (and so the lockfile) from.
+func buildCommandOf(generic any) string {
+	m, _ := generic.(map[string]any)
+	s, _ := m["buildCommand"].(string)
+	return s
 }
 
 // declaresPage reports whether the manifest declares a non-null `page` surface.
@@ -541,6 +636,37 @@ var readyAckAdviceUnwired = "the manifest declares a \"page\" surface, and this 
 var readyAckAdviceMissing = "the manifest declares a \"page\" surface but nothing in this project's source " +
 	"posts " + readyAckType + ", and nothing index.html loads posts it either — " + readyAckWhy + ". Apps " +
 	"scaffolded before that fix ship no emitter: " + readyAckRemedy + ". Caveat: " + readyAckTail
+
+// readyAckAdviceSDKNotConnected is the SDK-MOUNT finding: the project depends on
+// `@civitai/blocks-react`, the entry graph resolved completely, and nothing in
+// it constructs the SDK transport at mount.
+//
+// 🔴 IT IS DELIBERATELY NOT IN readyAckAdvisories. That ledger is the EMITTER
+// remedy family, and its tests require every member to tell the author to copy
+// in `civitai-host.js` — advice that is WRONG here: this app already acks
+// through the SDK, and shipping the emitter beside it races two handshakes (the
+// "never both" rule). The remedy is one line in the root component.
+//
+// It does not reuse readyAckWhy, because the measured symptom differs: this
+// shape was observed live as the 10 s "didn't load in time" card, retried twice.
+//
+// 🔴 EVERY CLAIM IN IT IS SCOPED TO THE INSTALLED VERSION. It only fires for a
+// blocks-react version at or below a release measured without #632 (the version
+// gate), so "the
+// version this project's lockfile installs connects lazily" is true wherever it
+// is printed; an unscoped "useBuzzWorkflow connects lazily" would be false on
+// every fixed release.
+var readyAckAdviceSDKNotConnected = "the manifest declares a \"page\" surface and this project depends on " +
+	blockproto.BlocksReactPackage + ", whose iframe transport sends " + readyAckType + " for you — but only " +
+	"once something constructs that transport, and nothing index.html loads does so at mount: resolving " +
+	"index.html and every module it loads found no reference to a hook that connects during render or on " +
+	"mount. In the " + blockproto.BlocksReactPackage + " version this project's lockfile installs (a release " +
+	"from before every hook connected at mount), hooks such as useBuzzWorkflow connect only inside the " +
+	"functions they return, so an app that uses only those never answers the host's BLOCK_INIT. Fix: call " +
+	"useBlockContext() (or getTransport()) in your root component; without it the host shows \"This app " +
+	"didn't load in time\" after 10 s, retries, and gives up. Upgrading " + blockproto.BlocksReactPackage +
+	" to a release in which every hook connects at mount also fixes it. Do not also add `" + blockproto.ReadyAckFilename + "` — two handshakes race. Caveat: " +
+	readyAckTail
 
 // readyAckAdvicePresenceOnlyHead is the PRESENCE finding up to the point where
 // the resolver's own reasons are spliced in. It discloses its own weakness: it

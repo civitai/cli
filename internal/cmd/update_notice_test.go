@@ -287,6 +287,9 @@ func TestMaybeNotify_GatingSuppresses(t *testing.T) {
 		{name: "excluded help", cmdName: "help", prep: func(t *testing.T) {}},
 		{name: "internal __complete", cmdName: "__complete", prep: func(t *testing.T) {}},
 		{name: "internal __update-check", cmdName: "__update-check", prep: func(t *testing.T) {}},
+		// git runs the credential helper on every fetch/push; a notice there
+		// lands in the middle of git's own output.
+		{name: "excluded git-credential", cmdName: "git-credential", prep: func(t *testing.T) {}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

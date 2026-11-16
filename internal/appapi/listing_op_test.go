@@ -177,6 +177,14 @@ func listingRouteCases() []listingRouteCase {
 			},
 		},
 		{
+			name: "setRedMedia", route: trpcSetRedMedia, wantOp: listingOpChange, serverMsg: "refused: civitai.red override",
+			call: func(ctx context.Context, c *Client) error {
+				img := 6061
+				_, err := c.SetRedMedia(ctx, "apl_red_606", "cover", &img)
+				return err
+			},
+		},
+		{
 			name: "addScreenshot", route: trpcAddScreenshot, wantOp: listingOpChange, serverMsg: "refused: screenshot append",
 			call: func(ctx context.Context, c *Client) error {
 				_, err := c.AddScreenshot(ctx, "apl_shot_505", 5051, "caption-echo")
@@ -438,6 +446,9 @@ func TestListingBadRequestSubjectIsReachablePerRoute(t *testing.T) {
 //     image's geometry/aspect/MIME/bytes at attach — a different file gives a
 //     different verdict, so it is author-controlled.
 //   - addScreenshot: the same, plus `caption` from --caption.
+//   - setRedMedia: `imageId` as for setIcon / setCover (or null, from
+//     `clear-red`), and `slot`, which is the author's choice of command:
+//     `set-icon --red` vs `set-cover --red`, or `clear-red <icon|cover>`'s argv.
 //   - removeScreenshot: `screenshotId` is argv (`rm-screenshot alsc_…`).
 //   - reorderScreenshots: `orderedIds` is argv.
 //   - beginListingRevision: NOTHING. `listingId` comes from resolveListing, a
@@ -458,6 +469,7 @@ var authorControlledFields = map[string][]string{
 	"updateListing":         {"patch"},
 	"setIcon":               {"imageId"},
 	"setCover":              {"imageId"},
+	"setRedMedia":           {"imageId", "slot"},
 	"addScreenshot":         {"imageId", "caption"},
 	"removeScreenshot":      {"screenshotId"},
 	"reorderScreenshots":    {"orderedIds"},
@@ -479,6 +491,7 @@ var cliMintedFields = map[string][]string{
 	"updateListing":         {"listingId"},
 	"setIcon":               {"listingId"},
 	"setCover":              {"listingId"},
+	"setRedMedia":           {"listingId"},
 	"addScreenshot":         {"listingId"},
 	"removeScreenshot":      {},
 	"reorderScreenshots":    {"listingId"},
@@ -604,8 +617,8 @@ func TestChangeArmPresumesNoUserSuppliedValue(t *testing.T) {
 
 	// Positive control on the selection: a filter that matched nothing would
 	// make every subtest above vacuous.
-	if changeRoutes != 8 {
-		t.Errorf("expected 8 change routes to check, got %d — if a change route was added or retired, "+
+	if changeRoutes != 9 {
+		t.Errorf("expected 9 change routes to check, got %d — if a change route was added or retired, "+
 			"give it an authorControlledFields entry and update this count in the same commit", changeRoutes)
 	}
 	// The conclusion the change arm's wording rests on. If this ever goes empty
@@ -806,6 +819,7 @@ func TestListingRouteOpsAreExactlyThisSpelledSet(t *testing.T) {
 		"/api/trpc/appListings.updateListing":         "listingOpChange",
 		"/api/trpc/appListings.setIcon":               "listingOpChange",
 		"/api/trpc/appListings.setCover":              "listingOpChange",
+		"/api/trpc/appListings.setRedMedia":           "listingOpChange",
 		"/api/trpc/appListings.addScreenshot":         "listingOpChange",
 		"/api/trpc/appListings.removeScreenshot":      "listingOpChange",
 		"/api/trpc/appListings.reorderScreenshots":    "listingOpChange",
