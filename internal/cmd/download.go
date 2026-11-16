@@ -530,7 +530,14 @@ func resolveBarePositionalVersion(ctx context.Context, client civitai.Reader, po
 
 	// The id IS a valid version. Is it ALSO a confirmable model id? If so it's the
 	// ambiguity footgun.
-	m := lookupConfirmedModel(ctx, client, positional, n)
+	m, merr := lookupConfirmedModel(ctx, client, positional, n)
+	if merr != nil {
+		// The model lookup failed for a reason other than "no such model"
+		// (#878): the ambiguity check could not run, so stop rather than read
+		// the failure as version-only and download what may be an unrelated
+		// model's version.
+		return nil, "", merr
+	}
 	if m == nil {
 		return v, "", nil // version-only — unambiguous, download as today.
 	}
@@ -544,14 +551,25 @@ func resolveBarePositionalVersion(ctx context.Context, client civitai.Reader, po
 
 // lookupConfirmedModel returns the model for id only when it resolves as a model
 // whose returned id ECHOES the queried id (a mismatch means the lookup didn't
-// actually resolve that id). Any lookup failure or id mismatch returns nil ("not
-// a confirmable model id").
-func lookupConfirmedModel(ctx context.Context, client civitai.Reader, id string, n int) *civitai.ModelDetail {
+// actually resolve that id). A 404 or an id mismatch returns (nil, nil): "not a
+// confirmable model id".
+//
+// Every OTHER lookup failure — a 429, a 5xx, a network error — is returned
+// (#878). It means the CLI could not tell whether id is also a model, and
+// collapsing it to nil read as "version-only", which skipped the ambiguity stop
+// that exists to keep an unrelated model's version from being downloaded.
+func lookupConfirmedModel(ctx context.Context, client civitai.Reader, id string, n int) (*civitai.ModelDetail, error) {
 	m, _, err := client.GetModel(ctx, id)
-	if err != nil || m == nil || m.ID != n {
-		return nil
+	if err != nil {
+		if errors.Is(err, civitai.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("could not check whether %s is also a model id, so the download was stopped (retry, or pass --version %s or --model %s to say which you mean): %w", id, id, id, err)
 	}
-	return m
+	if m == nil || m.ID != n {
+		return nil, nil
+	}
+	return m, nil
 }
 
 // autoResolveModelDefault handles a bare positional that is a valid MODEL id but
@@ -559,7 +577,12 @@ func lookupConfirmedModel(ctx context.Context, client civitai.Reader, id string,
 // version and returns its detail plus a one-line note. handled=false means the id
 // is not a confirmable model id → the caller keeps the original version error.
 func autoResolveModelDefault(ctx context.Context, client civitai.Reader, id string, n int) (v *civitai.ModelVersionDetail, note string, handled bool, err error) {
-	m := lookupConfirmedModel(ctx, client, id, n)
+	m, merr := lookupConfirmedModel(ctx, client, id, n)
+	if merr != nil {
+		// The version 404'd but the model lookup failed for another reason:
+		// that failure is the real problem, not the version's not-found.
+		return nil, "", true, merr
+	}
 	if m == nil {
 		return nil, "", false, nil
 	}
