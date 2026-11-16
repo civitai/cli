@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -197,6 +199,12 @@ type allowedProxyAddrKey struct{}
 // variable only so tests can map hostnames without real DNS.
 var lookupDownloadHost = net.DefaultResolver.LookupIPAddr
 
+// proxyTargetLookupTimeout bounds the proxied pre-check's own DNS lookup. A
+// lookup that times out is treated like any other failed lookup: the name is
+// passed to the proxy (see proxyTargetGuard). A variable only so tests can
+// shorten it.
+var proxyTargetLookupTimeout = 3 * time.Second
+
 // proxyTargetGuard applies the private-address rules to the TARGET of a request
 // that goes through a proxy (#780). For each request it hands to the transport
 // — the first URL and every redirect hop, since http.Client calls RoundTrip
@@ -204,16 +212,18 @@ var lookupDownloadHost = net.DefaultResolver.LookupIPAddr
 // proxied. If not, it does nothing and the dial guard checks the target as
 // before. If so, it:
 //
-//  1. resolves the target host here (an IP literal is used as-is) and refuses
-//     the request if ANY address is private/loopback, by the same
-//     blockedDownloadReason the dial guard uses — before anything is sent; a
-//     mixed answer with one private address among public ones is refused; and
+//  1. classifies the target host (see checkProxiedDownloadTarget) and refuses
+//     the request if it is, or resolves here to, ANY private/loopback address,
+//     by the same blockedDownloadReason the dial guard uses — before anything
+//     is sent; a mixed answer with one private address among public ones is
+//     refused; and
 //  2. records the proxy's host:port in the request context, so the dial guard
 //     lets exactly that address through even when it is private (an agent
 //     sandbox's loopback proxy is the case that motivated this).
 //
-// A name that does not resolve HERE (a lookup error, or no addresses) is passed
-// to the proxy unchecked, and the proxy resolves it. That is a deliberate
+// A real hostname that does not resolve HERE (a lookup error, no addresses, or
+// no answer within proxyTargetLookupTimeout) is passed to the proxy unchecked,
+// and the proxy resolves it. That is a deliberate
 // operator decision: a sandbox whose only route out is the proxy often has no
 // DNS of its own, and refusing every such name would block exactly the setup
 // #780 is about. It widens the gap below: such a name is not checked at all.
@@ -249,31 +259,136 @@ func (g *proxyTargetGuard) RoundTrip(req *http.Request) (*http.Response, error) 
 }
 
 // checkProxiedDownloadTarget refuses host when it is, or resolves to, any
-// private/loopback address. A host that does not resolve here passes (the
-// proxy resolves it). See proxyTargetGuard for why this is a best-effort
-// pre-check.
+// private/loopback address. See proxyTargetGuard for why this is a best-effort
+// pre-check. ONE trailing dot is stripped first, then the host is classified:
+//
+//   - an IP literal net.ParseIP accepts, or one containing ':' (IPv6, including
+//     a zone, which net.ParseIP rejects), is checked as that address; an
+//     unparseable ':' host is refused;
+//   - a host made only of numeric or 0x labels is an IP literal in a form the
+//     PROXY may accept even though net.ParseIP does not ("2130706433",
+//     "0x7f000001", "127.1"). It is parsed the way inet_aton does and checked,
+//     and refused when it cannot be parsed. Without this, the pure-Go resolver
+//     (CGO_ENABLED=0, how releases are built) fails to look such a host up, and
+//     the unresolvable branch below would pass it to the proxy unchecked;
+//   - "localhost" and any "*.localhost" name are loopback (RFC 6761);
+//   - anything else is a real hostname: it is resolved here, and if it does
+//     not resolve, it passes (the proxy resolves it).
 func checkProxiedDownloadTarget(ctx context.Context, host string, proxyURL *url.URL) error {
+	host = strings.TrimSuffix(host, ".")
 	if host == "" {
 		return fmt.Errorf("refusing to download via proxy %s: the URL has no host", proxyURL.Host)
 	}
-	var ips []net.IP
-	if ip := net.ParseIP(host); ip != nil {
-		ips = []net.IP{ip}
-	} else {
-		addrs, err := lookupDownloadHost(ctx, host)
-		if err != nil {
-			return nil // unresolvable here: the proxy resolves it (see proxyTargetGuard)
-		}
-		for _, a := range addrs {
-			ips = append(ips, a.IP)
-		}
-	}
-	for _, ip := range ips {
+	refuse := func(ip net.IP, literal bool) error {
 		if reason := blockedDownloadReason(ip); reason != "" {
-			return &blockedDownloadAddrError{host: host, ip: ip, reason: reason, proxy: proxyURL.Host}
+			return &blockedDownloadAddrError{host: host, ip: ip, reason: reason, proxy: proxyURL.Host, literal: literal}
+		}
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return refuse(ip, true)
+	}
+	if strings.Contains(host, ":") {
+		a, err := netip.ParseAddr(host)
+		if err != nil {
+			return fmt.Errorf("refusing to download from %s via proxy %s: it looks like an IPv6 address but is not a valid one, so it cannot be checked", host, proxyURL.Host)
+		}
+		return refuse(net.IP(a.WithZone("").AsSlice()), true)
+	}
+	if isNumericHost(host) {
+		ip, ok := parseInetAton(host)
+		if !ok {
+			return fmt.Errorf("refusing to download from %s via proxy %s: it looks like a numeric IP address but is not a valid one, so it cannot be checked", host, proxyURL.Host)
+		}
+		return refuse(ip, true)
+	}
+	if lower := strings.ToLower(host); lower == "localhost" || strings.HasSuffix(lower, ".localhost") {
+		return &blockedDownloadAddrError{host: host, reason: "loopback", proxy: proxyURL.Host}
+	}
+	lctx, cancel := context.WithTimeout(ctx, proxyTargetLookupTimeout)
+	defer cancel()
+	addrs, err := lookupDownloadHost(lctx, host)
+	if err != nil {
+		return nil // unresolvable here (or timed out): the proxy resolves it (see proxyTargetGuard)
+	}
+	for _, a := range addrs {
+		if err := refuse(a.IP, false); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// isNumericHost reports whether every dot-separated label of host is a decimal
+// number or a 0x/0X hex number (possibly with no digits after the prefix,
+// which parseInetAton then rejects). Such a host can only be meant as an IPv4
+// literal; no registrable name is all-numeric.
+func isNumericHost(host string) bool {
+	for _, label := range strings.Split(host, ".") {
+		if label == "" {
+			return false
+		}
+		digits, isDigit := label, func(r rune) bool { return r >= '0' && r <= '9' }
+		if len(label) >= 2 && label[0] == '0' && (label[1] == 'x' || label[1] == 'X') {
+			digits = label[2:]
+			isDigit = func(r rune) bool {
+				return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+			}
+		}
+		for _, r := range digits {
+			if !isDigit(r) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// parseInetAton parses an IPv4 address the way inet_aton(3) does: one to four
+// parts, each decimal, 0x-prefixed hex, or 0-prefixed octal; every part but the
+// last is one byte and the last fills the remaining bytes ("127.1" is
+// 127.0.0.1, "2130706433" is 127.0.0.1). ok is false for anything inet_aton
+// would reject, including a part that overflows its bytes.
+func parseInetAton(host string) (ip net.IP, ok bool) {
+	parts := strings.Split(host, ".")
+	if len(parts) < 1 || len(parts) > 4 {
+		return nil, false
+	}
+	vals := make([]uint64, len(parts))
+	for i, p := range parts {
+		var v uint64
+		var err error
+		switch {
+		case len(p) >= 2 && p[0] == '0' && (p[1] == 'x' || p[1] == 'X'):
+			if len(p) == 2 {
+				return nil, false
+			}
+			v, err = strconv.ParseUint(p[2:], 16, 64)
+		case len(p) > 1 && p[0] == '0':
+			v, err = strconv.ParseUint(p[1:], 8, 64)
+		default:
+			v, err = strconv.ParseUint(p, 10, 64)
+		}
+		if err != nil {
+			return nil, false
+		}
+		vals[i] = v
+	}
+	n := len(vals)
+	for _, v := range vals[:n-1] {
+		if v > 0xff {
+			return nil, false
+		}
+	}
+	if vals[n-1] > (uint64(1)<<(8*(5-n)))-1 {
+		return nil, false
+	}
+	var addr uint64
+	for i, v := range vals[:n-1] {
+		addr |= v << (24 - 8*i)
+	}
+	addr |= vals[n-1]
+	return net.IPv4(byte(addr>>24), byte(addr>>16), byte(addr>>8), byte(addr)), true
 }
 
 // proxyDialAddr is the host:port the transport dials for proxyURL, with the
@@ -334,21 +449,42 @@ func blockedDownloadReason(ip net.IP) string {
 // for a proxied request's target. It names the host, the address it resolved
 // to, which internal range that is, and the proxy when there was one.
 type blockedDownloadAddrError struct {
-	host   string // the hostname dialed or requested; "" when unknown
-	ip     net.IP
-	reason string // blockedDownloadReason(ip)
-	proxy  string // proxy host:port when the target was checked for a proxied request
+	host    string // the hostname dialed or requested; "" when unknown
+	ip      net.IP // nil for a name that is loopback by definition (localhost)
+	reason  string // blockedDownloadReason(ip), or "loopback" for localhost
+	proxy   string // proxy host:port when the target was checked for a proxied request
+	literal bool   // host is an IP literal (ip was parsed from it, not resolved)
 }
 
 func (e *blockedDownloadAddrError) Error() string {
-	target := e.ip.String()
-	if e.host != "" && e.host != target {
-		target = fmt.Sprintf("%s (resolved to %s)", e.host, e.ip)
+	var target, what string
+	if e.ip == nil {
+		target = e.host
+		what = fmt.Sprintf("%s is %s %s name (RFC 6761)", e.host, article(e.reason), e.reason)
+	} else {
+		target = e.ip.String()
+		if e.host != "" && e.host != target {
+			verb := "resolved to"
+			if e.literal {
+				verb = "read as"
+			}
+			target = fmt.Sprintf("%s (%s %s)", e.host, verb, e.ip)
+		}
+		what = fmt.Sprintf("%s is %s %s address", e.ip, article(e.reason), e.reason)
 	}
 	if e.proxy != "" {
-		return fmt.Sprintf("refusing to download from %s via proxy %s: %s is a %s address, and downloads may not reach private/loopback addresses (a private proxy is allowed; a private target is not)", target, e.proxy, e.ip, e.reason)
+		return fmt.Sprintf("refusing to download from %s via proxy %s: %s, and downloads may not reach private/loopback addresses (a private proxy is allowed; a private target is not)", target, e.proxy, what)
 	}
-	return fmt.Sprintf("refusing to download from %s: %s is a %s address, and downloads may not reach private/loopback addresses", target, e.ip, e.reason)
+	return fmt.Sprintf("refusing to download from %s: %s, and downloads may not reach private/loopback addresses", target, what)
+}
+
+// article is "an" before a reason that starts with a vowel ("unspecified"),
+// else "a".
+func article(word string) string {
+	if word != "" && strings.ContainsRune("aeiouAEIOU", rune(word[0])) {
+		return "an"
+	}
+	return "a"
 }
 
 // downloadTransport returns a RoundTripper carrying a ResponseHeaderTimeout. When

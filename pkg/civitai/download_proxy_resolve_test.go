@@ -130,3 +130,70 @@ func TestDownloadUnresolvableWithoutProxyUnchanged(t *testing.T) {
 		t.Errorf("no proxy was used; the error must not say one was: %v", err)
 	}
 }
+
+// TestDownloadViaProxyRefusesNonStandardIPForms: hosts that are IP literals in
+// a form net.ParseIP rejects, or loopback by name. The pure-Go resolver
+// (CGO_ENABLED=0, how releases are built) answers "no such host" for every one
+// of them — measured with CGO_ENABLED=0 on go1.26 — and the fake resolver here
+// answers exactly that, so the test does not depend on how it was built.
+// Before the fix the "unresolvable, so the proxy resolves it" branch let them
+// all through; a proxy that parses them like inet_aton then reaches loopback or
+// a private address.
+func TestDownloadViaProxyRefusesNonStandardIPForms(t *testing.T) {
+	fakeResolver(t, nil) // every lookup: no such host
+
+	refused := []struct {
+		host string // as written in the URL
+		want string // fragment of the refusal
+	}{
+		{"2130706433", "2130706433 (read as 127.0.0.1) via proxy "},
+		{"0x7f000001", "0x7f000001 (read as 127.0.0.1) via proxy "},
+		{"127.1", "127.1 (read as 127.0.0.1) via proxy "},
+		{"0177.0.0.1", "0177.0.0.1 (read as 127.0.0.1) via proxy "},
+		{"10.0.0.5.", "refusing to download from 10.0.0.5 via proxy "},
+		{"167772165", "167772165 (read as 10.0.0.5) via proxy "},
+		{"[fe80::1%25eth0]", "fe80::1%eth0 (read as fe80::1) via proxy "},
+		{"foo.localhost", "foo.localhost is a loopback name (RFC 6761)"},
+		{"localhost.", "localhost is a loopback name (RFC 6761)"},
+		{"0x", "looks like a numeric IP address but is not a valid one"},
+		{"1.2.3.4.5", "looks like a numeric IP address but is not a valid one"},
+		{"08.0.0.1", "looks like a numeric IP address but is not a valid one"},
+		{"256.0.0.1", "looks like a numeric IP address but is not a valid one"},
+		{"4294967296", "looks like a numeric IP address but is not a valid one"},
+	}
+	for _, tc := range refused {
+		t.Run(tc.host, func(t *testing.T) {
+			f := newProxyFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				t.Errorf("origin reached for %s", r.Host)
+			})
+			c := proxiedClient(http.ProxyURL(f.proxyURL))
+			_, err := c.DownloadPresigned(context.Background(), "https://"+tc.host+"/f")
+			if err == nil {
+				t.Fatalf("%s via proxy was downloaded", tc.host)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("refusal should contain %q, got: %v", tc.want, err)
+			}
+			if got := f.connectTargets(); len(got) != 0 {
+				t.Errorf("proxy was asked to CONNECT %v", got)
+			}
+		})
+	}
+
+	// Control: a public address written as one decimal number (203.0.113.10)
+	// is still downloaded through the proxy.
+	t.Run("public decimal form passes", func(t *testing.T) {
+		f := newProxyFixture(t, func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, "ok")
+		})
+		c := proxiedClient(http.ProxyURL(f.proxyURL))
+		resp, err := c.DownloadPresigned(context.Background(), "https://3405803786/f")
+		if err != nil {
+			t.Fatalf("public decimal form refused: %v", err)
+		}
+		_ = resp.Body.Close()
+		if got := f.connectTargets(); len(got) != 1 || got[0] != "3405803786:443" {
+			t.Errorf("proxy CONNECT targets = %v, want [3405803786:443]", got)
+		}
+	})
+}
