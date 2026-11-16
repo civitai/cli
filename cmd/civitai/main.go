@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"syscall"
 
@@ -56,7 +57,18 @@ func main() {
 		// BEFORE this line prepends anything, so it was structurally incapable
 		// of observing the property it was named for.
 		fmt.Fprintln(os.Stderr, errorLine(err))
+		printFeedbackHint(os.Stderr, err)
 		os.Exit(exitCode(err))
+	}
+}
+
+// printFeedbackHint writes, under the error line, the one-line `civitai
+// feedback send` suggestion for a whitelisted platform failure
+// (cmd.FeedbackHint), and nothing for any other error. It reads the error and
+// never feeds exitCode.
+func printFeedbackHint(w io.Writer, err error) {
+	if hint := cmd.FeedbackHint(err); hint != "" {
+		fmt.Fprintln(w, hint)
 	}
 }
 

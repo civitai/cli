@@ -148,6 +148,15 @@ var patternRules = map[string]patternRule{
 		rule:    "must start with a \"/\"",
 		example: "/",
 	},
+	// storage.collections.<name>.ownedModelVersions[] — a path into a stored
+	// document's `data`. Pointer-SHAPED but deliberately narrower than RFC 6901:
+	// no `~` escapes, and a segment cannot start with a digit, so it can never
+	// index into an array. The gloss names those three exclusions because they
+	// are what an author who knows JSON Pointer will try.
+	`^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$`: {
+		rule:    "must be a field path of 1 to 4 segments, each \"/\" then a letter or _ followed by up to 63 letters, digits or _ — no array indexes, \"~\" escapes or hyphens",
+		example: "/workflow/modelVersionId",
+	},
 }
 
 // patternAdvice returns the trailing gloss for a pattern violation, or "" when

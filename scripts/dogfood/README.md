@@ -205,7 +205,7 @@ carries two byte COUNTS and nothing else.
 
 | cap | flag | mechanical? |
 |---|---|---|
-| app-name prefix on anything the trial creates or mutates | `--app-prefix` | **yes** — a mismatched `app init` / `create` / `submit` / `listing` is refused and never executed. It reads the positional app-name argument plus the value of any flag `GATED_FLAGS` (runner.py) marks slug-bearing — `--slug`, `--from`, `--name`, `--dir` — in both the `--slug x` and `--slug=x` spelling. With no slug on the command line it reads every `block.manifest.json` under `/work` and requires all of them to carry the prefix. **Other flags' values are not app names:** `--template static` used to be refused as if `static` were a slug, and the agent that believed it measured the wrong scaffold |
+| app-name prefix on anything the trial creates or mutates | `--app-prefix` | **yes** — a mismatched `app init` / `create` / `submit` / `listing` is refused and never executed. It reads the positional app-name argument plus the value of any flag `GATED_FLAGS` (runner.py) marks slug-bearing — `--slug`, `--name`, `--dir` — in both the `--slug x` and `--slug=x` spelling. With no slug on the command line it reads every `block.manifest.json` under `/work` and requires all of them to carry the prefix. **Other flags' values are not app names:** `--template static` used to be refused as if `static` were a slug, and the agent that believed it measured the wrong scaffold |
 | generation cap | `--max-generations N` | **yes** — the N+1th `civitai generate` is refused before the `docker exec` |
 | submission cap | `--max-submissions N` | **yes** — same, for `civitai app submit`, and it counts SUBMISSIONS rather than attempts. Each attempt is charged before it runs and **refunded** when its own result proves nothing was contacted: it exited non-zero *and* carried the CLI's pre-flight refusal for lack of `--yes`. `--package-only` contacts nothing by construction and is never charged. 🔴 **The refund direction is deliberate and it is the fail-CLOSED one.** Deciding up front — "only charge a submit carrying `--yes`" — makes the harness depend on the CLI continuing to refuse, so the day that stops it silently under-counts and permits unlimited real submissions; a refund that stops firing merely over-refuses. Both facts live in Go and are pinned by the seam guards in `dogfood_submission_cap_seam_test.go`, which run the real CLI against a recording server. Measured defect: trial `ab-ship-mimo-01` charged a refused submit, then blocked the `--yes` retry the model reached for on its very next step, and graded `SHIP=no` for an app that was never submitted |
 | `app withdraw` | `--allow-withdraw` to permit | **yes** — refused by default. It permanently destroys a listing's captioned screenshots and names a publication-request id no prefix check can resolve to an app. **Not threaded through `driver.sh`** — a matrix run cannot reach it at all |
@@ -430,7 +430,7 @@ agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius brief_sou
 Tests: `go test . -run 'TestOracle|TestGrade|TestServeBlock'`. Docker is stubbed,
 so they need no daemon — but they do drive a **real** browser, and they FAIL
 rather than skip under `$CI` (a skip and a pass read the same in a merge log).
-`ci.yml`'s `build-test` resolves one into `CIVITAI_CHROME` before `go test ./...`.
+Every CI job that runs them (`build-test` and `dogfood-browser`) resolves one into `CIVITAI_CHROME` first, through `ci-browser.sh`.
 
 #### Launching the browser (`launch()` in `briefs/_cdp.mjs`)
 
@@ -451,17 +451,25 @@ What the launch does about it, and the standing of each part:
 | **Flags that skip startup work.** `--password-store=basic` plus the no-background-network group. | The runner's `DBUS_SESSION_BUS_ADDRESS` is unparseable — reproduce the exact CI stderr with `DBUS_SESSION_BUS_ADDRESS=bogus:path=/nope`. Measured: the flag removes one session-bus round trip (4 `dbus/bus.cc` errors → 3), the keyring probe, which is the last one before the DevTools line. Three of the four failures stalled after exactly three; **the fourth stalled after one, so this is not the whole mechanism.** ⚠ Null result worth not re-deriving: *clearing* the env var changes nothing (4 either way). |
 | **Release builds preferred.** `google-chrome` before `chromium`. | `ubuntu-latest` ships both, and `/usr/bin/chromium` there is a raw `chromium-browser-snapshots` build (152.0.7977.0) while `google-chrome` is a release (152.0.7977.82). ⚠ A determinism argument, **not** a measurement. |
 | **The process is killed when a launch fails.** | The old code walked away from it; all four CI logs end with the runner's own `Terminate orphan process: pid (…) (chrome)`. |
-| **A bounded retry** — `CIVITAI_ASSERT_LAUNCH_ATTEMPTS`, default 2. | The backstop, not the fix. 🔴 **It is loud on SUCCESS**: a launch that needed a second attempt prints `BROWSER LAUNCH RETRY` with the first attempt's diagnostics, and `ci.yml`'s browser-smoke step turns that string into a `::warning`. That is the only thing keeping it from being a way to stop noticing a browser that has started failing half the time. A browser that never works still fails, after exactly N attempts, with every attempt's output in the message. |
+| **A bounded retry** — `CIVITAI_ASSERT_LAUNCH_ATTEMPTS`, default 2. | The backstop, not the fix. 🔴 **It is loud on SUCCESS**: a launch that needed a second attempt prints `BROWSER LAUNCH RETRY` with the first attempt's diagnostics, and `ci-browser.sh`'s smoke step turns that string into a `::warning`. That is the only thing keeping it from being a way to stop noticing a browser that has started failing half the time. A browser that never works still fails, after exactly N attempts, with every attempt's output in the message. |
 
 ⚠ **The stall was never reproduced locally.** `TestCdpLaunch*` in
 `dogfood_cdp_launch_test.go` are therefore invariant guards on the launch's
 behaviour, driven by a fake browser, and only the orphan one is a regression
 test. Do not read them as evidence the flake is gone.
 
-`ci.yml` gained a **browser smoke step** that runs `launch()` before `go test`,
+CI runs a **browser smoke step** (`ci-browser.sh`) that runs `launch()` before `go test`,
 carrying both controls: it fails a binary that exits 3 without printing (so it
 can still go red) and it fails the job by name if the resolved browser cannot
 bind a debugging port, instead of that surfacing eighty lines into a Go test.
+
+**`CIVITAI_ASSERT_WAIT_LOG=<file>`** (unset by default) makes every in-page wait
+append `{"what","ok","ms","budget"}` to `<file>`. The Go suite uses it to run
+its expected-timeout negative controls on a **short** `CIVITAI_ASSERT_WAIT_MS`
+and to refuse that short budget anywhere else (`dogfood_control_wait_test.go`);
+`dogfood-browser` publishes the distribution of the waits that succeeded
+(`wait-summary.sh`, via `ci-browser-tests.sh`), which is the evidence the short budget rests on. A grading
+run is unaffected: neither knob changes `WAIT_MS`'s 15 s default.
 
 - 🔴 **`scopes=` decides no verdict**, exactly like the validate gate. A manifest
   is a declaration, not a behaviour — a block can declare `posts:write:self` and

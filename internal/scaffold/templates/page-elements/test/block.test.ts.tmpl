@@ -231,6 +231,45 @@ describe('mountBlock over the real bridge', () => {
   });
 });
 
+// The allowlist this app's dev server ships, read from `.env.development` the
+// way Vite reads it, and handed to the REAL bridge, so these cases test the file
+// that ships and not a copy of it.
+const ENV_DEVELOPMENT = join(dirname(fileURLToPath(import.meta.url)), '..', '.env.development');
+const ALLOWLIST_KEY = 'VITE_BLOCK_ALLOWED_PARENT_ORIGINS=';
+
+function devAllowlist(): string[] {
+  const lines = readFileSync(ENV_DEVELOPMENT, 'utf8')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith(ALLOWLIST_KEY));
+  expect(lines).toHaveLength(1);
+  return lines[0]!
+    .slice(ALLOWLIST_KEY.length)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+describe('the dev allowlist admits every Civitai domain', () => {
+  // App previews run on every Civitai domain. Literal on purpose.
+  const accepted = ['https://civitai.com', 'https://civitai.red', 'https://civitai.green', 'http://localhost:5186'];
+
+  beforeEach(() => {
+    __resetTransport();
+    getTransport({ allowedParentOrigins: devAllowlist() });
+  });
+
+  for (const origin of accepted) {
+    test(`a BLOCK_INIT from ${origin} mounts the app and is answered there`, async () => {
+      const mounted = mountBlock(root);
+      fromHost({ type: 'BLOCK_INIT', payload: initPayload() }, origin);
+      await mounted;
+      expect(rendered()).toBe(true);
+      expect(posted.filter((p) => p.message.type === 'BLOCK_READY').map((p) => p.targetOrigin)).toEqual([origin]);
+    });
+  }
+});
+
 describe('host pushes after mount', () => {
   test('a TOKEN_REFRESH leaves the page and what the viewer typed intact', async () => {
     const mounted = mountBlock(root);
@@ -276,6 +315,44 @@ describe('host pushes after mount', () => {
     expect(document.documentElement.dataset.theme).toBe('dark');
     expect(input.isConnected).toBe(true);
     expect(input.value).toBe('kept');
+  });
+});
+
+describe('the stock controls', () => {
+  // <civitai-text-input> and <civitai-button> are form-associated: they call
+  // attachInternals() when constructed, which happy-dom lacks. test/setup.ts
+  // supplies it; without that file this whole block fails to mount.
+  test('typing into <civitai-text-input> and clicking <civitai-button> echoes the text', async () => {
+    const mounted = mountBlock(root);
+    fromHost({ type: 'BLOCK_INIT', payload: initPayload() });
+    await mounted;
+
+    const message = field('message')!;
+    const echo = field('echo')!;
+    expect(message).toBeInstanceOf(customElements.get('civitai-text-input')!);
+    expect(echo).toBeInstanceOf(customElements.get('civitai-button')!);
+    await (message as unknown as { updateComplete: Promise<unknown> }).updateComplete;
+
+    // Type the way a viewer does: into the element's own inner <input>.
+    const inner = message.shadowRoot?.querySelector('input');
+    expect(inner).not.toBeNull();
+    inner!.value = 'hello';
+    inner!.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+    expect((message as unknown as { value: string }).value).toBe('hello');
+
+    expect(field('echoed')?.textContent).toBe('');
+    echo.click();
+    expect(field('echoed')?.textContent).toBe('You said: hello');
+
+    // What the viewer typed survives a host push (onChange only updates).
+    fromHost({
+      type: 'TOKEN_REFRESH',
+      payload: {
+        token: { raw: 'rotated.token', scopes: [], expiresAt: new Date(Date.now() + 15 * 60_000).toISOString() },
+      },
+    });
+    expect(field('message')).toBe(message);
+    expect((message as unknown as { value: string }).value).toBe('hello');
   });
 });
 

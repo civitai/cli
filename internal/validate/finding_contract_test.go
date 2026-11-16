@@ -810,6 +810,7 @@ const goodBase = `{
   "description": "a manifest used by the field-coverage corpus",
   "author": "tester",
   "contentRating": "g",
+  "targets": [{"slotId": "model.sidebar_top"}],
   "renderMode": "iframe",
   "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
   "entry": "index.html"
@@ -831,6 +832,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "schema violations at the root and inside an array (schemaErrors)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "Bad_Id",
 			  "name": "x",
 			  "version": "1.0.0",
@@ -839,8 +841,20 @@ func fieldCoverageCorpus() []fieldFixture {
 			}`},
 		},
 		{
+			name: "no surface declared: neither page nor targets (schemaErrors, surface clause)",
+			files: map[string]string{"block.manifest.json": `{
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": [],
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false}
+			}`},
+		},
+		{
 			name: "server-owned fields set (serverOwnedFieldChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -852,8 +866,23 @@ func fieldCoverageCorpus() []fieldFixture {
 			}`},
 		},
 		{
+			name: "the platform-stamped canonical iframe.src (serverOwnedFieldChecks warning)",
+			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "description": "a pulled checkout",
+			  "author": "tester",
+			  "contentRating": "g",
+			  "scopes": [],
+			  "iframe": {"src": "https://cov-block.civit.ai/", "sandbox": "allow-scripts", "minHeight": 400, "resizable": false}
+			}`},
+		},
+		{
 			name: "buildCommand not on the allowlist, and no outputDir (buildCoherence)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -867,6 +896,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "outputDir escapes the project root, with no buildCommand (buildCoherence)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -880,6 +910,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "outputDir is absolute (buildCoherence)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -894,6 +925,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "buildCommand set with no outputDir (buildCoherence)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -907,6 +939,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "buildCommand over the length cap (buildCoherence)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -921,6 +954,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "renderMode tier gate, and no iframe block (semanticChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -945,6 +979,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "iframe missing minHeight and resizable (iframeRequiredFields)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -957,6 +992,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "iframe minHeight above the ceiling (iframeRequiredFields)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -969,6 +1005,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "sandbox escape combination and a disallowed token (sandboxChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -981,6 +1018,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "sandbox is whitespace only (sandboxChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -993,6 +1031,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "justification for a scope that is not declared (scopeJustificationChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1007,6 +1046,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "sensitive scope with no justification (sensitiveScopeJustificationChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1027,6 +1067,7 @@ func fieldCoverageCorpus() []fieldFixture {
 			// oversized payload.
 			name: "all three goods rules (goodsChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1077,6 +1118,7 @@ func fieldCoverageCorpus() []fieldFixture {
 		{
 			name: "budgeted scope with no page at all (warningChecks)",
 			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1149,11 +1191,124 @@ func fieldCoverageCorpus() []fieldFixture {
 			},
 		},
 		{
-			// storageScopeChecks reports against `scopes`, NOT FieldProject — the
-			// deliberate opposite of readyAckChecks above, because here the source
-			// is correct and the manifest is what needs the edit. This fixture is
-			// what makes that assertion checkable rather than asserted.
-			name: "source calls a storage hook with no storage scope declared (storageScopeChecks)",
+			name: "a blocks-react page app that never constructs the transport at mount (sdkMountChecks)",
+			files: map[string]string{
+				"block.manifest.json": `{
+				  "blockId": "cov-block",
+				  "name": "Coverage Block",
+				  "version": "1.0.0",
+				  "description": "page app whose SDK never connects",
+				  "author": "tester",
+				  "contentRating": "g",
+				  "page": {"path": "/", "title": "App"},
+				  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+				  "entry": "index.html"
+				}`,
+				"package.json":      `{"dependencies": {"@civitai/blocks-react": "^0.72.0"}}`,
+				"package-lock.json": `{"lockfileVersion": 3, "packages": {"node_modules/@civitai/blocks-react": {"version": "0.72.0"}}}`,
+				"index.html":        `<!doctype html><script type="module" src="./app.js"></script>`,
+				"app.js": "import { useBuzzWorkflow } from '@civitai/blocks-react';\n" +
+					"export function App() { const { submit } = useBuzzWorkflow(); return submit; }\n",
+			},
+		},
+		{
+			// storageFeatureGateWarnings (every feature the server refuses
+			// today, as WARNINGS) and storageDeclarationChecks (the counter/mark
+			// name collision, an error), one collection each. The collision
+			// keeps the scope rules silent here BY DESIGN (an invalid
+			// declaration declares nothing); the next fixture reaches them.
+			name: "storage features not available yet, and a counter/mark collision (storageFeatureGateWarnings, storageDeclarationChecks)",
+			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": ["apps:storage", "apps:storage:publish"],
+			  "scopeJustifications": {"apps:storage:publish": "viewers publish entries"},
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+			  "storage": {"collections": {
+			    "cov_log": {"visibility": "private", "kind": "log"},
+			    "cov_anyone": {"visibility": "shared", "write": "anyone"},
+			    "cov_owner": {"visibility": "shared", "write": "owner", "marks": ["star"]},
+			    "cov_ttl": {"visibility": "private", "ttlSeconds": 120},
+			    "cov_daily": {"visibility": "shared", "write": "own", "dailyWritesPerAuthor": 10},
+			    "cov_registry": {"visibility": "shared", "write": "own", "registry": "public"},
+			    "cov_hook": {"visibility": "private", "hook": {"file": "hooks/guard.js", "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}},
+			    "cov_dup": {"visibility": "shared", "write": "none", "counters": ["n"], "marks": ["n"]}
+			  }}
+			}`},
+		},
+		{
+			name: "collections declared without either storage scope (storageScopeRuleChecks)",
+			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": ["user:read:self"],
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+			  "storage": {"collections": {
+			    "cov_kv": {"visibility": "private"},
+			    "cov_posts": {"visibility": "shared", "write": "own"}
+			  }}
+			}`},
+		},
+		{
+			name: "all three storage scopes with nothing declared for them (storageScopeRuleChecks)",
+			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": ["apps:storage", "apps:storage:publish", "apps:storage:import"],
+			  "scopeJustifications": {"apps:storage:publish": "viewers publish entries", "apps:storage:import": "reads the parent app's entries"},
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false}
+			}`},
+		},
+		{
+			name: "imports with neither apps:storage nor apps:storage:import (storageScopeRuleChecks)",
+			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": ["user:read:self"],
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+			  "storage": {"imports": [{"from": "cov-parent", "collections": ["cov_kv"], "access": "read"}]}
+			}`},
+		},
+		{
+			// storageImportChecks: the two parseImports refusals the schema
+			// admits — an import from this app itself, and a second import from
+			// one source. Each keeps the scope rules silent (an invalid
+			// declaration declares nothing).
+			name: "an import from itself and a duplicate source (storageImportChecks)",
+			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": ["apps:storage", "apps:storage:import"],
+			  "scopeJustifications": {"apps:storage:import": "reads the parent app's entries"},
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+			  "storage": {"imports": [
+			    {"from": "cov-block", "collections": ["cov_kv"], "access": "read"},
+			    {"from": "cov-parent", "collections": ["cov_kv"], "access": "read"},
+			    {"from": "cov-parent", "collections": ["cov_kv"], "access": "readwrite"}
+			  ]}
+			}`},
+		},
+		{
+			// storageScopeChecks: the three SOURCE findings — an undeclared
+			// literal collection name, the document store with no apps:storage,
+			// and a legacy hook call. All three report manifest
+			// fields; this fixture is what makes that checkable.
+			name: "source on the document store with nothing declared, plus a legacy hook (storageScopeChecks)",
 			files: map[string]string{
 				"block.manifest.json": `{
 				  "blockId": "cov-block",
@@ -1162,13 +1317,98 @@ func fieldCoverageCorpus() []fieldFixture {
 				  "description": "storage with no scope",
 				  "author": "tester",
 				  "contentRating": "g",
+				  "scopes": ["user:read:self"],
 				  "page": {"path": "/", "title": "App"},
 				  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
 				  "entry": "index.html"
 				}`,
-				"index.html":  `<!doctype html><script type="module" src="./src/App.tsx"></script>`,
-				"src/App.tsx": `import { useAppStorage } from '@civitai/blocks-react';` + "\n" + `export const S = () => useAppStorage();`,
+				"index.html": `<!doctype html><script type="module" src="./src/App.tsx"></script>`,
+				"src/App.tsx": `import { useAppStorage } from '@civitai/blocks-react';` + "\n" +
+					`export const S = () => useAppStorage();` + "\n" +
+					`export const N = () => app.storage.collection('cov_notes').list();`,
 			},
 		},
+		{
+			// storageScopeChecks rule 1b: a `from` call checked against the
+			// import from that source — one collection the import does not
+			// list, and one source no import names. The listed call beside
+			// them is the accept twin.
+			name: "source reading another app's collections through imports (importedCollectionAdvisories)",
+			files: map[string]string{
+				"block.manifest.json": `{
+				  "blockId": "cov-block",
+				  "name": "Coverage Block",
+				  "version": "1.0.0",
+				  "description": "a fork reading its parent",
+				  "author": "tester",
+				  "contentRating": "g",
+				  "scopes": ["apps:storage", "apps:storage:import"],
+				  "scopeJustifications": {"apps:storage:import": "reads the parent app's entries"},
+				  "page": {"path": "/", "title": "App"},
+				  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+				  "storage": {"imports": [{"from": "cov-parent", "collections": ["cov_kv"], "access": "read"}]},
+				  "entry": "index.html"
+				}`,
+				"index.html": `<!doctype html><script type="module" src="./src/App.tsx"></script>`,
+				"src/App.tsx": `export const K = () => app.storage.collection('cov_kv', { from: 'cov-parent' }).list();` + "\n" +
+					`export const O = () => app.storage.collection('cov_other', { from: 'cov-parent' }).list();` + "\n" +
+					`export const S = () => app.storage.collection('cov_kv', { from: 'cov-stranger' }).list();`,
+			},
+		},
+		{
+			// storageCollectionSchemaChecks and storageCollectionSchemaWarnings:
+			// each server-only bound of a collection `schema`, one collection
+			// each, plus a pattern JavaScript's "u" mode refuses (a WARNING). The write
+			// "none" collection also draws the vendored schema's own `false`.
+			name: "collection schemas past the server's bounds (storageCollectionSchemaChecks, storageCollectionSchemaWarnings)",
+			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": ["apps:storage"],
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+			  "storage": {"collections": {
+			    "cov_schema_none": {"visibility": "shared", "write": "none", "counters": ["n"], "schema": {}},
+			    "cov_schema_big": {"visibility": "private", "schema": {"description": "` + strings.Repeat("d", 16400) + `"}},
+			    "cov_schema_deep": {"visibility": "private", "schema": ` +
+				strings.Repeat(`{"items":`, 16) + `{}` + strings.Repeat(`}`, 16) + `},
+			    "cov_schema_many": {"visibility": "private", "schema": {"properties": {` +
+				covPatternProps(17) + `}}},
+			    "cov_schema_bounds": {"visibility": "private", "schema": {"minLength": 2, "maxLength": 1, "maxItems": 9007199254740992}},
+			    "cov_schema_regex": {"visibility": "private", "schema": {"pattern": "(?i)a", "maxLength": 3}}
+			  }}
+			}`},
+		},
+		{
+			// storageManifestPatternCapChecks: 16 + 16 + 1 patterns across three
+			// collections that each parse, one over the manifest's cap of 32.
+			name: "collection schemas over the manifest's pattern cap (storageManifestPatternCapChecks)",
+			files: map[string]string{"block.manifest.json": `{
+			  "targets": [{"slotId": "model.sidebar_top"}],
+			  "blockId": "cov-block",
+			  "name": "Coverage Block",
+			  "version": "1.0.0",
+			  "contentRating": "g",
+			  "scopes": ["apps:storage"],
+			  "iframe": {"sandbox": "allow-scripts", "minHeight": 400, "resizable": false},
+			  "storage": {"collections": {
+			    "cov_cap_a": {"visibility": "private", "schema": {"properties": {` + covPatternProps(16) + `}}},
+			    "cov_cap_b": {"visibility": "private", "schema": {"properties": {` + covPatternProps(16) + `}}},
+			    "cov_cap_c": {"visibility": "private", "schema": {"properties": {` + covPatternProps(1) + `}}}
+			  }}
+			}`},
+		},
 	}
+}
+
+// covPatternProps renders n more pattern-carrying properties (q0…) for the
+// corpus's pattern-count fixture, as JSON object members without braces.
+func covPatternProps(n int) string {
+	parts := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		parts = append(parts, `"q`+itoaTest(i)+`": {"pattern": "x", "maxLength": 3}`)
+	}
+	return strings.Join(parts, ", ")
 }

@@ -255,16 +255,36 @@ func TestTheWizardParagraphAgreesWithTheArtefactsItDescribes(t *testing.T) {
 		// changing the block's default from 50 to 40 passed a guard whose whole job
 		// is to catch that. The assertion has to be over the numbers the block
 		// actually states, so it is over a tokenised set.
+		//
+		// 🔴 AND OVER THE `--budget` BULLET ONLY, NOT THE WHOLE BLOCK. Once the cap
+		// became 5000 the whole-block set was satisfied by an UNRELATED 5000 — the
+		// app_unlock price cap in the earning bullet — so a block still saying
+		// "1–250" passed the cap check (measured: only the default row went red
+		// against the pre-fix block). Scoping to the bullet that states the budget
+		// is what makes each membership test about the budget.
+		const bulletLead = "**`--budget` is a per-generation Buzz ceiling"
+		start := strings.Index(block, bulletLead)
+		if start < 0 {
+			t.Fatalf("PREMISE BROKEN: the block has no %q bullet, so there is no budget sentence "+
+				"for this test to check.\n\nblock:\n%s", bulletLead, block)
+		}
+		bullet := block[start:]
+		if end := strings.Index(bullet, "\n- "); end >= 0 {
+			bullet = bullet[:end]
+		}
+		if end := strings.Index(bullet, "\n\n"); end >= 0 {
+			bullet = bullet[:end]
+		}
 		nums := map[string]bool{}
-		for _, tok := range blockIntegerRe.FindAllString(block, -1) {
+		for _, tok := range blockIntegerRe.FindAllString(bullet, -1) {
 			nums[tok] = true
 		}
-		// Positive control on the tokeniser: the block certainly states SOME numbers,
+		// Positive control on the tokeniser: the bullet certainly states SOME numbers,
 		// and an empty set would make every membership test below pass or fail for
 		// reasons unrelated to the budget.
 		if len(nums) < 2 {
-			t.Fatalf("the tokeniser found %d integer(s) in the block, so the membership tests below "+
-				"are not about the numbers it states: %v", len(nums), nums)
+			t.Fatalf("the tokeniser found %d integer(s) in the budget bullet, so the membership tests below "+
+				"are not about the numbers it states: %v\nbullet: %q", len(nums), nums, bullet)
 		}
 		for label, n := range map[string]int{
 			"default": appapi.DevBuzzBudgetDefault,
@@ -275,7 +295,7 @@ func TestTheWizardParagraphAgreesWithTheArtefactsItDescribes(t *testing.T) {
 				t.Errorf("the block does not state %d as the per-generation budget %s "+
 					"(appapi.DevBuzzBudget* is the source). That number is the SERVER's, not the "+
 					"manifest's, and getting it wrong is a refused generation.\n  integers in the "+
-					"block: %v", n, label, nums)
+					"`--budget` bullet: %v", n, label, nums)
 			}
 		}
 		// MECHANICAL NEGATIVE CONTROL: a value the constant cannot equal must be

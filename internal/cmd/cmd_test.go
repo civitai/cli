@@ -271,21 +271,6 @@ func TestAppInitRequiresName(t *testing.T) {
 	}
 }
 
-// TestAppInitFromIsNotWired pins the `--from` refusal for `app init`; the
-// message contract itself (no internal TODO, an actionable next command) is
-// asserted for BOTH commands in TestScaffoldFromErrorShipsNoEngineeringNote.
-func TestAppInitFromIsNotWired(t *testing.T) {
-	tmp := t.TempDir()
-	chdir(t, tmp)
-	_, _, err := run(t, "app", "init", "forked", "--from", "some-slug")
-	if err == nil {
-		t.Fatal("expected --from to be reported as not wired")
-	}
-	if !strings.Contains(err.Error(), "--from is not available yet") {
-		t.Errorf("error should say --from is not available yet: %v", err)
-	}
-}
-
 func TestAppInitUnknownTemplate(t *testing.T) {
 	tmp := t.TempDir()
 	chdir(t, tmp)

@@ -112,8 +112,14 @@ export function resolveLiveConfig(): LiveConfig {
  * catalog overlay backed by `/api/v1/blocks/models` and resolves a real
  * BlockCheckpointInfo / BlockResourceInfo), so `useCheckpointPicker` /
  * `useResourcePicker` work in `dev:live` exactly as in prod. It does NOT support
- * SET_USER_CHECKPOINT, the App-Storage KV protocol, or in-band Buzz purchase —
- * those reply "not supported in live v1" (use mock mode for them).
+ * SET_USER_CHECKPOINT or in-band Buzz purchase — those reply "not supported in
+ * live v1" (use mock mode for them).
+ *
+ * Storage does not work in `dev:live`. The legacy App-Storage and
+ * shared-storage stores are removed (civitai.com refuses every call with
+ * `legacy_store_removed`, and `@civitai/blocks-react` 0.81.0 dropped their
+ * hooks), and the `@civitai/sdk` document store is not on this bridge at all.
+ * Test the document store against `createFakeStorage` from `@civitai/sdk/testing`.
  *
  * Returns the `uninstall()` teardown.
  */

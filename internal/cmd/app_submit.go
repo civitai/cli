@@ -311,6 +311,10 @@ Excluded DIRECTORIES, by name, at any depth:
   ` + wrapCommaList(pkgzip.ExcludedNames(), 6) + `
 ...and by pattern: ` + pkgzip.DirectoryPatternSummary() + `
 
+Excluded DIRECTORIES, by name, at the PROJECT ROOT only:
+  ` + wrapCommaList(pkgzip.RootExcludedNames(), 6) + `
+...a directory of that name deeper in the tree (src/x/scratch/) IS packaged.
+
 Excluded FILES, by base name:
   ` + wrapCommaList(pkgzip.ExcludedFilePatterns(), 6) + `
 ...but these three are KEPT and uploaded, AT THE PROJECT ROOT ONLY:
@@ -388,6 +392,14 @@ Listing-completeness gate:
 
   Your FIRST submit is what creates the store listing, so there is nothing to
   check yet and nothing is refused; the gate applies from the second one on.
+
+Storage migration notes:
+  An app that declares App Storage collections is checked by the SERVER
+  against the previous approved version. An accepted submit prints the
+  server's migration notes under the success line — for example a
+  storage.collections.<name>.migrations op that covers nothing and so will
+  never run. They never block the submit. (A breaking change no migration
+  covers refuses the submit, and the server's error lists each one.)
 
 Defaults to the current directory.`,
 		Example: `  civitai app submit                    # validate + package + confirm + submit
@@ -784,15 +796,27 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 		case !errors.Is(err, civitai.ErrUnauthorized) && !errors.Is(err, civitai.ErrRateLimited):
 			printSubmitSizeDiagnosis(cmd.ErrOrStderr(), zipBytes, prov)
 		}
+		// The platform refused a bundle the caller could not have known to fix
+		// (feedback_hint.go): one line on stderr, after the diagnosis, with
+		// the error returned unchanged.
+		if submitRefusalIsPlatformFriction(err) {
+			printFeedbackHint(cmd.ErrOrStderr(), feedbackHintSubmitRefused)
+		}
 		return err
 	}
 	base := strings.TrimRight(baseURL, "/")
 	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Submitted — %s is pending moderator review.", r.PublishRequestID)))
+	printSubmitListingReadiness(out, r.Listing)
+	printStorageMigrationWarnings(out, r.StorageMigrationWarnings)
 	fmt.Fprintf(out, "\nWhat's next: a moderator reviews it; on approval it builds + deploys to %s (usually a few minutes).\n", ui.URL(fmt.Sprintf("https://%s.civit.ai", r.Slug)))
 	fmt.Fprintln(out, "\nTrack it:")
 	fmt.Fprintf(out, "  %s                          # review + deploy status\n", ui.Code("civitai app status"))
 	fmt.Fprintf(out, "  %s/apps/my-submissions               # your submissions\n", base)
-	printListingFloorHeadsUp(out)
+	// The server's readiness block above already says what the listing lacks;
+	// the fixed reminder is only for a server that sends no `listing`.
+	if r.Listing == nil {
+		printListingFloorHeadsUp(out)
+	}
 	printMoneyPathNote(out, m)
 	return nil
 }
@@ -800,6 +824,8 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 // printListingFloorHeadsUp is a non-fatal reminder (issue #186 point 4) that a
 // store listing won't publish without an icon + cover, with the exact commands
 // to add them. Kept static (no server call) so it works even pre-first-listing.
+// Printed only when the submit response has no `listing` (an older server);
+// otherwise printSubmitListingReadiness reports the same thing from the server.
 // This submit MINTED the store listing as a draft, so the media is settable NOW —
 // no need to wait for approval.
 //
@@ -819,6 +845,49 @@ func printListingFloorHeadsUp(out io.Writer) {
 	fmt.Fprintf(out, "  %s\n", ui.Code("civitai app listing set-icon <file>"))
 	fmt.Fprintf(out, "  %s\n", ui.Code("civitai app listing set-cover <file>"))
 	fmt.Fprintf(out, "  %s   # what's attached vs. required\n", ui.Code("civitai app listing status"))
+}
+
+// printSubmitListingReadiness prints the store listing's readiness the server
+// returned with the submit (civitai/civitai#7311), directly under the success
+// line so it is not lost below the generic follow-up text.
+//
+//   - approvalBlocked with a next step: a WARNING line — a moderator cannot
+//     approve this submission until the author acts, and the submit having
+//     succeeded is exactly when that is easy to miss.
+//   - a next step without approvalBlocked (e.g. no listing row yet): a plain note.
+//   - problems: one `code  label [severity]` line each, in the server's order.
+//
+// nil (an older server, or `listing: null` when the server could not read it)
+// prints nothing, so the output is what it was before the field existed. Every
+// string here is SERVER text, so each goes through safeTermSingle: escape bytes
+// stripped and newlines flattened, so none can forge a line of its own.
+func printSubmitListingReadiness(out io.Writer, l *appapi.SubmitListingReadiness) {
+	if l == nil {
+		return
+	}
+	st := ui.For(out)
+	next := strings.TrimSpace(safeTermSingle(l.NextStep))
+	switch {
+	case l.ApprovalBlocked && next != "":
+		fmt.Fprintln(out, st.Warn("Approval blocked: "+next))
+	case l.ApprovalBlocked:
+		// The server sets nextStep whenever it blocks; this arm only keeps a
+		// blocked verdict from printing nothing if that ever changes.
+		fmt.Fprintln(out, st.Warn("Approval blocked: a moderator cannot approve this until the store listing has an icon and a cover."))
+	case next != "":
+		fmt.Fprintln(out, "Listing: "+next)
+	}
+	if len(l.Problems) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "Listing problems reported by the server:")
+	for _, p := range l.Problems {
+		line := "  " + safeTermSingle(p.Code) + "  " + safeTermSingle(p.Label)
+		if sev := safeTermSingle(p.Severity); sev != "" {
+			line += " [" + sev + "]"
+		}
+		fmt.Fprintln(out, line)
+	}
 }
 
 // manifestNeedsSpend reports whether the manifest declares a Buzz-spend scope

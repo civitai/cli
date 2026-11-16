@@ -288,6 +288,20 @@ commands the recipe names as it spells them and asserts the `set-status` line
 makes exactly one request. As with the first exception: the next addition
 argues for itself.
 
+#### THIRD NAMED EXCEPTION — the platform-feedback channel (operator decision, 2026-10-14)
+
+`### Reporting a platform problem` names `civitai feedback send` and `civitai
+feedback status <ref>`, and says it is NOT `civitai app feedback`. A blind agent
+reading this block went looking for a way to report platform friction, found
+nothing here, and picked `civitai app feedback` — the inbound inbox of the
+app's own users — because nothing told it otherwise. A command name is not
+docs-site contents that rot here, but the sentence is guidance, so it is
+recorded rather than argued away. **Measured cost, paid every turn in a file
+nothing can recall: +298 bytes on every rendered block** — smallest shape
+8,390 → 8,688 B, **+3.6%**. Pinned whole, per shape, by
+`internal/cmd/feedback_hint_test.go`, which also runs both commands as the
+section spells them (decision 41 §7).
+
 #### NOT an exception — `### Before you submit` is a POINTER (civitai-app-starters#573, Zach, 2026-10-08)
 
 The block's `### Before you submit` section is one sentence and the
@@ -418,7 +432,19 @@ measurement; run the probe.
   (`401`/`403`/`429`/`5xx`, which a blocked edge produces as readily as a broken
   page). A transport failure on one link is collected and the run continues; a
   run that could not reach every link reports **SKIP with the counts**, never a
-  pass.
+  pass. Its link list comes from ONE function, `blockDocsProbeCorpus`: the
+  `### Docs` links of every shape under **both** `{{ if .ElementsSDK }}` arms.
+  Until #835 it rendered `allProjectShapesForTest()[0]` alone — a blocks-react
+  shape — so the default `@civitai/sdk` template's own addresses (the workflow
+  guide pointer) were never fetched. The corpus fails a per-arm control when an
+  arm contributes no link the other lacks; a raw per-section count cannot, because
+  the shared tail outside the `{{ if }}` gives both arms four links.
+- `TestBlockDocsLinkCorpusCoversBothSDKBranches` — the OFFLINE half of that
+  probe, so the corpus claim is checked in `make ci`: it renders each arm
+  independently and asserts `blockDocsProbeCorpus`'s list contains every link of
+  both. A corpus that drops an arm fails here without network. It checks the
+  corpus the probe is built FROM, not the probe's loop — a filter added inside
+  the probe after that call would not be seen offline.
 
 #### The audit repairs (#549 follow-up)
 
@@ -574,3 +600,61 @@ Two consequences worth naming, so this is not re-derived from the headline:
 "satisfies neither arm" of its closing condition, and that is still true: this
 ships no install fix. The cause-side remedy is candidate (b), which lives in the
 hosted prompt in another repo.
+
+## Fifth: every docs PAGE the block links is the `.md` rendering (2026-10-14)
+
+The `### Docs` section says the `.md` suffix serves the plain-text source an
+agent can read directly, and then linked three pages by their HTML route:
+`/apps/reference/` (twice, one per SDK arm), `/apps/guide/` and
+`/apps/examples`. The `--track api` refusal did the same with `/site/` and
+`/orchestration/`. All five now link the `.md` rendering.
+
+Measured 2026-10-14 from this host, redirects NOT followed:
+
+| Spelling | Status | Content-Type | Body starts |
+|---|---|---|---|
+| `/apps/reference/` | `200` | `text/html` | `<!DOCTYPE html>` (~77 KB) |
+| `/apps/reference.md` | `200` | `text/markdown` | front matter (~2.5 KB) |
+| `/apps/guide/` | `200` | `text/html` | `<!DOCTYPE html>` (~89 KB) |
+| `/apps/guide.md` | `200` | `text/markdown` | front matter (~6 KB) |
+| `/apps/examples` | `200` | `text/html` | `<!DOCTYPE html>` (~118 KB) |
+| `/apps/examples.md` | `200` | `text/markdown` | front matter (~23 KB) |
+| `/site.md`, `/orchestration.md` | `200` | `text/markdown` | front matter |
+| `/__civitai-cli-link-probe-must-404__.md` | `404` | — | negative control |
+
+As §"The trailing slash is measured, never tidied" says, each spelling is a
+measurement: the `.md` twin of `/apps/guide/` is `/apps/guide.md`, not
+`/apps/guide/index.md`, and it was probed rather than inferred.
+
+**The "over 100 KB, so page it" sentence was replaced, not updated.** Agent
+fetch tools truncate around 100,000 characters without saying so, and the
+large reference pages (`hooks.md`, `generation.md`, `cli.md`) were each well
+past that on this date. A split of those pages into hub + sub-pages at the same
+URLs was in flight in the docs repo but NOT merged, so the replacement line is
+written to be true on both sides of it: it names no size, promises no
+sub-page, and tells the agent that missing content was probably truncated —
+download and search the page, or fetch a narrower page *if the page links to
+one*. It sits in the shared tail, so the `@civitai/sdk` arm (whose
+`generation.md` pointer is just as large) gets it too. **Measured cost: +238
+bytes of template** (the line added, less the sentence it replaced and the
+`.md` suffixes). It is guidance about how to READ the linked pages, not their
+contents, so it is not a third named exception to the addresses-only rule.
+
+### Guards
+
+- `TestEveryDocsPageURLAnAgentReceivesIsMarkdown`
+  (`internal/cmd/agent_setup_markdown_links_test.go`) — every
+  `developer.civitai.com` address in the WHOLE rendered block, for every shape
+  under both SDK arms, plus the `--track api` refusal, must end `.md` or be
+  `/llms.txt`. A rule about the address SHAPE, so a link added later is covered.
+  Red at `origin/main` `ca9504b` with only the test file added (32 findings:
+  three HTML routes × 10 rendered blocks, plus the refusal's two); green at HEAD.
+- `TestHTMLRouteDetectorCanFail` — its control: the detector flags both HTML
+  shapes the block shipped (trailing slash, bare) and passes `.md`/`llms.txt`.
+- `TestEveryDocsURLSpellingIsLedgered` now also derives, from each `.md`
+  golden URL, its directory form `<path>/`. Without it, 12 ledger rows that
+  link pages UNDER `/apps/guide/` (README.md, the scaffolds' `responsive`
+  pointer, …) went "no longer spells ANY" in this one edit while none of their
+  URLs changed. The bare `<path>` was rejected as the needle because it also
+  matches `internal/redact` fixtures that are not a rot surface. Ledger result
+  unchanged: 17 ledgered, 4 exempt, before and after.

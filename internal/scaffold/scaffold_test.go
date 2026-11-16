@@ -135,7 +135,7 @@ func TestRenderPageMoney(t *testing.T) {
 		"src/generation.test.ts", "src/models.test.ts", "src/nav.test.ts",
 		"src/comfy.test.ts",
 		"src/setup-dev-live.test.ts", "src/setup-plugin.test.ts",
-		"src/App.pollretry.test.tsx", "src/responsive.test.tsx", "src/index.css",
+		"src/App.pollretry.test.tsx", "src/App.quote.test.tsx", "src/responsive.test.tsx", "src/index.css",
 		"README.md", ".gitignore", ".env.development", ".env.production", ".env.example",
 		"assets/README.md",
 	} {
@@ -188,10 +188,11 @@ func TestRenderPageMoney(t *testing.T) {
 	// from the `buzzBalance` option AND stamps spentAccountType on succeeded
 	// snapshots natively — so the scaffold no longer ships a mock balance shim) +
 	// @civitai/app-sdk@0.14.0+. The pins track the CURRENT published minors — the
-	// pins-vs-published guard (TestScaffoldPinsSatisfyPublished) fails CI if they
-	// fall behind npm, so bump BOTH assertions here in lockstep with the .tmpl.
-	mustContain(t, pkg, `"@civitai/blocks-react": "^0.68.0"`)
-	mustContain(t, pkg, `"@civitai/app-sdk": "^0.64.0"`)
+	// pins-vs-published CI job (cmd/pins-gate) fails main and pin-touching PRs if
+	// they fall behind npm, so bump BOTH assertions here in lockstep with the .tmpl
+	// (bump-pins does this).
+	mustContain(t, pkg, `"@civitai/blocks-react": "^0.82.0"`)
+	mustContain(t, pkg, `"@civitai/app-sdk": "^0.89.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk"`)
 	mustContain(t, pkg, `"dev:harness"`)
 	mustContain(t, pkg, `"build"`)
@@ -254,12 +255,17 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "MAX_TRANSIENT_ERRORS")
 	mustContain(t, app, "consecutiveErrors")
 
-	// The confirm-spend modal was removed: Generate is one click → consent →
-	// spend (the button already shows the cost).
+	// The confirm-spend modal was removed: the price is ON the Generate button,
+	// which is disabled until an estimate for the current request succeeds
+	// (#880). The click submits only with that quote; behaviour is pinned by the
+	// template's own src/App.price.test.tsx and src/App.quote.test.tsx, run in
+	// the template-page-money job.
 	mustNotContain(t, app, "Confirm generation")
 	mustNotContain(t, app, "setConfirmOpen")
-	// The Generate click runs the gate directly (no intermediate confirm state).
-	mustContain(t, app, "proceed()")
+	mustContain(t, app, "Retry estimate")
+	if _, err := os.Stat(filepath.Join(dest, "src", "App.price.test.tsx")); err != nil {
+		t.Errorf("page-money must ship its price-contract test src/App.price.test.tsx: %v", err)
+	}
 
 	// The "About this block" modal + the "How this works" section/button were
 	// removed (a clean, minimal scaffold). The status Badge near the title was

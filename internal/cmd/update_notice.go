@@ -29,6 +29,7 @@ var noticeExcludedCommands = map[string]bool{
 	updateCheckHiddenCmd: true,
 	"completion":         true,
 	"help":               true,
+	gitCredentialCmdName: true,
 }
 
 // ciEnvVars are environment variables whose presence indicates a CI/automation

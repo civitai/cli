@@ -56,10 +56,66 @@ func okCloneInfo() map[string]any {
 	}
 }
 
-func TestAppPullClonesFreshDir(t *testing.T) {
+// stubHelperExe pins how the installed helper names the binary, so argv
+// assertions do not depend on whether `civitai` is on the test machine's PATH.
+func stubHelperExe(t *testing.T) {
+	t.Helper()
+	orig := helperExecutable
+	helperExecutable = func() string { return "civitai" }
+	t.Cleanup(func() { helperExecutable = orig })
+}
+
+// stubGitOutput replaces the read-only git runner (used for the remote scan).
+func stubGitOutput(t *testing.T, fn gitOutputFunc) {
+	t.Helper()
+	orig := gitOutput
+	gitOutput = fn
+	t.Cleanup(func() { gitOutput = orig })
+}
+
+const okCredCtx = "credential.https://forgejo.civitai.com"
+
+// wantHelperCfg is the exact helper configuration `app pull` must install for
+// okCloneInfo, as `-c key=value` clone arguments.
+var wantCloneConfig = []string{
+	"-c", okCredCtx + ".helper=",
+	"-c", okCredCtx + ".helper=!civitai git-credential --app my-block",
+	"-c", okCredCtx + ".useHttpPath=true",
+}
+
+func equalArgv(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// assertNoToken fails if the token appears in ANY git argv: a token on a
+// command line is visible to every local process, and a clone URL with one is
+// persisted into .git/config.
+func assertNoToken(t *testing.T, calls [][]string) {
+	t.Helper()
+	for _, c := range calls {
+		for _, a := range c {
+			if strings.Contains(a, "tok-sha1") {
+				t.Fatalf("git argv carries the token: %v", c)
+			}
+		}
+	}
+}
+
+// 🔴 Regression (red on the pre-change CLI, which cloned okCloneURL — the token
+// URL — and so persisted the token into .git/config).
+func TestAppPullClonesTokenlessURLWithHelper(t *testing.T) {
 	var gotInput string
 	srv := cloneInfoServer(t, okCloneInfo(), http.StatusOK, &gotInput)
 	defer srv.Close()
+	stubHelperExe(t)
 
 	var gitCalls [][]string
 	stubGit(t, func(dir string, args ...string) error {
@@ -77,46 +133,38 @@ func TestAppPullClonesFreshDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app pull: %v\n%s", err, errOut)
 	}
-
-	// The tRPC input carries the slug under {"json":{"slug":...}}.
 	if !strings.Contains(gotInput, `"slug":"my-block"`) {
 		t.Errorf("tRPC input should carry the slug: %q", gotInput)
 	}
-	// A fresh dir → `git clone -- <cloneUrl> <slug>`. The literal `--` separator
-	// is mandatory: it stops git from parsing a dash-leading URL/dir as a flag
-	// (argument-injection hardening).
+	// One `git clone -c … -- <token-less url> <slug>`. The literal `--` separator
+	// is mandatory: it stops git from parsing a dash-leading URL/dir as a flag.
 	if len(gitCalls) != 1 {
 		t.Fatalf("expected exactly one git call, got %d: %v", len(gitCalls), gitCalls)
 	}
-	wantClone := []string{"clone", "--", okCloneURL, "my-block"}
-	if len(gitCalls[0]) != len(wantClone) {
-		t.Fatalf("clone args = %v, want %v", gitCalls[0], wantClone)
+	want := append(append([]string{"clone"}, wantCloneConfig...), "--", okHTTPURL, "my-block")
+	if !equalArgv(gitCalls[0], want) {
+		t.Fatalf("clone args =\n  %q\nwant\n  %q", gitCalls[0], want)
 	}
-	for i, a := range wantClone {
-		if gitCalls[0][i] != a {
-			t.Fatalf("clone args = %v, want %v", gitCalls[0], wantClone)
-		}
-	}
+	assertNoToken(t, gitCalls)
 	if !strings.Contains(out, "Cloning my-block") {
 		t.Errorf("output should announce the clone: %s", out)
 	}
-	// The token-leakage caveat MUST be surfaced (token now on disk).
-	if !strings.Contains(errOut, "embeds your access token") {
-		t.Errorf("pull must warn about token-in-URL leakage: %s", errOut)
+	if !strings.Contains(out, "no token is stored there") {
+		t.Errorf("output should say no token is stored: %s", out)
 	}
-	// The CLONE path persists the URL to .git/config, so the warning MUST claim
-	// config-persistence and offer the set-url remedy.
-	if !strings.Contains(errOut, ".git/config") {
-		t.Errorf("clone warning must mention .git/config persistence: %s", errOut)
-	}
-	if !strings.Contains(errOut, "remote set-url origin "+okHTTPURL) {
-		t.Errorf("clone warning must offer the set-url remedy: %s", errOut)
+	if strings.Contains(errOut, "embeds your access token") {
+		t.Errorf("the token-in-URL warning is obsolete and must not print: %s", errOut)
 	}
 }
 
-func TestAppPullSyncsExistingCheckout(t *testing.T) {
+// 🔴 Regression (red pre-change: the sync fetched okCloneURL, putting the token
+// on git's command line, and installed no helper).
+func TestAppPullSyncsExistingCheckoutWithoutToken(t *testing.T) {
 	srv := cloneInfoServer(t, okCloneInfo(), http.StatusOK, nil)
 	defer srv.Close()
+	stubHelperExe(t)
+	// No remotes carry a credential.
+	stubGitOutput(t, func(dir string, args ...string) (string, error) { return "", nil })
 
 	var gitCalls [][]string
 	stubGit(t, func(dir string, args ...string) error {
@@ -126,7 +174,6 @@ func TestAppPullSyncsExistingCheckout(t *testing.T) {
 
 	tmp := t.TempDir()
 	chdir(t, tmp)
-	// Make ./my-block already a git checkout (a .git dir).
 	if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -138,69 +185,37 @@ func TestAppPullSyncsExistingCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app pull (sync): %v", err)
 	}
-	// An existing checkout → fetch+merge, NOT `git pull <url>`. The fetch carries
-	// a literal `--` immediately before the URL (argument-injection hardening: a
-	// dash-leading URL must be a positional, never a flag), then a separate
-	// `merge --ff-only FETCH_HEAD` preserves the fast-forward-only semantics.
-	if len(gitCalls) != 2 {
-		t.Fatalf("expected two git calls (fetch + merge), got %v", gitCalls)
+	want := [][]string{
+		{"-C", "my-block", "config", "--local", "--unset-all", okCredCtx + ".helper"},
+		{"-C", "my-block", "config", "--local", "--add", okCredCtx + ".helper", ""},
+		{"-C", "my-block", "config", "--local", "--add", okCredCtx + ".helper", "!civitai git-credential --app my-block"},
+		{"-C", "my-block", "config", "--local", "--unset-all", okCredCtx + ".useHttpPath"},
+		{"-C", "my-block", "config", "--local", "--add", okCredCtx + ".useHttpPath", "true"},
+		// `--` immediately before the URL: a dash-leading URL stays a positional.
+		{"-C", "my-block", "fetch", "--", okHTTPURL, "HEAD"},
+		{"-C", "my-block", "merge", "--ff-only", "FETCH_HEAD"},
 	}
-	wantFetch := []string{"-C", "my-block", "fetch", "--", okCloneURL, "HEAD"}
-	if len(gitCalls[0]) != len(wantFetch) {
-		t.Fatalf("fetch args = %v, want %v", gitCalls[0], wantFetch)
+	if len(gitCalls) != len(want) {
+		t.Fatalf("git calls =\n  %q\nwant\n  %q", gitCalls, want)
 	}
-	for i, a := range wantFetch {
-		if gitCalls[0][i] != a {
-			t.Fatalf("fetch args = %v, want %v", gitCalls[0], wantFetch)
+	for i := range want {
+		if !equalArgv(gitCalls[i], want[i]) {
+			t.Fatalf("git call %d = %q, want %q", i, gitCalls[i], want[i])
 		}
 	}
-	// The `--` must appear immediately before the URL.
-	dashIdx, urlIdx := -1, -1
-	for i, a := range gitCalls[0] {
-		if a == "--" {
-			dashIdx = i
-		}
-		if a == okCloneURL {
-			urlIdx = i
-		}
-	}
-	if dashIdx == -1 || urlIdx != dashIdx+1 {
-		t.Fatalf("fetch must place `--` immediately before the URL (sep=%d url=%d): %v", dashIdx, urlIdx, gitCalls[0])
-	}
-	wantMerge := []string{"-C", "my-block", "merge", "--ff-only", "FETCH_HEAD"}
-	if len(gitCalls[1]) != len(wantMerge) {
-		t.Fatalf("merge args = %v, want %v", gitCalls[1], wantMerge)
-	}
-	for i, a := range wantMerge {
-		if gitCalls[1][i] != a {
-			t.Fatalf("merge args = %v, want %v", gitCalls[1], wantMerge)
-		}
-	}
+	assertNoToken(t, gitCalls)
 	if !strings.Contains(out, "Syncing existing checkout") {
 		t.Errorf("output should announce the sync: %s", out)
 	}
-	// The SYNC path passes the URL explicitly; git does NOT persist it to
-	// .git/config, so the warning must NOT claim config-persistence (that would
-	// send the user chasing a non-existent on-disk token + a useless set-url).
-	if strings.Contains(errOut, "stored it in .git/config") {
-		t.Errorf("sync warning must NOT claim the token was stored in .git/config: %s", errOut)
-	}
-	if strings.Contains(errOut, "remote set-url") {
-		t.Errorf("sync warning must NOT offer the clone-only set-url remedy: %s", errOut)
-	}
-	// And it should affirmatively reassure that nothing was persisted to config.
-	if !strings.Contains(errOut, "NOT persisted to .git/config") {
-		t.Errorf("sync warning should clarify the token was NOT persisted to config: %s", errOut)
-	}
-	// It should still surface the transient process-args exposure accurately.
-	if !strings.Contains(errOut, "access token") {
-		t.Errorf("sync should still warn about the transient token exposure: %s", errOut)
+	if strings.Contains(errOut, "access token") {
+		t.Errorf("nothing was migrated, so no token warning may print: %s", errOut)
 	}
 }
 
 func TestAppPullExplicitDir(t *testing.T) {
 	srv := cloneInfoServer(t, okCloneInfo(), http.StatusOK, nil)
 	defer srv.Close()
+	stubHelperExe(t)
 	var gitCalls [][]string
 	stubGit(t, func(dir string, args ...string) error {
 		gitCalls = append(gitCalls, args)
@@ -216,9 +231,9 @@ func TestAppPullExplicitDir(t *testing.T) {
 	if _, _, err := run(t, "app", "pull", "custom-dir", "--app", "my-block"); err != nil {
 		t.Fatalf("app pull custom-dir: %v", err)
 	}
-	// `clone -- <url> <dir>` → the explicit dir is the 4th argv element.
-	if len(gitCalls[0]) != 4 || gitCalls[0][3] != "custom-dir" {
-		t.Errorf("explicit dir should be the clone target after `--`: %v", gitCalls[0])
+	argv := gitCalls[0]
+	if len(argv) < 2 || argv[len(argv)-1] != "custom-dir" || argv[len(argv)-3] != "--" {
+		t.Errorf("explicit dir should be the clone target after `--`: %v", argv)
 	}
 }
 
@@ -229,6 +244,7 @@ func TestAppPullExplicitDir(t *testing.T) {
 func TestAppPullCloneSeparatesPositionals(t *testing.T) {
 	srv := cloneInfoServer(t, okCloneInfo(), http.StatusOK, nil)
 	defer srv.Close()
+	stubHelperExe(t)
 
 	var gitCalls [][]string
 	stubGit(t, func(dir string, args ...string) error {
@@ -242,99 +258,78 @@ func TestAppPullCloneSeparatesPositionals(t *testing.T) {
 	t.Setenv("CIVITAI_TOKEN", "tok-1")
 	t.Setenv("CIVITAI_BASE_URL", srv.URL)
 
-	// A dash-leading target dir — the canonical argument-injection probe. The CLI
-	// `--` lets cobra accept `-bad` as a positional arg (rather than a CLI flag);
-	// the code under test must in turn pass it to git after git's own `--`.
 	if _, _, err := run(t, "app", "pull", "--app", "my-block", "--", "-bad"); err != nil {
 		t.Fatalf("app pull -- -bad: %v", err)
 	}
 	if len(gitCalls) != 1 {
 		t.Fatalf("expected one git call, got %v", gitCalls)
 	}
-	argv := gitCalls[0]
-	// `--` must appear immediately before the URL+dir positionals.
-	want := []string{"clone", "--", okCloneURL, "-bad"}
-	if len(argv) != len(want) {
-		t.Fatalf("clone argv = %v, want %v", argv, want)
-	}
-	for i, a := range want {
-		if argv[i] != a {
-			t.Fatalf("clone argv = %v, want %v", argv, want)
-		}
-	}
-	// Belt-and-suspenders: the dash-leading dir must come AFTER the `--`, never
-	// before it (where git would interpret it as a flag).
-	dashSep, dirIdx := -1, -1
-	for i, a := range argv {
-		if a == "--" {
-			dashSep = i
-		}
-		if a == "-bad" {
-			dirIdx = i
-		}
-	}
-	if dashSep == -1 {
-		t.Fatalf("clone argv must contain a `--` separator: %v", argv)
-	}
-	if dirIdx <= dashSep {
-		t.Fatalf("dash-leading dir must come after `--` (got sep=%d dir=%d): %v", dashSep, dirIdx, argv)
+	want := append(append([]string{"clone"}, wantCloneConfig...), "--", okHTTPURL, "-bad")
+	if !equalArgv(gitCalls[0], want) {
+		t.Fatalf("clone argv = %q, want %q", gitCalls[0], want)
 	}
 }
 
-// TestAppPullSyncSeparatesPositionals pins the SYNC-path argument-injection
-// hardening: a dash-leading cloneURL (the structurally-identical hole the clone
-// fix originally missed) MUST be passed to `git fetch` as a positional AFTER the
-// literal `--`, never as a flag (e.g. `--upload-pack=<cmd>` would execute an
-// attacker-chosen command).
-func TestAppPullSyncSeparatesPositionals(t *testing.T) {
-	const evilURL = "--upload-pack=/tmp/pwn.sh"
-	info := okCloneInfo()
-	info["cloneUrl"] = evilURL
-	srv := cloneInfoServer(t, info, http.StatusOK, nil)
-	defer srv.Close()
+// TestAppPullRefusesUnusableRepoURL: the repository URL is server-controlled and
+// lands in git's argv and in .git/config, so one that is not an http(s) URL — the
+// dash-leading `--upload-pack=` probe — or that carries a credential is refused
+// before ANY git command runs.
+func TestAppPullRefusesUnusableRepoURL(t *testing.T) {
+	for _, bad := range []string{"--upload-pack=/tmp/pwn.sh", "ext::sh -c touch% /tmp/pwned", "https://u:p@forgejo.civitai.com/civitai-apps/my-block.git"} {
+		t.Run(bad, func(t *testing.T) {
+			info := okCloneInfo()
+			info["httpUrl"] = bad
+			srv := cloneInfoServer(t, info, http.StatusOK, nil)
+			defer srv.Close()
+			called := false
+			stubGit(t, func(dir string, args ...string) error { called = true; return nil })
 
-	var gitCalls [][]string
-	stubGit(t, func(dir string, args ...string) error {
-		gitCalls = append(gitCalls, args)
-		return nil
-	})
+			tmp := t.TempDir()
+			chdir(t, tmp)
+			if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			t.Setenv("CIVITAI_TOKEN", "tok-1")
+			t.Setenv("CIVITAI_BASE_URL", srv.URL)
 
-	tmp := t.TempDir()
-	chdir(t, tmp)
-	// Make ./my-block already a git checkout so we take the sync path.
-	if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
-		t.Fatal(err)
+			if _, _, err := run(t, "app", "pull", "--app", "my-block"); err == nil {
+				t.Fatalf("expected a refusal for repository URL %q", bad)
+			}
+			if called {
+				t.Fatalf("git must not run for repository URL %q", bad)
+			}
+		})
 	}
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("CIVITAI_TOKEN", "tok-1")
-	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+}
 
-	if _, _, err := run(t, "app", "pull", "--app", "my-block"); err != nil {
-		t.Fatalf("app pull (sync, evil url): %v", err)
-	}
-	if len(gitCalls) != 2 {
-		t.Fatalf("expected two git calls (fetch + merge), got %v", gitCalls)
-	}
-	argv := gitCalls[0]
-	dashSep, urlIdx := -1, -1
-	for i, a := range argv {
-		if a == "--" {
-			dashSep = i
-		}
-		if a == evilURL {
-			urlIdx = i
-		}
-	}
-	if dashSep == -1 {
-		t.Fatalf("fetch argv must contain a `--` separator: %v", argv)
-	}
-	if urlIdx == -1 {
-		t.Fatalf("fetch argv must contain the dash-leading URL as a positional: %v", argv)
-	}
-	// The dash-leading URL must come AFTER the `--`, never before (where git would
-	// interpret it as a flag and execute `--upload-pack`).
-	if urlIdx != dashSep+1 {
-		t.Fatalf("dash-leading URL must immediately follow `--` (sep=%d url=%d): %v", dashSep, urlIdx, argv)
+// TestAppPullRefusesShellUnsafeSlug: the slug is written into a `!` helper that
+// git runs through sh. A slug carrying shell syntax is refused before git runs,
+// even when an explicit [dir] makes the directory check irrelevant.
+func TestAppPullRefusesShellUnsafeSlug(t *testing.T) {
+	for _, slug := range []string{"a;touch /tmp/x", "a$(id)", "a b", "a'b", "-x"} {
+		t.Run(slug, func(t *testing.T) {
+			info := okCloneInfo()
+			info["slug"] = slug
+			srv := cloneInfoServer(t, info, http.StatusOK, nil)
+			defer srv.Close()
+			called := false
+			stubGit(t, func(dir string, args ...string) error { called = true; return nil })
+
+			tmp := t.TempDir()
+			chdir(t, tmp)
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			t.Setenv("CIVITAI_TOKEN", "tok-1")
+			t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+			_, _, err := run(t, "app", "pull", "safe-dir", "--app", "my-block")
+			if err == nil || !strings.Contains(err.Error(), "cannot be written into a git credential helper") {
+				t.Fatalf("expected the helper-slug refusal, got %v", err)
+			}
+			if called {
+				t.Fatalf("git must not run for slug %q", slug)
+			}
+		})
 	}
 }
 
@@ -370,35 +365,6 @@ func TestAppPullRejectsUnsafeSlugDir(t *testing.T) {
 				t.Errorf("git must NOT run for an unsafe slug-derived dir %q", slug)
 			}
 		})
-	}
-}
-
-// TestAppPullExplicitDirOverridesUnsafeSlug confirms an explicit [dir] is honored
-// even when the server slug would have been unsafe — the validation only guards
-// the slug-DERIVED default, not the user's own choice.
-func TestAppPullExplicitDirOverridesUnsafeSlug(t *testing.T) {
-	info := okCloneInfo()
-	info["slug"] = "../evil"
-	srv := cloneInfoServer(t, info, http.StatusOK, nil)
-	defer srv.Close()
-
-	var gitCalls [][]string
-	stubGit(t, func(dir string, args ...string) error {
-		gitCalls = append(gitCalls, args)
-		return nil
-	})
-
-	tmp := t.TempDir()
-	chdir(t, tmp)
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("CIVITAI_TOKEN", "tok-1")
-	t.Setenv("CIVITAI_BASE_URL", srv.URL)
-
-	if _, _, err := run(t, "app", "pull", "safe-dir", "--app", "my-block"); err != nil {
-		t.Fatalf("explicit dir should override unsafe slug: %v", err)
-	}
-	if len(gitCalls) != 1 || gitCalls[0][3] != "safe-dir" {
-		t.Errorf("explicit dir should be the clone target: %v", gitCalls)
 	}
 }
 
@@ -477,5 +443,274 @@ func TestAppHelpListsPull(t *testing.T) {
 	}
 	if !strings.Contains(out, "pull") {
 		t.Errorf("app help should list the pull subcommand:\n%s", out)
+	}
+}
+
+// 🔴 Regression (red on the pre-change CLI, whose help called the identity
+// "read-only" and documented a token in .git/config). The help is the published
+// contract for what the token can do and where it lives, so the security
+// paragraphs are pinned WHOLE (whitespace-normalised): a reword that drops the
+// write scope or the reset line fails here instead of passing a keyword check.
+func TestAppPullHelpStatesTheHelperAndTheWriteScope(t *testing.T) {
+	norm := func(s string) string { return strings.Join(strings.Fields(s), " ") }
+	long := norm(newAppPullCmd().Long)
+	for _, want := range []string{
+		"Authentication uses your stored credential (`civitai login` or a personal API key). " +
+			"The command calls an owner-only endpoint that lazily provisions your platform git identity, " +
+			"then clones the TOKEN-LESS repository URL. That identity's token is a WRITE token " +
+			"(scope write:repository): it can push to every app repository you have write access to, " +
+			"not only this one, which is why it is kept out of the checkout. " +
+			"(A push never deploys: it is queued for review.)",
+		"NO TOKEN ON DISK: the clone's .git/config gets a repo-local git credential helper, scoped to " +
+			"the platform git host, instead of a token in the remote URL: " +
+			"[credential \"https://<git host>\"] helper = helper = !civitai git-credential --app <slug> useHttpPath = true " +
+			"git runs `civitai git-credential` on each fetch/push; it asks the platform for your git " +
+			"credential with your stored Civitai login and hands it to git only for this app's repository. " +
+			"The empty `helper =` line stops any helper from your global git config (e.g. `store`) from " +
+			"saving that credential to disk.",
+		"OLDER CLONES: a checkout made by an earlier CLI stored the token in its remote URL. Running " +
+			"`civitai app pull` in it removes the token from every remote that points at this app's " +
+			"repository, installs the helper, and says so; a remote that carries a credential but points " +
+			"elsewhere is left alone and the command prints the `git remote set-url` that would clean it. " +
+			"The token itself is not rotated by this.",
+	} {
+		if !strings.Contains(long, want) {
+			t.Errorf("app pull --help is missing the paragraph:\n  %s\n\ngot:\n  %s", want, long)
+		}
+	}
+	for _, gone := range []string{"read-only", "TOKEN-IN-URL", "token lands on disk"} {
+		if strings.Contains(long, gone) {
+			t.Errorf("app pull --help still says %q", gone)
+		}
+	}
+}
+
+// Regression (audit round 1): migrating an old clone must not put the token on
+// a git command line either — the rewrite matches the tokened value with a
+// pattern, never by quoting it.
+func TestAppPullMigrationKeepsTheTokenOffArgv(t *testing.T) {
+	srv := cloneInfoServer(t, okCloneInfo(), http.StatusOK, nil)
+	defer srv.Close()
+	stubHelperExe(t)
+	stubGitOutput(t, func(dir string, args ...string) (string, error) {
+		return "remote.origin.url " + okCloneURL + "\n", nil
+	})
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	_, errOut, err := run(t, "app", "pull", "--app", "my-block")
+	if err != nil {
+		t.Fatalf("app pull: %v", err)
+	}
+	want := []string{"-C", "my-block", "config", "--local", "--replace-all", "remote.origin.url", okHTTPURL,
+		`^https://[^/@]+@forgejo\.civitai\.com/civitai-apps/my-block\.git$`}
+	if !equalArgv(gitCalls[0], want) {
+		t.Fatalf("migration call = %q, want %q", gitCalls[0], want)
+	}
+	assertNoToken(t, gitCalls)
+	if !strings.Contains(errOut, `Removed the access token from remote "origin"`) {
+		t.Fatalf("the migration must be reported: %s", errOut)
+	}
+}
+
+const okSourceURL = "https://forgejo.civitai.com/civitai-apps-src/my-block.git"
+
+func sourceCloneInfo() map[string]any {
+	info := okCloneInfo()
+	info["sourceHttpUrl"] = okSourceURL
+	return info
+}
+
+// pullWithStubs runs `app pull --app my-block` against info with git stubbed,
+// returning every git argv. existing makes ./my-block an existing checkout whose
+// origin (as `git config --get remote.origin.url` reads it) is origin.
+func pullWithStubs(t *testing.T, info map[string]any, existing bool, origin string) ([][]string, string, string) {
+	t.Helper()
+	srv := cloneInfoServer(t, info, http.StatusOK, nil)
+	t.Cleanup(srv.Close)
+	stubHelperExe(t)
+	stubGitOutput(t, func(dir string, args ...string) (string, error) {
+		if len(args) >= 4 && args[2] == "--get" && args[3] == "remote.origin.url" {
+			return origin + "\n", nil
+		}
+		return "", nil
+	})
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	if existing {
+		if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+	out, errOut, err := run(t, "app", "pull", "--app", "my-block")
+	if err != nil {
+		t.Fatalf("app pull: %v\n%s", err, errOut)
+	}
+	assertNoToken(t, gitCalls)
+	return gitCalls, out, errOut
+}
+
+// 🔴 Regression (red pre-change: sourceHttpUrl was ignored, so a fork's or an App
+// Assistant app's own history was never what `app pull` cloned).
+func TestAppPullClonesTheSourceRepoWhenTheAppHasOne(t *testing.T) {
+	calls, _, _ := pullWithStubs(t, sourceCloneInfo(), false, "")
+	want := append(append([]string{"clone"}, wantCloneConfig...), "--", okSourceURL, "my-block")
+	if len(calls) != 1 || !equalArgv(calls[0], want) {
+		t.Fatalf("git calls = %q, want one clone %q", calls, want)
+	}
+}
+
+// An app with no source repository still clones the build repository (the
+// pre-change behaviour, unchanged): an invariant guard.
+func TestAppPullClonesTheBuildRepoWithoutASource(t *testing.T) {
+	calls, _, _ := pullWithStubs(t, okCloneInfo(), false, "")
+	want := append(append([]string{"clone"}, wantCloneConfig...), "--", okHTTPURL, "my-block")
+	if len(calls) != 1 || !equalArgv(calls[0], want) {
+		t.Fatalf("git calls = %q, want one clone %q", calls, want)
+	}
+}
+
+func TestAppPullSyncsASourceCheckoutFromTheSource(t *testing.T) {
+	calls, _, errOut := pullWithStubs(t, sourceCloneInfo(), true, okSourceURL)
+	fetch := []string{"-C", "my-block", "fetch", "--", okSourceURL, "HEAD"}
+	if !equalArgv(calls[len(calls)-2], fetch) {
+		t.Fatalf("fetch = %q, want %q", calls[len(calls)-2], fetch)
+	}
+	if strings.Contains(errOut, "also has a SOURCE repository") {
+		t.Fatalf("a source checkout needs no pointer to itself: %s", errOut)
+	}
+}
+
+func TestAppPullKeepsABuildCheckoutOnTheBuildRepo(t *testing.T) {
+	calls, _, errOut := pullWithStubs(t, sourceCloneInfo(), true, okHTTPURL)
+	fetch := []string{"-C", "my-block", "fetch", "--", okHTTPURL, "HEAD"}
+	if !equalArgv(calls[len(calls)-2], fetch) {
+		t.Fatalf("fetch = %q, want %q", calls[len(calls)-2], fetch)
+	}
+	if !strings.Contains(errOut, "also has a SOURCE repository") || !strings.Contains(errOut, okSourceURL) {
+		t.Fatalf("the sync must name the source repository: %s", errOut)
+	}
+}
+
+// An old tokened clone of the SOURCE repository is migrated too (the migration
+// knows both of the app's repositories).
+func TestAppPullMigratesATokenedSourceRemote(t *testing.T) {
+	srv := cloneInfoServer(t, sourceCloneInfo(), http.StatusOK, nil)
+	defer srv.Close()
+	stubHelperExe(t)
+	tokened := strings.Replace(okSourceURL, "https://", "https://dev-7:tok-sha1@", 1)
+	stubGitOutput(t, func(dir string, args ...string) (string, error) {
+		if len(args) >= 3 && args[2] == "--get-regexp" {
+			return "remote.origin.url " + tokened + "\n", nil
+		}
+		return tokened + "\n", nil
+	})
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+	if _, errOut, err := run(t, "app", "pull", "--app", "my-block"); err != nil {
+		t.Fatalf("app pull: %v\n%s", err, errOut)
+	}
+	want := []string{"-C", "my-block", "config", "--local", "--replace-all", "remote.origin.url", okSourceURL, tokenedURLPattern(okSourceURL)}
+	if !equalArgv(gitCalls[0], want) {
+		t.Fatalf("first git call = %q, want the source remote's migration %q", gitCalls[0], want)
+	}
+	assertNoToken(t, gitCalls)
+}
+
+// The help states which repository is cloned and that pushing there submits
+// nothing — pinned WHOLE (whitespace-normalised), as the paragraphs above.
+func TestAppPullHelpStatesWhichRepository(t *testing.T) {
+	long := strings.Join(strings.Fields(newAppPullCmd().Long), " ")
+	want := "WHICH REPOSITORY: a forked app, or one App Assistant built, has a SOURCE repository " +
+		"(civitai-apps-src/<slug>) from its first day, before any approval: its git history, with " +
+		"App Assistant's saves as commits. When the app has one, this command clones it, and " +
+		"`git push` there keeps your history on the platform. Pushing to the source repository never " +
+		"builds or submits anything; submit a version with `civitai app submit`. An app without one " +
+		"gets its build repository (civitai-apps/<slug>), which holds the approved versions."
+	if !strings.Contains(long, want) {
+		t.Fatalf("app pull --help is missing:\n  %s\n\ngot:\n  %s", want, long)
+	}
+}
+
+// A build checkout of an app whose build repository the server does not name
+// right now (not approved: httpUrl is the source repository) is refused with
+// where the source repository is, instead of failing on unrelated history.
+func TestAppPullBuildCheckoutWithNoBuildRepoSaysWhere(t *testing.T) {
+	info := sourceCloneInfo()
+	info["httpUrl"] = okSourceURL
+	srv := cloneInfoServer(t, info, http.StatusOK, nil)
+	defer srv.Close()
+	stubHelperExe(t)
+	stubGitOutput(t, func(dir string, args ...string) (string, error) { return okHTTPURL + "\n", nil })
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+	_, _, err := run(t, "app", "pull", "--app", "my-block")
+	if err == nil || !strings.Contains(err.Error(), "which is not available right now") || !strings.Contains(err.Error(), okSourceURL) {
+		t.Fatalf("err = %v, want the not-available refusal naming the source repository", err)
+	}
+	if len(gitCalls) != 0 {
+		t.Fatalf("nothing may be written or fetched: %q", gitCalls)
+	}
+}
+
+// An origin written by hand still reads as the build repository.
+func TestOriginIsBuildRepoReadsThePath(t *testing.T) {
+	for origin, want := range map[string]bool{
+		okHTTPURL: true,
+		"https://forgejo.civitai.com/civitai-apps/my-block":               true,
+		"https://dev-7:tok@forgejo.civitai.com/civitai-apps/my-block.git": true,
+		"git@forgejo.civitai.com:civitai-apps/my-block.git":               true,
+		"https://forgejo.civitai.com/Civitai-Apps/My-Block.git":           true,
+		okSourceURL: false,
+		"https://forgejo.civitai.com/civitai-apps/other-block.git":     false,
+		"https://forgejo.civitai.com/civitai-apps-review/my-block.git": false,
+		"": false,
+	} {
+		o := origin
+		stubGitOutput(t, func(dir string, args ...string) (string, error) { return o + "\n", nil })
+		if got := originIsBuildRepo("my-block", "my-block"); got != want {
+			t.Errorf("originIsBuildRepo(%q) = %v, want %v", origin, got, want)
+		}
 	}
 }

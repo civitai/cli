@@ -19,7 +19,7 @@ func newModelVersionsCmd() *cobra.Command {
 		Aliases: []string{"model-version", "mv"},
 		Example: `  civitai model-versions get 128713
   civitai mv get 128713 --json
-  civitai model-versions by-hash 5D8D26E2A6`,
+  civitai model-versions by-hash 879DB523C3`,
 	}
 	// The alias list is rendered FROM cmd.Aliases rather than retyped, so a
 	// dropped or added alias cannot leave the help advertising a spelling the
@@ -117,8 +117,8 @@ ambiguous between a model id and a version id, and the printed command must
 never be the one that trips that stop.
 
 ` + readAnonShort,
-		Example: `  civitai model-versions by-hash 5D8D26E2A6
-  civitai mv by-hash 5D8D26E2A6 --json`,
+		Example: `  civitai model-versions by-hash 879DB523C3
+  civitai mv by-hash 879DB523C3 --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o := readFlags(cmd)

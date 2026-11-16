@@ -81,7 +81,9 @@ Alternatively, pass --token to store a personal API key created at
 https://civitai.com/user/account (API Keys). Passing --token with NO value prints
 where to create that key and how to re-run (it does not log in). Either way the
 credential is saved
-to your config file (~/.config/civitai/config.yaml, owner-readable only). The
+to config.yaml in your per-OS config directory, owner-readable only:
+~/.config/civitai/ on Linux ($XDG_CONFIG_HOME/civitai/ when set),
+~/Library/Application Support/civitai/ on macOS, %AppData%\civitai\ on Windows. The
 CIVITAI_TOKEN environment variable still overrides the stored credential.
 
 SCOPES. By DEFAULT ` + "`civitai login`" + ` grants identity + Apps submit +
