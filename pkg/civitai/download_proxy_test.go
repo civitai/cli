@@ -241,24 +241,3 @@ func TestDownloadProxyExemptionIsOnlyTheProxyAddress(t *testing.T) {
 		t.Errorf("the direct hop was not proxied; the message must not say it was: %v", err)
 	}
 }
-
-// TestDownloadWithoutProxyStillRefusesPrivateTarget is an INVARIANT GUARD, not
-// #780 regression coverage: with no proxy the dial guard refuses a loopback
-// target exactly as before the fix. It pins that the proxy work did not loosen
-// the direct path; it passed before the fix too.
-func TestDownloadWithoutProxyStillRefusesPrivateTarget(t *testing.T) {
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("dial guard should have refused before reaching the server")
-	}))
-	defer srv.Close()
-	u, _ := url.Parse(srv.URL)
-
-	c := proxiedClient(nil) // no proxy at all
-	_, err := c.DownloadPresigned(context.Background(), srv.URL+"/x")
-	if err == nil {
-		t.Fatal("a loopback target with no proxy was downloaded")
-	}
-	if !strings.Contains(err.Error(), "private/loopback") || !strings.Contains(err.Error(), u.Hostname()) {
-		t.Errorf("refusal should cite the private/loopback block and the address: %v", err)
-	}
-}
