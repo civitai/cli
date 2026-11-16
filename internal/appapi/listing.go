@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/civitai/cli/internal/redact"
 	"github.com/civitai/cli/pkg/civitai"
 )
 
@@ -777,7 +778,7 @@ func (c *Client) MintImageUpload(ctx context.Context) (id, uploadURL string, err
 		UploadURL string `json:"uploadURL"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil || out.ID == "" || out.UploadURL == "" {
-		return "", "", fmt.Errorf("unexpected image-upload response: %s", string(raw))
+		return "", "", redact.CredentialBodyError("unexpected image-upload response", raw, err)
 	}
 	return out.ID, out.UploadURL, nil
 }
@@ -1052,6 +1053,11 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 	msg := serverMessage(raw)
 	if json.Unmarshal(raw, &env) == nil && env.Error.JSON.Message != "" {
 		msg = env.Error.JSON.Message
+	}
+	if route == imageUploadRoute {
+		// The image-upload mint's success payload is a presigned PUT URL, so its
+		// body is never shown — see credentialRouteMessage.
+		msg = credentialRouteMessage(raw)
 	}
 	name := route.name()
 	switch status {

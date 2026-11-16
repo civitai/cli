@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/civitai/cli/internal/redact"
 	"github.com/civitai/cli/pkg/civitai"
 )
 
@@ -1694,27 +1695,18 @@ func (c *Client) GetForgejoCloneInfo(ctx context.Context, app string) (*ForgejoC
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil || env.Result.Data.JSON == nil {
-		return nil, credentialBodyError("unexpected getMyForgejoCloneInfo response", raw, err)
+		return nil, redact.CredentialBodyError("unexpected getMyForgejoCloneInfo response", raw, err)
 	}
 	return env.Result.Data.JSON, nil
 }
 
 // cloneInfoError maps a non-200 from the clone-info tRPC query to an actionable
-// message. tRPC error bodies are {error:{json:{message,code,...}}}.
+// message. tRPC error bodies are {error:{json:{message,code,...}}}. The route's
+// success payload is a push token, so the body itself is never shown — see
+// credentialRouteMessage.
 func cloneInfoError(status int, raw []byte) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
-	var env struct {
-		Error struct {
-			JSON struct {
-				Message string `json:"message"`
-				Code    int    `json:"code"`
-			} `json:"json"`
-		} `json:"error"`
-	}
-	msg := strings.TrimSpace(string(raw))
-	if json.Unmarshal(raw, &env) == nil && env.Error.JSON.Message != "" {
-		msg = env.Error.JSON.Message
-	}
+	msg := credentialRouteMessage(raw)
 	switch status {
 	case http.StatusUnauthorized:
 		return unauthorizedError(msg)
@@ -1910,10 +1902,10 @@ func (c *Client) MintDevToken(ctx context.Context, slug string, scopes []string,
 		Token string `json:"token"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", credentialBodyError("unexpected /api/v1/blocks/dev-token response", raw, err)
+		return "", redact.CredentialBodyError("unexpected /api/v1/blocks/dev-token response", raw, err)
 	}
 	if out.Token == "" {
-		return "", credentialBodyError("dev-token response had no token", raw, nil)
+		return "", redact.CredentialBodyError("dev-token response had no token", raw, nil)
 	}
 	return out.Token, nil
 }
@@ -1972,7 +1964,7 @@ func devTokenValidationDetail(raw []byte) string {
 // / readOnlyTokenWarning).
 func devTokenError(status int, raw []byte) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
-	msg := serverMessage(raw)
+	msg := credentialRouteMessage(raw)
 	switch status {
 	case http.StatusBadRequest:
 		// Report the server's OWN verdict rather than re-deriving one: the CLI
@@ -2464,23 +2456,43 @@ func submissionsError(status int, raw []byte, id, blockID string) (err error) {
 	}
 }
 
-// credentialBodyError reports a 2xx body that did not yield what the caller
-// needed, for a route whose success payload IS a credential (OAuth tokens, a
-// device_code, a dev token, a Forgejo push token). It names the failure and the
-// body's size, and never the body.
+// credentialRouteMessage is what an error on a route whose success payload IS a
+// credential (the Forgejo clone info, the dev-token mint, the image-upload mint)
+// may say about a non-2xx body: the server's error MESSAGE — a tRPC
+// `error.json.message`, else a plain `message` or string `error` — when
+// redact.ServerText accepts it, and otherwise only the body's size.
 //
-// 🔴 AN UNDECODABLE BODY IS NOT A BODY WITHOUT A CREDENTIAL. One off-shape field
-// fails the whole json.Unmarshal while the tokens beside it are intact, and the
-// refresh route has already rotated them — so echoing the body put the only
-// copy of a live refresh token on stderr. decodeErr is safe to show: encoding/
-// json's errors name a type, a field and at most one offending byte, never a
-// string value. It is formatted with %v, not %w, so the error stays unclassified
-// exactly as before.
-func credentialBodyError(what string, raw []byte, decodeErr error) error {
-	if decodeErr != nil {
-		return fmt.Errorf("%s (%d bytes, not shown because it may carry credentials): %v", what, len(raw), decodeErr)
+// 🔴 NEVER THE BODY. serverMessage falls back to the raw body when it finds no
+// message field, and on these routes that body can be the success payload under
+// an unexpected status (a 201) or what a half-failed handler had built (a 500) —
+// so `getMyForgejoCloneInfo failed (HTTP 201): {…"token":"…"}` printed the push
+// token. See redact.CredentialBodyError for the 2xx side of the same rule.
+func credentialRouteMessage(raw []byte) string {
+	var trpc struct {
+		Error struct {
+			JSON struct {
+				Message string `json:"message"`
+			} `json:"json"`
+		} `json:"error"`
 	}
-	return fmt.Errorf("%s (%d bytes, not shown because it may carry credentials)", what, len(raw))
+	if json.Unmarshal(raw, &trpc) == nil && trpc.Error.JSON.Message != "" {
+		if msg, ok := redact.ServerText(trpc.Error.JSON.Message); ok {
+			return msg
+		}
+		return redact.WithheldBody(raw)
+	}
+	var plain struct {
+		Message string `json:"message"`
+		Error   string `json:"error"`
+	}
+	if json.Unmarshal(raw, &plain) == nil {
+		for _, field := range []string{plain.Message, plain.Error} {
+			if msg, ok := redact.ServerText(field); ok {
+				return msg
+			}
+		}
+	}
+	return redact.WithheldBody(raw)
 }
 
 // serverMessage extracts the {"message"|"error": ...} field, falling back to the

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/civitai/cli/internal/redact"
 	"github.com/civitai/cli/pkg/civitai"
 )
 
@@ -70,7 +71,8 @@ func (c *Client) GetBlobUploadTarget(ctx context.Context) (*BlobUploadTarget, er
 	}
 	var out BlobUploadTarget
 	if err := json.Unmarshal(raw, &out); err != nil || strings.TrimSpace(out.UploadURL) == "" {
-		return nil, fmt.Errorf("unexpected getConsumerBlobUploadUrl response: %s", string(raw))
+		// The reply's whole payload is a presigned PUT URL: never show it.
+		return nil, redact.CredentialBodyError("unexpected getConsumerBlobUploadUrl response", raw, err)
 	}
 	return &out, nil
 }
@@ -80,15 +82,19 @@ func (c *Client) GetBlobUploadTarget(ctx context.Context) (*BlobUploadTarget, er
 //
 // The route answers a caller the orchestrator will not serve with **403 and a
 // bare text body** (not JSON, not a tRPC error envelope) — see the handler's
-// `catch` arm — so the body is surfaced verbatim rather than parsed.
+// `catch` arm — so that text is surfaced rather than parsed.
+//
+// 🔴 ONLY WHEN redact.ServerText ACCEPTS IT. The route's success payload is a
+// presigned PUT URL, and a body under an unexpected status (a 201, a 500 from a
+// half-failed handler) can be that payload — which the old verbatim echo
+// printed. ServerText refuses JSON and anything holding `://`; any other body is
+// reported by its size alone.
 func blobUploadError(status int, raw []byte) error {
-	msg := strings.TrimSpace(string(raw))
-	if len(msg) > 400 {
-		msg = msg[:400] + "…"
-	}
 	base := fmt.Sprintf("the server refused to issue an image-upload URL (%d)", status)
-	if msg != "" {
+	if msg, ok := redact.ServerText(string(raw)); ok {
 		base += ": " + msg
+	} else if len(strings.TrimSpace(string(raw))) > 0 {
+		base += ": " + redact.WithheldBody(raw)
 	}
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -152,7 +158,8 @@ func (c *Client) UploadImageBlob(ctx context.Context, up civitai.PresignedUpload
 
 	var blob UploadedBlob
 	if err := json.Unmarshal(raw, &blob); err != nil {
-		return "", fmt.Errorf("unexpected image-upload response: %s", string(raw))
+		// The blob's url can be a signed read URL: never show the body.
+		return "", redact.CredentialBodyError("unexpected image-upload response", raw, err)
 	}
 	if strings.TrimSpace(blob.URL) == "" {
 		// See the UploadedBlob doc: an empty/absent url must never reach the
