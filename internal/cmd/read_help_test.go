@@ -850,7 +850,7 @@ var readAPIInvocations = map[string][]string{
 	"models search":          {"models", "search"},
 	"models get":             {"models", "get", "4384"},
 	"model-versions get":     {"model-versions", "get", "128713"},
-	"model-versions by-hash": {"model-versions", "by-hash", "5D8D26E2A6"},
+	"model-versions by-hash": {"model-versions", "by-hash", "879DB523C3"},
 	"images search":          {"images", "search"},
 	"images get":             {"images", "get", "136456589"},
 	"articles search":        {"articles", "search"},

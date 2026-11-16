@@ -18,7 +18,7 @@ make build       # build ./bin/civitai
 make test        # go test ./...
 make vet         # go vet ./...
 make fmt         # gofmt -s -w .
-make lint        # golangci-lint if installed, else go vet
+make lint        # golangci-lint (required: errors with an install hint if absent)
 make ci-shallow  # go test ./... in a depth-1 clone — what CI actually sees
 ```
 

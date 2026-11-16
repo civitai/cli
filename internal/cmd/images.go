@@ -172,7 +172,7 @@ Paging: ` + limitRule(imagesLimitMax) + `.
 	cmd.Flags().StringVar(&typ, "type", "", "filter by media type (image, video, audio)")
 	cmd.Flags().StringVar(&period, "period", "", "time period (AllTime, Year, Month, Week, Day)")
 	cmd.Flags().StringVar(&sort, "sort", "", "sort order (\"Most Reactions\", \"Most Comments\", Newest)")
-	cmd.Flags().BoolVar(&nsfw, "nsfw", false, "include NSFW results")
+	cmd.Flags().BoolVar(&nsfw, "nsfw", false, "FILTER to NSFW (mature-rated) images only — it does not add them to the default mix; --nsfw=false filters to safe-for-work only")
 	cmd.Flags().BoolVar(&meta, "meta", false, "include generation metadata (prompt, sampler, seed, etc.)")
 	bindReadFlags(cmd)
 	return cmd
