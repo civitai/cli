@@ -902,7 +902,7 @@ export function App() {
           {!anon && estimateError && !estimateError.gated && (
             <Alert color="warning" title="No price for this request" data-testid="pm-estimate-error">
               <Stack gap={8}>
-                <span>{estimateState.message} Nothing has been spent.</span>
+                <span>{estimateError.message} Nothing has been spent.</span>
                 <Button
                   variant="light"
                   size="sm"
