@@ -173,3 +173,48 @@ func TestWorkflowPayloadIsNeverEchoed(t *testing.T) {
 		})
 	}
 }
+
+// TestUploadReplyProblemDetailsAreShown pins that an upload reply in RFC 7807
+// problem-details form (`title`/`detail`, no `message`/`error`) reports its
+// title and detail, each through the same display filter, and never the other
+// fields — `instance` here carries a signed URL.
+func TestUploadReplyProblemDetailsAreShown(t *testing.T) {
+	signed := `https://orchestration.example.com/v2/consumer/blobs/B1.png?sig=` + signedURLSentinel
+	cases := []struct {
+		name, body string
+		want       []string
+		notWant    []string
+	}{
+		{"title and detail", `{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.14","title":"Payload Too Large",` +
+			`"status":413,"detail":"The blob exceeds the 16 MB limit","instance":"` + signed + `"}`,
+			[]string{"the image upload was rejected (413): Payload Too Large: The blob exceeds the 16 MB limit"}, nil},
+		{"title only", `{"title":"Payload Too Large","status":413,"instance":"` + signed + `"}`,
+			[]string{"the image upload was rejected (413): Payload Too Large"}, []string{"bytes"}},
+		{"a detail the filter refuses is dropped", `{"title":"Payload Too Large","status":413,"detail":"see ` + signed + `"}`,
+			[]string{"the image upload was rejected (413): Payload Too Large"}, []string{"see "}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newBlobHarness(t)
+			h.uploadStatus, h.uploadBody2 = http.StatusRequestEntityTooLarge, tc.body
+			_, err := h.client.UploadImageBlob(context.Background(), h.upl, "image/png", []byte("PNG"))
+			if err == nil {
+				t.Fatal("a 413 returned no error")
+			}
+			msg := err.Error()
+			if strings.Contains(msg, signedURLSentinel) {
+				t.Errorf("the error text carries the signed URL:\n  %s", msg)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(msg, w) {
+					t.Errorf("want %q in:\n  %s", w, msg)
+				}
+			}
+			for _, w := range tc.notWant {
+				if strings.Contains(msg, w) {
+					t.Errorf("did not want %q in:\n  %s", w, msg)
+				}
+			}
+		})
+	}
+}

@@ -96,3 +96,55 @@ func TestErrorMessageAndWhatMayBeShown(t *testing.T) {
 		})
 	}
 }
+
+// TestServerTextRefusesTokenShapes pins the token shapes ServerText withholds
+// now that it has no length cap: a JWT anywhere in the text, and a run of 40+
+// token characters that is all hex or mixes upper- and lower-case letters. The
+// accept rows are the server's real long messages and a long lowercase slug, so
+// the refusal cannot be met by withholding every long message; the 39/40 pair
+// pins the threshold from both sides.
+func TestServerTextRefusesTokenShapes(t *testing.T) {
+	const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI0MiJ9.c2lnbmF0dXJlLXZhbHVl_-Q"
+	const unsignedJWT = "eyJhbGciOiJub25lIn0.eyJzdWIiOiI0MiJ9."
+	hex40 := "3f9a0c7e5b1d2468ace013579bdf2468ace01357"
+	mixed40 := "Q2xpZW50U2VjcmV0VmFsdWVGb3JUZXN0aW5nT25s"
+	mixed39 := mixed40[:39]
+	slug := "my-really-long-dev-block-name1"
+	refused := []struct{ name, in string }{
+		{"a JWT inside a message", `minted ` + jwt + ` for you`},
+		{"a bearer JWT", "Bearer " + jwt},
+		{"a bare JWT", jwt},
+		{"an unsigned JWT", "token " + unsignedJWT},
+		{"a 40-char hex run", "your key is " + hex40},
+		{"a 40-char mixed-case run", "secret=" + mixed40},
+		{"a 52-char mixed-case run with base64 padding", "k " + mixed40 + "AbCdEfGh0123=="},
+	}
+	for _, tc := range refused {
+		t.Run("refused/"+tc.name, func(t *testing.T) {
+			if got, ok := ServerText(tc.in); ok || got != "" {
+				t.Errorf("ServerText(%q) = (%q, %v), want it withheld", tc.in, got, ok)
+			}
+		})
+	}
+	shown := []string{
+		"block '" + slug + "' has no live deployment — dev:live requires an " +
+			"approved + deployed version (deployState: live). Until your first " +
+			"version is live, validate locally with dev:harness (mock).",
+		"dev-token needs a personal API key (full scope, create at " +
+			"civitai.com/user/account) OR an OAuth login whose token carries the " +
+			"Apps submit scope; real Buzz spend additionally needs AI Services scope",
+		"block 'a-very-long-lowercase-app-slug-with-many-words-2026' was not found",
+		"a 39-char run " + mixed39 + " is below the threshold",
+		"a lowercase path src/server/services/blocks/offsite-listing.service.ts failed",
+	}
+	if len(mixed39) != 39 || len(mixed40) != 40 || len(hex40) != 40 {
+		t.Fatalf("PREMISE BROKEN: fixture lengths %d/%d/%d", len(mixed39), len(mixed40), len(hex40))
+	}
+	for _, in := range shown {
+		t.Run("shown/"+in[:20], func(t *testing.T) {
+			if got, ok := ServerText(in); !ok || got != in {
+				t.Errorf("ServerText(%q) = (%q, %v), want it shown whole", in, got, ok)
+			}
+		})
+	}
+}
