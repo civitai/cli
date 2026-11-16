@@ -1703,10 +1703,10 @@ func (c *Client) GetForgejoCloneInfo(ctx context.Context, app string) (*ForgejoC
 // cloneInfoError maps a non-200 from the clone-info tRPC query to an actionable
 // message. tRPC error bodies are {error:{json:{message,code,...}}}. The route's
 // success payload is a push token, so the body itself is never shown — see
-// credentialRouteMessage.
+// redact.CredentialRouteMessage.
 func cloneInfoError(status int, raw []byte) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
-	msg := credentialRouteMessage(raw)
+	msg := redact.CredentialRouteMessage(raw)
 	switch status {
 	case http.StatusUnauthorized:
 		return unauthorizedError(msg)
@@ -1964,7 +1964,14 @@ func devTokenValidationDetail(raw []byte) string {
 // / readOnlyTokenWarning).
 func devTokenError(status int, raw []byte) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
-	msg := credentialRouteMessage(raw)
+	// 🔴 CLASSIFY ON reason, SHOW msg. reason is the server's own wording,
+	// unfiltered; msg is what redact lets an error print. Reading the "no live
+	// deployment" phrase off msg meant a message the display filter withheld
+	// (it once refused anything over 200 runes, which a 22+-char blockId pushed
+	// the real 404 past) read as the collision 404 and permanently renamed an
+	// app the developer owns.
+	reason := redact.ErrorMessage(raw)
+	msg := redact.CredentialRouteMessage(raw)
 	switch status {
 	case http.StatusBadRequest:
 		// Report the server's OWN verdict rather than re-deriving one: the CLI
@@ -1981,7 +1988,7 @@ func devTokenError(status int, raw []byte) (err error) {
 		// mint is refused) — that one is rename-retriable, so wrap the sentinel.
 		// The owned-but-not-yet-deployed 404 carries a "no live deployment"
 		// message and is NOT retriable (you own the slug; renaming is wrong).
-		if strings.Contains(strings.ToLower(msg), "no live deployment") {
+		if strings.Contains(strings.ToLower(reason), "no live deployment") {
 			return fmt.Errorf("app not found (404): %s", msg)
 		}
 		return fmt.Errorf("app not found (404): %s — check the slug. (dev-token mints from your local block.manifest.json; a 404 means the slug is registered to a different account.): %w", msg, ErrSlugRegisteredToOtherAccount)
@@ -2454,45 +2461,6 @@ func submissionsError(status int, raw []byte, id, blockID string) (err error) {
 	default:
 		return fmt.Errorf("server returned %d: %s", status, msg)
 	}
-}
-
-// credentialRouteMessage is what an error on a route whose success payload IS a
-// credential (the Forgejo clone info, the dev-token mint, the image-upload mint)
-// may say about a non-2xx body: the server's error MESSAGE — a tRPC
-// `error.json.message`, else a plain `message` or string `error` — when
-// redact.ServerText accepts it, and otherwise only the body's size.
-//
-// 🔴 NEVER THE BODY. serverMessage falls back to the raw body when it finds no
-// message field, and on these routes that body can be the success payload under
-// an unexpected status (a 201) or what a half-failed handler had built (a 500) —
-// so `getMyForgejoCloneInfo failed (HTTP 201): {…"token":"…"}` printed the push
-// token. See redact.CredentialBodyError for the 2xx side of the same rule.
-func credentialRouteMessage(raw []byte) string {
-	var trpc struct {
-		Error struct {
-			JSON struct {
-				Message string `json:"message"`
-			} `json:"json"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(raw, &trpc) == nil && trpc.Error.JSON.Message != "" {
-		if msg, ok := redact.ServerText(trpc.Error.JSON.Message); ok {
-			return msg
-		}
-		return redact.WithheldBody(raw)
-	}
-	var plain struct {
-		Message string `json:"message"`
-		Error   string `json:"error"`
-	}
-	if json.Unmarshal(raw, &plain) == nil {
-		for _, field := range []string{plain.Message, plain.Error} {
-			if msg, ok := redact.ServerText(field); ok {
-				return msg
-			}
-		}
-	}
-	return redact.WithheldBody(raw)
 }
 
 // serverMessage extracts the {"message"|"error": ...} field, falling back to the

@@ -1056,8 +1056,8 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 	}
 	if route == imageUploadRoute {
 		// The image-upload mint's success payload is a presigned PUT URL, so its
-		// body is never shown — see credentialRouteMessage.
-		msg = credentialRouteMessage(raw)
+		// body is never shown — see redact.CredentialRouteMessage.
+		msg = redact.CredentialRouteMessage(raw)
 	}
 	name := route.name()
 	switch status {

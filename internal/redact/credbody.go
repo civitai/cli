@@ -2,6 +2,7 @@ package redact
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"unicode"
@@ -51,19 +52,19 @@ func WithheldBody(raw []byte) string {
 	return fmt.Sprintf("%d-byte response body not shown because it may carry credentials", len(raw))
 }
 
-// maxServerText bounds a server message ServerText accepts. A real error
-// message ("invalid_grant", "App not found", "Not authorized to upload") is a
-// few dozen characters.
-const maxServerText = 200
-
 // ServerText reports whether s — a server's error MESSAGE field, or a body a
-// route documents as bare error text — is short, single-line plain text, and
-// returns it trimmed if so.
+// route documents as bare error text — is single-line plain text, and returns it
+// trimmed if so.
 //
-// It refuses: anything over maxServerText runes; invalid UTF-8; any control or
-// format character (newlines, ESC, bidi overrides); text that opens like a JSON
-// document; and text holding `://`, which every signed URL and every
-// credential-in-userinfo clone URL carries.
+// It refuses: invalid UTF-8; any control or format character (newlines, ESC,
+// bidi overrides); text that opens like a JSON document; and text holding `://`,
+// which every signed URL and every credential-in-userinfo clone URL carries.
+//
+// There is NO length limit. A length cap refuses real messages, and a caller
+// that branched on the text it got back lost the server's wording with them —
+// the dev-token route's owned-but-not-deployed 404 is 179 runes plus the
+// blockId, and a 200-rune cap made a long slug's 404 read as a slug collision.
+// Branch on ErrorMessage, never on what this returns.
 //
 // 🔴 THIS IS A SHAPE CHECK, NOT A SECRET DETECTOR. A bare token is short plain
 // text and passes. It is applied only to a FIELD whose meaning is "error
@@ -72,7 +73,7 @@ const maxServerText = 200
 // did not recognise, which is withheld whatever it looks like.
 func ServerText(s string) (string, bool) {
 	s = strings.TrimSpace(s)
-	if s == "" || !utf8.ValidString(s) || utf8.RuneCountInString(s) > maxServerText {
+	if s == "" || !utf8.ValidString(s) {
 		return "", false
 	}
 	if s[0] == '{' || s[0] == '[' || strings.Contains(s, "://") {
@@ -84,4 +85,67 @@ func ServerText(s string) (string, bool) {
 		}
 	}
 	return s, true
+}
+
+// ErrorMessage returns a JSON error body's MESSAGE field, unfiltered: a tRPC
+// `error.json.message`, else a top-level string `message`, else a top-level
+// string `error`; "" when the body has none.
+//
+// 🔴 IT IS FOR CLASSIFYING A FAILURE, NEVER FOR SHOWING ONE. A caller that tells
+// two errors apart by the server's wording must read that wording HERE, before
+// any display filter — reading it after ServerText meant a message the filter
+// withheld lost its wording, and the dev-token 404 that says "no live
+// deployment" was taken for a slug collision and renamed the developer's app.
+// What may be shown is CredentialRouteMessage.
+func ErrorMessage(raw []byte) string {
+	var trpc struct {
+		Error struct {
+			JSON struct {
+				Message string `json:"message"`
+			} `json:"json"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(raw, &trpc) == nil && trpc.Error.JSON.Message != "" {
+		return trpc.Error.JSON.Message
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return ""
+	}
+	for _, key := range []string{"message", "error"} {
+		var s string
+		if json.Unmarshal(fields[key], &s) == nil && strings.TrimSpace(s) != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// CredentialRouteMessage is what an error on a route whose success payload IS a
+// credential (OAuth tokens, a dev token, a Forgejo push token, a presigned URL)
+// may say about a non-2xx body: its ErrorMessage when ServerText accepts it, and
+// otherwise only the body's size.
+//
+// 🔴 NEVER THE BODY. A body without a recognised message field can be the
+// success payload under an unexpected status (a 201) or what a half-failed
+// handler had built (a 500), so the old raw-body fallback printed
+// `getMyForgejoCloneInfo failed (HTTP 201): {…"token":"…"}`.
+func CredentialRouteMessage(raw []byte) string {
+	if msg, ok := ServerText(ErrorMessage(raw)); ok {
+		return msg
+	}
+	return WithheldBody(raw)
+}
+
+// CredentialRouteText is CredentialRouteMessage for a route documented to
+// answer some failures with a BARE TEXT body: a body with no message field is
+// shown whole when ServerText accepts it. ServerText refuses JSON, so a JSON
+// body without a message field is still withheld.
+func CredentialRouteText(raw []byte) string {
+	if ErrorMessage(raw) == "" {
+		if msg, ok := ServerText(string(raw)); ok {
+			return msg
+		}
+	}
+	return CredentialRouteMessage(raw)
 }
