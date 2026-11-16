@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/civitai/cli/internal/redact"
 	"github.com/civitai/cli/pkg/civitai"
 )
 
@@ -1694,27 +1695,18 @@ func (c *Client) GetForgejoCloneInfo(ctx context.Context, app string) (*ForgejoC
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil || env.Result.Data.JSON == nil {
-		return nil, credentialBodyError("unexpected getMyForgejoCloneInfo response", raw, err)
+		return nil, redact.CredentialBodyError("unexpected getMyForgejoCloneInfo response", raw, err)
 	}
 	return env.Result.Data.JSON, nil
 }
 
 // cloneInfoError maps a non-200 from the clone-info tRPC query to an actionable
-// message. tRPC error bodies are {error:{json:{message,code,...}}}.
+// message. tRPC error bodies are {error:{json:{message,code,...}}}. The route's
+// success payload is a push token, so the body itself is never shown — see
+// redact.CredentialRouteMessage.
 func cloneInfoError(status int, raw []byte) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
-	var env struct {
-		Error struct {
-			JSON struct {
-				Message string `json:"message"`
-				Code    int    `json:"code"`
-			} `json:"json"`
-		} `json:"error"`
-	}
-	msg := strings.TrimSpace(string(raw))
-	if json.Unmarshal(raw, &env) == nil && env.Error.JSON.Message != "" {
-		msg = env.Error.JSON.Message
-	}
+	msg := redact.CredentialRouteMessage(raw)
 	switch status {
 	case http.StatusUnauthorized:
 		return unauthorizedError(msg)
@@ -1910,10 +1902,10 @@ func (c *Client) MintDevToken(ctx context.Context, slug string, scopes []string,
 		Token string `json:"token"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", credentialBodyError("unexpected /api/v1/blocks/dev-token response", raw, err)
+		return "", redact.CredentialBodyError("unexpected /api/v1/blocks/dev-token response", raw, err)
 	}
 	if out.Token == "" {
-		return "", credentialBodyError("dev-token response had no token", raw, nil)
+		return "", redact.CredentialBodyError("dev-token response had no token", raw, nil)
 	}
 	return out.Token, nil
 }
@@ -1972,7 +1964,14 @@ func devTokenValidationDetail(raw []byte) string {
 // / readOnlyTokenWarning).
 func devTokenError(status int, raw []byte) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
-	msg := serverMessage(raw)
+	// 🔴 CLASSIFY ON reason, SHOW msg. reason is the server's own wording,
+	// unfiltered; msg is what redact lets an error print. Reading the "no live
+	// deployment" phrase off msg meant a message the display filter withheld
+	// (it once refused anything over 200 runes, which a 22+-char blockId pushed
+	// the real 404 past) read as the collision 404 and permanently renamed an
+	// app the developer owns.
+	reason := redact.ErrorMessage(raw)
+	msg := redact.CredentialRouteMessage(raw)
 	switch status {
 	case http.StatusBadRequest:
 		// Report the server's OWN verdict rather than re-deriving one: the CLI
@@ -1989,7 +1988,7 @@ func devTokenError(status int, raw []byte) (err error) {
 		// mint is refused) — that one is rename-retriable, so wrap the sentinel.
 		// The owned-but-not-yet-deployed 404 carries a "no live deployment"
 		// message and is NOT retriable (you own the slug; renaming is wrong).
-		if strings.Contains(strings.ToLower(msg), "no live deployment") {
+		if strings.Contains(strings.ToLower(reason), "no live deployment") {
 			return fmt.Errorf("app not found (404): %s", msg)
 		}
 		return fmt.Errorf("app not found (404): %s — check the slug. (dev-token mints from your local block.manifest.json; a 404 means the slug is registered to a different account.): %w", msg, ErrSlugRegisteredToOtherAccount)
@@ -2462,25 +2461,6 @@ func submissionsError(status int, raw []byte, id, blockID string) (err error) {
 	default:
 		return fmt.Errorf("server returned %d: %s", status, msg)
 	}
-}
-
-// credentialBodyError reports a 2xx body that did not yield what the caller
-// needed, for a route whose success payload IS a credential (OAuth tokens, a
-// device_code, a dev token, a Forgejo push token). It names the failure and the
-// body's size, and never the body.
-//
-// 🔴 AN UNDECODABLE BODY IS NOT A BODY WITHOUT A CREDENTIAL. One off-shape field
-// fails the whole json.Unmarshal while the tokens beside it are intact, and the
-// refresh route has already rotated them — so echoing the body put the only
-// copy of a live refresh token on stderr. decodeErr is safe to show: encoding/
-// json's errors name a type, a field and at most one offending byte, never a
-// string value. It is formatted with %v, not %w, so the error stays unclassified
-// exactly as before.
-func credentialBodyError(what string, raw []byte, decodeErr error) error {
-	if decodeErr != nil {
-		return fmt.Errorf("%s (%d bytes, not shown because it may carry credentials): %v", what, len(raw), decodeErr)
-	}
-	return fmt.Errorf("%s (%d bytes, not shown because it may carry credentials)", what, len(raw))
 }
 
 // serverMessage extracts the {"message"|"error": ...} field, falling back to the

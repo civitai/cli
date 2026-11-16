@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/civitai/cli/internal/redact"
 	"github.com/civitai/cli/internal/saferune"
 )
 
@@ -486,7 +487,9 @@ func (c *Client) GetWorkflow(ctx context.Context, workflowID string) (*Workflow,
 	}
 	var out Workflow
 	if err := json.Unmarshal(payload, &out); err != nil {
-		return nil, nil, fmt.Errorf("unexpected orchestrator.getWorkflow payload: %s", string(payload))
+		// A workflow's outputs carry blob URLs, which can be signed read
+		// URLs: report the payload's size, never the payload.
+		return nil, nil, redact.CredentialBodyError("unexpected orchestrator.getWorkflow payload", payload, err)
 	}
 	if out.ID == "" {
 		// The orchestrator's id field is nullable; fall back to what was asked

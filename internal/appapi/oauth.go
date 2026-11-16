@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/civitai/cli/internal/redact"
 	"github.com/civitai/cli/pkg/civitai"
 )
 
@@ -454,8 +455,8 @@ type InvalidScopeError struct {
 func (e *InvalidScopeError) Error() string {
 	var b strings.Builder
 	b.WriteString("the Civitai auth server rejected this login's scopes (invalid_scope)")
-	if e.Description != "" {
-		b.WriteString(": " + e.Description)
+	if desc, ok := redact.ServerText(e.Description); ok {
+		b.WriteString(": " + desc)
 	}
 	if e.Requested != "" && e.Requested != DeviceScope {
 		// A widened request — the actionable case. Name the fallback that works
@@ -551,9 +552,15 @@ type DeviceFlowError struct {
 	Description string
 }
 
+// Error shows the server's Code and Description only when redact.ServerText
+// accepts them: both come from a response body on a credential route.
 func (e *DeviceFlowError) Error() string {
-	if e.Description != "" {
-		return fmt.Sprintf("device login failed: %s (%s)", e.Description, e.Code)
+	code, codeOK := redact.ServerText(e.Code)
+	if !codeOK {
+		code = "unrecognised error code"
+	}
+	if desc, ok := redact.ServerText(e.Description); ok {
+		return fmt.Sprintf("device login failed: %s (%s)", desc, code)
 	}
 	switch e.Code {
 	case "expired_token":
@@ -561,7 +568,7 @@ func (e *DeviceFlowError) Error() string {
 	case "access_denied":
 		return "device login was denied in the browser"
 	default:
-		return "device login failed: " + e.Code
+		return "device login failed: " + code
 	}
 }
 
@@ -602,7 +609,7 @@ func (c *OAuthClient) StartDevice(ctx context.Context) (*DeviceAuth, error) {
 	}
 	var d DeviceAuth
 	if err := json.Unmarshal(raw, &d); err != nil {
-		return nil, credentialBodyError("unexpected device-init response", raw, err)
+		return nil, redact.CredentialBodyError("unexpected device-init response", raw, err)
 	}
 	if d.DeviceCode == "" || d.UserCode == "" {
 		return nil, fmt.Errorf("device-init response missing device_code/user_code")
@@ -645,7 +652,7 @@ func (c *OAuthClient) pollOnce(ctx context.Context, deviceCode string) (pollOutc
 	if status == http.StatusOK {
 		var tr TokenResponse
 		if err := json.Unmarshal(raw, &tr); err != nil {
-			return pollPending, nil, credentialBodyError("unexpected device-token response", raw, err)
+			return pollPending, nil, redact.CredentialBodyError("unexpected device-token response", raw, err)
 		}
 		if tr.AccessToken == "" {
 			return pollPending, nil, fmt.Errorf("device-token success response had no access_token")
@@ -752,7 +759,7 @@ func (c *OAuthClient) Refresh(ctx context.Context, refreshToken string) (*TokenR
 	}
 	var tr TokenResponse
 	if err := json.Unmarshal(raw, &tr); err != nil {
-		return nil, credentialBodyError("unexpected refresh response", raw, err)
+		return nil, redact.CredentialBodyError("unexpected refresh response", raw, err)
 	}
 	if tr.AccessToken == "" {
 		return nil, fmt.Errorf("refresh response had no access_token")
@@ -789,14 +796,24 @@ func (c *OAuthClient) postForm(ctx context.Context, rawURL string, form url.Valu
 	return resp.StatusCode, raw, nil
 }
 
-// oauthMsg extracts a human message from an OAuth error body.
+// oauthMsg extracts a human message from an OAuth error body: the `error` code
+// and its `error_description`, each only when redact.ServerText accepts it, and
+// otherwise only the body's size.
+//
+// 🔴 NEVER THE BODY. Every caller is a non-200 on a route whose success payload
+// IS a credential (refresh, device-token, device-init), and a body without a
+// recognised `error` field can be that payload under an unexpected status — so
+// the old raw-body fallback printed `token refresh failed (status 201):
+// {"access_token":"…","refresh_token":"…"}`.
 func oauthMsg(raw []byte) string {
 	var oe oauthErr
-	if json.Unmarshal(raw, &oe) == nil && oe.Error != "" {
-		if oe.ErrorDescription != "" {
-			return oe.Error + ": " + oe.ErrorDescription
+	if json.Unmarshal(raw, &oe) == nil {
+		if code, ok := redact.ServerText(oe.Error); ok {
+			if desc, ok := redact.ServerText(oe.ErrorDescription); ok {
+				return code + ": " + desc
+			}
+			return code
 		}
-		return oe.Error
 	}
-	return strings.TrimSpace(string(raw))
+	return redact.WithheldBody(raw)
 }

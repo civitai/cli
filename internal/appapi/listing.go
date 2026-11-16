@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/civitai/cli/internal/redact"
 	"github.com/civitai/cli/pkg/civitai"
 )
 
@@ -777,7 +778,7 @@ func (c *Client) MintImageUpload(ctx context.Context) (id, uploadURL string, err
 		UploadURL string `json:"uploadURL"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil || out.ID == "" || out.UploadURL == "" {
-		return "", "", fmt.Errorf("unexpected image-upload response: %s", string(raw))
+		return "", "", redact.CredentialBodyError("unexpected image-upload response", raw, err)
 	}
 	return out.ID, out.UploadURL, nil
 }
@@ -1053,12 +1054,22 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 	if json.Unmarshal(raw, &env) == nil && env.Error.JSON.Message != "" {
 		msg = env.Error.JSON.Message
 	}
+	// reason is what the arms below CLASSIFY on; msg is what they SHOW.
+	reason := msg
+	if route == imageUploadRoute {
+		// The image-upload mint's success payload is a presigned PUT URL, so its
+		// body is never shown — see redact.CredentialRouteMessage. The arms still
+		// classify on the server's unfiltered words (redact.ErrorMessage): a
+		// message the display filter withholds must not lose its classification.
+		reason = redact.ErrorMessage(raw)
+		msg = redact.CredentialRouteMessage(raw)
+	}
 	name := route.name()
 	switch status {
 	case http.StatusUnauthorized:
 		return unauthorizedError("")
 	case http.StatusForbidden:
-		if isInsufficientScopeMsg(msg) {
+		if isInsufficientScopeMsg(reason) {
 			return fmt.Errorf("listing media needs the Apps submit scope (403): %s — re-run `civitai login` (an old token may predate the scope), or use a full-scope personal API key", msg)
 		}
 		// 🔴 A MODERATOR TAKEDOWN IS NOT AN ACCESS PROBLEM, and the fallback
@@ -1074,7 +1085,7 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		// that can work. It is deliberately NOT a new exit code: 403 is tagged
 		// by the deferred TagStatus above, so this stays exit 3, which is what
 		// README publishes for "a moderator removed the listing".
-		if isModeratorTakedownMsg(msg) {
+		if isModeratorTakedownMsg(reason) {
 			return fmt.Errorf("this listing is under a moderator takedown (403): %s — your account's access is not the problem and no CLI command reverses this; ask a Civitai moderator to relist it", msg)
 		}
 		// 🔴 THE THIRD INSTANCE OF THE WRONG-SUBJECT CLASS (#374/#391 on the 400
@@ -1106,7 +1117,7 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		// sentence is then confidently wrong about a listing that no longer
 		// exists. It is not a regression — the catch-all it replaces was equally
 		// false there — but do not tighten the wording without re-reading that.
-		if isNotOwnedMsg(msg) {
+		if isNotOwnedMsg(reason) {
 			return fmt.Errorf("this listing belongs to another account (403): %s — your account's access is not the problem, and being a moderator does not help: sign in as the app's owner (`civitai whoami` shows who you are), accept a pending collaborator invite if you were sent one, or ask the owner to make the change", msg)
 		}
 		return fmt.Errorf("not permitted for your account (403): %s — managing store listings needs Apps-author access (invite-only beta)", msg)
@@ -1124,7 +1135,7 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		// the override slots do not exist on this environment yet. It must not
 		// reach the change arm below ("may have partially applied" is false — the
 		// server refuses before writing) nor the caller's image advice.
-		if route == trpcSetRedMedia && isRedSlotsUnavailableMsg(msg) {
+		if route == trpcSetRedMedia && isRedSlotsUnavailableMsg(reason) {
 			return fmt.Errorf("%w (400: %s)", ErrRedSlotsUnavailable, msg)
 		}
 		// The SUBJECT comes from the ROUTE's op, not from the status and not
