@@ -241,10 +241,11 @@ It does three things from one static binary:
     right folder for ComfyUI / A1111.
   • Build & submit Apps — small, sandboxed web apps that run inside Civitai
     surfaces. Scaffold a correct project, validate it against the platform
-    contract, and package it for submission. EVERY civitai app command needs a
-    token, including the App-store browse commands app list / app view: that
-    endpoint keys the visible catalog off your identity, so it has no
-    anonymous view.
+    contract, and package it for submission. Local authoring (app create,
+    app validate) runs without a token; every app command that talks to the
+    platform needs one, including the App-store browse commands app list /
+    app view: that endpoint keys the visible catalog off your identity, so it
+    has no anonymous view.
   • Generate images — civitai generate "<prompt>". This SPENDS REAL BUZZ and
     needs the AI Services scopes (civitai login --scopes generate, or a
     full-scope personal API key); price a job with --dry-run first.
