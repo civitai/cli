@@ -2,6 +2,7 @@ package civitai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -61,11 +62,17 @@ const downloadResponseHeaderTimeout = 30 * time.Second
 // (stripping the Authorization header on a cross-host redirect) and each hop's
 // scheme is re-checked to be https by checkDownloadRedirect.
 //
-// The SSRF guard lives in the DIALER (net.Dialer.Control), so it inspects the
-// post-DNS address of EVERY connection — the initial downloadUrl and every
-// redirect target alike — which is DNS-rebinding-resistant (a hostname that
-// resolves to a public IP on the guard check but an internal one at dial time is
-// still caught, because the check IS the dial).
+// Without a proxy, the SSRF guard lives in the DIALER (net.Dialer.Control), so
+// it inspects the post-DNS address of EVERY connection — the initial downloadUrl
+// and every redirect target alike — which is DNS-rebinding-resistant (a hostname
+// that resolves to a public IP on the guard check but an internal one at dial
+// time is still caught, because the check IS the dial).
+//
+// With a proxy (the transport's Proxy func — HTTPS_PROXY & co. by default —
+// names one for the request), the dialer only ever sees the PROXY's address, so
+// the dial check alone would refuse every private proxy and wave through every
+// target behind a public one (#780). proxyTargetGuard covers that case: see its
+// doc for what it checks and the limit it cannot get past.
 func (c *Client) downloadHTTPClient() *http.Client {
 	var base http.RoundTripper
 	if c.HTTP != nil {
@@ -75,6 +82,9 @@ func (c *Client) downloadHTTPClient() *http.Client {
 	if !c.AllowPrivateDownloadHosts {
 		if t, ok := tr.(*http.Transport); ok {
 			t.DialContext = guardedDownloadDialContext()
+			if t.Proxy != nil {
+				tr = &proxyTargetGuard{next: t, proxy: t.Proxy}
+			}
 		}
 	}
 	return &http.Client{
@@ -137,6 +147,11 @@ func requireHTTPSTransfer(rawURL, verb, plural string) error {
 // internal IP. net.Dialer.Control runs AFTER DNS resolution with the concrete
 // ip:port about to be dialed, so it catches both the initial URL and any
 // redirect target and is not fooled by DNS rebinding.
+//
+// The one exception is the proxy address proxyTargetGuard recorded for THIS
+// request: that exact host:port (as configured, before DNS) is dialed without
+// the private-address check, so a loopback or private proxy works. Nothing else
+// is exempt — a different private address on a proxied request is still refused.
 func guardedDownloadDialContext() func(ctx context.Context, network, addr string) (net.Conn, error) {
 	d := &net.Dialer{
 		Timeout:   30 * time.Second,
@@ -150,13 +165,128 @@ func guardedDownloadDialContext() func(ctx context.Context, network, addr string
 			if ip == nil {
 				return fmt.Errorf("refusing to download: unresolved dial address %q", address)
 			}
-			if isBlockedDownloadIP(ip) {
-				return &blockedDownloadAddrError{ip: ip}
+			if reason := blockedDownloadReason(ip); reason != "" {
+				return &blockedDownloadAddrError{ip: ip, reason: reason}
 			}
 			return nil
 		},
 	}
-	return d.DialContext
+	proxyDialer := &net.Dialer{Timeout: d.Timeout, KeepAlive: d.KeepAlive}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if allowed, ok := ctx.Value(allowedProxyAddrKey{}).(string); ok && allowed == addr {
+			return proxyDialer.DialContext(ctx, network, addr)
+		}
+		conn, err := d.DialContext(ctx, network, addr)
+		var blocked *blockedDownloadAddrError
+		if err != nil && errors.As(err, &blocked) && blocked.host == "" {
+			// Name the host that was dialed, not just the IP it resolved to.
+			if h, _, serr := net.SplitHostPort(addr); serr == nil {
+				blocked.host = h
+			}
+		}
+		return conn, err
+	}
+}
+
+// allowedProxyAddrKey is the context key under which proxyTargetGuard records
+// the canonical host:port of the proxy chosen for a request.
+type allowedProxyAddrKey struct{}
+
+// lookupDownloadHost resolves a download target's host for proxyTargetGuard. It
+// is the resolver the dial guard's net.Dialer uses (net.DefaultResolver); a
+// variable only so tests can map hostnames without real DNS.
+var lookupDownloadHost = net.DefaultResolver.LookupIPAddr
+
+// proxyTargetGuard applies the private-address rules to the TARGET of a request
+// that goes through a proxy (#780). For each request it hands to the transport
+// — the first URL and every redirect hop, since http.Client calls RoundTrip
+// once per hop — it asks the transport's own Proxy func whether this request is
+// proxied. If not, it does nothing and the dial guard checks the target as
+// before. If so, it:
+//
+//  1. resolves the target host here (an IP literal is used as-is) and refuses
+//     the request if ANY address is private/loopback, by the same
+//     blockedDownloadReason the dial guard uses — before anything is sent; and
+//  2. records the proxy's host:port in the request context, so the dial guard
+//     lets exactly that address through even when it is private (an agent
+//     sandbox's loopback proxy is the case that motivated this).
+//
+// A failed resolution is a refusal, not a pass: an unchecked target is exactly
+// what this guard exists to prevent.
+//
+// 🔴 THIS IS A BEST-EFFORT PRE-CHECK, NOT THE DIAL-TIME GUARANTEE THE DIRECT PATH
+// HAS. Through a proxy the CLI never learns which address the proxy connects to:
+// the proxy resolves the target itself, later and possibly against different
+// DNS. A name that resolves public here and private at the proxy — DNS
+// rebinding with a short TTL, split-horizon DNS where the proxy sees internal
+// records, a hosts-file entry on the proxy host — passes this check and is
+// reached. Closing that needs the proxy to enforce the rule. What this does
+// guarantee is narrower: a target that resolves to a private address from THIS
+// machine is never requested through any proxy, public or private.
+type proxyTargetGuard struct {
+	next  http.RoundTripper
+	proxy func(*http.Request) (*url.URL, error)
+}
+
+func (g *proxyTargetGuard) RoundTrip(req *http.Request) (*http.Response, error) {
+	proxyURL, err := g.proxy(req)
+	if err != nil {
+		return nil, err
+	}
+	if proxyURL == nil {
+		return g.next.RoundTrip(req)
+	}
+	if err := checkProxiedDownloadTarget(req.Context(), req.URL.Hostname(), proxyURL); err != nil {
+		return nil, err
+	}
+	ctx := context.WithValue(req.Context(), allowedProxyAddrKey{}, proxyDialAddr(proxyURL))
+	return g.next.RoundTrip(req.WithContext(ctx))
+}
+
+// checkProxiedDownloadTarget refuses host when it is, or resolves to, any
+// private/loopback address. See proxyTargetGuard for why this is a pre-check.
+func checkProxiedDownloadTarget(ctx context.Context, host string, proxyURL *url.URL) error {
+	if host == "" {
+		return fmt.Errorf("refusing to download via proxy %s: the URL has no host", proxyURL.Host)
+	}
+	var ips []net.IP
+	if ip := net.ParseIP(host); ip != nil {
+		ips = []net.IP{ip}
+	} else {
+		addrs, err := lookupDownloadHost(ctx, host)
+		if err != nil {
+			return fmt.Errorf("refusing to download %s via proxy %s: could not resolve it to check that it is not a private/loopback address: %w", host, proxyURL.Host, err)
+		}
+		for _, a := range addrs {
+			ips = append(ips, a.IP)
+		}
+		if len(ips) == 0 {
+			return fmt.Errorf("refusing to download %s via proxy %s: it resolved to no addresses, so it could not be checked", host, proxyURL.Host)
+		}
+	}
+	for _, ip := range ips {
+		if reason := blockedDownloadReason(ip); reason != "" {
+			return &blockedDownloadAddrError{host: host, ip: ip, reason: reason, proxy: proxyURL.Host}
+		}
+	}
+	return nil
+}
+
+// proxyDialAddr is the host:port the transport dials for proxyURL, with the
+// scheme's default port filled in the way net/http does.
+func proxyDialAddr(u *url.URL) string {
+	port := u.Port()
+	if port == "" {
+		switch strings.ToLower(u.Scheme) {
+		case "https":
+			port = "443"
+		case "socks5", "socks5h":
+			port = "1080"
+		default:
+			port = "80"
+		}
+	}
+	return net.JoinHostPort(u.Hostname(), port)
 }
 
 // cgnatBlock is RFC 6598 shared address space (100.64.0.0/10) — reachable
@@ -172,21 +302,49 @@ var cgnatBlock = func() *net.IPNet { _, n, _ := net.ParseCIDR("100.64.0.0/10"); 
 // IPv6 ULA (fc00::/7), and CGNAT (100.64.0.0/10). Public IPs (a normal
 // signed-storage host) pass.
 func isBlockedDownloadIP(ip net.IP) bool {
-	return ip.IsLoopback() ||
-		ip.IsUnspecified() || // 0.0.0.0 / :: — routes to loopback
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsPrivate() || // RFC1918 + RFC4193 (fc00::/7)
-		cgnatBlock.Contains(ip) // RFC6598 100.64.0.0/10
+	return blockedDownloadReason(ip) != ""
 }
 
-// blockedDownloadAddrError is returned by the dial guard when a download would
-// connect to an internal IP (SSRF). It carries the offending IP for a clear,
-// actionable message.
-type blockedDownloadAddrError struct{ ip net.IP }
+// blockedDownloadReason names the internal range ip falls in, or "" when it is a
+// public address. It is the one predicate behind isBlockedDownloadIP; the name
+// only feeds the refusal message.
+func blockedDownloadReason(ip net.IP) string {
+	switch {
+	case ip.IsLoopback():
+		return "loopback"
+	case ip.IsUnspecified(): // 0.0.0.0 / :: — routes to loopback
+		return "unspecified"
+	case ip.IsLinkLocalUnicast(), ip.IsLinkLocalMulticast():
+		return "link-local"
+	case ip.IsPrivate(): // RFC1918 + RFC4193 (fc00::/7)
+		return "private"
+	case cgnatBlock.Contains(ip): // RFC6598 100.64.0.0/10
+		return "CGNAT"
+	default:
+		return ""
+	}
+}
+
+// blockedDownloadAddrError is returned when a download would reach an internal
+// IP (SSRF): by the dial guard on a direct connection, or by proxyTargetGuard
+// for a proxied request's target. It names the host, the address it resolved
+// to, which internal range that is, and the proxy when there was one.
+type blockedDownloadAddrError struct {
+	host   string // the hostname dialed or requested; "" when unknown
+	ip     net.IP
+	reason string // blockedDownloadReason(ip)
+	proxy  string // proxy host:port when the target was checked for a proxied request
+}
 
 func (e *blockedDownloadAddrError) Error() string {
-	return fmt.Sprintf("refusing to download from a private/loopback address (%s) — the download URL resolved to a non-public IP", e.ip)
+	target := e.ip.String()
+	if e.host != "" && e.host != target {
+		target = fmt.Sprintf("%s (resolved to %s)", e.host, e.ip)
+	}
+	if e.proxy != "" {
+		return fmt.Sprintf("refusing to download from %s via proxy %s: %s is a %s address, and downloads may not reach private/loopback addresses (a private proxy is allowed; a private target is not)", target, e.proxy, e.ip, e.reason)
+	}
+	return fmt.Sprintf("refusing to download from %s: %s is a %s address, and downloads may not reach private/loopback addresses", target, e.ip, e.reason)
 }
 
 // downloadTransport returns a RoundTripper carrying a ResponseHeaderTimeout. When
