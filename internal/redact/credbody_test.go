@@ -18,8 +18,9 @@ func TestServerText(t *testing.T) {
 	}{
 		{"oauth code", "invalid_grant", "invalid_grant", true},
 		{"trimmed message", "  App not found \t", "App not found", true},
-		{"200 runes is the limit", strings.Repeat("é", 200), strings.Repeat("é", 200), true},
-		{"201 runes is over it", strings.Repeat("é", 201), "", false},
+		// No length limit: the dev-token route's real owned-but-not-deployed 404
+		// is 179 runes plus the blockId, and a 200-rune cap withheld it.
+		{"a long message is not refused for its length", strings.Repeat("é", 500), strings.Repeat("é", 500), true},
 		{"empty", "   ", "", false},
 		{"json object", `{"access_token":"x"}`, "", false},
 		{"json array", `["x"]`, "", false},
