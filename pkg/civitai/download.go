@@ -206,13 +206,17 @@ var lookupDownloadHost = net.DefaultResolver.LookupIPAddr
 //
 //  1. resolves the target host here (an IP literal is used as-is) and refuses
 //     the request if ANY address is private/loopback, by the same
-//     blockedDownloadReason the dial guard uses — before anything is sent; and
+//     blockedDownloadReason the dial guard uses — before anything is sent; a
+//     mixed answer with one private address among public ones is refused; and
 //  2. records the proxy's host:port in the request context, so the dial guard
 //     lets exactly that address through even when it is private (an agent
 //     sandbox's loopback proxy is the case that motivated this).
 //
-// A failed resolution is a refusal, not a pass: an unchecked target is exactly
-// what this guard exists to prevent.
+// A name that does not resolve HERE (a lookup error, or no addresses) is passed
+// to the proxy unchecked, and the proxy resolves it. That is a deliberate
+// operator decision: a sandbox whose only route out is the proxy often has no
+// DNS of its own, and refusing every such name would block exactly the setup
+// #780 is about. It widens the gap below: such a name is not checked at all.
 //
 // 🔴 THIS IS A BEST-EFFORT PRE-CHECK, NOT THE DIAL-TIME GUARANTEE THE DIRECT PATH
 // HAS. Through a proxy the CLI never learns which address the proxy connects to:
@@ -220,9 +224,10 @@ var lookupDownloadHost = net.DefaultResolver.LookupIPAddr
 // DNS. A name that resolves public here and private at the proxy — DNS
 // rebinding with a short TTL, split-horizon DNS where the proxy sees internal
 // records, a hosts-file entry on the proxy host — passes this check and is
-// reached. Closing that needs the proxy to enforce the rule. What this does
-// guarantee is narrower: a target that resolves to a private address from THIS
-// machine is never requested through any proxy, public or private.
+// reached, and so is a name this machine cannot resolve at all. Closing that
+// needs the proxy to enforce the rule. What this does guarantee is narrower: a
+// target that resolves to a private address from THIS machine is never
+// requested through any proxy, public or private.
 type proxyTargetGuard struct {
 	next  http.RoundTripper
 	proxy func(*http.Request) (*url.URL, error)
@@ -244,7 +249,9 @@ func (g *proxyTargetGuard) RoundTrip(req *http.Request) (*http.Response, error) 
 }
 
 // checkProxiedDownloadTarget refuses host when it is, or resolves to, any
-// private/loopback address. See proxyTargetGuard for why this is a pre-check.
+// private/loopback address. A host that does not resolve here passes (the
+// proxy resolves it). See proxyTargetGuard for why this is a best-effort
+// pre-check.
 func checkProxiedDownloadTarget(ctx context.Context, host string, proxyURL *url.URL) error {
 	if host == "" {
 		return fmt.Errorf("refusing to download via proxy %s: the URL has no host", proxyURL.Host)
@@ -255,13 +262,10 @@ func checkProxiedDownloadTarget(ctx context.Context, host string, proxyURL *url.
 	} else {
 		addrs, err := lookupDownloadHost(ctx, host)
 		if err != nil {
-			return fmt.Errorf("refusing to download %s via proxy %s: could not resolve it to check that it is not a private/loopback address: %w", host, proxyURL.Host, err)
+			return nil // unresolvable here: the proxy resolves it (see proxyTargetGuard)
 		}
 		for _, a := range addrs {
 			ips = append(ips, a.IP)
-		}
-		if len(ips) == 0 {
-			return fmt.Errorf("refusing to download %s via proxy %s: it resolved to no addresses, so it could not be checked", host, proxyURL.Host)
 		}
 	}
 	for _, ip := range ips {
