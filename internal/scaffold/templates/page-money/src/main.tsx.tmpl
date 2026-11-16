@@ -112,8 +112,8 @@ function LiveApp({ token, backendBaseUrl }: { token: string; backendBaseUrl: str
  *  - PROFILE NAME — `/api/v1/blocks/me` authed with the page-scoped BLOCK TOKEN
  *    (the same VITE_LIVE_BLOCK_TOKEN the app uses). Faithful to prod: a page
  *    block CAN read its own viewer.
- *  - BUZZ BALANCE — `/api/trpc/buzz.getBuzzAccount`. The page token canNOT read
- *    Buzz (no `buzz:read:self`), so the dev proxy injects the dev's PERSONAL key
+ *  - BUZZ BALANCE — `/api/trpc/buzz.getBuzzAccount`, a signed-in-user route that
+ *    does not accept a block token at all, so the dev proxy injects the dev's PERSONAL key
  *    as the Authorization header SERVER-SIDE, only on that route (see
  *    vite.config.ts). The key is NEVER `VITE_`-bundled — this client code never
  *    references it; it just fetches the same-origin route. With no key set the

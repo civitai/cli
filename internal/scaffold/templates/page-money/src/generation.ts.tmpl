@@ -238,6 +238,57 @@ export function formatCost(cost: number | null | undefined): string {
   return Math.round(cost).toLocaleString();
 }
 
+/**
+ * What the success receipt may say about the viewer's spend.
+ *
+ * A submitted workflow's snapshot (`submit` / `poll`) reports the GENERATION's
+ * realized cost only: the app's author fee is a SEPARATE charge, and only the
+ * ESTIMATE itemises it (`cost.authorFee`, already inside the estimate's total).
+ * So the whole debit is the realized generation cost plus the fee QUOTED for
+ * the request the viewer submitted — the host holds the fee to the one it
+ * quoted.
+ *
+ *  - `total`           — the fee was itemised on the quote (a number, `0`
+ *                        included), so the whole debit is known.
+ *  - `generation-only` — the quote did not itemise a fee (an older host, or a
+ *                        kind that prices none). Absent is NOT `0`: say what
+ *                        the number is, never call it the whole spend.
+ *  - `unknown`         — the snapshot carried no cost at all.
+ */
+export type Receipt =
+  | { kind: 'total'; total: number; generation: number; authorFee: number }
+  | { kind: 'generation-only'; generation: number }
+  | { kind: 'unknown' };
+
+export function receiptFor(
+  generationCost: number | null | undefined,
+  quotedAuthorFee: number | null | undefined,
+): Receipt {
+  if (generationCost == null || !Number.isFinite(generationCost)) return { kind: 'unknown' };
+  if (quotedAuthorFee == null || !Number.isFinite(quotedAuthorFee)) {
+    return { kind: 'generation-only', generation: generationCost };
+  }
+  return {
+    kind: 'total',
+    total: generationCost + quotedAuthorFee,
+    generation: generationCost,
+    authorFee: quotedAuthorFee,
+  };
+}
+
+/**
+ * The viewer-facing text for an estimate that produced no usable price, chosen
+ * by the SDK's `WorkflowEstimateError.code`. App-owned on purpose: the SDK's
+ * own guidance is that neither `err.message` (developer-facing) nor
+ * `err.snapshot.error` (server-authored, unsanitised) may be rendered.
+ */
+export function estimateFailureMessage(err: unknown): string {
+  const code = (err as { code?: unknown } | null | undefined)?.code;
+  return code === 'no-cost'
+    ? "We couldn't get a price for this request. Try adjusting it, or retry."
+    : 'Pricing is unavailable right now. Retry in a moment.';
+}
+
 /** Trim + clamp a prompt to the server cap so submit can't be rejected on length. */
 export function clampPrompt(raw: string): string {
   return raw.slice(0, PROMPT_MAX);

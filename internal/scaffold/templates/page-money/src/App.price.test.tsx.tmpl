@@ -1,0 +1,168 @@
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { createMockHost } from '@civitai/blocks-react/testing';
+
+import { App } from './App.js';
+
+// The PRICE CONTRACT of this money path, driven through the REAL SDK transport
+// against the SDK's mock host (no hook mocking):
+//
+//  1. Nothing is submitted until the viewer has been SHOWN a price for exactly
+//     the request they are about to run. Generate stays disabled until an
+//     estimate succeeds; an estimate that fails (or comes back with no price)
+//     shows an error and a "Retry estimate" button, and NEVER falls through to
+//     a submit.
+//  2. The success receipt reports what the viewer actually paid. A submitted
+//     workflow's snapshot carries the GENERATION's realized cost only — the
+//     app's author fee is a separate charge, itemised on the estimate — so the
+//     receipt adds the quoted fee back in and says so.
+//
+// Every number below is a literal. The mock prices a generation at
+// `costPerGen` and adds `authorFee` to the QUOTE; the submitted workflow's
+// snapshot reports `costPerGen` alone and the wallet is debited both.
+
+type Outbound = { type: string };
+
+const VIEWER = { id: 2, username: 'dev', status: 'active' as const };
+const PROMPT = 'a serene mountain lake';
+
+describe('App price contract', () => {
+  let uninstall: (() => void) | undefined;
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+  });
+
+  it.each(['failed', 'no-cost'] as const)(
+    'an estimate that rejects (%s) spends nothing: no submit, Generate stays disabled, Retry re-asks',
+    async (failEstimate) => {
+      const outbound: Outbound[] = [];
+      const host = createMockHost({
+        viewer: VIEWER,
+        consentGranted: true,
+        generation: { costPerGen: 6, authorFee: 1, failEstimate },
+        buzz: { balance: 100 },
+        pollsUntilDone: 1,
+        onOutbound: (m) => outbound.push({ type: m.type }),
+      });
+      uninstall = host.install();
+      const count = (type: string) => outbound.filter((m) => m.type === type).length;
+
+      const user = userEvent.setup();
+      render(<App />);
+      const generate = await screen.findByTestId('pm-generate');
+      await user.type(screen.getByLabelText(/prompt/i), PROMPT);
+      // A click the viewer makes before (or while) the price is being fetched.
+      await user.click(generate);
+
+      // The estimate was asked for and failed...
+      await waitFor(() => expect(count('ESTIMATE_WORKFLOW')).toBeGreaterThanOrEqual(1), { timeout: 3000 });
+      // ...give a fall-through submit every chance to happen before asserting
+      // it did not.
+      await new Promise((r) => setTimeout(r, 300));
+      expect(count('SUBMIT_WORKFLOW')).toBe(0);
+
+      // The failure is shown, with a way to retry, and Generate is disabled.
+      const alert = await screen.findByTestId('pm-estimate-error');
+      expect(alert).toBeInTheDocument();
+      expect(generate).toBeDisabled();
+      expect(generate).toHaveTextContent(/^Generate$/);
+
+      // Clicking the disabled button again still submits nothing.
+      await user.click(generate);
+      await new Promise((r) => setTimeout(r, 100));
+      expect(count('SUBMIT_WORKFLOW')).toBe(0);
+      expect(host.buzz.getBalance()).toBe(100);
+
+      // Retry re-requests the estimate.
+      const before = count('ESTIMATE_WORKFLOW');
+      await user.click(screen.getByRole('button', { name: 'Retry estimate' }));
+      await waitFor(() => expect(count('ESTIMATE_WORKFLOW')).toBe(before + 1), { timeout: 3000 });
+      expect(count('SUBMIT_WORKFLOW')).toBe(0);
+      expect(host.buzz.getBalance()).toBe(100);
+    },
+  );
+
+  it('the price is on the button BEFORE the click that submits', async () => {
+    const outbound: Outbound[] = [];
+    const host = createMockHost({
+      viewer: VIEWER,
+      consentGranted: true,
+      generation: { costPerGen: 6, authorFee: 1 },
+      buzz: { balance: 100 },
+      pollsUntilDone: 1,
+      onOutbound: (m) => outbound.push({ type: m.type }),
+    });
+    uninstall = host.install();
+
+    const user = userEvent.setup();
+    render(<App />);
+    const generate = await screen.findByTestId('pm-generate');
+    await user.type(screen.getByLabelText(/prompt/i), PROMPT);
+
+    await waitFor(() => expect(generate).toHaveTextContent('Generate · 7 Buzz'), { timeout: 3000 });
+    expect(outbound.filter((m) => m.type === 'SUBMIT_WORKFLOW')).toHaveLength(0);
+
+    await user.click(generate);
+    await screen.findByAltText(/generated result/i, {}, { timeout: 5000 });
+
+    expect(outbound.filter((m) => m.type === 'SUBMIT_WORKFLOW')).toHaveLength(1);
+    expect(host.buzz.getBalance()).toBe(93);
+  });
+
+  it('consent withheld: granting it prices the request and does NOT submit on its own', async () => {
+    const outbound: Outbound[] = [];
+    const host = createMockHost({
+      viewer: VIEWER,
+      consentGranted: false,
+      generation: { costPerGen: 6, authorFee: 1 },
+      buzz: { balance: 100 },
+      pollsUntilDone: 1,
+      onOutbound: (m) => outbound.push({ type: m.type }),
+    });
+    uninstall = host.install();
+
+    const user = userEvent.setup();
+    render(<App />);
+    const generate = await screen.findByTestId('pm-generate');
+    await user.type(screen.getByLabelText(/prompt/i), PROMPT);
+    expect(generate).toBeDisabled();
+
+    // The mock host grants on REQUEST_CONSENT and pushes a TOKEN_REFRESH.
+    await user.click(screen.getByTestId('pm-consent'));
+    await waitFor(() => expect(generate).toHaveTextContent('Generate · 7 Buzz'), { timeout: 3000 });
+    expect(generate).toBeEnabled();
+    expect(outbound.filter((m) => m.type === 'SUBMIT_WORKFLOW')).toHaveLength(0);
+    expect(host.buzz.getBalance()).toBe(100);
+  });
+
+  it.each([
+    // [authorFee, wallet after, receipt]
+    [1, 93, 'Spent 7 Buzz (6 generation + 1 app fee)'],
+    [0, 94, 'Spent 6 Buzz'],
+  ] as const)('the receipt with authorFee=%s reports the whole debit', async (authorFee, after, receipt) => {
+    const host = createMockHost({
+      viewer: VIEWER,
+      consentGranted: true,
+      generation: { costPerGen: 6, authorFee },
+      buzz: { balance: 100 },
+      pollsUntilDone: 1,
+    });
+    uninstall = host.install();
+
+    const user = userEvent.setup();
+    render(<App />);
+    const generate = await screen.findByTestId('pm-generate');
+    await user.type(screen.getByLabelText(/prompt/i), PROMPT);
+    await waitFor(() => expect(generate).toBeEnabled(), { timeout: 3000 });
+    await user.click(generate);
+    await screen.findByAltText(/generated result/i, {}, { timeout: 5000 });
+
+    expect(host.buzz.getBalance()).toBe(after);
+    const spent = screen.getByTestId('pm-spent');
+    expect(spent).toHaveTextContent(receipt);
+    if (authorFee === 0) expect(spent).not.toHaveTextContent(/app fee/);
+  });
+});

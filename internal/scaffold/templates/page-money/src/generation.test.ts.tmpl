@@ -7,6 +7,7 @@ import {
   accountLabel,
   buildWorkflowBody,
   clampPrompt,
+  estimateFailureMessage,
   firstImageUrl,
   formatCost,
   hasBudgetedScope,
@@ -18,6 +19,7 @@ import {
   phaseForError,
   phaseForSnapshot,
   phaseForSubmitError,
+  receiptFor,
   spentAccountLabel,
   submitErrorReason,
 } from './generation.js';
@@ -39,6 +41,38 @@ describe('formatCost', () => {
   it('rounds fractional costs and separates large ones', () => {
     expect(formatCost(1234.6)).toBe('1,235');
     expect(formatCost(1_234_567)).toBe((1_234_567).toLocaleString());
+  });
+});
+
+describe('receiptFor', () => {
+  it('adds the quoted author fee to the realized generation cost', () => {
+    expect(receiptFor(6, 1)).toEqual({ kind: 'total', total: 7, generation: 6, authorFee: 1 });
+  });
+  it('a quoted fee of 0 is a known whole debit', () => {
+    expect(receiptFor(6, 0)).toEqual({ kind: 'total', total: 6, generation: 6, authorFee: 0 });
+  });
+  it('an un-itemised fee is NOT read as 0 — generation cost only', () => {
+    expect(receiptFor(25, undefined)).toEqual({ kind: 'generation-only', generation: 25 });
+    expect(receiptFor(25, null)).toEqual({ kind: 'generation-only', generation: 25 });
+  });
+  it('no realized cost -> unknown', () => {
+    expect(receiptFor(null, 1)).toEqual({ kind: 'unknown' });
+    expect(receiptFor(undefined, undefined)).toEqual({ kind: 'unknown' });
+  });
+});
+
+describe('estimateFailureMessage', () => {
+  it('branches on the SDK error code, never renders server text', () => {
+    const server = 'upstream returned 503 (server-authored detail)';
+    expect(estimateFailureMessage({ code: 'no-cost', message: server })).toBe(
+      "We couldn't get a price for this request. Try adjusting it, or retry.",
+    );
+    expect(estimateFailureMessage({ code: 'failed', snapshot: { error: server } })).toBe(
+      'Pricing is unavailable right now. Retry in a moment.',
+    );
+    expect(estimateFailureMessage(new Error(server))).toBe(
+      'Pricing is unavailable right now. Retry in a moment.',
+    );
   });
 });
 

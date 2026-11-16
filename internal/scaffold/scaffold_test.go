@@ -255,12 +255,18 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "MAX_TRANSIENT_ERRORS")
 	mustContain(t, app, "consecutiveErrors")
 
-	// The confirm-spend modal was removed: Generate is one click → consent →
-	// spend (the button already shows the cost).
+	// The confirm-spend modal was removed: the price is ON the Generate button,
+	// which is disabled until an estimate for the current request succeeds
+	// (#880). The click submits only with that quote; behaviour is pinned by the
+	// template's own src/App.price.test.tsx, run in the template-page-money job.
 	mustNotContain(t, app, "Confirm generation")
 	mustNotContain(t, app, "setConfirmOpen")
-	// The Generate click runs the gate directly (no intermediate confirm state).
-	mustContain(t, app, "proceed()")
+	mustContain(t, app, "void runGeneration(quote)")
+	mustContain(t, app, "disabled={busy || !quote}")
+	mustContain(t, app, "Retry estimate")
+	if _, err := os.Stat(filepath.Join(dest, "src", "App.price.test.tsx")); err != nil {
+		t.Errorf("page-money must ship its price-contract test src/App.price.test.tsx: %v", err)
+	}
 
 	// The "About this block" modal + the "How this works" section/button were
 	// removed (a clean, minimal scaffold). The status Badge near the title was
