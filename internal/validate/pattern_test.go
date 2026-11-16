@@ -135,6 +135,16 @@ func patternFixtures() []patternFixture {
 			field:    "page.path",
 			got:      "run",
 		},
+		{
+			// A HYPHEN: valid in JSON Pointer, refused here, and the likeliest
+			// thing an author pastes (a kebab-case field name).
+			name:    "storage.ownedModelVersions",
+			pattern: `^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$`,
+			manifest: `{"blockId":"ok-app","storage":{"collections":{"c":{"visibility":"shared","write":"own",` +
+				`"ownedModelVersions":["/model-version"]}}},` + base + `}`,
+			field: "storage.collections.c.ownedModelVersions[0]",
+			got:   "/model-version",
+		},
 	}
 }
 
@@ -257,6 +267,11 @@ func TestPatternGlossesAreTheRightWayRound(t *testing.T) {
 			"a scheme requirement and nothing else"},
 		{`^/`, `must start with a "/"`, "/",
 			"a leading-character requirement on a mount path"},
+		// "field path of 1 to 4 segments" rather than anything about "/": the
+		// page.path row owns the leading-slash wording, and this regex's
+		// distinguishing claim is the bounded segment count.
+		{`^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$`, "field path of 1 to 4 segments", "/workflow/modelVersionId",
+			"a bounded, index-free path into a stored document"},
 	}
 	if len(ledger) != len(patternRules) {
 		t.Fatalf("%d ledger rows for %d glossed patterns — the ledger must be total, "+
@@ -546,7 +561,7 @@ func TestPostsWriteSelfScopeAccepted(t *testing.T) {
 	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
 		`"scopes":["models:read:self","posts:write:self"],` +
 		`"scopeJustifications":{"posts:write:self":"lets the viewer publish the images this app generated for them"},` +
-		`"kind":"page",` +
+		`"kind":"page","page":{"path":"/","title":"x"},` +
 		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
 	for _, f := range manifestOnlyFindings(t, body) {
 		t.Errorf("unexpected finding on %q: %s", f.Field, f.Message)
@@ -557,7 +572,7 @@ func TestPostsWriteSelfScopeAccepted(t *testing.T) {
 	// reason. Without this, a fixture that silently stopped reaching the
 	// validator would pass the loop above by producing nothing.
 	const unjustified = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
-		`"scopes":["models:read:self","posts:write:self"],"kind":"page",` +
+		`"scopes":["models:read:self","posts:write:self"],"kind":"page","page":{"path":"/","title":"x"},` +
 		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
 	var hit bool
 	for _, f := range manifestOnlyFindings(t, unjustified) {
@@ -582,14 +597,14 @@ func TestAppsStoreItemsWriteScopeAccepted(t *testing.T) {
 	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
 		`"scopes":["models:read:self","apps:store:items:write"],` +
 		`"scopeJustifications":{"apps:store:items:write":"lets the viewer list the presets they built as their own store cards"},` +
-		`"kind":"page",` +
+		`"kind":"page","page":{"path":"/","title":"x"},` +
 		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
 	for _, f := range manifestOnlyFindings(t, body) {
 		t.Errorf("unexpected finding on %q: %s", f.Field, f.Message)
 	}
 
 	const unjustified = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
-		`"scopes":["models:read:self","apps:store:items:write"],"kind":"page",` +
+		`"scopes":["models:read:self","apps:store:items:write"],"kind":"page","page":{"path":"/","title":"x"},` +
 		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
 	var hit bool
 	for _, f := range manifestOnlyFindings(t, unjustified) {

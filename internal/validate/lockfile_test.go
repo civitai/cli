@@ -13,6 +13,9 @@ import (
 // lockManifest is an otherwise-valid manifest with the given buildCommand
 // spliced in (plus the outputDir the schema requires alongside it). An empty
 // buildCommand omits BOTH fields — the legacy-default case.
+// The schema requires a surface; it is a slot target, not a `page`, because
+// Dir() runs readyAckChecks on a page app and its advisory would join the
+// warnings the source-reading tests count.
 func lockManifest(buildCommand string) string {
 	build := ""
 	if buildCommand != "" {
@@ -21,6 +24,7 @@ func lockManifest(buildCommand string) string {
 	return `{
 		"blockId": "lock-block", "version": "0.1.0", "name": "Lock Block",
 		"contentRating": "g", "scopes": [],
+		"targets": [{"slotId": "model.sidebar_top"}],
 		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts"}` + build + `
 	}`
 }

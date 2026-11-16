@@ -126,6 +126,11 @@ VIEW.innerHTML = `
       <civitai-text size="sm">Viewer:</civitai-text>
       <civitai-badge variant="light" data-field="viewer"></civitai-badge>
     </civitai-group>
+    <civitai-group gap="sm">
+      <civitai-text-input label="Message" placeholder="Type something" data-field="message"></civitai-text-input>
+      <civitai-button variant="light" data-field="echo">Echo</civitai-button>
+    </civitai-group>
+    <civitai-text size="sm" data-field="echoed"></civitai-text>
   </civitai-stack>
 `;
 
@@ -137,10 +142,25 @@ interface View {
 function createView(): View {
   const fragment = VIEW.content.cloneNode(true) as DocumentFragment;
   const root = fragment.querySelector<HTMLElement>('[data-block-root]')!;
-  return {
+  const view: View = {
     root,
     field: (name) => root.querySelector<HTMLElement>(`[data-field="${name}"]`)!,
   };
+  wireControls(view);
+  return view;
+}
+
+/**
+ * The demo's one interaction: the button copies the text input's value into the
+ * line below it. Wired ONCE, here, not in `fill` — so what the viewer typed
+ * survives every `onChange`. The value goes in with `textContent`, like all
+ * other text in this view.
+ */
+function wireControls(view: View): void {
+  const message = view.field('message') as HTMLElement & { value: string };
+  view.field('echo').addEventListener('click', () => {
+    view.field('echoed').textContent = message.value ? `You said: ${message.value}` : '';
+  });
 }
 
 /**

@@ -9,11 +9,15 @@ weight) → estimate → (lazy consent) → submit → poll → result.
 ## Every hook the SDK exports
 
 The COMPLETE, always-current list is
-<https://developer.civitai.com/apps/reference/hooks.md>. **Fetch it first.** Every
-capability this platform has is a hook, so if it is not there it is not a hook —
-check that page before concluding the platform cannot do something. It is
-generated from the published `@civitai/blocks-react`, so unlike a copy pasted into
-this file it cannot fall behind the package you actually installed.
+<https://developer.civitai.com/apps/reference/hooks.md>. **Fetch it first.** If a
+hook is not on that page it does not exist — check there before concluding the
+SDK has no hook for something. It is generated from the published
+`@civitai/blocks-react`, so unlike a copy pasted into this file it cannot fall
+behind the package you actually installed.
+
+Capabilities are hooks AND generation body kinds (a multi-step workflow is a
+`kind` you pass to `useBuzzWorkflow()`, not a hook); the kinds are listed at
+<https://developer.civitai.com/apps/reference/generation.md>.
 
 **A declared scope is not a granted scope.** `ai:write:budgeted` and
 `posts:write:self` are consent-gated: they are dropped from the token until the
@@ -486,9 +490,9 @@ funded it** — read from `snapshot.spentAccountType` (the account with the LARG
 debit). Note this can be **blue** even when you paid: a gen covered mostly by
 free/earned Buzz reports `blue`. It's informational only.
 
-`accountType` / `spentAccountType` / `useBuzzBalance` require
-`@civitai/app-sdk@^0.64.0` + `@civitai/blocks-react@^0.68.0` (already pinned in
-`package.json`).
+`accountType` / `spentAccountType` / `useBuzzBalance` need `@civitai/app-sdk`
+0.14.0 or later and `@civitai/blocks-react` 0.16.0 or later; the versions
+`package.json` pins already include them.
 
 ## Develop
 
@@ -575,10 +579,12 @@ To use it:
      page-money app's manifest declares only `ai:write:budgeted`, and the server
      strips that budgeted-spend scope from a token minted by a bearer without AI
      Services, so what's left is **read/identity only**: `dev:live` shows your
-     **viewer** plus catalog/storage, but **estimate → submit → real generation
-     does NOT work**. Fix it by re-running **`civitai login --scopes generate`**
-     (the login is re-runnable and additive — you keep submit + dev-tunnel), or
-     by using the full-scope **personal API key** above.
+     **viewer** and the catalog, but **estimate → submit → real generation
+     does NOT work**. (Storage does not work under `dev:live` with any
+     credential — see "Live v1 scope" below.) Fix it by re-running
+     **`civitai login --scopes generate`** (the login is re-runnable and
+     additive — you keep submit + dev-tunnel), or by using the full-scope
+     **personal API key** above.
 2. If you printed the token instead of using `--env >> …`, paste it into
    `.env.development.local` as `VITE_LIVE_BLOCK_TOKEN=<token>`. Keep the secret in
    `.env.development.local` (git-ignored), NOT the committed `.env.development`.
@@ -639,22 +645,39 @@ The two reads use **different credentials** — by design, and security-critical
 > (`estimate`/`submit`/`poll`/`cancel`) AND the resource pickers — it serves a
 > protocol-identical in-harness picker overlay, so `useCheckpointPicker` /
 > `useResourcePicker` work in `dev:live`. It does **not** support
-> `SET_USER_CHECKPOINT` persistence, the App-Storage KV protocol, in-band Buzz
-> purchase, or the `GET_BUZZ_BALANCE` read (`useBuzzBalance`) — those reply "not
-> supported in live v1" (use mock mode for them). So in `dev:live` the balance
+> `SET_USER_CHECKPOINT` persistence, in-band Buzz purchase, or the
+> `GET_BUZZ_BALANCE` read (`useBuzzBalance`) — those reply "not supported in
+> live v1" (use mock mode for them). So in `dev:live` the balance
 > reads as unavailable and the "Spend from" picker simply drops its 0-Buzz
 > annotations — nothing else changes, and the host nav's own balance total (read
 > via your personal key through the proxy) still works. The balance resolves in
 > **`dev:harness`** (synthetic, wired to the `balance` scenario) and on the **real
 > platform** (the civitai host answers `GET_BUZZ_BALANCE` natively).
+>
+> **Storage does not work under `dev:live`**, whatever credential minted the
+> token:
+>
+> - The **document store** (`app.storage.collection` in `@civitai/sdk`) is not
+>   reached at all. `@civitai/sdk` calls it over HTTP, not over the block→host
+>   bridge this harness forwards, and this template does not use `@civitai/sdk`.
+> - **The legacy stores** (`useAppStorage`, `useSharedStorage`) are removed:
+>   civitai.com refuses every call to them, in production too
+>   (`legacy_store_removed`, since 2026-11-10), and the `@civitai/blocks-react`
+>   this template pins no longer exports the two hooks. Do not build on them. Under
+>   `dev:live` the refusal you see may not be `legacy_store_removed`: a
+>   `useAppStorage` call is refused first with `401` `Apps access is not
+>   enabled for this browser session`, because that check runs before the
+>   removal check and a local harness never has a civitai.com browser session.
+>
+> Exercise the document store with `createFakeStorage` from
+> `@civitai/sdk/testing`.
 
 > **`dev:harness` is the wide one — do not infer its limits from `dev:live`'s.**
 > The mock host answers the whole block→host protocol, so hooks that `dev:live`
 > refuses work there, INCLUDING posting: `CREATE_POST_FROM_APP`
 > (`useCreatePostFromApp()`), `PUBLISH_GENERATION_OUTPUTS`, `SAVE_IMAGE`,
-> `GET_IMAGES_BY_IDS`, `SET_COLLECTION_FOLLOW`, `OPEN_IMAGE_UPLOAD`,
-> `GET_WILDCARD_PACK` and the App-Storage + shared-storage message families are
-> all mocked. You do not need to read `mockHost.js` to find that out, and you do
+> `GET_IMAGES_BY_IDS`, `SET_COLLECTION_FOLLOW`, `OPEN_IMAGE_UPLOAD` and
+> `GET_WILDCARD_PACK` are all mocked. You do not need to read `mockHost.js` to find that out, and you do
 > not need beta access or Buzz to exercise any of them. The authority is the set
 > of message types `createMockHost` handles in
 > `@civitai/blocks-react/testing` — this list is checked against it.

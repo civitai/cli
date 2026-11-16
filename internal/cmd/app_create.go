@@ -12,7 +12,6 @@ import (
 // to `page-money` while init defaulted to `static`.
 func newAppCreateCmd() *cobra.Command {
 	var templateFlag string
-	var fromSlug string
 	var dirFlag string
 	var nameFlag string
 	var slugFlag string
@@ -71,6 +70,12 @@ By default the project is created in ./<slug>. Override the output directory wit
 a positional [dir] or --dir <path>; override the display name independently with
 --name (so name, slug, and directory can all differ).
 
+The output directory must not exist yet, or must be empty. A directory holding
+only what "civitai agent-setup" wrote into it (AGENTS.md, CLAUDE.md and your
+agent's project MCP config) counts as empty, and those files are kept: only the
+managed block inside AGENTS.md is refreshed for the new project. Anything else in
+the directory is a refusal — nothing is overwritten and there is no --force.
+
 Note (page-money): a DEFAULT ` + "`civitai login`" + ` (OAuth) grants submit but NOT
 Buzz-spend. To run ` + "`dev:live`" + ` real generations, authenticate with a credential that carries
 the AI Services scopes: ` + spendCredentialRoutes + `.`,
@@ -93,13 +98,12 @@ the AI Services scopes: ` + spendCredentialRoutes + `.`,
   civitai app create "Café Del Mar" --slug cafe-del-mar`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAppScaffold(cmd, args, templateFlag, fromSlug, dirFlag, nameFlag, slugFlag, noInput)
+			return runAppScaffold(cmd, args, templateFlag, dirFlag, nameFlag, slugFlag, noInput)
 		},
 	}
 
 	// Every flag matches init exactly, the default template included.
 	cmd.Flags().StringVarP(&templateFlag, "template", "t", string(scaffold.DefaultTemplate), templateFlagUsage)
-	cmd.Flags().StringVar(&fromSlug, "from", "", fromFlagUsage)
 	cmd.Flags().StringVar(&dirFlag, "dir", "", "output directory (default ./<slug>)")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "display name (default derived from the name argument)")
 	cmd.Flags().StringVar(&slugFlag, "slug", "", slugFlagUsage)

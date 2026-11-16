@@ -10,8 +10,12 @@ import (
 )
 
 // devEmbedTemplates are the templates whose dev server `civitai app dev-tunnel`
-// must be able to embed: both SDK templates, page-elements being the default.
-// Every guard in this file and in dev_embed_contract_test.go runs over each.
+// must be able to embed AND that ship the SDK-side wiring (.env.development
+// parent origins, dev:tunnel + tunnel HMR, a vitest suite): both SDK templates,
+// page-elements being the default. Every guard in this file and the env guard in
+// dev_embed_contract_test.go runs over each. The dev-server half (allowedHosts +
+// headers) is guarded over EVERY Vite template, page-vite included, by
+// dev_embed_vite_templates_test.go and the header preflight seam test.
 var devEmbedTemplates = []Template{PageMoney, PageElements}
 
 // devEmbedTestPath is where each template's vitest suite for src/dev-embed.ts
@@ -57,8 +61,9 @@ func TestPageElementsSharesPageMoneyDevEmbed(t *testing.T) {
 		cfg := read("templates/" + string(tmpl) + "/vite.config.ts.tmpl")
 		for _, re := range []string{
 			`(?m)^\s*allowedHosts: DEV_ALLOWED_HOSTS,`,
-			`(?m)^\s*headers: devServerSecurityHeaders\(\),`,
-			`\.\.\.\(tunnelHmr \? \{ ws: \{ clientPort: 443, protocol: 'wss' \} \} : \{\}\),`,
+			`(?m)^\s*const devTunnel = isDevTunnel\(env\);`,
+			`\.\.\.\(devTunnel \? \{ headers: devServerSecurityHeaders\(\) \} : \{\}\),`,
+			`\.\.\.\(devTunnel \? \{ ws: \{ clientPort: 443, protocol: 'wss' \} \} : \{\}\),`,
 			`(?m)^\s*port: 5186,`,
 			`(?m)^\s*strictPort: true,`,
 		} {
@@ -71,7 +76,7 @@ func TestPageElementsSharesPageMoneyDevEmbed(t *testing.T) {
 
 // TestSDKTemplatesEmitEmbeddableDevServer asserts each scaffolded SDK project
 // ships an iframe-embeddable dev server for `civitai app dev-tunnel`: the dev
-// server sends a `frame-ancestors https://civitai.com` CSP, does NOT set
+// server sends a `frame-ancestors` CSP naming every Civitai domain, does NOT set
 // X-Frame-Options, admits the `.civit.ai` tunnel host, and the block's dev
 // parent-origin allowlist includes https://civitai.com — WITHOUT touching the
 // production build. This is the Go-verifiable companion to the scaffold's own
@@ -107,7 +112,7 @@ func TestSDKTemplatesEmitEmbeddableDevServer(t *testing.T) {
 			// 2. vite.config wires the security headers + allowedHosts into the dev server.
 			viteCfg := read("vite.config.ts")
 			if !strings.Contains(viteCfg, "devServerSecurityHeaders()") {
-				t.Errorf("vite.config.ts should wire devServerSecurityHeaders() into server.headers")
+				t.Errorf("vite.config.ts should wire devServerSecurityHeaders() into server.headers (dev-tunnel sessions only)")
 			}
 			if !strings.Contains(viteCfg, "DEV_ALLOWED_HOSTS") {
 				t.Errorf("vite.config.ts should set server.allowedHosts from DEV_ALLOWED_HOSTS")
@@ -178,9 +183,14 @@ func TestSDKTemplatesRouteTunnelHmrOverTunnel(t *testing.T) {
 			//    emits clientPort:443 + wss on `server.ws` — WITHOUT hardcoding a `ws.host`
 			//    (the tunnel host is minted at runtime; the client must fall back to
 			//    location.hostname).
+			//    The flag is read in ONE place, src/dev-embed.ts's isDevTunnel (it
+			//    gates the embed headers too), and vite.config calls it.
 			viteCfg := read("vite.config.ts")
-			if !strings.Contains(viteCfg, "CIVITAI_DEV_TUNNEL_HMR") {
-				t.Errorf("vite.config.ts should gate tunnel HMR on CIVITAI_DEV_TUNNEL_HMR:\n%s", viteCfg)
+			if devEmbed := read("src/dev-embed.ts"); !strings.Contains(devEmbed, "DEV_TUNNEL_ENV = 'CIVITAI_DEV_TUNNEL_HMR'") {
+				t.Errorf("src/dev-embed.ts should name CIVITAI_DEV_TUNNEL_HMR as DEV_TUNNEL_ENV:\n%s", devEmbed)
+			}
+			if !strings.Contains(viteCfg, "isDevTunnel(env)") {
+				t.Errorf("vite.config.ts should gate tunnel HMR on isDevTunnel(env):\n%s", viteCfg)
 			}
 			if !strings.Contains(viteCfg, "clientPort: 443") {
 				t.Errorf("vite.config.ts should set ws.clientPort: 443 for the tunnel")

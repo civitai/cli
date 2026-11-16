@@ -119,6 +119,7 @@ platform caps the image IT made — it can pass here and be refused at attach.`,
   civitai app listing set-text --tagline "Batch upscaling, in your browser"
   civitai app listing set-icon ./assets/icon.png
   civitai app listing set-cover ./assets/cover.png
+  civitai app listing set-cover ./assets/cover-red.png --red
   civitai app listing add-screenshot ./shot.png --caption "Grid view"
   civitai app listing rm-screenshot alsc_01H...
   civitai app listing reorder alsc_02 alsc_01 alsc_03
@@ -129,6 +130,7 @@ platform caps the image IT made — it can pass here and be refused at attach.`,
 	cmd.AddCommand(newAppListingSetSourceRepoCmd())
 	cmd.AddCommand(newAppListingSetIconCmd())
 	cmd.AddCommand(newAppListingSetCoverCmd())
+	cmd.AddCommand(newAppListingClearRedCmd())
 	cmd.AddCommand(newAppListingAddScreenshotCmd())
 	cmd.AddCommand(newAppListingRmScreenshotCmd())
 	cmd.AddCommand(newAppListingReorderCmd())
@@ -569,6 +571,7 @@ func newAppListingSetIconCmd() *cobra.Command {
 	var lc listingCommon
 	var changelog string
 	var assumeYes bool
+	var red bool
 	cmd := &cobra.Command{
 		Use:   "set-icon <file>",
 		Short: "Set the listing icon (" + listingSourceRule(kindIcon) + ")",
@@ -586,6 +589,9 @@ the longer side) and the platform caps that re-encoded image — a different
 measurement from the cap above, which is on your file. A detailed 1024x1024
 icon can pass here and be refused there; the lever is smaller pixel dimensions.
 
+--red sets the civitai.red-only icon override instead (shown there in place of
+this icon); ` + "`clear-red icon`" + ` removes it.
+
 Platform bounds: https://developer.civitai.com/apps/guide/store-listing
 
 ` + liveRevisionHelp + `
@@ -593,14 +599,16 @@ Platform bounds: https://developer.civitai.com/apps/guide/store-listing
 Run ` + "`civitai app listing status`" + ` to see what the publish floor still needs.`,
 		Example: `  civitai app listing set-icon ./assets/icon.png
   civitai app listing set-icon ./icon.png --slug my-app
-  civitai app listing set-icon ./icon.png --changelog "New brand mark" -y`,
+  civitai app listing set-icon ./icon.png --changelog "New brand mark" -y
+  civitai app listing set-icon ./icon-red.png --red`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSetMedia(cmd, kindIcon, args[0], "", lc, changelog, assumeYes)
+			return runSetMedia(cmd, kindIcon, args[0], "", lc, changelog, assumeYes, red)
 		},
 	}
 	lc.bind(cmd)
 	bindRevisionFlags(cmd, &changelog, &assumeYes)
+	bindRedFlag(cmd, &red, kindIcon)
 	return cmd
 }
 
@@ -608,6 +616,7 @@ func newAppListingSetCoverCmd() *cobra.Command {
 	var lc listingCommon
 	var changelog string
 	var assumeYes bool
+	var red bool
 	cmd := &cobra.Command{
 		Use:   "set-cover <file>",
 		Short: "Set the listing cover (" + listingSourceRule(kindCover) + ")",
@@ -620,6 +629,9 @@ Nothing is uploaded if the local check fails. The platform validates the
 image's dimensions and aspect at the ATTACH step, so a wrongly-shaped image is
 refused in seconds rather than after the scan.
 
+--red sets the civitai.red-only cover override instead (shown there in place of
+this cover); ` + "`clear-red cover`" + ` removes it.
+
 Platform bounds: https://developer.civitai.com/apps/guide/store-listing
 
 ` + liveRevisionHelp + `
@@ -627,14 +639,16 @@ Platform bounds: https://developer.civitai.com/apps/guide/store-listing
 Run ` + "`civitai app listing status`" + ` to see what the publish floor still needs.`,
 		Example: `  civitai app listing set-cover ./assets/cover.png
   civitai app listing set-cover ./cover.jpg --slug my-app
-  civitai app listing set-cover ./cover.png --changelog "Updated hero" -y`,
+  civitai app listing set-cover ./cover.png --changelog "Updated hero" -y
+  civitai app listing set-cover ./cover-red.png --red`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSetMedia(cmd, kindCover, args[0], "", lc, changelog, assumeYes)
+			return runSetMedia(cmd, kindCover, args[0], "", lc, changelog, assumeYes, red)
 		},
 	}
 	lc.bind(cmd)
 	bindRevisionFlags(cmd, &changelog, &assumeYes)
+	bindRedFlag(cmd, &red, kindCover)
 	return cmd
 }
 
@@ -674,13 +688,37 @@ usage error.
   civitai app listing add-screenshot ./shot.png --slug my-app`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSetMedia(cmd, kindScreenshot, args[0], caption, lc, changelog, assumeYes)
+			return runSetMedia(cmd, kindScreenshot, args[0], caption, lc, changelog, assumeYes, false)
 		},
 	}
 	lc.bind(cmd)
 	bindRevisionFlags(cmd, &changelog, &assumeYes)
 	cmd.Flags().StringVar(&caption, "caption", "", "optional one-line caption for the screenshot")
 	return cmd
+}
+
+// bindRedFlag binds `--red` on set-icon / set-cover: attach to the listing's
+// civitai.red-only override slot of that kind instead of its own icon / cover.
+func bindRedFlag(cmd *cobra.Command, red *bool, kind mediaKind) {
+	cmd.Flags().BoolVar(red, "red", false, "set the civitai.red-only "+string(kind)+" override instead of the listing's own "+string(kind))
+}
+
+// mediaSubject names what a set-/add- command attached, for its output: the
+// kind, or the civitai.red override of that kind.
+func mediaSubject(kind mediaKind, red bool) string {
+	if red {
+		return "civitai.red " + string(kind)
+	}
+	return string(kind)
+}
+
+// subjectHeading is mediaSubject at the start of a sentence: capitalised, except
+// that the civitai.red name keeps its own lower case.
+func subjectHeading(subject string) string {
+	if strings.HasPrefix(subject, "civitai.red") {
+		return subject
+	}
+	return capitalize(subject)
 }
 
 func bindRevisionFlags(cmd *cobra.Command, changelog *string, assumeYes *bool) {
@@ -691,8 +729,10 @@ func bindRevisionFlags(cmd *cobra.Command, changelog *string, assumeYes *bool) {
 // runSetMedia is the shared resolve -> validate -> ingest -> attach -> scan flow
 // for set-icon / set-cover / add-screenshot, branching on the listing status for
 // the live-listing shadow-revision path.
-func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc listingCommon, changelog string, assumeYes bool) error {
+func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc listingCommon, changelog string, assumeYes, red bool) error {
 	out := cmd.OutOrStdout()
+	// `--red` is bound only on set-icon / set-cover; a screenshot has no override.
+	subject := mediaSubject(kind, red)
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
@@ -718,19 +758,26 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 	if err != nil {
 		return err
 	}
-	switch ref.Status {
-	case "rejected":
-		return fmt.Errorf("this listing was rejected — resubmit the app before editing its media")
-	case "removed":
-		return fmt.Errorf("this listing was removed by a moderator and can no longer be edited")
+	if err := refuseUneditableListing(ref.Status); err != nil {
+		return err
 	}
 	live := ref.Status == "approved"
 
 	// 3. For a live listing, confirm the revision + resolve a changelog first, so
 	// we don't ingest/upload before the user has agreed to open a review cycle.
 	if live {
-		changelog, err = confirmLiveRevision(cmd, kind, changelog, assumeYes)
+		changelog, err = confirmLiveRevision(cmd, subject, changelog, assumeYes)
 		if err != nil {
+			return err
+		}
+	}
+
+	// 3b. --red on an environment without the override slots: refuse before the
+	// upload and before the CLI's own beginListingRevision, for an edit that
+	// cannot be saved. (On a LIVE listing the read itself resolves the shadow
+	// server-side — see assertRedSlotsAvailable.)
+	if red {
+		if err := assertRedSlotsAvailable(ctx, client, ref.AppListingID); err != nil {
 			return err
 		}
 	}
@@ -746,7 +793,7 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 	// live in the platform's Store listing guide, not in this repo's README, since
 	// that section was relocated — instead of reading a rejection that names a
 	// number their file does not have.
-	fmt.Fprintf(out, "Uploading %s (%s, %d×%d)…\n", kind, humanBytes(int64(len(data))), info.Width, info.Height)
+	fmt.Fprintf(out, "Uploading %s (%s, %d×%d)…\n", subject, humanBytes(int64(len(data))), info.Width, info.Height)
 	var imageID int
 	if kind == kindIcon {
 		imageID, err = client.IngestAssetFromDataURI(ctx, data, info.MimeType)
@@ -781,7 +828,7 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 		}
 		targetID = shadowID
 	}
-	res, err := attachMedia(ctx, client, kind, targetID, imageID, caption)
+	res, err := attachMedia(ctx, client, kind, red, targetID, imageID, caption)
 	if err != nil {
 		return attachRejectionAdvice(err, kind, file, len(data), info)
 	}
@@ -801,17 +848,17 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 	switch {
 	case res.Status == attachStatusPending:
 		if err := pollScan(ctx, out, client, imageID); err != nil {
-			return scanFailure(out, err, kind, live, res)
+			return scanFailure(out, err, kind, subject, live, res)
 		}
-		if res, err = attachMedia(ctx, client, kind, targetID, imageID, caption); err != nil {
+		if res, err = attachMedia(ctx, client, kind, red, targetID, imageID, caption); err != nil {
 			return attachRejectionAdvice(err, kind, file, len(data), info)
 		}
 		if res.Status == attachStatusPending {
-			return fmt.Errorf("the server did not attach the %s — it still reports the image as scanning; try again shortly", kind)
+			return fmt.Errorf("the server did not attach the %s — it still reports the image as scanning; try again shortly", subject)
 		}
 	case res.ScanPending:
 		if err := pollScan(ctx, out, client, imageID); err != nil {
-			return scanFailure(out, err, kind, live, res)
+			return scanFailure(out, err, kind, subject, live, res)
 		}
 	}
 
@@ -823,8 +870,8 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 			// reason which is not a failure of the command that ran: a listing
 			// below the publish floor cannot go to review YET, and clearing the
 			// floor takes a second command. See reportStagedBelowFloor (#400).
-			if reportStagedBelowFloor(ctx, out, client, ref.AppListingID, capitalize(string(kind)),
-				func(v *appapi.ListingEditView) bool { return attachLanded(v, kind, imageID, res) }, err) {
+			if reportStagedBelowFloor(ctx, out, client, ref.AppListingID, subjectHeading(subject),
+				func(v *appapi.ListingEditView) bool { return attachLanded(v, kind, red, imageID, res) }, err) {
 				return nil
 			}
 			return err
@@ -832,16 +879,53 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 		// submitListingRevision is idempotent: a shadow that already had a pending
 		// request returns THAT request rather than opening a second. The response
 		// carries no fresh-vs-existing flag, so phrase it neutrally.
-		fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s staged on a revision — pending moderator review (%s).", capitalize(string(kind)), rev.PublishRequestID)))
+		fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s staged on a revision — pending moderator review (%s).", subjectHeading(subject), rev.PublishRequestID)))
 		fmt.Fprintln(out, "Your live listing is unchanged until a moderator approves the revision.")
 	} else {
 		// No trailing ✓ here (nor on the two sibling lines below): ui.Success
 		// already prefixes one, and spelling a second rendered `✓ Icon set ✓`.
-		fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s set", capitalize(string(kind)))))
+		fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s set", subjectHeading(subject))))
 	}
 
 	// 8. Print the resulting floor state (best-effort — the attach already succeeded).
 	printFloorAfter(ctx, out, client, ref.AppListingID)
+	return nil
+}
+
+// assertRedSlotsAvailable refuses with appapi.ErrRedSlotsUnavailable when the
+// listing's edit view reports `redMedia.available: false`. An ABSENT flag (a
+// server that predates it) proceeds: setRedMedia's own refusal still covers that
+// case, just after the upload instead of before it.
+//
+// ⚠ On an APPROVED listing this read is not side-effect free: the server's
+// getMyListingForEdit idempotently resolves (minting if needed) the shadow
+// revision it reads — the same shadow the CLI's own beginListingRevision would
+// open a few steps later, and the same read `listing status` makes. It is NOT
+// submitted, so the live listing is unchanged; but an unsubmitted draft revision
+// can be left behind. The CLI has no side-effect-free owner read of the flag
+// (`getAssets` carries it but is deliberately not CLI-scoped).
+func assertRedSlotsAvailable(ctx context.Context, client *appapi.Client, listingID string) error {
+	view, err := client.GetMyListingForEdit(ctx, listingID)
+	if err != nil {
+		return err
+	}
+	if a := view.RedMedia.Available; a != nil && !*a {
+		return fmt.Errorf("%w (the listing editor reports the override slots unavailable)", appapi.ErrRedSlotsUnavailable)
+	}
+	return nil
+}
+
+// refuseUneditableListing is the ONE statement of which listing statuses no
+// media command may edit: a rejected listing (the app must be resubmitted) and a
+// moderator-removed one. set-icon / set-cover / add-screenshot, submit-revision
+// and clear-red all ask it before any write; nil means the status is editable.
+func refuseUneditableListing(status string) error {
+	switch status {
+	case "rejected":
+		return fmt.Errorf("this listing was rejected — resubmit the app before editing its media")
+	case "removed":
+		return fmt.Errorf("this listing was removed by a moderator and can no longer be edited")
+	}
 	return nil
 }
 
@@ -854,7 +938,10 @@ const attachStatusPending = "pending"
 // attachMedia attaches the ingested image and returns the server's attach result
 // (never nil on a nil error), which carries the `scanPending` flag the caller
 // uses to decide whether the scan still has to be waited on.
-func attachMedia(ctx context.Context, client *appapi.Client, kind mediaKind, listingID string, imageID int, caption string) (*appapi.AttachResult, error) {
+func attachMedia(ctx context.Context, client *appapi.Client, kind mediaKind, red bool, listingID string, imageID int, caption string) (*appapi.AttachResult, error) {
+	if red && (kind == kindIcon || kind == kindCover) {
+		return client.SetRedMedia(ctx, listingID, string(kind), &imageID)
+	}
 	switch kind {
 	case kindIcon:
 		return client.SetIcon(ctx, listingID, imageID)
@@ -873,7 +960,7 @@ func attachMedia(ctx context.Context, client *appapi.Client, kind mediaKind, lis
 // arrives, which was impossible when the poll ran first. For a live listing the
 // revision is simply not submitted; for a screenshot the row exists and needs an
 // explicit removal, so its id is handed over.
-func scanFailure(out io.Writer, err error, kind mediaKind, live bool, res *appapi.AttachResult) error {
+func scanFailure(out io.Writer, err error, kind mediaKind, subject string, live bool, res *appapi.AttachResult) error {
 	switch {
 	case live:
 		fmt.Fprintln(out, "The revision was not submitted — your live listing is unchanged.")
@@ -881,7 +968,7 @@ func scanFailure(out io.Writer, err error, kind mediaKind, live bool, res *appap
 		fmt.Fprintf(out, "The screenshot was added to your draft — remove it with %s\n",
 			ui.Code("civitai app listing rm-screenshot "+res.ID))
 	case res != nil && res.Status != attachStatusPending:
-		fmt.Fprintf(out, "The %s is attached to your draft but cannot go live — re-run this command with a different image.\n", kind)
+		fmt.Fprintf(out, "The %s is attached to your draft but cannot go live — re-run this command with a different image.\n", subject)
 	}
 	return err
 }
@@ -1014,7 +1101,19 @@ func reportStagedBelowFloor(ctx context.Context, out io.Writer, client *appapi.C
 // false success. Widening to "the slot is non-empty" would trade that for the
 // opposite failure — a listing being re-branded already HAS an icon, so
 // presence alone would certify the image the author is REPLACING.
-func attachLanded(view *appapi.ListingEditView, kind mediaKind, imageID int, res *appapi.AttachResult) bool {
+func attachLanded(view *appapi.ListingEditView, kind mediaKind, red bool, imageID int, res *appapi.AttachResult) bool {
+	// A civitai.red override is matched in its OWN slot, by the same identity
+	// rule: the override slot of the edit view, against the ingested id or the
+	// id setRedMedia echoed. The listing's own icon / cover never counts.
+	if red {
+		switch kind {
+		case kindIcon:
+			return slotHolds(view.RedMedia.Icon, imageID, derefID(resImageID(res)))
+		case kindCover:
+			return slotHolds(view.RedMedia.Cover, imageID, derefID(resImageID(res)))
+		}
+		return false
+	}
 	switch kind {
 	case kindIcon:
 		return slotHolds(view.Assets.Icon, imageID, derefID(resIconID(res)))
@@ -1047,6 +1146,13 @@ func resIconID(res *appapi.AttachResult) *int {
 		return nil
 	}
 	return res.IconID
+}
+
+func resImageID(res *appapi.AttachResult) *int {
+	if res == nil {
+		return nil
+	}
+	return res.ImageID
 }
 
 func resCoverID(res *appapi.AttachResult) *int {
@@ -1143,9 +1249,9 @@ func printFloorLine(out io.Writer, view *appapi.ListingEditView) {
 // A provided --changelog proceeds. Otherwise: a non-TTY refuses (needs an
 // explicit --changelog); a TTY warns about the moderator-review cycle and, on a
 // "yes", proceeds with a default changelog. --yes skips the prompt.
-func confirmLiveRevision(cmd *cobra.Command, kind mediaKind, changelog string, assumeYes bool) (string, error) {
+func confirmLiveRevision(cmd *cobra.Command, subject, changelog string, assumeYes bool) (string, error) {
 	out := cmd.OutOrStdout()
-	defaultChangelog := fmt.Sprintf("Update listing %s via civitai CLI", kind)
+	defaultChangelog := fmt.Sprintf("Update listing %s via civitai CLI", subject)
 
 	if changelog != "" {
 		fmt.Fprintln(out, ui.Warn("This listing is live — your change opens a revision for moderator re-review."))
@@ -1324,13 +1430,10 @@ func runSubmitRevision(cmd *cobra.Command, lc listingCommon, changelog string) e
 	}
 	ctx := cmdCtx(cmd)
 
-	switch ref.Status {
-	case "rejected":
-		return fmt.Errorf("this listing was rejected — resubmit the app before editing its media")
-	case "removed":
-		return fmt.Errorf("this listing was removed by a moderator and can no longer be edited")
-	case "approved":
-	default:
+	if err := refuseUneditableListing(ref.Status); err != nil {
+		return err
+	}
+	if ref.Status != "approved" {
 		// A draft/pending listing IS the edit target: every listing command
 		// writes it directly, so there is no revision and nothing was staged
 		// behind a review gate.
@@ -1658,7 +1761,9 @@ func loadAndValidateImage(kind mediaKind, file string) ([]byte, appapi.ImageInfo
 // (pixel dimensions) instead of predicting the number, and why no local gate was
 // added. #286 recorded this reachability as unmeasured; it is now measured.
 func attachRejectionAdvice(err error, kind mediaKind, file string, srcBytes int, info appapi.ImageInfo) error {
-	if err == nil || !errors.Is(err, civitai.ErrBadRequest) {
+	// The environment refusal is tagged 400 too, but it says nothing about the
+	// file: relay it bare, without the image-bounds advice below.
+	if err == nil || !errors.Is(err, civitai.ErrBadRequest) || errors.Is(err, appapi.ErrRedSlotsUnavailable) {
 		return err
 	}
 	// Every value below comes from the source file, so this line is true whichever

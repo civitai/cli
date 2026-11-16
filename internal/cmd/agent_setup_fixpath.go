@@ -235,11 +235,15 @@ const (
 //
 // 🔴 THE SYMLINK RESOLUTION IS THE POINT, AND THE npm CASE IS WHY. `@civitai/cli`
 // is a wrapper: `<prefix>/bin/civitai` is a symlink to a Node launcher, which
-// execs the real Go binary out of `<pkg>/lib/binaries/civitai`. os.Executable()
-// inside the Go process therefore reports the LATTER, and that is the right
+// execs the real Go binary — out of the platform package
+// (`@civitai/cli-linux-x64/bin/civitai`) where one is installed, else out of
+// `<pkg>/lib/binaries/civitai`, where the wrapper downloaded it. os.Executable()
+// inside the Go process therefore reports the BINARY, and that is the right
 // answer — the file there is itself named `civitai`, so putting its directory on
 // PATH makes the name resolve, bypassing the launcher rather than depending on
-// it. EvalSymlinks is what makes a Homebrew install (an opt/Cellar chain) resolve
+// it. With a platform package, `<pkg>/lib/binaries/civitai` is a symlink to it
+// (kept by the wrapper so blocks written before platform packages keep working);
+// started through that link this still resolves to the platform package's `bin`. EvalSymlinks is what makes a Homebrew install (an opt/Cellar chain) resolve
 // to the directory that actually holds the file.
 //
 // 🔴 A BASE NAME THAT IS NOT `civitai` IS REFUSED, NOT PAPERED OVER. The whole
@@ -310,7 +314,9 @@ func shellSingleQuote(s string) string {
 // 🔴 THE `[ -x … ]` GUARD IS WHAT STOPS THIS BLOCK SHADOWING A LATER INSTALL.
 // The block pins ONE absolute directory and PREPENDS it. Within a single npm
 // prefix that is correct — a re-install lands in the same directory, so updates
-// work. Across prefixes it is not: after an nvm node switch or a `--prefix`
+// work. (That holds across the move to platform packages only because the npm
+// wrapper leaves `<pkg>/lib/binaries/civitai` behind as a symlink to the
+// platform binary; without it the guard below would expire every older block.) Across prefixes it is not: after an nvm node switch or a `--prefix`
 // change the global install lands somewhere else while this file still puts the
 // OLD directory first, so `civitai --version` reports the stale build
 // indefinitely and `npm update -g` looks inert. The prepend-wins mechanism is

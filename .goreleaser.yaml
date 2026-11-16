@@ -147,11 +147,25 @@ homebrew_casks:
     commit_author:
       name: civitai-bot
       email: bot@civitai.com
+    # Strip macOS quarantine from the staged binary after install (#875).
+    #
+    # `install_steps` (goreleaser >= v2.19), not the legacy `install`: the
+    # legacy field renders a raw-Ruby `postflight do` block, which Homebrew
+    # now deprecates — every `brew info/install/upgrade` of the cask printed
+    # "Calling `postflight` is deprecated! Use `postflight_steps` instead."
+    # `install_steps` renders `postflight_steps do` in Homebrew's declarative
+    # install-steps DSL instead. Do not set both: goreleaser writes only the
+    # `_steps` body, but still logs the legacy field as deprecated.
+    #
+    # `{{ .StagedPath }}` is goreleaser's field for Homebrew's own
+    # `{{staged_path}}` token (both use `{{ }}` delimiters). The release
+    # workflow resolves goreleaser as `~> v2`, so it already runs a version
+    # that understands this field.
     hooks:
       post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/civitai"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/civitai"]
           end
 
 release:

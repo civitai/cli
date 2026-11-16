@@ -21,7 +21,7 @@ func TestByHashEmitsRunnableDownloadCommand(t *testing.T) {
 		  "files":[{"id":9,"name":"m.safetensors","type":"Model","primary":true,"sizeKB":2000000}]}`))
 	})
 
-	out, _, err := run(t, "model-versions", "by-hash", "5D8D26E2A6")
+	out, _, err := run(t, "model-versions", "by-hash", "879DB523C3")
 	if err != nil {
 		t.Fatalf("by-hash: %v", err)
 	}

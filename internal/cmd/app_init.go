@@ -18,7 +18,6 @@ import (
 
 func newAppInitCmd() *cobra.Command {
 	var templateFlag string
-	var fromSlug string
 	var dirFlag string
 	var nameFlag string
 	var slugFlag string
@@ -54,7 +53,13 @@ derivation entirely.
 
 By default the project is created in ./<slug>. Override the output directory with
 a positional [dir] or --dir <path>; override the display name independently with
---name (so name, slug, and directory can all differ).`,
+--name (so name, slug, and directory can all differ).
+
+The output directory must not exist yet, or must be empty. A directory holding
+only what "civitai agent-setup" wrote into it (AGENTS.md, CLAUDE.md and your
+agent's project MCP config) counts as empty, and those files are kept: only the
+managed block inside AGENTS.md is refreshed for the new project. Anything else in
+the directory is a refusal — nothing is overwritten and there is no --force.`,
 		Example: `  # A web-components app (the page-elements default) in ./my-block.
   civitai app init my-block
 
@@ -74,12 +79,11 @@ a positional [dir] or --dir <path>; override the display name independently with
   civitai app init my-block ./apps/foo --name "My Block"`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAppScaffold(cmd, args, templateFlag, fromSlug, dirFlag, nameFlag, slugFlag, noInput)
+			return runAppScaffold(cmd, args, templateFlag, dirFlag, nameFlag, slugFlag, noInput)
 		},
 	}
 
 	cmd.Flags().StringVarP(&templateFlag, "template", "t", string(scaffold.DefaultTemplate), templateFlagUsage)
-	cmd.Flags().StringVar(&fromSlug, "from", "", fromFlagUsage)
 	cmd.Flags().StringVar(&dirFlag, "dir", "", "output directory (default ./<slug>)")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "display name (default derived from the name argument)")
 	cmd.Flags().StringVar(&slugFlag, "slug", "", slugFlagUsage)
@@ -87,34 +91,20 @@ a positional [dir] or --dir <path>; override the display name independently with
 	return cmd
 }
 
-// slugFlagUsage / fromFlagUsage / templateFlagUsage are shared by `app init`
+// slugFlagUsage / templateFlagUsage are shared by `app init`
 // and `app create` so the two commands cannot drift on the same flag.
 const (
 	templateFlagUsage = "project template: page-elements | page-money | page-vite | static"
 
 	slugFlagUsage = "explicit blockId (bypasses derivation from the name; 3-40 chars, starts with a letter, lowercase a-z/0-9/hyphens)"
-	// The flag stays discoverable — it is a real roadmap item and hiding it
-	// would only move the surprise to a user who read about it elsewhere — but
-	// the usage string says up front that it cannot work yet, so the failure is
-	// predictable BEFORE the command is run rather than after.
-	fromFlagUsage = "fork from an existing published app slug (NOT AVAILABLE YET — the CLI cannot fetch app source)"
 )
 
 // runAppScaffold is the shared scaffold body behind both `app init` and
 // `app create`. The two commands differ only in the default template; all of
 // the slug/display derivation, dir resolution, rendering, self-validation, and
 // next-steps output lives here so there is a single code path.
-func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, dirFlag, nameFlag, slugFlag string, noInput bool) error {
+func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, dirFlag, nameFlag, slugFlag string, noInput bool) error {
 	out := cmd.OutOrStdout()
-
-	// TODO(server): expose a read endpoint that returns a published app's
-	// canonical source tree by slug, then --from can scaffold from it. Until
-	// then the flag has a 100% failure rate, so the message a user sees is a
-	// plain actionable CLI error — the engineering context stays HERE. An
-	// end-user error is not the place to ship an internal ticket.
-	if fromSlug != "" {
-		return fmt.Errorf("--from is not available yet: this CLI cannot fetch a published app's source. Scaffold a plain project with `%s <name>` and copy the upstream files in by hand", cmd.CommandPath())
-	}
 
 	// An explicit --slug bypasses derivation entirely, so it is checked against
 	// the same server contract a derived slug is. A bad VALUE is a usage error
@@ -245,10 +235,14 @@ func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, d
 		return err
 	}
 
-	written, err := scaffold.Render(tmpl, destDir, scaffold.Data{
+	// 🔴 RenderKeeping, NOT Render: a directory that holds only what
+	// `civitai agent-setup` wrote is the directory the onboarding sends an author
+	// to scaffold into. See agentSetupProjectPaths for the set and
+	// scaffold.RenderKeeping for what "only" means.
+	written, err := scaffold.RenderKeeping(tmpl, destDir, scaffold.Data{
 		Slug: slug,
 		Name: display,
-	})
+	}, agentSetupProjectPaths())
 	if err != nil {
 		return err
 	}
@@ -302,11 +296,12 @@ func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, d
 // reader this defect hurts is an AGENT running non-interactively — `--yes`, no
 // TTY — which is exactly the invocation a prompt cannot reach; a prompt would
 // leave the measured failure untouched and add a question to the one path that
-// was already fine. The write is also as safe as a write gets: `scaffold.Render`
-// has just REFUSED to run in a non-empty directory, so this AGENTS.md is one
-// this command created and no author has touched. `mergeAgentsMD` is used
-// anyway rather than a blind overwrite, so the three-case rule still holds if
-// that ever stops being true.
+// was already fine. `mergeAgentsMD` is what makes the write safe, and it is no
+// longer a belt-and-braces choice: the scaffolder now accepts a directory that
+// holds only `agent-setup`'s own files (agentSetupProjectPaths), so an AGENTS.md
+// can be there before this runs — the one that earlier step wrote, possibly with
+// the author's own text around the managed block. The three-case rule rewrites
+// the span between the markers and nothing else.
 //
 // 🔴 AGENTS.md ONLY — NOT CLAUDE.md, NOT THE MCP CONFIG. Those two are about the
 // AUTHOR'S AGENT, not about the project: which agent it is, where its config

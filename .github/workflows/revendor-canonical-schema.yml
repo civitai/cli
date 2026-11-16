@@ -354,7 +354,7 @@ jobs:
         # Full suite so the ROOT-package examples test (examples_test.go —
         # `TestExampleManifestsValidateClean`, which validates the shipped
         # examples/*.block.manifest.json) runs too, not just internal/validate.
-        run: go test ./...
+        run: go test -count=1 ./...
 
       # NO `add-paths:` here, deliberately — and that is a decision, not an
       # oversight. This action stages `git add -A` when `add-paths` is absent,

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "ref": "5123-3f9a01bc",
+  "duplicate": true,
+  "status": "acknowledged",
+  "fixedIn": null,
+  "civitaiNote": null,
+  "reporters": 14,
+  "sent": {
+    "about": "review",
+    "kind": "bug",
+    "ref": "submit.server-refused",
+    "message": "submit from ~/apps/tide-chart (~/apps/tide-chart/dist) was refused with a 500",
+    "client": {
+      "name": "civitai-cli",
+      "version": "0.1.96"
+    },
+    "os": "linux",
+    "arch": "amd64"
+  },
+  "redactions": [
+    {
+      "kind": "home-path",
+      "count": 2
+    }
+  ]
+}

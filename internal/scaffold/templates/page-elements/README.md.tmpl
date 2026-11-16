@@ -44,8 +44,9 @@ npm run dev:harness   # http://localhost:5186, with a local mock host
 harness stands in for the host page: it posts a fake `BLOCK_INIT`, logs your
 outbound messages, and echoes token refreshes, so the UI iterates without
 civitai.com embedding it. `.env.development` already allow-lists the harness's
-origin (`http://localhost:5186`) and `https://civitai.com`, the real host's
-origin when `civitai app dev-tunnel` embeds your dev server; the port is pinned
+origin (`http://localhost:5186`) and every Civitai domain (`https://civitai.com`,
+`https://civitai.red`, `https://civitai.green`), the real host's origin when
+`civitai app dev-tunnel` embeds your dev server; the port is pinned
 in `vite.config.ts` and is the dev tunnel's default. If the app sits on its
 skeleton, the console says it is still waiting for a host — check that the
 host's origin is on that list.
@@ -61,11 +62,14 @@ npm run dev:tunnel        # terminal 1: the embeddable dev server on :5186
 civitai app dev-tunnel    # terminal 2: tunnels it and prints the /apps/dev/<blockId> URL
 ```
 
-`vite.config.ts` makes the dev server embeddable for this — it admits the
-`.civit.ai` tunnel host, sends `Access-Control-Allow-Origin: *` (the host frames
-the app at a null origin) and a `frame-ancestors https://civitai.com` CSP, and
-routes live reload over the tunnel — all from `src/dev-embed.ts`, and all
-dev-only: `vite build` is unaffected.
+`vite.config.ts` makes the dev server embeddable for this. It always admits
+the `.civit.ai` tunnel host. In a dev-tunnel session (`npm run dev:tunnel`,
+which sets `CIVITAI_DEV_TUNNEL_HMR=1`) it also sends
+`Access-Control-Allow-Origin: *` (the host frames the app at a null origin) and
+a `frame-ancestors` CSP naming every Civitai domain, and routes live reload over the
+tunnel. Plain `npm run dev` sends neither header, so other pages in your browser
+cannot read the dev server's source. All of it comes from `src/dev-embed.ts`
+and is dev-only: `vite build` is unaffected.
 
 | Command | What it does |
 |---|---|
@@ -100,12 +104,15 @@ place from `app.onChange` — which also fires on every token rotation — so ne
 rebuild the view there, or a host push wipes whatever the viewer typed.
 `src/main.ts` calls `startBlock`, which shows an error in place of the skeleton
 if the app cannot start; keep that wiring. From the same `app` you also get `app.site`
-(the `/api/v1` REST API as the viewer), `app.storage` / `app.sharedStorage`,
+(the `/api/v1` REST API as the viewer), `app.storage.collection(name)` (the
+document store: declare each collection under the manifest's `storage` key),
 `app.requestGrants(scopes)`, and the host's own UI via `app.host`. The
-`@civitai/sdk` README documents each.
+`@civitai/sdk` README documents each; its legacy `app.storage.get/set/…` and
+`app.sharedStorage` stores are deprecated, so start nothing new on them.
 
-Every tag, attribute, event and slot of the `<civitai-*>` elements is listed in
-`@civitai/components`' `custom-elements.json` — but `@civitai/components/register`
+`civitai app elements <tag>` prints every attribute (inherited ones included),
+event and slot of a `<civitai-*>` element from the `@civitai/components`
+installed here; with no tag it lists them all. But `@civitai/components/register`
 defines only the generic kit. The civitai-specific elements (`<civitai-avatar>`,
 `<civitai-media-card>`, `<civitai-rating-badge>`, `<civitai-reaction>`,
 `<civitai-tag>`) need `@civitai/components/register-site` instead, and the

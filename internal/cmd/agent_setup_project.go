@@ -94,6 +94,49 @@ type projectShape struct {
 	// `.d.ts` points it at a package this project never installed. Read from the
 	// file, like Scripts, never assumed from a template name.
 	ElementsSDK bool
+	// HasScratchDir reports whether THIS project has a `scratch/` directory at
+	// its root. The block tells an agent to put throwaway files there only when
+	// the directory exists, so it never names one a project does not have (the
+	// item-36 rule: render from the project).
+	//
+	// 🔴 IT IS EVIDENCE OF THE DIRECTORY AND OF NOTHING ELSE. Whether it is
+	// git-ignored, or outside the typecheck and the test run, is decided by
+	// that project's own .gitignore / tsconfig / vitest config. page-elements
+	// scaffolds all three; any other project's scratch/ is whatever its author
+	// made it. So the line this gates claims only what holds in EVERY project
+	// (`app submit` leaves the root scratch/ out — pkgzip's rootExcludedDirs)
+	// and leaves the rest to HasScratchReadme's pointer.
+	HasScratchDir bool
+	// HasScratchReadme reports whether `scratch/README.md` is a regular file.
+	// page-elements ships one stating what its scaffold makes true of the
+	// directory; the block POINTS at it rather than restating those claims,
+	// because only that project's own files can say whether they still hold.
+	HasScratchReadme bool
+}
+
+// scratchDirName is the directory HasScratchDir looks for.
+const scratchDirName = "scratch"
+
+// hasDirNamedExactly reports whether dir holds a directory entry spelled
+// exactly name, by reading the entry names rather than calling os.Stat.
+//
+// 🔴 os.Stat IS CASE-INSENSITIVE ON A CASE-INSENSITIVE FILESYSTEM (macOS APFS
+// by default), so Stat("scratch") succeeds for a `Scratch/`. The packager
+// matches directory names by exact case and SHIPS `Scratch/`, so a Stat-based
+// check made the block say "left out of the package" about a directory that is
+// uploaded. Reading the names makes the two agree on every filesystem. An
+// unreadable dir answers false (see detectProjectShape on never failing).
+func hasDirNamedExactly(dir, name string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.Name() == name && e.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 // setupWizardMarker is the file whose presence means this project can mint its
@@ -175,6 +218,12 @@ func detectProjectShape(dir string) projectShape {
 	// rather than an error anybody sees.
 	if _, err := os.Stat(filepath.Join(dir, setupWizardMarker)); err == nil {
 		shape.HasSetupWizard = true
+	}
+	if hasDirNamedExactly(dir, scratchDirName) {
+		shape.HasScratchDir = true
+		if fi, err := os.Stat(filepath.Join(dir, scratchDirName, "README.md")); err == nil && fi.Mode().IsRegular() {
+			shape.HasScratchReadme = true
+		}
 	}
 
 	pkgPath := filepath.Join(dir, "package.json")

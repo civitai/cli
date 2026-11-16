@@ -91,8 +91,9 @@
 //     the first that passes the gate (every credential word on the line gets its
 //     turn — see matchAssignment — but the line stops at the first hit). A value
 //     is read as far as its closing quote, its first structural delimiter, or
-//     512 bytes, whichever comes first, so a secret longer than 512 bytes is
-//     seen only in part (it still fires — the gate has no upper length).
+//     512 characters, whichever comes first, so a secret longer than 512
+//     characters is seen only in part (it still fires — the gate has no upper
+//     length).
 //   - GOOGLE API KEYS are exempt by shape — see publicByDesignRe — so a Google
 //     *server* key is a deliberate false negative, and so is a headerless PKCS#8
 //     body (see knownFormats).
@@ -116,6 +117,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // Finding is one line that looks like it holds a credential.
@@ -436,8 +438,7 @@ func matchAssignment(line string) (string, bool) {
 		}
 		key := line[pos+loc[2] : pos+loc[3]]
 		word := line[pos+loc[4] : pos+loc[5]]
-		value, quoted := cleanValue(line[pos+loc[8] : pos+loc[9]])
-		if valueLooksLikeSecret(value, quoted) {
+		if _, ok, _ := assignment(line, pos+loc[8], pos+loc[9]); ok {
 			return labelFor(key, word), true
 		}
 		// Resume just past this match's OPERATOR, so the next credential word on
@@ -555,7 +556,8 @@ func cleanValue(raw string) (value string, quoted bool) {
 		return closed, true
 	}
 	v := strings.TrimSpace(stripTrailingComment(raw))
-	// 🔴 AN UNQUOTED VALUE ENDS AT THE FIRST STRUCTURAL DELIMITER, and this
+	// 🔴 AN UNQUOTED VALUE ENDS AT THE FIRST STRUCTURAL DELIMITER (see
+	// endsUnquotedValue), and this
 	// appeared the moment the value capture was bounded (see assignRe). While the
 	// capture ran to end of line, a JSON fragment inside prose swept up the
 	// spaces after it and the whitespace clause rejected it; a bounded non-space
@@ -564,7 +566,7 @@ func cleanValue(raw string) (value string, quoted bool) {
 	// in the corpus, caught by re-measuring rather than by any test. In JSON,
 	// JS, YAML and TOML alike an unquoted value ends at `,`/`}`/`]`/`)`, and no
 	// credential shape contains one.
-	if i := strings.IndexAny(v, ",}])"); i >= 0 {
+	if i := strings.IndexFunc(v, endsUnquotedValue); i >= 0 {
 		v = v[:i]
 	}
 	v = strings.TrimSpace(strings.TrimRight(v, ",;"))
@@ -622,8 +624,11 @@ func valueLooksLikeSecret(value string, quoted bool) bool {
 		return false
 	}
 	// 🔴 THERE IS NO WHITESPACE CLAUSE HERE ANY MORE, AND ITS ABSENCE IS THE
-	// POINT. assignRe's value group is `\S{1,512}` — a non-space run — so a
-	// value carrying a space cannot reach this function, and a mutation battery
+	// POINT. assignRe's value group is `\S{1,512}` — a non-space run — so an
+	// UNQUOTED value carrying a space cannot reach this function. (A QUOTED value
+	// cut at the bound is judged to its real closing quote — see assignment —
+	// and may carry spaces after its first 512 non-space characters; a quoted
+	// string may contain spaces, so that is not a reason to reject it.) A mutation battery
 	// scored the old `strings.ContainsAny(value, " \t")` SURVIVED because
 	// nothing could make it fire. Dead code in a gate reads as protection, so
 	// the invariant moved to where it is enforced: the regexp, pinned by
@@ -653,7 +658,7 @@ func valueLooksLikeSecret(value string, quoted bool) bool {
 	if publicByDesignRe.MatchString(value) {
 		return false
 	}
-	return shannonBitsPerChar(value) >= minEntropyBitsPerChar
+	return entropyClears(value, minEntropyBitsPerChar)
 }
 
 // publicByDesignRe is the one value shape this detector deliberately stays quiet
@@ -668,6 +673,15 @@ func valueLooksLikeSecret(value string, quoted bool) bool {
 // same shape, so it is a deliberate false negative. Anchored to the exact key
 // shape, so it exempts nothing else.
 var publicByDesignRe = regexp.MustCompile(`^AIza[0-9A-Za-z_-]{35}$`)
+
+// endsUnquotedValue reports whether r ends an unquoted value: a structural
+// delimiter. In JSON, JS, YAML and TOML an unquoted value ends at `,` `}` `]`
+// `)`, and no credential shape contains one. It is the ONE definition:
+// cleanValue cuts the capture with it and Spans extends a cut capture with it,
+// so the value judged and the span located end at the same place.
+func endsUnquotedValue(r rune) bool {
+	return strings.ContainsRune(",}])", r)
+}
 
 func hasDigit(s string) bool {
 	for i := 0; i < len(s); i++ {
@@ -687,9 +701,27 @@ func hasLetter(s string) bool {
 	return false
 }
 
-// shannonBitsPerChar is the Shannon entropy of s over its byte frequencies, in
-// bits per character. Empty is 0.
-func shannonBitsPerChar(s string) float64 {
+// entropyClears reports whether s clears an entropy floor by EITHER measure:
+// per character or per byte. It is the ONE entropy test; the assignment gate
+// and the URL-password check both call it.
+//
+// 🔴 NEITHER MEASURE ALONE IS SAFE TO SWAP IN FOR THE OTHER. Over bytes, a
+// non-Latin value is judged by its UTF-8 encoding: every Cyrillic letter in
+// `a1ЖЩЯФЫВАПРО` shares a lead byte, so its byte entropy (2.95) is under the
+// floor while its character entropy (3.58) is not — main sent it. Over
+// characters, a repeated multi-byte character is one symbol where bytes see
+// three: `Kq9中中中中中密密密密密钥钥钥钥钥` is 3.41 per byte and 2.24 per
+// character — main redacted it, and a character-only measure sent it. Either
+// one passing is what makes this at least as strict as main and no stricter
+// than needed. For ASCII the two are the same number.
+// TestParityWithMain (internal/redact) pins both one-measure-only cases.
+func entropyClears(s string, floor float64) bool {
+	return shannonBitsPerChar(s) >= floor || shannonBitsPerByte(s) >= floor
+}
+
+// shannonBitsPerByte is the Shannon entropy of s over its BYTE frequencies —
+// the measure main applies. Empty is 0.
+func shannonBitsPerByte(s string) float64 {
 	if s == "" {
 		return 0
 	}
@@ -704,6 +736,36 @@ func shannonBitsPerChar(s string) float64 {
 			continue
 		}
 		p := float64(c) / n
+		h -= p * math.Log2(p)
+	}
+	return h
+}
+
+// shannonBitsPerChar is the Shannon entropy of s over its CHARACTER
+// frequencies, in bits per character. Empty is 0.
+//
+// It is one of entropyClears' two measures, never used alone. A byte that is
+// not valid UTF-8 counts as its own symbol, so distinct invalid bytes do not
+// collapse into one U+FFFD.
+func shannonBitsPerChar(s string) float64 {
+	if s == "" {
+		return 0
+	}
+	counts := map[rune]int{}
+	n := 0
+	for i := 0; i < len(s); {
+		r, w := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && w == 1 {
+			r = -1 - rune(s[i]) // invalid byte: a key no real rune can take
+		}
+		counts[r]++
+		n++
+		i += w
+	}
+	total := float64(n)
+	var h float64
+	for _, c := range counts {
+		p := float64(c) / total
 		h -= p * math.Log2(p)
 	}
 	return h
@@ -944,7 +1006,7 @@ func urlPasswordLooksReal(match string) bool {
 		return false
 	}
 	// And a repeated character is nobody's password: `aaaaaaaa`, `00000000`.
-	return shannonBitsPerChar(pw) >= minURLPasswordEntropy
+	return entropyClears(pw, minURLPasswordEntropy)
 }
 
 // matchKnownFormat implements B. Order is the table's order, so the label for a

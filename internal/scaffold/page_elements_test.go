@@ -60,9 +60,9 @@ func TestRenderPageElements(t *testing.T) {
 	// `"@civitai/<pkg>": "^X.Y.Z"` shape, or the bumper stops finding them.
 	// The minors mirror the starter (civitai-app-starters #557), in the
 	// `^X.Y.0` form bump-pins writes.
-	mustContain(t, pkg, `"@civitai/app-sdk": "^0.64.0"`)
-	mustContain(t, pkg, `"@civitai/components": "^0.9.0"`)
-	mustContain(t, pkg, `"@civitai/sdk": "^0.11.0"`)
+	mustContain(t, pkg, `"@civitai/app-sdk": "^0.89.0"`)
+	mustContain(t, pkg, `"@civitai/components": "^0.13.0"`)
+	mustContain(t, pkg, `"@civitai/sdk": "^0.27.0"`)
 	mustContain(t, pkg, `"@civitai/theme": "^0.5.0"`)
 
 	var doc struct {
@@ -183,11 +183,11 @@ func TestParsePageElements(t *testing.T) {
 
 // TestPageElementsDevAllowlistAndPort pins the dev-server origin and the parent
 // origins the bridge accepts in dev. Both must match page-money: port 5186 is
-// `civitai app dev-tunnel`'s default, and `https://civitai.com` is the origin
-// the REAL host posts BLOCK_INIT from when the tunnel embeds the dev server.
-// Without it the bridge drops that BLOCK_INIT and the app waits forever.
+// `civitai app dev-tunnel`'s default, and every Civitai domain is an origin the
+// REAL host posts BLOCK_INIT from when the tunnel embeds the dev server. Without
+// one the bridge drops that domain's BLOCK_INIT and the app waits forever.
 func TestPageElementsDevAllowlistAndPort(t *testing.T) {
-	const want = "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5186,https://civitai.com"
+	const want = "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5186,https://civitai.com,https://civitai.red,https://civitai.green"
 	for _, tmpl := range []Template{PageElements, PageMoney} {
 		dir := filepath.Join(t.TempDir(), "probe")
 		if _, err := Render(tmpl, dir, Data{Slug: "probe-app", Name: "Probe App"}); err != nil {
