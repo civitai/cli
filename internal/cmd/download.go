@@ -104,9 +104,13 @@ Identify the version deterministically by its numeric version id:
 
   civitai download 691639
 
-…or resolve a model's default (first published) version with --model:
+…or resolve a model's default version with --model. The default is the FIRST
+version the API lists for the model — the top of the creator's version order,
+usually but not always the newest, and NOT the first published:
 
   civitai download --model 4384
+
+To get any other version of the model, name it by its version id.
 
 The positional id is normally a model-VERSION id, but 'civitai models search'
 and 'civitai models get' list MODEL ids — so handing a model id as the positional
@@ -242,7 +246,7 @@ the CLI notes this on stderr. Only download models from creators you trust.`,
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.modelID, "model", "", "resolve+download a MODEL's default (first published) version instead of a version id")
+	f.StringVar(&o.modelID, "model", "", "resolve+download a MODEL's default version (the first the API lists: the creator's top version, not the first published) instead of a version id")
 	f.StringVar(&o.version, "version", "", "download this model-VERSION id explicitly (skips the ambiguous model-id safety stop the bare positional id triggers)")
 	f.BoolVar(&o.yes, "yes", false, "proceed past the ambiguous-id safety stop (a bare id that is BOTH a model id and a version id): download the version as typed")
 	f.StringVar(&o.file, "file", "", "select one file by numeric file id, or by name (exact, else a unique case-insensitive substring); use the id to pick one of two same-named files")
@@ -446,7 +450,7 @@ func downloadSelected(ctx context.Context, dl civitai.Downloader, out, errW io.W
 // (stderr) describing any automatic resolution.
 //
 //   - --version <id> / --model <id> resolve deterministically (a --model resolves
-//     the model's default (first published) version) — no ambiguity handling.
+//     the model's default version, the first the API lists) — no ambiguity handling.
 //   - A bare positional id is classified by looking it up as BOTH a version and a
 //     model, then handled by resolveBarePositionalVersion.
 func resolveDownloadVersion(ctx context.Context, client civitai.Reader, positional string, o *downloadOpts) (*civitai.ModelVersionDetail, string, error) {
@@ -465,8 +469,10 @@ func resolveDownloadVersion(ctx context.Context, client civitai.Reader, position
 }
 
 // resolveExplicitVersionID returns the version id for the explicit --version /
-// --model paths. For --model, the API returns modelVersions default/latest-first,
-// so the model's default version is modelVersions[0]; its primary file downloads
+// --model paths. For --model, the API returns modelVersions in the creator's
+// version order (the `index` field, ascending — measured on models 139562, 112902
+// and 4384), so the model's default version is modelVersions[0]: usually but NOT
+// always the newest, and never chosen as "the first published"; its primary file downloads
 // regardless of file type (a "Workflows" model's Archive, training data, or plain
 // weights all download the same way).
 func resolveExplicitVersionID(ctx context.Context, client civitai.Reader, o *downloadOpts) (string, error) {
@@ -555,9 +561,9 @@ func lookupConfirmedModel(ctx context.Context, client civitai.Reader, id string,
 }
 
 // autoResolveModelDefault handles a bare positional that is a valid MODEL id but
-// NOT a valid version id: it resolves the model's default (first published)
-// version and returns its detail plus a one-line note. handled=false means the id
-// is not a confirmable model id → the caller keeps the original version error.
+// NOT a valid version id: it resolves the model's default version (the first
+// the API lists) and returns its detail plus a one-line note. handled=false
+// means the id is not a confirmable model id → the caller keeps the original version error.
 func autoResolveModelDefault(ctx context.Context, client civitai.Reader, id string, n int) (v *civitai.ModelVersionDetail, note string, handled bool, err error) {
 	m := lookupConfirmedModel(ctx, client, id, n)
 	if m == nil {

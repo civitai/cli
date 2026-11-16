@@ -6,9 +6,11 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Comfy on Civitai recipes are server-registered + code-reviewed** — an App can't ship its own graph. The iframe only picks a **recipe id** plus a small, per-recipe-validated `params` object; the Civitai server owns the ComfyUI graph, the resource allowlist, the checkpoint policy, and a hard per-job Buzz ceiling.
+        **Comfy on Civitai recipes are server-registered + code-reviewed** — when an App uses a recipe, it doesn't ship the graph: the iframe only picks a **recipe id** plus a small, per-recipe-validated `params` object; the Civitai server owns the ComfyUI graph, the resource allowlist, the checkpoint policy, and a hard per-job Buzz ceiling.
 
         Use this form to request a NEW recipe. Describe the graph/workflow you want, the params your App needs to expose, and the use case. We'll review it and, if approved, register it as a recipe id you can invoke via `buildComfyBody({ recipe, params })` (see `src/comfy.ts` in the page-money scaffold).
+
+        You may not need a recipe at all: `customComfy` has a second, **inline** arm (`mode: 'inline'`, page tokens) where your App ships its own ComfyUI graph, with a declared resource manifest and a `maxBuzz` ceiling. The page-money scaffold's `src/comfy.ts` includes `buildInlineComfyBody` for it; see that scaffold's README section on the two `customComfy` arms.
   - type: input
     id: username
     attributes:
