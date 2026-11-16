@@ -117,7 +117,10 @@ numbers), the CLI STOPS and asks you to disambiguate rather than silently
 downloading an unrelated model's version — re-run with --model <id> (the model's
 default version) or --version <id> (that version as-is). Use --version to name a
 version id explicitly and skip that stop; --yes proceeds on the version
-interpretation and echoes exactly which version it is downloading.
+interpretation and echoes exactly which version it is downloading. If the
+model-id check itself fails (rate limited, server or network error), the
+download stops; with --yes it proceeds with the version and says the check
+failed and why.
 
 Use --dry-run to print the resolved plan (files, sizes, SHA256, target paths,
 and whether auth is required) without transferring anything. It creates no
@@ -533,9 +536,13 @@ func resolveBarePositionalVersion(ctx context.Context, client civitai.Reader, po
 	m, merr := lookupConfirmedModel(ctx, client, positional, n)
 	if merr != nil {
 		// The model lookup failed for a reason other than "no such model"
-		// (#878): the ambiguity check could not run, so stop rather than read
-		// the failure as version-only and download what may be an unrelated
-		// model's version.
+		// (#878): the ambiguity check could not run. --yes already means "the
+		// version as typed", so it proceeds, saying the check failed and why.
+		// Without --yes, stop rather than read the failure as version-only and
+		// download what may be an unrelated model's version.
+		if o.yes {
+			return v, modelCheckFailedYesNote(positional, merr), nil
+		}
 		return nil, "", fmt.Errorf("%s is a valid version id, but checking whether it is also a model id failed, so the download was stopped — retry, or say which you mean with --version %s or --model %s: %w", positional, positional, positional, merr)
 	}
 	if m == nil {
@@ -595,6 +602,16 @@ func autoResolveModelDefault(ctx context.Context, client civitai.Reader, id stri
 		return nil, "", true, gerr
 	}
 	return dv, fmt.Sprintf("note: %s is a model id — downloading its default version %s", id, defVerID), true, nil
+}
+
+// modelCheckFailedYesNote is the --yes echo when the model check itself failed
+// (#878): the version as typed is downloaded, and the note says the ambiguity
+// check did not run and why. The reason is err's own text, printed as main
+// prints any error: pkg/civitai already filters the server snippet inside it
+// (AGENTS.md item 38), and a second filter here would also mangle the parts
+// that echo what the user typed (civitai/cli#393).
+func modelCheckFailedYesNote(id string, err error) string {
+	return fmt.Sprintf("--yes: model check failed: %s; downloading version %s as requested", err.Error(), id)
 }
 
 // ambiguousYesNote is the --yes echo for an ambiguous id: it spells out EXACTLY

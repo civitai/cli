@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -113,32 +114,6 @@ func TestDownloadModelLookupFailureDownloadsNothing(t *testing.T) {
 	}
 }
 
-// TestDownloadModelLookup404IsVersionOnly is the control: a 404 on the model
-// lookup still means "not a model id", so the version downloads as typed.
-func TestDownloadModelLookup404IsVersionOnly(t *testing.T) {
-	newLookupServer(t, http.StatusOK, http.StatusNotFound)
-	out, _, err := run(t, "download", "4384", "--dry-run")
-	if err != nil {
-		t.Fatalf("a 404 model lookup must leave the id version-only: %v", err)
-	}
-	if !strings.Contains(out, dryRunPlanMarker) || !strings.Contains(out, "w.safetensors") {
-		t.Errorf("expected the version's plan:\n%s", out)
-	}
-}
-
-// TestDownloadModelLookupBothOKStillStops pins that the ambiguity stop itself is
-// unchanged by the fix (invariant guard: the bug never broke this path).
-func TestDownloadModelLookupBothOKStillStops(t *testing.T) {
-	newLookupServer(t, http.StatusOK, http.StatusOK)
-	out, _, err := run(t, "download", "4384", "--dry-run")
-	if err == nil || !errors.Is(err, ErrUsage) || !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatalf("want the ambiguity usage error, got %v", err)
-	}
-	if strings.Contains(out, dryRunPlanMarker) {
-		t.Errorf("no plan may be printed on an ambiguous id:\n%s", out)
-	}
-}
-
 // TestDownloadModelLookupFailureAfterVersion404 covers the other caller: the
 // version lookup 404s and the model lookup is throttled. The throttle is the
 // real problem and must surface as such, not as the version's not-found.
@@ -153,5 +128,42 @@ func TestDownloadModelLookupFailureAfterVersion404(t *testing.T) {
 	}
 	if errors.Is(err, civitai.ErrNotFound) {
 		t.Errorf("a throttled model lookup was reported as not-found: %v", err)
+	}
+}
+
+// TestDownloadModelLookupFailureYesProceeds: with --yes, a model check that
+// fails for a reason other than 404 does not stop the download (operator
+// decision on #878). The typed VERSION is downloaded, and a note says the
+// model check failed and why, so the user knows the ambiguity check did not
+// run.
+func TestDownloadModelLookupFailureYesProceeds(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		reason string // a fragment of the failure the note must carry
+	}{
+		{"429 rate limited", http.StatusTooManyRequests, "rate limited"},
+		{"500 server error", http.StatusInternalServerError, "500"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ls := newLookupServer(t, http.StatusOK, tc.status)
+			_, errOut, err := run(t, "download", "4384", "--yes")
+			if err != nil {
+				t.Fatalf("--yes with a failed model check (%d) should download the typed version, got: %v", tc.status, err)
+			}
+			got, rerr := os.ReadFile("w.safetensors")
+			if rerr != nil || string(got) != "weights" {
+				t.Fatalf("version file not downloaded: %v (content %q)", rerr, got)
+			}
+			if n := ls.dlHits.Load(); n != 1 {
+				t.Errorf("file route requested %d time(s); want 1", n)
+			}
+			for _, want := range []string{"model check failed: ", tc.reason, "downloading version 4384 as requested"} {
+				if !strings.Contains(errOut, want) {
+					t.Errorf("stderr note should contain %q:\n%s", want, errOut)
+				}
+			}
+		})
 	}
 }
