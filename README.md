@@ -4,7 +4,8 @@
 > validate, and submit App Blocks.** Two paths in one static binary: a
 > **read/download client** for the public API (reads are anonymous; most
 > downloads need a token), and the toolchain for shipping **Apps** (every
-> `civitai app` command needs one).
+> `civitai app` command that talks to the platform needs one; local authoring —
+> `app create`, `app validate` — does not).
 
 > ⚠️ **Apps is in a limited, invite-only beta (pre-GA).** You can install this
 > CLI, `login`, scaffold, validate, and run an app locally right now — but
@@ -208,12 +209,13 @@ for the commands in this section. Every one of them takes `--json` to emit the
 raw API response for scripting.
 
 > **What is *not* anonymous.** Most `civitai download`s need a token (some public
-> files download without one), and so does every `civitai app …` command —
-> **including the App-store browse commands** `civitai app list` and
+> files download without one), and so does every `civitai app …` command that
+> talks to the platform — **including the App-store browse commands** `civitai app list` and
 > `civitai app view`, which exit `3` with
 > `no token configured` when you have not logged in. The store endpoint keys the
 > visible catalog off your identity, so there is no anonymous view of it. See
-> [Browse the App store](#browse-the-app-store).
+> [Browse the App store](#browse-the-app-store). Local authoring — `civitai app
+> create` and `civitai app validate` — needs no token.
 
 ```bash
 civitai login                                                    # most downloads need a token
@@ -1470,7 +1472,7 @@ also takes `--json` to print the **raw API JSON response** for scripting.
 | `civitai model-versions by-hash <hash>` | Look up a model version by file hash (AutoV2, SHA256, …) | `--json`, `--anon` |
 | `civitai download <version-id>` | Download a model version's file(s) | `--model`, `--file`, `--all`, `--out`, `--out-dir`, `--layout`, `--root`, `--for-base`, `--no-verify`, `--force`, `--anon` |
 | `civitai images get <id>` | Get one image by id (`GET /api/v1/images?imageId=<id>`) | `--json`, `--anon` |
-| `civitai images search` | Search images (`GET /api/v1/images`) | `--model-id`, `--model-version-id`, `--post-id`, `--username`, `--base-model` (repeatable), `--type` (image/video/audio), `--sort`, `--period`, `--nsfw`, `--meta` (include generation metadata); paging `--limit` (≤200), `--page`, `--cursor` |
+| `civitai images search` | Search images (`GET /api/v1/images`) | `--model-id`, `--model-version-id`, `--post-id`, `--username`, `--base-model` (repeatable), `--type` (image/video/audio), `--sort`, `--period`, `--nsfw` (filters to NSFW-rated images only), `--meta` (include generation metadata); paging `--limit` (≤200), `--page`, `--cursor` |
 | `civitai tags search` | Search model tags | `--query`; paging `--limit` (≤200), `--page` |
 | `civitai creators search` | Search creators | `--query`; paging `--limit` (≤200), `--page` |
 | `civitai users get <username-or-id>` | Look up a user via public search (a number = exact id; a name = exact-username match, else it lists close matches) | `--json`, `--anon` |
@@ -1489,7 +1491,7 @@ paging); `articles`/`collections` are **cursor-only** (keyset feed — no
 ```bash
 civitai models search --query "pony" --limit 5
 civitai models get 4384
-civitai model-versions by-hash 5D8D26E2A6
+civitai model-versions by-hash 879DB523C3
 civitai articles get 32680
 civitai articles get 32680 --content   # render the article body (the guide) as readable text/markdown
 civitai images search --model-id 4384 --sort "Most Reactions" --json   # raw JSON for scripting
