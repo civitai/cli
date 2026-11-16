@@ -38,6 +38,14 @@ import (
 
 const oracleDir = "scripts/dogfood"
 
+// cdpModule is the browser-launch module the oracle tests drive. It lives here,
+// not beside its launch tests in dogfood_cdp_launch_test.go, because that file
+// is `!windows` (it probes pids with syscall.Kill and fakes the browser with a
+// /bin/sh script) while dogfood_oracle_consent_test.go,
+// dogfood_oracle_picker_test.go, dogfood_oracle_post_test.go and
+// dogfood_control_wait_test.go, which build on every OS, also read it.
+const cdpModule = "scripts/dogfood/briefs/_cdp.mjs"
+
 // 🔴 A SKIP IS A GREEN THAT CHECKED NOTHING. Same rule, and the same shape, as
 // dogfoodTool: on a contributor's machine a missing browser skips (with the
 // reason, under -v); under CI it FAILS, because there a skip and a pass are

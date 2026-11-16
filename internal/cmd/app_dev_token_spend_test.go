@@ -211,9 +211,9 @@ func TestAppDevTokenDefaultDropsBudgetedScope(t *testing.T) {
 	}
 }
 
-// TestAppDevTokenDefaultBudgetedOnlyManifestStillNarrows covers the DEFAULT
-// SCAFFOLD, whose block.manifest.json declares `ai:write:budgeted` and NOTHING
-// ELSE. Filtering that list to empty would be INERT rather than safe: the server
+// TestAppDevTokenDefaultBudgetedOnlyManifestStillNarrows covers a
+// block.manifest.json that declares `ai:write:budgeted` and NOTHING ELSE (the
+// page-money scaffold's shape until it also declared `buzz:read:self`, #886). Filtering that list to empty would be INERT rather than safe: the server
 // only applies body narrowing when `requestedScopes.length > 0`
 // (dev-scoped-mint.service.ts clampDevScopes), and `scopes` is `omitempty` on
 // the wire — so an emptied list vanishes from the body and, on an approved or

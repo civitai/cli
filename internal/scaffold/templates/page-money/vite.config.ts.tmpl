@@ -97,8 +97,8 @@ export default defineConfig(({ mode }) => {
     // `VITE_LIVE_HOST_ORIGIN` overrides the proxy TARGET (read from env at config
     // time — NOT import.meta.env); default https://civitai.com.
     proxy: {
-      // The Buzz-balance route for the dev:live host nav. The page block token
-      // can't read Buzz, so we inject the dev's PERSONAL key (CIVITAI_HOST_KEY)
+      // The Buzz-balance route for the dev:live host nav. It is a signed-in-user
+      // route that does not accept a block token, so we inject the dev's PERSONAL key (CIVITAI_HOST_KEY)
       // as the Authorization header SERVER-SIDE here — it never reaches client
       // JS. This route MUST be declared BEFORE the catch-all `/api` so it wins.
       // No key set → no header injected → the route 401s → nav shows name only.
