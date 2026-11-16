@@ -144,7 +144,10 @@ func TestWorkflowPayloadIsNeverEchoed(t *testing.T) {
 			"unexpected orchestrator.getWorkflow payload"},
 		{"queryGeneratedImages: off-shape id beside a signed output URL",
 			`{"items":[{"id":7,"status":"succeeded","url":"` + signed + `"}],"nextCursor":null}`,
-			func(c *Client) error { _, _, err := c.QueryWorkflows(context.Background(), ListOptions{Take: 5}); return err },
+			func(c *Client) error {
+				_, _, err := c.QueryWorkflows(context.Background(), ListOptions{Take: 5})
+				return err
+			},
 			"unexpected orchestrator.queryGeneratedImages payload"},
 	}
 	for _, tc := range cases {
