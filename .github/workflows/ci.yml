@@ -82,6 +82,17 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # Every job here runs on Linux, so a file that only compiles on Unix
+      # breaks the Windows build and nothing notices: Go compiles a package's
+      # tests as one unit, so one `syscall.Kill` stops the whole package from
+      # building on Windows and none of its tests run there (#798). Cross-
+      # compiling every package for Windows under vet catches that on this
+      # runner. It checks that the code compiles, not that it behaves the same
+      # on Windows. Measured: red at 5f151c2 (`dogfood_cdp_launch_test.go:334:22:
+      # undefined: syscall.Kill`), clean from 7b25f79. Suggested by xsvm in #798.
+      - name: go vet (GOOS=windows)
+        run: GOOS=windows go vet ./...
+
       # 🔴 THE RENDER-ORACLE TESTS REFUSE TO SKIP UNDER CI, so a job running
       # them has to give them a browser that LAUNCHES — resolved, then smoke-
       # tested through the harness's own launch(), with a negative control.
