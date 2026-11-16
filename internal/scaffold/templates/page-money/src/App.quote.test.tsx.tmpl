@@ -1,0 +1,119 @@
+import { act, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+
+// The quote is KEYED TO THE REQUEST. Generate submits only with a price for
+// exactly the body on screen, so:
+//
+//  - an edit after pricing disables Generate until the NEW request is priced
+//    (the old quote is still in state while the edit is debounced — only the
+//    key check keeps it off the button);
+//  - when two estimates resolve out of order, the OLDER one is ignored (the
+//    sequence guard), so a stale reply can never knock out the current price.
+//
+// `estimate()` is stubbed with hand-resolved promises so the test decides the
+// order replies land in; the mock host always answers in order.
+
+const submitFn = vi.fn<() => Promise<BlockWorkflowSnapshot>>();
+const estimateFn = vi.fn<() => Promise<BlockWorkflowSnapshot>>();
+
+vi.mock('@civitai/blocks-react', () => ({
+  useBlockContext: () => ({ ready: true, viewer: { id: 2, username: 'dev' }, theme: 'dark' }),
+  useBlockResize: () => {},
+  // Width tier is inert here, but App calls `.below()` on it, so it must be the
+  // full shape. 🔴 This `vi.mock` is WHOLESALE: every hook App imports is listed.
+  useBlockBreakpoint: () => ({
+    tier: 'base',
+    measured: false,
+    atLeast: () => false,
+    below: () => true,
+  }),
+  useBlockToken: () => ({ scopes: ['ai:write:budgeted'], raw: 't', expiresAt: '' }),
+  useBuzzWorkflow: () => ({ estimate: estimateFn, submit: submitFn, poll: vi.fn() }),
+  useBuzzBalance: () => ({ balance: null, loading: false, error: null, refetch: vi.fn() }),
+  useRequestConsent: () => ({ requestConsent: vi.fn() }),
+  useRequestSignIn: () => ({ requestSignIn: vi.fn() }),
+  useCheckpointPicker: () => ({ open: vi.fn().mockResolvedValue({ selected: undefined }), persist: vi.fn() }),
+  useResourcePicker: () => ({ open: vi.fn().mockResolvedValue(null) }),
+}));
+
+// Imported AFTER the mock is registered.
+const { App } = await import('./App.js');
+
+const priced = (total: number): BlockWorkflowSnapshot => ({
+  workflowId: 'wf_estimate',
+  status: 'processing',
+  cost: { total, authorFee: 0 },
+});
+
+/** One pending estimate per call; the test resolves each when it chooses. */
+function deferEstimates() {
+  const pending: Array<(snap: BlockWorkflowSnapshot) => void> = [];
+  estimateFn.mockImplementation(
+    () => new Promise<BlockWorkflowSnapshot>((resolve) => pending.push(resolve)),
+  );
+  return pending;
+}
+
+describe('App quote is keyed to the request', () => {
+  afterEach(() => {
+    submitFn.mockReset();
+    estimateFn.mockReset();
+    vi.restoreAllMocks();
+  });
+
+  it('editing the prompt after pricing disables Generate until the new estimate lands', async () => {
+    const pending = deferEstimates();
+    const user = userEvent.setup();
+    render(<App />);
+    const generate = await screen.findByTestId('pm-generate');
+    const prompt = screen.getByLabelText(/prompt/i);
+
+    await user.type(prompt, 'a lake');
+    await waitFor(() => expect(estimateFn).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    await act(async () => pending[0](priced(7)));
+    await waitFor(() => expect(generate).toHaveTextContent('Generate · 7 Buzz'));
+    expect(generate).toBeEnabled();
+
+    // Edit. The new request is not priced yet (the estimate is still debounced),
+    // so the old price must not be on the button and a click must not submit.
+    await user.type(prompt, ' at dusk');
+    expect(estimateFn).toHaveBeenCalledTimes(1);
+    expect(generate).toBeDisabled();
+    expect(generate).not.toHaveTextContent('7 Buzz');
+    await user.click(generate);
+    expect(submitFn).not.toHaveBeenCalled();
+
+    // The new request's estimate lands: Generate carries ITS price.
+    await waitFor(() => expect(estimateFn).toHaveBeenCalledTimes(2), { timeout: 3000 });
+    await act(async () => pending[1](priced(9)));
+    await waitFor(() => expect(generate).toHaveTextContent('Generate · 9 Buzz'));
+    expect(generate).toBeEnabled();
+  });
+
+  it('two estimates resolving out of order: the older one is ignored', async () => {
+    const pending = deferEstimates();
+    const user = userEvent.setup();
+    render(<App />);
+    const generate = await screen.findByTestId('pm-generate');
+    const prompt = screen.getByLabelText(/prompt/i);
+
+    await user.type(prompt, 'a lake');
+    await waitFor(() => expect(estimateFn).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    // The first estimate is still in flight when the request changes.
+    await user.type(prompt, ' at dusk');
+    await waitFor(() => expect(estimateFn).toHaveBeenCalledTimes(2), { timeout: 3000 });
+
+    // The NEWER request's reply lands first...
+    await act(async () => pending[1](priced(9)));
+    await waitFor(() => expect(generate).toHaveTextContent('Generate · 9 Buzz'));
+
+    // ...then the OLDER one. It must change nothing.
+    await act(async () => pending[0](priced(5)));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(generate).toHaveTextContent('Generate · 9 Buzz');
+    expect(generate).toBeEnabled();
+  });
+});
