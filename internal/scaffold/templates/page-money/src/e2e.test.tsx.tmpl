@@ -12,7 +12,8 @@ import { installMockMoneyHost } from './mock-buzz.js';
  */
 async function clickWhenPriced(user: ReturnType<typeof userEvent.setup>) {
   const generate = screen.getByTestId('pm-generate');
-  await waitFor(() => expect(generate).toHaveTextContent(/^Generate · \d[\d,]* Buzz$/), { timeout: 3000 });
+  // `≈` marks a Comfy recipe's display estimate (see App.tsx).
+  await waitFor(() => expect(generate).toHaveTextContent(/^Generate · ≈?\d[\d,]* Buzz$/), { timeout: 3000 });
   await user.click(generate);
 }
 

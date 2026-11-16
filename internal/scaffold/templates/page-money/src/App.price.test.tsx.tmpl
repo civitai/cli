@@ -23,10 +23,14 @@ import { App } from './App.js';
 // `costPerGen` and adds `authorFee` to the QUOTE; the submitted workflow's
 // snapshot reports `costPerGen` alone and the wallet is debited both.
 
-type Outbound = { type: string };
+type Outbound = { type: string; payload?: unknown };
 
 const VIEWER = { id: 2, username: 'dev', status: 'active' as const };
 const PROMPT = 'a serene mountain lake';
+// The host's own words for a refused estimate (civitai blocks.router.ts).
+const RATE_LIMITED = 'Rate limit exceeded, please retry shortly.';
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe('App price contract', () => {
   let uninstall: (() => void) | undefined;
@@ -164,5 +168,153 @@ describe('App price contract', () => {
     const spent = screen.getByTestId('pm-spent');
     expect(spent).toHaveTextContent(receipt);
     if (authorFee === 0) expect(spent).not.toHaveTextContent(/app fee/);
+  });
+
+  it('granting consent shows the balance without any generation (buzz:read:self is consent-gated)', async () => {
+    // The real mint WITHHOLDS buzz:read:self until the viewer consents, so the
+    // mount read is refused. The mock host does not enforce that scope itself,
+    // so this test does: the balance read fails until a REQUEST_CONSENT that
+    // asks for buzz:read:self arrives.
+    const outbound: Outbound[] = [];
+    const host = createMockHost({
+      viewer: VIEWER,
+      consentGranted: false,
+      generation: { costPerGen: 6, authorFee: 1 },
+      buzz: { balance: 100 },
+      buzzBalance: { blue: 50, green: 50, yellow: 0 },
+      buzzBalanceError: 'block lacks buzz:read:self scope',
+      pollsUntilDone: 1,
+      onOutbound: (m) => {
+        outbound.push({ type: m.type, payload: m.payload });
+        const scopes = (m.payload as { scopes?: unknown } | undefined)?.scopes;
+        if (m.type === 'REQUEST_CONSENT' && Array.isArray(scopes) && scopes.includes('buzz:read:self')) {
+          host.setScenario({ buzzBalanceError: false });
+        }
+      },
+    });
+    uninstall = host.install();
+    const count = (type: string) => outbound.filter((m) => m.type === type).length;
+
+    const user = userEvent.setup();
+    render(<App />);
+    const yellow = await screen.findByTestId('pm-account-yellow');
+    // The mount read went out and was refused: no balance annotation.
+    await waitFor(() => expect(count('GET_BUZZ_BALANCE')).toBeGreaterThanOrEqual(1), { timeout: 3000 });
+    await sleep(100);
+    expect(yellow).toHaveTextContent(/^Yellow$/);
+
+    await user.click(screen.getByTestId('pm-consent'));
+    // One dialog asks for both scopes.
+    const consent = outbound.find((m) => m.type === 'REQUEST_CONSENT');
+    expect((consent?.payload as { scopes?: string[] } | undefined)?.scopes).toEqual([
+      'ai:write:budgeted',
+      'buzz:read:self',
+    ]);
+
+    await waitFor(() => expect(yellow).toHaveTextContent('Yellow · 0'), { timeout: 3000 });
+    expect(count('SUBMIT_WORKFLOW')).toBe(0);
+    expect(host.buzz.getBalance()).toBe(100);
+  });
+
+  it('Comfy: the price is approximate on the button, and the receipt is what was charged', async () => {
+    const host = createMockHost({
+      viewer: VIEWER,
+      consentGranted: true,
+      generation: { costPerGen: 9 },
+      buzz: { balance: 100 },
+      pollsUntilDone: 1,
+    });
+    uninstall = host.install();
+
+    const user = userEvent.setup();
+    render(<App />);
+    const generate = await screen.findByTestId('pm-generate');
+    await user.click(screen.getByRole('tab', { name: /comfy on civitai recipe/i }));
+    await user.type(screen.getByLabelText(/prompt/i), PROMPT);
+
+    await waitFor(() => expect(generate).toHaveTextContent(/^Generate · ≈9 Buzz$/), { timeout: 3000 });
+    expect(generate).toBeEnabled();
+
+    // The run settles to its actual cost, which differs from the estimate.
+    host.setScenario({ generation: { costPerGen: 6 } });
+    await user.click(generate);
+    await screen.findByAltText(/generated result/i, {}, { timeout: 5000 });
+
+    expect(host.buzz.getBalance()).toBe(94);
+    const spent = screen.getByTestId('pm-spent');
+    expect(spent).toHaveTextContent('Spent 6 Buzz');
+    expect(spent).not.toHaveTextContent(/app fee/);
+  });
+
+  it(
+    'a rate-limited estimate holds the next automatic one back; Retry estimate overrides it',
+    async () => {
+      const outbound: Outbound[] = [];
+      const host = createMockHost({
+        viewer: VIEWER,
+        consentGranted: true,
+        generation: { costPerGen: 6, authorFee: 1, failEstimate: 'failed', failEstimateMessage: RATE_LIMITED },
+        buzz: { balance: 100 },
+        pollsUntilDone: 1,
+        onOutbound: (m) => outbound.push({ type: m.type }),
+      });
+      uninstall = host.install();
+      const count = (type: string) => outbound.filter((m) => m.type === type).length;
+
+      const user = userEvent.setup();
+      render(<App />);
+      const generate = await screen.findByTestId('pm-generate');
+      const prompt = screen.getByLabelText(/prompt/i);
+      await user.type(prompt, PROMPT);
+      await screen.findByTestId('pm-estimate-error', {}, { timeout: 3000 });
+      expect(count('ESTIMATE_WORKFLOW')).toBe(1);
+
+      // The bucket recovers, and the viewer edits the request. The debounce
+      // alone (900 ms) would send the estimate well inside 1.3 s; the 2 s
+      // backoff holds it.
+      host.setScenario({ generation: { failEstimate: undefined } });
+      await user.type(prompt, ' at dusk');
+      await sleep(1300);
+      expect(count('ESTIMATE_WORKFLOW')).toBe(1);
+      await waitFor(() => expect(generate).toHaveTextContent('Generate · 7 Buzz'), { timeout: 4000 });
+      expect(count('ESTIMATE_WORKFLOW')).toBe(2);
+
+      // Rate-limited again: "Retry estimate" is sent at once, not after the backoff.
+      host.setScenario({ generation: { failEstimate: 'failed', failEstimateMessage: RATE_LIMITED } });
+      await user.type(prompt, ' again');
+      await screen.findByTestId('pm-estimate-error', {}, { timeout: 3000 });
+      expect(count('ESTIMATE_WORKFLOW')).toBe(3);
+      await user.click(screen.getByRole('button', { name: 'Retry estimate' }));
+      await sleep(500);
+      expect(count('ESTIMATE_WORKFLOW')).toBe(4);
+      expect(count('SUBMIT_WORKFLOW')).toBe(0);
+    },
+    15_000,
+  );
+
+  it('a gated Comfy estimate shows only the gate panel, with no Retry', async () => {
+    const outbound: Outbound[] = [];
+    const host = createMockHost({
+      viewer: VIEWER,
+      consentGranted: true,
+      generation: { costPerGen: 9, failEstimate: 'failed', failEstimateMessage: 'Apps are not enabled' },
+      buzz: { balance: 100 },
+      pollsUntilDone: 1,
+      onOutbound: (m) => outbound.push({ type: m.type }),
+    });
+    uninstall = host.install();
+
+    const user = userEvent.setup();
+    render(<App />);
+    const generate = await screen.findByTestId('pm-generate');
+    await user.click(screen.getByRole('tab', { name: /comfy on civitai recipe/i }));
+    await user.type(screen.getByLabelText(/prompt/i), PROMPT);
+
+    await screen.findByTestId('pm-gated', {}, { timeout: 3000 });
+    await sleep(100);
+    expect(screen.queryByTestId('pm-estimate-error')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry estimate' })).not.toBeInTheDocument();
+    expect(generate).toBeDisabled();
+    expect(outbound.filter((m) => m.type === 'SUBMIT_WORKFLOW')).toHaveLength(0);
   });
 });

@@ -289,6 +289,47 @@ export function estimateFailureMessage(err: unknown): string {
     : 'Pricing is unavailable right now. Retry in a moment.';
 }
 
+/**
+ * Did this estimate fail because the host's estimate allowance is spent (an
+ * HTTP 429 / tRPC `TOO_MANY_REQUESTS`)?
+ *
+ * On a page app that allowance is ONE bucket per block instance, shared by
+ * every viewer of the app (civitai's `checkBlockCatalogRateLimit`), so a
+ * refused estimate means "everyone slow down", not "this request is bad".
+ *
+ * 🔴 THIS IS A TEXT MATCH, AND THAT IS THE SDK'S DOING, NOT A CHOICE. In
+ * @civitai/blocks-react 0.82 a 429 reaches the block as a
+ * `WorkflowEstimateError` with `code: 'failed'` — the same code as every other
+ * host-side throw — and the host's `failureSnapshot(err)` keeps only the
+ * message: `snapshot.error` reads `Rate limit exceeded, please retry shortly.`
+ * (civitai `blocks.router.ts`, `estimateWorkflow`). There is no `errorCode` or
+ * HTTP status on the reply. When the SDK grows a structured signal, branch on
+ * it here instead. A miss is harmless: the request is treated as an ordinary
+ * pricing failure, which the viewer can still retry.
+ */
+export function isRateLimitedEstimate(err: unknown): boolean {
+  const e = err as { code?: unknown; snapshot?: { error?: unknown } } | null | undefined;
+  if (e?.code !== 'failed') return false;
+  const reason = e.snapshot?.error;
+  return typeof reason === 'string' && /rate limit/i.test(reason);
+}
+
+/** First wait after a rate-limited estimate, before the next automatic one. */
+export const ESTIMATE_BACKOFF_START_MS = 2_000;
+/** The longest wait between automatic estimates while still rate-limited. */
+export const ESTIMATE_BACKOFF_MAX_MS = 30_000;
+
+/**
+ * How long to hold the next AUTOMATIC estimate after `strikes` consecutive
+ * rate-limited ones: 2 s, 4 s, 8 s, 16 s, then 30 s. A successful estimate
+ * resets the streak. "Retry estimate" ignores it — a click is the viewer's
+ * own decision.
+ */
+export function estimateBackoffMs(strikes: number): number {
+  if (!(strikes > 0)) return 0;
+  return Math.min(ESTIMATE_BACKOFF_START_MS * 2 ** (strikes - 1), ESTIMATE_BACKOFF_MAX_MS);
+}
+
 /** Trim + clamp a prompt to the server cap so submit can't be rejected on length. */
 export function clampPrompt(raw: string): string {
   return raw.slice(0, PROMPT_MAX);
@@ -368,7 +409,6 @@ export function firstImageUrl(snapshot: BlockWorkflowSnapshot | null): string | 
 export type GenPhase =
   | 'idle'
   | 'needs-consent'
-  | 'estimating'
   | 'submitting'
   | 'polling'
   | 'succeeded'
@@ -379,7 +419,7 @@ export type GenPhase =
 
 /** Is a generation in flight (Generate should be disabled / show progress)? */
 export function isBusyPhase(phase: GenPhase): boolean {
-  return phase === 'estimating' || phase === 'submitting' || phase === 'polling';
+  return phase === 'submitting' || phase === 'polling';
 }
 
 /**

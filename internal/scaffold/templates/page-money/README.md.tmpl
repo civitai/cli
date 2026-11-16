@@ -19,8 +19,8 @@ Capabilities are hooks AND generation body kinds (a multi-step workflow is a
 `kind` you pass to `useBuzzWorkflow()`, not a hook); the kinds are listed at
 <https://developer.civitai.com/apps/reference/generation.md>.
 
-**A declared scope is not a granted scope.** `ai:write:budgeted` and
-`posts:write:self` are consent-gated: they are dropped from the token until the
+**A declared scope is not a granted scope.** `ai:write:budgeted`,
+`buzz:read:self` and `posts:write:self` are consent-gated: they are dropped from the token until the
 viewer consents, so you get a 403 while the manifest and the runtime both look
 correct — call `useRequestConsent()` and retry. A hook the reference lists with no
 scope is host-mediated (the host resolves the viewer from your block token).
@@ -63,15 +63,20 @@ linked at the top of this file:
   read host-side via the `GET_BUZZ_BALANCE` bridge, which **requires the
   `buzz:read:self` scope** — so `block.manifest.json` declares it (with a
   `scopeJustifications` entry). Without it the host's read is refused and the
-  app simply shows no per-account annotation. Use it to *reason* about spend
+  app simply shows no per-account annotation. The scope is **consent-gated**, so
+  the first token is minted without it and the mount read is refused; the app
+  asks for it in the same **Allow Buzz spending** dialog and re-reads the
+  balance when the token's scopes change. Use it to *reason* about spend
   (which account can fund this?), **not** to re-display the balance — the
   Civitai chrome around your app already shows it.
 - `useCheckpointPicker()` / `useResourcePicker()` — open the HOST's native
   resource picker for the checkpoint + LoRAs (the app never browses a catalog).
-- `useRequestConsent()` — the **Allow Buzz spending** button: `ai:write:budgeted`
-  is consent-gated, so the token mints WITHOUT it, and the server will not even
-  PRICE a request without it. The grant arrives as a `TOKEN_REFRESH`; the app
-  then estimates the request and shows the price — it never submits on a grant.
+- `useRequestConsent()` — the **Allow Buzz spending** button asks for
+  `ai:write:budgeted` and `buzz:read:self` in one dialog. Both are consent-gated,
+  so the token mints WITHOUT them, and the server will not even PRICE a request
+  without `ai:write:budgeted`. The grant arrives as a `TOKEN_REFRESH`; the app
+  then estimates the request, shows the price and re-reads the balance — it
+  never submits on a grant.
 - **Price before spend.** `estimate()` runs as the viewer edits the request, and
   Generate stays **disabled** until an estimate for exactly the current request
   succeeds; the button then reads `Generate · N Buzz`. A failed estimate (or one
@@ -79,6 +84,17 @@ linked at the top of this file:
   to `submit()`. The receipt reports the whole debit: a submitted workflow's
   snapshot carries the generation cost only, so the app adds back the author fee
   the estimate itemised (`cost.authorFee`).
+- **Comfy prices are approximate.** A Comfy recipe's estimate is a display
+  estimate: submit reserves the recipe's `maxBuzz` ceiling and settles to the
+  actual runtime cost. The estimate reply carries no ceiling, so the button
+  reads `Generate · ≈N Buzz`, and the receipt shows what was actually charged.
+- **Go easy on the estimate allowance.** On a page app it is one bucket per
+  block instance, shared by every viewer of your app. The request is re-priced
+  900 ms after the last edit, and after a rate-limited estimate the next
+  automatic one waits 2 s, doubling up to 30 s (a successful estimate resets
+  it). **Retry estimate** is sent at once, whatever the backoff. The SDK gives a
+  rate limit no code of its own, so `isRateLimitedEstimate` in
+  `src/generation.ts` matches the host's message.
 - `useBlockResize()` — the SDK reports height to the host safely.
 - `useBlockBreakpoint()` — the width tier of your block's own box, for layout
   decisions. See below.
