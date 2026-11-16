@@ -536,7 +536,7 @@ func resolveBarePositionalVersion(ctx context.Context, client civitai.Reader, po
 		// (#878): the ambiguity check could not run, so stop rather than read
 		// the failure as version-only and download what may be an unrelated
 		// model's version.
-		return nil, "", merr
+		return nil, "", fmt.Errorf("%s is a valid version id, but checking whether it is also a model id failed, so the download was stopped — retry, or say which you mean with --version %s or --model %s: %w", positional, positional, positional, merr)
 	}
 	if m == nil {
 		return v, "", nil // version-only — unambiguous, download as today.
@@ -564,7 +564,7 @@ func lookupConfirmedModel(ctx context.Context, client civitai.Reader, id string,
 		if errors.Is(err, civitai.ErrNotFound) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("could not check whether %s is also a model id, so the download was stopped (retry, or pass --version %s or --model %s to say which you mean): %w", id, id, id, err)
+		return nil, err
 	}
 	if m == nil || m.ID != n {
 		return nil, nil
@@ -581,7 +581,7 @@ func autoResolveModelDefault(ctx context.Context, client civitai.Reader, id stri
 	if merr != nil {
 		// The version 404'd but the model lookup failed for another reason:
 		// that failure is the real problem, not the version's not-found.
-		return nil, "", true, merr
+		return nil, "", true, fmt.Errorf("%s is not a version id, and checking whether it is a model id failed: %w", id, merr)
 	}
 	if m == nil {
 		return nil, "", false, nil
