@@ -291,8 +291,11 @@ func TestContextCancelledIsNeverRetried(t *testing.T) {
 // it, a "fix" that simply deleted isTransientNetErr's net.Error branch would
 // leave every filesystem row above green.
 //
-// 🔴 INVARIANT GUARD, not regression coverage — every row passes at base too.
-// That is exactly its job.
+// 🔴 Mostly an INVARIANT GUARD: every row except the last two also passes
+// before #799, and that is their job. The two "Windows refused dial" /
+// "Windows reset read" rows (WSAECONNREFUSED 10061, WSAECONNRESET 10054) are
+// REGRESSION COVERAGE for #799: both fail at 68be2f0 (its parent) and pass
+// after it.
 //
 // Rows carrying an errno that is NOT one of the two explicit sentinels
 // (ECONNREFUSED / ECONNRESET) are the ones that pin the WALK rather than the
