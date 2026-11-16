@@ -27,7 +27,7 @@ func TestServerText(t *testing.T) {
 		{"userinfo url", "git://dev:tok@host/repo", "", false},
 		{"newline", "line one\nline two", "", false},
 		{"escape sequence", "a\x1b[2Jb", "", false},
-		{"bidi override", "abc‮def", "", false},
+		{"bidi override", "abc\u202edef", "", false},
 		{"invalid utf-8", "a\xffb", "", false},
 	}
 	for _, tc := range cases {
