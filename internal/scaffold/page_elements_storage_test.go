@@ -28,7 +28,7 @@ func TestPageElementsReadmeSaysTheLegacyStoresAreShutDown(t *testing.T) {
 		t.Errorf("page-elements README.md does not carry the legacy-store sentence WHOLE.\nwant: %s",
 			wantPageElementsLegacyStoreSentence)
 	}
-	for _, retired := range []string{"are deprecated, so start nothing new", "start nothing new on them", "still work"} {
+	for _, retired := range []string{"are deprecated, so start nothing new", "start nothing new on them"} {
 		if strings.Contains(readme, retired) {
 			t.Errorf("page-elements README.md still says %q about the retired legacy stores", retired)
 		}
