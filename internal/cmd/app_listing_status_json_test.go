@@ -501,10 +501,10 @@ func TestAppListingStatusJSONHelpWarnsAboutTheShadowSideEffect(t *testing.T) {
 		t.Fatal("`app listing status` has no --json flag")
 	}
 	long := cmd.Long
-	for _, want := range []string{"--json", "poll", "shadow revision", "389"} {
+	for _, want := range []string{"--json", "read-only", "never opens", "shadow revision", "poll", "389"} {
 		if !strings.Contains(long, want) {
-			t.Errorf("`app listing status` Long does not mention %q — a machine interface that "+
-				"invites polling must say that polling it opens a revision:\n%s", want, long)
+			t.Errorf("`app listing status` Long does not mention %q — the help must say the read "+
+				"opens no revision, and that older servers still do on a successful call:\n%s", want, long)
 		}
 	}
 	// The `editTargetId` absence is a decision, not an oversight, so the help
@@ -541,20 +541,15 @@ const listing389IssueLink = "https://github.com/civitai/cli/issues/389"
 // pinned and only LINE WRAPPING is normalised away. A cosmetic reword therefore
 // fails this test: pay it deliberately and move the literal, which is the point —
 // the claim is machine-readable and its edits are visible in review.
-const wantREADMEListingWriteWarning = "- 🔴 **`listing status` is NOT a pure read — `--json` or not — so do not poll it in a loop.** On " +
-	"a LIVE (approved) listing the read behind it (`getMyListingForEdit`) opens the revision draft " +
-	"server-side, idempotently — the same one each time — so a script calling it repeatedly keeps a " +
-	"revision open on your listing. [#389](https://github.com/civitai/cli/issues/389) asked the " +
-	"narrower question of whether a call that FAILS could leave a revision behind; it cannot, because " +
-	"every refusal the server can return here is raised before the revision is opened. **That settles " +
-	"the error path only — the write on success is unchanged.** Reading it once per change is " +
-	"fine; a watch loop is a writer. ⚠ **This now applies to OFFSITE apps too.** Before " +
-	"[#422](https://github.com/civitai/cli/issues/422) every `app listing` subcommand refused for an " +
-	"offsite app and therefore could not write anything; now that they resolve by slug, `app listing " +
-	"status` against an **approved** offsite listing mints that shadow revision like any other. Every " +
-	"offsite app measured on civitai.com is approved, so this is the *normal* state there, not an " +
-	"edge case. #422 retired the \"cannot be addressed\" refusal, and #389 retired nothing about the " +
-	"write — the shadow is a property of `getMyListingForEdit`, not of how the listing id was obtained."
+const wantREADMEListingWriteWarning = "- **`listing status` is a read — `--json` or not.** It asks the server for the read-only view " +
+	"of the listing (`getMyListingForEdit` with `readOnly: true`), so on a LIVE (approved) listing " +
+	"it reports an existing revision draft (`shadowId`) but never opens one; with no revision draft, " +
+	"`shadowId` is `null`. The commands that change a listing (`set-`, `add-`, `rm-`, `clear-red`, " +
+	"`reorder`) still open the revision draft when they need one. Older civitai.com servers ignore " +
+	"the read-only request and open the revision draft on every successful call, the behaviour " +
+	"[#389](https://github.com/civitai/cli/issues/389) documented (a call that FAILS never opened " +
+	"one), so against such a server a watch loop is a writer. This holds for OFFSITE apps too, which " +
+	"resolve by slug since [#422](https://github.com/civitai/cli/issues/422)."
 
 // readmeTopLevelBullets splits md into its top-level markdown bullets: a line
 // beginning `- ` at column 0, plus every indented continuation line under it.
@@ -680,6 +675,48 @@ func TestTheShadowWriteWarningIsOnBothPublishedSurfaces(t *testing.T) {
 		if !citationRe.MatchString(s.text) {
 			t.Errorf("%s no longer cites civitai/cli#389 — every surface that documents this command as a "+
 				"read must also say it opens a revision draft on a live listing", s.surface)
+		}
+	}
+}
+
+// `app listing status` must ask for the read-only view: without `readOnly: true`
+// the server opens a revision draft on every successful status read of a live
+// listing, which is the write this command documents it does not do.
+func TestAppListingStatusAsksForTheReadOnlyView(t *testing.T) {
+	var editInputs []map[string]any
+	inner := approvedListingServer(t)
+	defer inner.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "getMyListingForEdit") {
+			var in struct {
+				JSON map[string]any `json:"json"`
+			}
+			if err := json.Unmarshal([]byte(r.URL.Query().Get("input")), &in); err != nil {
+				t.Errorf("getMyListingForEdit input is not JSON: %v", err)
+			}
+			editInputs = append(editInputs, in.JSON)
+		}
+		inner.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	listingEnv(t, srv.URL)
+
+	for _, args := range [][]string{
+		{"app", "listing", "status", "--slug", jsonFixtureSlug},
+		{"app", "listing", "status", "--slug", jsonFixtureSlug, "--json"},
+	} {
+		editInputs = nil
+		if _, _, err := run(t, args...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if len(editInputs) != 1 {
+			t.Fatalf("%v made %d getMyListingForEdit reads, want 1", args, len(editInputs))
+		}
+		if editInputs[0]["readOnly"] != true {
+			t.Errorf("%v sent getMyListingForEdit input %v, want readOnly: true", args, editInputs[0])
+		}
+		if editInputs[0]["listingId"] != jsonFixtureParentID {
+			t.Errorf("%v sent listingId %v, want %q", args, editInputs[0]["listingId"], jsonFixtureParentID)
 		}
 	}
 }
