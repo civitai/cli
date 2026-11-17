@@ -337,6 +337,13 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "SegmentedControl")
 	mustContain(t, app, "pm-comfy-beta")
 	mustContain(t, app, "pm-gated")
+	// Both beta alerts route access requests to the onsite form, not to this
+	// repo: requests are reviewed on civitai.com, and an access-request issue
+	// opened here is auto-closed with a pointer back to the form.
+	if n := strings.Count(app, `href="https://civitai.com/apps/build?request-access=1"`); n != 2 {
+		t.Errorf("page-money App.tsx: want the onsite access-request link in BOTH beta alerts (2), got %d", n)
+	}
+	mustNotContain(t, app, `href="https://github.com/civitai/cli`)
 
 	// The INLINE arm — the app ships its own ComfyUI graph. These are presence
 	// checks for DISCOVERABILITY (the dogfood failure was a developer guessing at

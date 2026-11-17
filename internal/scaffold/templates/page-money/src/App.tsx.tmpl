@@ -770,9 +770,9 @@ export function App() {
               <code>recipe</code> id (<code>{STARTER_COMFY_RECIPE}</code>) + a prompt; the server
               owns the graph and a hard per-job Buzz ceiling. Invite-only beta on live civitai.com —
               works end-to-end against the <strong>mock host</strong> (<code>npm run dev:harness</code>).
-              Request tester access at{' '}
-              <a href="https://github.com/civitai/cli/issues/new" target="_blank" rel="noreferrer">
-                github.com/civitai/cli
+              Request access while signed in to Civitai at{' '}
+              <a href="https://civitai.com/apps/build?request-access=1" target="_blank" rel="noreferrer">
+                civitai.com/apps/build
               </a>
               .
             </Alert>
@@ -942,9 +942,9 @@ export function App() {
           {phase === 'gated' && (
             <Alert color="info" title="Comfy on Civitai recipes are in invite-only beta" data-testid="pm-gated">
               Your account isn&apos;t in the tester cohort yet, so this recipe can&apos;t run on live
-              civitai.com. Request access at{' '}
-              <a href="https://github.com/civitai/cli" target="_blank" rel="noreferrer">
-                github.com/civitai/cli
+              civitai.com. Request access while signed in to Civitai at{' '}
+              <a href="https://civitai.com/apps/build?request-access=1" target="_blank" rel="noreferrer">
+                civitai.com/apps/build
               </a>
               . Meanwhile it works end-to-end in the mock harness (<code>npm run dev:harness</code>).
             </Alert>

@@ -13,9 +13,16 @@
 > `dev:live` are limited to **invited beta testers** while the feature is in a
 > limited (pre-GA) beta, until Apps opens to the public.
 >
-> **Anyone can request an invite** — open a request below and we'll review it:
+> **Anyone can request an invite, on Civitai itself:**
+>
+> 1. Sign in at civitai.com and open **Request access** at
+>    <https://civitai.com/apps/build?request-access=1>. Requests are reviewed
+>    there by the Civitai team; there is no need to open a GitHub issue.
+> 2. Once you're approved, accept the App Developer Terms at
+>    <https://civitai.com/apps/submit>. Until you do, `civitai app submit` is
+>    refused with a 403.
 
-[![Request access](https://img.shields.io/badge/Request%20access-invite--only%20beta-3b82f6?style=for-the-badge&logo=github)](https://github.com/civitai/cli/issues/new?template=request-access.yml)
+[![Request access](https://img.shields.io/badge/Request%20access-on%20civitai.com-3b82f6?style=for-the-badge)](https://civitai.com/apps/build?request-access=1)
 
 ## Using an AI coding agent? Paste this
 
