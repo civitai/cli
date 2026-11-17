@@ -123,7 +123,7 @@ var knownOverRedactions = []knownEntry{
 	{
 		doc: "a URL's `#fragment`, and whatever is glued to a URL after its first `?` or `#` with no white space: closing quotes, brackets, a trailing full stop, the rest of a minified JSON line",
 		cases: []knownCase{
-			{in: "(see https://developer.civitai.com/apps/guide#scopes).", want: "(see https://developer.civitai.com/apps/guide"},
+			{in: "(see https://developer.civitai.com/apps/tokens#scopes).", want: "(see https://developer.civitai.com/apps/tokens"},
 			{in: `{"url":"https://h.fieldstone.dev/p?a=1","retries":3}`, want: `{"url":"https://h.fieldstone.dev/p`},
 		},
 	},
