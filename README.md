@@ -90,6 +90,7 @@ contract, and **packages/submits** it for review.
 - [Examples](#examples)
 - [Validate fidelity](#validate-fidelity)
 - [Submit & auth](#submit--auth)
+  - [Submitting from GitHub Actions](#submitting-from-github-actions)
   - [What `civitai whoami` reports](#what-civitai-whoami-reports)
   - [Link your source code (`app listing set-source-repo`)](#link-your-source-code-app-listing-set-source-repo) — **material: stages a revision**
 - [Submission status](#submission-status)
@@ -915,6 +916,21 @@ why deployed is not the same as listed:
 Linking your source repository, and every other listing command:
 [Your store listing](https://developer.civitai.com/apps/guide/store-listing#link-your-source-code).
 Offline: `civitai login --help`, `civitai app submit --help`.
+
+### Submitting from GitHub Actions
+
+`civitai app submit` sends a GitHub Actions OIDC token with the bundle when
+`CIVITAI_GITHUB_OIDC_TOKEN` is set. The
+[`civitai/app-submit-action`](https://github.com/civitai/app-submit-action)
+Action requests the token and sets it on a tag push. The server checks the
+token with GitHub (signature, audience, expiry, one use, a push of a tag that
+matches the manifest version) and records the workflow run's repository, tag
+and commit with the submission; that is a different thing from the
+`sourceCommit` this CLI claims, which the server stores unchecked. A token that
+fails the check refuses the submit with a `400` whose message says why; on
+success the CLI prints whether the run was recorded. The token is read from the
+environment only (no flag, so it is never on the command line) and is never
+printed. Without the variable, the submit is unchanged.
 
 ### What `civitai whoami` reports
 

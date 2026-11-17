@@ -64,6 +64,20 @@ type Provenance struct {
 	Commit string
 	// Dirty is the client's assertion about its own work tree. nil ⇒ unknown.
 	Dirty *bool
+	// GitHubOIDCToken is a GitHub Actions OIDC token for the workflow run doing
+	// this submit, or "" when there is none (every submit outside GitHub Actions).
+	// It travels as `githubOidcToken`.
+	//
+	// 🔴 NOT PART OF THE CLAIM ABOVE, AND NEVER DERIVED FROM IT. Commit and Dirty
+	// are what this CLI says; the token is signed by GitHub, and the SERVER checks
+	// it and reads the repository, tag and commit from it (civitai/civitai,
+	// flag `app-blocks-oidc-verified-submit`). The CLI does not parse it, and it
+	// is not sanitised away with a bad Commit: they are separate answers.
+	//
+	// 🔴 A CREDENTIAL. It goes in the request body and nowhere else: never printed,
+	// never in an error, never on argv (which is why it is read from the
+	// environment and has no flag).
+	GitHubOIDCToken string
 }
 
 // sourceCommitRe is the server's own validator, mirrored (civitai/civitai#4061,
@@ -469,6 +483,12 @@ type SubmitResult struct {
 	// whose storage no longer parses. Reported, never refused. Empty or absent (a
 	// server that predates it) prints nothing.
 	StorageMigrationWarnings []string `json:"storageMigrationWarnings,omitempty"`
+	// ActionsRunSourceRecorded is set only when this submit carried a GitHub
+	// Actions OIDC token and the server verified it: true when the run's
+	// repository, tag and commit were stored with the request, false when the
+	// server could not store them. nil when no token was sent, the server's flag
+	// is off (it then ignores the token), or the server predates the field.
+	ActionsRunSourceRecorded *bool `json:"actionsRunSourceRecorded,omitempty"`
 }
 
 // SubmitListingReadiness mirrors the server's SubmitListingReadiness
@@ -659,6 +679,9 @@ type submitBody struct {
 	BundleBase64 string `json:"bundleBase64"`
 	SourceCommit string `json:"sourceCommit,omitempty"`
 	SourceDirty  *bool  `json:"sourceDirty,omitempty"`
+	// GitHubOIDCToken is omitted when empty, so a submit outside GitHub Actions
+	// sends exactly the body it sent before this field existed.
+	GitHubOIDCToken string `json:"githubOidcToken,omitempty"`
 }
 
 // submitBodyEnvelope is the literal JSON document json.Marshal produces for an
@@ -683,10 +706,10 @@ const submitBodyEnvelope = `{"bundleBase64":""}`
 // remembering to update an arithmetic term.
 func submitEnvelopeLen(prov Provenance) int {
 	commit, dirty := prov.sanitised()
-	if commit == "" && dirty == nil {
+	if commit == "" && dirty == nil && prov.GitHubOIDCToken == "" {
 		return len(submitBodyEnvelope)
 	}
-	env, err := json.Marshal(submitBody{SourceCommit: commit, SourceDirty: dirty})
+	env, err := json.Marshal(submitBody{SourceCommit: commit, SourceDirty: dirty, GitHubOIDCToken: prov.GitHubOIDCToken})
 	if err != nil {
 		// Unreachable for these field types; degrade to the no-provenance
 		// envelope rather than reporting a nonsense size.
@@ -921,9 +944,10 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 	// stamp must never be able to turn a working submit into a failed one.
 	commit, dirty := prov.sanitised()
 	body, err := json.Marshal(submitBody{
-		BundleBase64: base64.StdEncoding.EncodeToString(zipBytes),
-		SourceCommit: commit,
-		SourceDirty:  dirty,
+		BundleBase64:    base64.StdEncoding.EncodeToString(zipBytes),
+		SourceCommit:    commit,
+		SourceDirty:     dirty,
+		GitHubOIDCToken: prov.GitHubOIDCToken,
 	})
 	if err != nil {
 		// UNREACHABLE for these field types — submitEnvelopeLen says the same of
