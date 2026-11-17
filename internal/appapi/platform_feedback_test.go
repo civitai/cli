@@ -91,7 +91,7 @@ func pfFullInput() PlatformFeedbackCreateInput {
 			ExitCode:     intPtr(1),
 			HTTPStatus:   intPtr(500),
 			SDK:          []PlatformFeedbackSDK{{Name: "@civitai/app-sdk", Version: "^0.69.0"}},
-			DocURL:       "https://developer.civitai.com/apps/submit",
+			DocURL:       "https://developer.civitai.com/site/guide/cli",
 			ErrorExcerpt: "Error: server returned 500",
 			AppSlug:      "tide-chart",
 		},
@@ -103,7 +103,7 @@ const pfFullBody = `{"json":{"message":"submit was refused with a 500 and no mes
 	`"client":{"name":"civitai-cli","version":"0.1.96"},"agent":"codex","os":"darwin","arch":"arm64",` +
 	`"command":"civitai app submit --yes","exitCode":1,"httpStatus":500,` +
 	`"sdk":[{"name":"@civitai/app-sdk","version":"^0.69.0"}],` +
-	`"docUrl":"https://developer.civitai.com/apps/submit","errorExcerpt":"Error: server returned 500","appSlug":"tide-chart"}}}`
+	`"docUrl":"https://developer.civitai.com/site/guide/cli","errorExcerpt":"Error: server returned 500","appSlug":"tide-chart"}}}`
 
 func TestCreatePlatformFeedbackSendsTheContractBody(t *testing.T) {
 	s := &pfServer{reply: func(pfCall) (int, string) {
@@ -427,7 +427,7 @@ func TestValidateRefusesEveryOtherContractViolation(t *testing.T) {
 		{"client version with a space", "report.client.version", func(in *PlatformFeedbackCreateInput) { in.Report.Client.Version = "0.1 beta" }},
 		{"client version empty", "report.client.version", func(in *PlatformFeedbackCreateInput) { in.Report.Client.Version = "" }},
 		{"docUrl on another host", "report.docUrl", func(in *PlatformFeedbackCreateInput) { in.Report.DocURL = "https://civitai.com/apps" }},
-		{"docUrl over http", "report.docUrl", func(in *PlatformFeedbackCreateInput) { in.Report.DocURL = "http://developer.civitai.com/apps" }},
+		{"docUrl over http", "report.docUrl", func(in *PlatformFeedbackCreateInput) { in.Report.DocURL = "http://developer.civitai.com/apps/" }},
 		{"exitCode below range", "report.exitCode", func(in *PlatformFeedbackCreateInput) { in.Report.ExitCode = intPtr(-1) }},
 		{"exitCode above range", "report.exitCode", func(in *PlatformFeedbackCreateInput) { in.Report.ExitCode = intPtr(256) }},
 		{"httpStatus below range", "report.httpStatus", func(in *PlatformFeedbackCreateInput) { in.Report.HTTPStatus = intPtr(99) }},
