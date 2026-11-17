@@ -90,6 +90,7 @@ contract, and **packages/submits** it for review.
 - [Examples](#examples)
 - [Validate fidelity](#validate-fidelity)
 - [Submit & auth](#submit--auth)
+  - [Submitting from GitHub Actions](#submitting-from-github-actions)
   - [What `civitai whoami` reports](#what-civitai-whoami-reports)
   - [Link your source code (`app listing set-source-repo`)](#link-your-source-code-app-listing-set-source-repo) — **material: stages a revision**
 - [Submission status](#submission-status)
