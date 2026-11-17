@@ -306,7 +306,7 @@ func TestOrdinaryTextIsLeftAlone(t *testing.T) {
 		"Bearer authentication is required, but the docs never say which scope",
 		"@civitai/app-sdk@0.69.0 has no typed helper for the buzz balance call",
 		"ssh: connect to host tunnel port 22: user@host is how the docs spell it",
-		"see https://developer.civitai.com/apps/guide for the page I mean",
+		"see https://developer.civitai.com/apps/tokens for the page I mean",
 		"the token field is empty: token=\"\" in the generated config",
 		"exit code 3 from `civitai app status my-app --json`",
 		"~/work/my-app is where I ran it",
