@@ -88,6 +88,16 @@ var notAPage = map[string]string{
 
 	// MEASURED RED on the guard's first live run.
 	"https://github.com/me/my-app": "placeholder repo URL in a command example",
+
+	// The onsite Apps access-request form and the developer-terms page. Both
+	// are pages a person follows, but only when SIGNED IN: the /apps pages are
+	// feature-gated per account, and an anonymous GET is answered 404. MEASURED
+	// 404 for both (and for /apps, /apps/build and /apps/store) to an anonymous
+	// GET on 2026-11-17, so this anonymous prober would report a dead link for a
+	// page every reader who can use it sees. Not a measured CI red: ledgered in
+	// the same commit that put the addresses in README.md, from that probe.
+	"https://civitai.com/apps/build?request-access=1": "onsite access-request form; signed-in only, measured 404 to an anonymous GET",
+	"https://civitai.com/apps/submit":                 "developer-terms page; signed-in only, measured 404 to an anonymous GET",
 }
 
 // placeholderHosts are hosts the README uses ON PURPOSE to mean "your address
