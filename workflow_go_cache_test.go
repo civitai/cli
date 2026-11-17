@@ -408,8 +408,9 @@ func TestCIRestoresTheGoCacheAndSavesItOnce(t *testing.T) {
 		composite    = "./.github/actions/setup-go"
 		compositeDir = ".github/actions/setup-go"
 		saveIf       = "github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.go.outputs.exact-hit != 'true'"
-		// Eight jobs set up Go when this was written; see the positive control.
-		minGoJobs = 8
+		// Four jobs set up Go when this was written (build-test, dogfood-browser,
+		// lint, checks); see the positive control.
+		minGoJobs = 4
 	)
 
 	steps := loadCISteps(t)

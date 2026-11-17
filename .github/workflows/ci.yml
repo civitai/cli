@@ -364,71 +364,120 @@ jobs:
   # `civitai app validate`) must stay identical to the canonical the platform
   # publishes at civitai.com/schemas/app-block/v1.json (the single source of
   # truth). Fails if a server-side contract change leaves the CLI stale.
-  # Rot-guard: assert each scaffold template's `@civitai/*` pin still ADMITS the
-  # version npm currently publishes as `latest`. A pre-1.0 caret (`^0.24.0`)
-  # locks the minor, so a pin that falls behind npm silently ships apps that are
-  # born stale — and `npm install` won't catch it (it resolves the caret to the
-  # newest version the stale range still admits). This is the network half of
-  # the scaffold guard.
+  # ── checks: six small gates, ONE runner ─────────────────────────────────
   #
-  # 🔴 THIS JOB IS A REQUIRED CONTEXT THAT COMPARES AGAINST SOMETHING NO PULL
-  # REQUEST CONTROLS, and until this was rewritten it failed EVERY open PR the
-  # moment a `@civitai/*` minor was published. Measured over the 399 CI runs of
-  # 2026-09-20..10-12: this job failed 72 times, and every one of those logs is
-  # a STALE SCAFFOLD PIN verdict. Across the 118 PRs merged in that window it
-  # was the ONLY failing job on 52 of their 264 CI runs, and 25 of those PRs hit
-  # it at least once — only 5 of the 25 touched a pin input. Each waited on the
-  # bump bot's PR and then a re-push, for a version number on a registry.
+  # pins-vs-published, ready-ack-runtime, template-page-vite,
+  # template-page-elements, template-page-money and scaffold-currency used to
+  # be six jobs. Each did 18–52 s of work, and each waited for its own
+  # GitHub-hosted runner first. On this repo that wait — not the work — is
+  # what a run's wall time is made of: the runner pool hands out runners
+  # slowly, so a run that asks for ten jobs pays the wait ten times over. They
+  # are now steps of this one job, in the same order they had in this file,
+  # and every step's name is prefixed with the job it came from
+  # (`<former job> · <step>`), so a red run still says which gate failed.
   #
-  # So the job now ALWAYS REPORTS and only SOMETIMES BLOCKS, and the decision is
-  # made in ONE place — `internal/scaffold/cmd/pins-gate`, table-tested there:
+  # 🔴 THE REQUIRED CONTEXT IS NOW `checks`. Branch protection used to name
+  # five of the six jobs (pins-vs-published, ready-ack-runtime,
+  # template-page-vite, template-page-elements, scaffold-currency); this PR
+  # cannot change protection, so the old names have to be swapped for
+  # `checks` in the same window as the merge. template-page-money was NOT
+  # required before and now gates, because it shares this job.
   #
-  #   pull_request, diff touches NO pin input   stale       → ::warning + summary, job GREEN
-  #                                             npm down    → ::warning (distinct title), job GREEN
-  #                                             pin invalid → job RED
-  #   pull_request, diff touches a pin input    any of them → job RED   (as before)
-  #   push to main / workflow_dispatch /        any of them → job RED
-  #   schedule / any event it does not know
+  # ⚠ ONE FAILURE NOW STOPS THE REST. Steps run with GitHub's default
+  # `success()`, so the first red step skips every step after it — a run that
+  # breaks two gates reports the first, and the second shows on the next run.
+  # That is the price of one runner; it can only hide a red behind another
+  # red, never turn one green. Do not paper over it with `continue-on-error`:
+  # see the pins-vs-published notes below, and workflow_checks_job_test.go.
   #
-  # Three things here are load-bearing and each is pinned by
-  # `workflow_pins_gate_test.go`, with a broken variant per assertion:
-  #
-  #   * THE JOB KEY. Branch protection requires the context `pins-vs-published`
-  #     by NAME. Renamed, the required check is never reported and every PR
-  #     hangs "expected"; that is why this is a downgrade inside the job and not
-  #     a `paths:` filter or a second job.
-  #   * NO `continue-on-error` AND NO `if:`, at job or step level. Either makes
-  #     the job unable to block ANYWHERE — main included — while still painting
-  #     the context green. A skipped required job satisfies protection.
-  #   * `fetch-depth: 2`. The pull request's diff is read off the merge commit
-  #     checkout leaves at HEAD (`HEAD^1` is the base, `HEAD^2` the PR head). At
-  #     the default depth 1 neither parent is visible, pins-gate cannot tell
-  #     what the PR changed, and — because it fails CLOSED — every PR gates
-  #     again. Nothing would look broken; the downgrade would just be inert.
-  #
-  # 🔴 "npm UNREACHABLE" IS NO LONGER A GREEN ON A RUN THAT GATES. It used to be
-  # a `t.Skipf` with a ::notice — on main and on a PR that changed a pin alike.
-  # Now that most runs do not gate, the ones that still do carry the whole
-  # weight, and a gate that could not look reporting success is a claim about
-  # nothing. pins-gate retries three times first; if the registry is still down
-  # a gating run fails with its own title (`NOT CHECKED, npm unreachable`), and
-  # the fix is to re-run it.
-  #
-  # The pin-input list, and why it is wider than "the templates", lives beside
-  # `pinInputs` in pins-gate/main.go. It is held to the build graph by a test,
-  # so this comment deliberately does not copy it.
-  pins-vs-published:
+  # The shared setup runs once: checkout at `fetch-depth: 2` (pins-gate reads
+  # the merge commit's two parents — see below), the Go cache restore, and
+  # node 24. Every scaffold writes its own `_ci-*` directory, so the former
+  # jobs share no files. Guarded by workflow_checks_job_test.go.
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
+      # Restore-only, like every job but build-test (see the action).
       - uses: ./.github/actions/setup-go
         with:
           go-version: "1.25"
 
-      - name: check scaffold pins vs npm latest
+      # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
+      # `Cannot read properties of null (reading 'edgesOut')` while walking
+      # vitest -> its optional `jsdom@*` peer -> canvas, during `npm install`
+      # of a scaffolded page-money app. That froze EVERY PR in this repo
+      # (scaffold-currency is required + enforce_admins) with no code change,
+      # the moment vitest@5.0.0 published upstream. Measured: npm 10.9.9 fails
+      # on the unmodified template, npm 11.19.0 succeeds; overriding jsdom or
+      # pinning vitest does NOT fix it. Do not drop back to 22.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      # ── pins-vs-published ─────────────────────────────────────────────────────
+      #
+      # Rot-guard: assert each scaffold template's `@civitai/*` pin still ADMITS the
+      # version npm currently publishes as `latest`. A pre-1.0 caret (`^0.24.0`)
+      # locks the minor, so a pin that falls behind npm silently ships apps that are
+      # born stale — and `npm install` won't catch it (it resolves the caret to the
+      # newest version the stale range still admits). This is the network half of
+      # the scaffold guard.
+      #
+      # 🔴 THIS JOB IS A REQUIRED CONTEXT THAT COMPARES AGAINST SOMETHING NO PULL
+      # REQUEST CONTROLS, and until this was rewritten it failed EVERY open PR the
+      # moment a `@civitai/*` minor was published. Measured over the 399 CI runs of
+      # 2026-09-20..10-12: this job failed 72 times, and every one of those logs is
+      # a STALE SCAFFOLD PIN verdict. Across the 118 PRs merged in that window it
+      # was the ONLY failing job on 52 of their 264 CI runs, and 25 of those PRs hit
+      # it at least once — only 5 of the 25 touched a pin input. Each waited on the
+      # bump bot's PR and then a re-push, for a version number on a registry.
+      #
+      # So the step now ALWAYS REPORTS and only SOMETIMES BLOCKS, and the decision is
+      # made in ONE place — `internal/scaffold/cmd/pins-gate`, table-tested there:
+      #
+      #   pull_request, diff touches NO pin input   stale       → ::warning + summary, step GREEN
+      #                                             npm down    → ::warning (distinct title), step GREEN
+      #                                             pin invalid → step RED
+      #   pull_request, diff touches a pin input    any of them → step RED   (as before)
+      #   push to main / workflow_dispatch /        any of them → step RED
+      #   schedule / any event it does not know
+      #
+      # A red step fails `checks`, the required context. Three things here are
+      # load-bearing and each is pinned by `workflow_pins_gate_test.go`, with a
+      # broken variant per assertion:
+      #
+      #   * THE JOB KEY. Branch protection requires the context `checks` by NAME
+      #     (it was `pins-vs-published` while this was its own job). Renamed, the
+      #     required check is never reported and every PR hangs "expected"; that
+      #     is why this is a downgrade inside the step and not a `paths:` filter
+      #     or a second job.
+      #   * NO `continue-on-error` anywhere in `checks`, and NO `if:` on the job
+      #     or on this step. Either makes the gate unable to block ANYWHERE — main
+      #     included — while still painting the context green. A skipped required
+      #     job satisfies protection.
+      #   * `fetch-depth: 2`. The pull request's diff is read off the merge commit
+      #     checkout leaves at HEAD (`HEAD^1` is the base, `HEAD^2` the PR head). At
+      #     the default depth 1 neither parent is visible, pins-gate cannot tell
+      #     what the PR changed, and — because it fails CLOSED — every PR gates
+      #     again. Nothing would look broken; the downgrade would just be inert.
+      #
+      # 🔴 "npm UNREACHABLE" IS NO LONGER A GREEN ON A RUN THAT GATES. It used to be
+      # a `t.Skipf` with a ::notice — on main and on a PR that changed a pin alike.
+      # Now that most runs do not gate, the ones that still do carry the whole
+      # weight, and a gate that could not look reporting success is a claim about
+      # nothing. pins-gate retries three times first; if the registry is still down
+      # a gating run fails with its own title (`NOT CHECKED, npm unreachable`), and
+      # the fix is to re-run it.
+      #
+      # The pin-input list, and why it is wider than "the templates", lives beside
+      # `pinInputs` in pins-gate/main.go. It is held to the build graph by a test,
+      # so this comment deliberately does not copy it.
+
+      - name: pins-vs-published · check scaffold pins vs npm latest
         env:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -474,54 +523,35 @@ jobs:
             exit 1
           fi
 
-  # Guard B for the block->host ready-ack (issue #206) — the RUNTIME half.
-  #
-  # `internal/scaffold/ready_ack_contract_test.go` runs in the build-test job
-  # above and proves each SDK-free page template ships a byte-identical copy of
-  # `internal/blockproto/ready-ack.js` that the entry point RESOLVES to. It
-  # cannot prove the ack FIRES — no Go static check can prove JavaScript
-  # executes, and an emitter with an inverted `event.source` check passes every
-  # static assertion while being completely inert.
-  #
-  # This job executes the emitter in node against a fake host. It is env-gated
-  # so `make ci` stays Go-only and offline. The scheduled `bump-scaffold-pins` sweep
-  # (every 6 hours) runs it too, but a scheduled runner reports hours AFTER a
-  # merge, on a workflow nobody watches — running it per-PR puts the result in front of a
-  # reviewer while the change is still open.
-  #
-  # 🔴 NOTE: this both reports AND gates. `main`'s required contexts are
-  # `pins-vs-published`, `scaffold-currency`, `build-test`, `ready-ack-runtime`
-  # and `template-page-vite` (no rulesets), so a red run here blocks the merge.
-  # That was a policy change made after this job landed — it did NOT gate when
-  # it shipped. Re-measure with
-  # `gh api repos/civitai/cli/branches/main/protection` before calling any job
-  # here a gate; see AGENTS.md item 11.
-  #
-  # -v so the run REPORTS its controls (an inert emitter and a naive ack are
-  # driven through the same assertions and must be rejected) rather than just an
-  # exit code.
-  ready-ack-runtime:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # ── ready-ack-runtime ─────────────────────────────────────────────────────
+      #
+      # Guard B for the block->host ready-ack (issue #206) — the RUNTIME half.
+      #
+      # `internal/scaffold/ready_ack_contract_test.go` runs in the build-test job
+      # above and proves each SDK-free page template ships a byte-identical copy of
+      # `internal/blockproto/ready-ack.js` that the entry point RESOLVES to. It
+      # cannot prove the ack FIRES — no Go static check can prove JavaScript
+      # executes, and an emitter with an inverted `event.source` check passes every
+      # static assertion while being completely inert.
+      #
+      # This job executes the emitter in node against a fake host. It is env-gated
+      # so `make ci` stays Go-only and offline. The scheduled `bump-scaffold-pins` sweep
+      # (every 6 hours) runs it too, but a scheduled runner reports hours AFTER a
+      # merge, on a workflow nobody watches — running it per-PR puts the result in front of a
+      # reviewer while the change is still open.
+      #
+      # 🔴 NOTE: this both reports AND gates. It is a step of `checks`, which is
+      # meant to be a required context (it replaced the five required former
+      # jobs), so a red run here blocks the merge. It did NOT gate when it
+      # shipped. Re-measure with
+      # `gh api repos/civitai/cli/branches/main/protection` before calling any job
+      # here a gate; see AGENTS.md item 11.
+      #
+      # -v so the run REPORTS its controls (an inert emitter and a naive ack are
+      # driven through the same assertions and must be rejected) rather than just an
+      # exit code.
 
-      - uses: ./.github/actions/setup-go
-        with:
-          go-version: "1.25"
-
-      # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
-      # `Cannot read properties of null (reading 'edgesOut')` while walking
-      # vitest -> its optional `jsdom@*` peer -> canvas, during `npm install`
-      # of a scaffolded page-money app. That froze EVERY PR in this repo
-      # (scaffold-currency is required + enforce_admins) with no code change,
-      # the moment vitest@5.0.0 published upstream. Measured: npm 10.9.9 fails
-      # on the unmodified template, npm 11.19.0 succeeds; overriding jsdom or
-      # pinning vitest does NOT fix it. Do not drop back to 22.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - name: scaffolded ready-ack actually fires
+      - name: ready-ack-runtime · scaffolded ready-ack actually fires
         env:
           CIVITAI_CHECK_SCAFFOLD_RUNTIME: "1"
         run: |
@@ -556,55 +586,37 @@ jobs:
             exit 1
           fi
 
-  # Rot-guard: build the page-vite template. It is the only SDK-free template
-  # with a build step, and nothing else in CI builds it — `template-page-money`
-  # and `scaffold-currency` both scaffold page-money.
-  #
-  # Since #206 its entry module has a HARD RESOLUTION DEPENDENCY on
-  # `./civitai-host.js`, so a wrong import path is a build failure rather than a
-  # subtle one. Measured: `import '../nonexistent/civitai-host.js'` survived the
-  # entire Go suite, and would have shipped a template that cannot build at all.
-  #
-  # The bundle assertion is separate from Guard A on purpose. Guard A pins the
-  # SOURCE tree; Vite output is what the platform actually serves, and a
-  # tree-shaken or mis-externalised side-effect import would leave a bundle with
-  # no handshake in it. Control pair, both measured locally: with the import the
-  # bundle carries BLOCK_INIT/BLOCK_READY, with it commented out it carries
-  # neither — while the positive control (the app's display name) matches in
-  # both cases, proving the grep reads the bundle either way.
-  template-page-vite:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # ── template-page-vite ────────────────────────────────────────────────────
+      #
+      # Rot-guard: build the page-vite template. It is the only SDK-free template
+      # with a build step, and nothing else in CI builds it — `template-page-money`
+      # and `scaffold-currency` both scaffold page-money.
+      #
+      # Since #206 its entry module has a HARD RESOLUTION DEPENDENCY on
+      # `./civitai-host.js`, so a wrong import path is a build failure rather than a
+      # subtle one. Measured: `import '../nonexistent/civitai-host.js'` survived the
+      # entire Go suite, and would have shipped a template that cannot build at all.
+      #
+      # The bundle assertion is separate from Guard A on purpose. Guard A pins the
+      # SOURCE tree; Vite output is what the platform actually serves, and a
+      # tree-shaken or mis-externalised side-effect import would leave a bundle with
+      # no handshake in it. Control pair, both measured locally: with the import the
+      # bundle carries BLOCK_INIT/BLOCK_READY, with it commented out it carries
+      # neither — while the positive control (the app's display name) matches in
+      # both cases, proving the grep reads the bundle either way.
 
-      - uses: ./.github/actions/setup-go
-        with:
-          go-version: "1.25"
-
-      # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
-      # `Cannot read properties of null (reading 'edgesOut')` while walking
-      # vitest -> its optional `jsdom@*` peer -> canvas, during `npm install`
-      # of a scaffolded page-money app. That froze EVERY PR in this repo
-      # (scaffold-currency is required + enforce_admins) with no code change,
-      # the moment vitest@5.0.0 published upstream. Measured: npm 10.9.9 fails
-      # on the unmodified template, npm 11.19.0 succeeds; overriding jsdom or
-      # pinning vitest does NOT fix it. Do not drop back to 22.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - name: scaffold page-vite
+      - name: template-page-vite · scaffold page-vite
         run: go run ./cmd/civitai app init "CI Vite Block" --dir ./_ci-page-vite --template page-vite
 
-      - name: install
+      - name: template-page-vite · install
         working-directory: ./_ci-page-vite
         run: npm install --no-audit --no-fund
 
-      - name: build
+      - name: template-page-vite · build
         working-directory: ./_ci-page-vite
         run: npm run build
 
-      - name: the ready-ack survives bundling
+      - name: template-page-vite · the ready-ack survives bundling
         working-directory: ./_ci-page-vite
         run: |
           set -euo pipefail
@@ -655,39 +667,28 @@ jobs:
       # page in the browser could read the dev server's source), a dev-tunnel
       # session (CIVITAI_DEV_TUNNEL_HMR=1) must. One script for all three Vite
       # templates; what it asserts and why is in its header.
-      - name: dev server embed headers (plain vs dev-tunnel)
+      - name: template-page-vite · dev server embed headers (plain vs dev-tunnel)
         working-directory: ./_ci-page-vite
         run: ../scripts/ci/dev-tunnel-embed-probe.sh
 
-      - name: validate
+      - name: template-page-vite · validate
         working-directory: ./_ci-page-vite
         run: go run ../cmd/civitai app validate
 
-  # Rot-guard: scaffold the DEFAULT template (page-elements — web components,
-  # @civitai/sdk + @civitai/components + @civitai/theme) and run its JS toolchain
-  # against the PUBLISHED packages: install, typecheck, the app's own tests,
-  # build, validate. It scaffolds with NO --template, so it is also the check
-  # that plain `civitai app init` still produces a project that builds — the
-  # thing a first-time author runs. This job is the template's one end-to-end
-  # check; `bump-scaffold-pins.yml` repeats the same steps after a pin bump.
-  #
-  # Reports; it is NOT a required context until a maintainer adds it to branch
-  # protection (AGENTS.md item 11: measure, never infer, which jobs gate).
-  template-page-elements:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # ── template-page-elements ────────────────────────────────────────────────
+      #
+      # Rot-guard: scaffold the DEFAULT template (page-elements — web components,
+      # @civitai/sdk + @civitai/components + @civitai/theme) and run its JS toolchain
+      # against the PUBLISHED packages: install, typecheck, the app's own tests,
+      # build, validate. It scaffolds with NO --template, so it is also the check
+      # that plain `civitai app init` still produces a project that builds — the
+      # thing a first-time author runs. This job is the template's one end-to-end
+      # check; `bump-scaffold-pins.yml` repeats the same steps after a pin bump.
+      #
+      # It gates as part of `checks` (AGENTS.md item 11: measure, never infer,
+      # which contexts branch protection requires).
 
-      - uses: ./.github/actions/setup-go
-        with:
-          go-version: "1.25"
-
-      # node 24 (npm 11), NOT 22 (npm 10) — see template-page-money below.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - name: scaffold the default template
+      - name: template-page-elements · scaffold the default template
         run: |
           set -euo pipefail
           go run ./cmd/civitai app init "CI Elements Block" --dir ./_ci-page-elements --yes | tee scaffold.out
@@ -695,28 +696,28 @@ jobs:
           # some other template while reporting on this one.
           grep -F '(page-elements)' scaffold.out
 
-      - name: install
+      - name: template-page-elements · install
         working-directory: ./_ci-page-elements
         run: npm install --no-audit --no-fund
 
-      - name: typecheck
+      - name: template-page-elements · typecheck
         working-directory: ./_ci-page-elements
         run: npm run typecheck
 
-      - name: test
+      - name: template-page-elements · test
         working-directory: ./_ci-page-elements
         run: npm test
 
-      - name: build
+      - name: template-page-elements · build
         working-directory: ./_ci-page-elements
         run: npm run build
 
       # Same probe as template-page-vite; see scripts/ci/dev-tunnel-embed-probe.sh.
-      - name: dev server embed headers (plain vs dev-tunnel)
+      - name: template-page-elements · dev server embed headers (plain vs dev-tunnel)
         working-directory: ./_ci-page-elements
         run: ../scripts/ci/dev-tunnel-embed-probe.sh
 
-      - name: validate
+      - name: template-page-elements · validate
         working-directory: ./_ci-page-elements
         run: go run ../cmd/civitai app validate
 
@@ -725,7 +726,7 @@ jobs:
       # that renders its own copy, npm-installs it and runs tsc + vitest. It
       # SKIPS ITSELF unless CIVITAI_SCAFFOLD_TYPECHECK=1, so `build-test`'s plain
       # `go test ./...` never executes it; this step is what does.
-      - name: scratch/ probes cannot fail typecheck or tests
+      - name: template-page-elements · scratch/ probes cannot fail typecheck or tests
         env:
           CIVITAI_SCAFFOLD_TYPECHECK: "1"
         run: |
@@ -745,110 +746,74 @@ jobs:
             exit 1
           fi
 
-  # Rot-guard: scaffold the page-money template and run its JS toolchain against
-  # the PUBLISHED SDK (@civitai/blocks-react). Catches a template that renders
-  # but no longer installs / typechecks / tests / builds after an SDK bump — the
-  # out-of-the-box contract the template promises.
-  template-page-money:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # ── template-page-money ───────────────────────────────────────────────────
+      #
+      # Rot-guard: scaffold the page-money template and run its JS toolchain against
+      # the PUBLISHED SDK (@civitai/blocks-react). Catches a template that renders
+      # but no longer installs / typechecks / tests / builds after an SDK bump — the
+      # out-of-the-box contract the template promises.
 
-      - uses: ./.github/actions/setup-go
-        with:
-          go-version: "1.25"
-
-      # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
-      # `Cannot read properties of null (reading 'edgesOut')` while walking
-      # vitest -> its optional `jsdom@*` peer -> canvas, during `npm install`
-      # of a scaffolded page-money app. That froze EVERY PR in this repo
-      # (scaffold-currency is required + enforce_admins) with no code change,
-      # the moment vitest@5.0.0 published upstream. Measured: npm 10.9.9 fails
-      # on the unmodified template, npm 11.19.0 succeeds; overriding jsdom or
-      # pinning vitest does NOT fix it. Do not drop back to 22.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - name: scaffold page-money
+      - name: template-page-money · scaffold page-money
         run: go run ./cmd/civitai app init "CI Money Block" --dir ./_ci-page-money --template page-money
 
-      - name: install
+      - name: template-page-money · install
         working-directory: ./_ci-page-money
         run: npm install --no-audit --no-fund
 
-      - name: typecheck
+      - name: template-page-money · typecheck
         working-directory: ./_ci-page-money
         run: npm run typecheck
 
-      - name: test (node + dom suites)
+      - name: template-page-money · test (node + dom suites)
         working-directory: ./_ci-page-money
         run: npm test
 
-      - name: build
+      - name: template-page-money · build
         working-directory: ./_ci-page-money
         run: npm run build
 
       # Same probe as template-page-vite; see scripts/ci/dev-tunnel-embed-probe.sh.
-      - name: dev server embed headers (plain vs dev-tunnel)
+      - name: template-page-money · dev server embed headers (plain vs dev-tunnel)
         working-directory: ./_ci-page-money
         run: ../scripts/ci/dev-tunnel-embed-probe.sh
 
-      - name: validate
+      - name: template-page-money · validate
         working-directory: ./_ci-page-money
         run: go run ../cmd/civitai app validate
 
-  # Scaffold-currency guard — the "born-broken app" gate. Two rot-classes that
-  # pins-vs-published + template-page-money both MISS:
-  #
-  #   (a) ANTI-PATTERN gate — scaffold the SDK template, then scan the generated
-  #       source for a curated denylist of dead platform surfaces (the
-  #       deprecated @civitai/blocks-cli, the dead RESIZE_IFRAME host message).
-  #       A scaffold can compile and pass the pins guard yet still ship code
-  #       that does nothing at runtime. The denylist holds NO /api/v1/blocks/*
-  #       REST route: REST is the supported path for data, so the `buzz-rest`
-  #       and `shared-storage-rest` rules were removed — this job is required
-  #       and was enforcing the wrong direction.
-  #       Logic + fixtures live in internal/antipattern (offline table test); this
-  #       runs it against the real `civitai app init` output.
-  #
-  #   (b) LATEST-SDK build — install the ACTUAL newest published @civitai/app-sdk
-  #       + @civitai/blocks-react (not the pinned caret npm resolves to) and
-  #       re-typecheck + re-build. pins-vs-published catches "the pin can't admit
-  #       latest"; THIS catches "the template code breaks against latest" (a
-  #       removed/renamed SDK export). Network-dependent, so it keeps the
-  #       SKIP-on-unreachable contract pins-vs-published USED to have (that job
-  #       now FAILS a gating run when npm is unreachable — see pins-gate): a
-  #       reachability PROBE
-  #       gates the install/typecheck/build steps — an npm outage (network / DNS /
-  #       5xx / 429) SKIPS them (job stays green, indistinguishable-from-real is
-  #       avoided) while a reachable registry runs them and FAILS on a genuine
-  #       code-breaks-against-latest signal. (A peer-dep incompat where the pin
-  #       can't admit latest is already caught by pins-vs-published, so treating an
-  #       install failure under a REACHABLE registry as real is correct.) The
-  #       offline anti-pattern scan is hermetic and always runs.
-  scaffold-currency:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # ── scaffold-currency ─────────────────────────────────────────────────────
+      #
+      # Scaffold-currency guard — the "born-broken app" gate. Two rot-classes that
+      # pins-vs-published + template-page-money both MISS:
+      #
+      #   (a) ANTI-PATTERN gate — scaffold the SDK template, then scan the generated
+      #       source for a curated denylist of dead platform surfaces (the
+      #       deprecated @civitai/blocks-cli, the dead RESIZE_IFRAME host message).
+      #       A scaffold can compile and pass the pins guard yet still ship code
+      #       that does nothing at runtime. The denylist holds NO /api/v1/blocks/*
+      #       REST route: REST is the supported path for data, so the `buzz-rest`
+      #       and `shared-storage-rest` rules were removed — this job is required
+      #       and was enforcing the wrong direction.
+      #       Logic + fixtures live in internal/antipattern (offline table test); this
+      #       runs it against the real `civitai app init` output.
+      #
+      #   (b) LATEST-SDK build — install the ACTUAL newest published @civitai/app-sdk
+      #       + @civitai/blocks-react (not the pinned caret npm resolves to) and
+      #       re-typecheck + re-build. pins-vs-published catches "the pin can't admit
+      #       latest"; THIS catches "the template code breaks against latest" (a
+      #       removed/renamed SDK export). Network-dependent, so it keeps the
+      #       SKIP-on-unreachable contract pins-vs-published USED to have (that job
+      #       now FAILS a gating run when npm is unreachable — see pins-gate): a
+      #       reachability PROBE
+      #       gates the install/typecheck/build steps — an npm outage (network / DNS /
+      #       5xx / 429) SKIPS them (job stays green, indistinguishable-from-real is
+      #       avoided) while a reachable registry runs them and FAILS on a genuine
+      #       code-breaks-against-latest signal. (A peer-dep incompat where the pin
+      #       can't admit latest is already caught by pins-vs-published, so treating an
+      #       install failure under a REACHABLE registry as real is correct.) The
+      #       offline anti-pattern scan is hermetic and always runs.
 
-      - uses: ./.github/actions/setup-go
-        with:
-          go-version: "1.25"
-
-      # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
-      # `Cannot read properties of null (reading 'edgesOut')` while walking
-      # vitest -> its optional `jsdom@*` peer -> canvas, during `npm install`
-      # of a scaffolded page-money app. That froze EVERY PR in this repo
-      # (scaffold-currency is required + enforce_admins) with no code change,
-      # the moment vitest@5.0.0 published upstream. Measured: npm 10.9.9 fails
-      # on the unmodified template, npm 11.19.0 succeeds; overriding jsdom or
-      # pinning vitest does NOT fix it. Do not drop back to 22.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - name: scaffold page-money
+      - name: scaffold-currency · scaffold page-money
         run: go run ./cmd/civitai app init "CI Currency Block" --dir "$GITHUB_WORKSPACE/_ci-currency" --template page-money
 
       # (a) Anti-pattern gate on the scaffolded app.
@@ -857,7 +822,7 @@ jobs:
       #     the repo root, so a relative `./_ci-currency` would resolve under the
       #     package dir and lstat-fail. github.workspace anchors it to where the
       #     scaffold step wrote the app.
-      - name: anti-pattern scan (scaffolded app)
+      - name: scaffold-currency · anti-pattern scan (scaffolded app)
         env:
           CIVITAI_ANTIPATTERN_SCAN_DIR: ${{ github.workspace }}/_ci-currency
         run: |
@@ -887,7 +852,7 @@ jobs:
       #     now fails gating runs instead). A 200 on the
       #     /latest metadata means "reachable" — a real SDK break then fails at
       #     typecheck/build, not here.
-      - name: probe npm reachability
+      - name: scaffold-currency · probe npm reachability
         id: npmprobe
         run: |
           code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
@@ -914,7 +879,7 @@ jobs:
       #
       # Assert the probe actually published one of its two verdicts. This does
       # NOT re-decide reachability — it only refuses the third state.
-      - name: the reachability verdict exists
+      - name: scaffold-currency · the reachability verdict exists
         env:
           REACHABLE: ${{ steps.npmprobe.outputs.reachable }}
         run: |
@@ -928,22 +893,22 @@ jobs:
             echo "::notice title=scaffold-currency::the latest-SDK build check did not run this time — npm was unreachable. This job's green is a statement about the offline anti-pattern scan only."
           fi
 
-      - name: install (pinned)
+      - name: scaffold-currency · install (pinned)
         if: steps.npmprobe.outputs.reachable == 'true'
         working-directory: ./_ci-currency
         run: npm install --no-audit --no-fund
 
-      - name: install @latest SDK
+      - name: scaffold-currency · install @latest SDK
         if: steps.npmprobe.outputs.reachable == 'true'
         working-directory: ./_ci-currency
         run: npm install --no-audit --no-fund @civitai/app-sdk@latest @civitai/blocks-react@latest
 
-      - name: typecheck against latest SDK
+      - name: scaffold-currency · typecheck against latest SDK
         if: steps.npmprobe.outputs.reachable == 'true'
         working-directory: ./_ci-currency
         run: npm run typecheck
 
-      - name: build against latest SDK
+      - name: scaffold-currency · build against latest SDK
         if: steps.npmprobe.outputs.reachable == 'true'
         working-directory: ./_ci-currency
         run: npm run build

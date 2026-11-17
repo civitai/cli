@@ -11,8 +11,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The `pins-vs-published` job in ci.yml is a REQUIRED status check whose
-// blocking behaviour was deliberately narrowed: `internal/scaffold/cmd/pins-gate`
+// The pins-vs-published gate in ci.yml — once its own job, now the
+// `pins-vs-published · …` step of the REQUIRED `checks` job — has a
+// blocking behaviour that was deliberately narrowed: `internal/scaffold/cmd/pins-gate`
 // now decides, per run, whether a stale pin blocks (a pull request that touches
 // no pin input is warned, everything else gates). The decision is table-tested
 // beside the command. THIS file guards the other half — the YAML around it —
@@ -34,7 +35,7 @@ import (
 
 const (
 	pinsGateWorkflow = "ci.yml"
-	pinsGateJob      = "pins-vs-published"
+	pinsGateJob      = "checks"
 	pinsGateCmd      = "go run ./internal/scaffold/cmd/pins-gate"
 )
 
@@ -266,10 +267,10 @@ func TestPinsGateWorkflowGuardCanGoRed(t *testing.T) {
 		t.Fatalf("control: the unmodified workflow must be clean before its mutants mean anything, got %q", p)
 	}
 
-	const jobHead = "  pins-vs-published:\n    runs-on: ubuntu-latest\n"
+	const jobHead = "  checks:\n    runs-on: ubuntu-latest\n"
 	const invocation = "-event \"$GITHUB_EVENT_NAME\" -pr-head \"$PR_HEAD_SHA\" 2>&1 \\\n            | tee \"$RUNNER_TEMP/pins.log\"\n"
 	const verdictRe = `'^pins-gate: mode=(gate|advise) verdict=(ok|stale|unreachable) pins=[1-9][0-9]* blocking=0 exit=0$'`
-	const stepHead = "      - name: check scaffold pins vs npm latest\n"
+	const stepHead = "      - name: pins-vs-published · check scaffold pins vs npm latest\n"
 	// Anchored on the job's own head: another job in ci.yml may set the same
 	// `fetch-depth: 2`, and a bare anchor would then mutate whichever came first.
 	const checkout = jobHead + "    steps:\n      - uses: actions/checkout@v4\n"
@@ -279,8 +280,8 @@ func TestPinsGateWorkflowGuardCanGoRed(t *testing.T) {
 		old, new string
 		want     string // a substring only THIS assertion's message carries
 	}{
-		{"job renamed", "  pins-vs-published:\n", "  pins-vs-npm:\n", "there is no job with the key `pins-vs-published`"},
-		{"job removed (key commented out)", "  pins-vs-published:\n", "  # pins-vs-published:\n  some-other-job:\n", "there is no job with the key `pins-vs-published`"},
+		{"job renamed", "  checks:\n", "  pins-vs-npm:\n", "there is no job with the key `checks`"},
+		{"job removed (key commented out)", "  checks:\n", "  # checks:\n  some-other-job:\n", "there is no job with the key `checks`"},
 		{"job given a different display name", jobHead, jobHead + "    name: scaffold pins\n", "sets `name: scaffold pins`"},
 		{"job-level continue-on-error: true", jobHead, jobHead + "    continue-on-error: true\n", "sets `continue-on-error` at JOB level"},
 		{"job-level continue-on-error as an expression", jobHead, jobHead + "    continue-on-error: ${{ github.event_name == 'pull_request' }}\n", "sets `continue-on-error` at JOB level"},
@@ -290,7 +291,7 @@ func TestPinsGateWorkflowGuardCanGoRed(t *testing.T) {
 		{"step-level if on the gate", stepHead, stepHead + "        if: github.event_name != 'push'\n", "the pins-gate step has an `if:`"},
 		{"fetch-depth dropped", checkout + "        with:\n          fetch-depth: 2\n", checkout, "does not set `fetch-depth: 2`"},
 		{"fetch-depth: 1", checkout + "        with:\n          fetch-depth: 2\n", checkout + "        with:\n          fetch-depth: 1\n", "does not set `fetch-depth: 2`"},
-		{"the command no longer runs", pinsGateCmd + " \\\n", "go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished \\\n", "0 step(s) of `pins-vs-published` run"},
+		{"the command no longer runs", pinsGateCmd + " \\\n", "go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished \\\n", "0 step(s) of `checks` run"},
 		{"event hardcoded to pull_request", `-event "$GITHUB_EVENT_NAME"`, `-event pull_request`, "must pass `-event \"$GITHUB_EVENT_NAME\"` exactly once"},
 		{"a second -event flag appended", invocation, strings.Replace(invocation, " 2>&1", " -event pull_request 2>&1", 1), "must pass `-event \"$GITHUB_EVENT_NAME\"` exactly once (found 2"},
 		{"pr head no longer the event's", "PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}", "PR_HEAD_SHA: ${{ github.sha }}", "must pass `-pr-head \"$PR_HEAD_SHA\"` with"},
