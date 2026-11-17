@@ -181,9 +181,9 @@ var redactionRows = []redactionRow{
 	},
 	{
 		name:      "a query string and the fragment after it are both dropped",
-		in:        "see https://developer.civitai.com/apps/guide?ref=ck_41d7e2#scopes",
+		in:        "see https://developer.civitai.com/apps/guide/?ref=ck_41d7e2#scopes",
 		secret:    "ck_41d7e2",
-		wantOut:   "see https://developer.civitai.com/apps/guide",
+		wantOut:   "see https://developer.civitai.com/apps/guide/",
 		kind:      KindURLQuery,
 		wantCount: 1,
 	},
