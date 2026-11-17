@@ -188,7 +188,7 @@ func TestFeedbackSendPostsTheRedactedReport(t *testing.T) {
 
 	out, errOut, err := run(t, "--no-color", "feedback", "send",
 		"--about", "review", "--kind", "confusing", "--ref", "submit.server-refused",
-		"--doc", "https://developer.civitai.com/apps/guide/review-and-deploy", "--app", "tide-chart",
+		"--doc", "https://developer.civitai.com/site/guide/cli", "--app", "tide-chart",
 		"--error-file", logPath,
 		"submit from /Users/lindqvist/tide-chart was refused with a 500 and no message")
 	if err != nil {
@@ -199,7 +199,7 @@ func TestFeedbackSendPostsTheRedactedReport(t *testing.T) {
 		`"about":"review","kind":"confusing","ref":"submit.server-refused",` +
 		`"client":{"name":"civitai-cli","version":"0.1.96"},"os":"linux","arch":"amd64",` +
 		`"sdk":[{"name":"@civitai/app-sdk","version":"^0.69.0"},{"name":"@civitai/blocks-react","version":"0.14.2"}],` +
-		`"docUrl":"https://developer.civitai.com/apps/guide/review-and-deploy",` +
+		`"docUrl":"https://developer.civitai.com/site/guide/cli",` +
 		`"errorExcerpt":"Error: ENOENT ~/work/tide-chart/dist/index.html\n  mailto \u003cemail\u003e",` +
 		`"appSlug":"tide-chart"}}}`
 	if got := pfSentBody(t, f); got != want {
@@ -288,7 +288,7 @@ func TestFeedbackSendDryRunJSONGolden(t *testing.T) {
 	f := &pfFake{t: t}
 	f.serve()
 	out, _, err := run(t, "feedback", "send", "--about", "docs", "--kind", "missing",
-		"--doc", "https://developer.civitai.com/apps/reference/scopes", "--dry-run", "--json",
+		"--doc", "https://developer.civitai.com/site/guide/cli", "--dry-run", "--json",
 		"the scopes page does not list the dev-token scope; I am quillon.vance@harborlight.dev")
 	if err != nil {
 		t.Fatalf("feedback send --dry-run --json: %v", err)
