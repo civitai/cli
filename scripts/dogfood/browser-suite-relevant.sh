@@ -31,6 +31,7 @@
 # Changing a pattern here changes what a PR is allowed to skip. The table test
 # (dogfood_browser_relevance_test.go) pins one row per class.
 set -uo pipefail
+echo "probe #920: deliberate classifier crash" >&2; exit 3
 
 event="${1:-}"
 list="${2:-}"
