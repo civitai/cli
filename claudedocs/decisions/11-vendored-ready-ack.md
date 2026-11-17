@@ -171,9 +171,6 @@ deleting it:
       `ready_ack_runtime_test.go`, claimed one "BLOCKS the merge" while it did
       not. That claim was false when written and is true now only because the
       contexts were added — not because the job runs.
-      Since the `checks` job landed, `pins-vs-published`, `ready-ack-runtime`,
-      `template-page-*` and `scaffold-currency` are STEPS of `checks`, so the
-      list above names jobs that no longer exist — re-measure.
       If you add a template, add nothing — Guard A picks it up automatically and
       fails until `ReadyAckPath()` is set.
     - **`BLOCK_HELLO` now exists host-side, and the emitter deliberately does
