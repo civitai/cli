@@ -372,9 +372,14 @@ jobs:
   # GitHub-hosted runner first. On this repo that wait — not the work — is
   # what a run's wall time is made of: the runner pool hands out runners
   # slowly, so a run that asks for ten jobs pays the wait ten times over. They
-  # are now steps of this one job, in the same order they had in this file,
-  # and every step's name is prefixed with the job it came from
-  # (`<former job> · <step>`), so a red run still says which gate failed.
+  # are now steps of this one job, and every step's name is prefixed with the
+  # job it came from (`<former job> · <step>`), so a red run still says which
+  # gate failed. pins-vs-published runs LAST: on a push to main it fails
+  # whenever npm has published a newer @civitai/* minor, and as the first
+  # step it would skip the other five on every main run until the bump bot's
+  # PR merged (stale windows have run 34 h). It reads only commits (its diff
+  # is HEAD^1..HEAD) and npm, never the working tree, so it has no ordering
+  # dependency on the scaffolds before it.
   #
   # 🔴 THE REQUIRED CONTEXT IS NOW `checks`. Branch protection used to name
   # five of the six jobs (pins-vs-published, ready-ack-runtime,
@@ -417,111 +422,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-
-      # ── pins-vs-published ─────────────────────────────────────────────────────
-      #
-      # Rot-guard: assert each scaffold template's `@civitai/*` pin still ADMITS the
-      # version npm currently publishes as `latest`. A pre-1.0 caret (`^0.24.0`)
-      # locks the minor, so a pin that falls behind npm silently ships apps that are
-      # born stale — and `npm install` won't catch it (it resolves the caret to the
-      # newest version the stale range still admits). This is the network half of
-      # the scaffold guard.
-      #
-      # 🔴 THIS JOB IS A REQUIRED CONTEXT THAT COMPARES AGAINST SOMETHING NO PULL
-      # REQUEST CONTROLS, and until this was rewritten it failed EVERY open PR the
-      # moment a `@civitai/*` minor was published. Measured over the 399 CI runs of
-      # 2026-09-20..10-12: this job failed 72 times, and every one of those logs is
-      # a STALE SCAFFOLD PIN verdict. Across the 118 PRs merged in that window it
-      # was the ONLY failing job on 52 of their 264 CI runs, and 25 of those PRs hit
-      # it at least once — only 5 of the 25 touched a pin input. Each waited on the
-      # bump bot's PR and then a re-push, for a version number on a registry.
-      #
-      # So the step now ALWAYS REPORTS and only SOMETIMES BLOCKS, and the decision is
-      # made in ONE place — `internal/scaffold/cmd/pins-gate`, table-tested there:
-      #
-      #   pull_request, diff touches NO pin input   stale       → ::warning + summary, step GREEN
-      #                                             npm down    → ::warning (distinct title), step GREEN
-      #                                             pin invalid → step RED
-      #   pull_request, diff touches a pin input    any of them → step RED   (as before)
-      #   push to main / workflow_dispatch /        any of them → step RED
-      #   schedule / any event it does not know
-      #
-      # A red step fails `checks`, the required context. Three things here are
-      # load-bearing and each is pinned by `workflow_pins_gate_test.go`, with a
-      # broken variant per assertion:
-      #
-      #   * THE JOB KEY. Branch protection requires the context `checks` by NAME
-      #     (it was `pins-vs-published` while this was its own job). Renamed, the
-      #     required check is never reported and every PR hangs "expected"; that
-      #     is why this is a downgrade inside the step and not a `paths:` filter
-      #     or a second job.
-      #   * NO `continue-on-error` anywhere in `checks`, and NO `if:` on the job
-      #     or on this step. Either makes the gate unable to block ANYWHERE — main
-      #     included — while still painting the context green. A skipped required
-      #     job satisfies protection.
-      #   * `fetch-depth: 2`. The pull request's diff is read off the merge commit
-      #     checkout leaves at HEAD (`HEAD^1` is the base, `HEAD^2` the PR head). At
-      #     the default depth 1 neither parent is visible, pins-gate cannot tell
-      #     what the PR changed, and — because it fails CLOSED — every PR gates
-      #     again. Nothing would look broken; the downgrade would just be inert.
-      #
-      # 🔴 "npm UNREACHABLE" IS NO LONGER A GREEN ON A RUN THAT GATES. It used to be
-      # a `t.Skipf` with a ::notice — on main and on a PR that changed a pin alike.
-      # Now that most runs do not gate, the ones that still do carry the whole
-      # weight, and a gate that could not look reporting success is a claim about
-      # nothing. pins-gate retries three times first; if the registry is still down
-      # a gating run fails with its own title (`NOT CHECKED, npm unreachable`), and
-      # the fix is to re-run it.
-      #
-      # The pin-input list, and why it is wider than "the templates", lives beside
-      # `pinInputs` in pins-gate/main.go. It is held to the build graph by a test,
-      # so this comment deliberately does not copy it.
-
-      - name: pins-vs-published · check scaffold pins vs npm latest
-        env:
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -uo pipefail
-
-          # `go run`, not `go test -run`: the two vacuous greens the old step
-          # needed controls for are gone by construction. There is no name
-          # pattern to match nothing (shape 1), and a binary cannot be replayed
-          # from GOCACHE the way a test RESULT can (shape 3). That second one
-          # was measured on the old step, which is why it carried `-count=1` —
-          # the same `go test -run TestScaffoldPinsSatisfyPublished -v` twice:
-          #     --- PASS: TestScaffoldPinsSatisfyPublished (0.46s)
-          #     ok  github.com/civitai/cli/internal/scaffold  0.460s
-          #     --- PASS: TestScaffoldPinsSatisfyPublished (0.46s)
-          #     ok  github.com/civitai/cli/internal/scaffold  (cached)
-          # The second run contacted npm ZERO times and replayed the first run's
-          # timing and PASS line verbatim out of GOCACHE — which every job here
-          # restores across runs (.github/actions/setup-go). Go's test cache
-          # tracks the env vars a test reads; it does NOT track what npm
-          # published. If this step ever goes back to `go test`, `-count=1` goes
-          # back with it.
-          #
-          # `$GITHUB_EVENT_NAME` comes from the runner, NOT from a literal here:
-          # a literal would let this file decide which runs gate.
-          #
-          # errexit is on (see the ERREXIT NOTE at the top), so a non-zero exit
-          # from pins-gate kills the step AT THE PIPE — that is the gate.
-          go run ./internal/scaffold/cmd/pins-gate \
-            -event "$GITHUB_EVENT_NAME" -pr-head "$PR_HEAD_SHA" 2>&1 \
-            | tee "$RUNNER_TEMP/pins.log"
-
-          # POSITIVE CONTROL — the remaining vacuous green. Exit 0 must mean
-          # "pins-gate reached a verdict over at least one pin", so require its
-          # own last line. `pins=[1-9]` is the ONLY thing that rejects a green
-          # over zero pins: pins-gate refuses that itself, but the refusal sits
-          # behind `go:embed`, so no Go test can present it with zero pins and
-          # it survives a mutation battery. `workflow_pins_gate_test.go` fails
-          # if this line is deleted or loosened. `verdict=broken` and `exit=1|2` are deliberately not
-          # accepted: they cannot reach this line, and if one ever does the
-          # command and its exit code have come apart.
-          if ! grep -Eq -- '^pins-gate: mode=(gate|advise) verdict=(ok|stale|unreachable) pins=[1-9][0-9]* blocking=0 exit=0$' "$RUNNER_TEMP/pins.log"; then
-            echo "::error::pins-gate exited 0 without printing a passing verdict line over at least one pin. A green here would have been a claim about nothing."
-            exit 1
-          fi
 
       # ── ready-ack-runtime ─────────────────────────────────────────────────────
       #
@@ -912,3 +812,108 @@ jobs:
         if: steps.npmprobe.outputs.reachable == 'true'
         working-directory: ./_ci-currency
         run: npm run build
+
+      # ── pins-vs-published ─────────────────────────────────────────────────────
+      #
+      # Rot-guard: assert each scaffold template's `@civitai/*` pin still ADMITS the
+      # version npm currently publishes as `latest`. A pre-1.0 caret (`^0.24.0`)
+      # locks the minor, so a pin that falls behind npm silently ships apps that are
+      # born stale — and `npm install` won't catch it (it resolves the caret to the
+      # newest version the stale range still admits). This is the network half of
+      # the scaffold guard.
+      #
+      # 🔴 THIS JOB IS A REQUIRED CONTEXT THAT COMPARES AGAINST SOMETHING NO PULL
+      # REQUEST CONTROLS, and until this was rewritten it failed EVERY open PR the
+      # moment a `@civitai/*` minor was published. Measured over the 399 CI runs of
+      # 2026-09-20..10-12: this job failed 72 times, and every one of those logs is
+      # a STALE SCAFFOLD PIN verdict. Across the 118 PRs merged in that window it
+      # was the ONLY failing job on 52 of their 264 CI runs, and 25 of those PRs hit
+      # it at least once — only 5 of the 25 touched a pin input. Each waited on the
+      # bump bot's PR and then a re-push, for a version number on a registry.
+      #
+      # So the step now ALWAYS REPORTS and only SOMETIMES BLOCKS, and the decision is
+      # made in ONE place — `internal/scaffold/cmd/pins-gate`, table-tested there:
+      #
+      #   pull_request, diff touches NO pin input   stale       → ::warning + summary, step GREEN
+      #                                             npm down    → ::warning (distinct title), step GREEN
+      #                                             pin invalid → step RED
+      #   pull_request, diff touches a pin input    any of them → step RED   (as before)
+      #   push to main / workflow_dispatch /        any of them → step RED
+      #   schedule / any event it does not know
+      #
+      # A red step fails `checks`, the required context. Three things here are
+      # load-bearing and each is pinned by `workflow_pins_gate_test.go`, with a
+      # broken variant per assertion:
+      #
+      #   * THE JOB KEY. Branch protection requires the context `checks` by NAME
+      #     (it was `pins-vs-published` while this was its own job). Renamed, the
+      #     required check is never reported and every PR hangs "expected"; that
+      #     is why this is a downgrade inside the step and not a `paths:` filter
+      #     or a second job.
+      #   * NO `continue-on-error` anywhere in `checks`, and NO `if:` on the job
+      #     or on this step. Either makes the gate unable to block ANYWHERE — main
+      #     included — while still painting the context green. A skipped required
+      #     job satisfies protection.
+      #   * `fetch-depth: 2`. The pull request's diff is read off the merge commit
+      #     checkout leaves at HEAD (`HEAD^1` is the base, `HEAD^2` the PR head). At
+      #     the default depth 1 neither parent is visible, pins-gate cannot tell
+      #     what the PR changed, and — because it fails CLOSED — every PR gates
+      #     again. Nothing would look broken; the downgrade would just be inert.
+      #
+      # 🔴 "npm UNREACHABLE" IS NO LONGER A GREEN ON A RUN THAT GATES. It used to be
+      # a `t.Skipf` with a ::notice — on main and on a PR that changed a pin alike.
+      # Now that most runs do not gate, the ones that still do carry the whole
+      # weight, and a gate that could not look reporting success is a claim about
+      # nothing. pins-gate retries three times first; if the registry is still down
+      # a gating run fails with its own title (`NOT CHECKED, npm unreachable`), and
+      # the fix is to re-run it.
+      #
+      # The pin-input list, and why it is wider than "the templates", lives beside
+      # `pinInputs` in pins-gate/main.go. It is held to the build graph by a test,
+      # so this comment deliberately does not copy it.
+
+      - name: pins-vs-published · check scaffold pins vs npm latest
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+
+          # `go run`, not `go test -run`: the two vacuous greens the old step
+          # needed controls for are gone by construction. There is no name
+          # pattern to match nothing (shape 1), and a binary cannot be replayed
+          # from GOCACHE the way a test RESULT can (shape 3). That second one
+          # was measured on the old step, which is why it carried `-count=1` —
+          # the same `go test -run TestScaffoldPinsSatisfyPublished -v` twice:
+          #     --- PASS: TestScaffoldPinsSatisfyPublished (0.46s)
+          #     ok  github.com/civitai/cli/internal/scaffold  0.460s
+          #     --- PASS: TestScaffoldPinsSatisfyPublished (0.46s)
+          #     ok  github.com/civitai/cli/internal/scaffold  (cached)
+          # The second run contacted npm ZERO times and replayed the first run's
+          # timing and PASS line verbatim out of GOCACHE — which every job here
+          # restores across runs (.github/actions/setup-go). Go's test cache
+          # tracks the env vars a test reads; it does NOT track what npm
+          # published. If this step ever goes back to `go test`, `-count=1` goes
+          # back with it.
+          #
+          # `$GITHUB_EVENT_NAME` comes from the runner, NOT from a literal here:
+          # a literal would let this file decide which runs gate.
+          #
+          # errexit is on (see the ERREXIT NOTE at the top), so a non-zero exit
+          # from pins-gate kills the step AT THE PIPE — that is the gate.
+          go run ./internal/scaffold/cmd/pins-gate \
+            -event "$GITHUB_EVENT_NAME" -pr-head "$PR_HEAD_SHA" 2>&1 \
+            | tee "$RUNNER_TEMP/pins.log"
+
+          # POSITIVE CONTROL — the remaining vacuous green. Exit 0 must mean
+          # "pins-gate reached a verdict over at least one pin", so require its
+          # own last line. `pins=[1-9]` is the ONLY thing that rejects a green
+          # over zero pins: pins-gate refuses that itself, but the refusal sits
+          # behind `go:embed`, so no Go test can present it with zero pins and
+          # it survives a mutation battery. `workflow_pins_gate_test.go` fails
+          # if this line is deleted or loosened. `verdict=broken` and `exit=1|2` are deliberately not
+          # accepted: they cannot reach this line, and if one ever does the
+          # command and its exit code have come apart.
+          if ! grep -Eq -- '^pins-gate: mode=(gate|advise) verdict=(ok|stale|unreachable) pins=[1-9][0-9]* blocking=0 exit=0$' "$RUNNER_TEMP/pins.log"; then
+            echo "::error::pins-gate exited 0 without printing a passing verdict line over at least one pin. A green here would have been a claim about nothing."
+            exit 1
+          fi

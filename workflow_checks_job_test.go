@@ -33,15 +33,26 @@ import (
 const ckJob = "checks"
 
 // The ledger: exactly these former jobs are steps of `checks`, in this order,
-// each step named `<former job> · <step>`.
+// each step named `<former job> · <step>`. pins-vs-published is LAST on
+// purpose — see the comment above `checks:` in ci.yml.
 var ckGates = []string{
-	"pins-vs-published",
 	"ready-ack-runtime",
 	"template-page-vite",
 	"template-page-elements",
 	"template-page-money",
 	"scaffold-currency",
+	"pins-vs-published",
 }
+
+// The only step-level `if:` allowed in `checks`: scaffold-currency's four
+// latest-SDK steps, skipped when npm is unreachable (a deliberate contract,
+// backstopped by its own "reachability verdict exists" step). Any other `if:`
+// lets a gate skip itself while `checks` reports green.
+const (
+	ckAllowedIfGate  = "scaffold-currency"
+	ckAllowedIf      = "steps.npmprobe.outputs.reachable == 'true'"
+	ckAllowedIfCount = 4
+)
 
 const ckSep = " · "
 
@@ -49,6 +60,7 @@ type ckStep struct {
 	Name            string    `yaml:"name"`
 	Uses            string    `yaml:"uses"`
 	Run             string    `yaml:"run"`
+	If              string    `yaml:"if"`
 	ContinueOnError yaml.Node `yaml:"continue-on-error"`
 }
 
@@ -94,7 +106,15 @@ func checksJobProblems(raw []byte) []string {
 
 	var order []string
 	seen := map[string]bool{}
+	gatedIfs := 0
 	for i, st := range job.Steps {
+		if st.If != "" {
+			if strings.HasPrefix(st.Name, ckAllowedIfGate+ckSep) && st.If == ckAllowedIf {
+				gatedIfs++
+			} else {
+				add("step %d (%s) of `%s` has `if: %s` — only %s's npm-reachability steps may skip themselves (`if: %s`); any other condition lets a gate not run while `%s` is green", i+1, st.Name, ckJob, st.If, ckAllowedIfGate, ckAllowedIf, ckJob)
+			}
+		}
 		if !st.ContinueOnError.IsZero() {
 			add("step %d (%s) of `%s` sets `continue-on-error` — one gate's red would no longer fail the job", i+1, st.Name, ckJob)
 		}
@@ -110,6 +130,9 @@ func checksJobProblems(raw []byte) []string {
 			seen[g] = true
 			order = append(order, g)
 		}
+	}
+	if gatedIfs != ckAllowedIfCount {
+		add("%d step(s) of `%s` carry `if: %s`, want exactly %d (scaffold-currency's latest-SDK steps)", gatedIfs, ckJob, ckAllowedIf, ckAllowedIfCount)
 	}
 	if got, want := strings.Join(order, ","), strings.Join(ckGates, ","); got != want {
 		add("the gates run by `%s` are [%s], want exactly [%s] in that order — a gate missing here is a check that silently stopped running; a new one must be added to this ledger on purpose", ckJob, got, want)
@@ -147,8 +170,11 @@ func TestChecksJobGuardRejectsBrokenVariants(t *testing.T) {
 		{"job-level continue-on-error", jobHead, jobHead + "    continue-on-error: true\n", "job-level `continue-on-error`"},
 		{"step continue-on-error", "      - name: template-page-money · build\n", "      - name: template-page-money · build\n        continue-on-error: true\n", "sets `continue-on-error`"},
 		{"unprefixed step name", "      - name: template-page-vite · build\n", "      - name: build\n", "without the `<former job> · ` prefix"},
-		{"a gate dropped", "      - name: ready-ack-runtime · scaffolded ready-ack actually fires\n", "      - name: template-page-vite · scaffolded ready-ack actually fires\n", "want exactly [pins-vs-published,ready-ack-runtime"},
-		{"an unledgered gate added", "      - name: template-page-money · validate\n", "      - name: template-page-sdk · validate\n", "want exactly [pins-vs-published"},
+		{"a gate dropped", "      - name: ready-ack-runtime · scaffolded ready-ack actually fires\n", "      - name: template-page-vite · scaffolded ready-ack actually fires\n", "want exactly [ready-ack-runtime,template-page-vite"},
+		{"an unledgered gate added", "      - name: template-page-money · validate\n", "      - name: template-page-sdk · validate\n", "want exactly [ready-ack-runtime"},
+		{"a gate step given an if", "      - name: ready-ack-runtime · scaffolded ready-ack actually fires\n", "      - name: ready-ack-runtime · scaffolded ready-ack actually fires\n        if: github.event_name == 'push'\n", "only scaffold-currency's npm-reachability steps may skip themselves"},
+		{"an npm-gated step loses its if", "      - name: scaffold-currency · build against latest SDK\n        if: steps.npmprobe.outputs.reachable == 'true'\n", "      - name: scaffold-currency · build against latest SDK\n", "want exactly 4"},
+		{"pins moved back to first", "      # ── ready-ack-runtime ", "      - name: pins-vs-published · early\n        run: true\n\n      # ── ready-ack-runtime ", "want exactly [ready-ack-runtime"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
