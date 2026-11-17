@@ -393,6 +393,14 @@ Listing-completeness gate:
   Your FIRST submit is what creates the store listing, so there is nothing to
   check yet and nothing is refused; the gate applies from the second one on.
 
+GitHub Actions:
+  When CIVITAI_GITHUB_OIDC_TOKEN is set (the civitai/app-submit-action Action
+  sets it on a tag push), the token is sent with the submit. The server checks
+  it with GitHub and records the workflow run's repository, tag and commit
+  with the submission; a token that fails that check refuses the submit, and
+  the error says why. It is read from the environment only (there is no flag,
+  so it never appears on the command line) and is never printed.
+
 Storage migration notes:
   An app that declares App Storage collections is checked by the SERVER
   against the previous approved version. An accepted submit prints the
@@ -525,6 +533,15 @@ Defaults to the current directory.`,
 				prov, err = checkWorkTreeClean(gitOutput, cmd.ErrOrStderr(), dir, m.BlockID, m.Version, allowDirty)
 				if err != nil {
 					return err
+				}
+				// 2a'. GITHUB ACTIONS OIDC TOKEN, when the environment carries one
+				// (the civitai/app-submit-action Action sets it on a tag push). The
+				// server verifies it and records the run's repository, tag and
+				// commit; see githubOIDCTokenFromEnv. Only on the upload path: the
+				// paths that send nothing carry nothing.
+				if tok := githubOIDCTokenFromEnv(); tok != "" {
+					prov.GitHubOIDCToken = tok
+					fmt.Fprintf(cmd.ErrOrStderr(), "Sending the GitHub Actions OIDC token from %s with this submit.\n", GitHubOIDCTokenEnv)
 				}
 
 				if err := confirmSubmit(cmd, m, cfg.BaseURL(), assumeYes); err != nil {
@@ -806,6 +823,7 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 	}
 	base := strings.TrimRight(baseURL, "/")
 	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Submitted — %s is pending moderator review.", r.PublishRequestID)))
+	printActionsRunSourceRecorded(out, r.ActionsRunSourceRecorded)
 	printSubmitListingReadiness(out, r.Listing)
 	printStorageMigrationWarnings(out, r.StorageMigrationWarnings)
 	fmt.Fprintf(out, "\nWhat's next: a moderator reviews it; on approval it builds + deploys to %s (usually a few minutes).\n", ui.URL(fmt.Sprintf("https://%s.civit.ai", r.Slug)))
@@ -819,6 +837,40 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 	}
 	printMoneyPathNote(out, m)
 	return nil
+}
+
+// GitHubOIDCTokenEnv names the environment variable `app submit` reads a GitHub
+// Actions OIDC token from.
+const GitHubOIDCTokenEnv = "CIVITAI_GITHUB_OIDC_TOKEN"
+
+// githubOIDCTokenFromEnv returns the GitHub Actions OIDC token to send with a
+// submit, or "" when there is none.
+//
+// 🔴 ENVIRONMENT ONLY, NO FLAG. A flag value sits on argv, where any process on
+// the runner can read it and where shells and CI logs echo it. The token is a
+// short-lived credential, so it is read here and goes into the request body and
+// nowhere else; nothing prints it.
+//
+// The CLI does not request, parse or check the token: the server verifies it
+// (signature, audience, expiry, one use, a tag push whose tag is the manifest
+// version) and refuses the submit when it fails. A server whose
+// `app-blocks-oidc-verified-submit` flag is off ignores it.
+func githubOIDCTokenFromEnv() string {
+	return strings.TrimSpace(os.Getenv(GitHubOIDCTokenEnv))
+}
+
+// printActionsRunSourceRecorded reports what the server did with a GitHub
+// Actions OIDC token. nil (no token sent, the server's flag off, or an older
+// server) prints nothing.
+func printActionsRunSourceRecorded(out io.Writer, recorded *bool) {
+	if recorded == nil {
+		return
+	}
+	if *recorded {
+		fmt.Fprintln(out, "GitHub Actions run verified and recorded with this submission.")
+		return
+	}
+	fmt.Fprintln(out, "GitHub Actions run verified, but the server could not record it with this submission.")
 }
 
 // printListingFloorHeadsUp is a non-fatal reminder (issue #186 point 4) that a
