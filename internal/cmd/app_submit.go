@@ -514,11 +514,22 @@ Defaults to the current directory.`,
 				// app submit` — the accidental-footgun invocation, which refuses
 				// for lack of --yes — an API read it does not have today, and
 				// TestAppSubmit_NonTTYRefusesWithoutYes_NoNetworkCall pins that.
-				// This guard reads only the local filesystem through `git`, so
-				// running it first acquires nothing: that test's invocation still
-				// touches no network, and it keeps the CLI from asking "Submit
-				// for review? [y/N]" about a submit it has already decided to
-				// refuse. Pinned by TestDirtyGuardRefusesBeforePrompting.
+				// This guard reads the local filesystem through `git`, and
+				// makes NO call to the Civitai API, so running it first adds no
+				// API read: that test's invocation (a directory that is not a git
+				// repo) still touches no network, and it keeps the CLI from
+				// asking "Submit for review? [y/N]" about a submit it has already
+				// decided to refuse. Pinned by TestDirtyGuardRefusesBeforePrompting.
+				//
+				// 🔴 ONE EXCEPTION, AND IT IS TO THE USER'S GIT REMOTES, NOT TO
+				// CIVITAI. A clean tree whose HEAD is in no remote-tracking ref
+				// (outside GitHub Actions, or there with GITHUB_SHA != HEAD) runs
+				// `git ls-remote` against each configured remote before deciding
+				// whether to warn — see headIsARemoteTip. It is bounded (under
+				// 2×gitNetworkTimeout in total) and non-interactive, and every
+				// failure just keeps the warning. So a bare non-TTY submit on an
+				// unpushed commit can now contact the user's git remotes before
+				// it refuses for lack of --yes.
 				//
 				// It runs only on the canUpload path, for the same reason the
 				// version guard does: --package-only and the no-token fallback

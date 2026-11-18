@@ -154,13 +154,24 @@ func gitScrubbedEnv(env []string) []string {
 // process holds.
 //
 // 🔴 `ls-remote` IS THE ONE CALL HERE THAT LEAVES THE MACHINE, and it is run so
-// that it can neither hang a submit nor stop to ask the user anything: a hard
-// timeout (gitNetworkTimeout, with WaitDelay so an ssh grandchild holding the
-// stdout pipe cannot outlive it), GIT_TERMINAL_PROMPT=0 and
-// SSH_ASKPASS_REQUIRE=never so no credential or passphrase prompt is raised,
-// and on unix a new session (detachFromTerminal) so ssh has no /dev/tty to
-// prompt on. Each of those turns a would-be prompt into a failed call, and a
-// failed call keeps the pre-existing warning (see headIsARemoteTip).
+// that it can neither hang a submit nor stop to ask the user anything:
+//   - a hard timeout (gitNetworkTimeout). On unix the cancel kills git's whole
+//     process group (detachFromTerminal), because killing git alone leaves a
+//     hung ssh child running, re-parented to init. WaitDelay bounds the pipe
+//     copy if anything still holds stdout.
+//   - GIT_TERMINAL_PROMPT=0: no terminal credential prompt.
+//   - GIT_ASKPASS set EMPTY: git stops its askpass lookup at a set-but-empty
+//     GIT_ASKPASS, so neither core.askPass nor SSH_ASKPASS is run for an https
+//     credential. GIT_TERMINAL_PROMPT=0 alone does NOT stop askpass: VS Code's
+//     terminal and desktop SSH_ASKPASS setups would otherwise open a dialog.
+//   - SSH_ASKPASS_REQUIRE=never: ssh itself does not use askpass either.
+//   - on unix, a new session (detachFromTerminal), so ssh has no /dev/tty to
+//     ask for a passphrase or host-key confirmation on.
+//
+// Each of those turns a would-be prompt into a failed call, and a failed call
+// keeps the pre-existing warning (see headIsARemoteTip). Not covered: a
+// configured credential HELPER, and an ssh agent that asks for confirmation
+// on every use. Both are the user's own setup.
 var gitOutput gitOutputFunc = func(dir string, args ...string) (string, error) {
 	if _, err := exec.LookPath("git"); err != nil {
 		return "", errGitUnavailable
@@ -175,7 +186,7 @@ var gitOutput gitOutputFunc = func(dir string, args ...string) (string, error) {
 	c := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "--no-optional-locks"}, args...)...)
 	c.Env = gitScrubbedEnv(os.Environ())
 	if network {
-		c.Env = append(c.Env, "GIT_TERMINAL_PROMPT=0", "SSH_ASKPASS_REQUIRE=never")
+		c.Env = append(c.Env, "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "SSH_ASKPASS_REQUIRE=never")
 		c.WaitDelay = time.Second
 		detachFromTerminal(c)
 	}
@@ -192,9 +203,12 @@ var gitOutput gitOutputFunc = func(dir string, args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-// gitNetworkTimeout bounds the `ls-remote` in headIsARemoteTip, per remote. It
-// only ever decides whether to print a warning, so it is short.
-const gitNetworkTimeout = 10 * time.Second
+// gitNetworkTimeout bounds one `ls-remote` call in headIsARemoteTip. That
+// function also starts no new call once this much time has passed in total, so
+// the whole remote check takes under twice this long however many remotes are
+// configured. It only ever decides whether to print a warning, so it is short.
+// It is a var only so tests can shorten it.
+var gitNetworkTimeout = 5 * time.Second
 
 // dirtyPathListCap bounds how many paths the refusal prints. A tree with 400
 // uncommitted files should say so and show a sample, not emit 400 lines into a
@@ -438,7 +452,13 @@ func headIsARemoteTip(git gitOutputFunc, dir, head string) bool {
 	if err != nil {
 		return false
 	}
+	start := time.Now()
 	for _, name := range strings.Fields(names) {
+		if time.Since(start) >= gitNetworkTimeout {
+			// Total budget spent (see gitNetworkTimeout): N unreachable remotes
+			// must not cost N timeouts before the confirmation prompt.
+			break
+		}
 		if strings.HasPrefix(name, "-") {
 			// Would be parsed as an option by ls-remote; not worth a guess.
 			continue
