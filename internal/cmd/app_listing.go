@@ -342,12 +342,10 @@ has to decide which needs both ids. The server's own editTargetId is NOT in
 there: this CLI does not decode that field, and reporting an id it never read
 would be a guess.
 
-This is a read, with or without --json: it asks the server for the read-only
-view, so on a LIVE listing it reports an existing shadow revision (shadowId) but
-never opens one, and with no revision draft shadowId is null. Older civitai.com
-servers ignore that request and still open the shadow revision on a successful
-call (civitai/cli#389 settled that a FAILED call writes nothing), so against one
-of those, do not poll it in a loop.`,
+This is a read, with or without --json: it asks for the read-only view, so on
+a LIVE listing it reports an existing shadow revision but never opens one.
+Older servers ignore that and open the shadow revision on a successful call
+(civitai/cli#389: a FAILED call writes nothing), so do not poll those.`,
 		Example: `  civitai app listing status
   civitai app listing status --slug my-app
   civitai app listing status --dir ./my-app
