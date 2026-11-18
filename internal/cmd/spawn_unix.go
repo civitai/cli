@@ -33,3 +33,13 @@ func detachAndStart(cmd *exec.Cmd) error {
 	// an orphan once the parent exits.
 	return startErr
 }
+
+// detachFromTerminal runs cmd in a new session, so it has no controlling
+// terminal. Used for the guard's `git ls-remote` (app_submit_dirty_guard.go):
+// ssh reads a passphrase or a host-key confirmation from /dev/tty, not stdin, so
+// without this a local-only commit would stop `app submit` on a prompt the user
+// never asked for. With no tty the prompt fails, the call fails, and the guard
+// keeps its pre-existing warning.
+func detachFromTerminal(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+}

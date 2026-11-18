@@ -29,3 +29,8 @@ func detachAndStart(cmd *exec.Cmd) error {
 	// Fire and forget — never Wait.
 	return startErr
 }
+
+// detachFromTerminal is a no-op on Windows: there is no /dev/tty for ssh to
+// prompt on, and the guard's `git ls-remote` is still bounded by its timeout
+// and GIT_TERMINAL_PROMPT=0 (app_submit_dirty_guard.go).
+func detachFromTerminal(_ *exec.Cmd) {}

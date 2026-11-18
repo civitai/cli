@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/pkgzip"
@@ -150,12 +152,33 @@ func gitScrubbedEnv(env []string) []string {
 // refreshed stat cache, which is a write to someone else's repository from a
 // command that only asked a question — and can fail on a tree another git
 // process holds.
+//
+// 🔴 `ls-remote` IS THE ONE CALL HERE THAT LEAVES THE MACHINE, and it is run so
+// that it can neither hang a submit nor stop to ask the user anything: a hard
+// timeout (gitNetworkTimeout, with WaitDelay so an ssh grandchild holding the
+// stdout pipe cannot outlive it), GIT_TERMINAL_PROMPT=0 and
+// SSH_ASKPASS_REQUIRE=never so no credential or passphrase prompt is raised,
+// and on unix a new session (detachFromTerminal) so ssh has no /dev/tty to
+// prompt on. Each of those turns a would-be prompt into a failed call, and a
+// failed call keeps the pre-existing warning (see headIsARemoteTip).
 var gitOutput gitOutputFunc = func(dir string, args ...string) (string, error) {
 	if _, err := exec.LookPath("git"); err != nil {
 		return "", errGitUnavailable
 	}
-	c := exec.Command("git", append([]string{"-C", dir, "--no-optional-locks"}, args...)...)
+	ctx := context.Background()
+	network := len(args) > 0 && args[0] == "ls-remote"
+	if network {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, gitNetworkTimeout)
+		defer cancel()
+	}
+	c := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "--no-optional-locks"}, args...)...)
 	c.Env = gitScrubbedEnv(os.Environ())
+	if network {
+		c.Env = append(c.Env, "GIT_TERMINAL_PROMPT=0", "SSH_ASKPASS_REQUIRE=never")
+		c.WaitDelay = time.Second
+		detachFromTerminal(c)
+	}
 	var stdout, stderr bytes.Buffer
 	c.Stdout = &stdout
 	c.Stderr = &stderr
@@ -168,6 +191,10 @@ var gitOutput gitOutputFunc = func(dir string, args ...string) (string, error) {
 	}
 	return stdout.String(), nil
 }
+
+// gitNetworkTimeout bounds the `ls-remote` in headIsARemoteTip, per remote. It
+// only ever decides whether to print a warning, so it is short.
+const gitNetworkTimeout = 10 * time.Second
 
 // dirtyPathListCap bounds how many paths the refusal prints. A tree with 400
 // uncommitted files should say so and show a sample, not emit 400 lines into a
@@ -365,12 +392,69 @@ func checkWorkTreeClean(git gitOutputFunc, warn io.Writer, dir, slug, version st
 	// A failure here (an unborn HEAD in a repo with no commits, an ancient git)
 	// is silent: it is a question about a nicety, and a warning nobody can act on
 	// is noise on the happy path.
+	//
+	// 🔴 AN EMPTY `refs/remotes` IS NOT "ON NO REMOTE". The local check only sees
+	// remote-tracking branches, and a CI checkout of a tag has none: actions/checkout
+	// on a tag push fetches `refs/tags/<tag>` at depth 1 and detaches HEAD, so this
+	// for-each-ref answers empty for a commit that is the pushed tag's own tip — the
+	// false warning civitai/app-submit-action@v1 printed on every tagged release.
+	// headIsARemoteTip asks the remote itself before the warning is allowed to fire.
 	remotes, err := git(dir, "for-each-ref", "--count=1", "--contains", "HEAD", "--format=%(refname:short)", "refs/remotes")
-	if err == nil && strings.TrimSpace(remotes) == "" {
+	if err == nil && strings.TrimSpace(remotes) == "" && !headIsARemoteTip(git, dir, prov.Commit) {
 		warnf(warn, "the work tree is clean, but HEAD is on no remote — this bundle's source exists only on this machine. "+
 			"Push the branch so the submitted version can be traced back to a commit.")
 	}
 	return prov, nil
+}
+
+// headIsARemoteTip reports whether head — HEAD's sha — is known to exist on a
+// remote by evidence the local remote-tracking refs cannot supply. It is only
+// asked once that local check came back empty, so the common case (a pushed
+// branch that has been fetched) never reaches the network.
+//
+// Two sources, in order, and EITHER is enough:
+//
+//  1. GitHub Actions' own statement: with GITHUB_ACTIONS=true, GITHUB_SHA is the
+//     commit the workflow was triggered for, which by construction is on GitHub
+//     (a pushed branch or tag, or a pull request's merge ref). No network.
+//  2. The remote's own answer: `git ls-remote --heads --tags <remote>` for each
+//     configured remote, matching head against every branch and tag tip. The
+//     peeled `<tag>^{}` lines are what make an ANNOTATED tag match — its own
+//     object id is the tag object, not the commit HEAD names.
+//
+// 🔴 EVERY FAILURE ANSWERS false, WHICH IS THE PRE-EXISTING BEHAVIOUR (warn).
+// This is a question about a warning; an unreachable remote, a refused auth, a
+// timeout or no remote at all must never fail the submit, and must not silence
+// the warning either. A tip match only: a commit BEHIND a branch tip that was
+// never fetched is not found here — the warning stays, as it always did.
+func headIsARemoteTip(git gitOutputFunc, dir, head string) bool {
+	if head == "" {
+		return false
+	}
+	if os.Getenv("GITHUB_ACTIONS") == "true" && os.Getenv("GITHUB_SHA") == head {
+		return true
+	}
+	names, err := git(dir, "remote")
+	if err != nil {
+		return false
+	}
+	for _, name := range strings.Fields(names) {
+		if strings.HasPrefix(name, "-") {
+			// Would be parsed as an option by ls-remote; not worth a guess.
+			continue
+		}
+		tips, err := git(dir, "ls-remote", "--heads", "--tags", name)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(tips, "\n") {
+			sha, _, ok := strings.Cut(line, "\t")
+			if ok && strings.TrimSpace(sha) == head {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // headCommit asks the one git seam for HEAD's sha, and returns "" for every
