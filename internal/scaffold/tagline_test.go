@@ -112,8 +112,8 @@ func TestScaffoldedManifestCarriesARealTagline(t *testing.T) {
 		})
 	}
 	// CONTROL: the loop asserts nothing if AllTemplates() is empty.
-	if examined != 3 {
-		t.Fatalf("examined %d template(s), want 3 — the loop is not walking what it claims to", examined)
+	if examined != 4 {
+		t.Fatalf("examined %d template(s), want 4 — the loop is not walking what it claims to", examined)
 	}
 }
 

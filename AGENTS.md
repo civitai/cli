@@ -8,9 +8,9 @@ intentional. For the contributor checklist see
 
 🔴 **[`README.md`](README.md) IS THE PUBLISHED USER CONTRACT, AND IT IS NOT ONE
 PLACE.** This file holds the decisions and rationale; the README states/LINKS the
-contract — exit codes, `--json` shapes, the command reference (don't re-derive
-it here) — so **any** behaviour change is incomplete until it moves too, not
-only the ones an item below cites. Its command section and exit-code table each
+contract — exit codes, `--json` shapes, a link to the generated command
+reference — so **any** behaviour change is incomplete until it moves too, not
+only the ones an item below cites. Its sections and exit-code table each
 state that contract and each goes stale ALONE: #371 shipped having updated two of
 three (#378). Grep every surface naming what you
 changed: some of that prose is GENERATED (`internal/cmd/exitcodes_doc.go`) or
@@ -73,10 +73,10 @@ equivalent to CI. **Run `make lint` too before claiming done** — it errors whe
 golangci-lint is missing rather than degrading to something weaker, which is what
 makes its zero meaningful; do not "helpfully" add a fallback.
 
-CI (`.github/workflows/ci.yml`) runs **eight** jobs, not four steps:
-`build-test` (vet + `gofmt -s -l .` + test + build), `lint`, `schema-drift`,
-`pins-vs-published`, `ready-ack-runtime`, `template-page-vite`,
-`template-page-money` and `scaffold-currency`.
+CI (`.github/workflows/ci.yml`) runs four jobs: `build-test` (vet
+(Linux+Windows) + gofmt + test + build), `lint`, `dogfood-browser`, and `checks`,
+whose steps are the former `pins-vs-published`, `ready-ack-runtime`,
+`template-page-*` and `scaffold-currency` jobs.
 
 🔴 **Reporting and gating are different questions, and fewer of those jobs gate
 than run.** Item 11 carries the measured list of required contexts and the
@@ -121,13 +121,13 @@ These go beyond the global defaults because this repo's release pipeline
 - `cmd/civitai/main.go` — binary entrypoint; injects build version/commit/date.
 - `internal/cmd/` — the Cobra tree, **one file per command**, wired in
   `root.go`.
-- `internal/{scaffold,validate,pkgzip,manifest,config,auth}` — the building
+- `internal/{scaffold,validate,pkgzip,manifest,config,auth,redact}` — the building
   blocks behind those commands. No `api` — #172 promoted it to `pkg/civitai` on
   2026-07-20 and it sat here stale until found by hand, so this section is now a
   BIDIRECTIONAL LEDGER: `layout_ledger_test.go` fails both when a package under
   `internal/` is unnamed and when a named one does not exist.
 - `internal/appapi` — the App-Blocks REST/tRPC client (submissions, listing
-  media, `app metrics`); holds the `Submitter` / `Verifier` seams tests fake.
+  media, `app metrics`, `app feedback`); holds the `Submitter` / `Verifier` seams tests fake.
 - `internal/ui` — the ONE presentation layer; color is configured once, from the
   root command. `internal/ui/CONVENTION.md` is the rule set, including why
   `--json` must never pass through it.
@@ -141,7 +141,7 @@ These go beyond the global defaults because this repo's release pipeline
   `pkgzip` shipped, prints `path:line` never the value. Read its doc comment
   before making it exclude, gate or refuse.
 - `internal/antipattern` — the scaffold-currency denylist: fails a template
-  shipping code against a dead platform endpoint or message (item 18).
+  shipping a dead tool or host message; it holds no REST-route rule (item 18).
 - `internal/genapi` — the orchestrator **generation** client behind
   `civitai generate` and `civitai workflows …`: tRPC transport, the two envelope
   shapes, the graph payload, model-version resolution. Deliberately not in
@@ -163,8 +163,8 @@ These go beyond the global defaults because this repo's release pipeline
   cost.
 - **Module root** (`package cli`, `main.go` + `schema.go`) exists *only* to
   `go:embed` the vendored `schema/` and `examples/`. It is not the executable.
-- `npm/` — the `@civitai/cli` wrapper (postinstall downloads the matching raw
-  binary from the GitHub Release). Not built by `make`; see the release section.
+- `npm/` — the `@civitai/cli` wrapper: the binary comes from a platform package
+  (`npm/lib/platforms.json`), else a GitHub Release download. Not built by `make`.
 - `flake.nix` / `flake.lock` — the Nix package. `vendorHash` pins the module set,
   so a dependency change breaks the flake build until `bump-flake-vendorhash.yml`
   updates it; `flake.yml` is what catches that.
@@ -186,7 +186,7 @@ item 7 owns why an untagged return unpins a published exit code.
   (`appapi.Submitter`, `appapi.Verifier`) or take a dir argument, so tests use
   `httptest` + `t.TempDir()` with no live server. New behaviour needs tests that
   cover the **error paths**, not just the happy path.
-- **Config:** `~/.config/civitai/config.yaml` (0600, atomic write). Overridable
+- **Config:** `<UserConfigDir>/civitai/config.yaml` (per-OS; 0600, atomic). Overridable
   by `CIVITAI_TOKEN` / `CIVITAI_BASE_URL`; default base URL `https://civitai.com`.
 
 ### Adding a command
@@ -197,7 +197,7 @@ item 7 owns why an untagged return unpins a published exit code.
    like `newAppCmd` for a subcommand.
 3. Add `internal/cmd/<name>_test.go` driving it via `NewRootCmd()` + `SetArgs`,
    or the constructor + `SetOut`/`SetErr` buffers.
-4. Keep `make ci` green; update `README.md` (command table + a section).
+4. Keep `make ci` green; update `README.md` (a section; no flag table).
 
 ## Intentional decisions that look wrong (read before "fixing")
 
@@ -240,6 +240,9 @@ Item 36 is its THIRD: what the managed block may claim about the project it was
 written into.
 Item 37 is a username that arrives as a NUMBER.
 Item 38 is what the read path may CLAIM about the bytes it prints.
+Item 39 is the FOURTH half of `agent-setup`: the only thing this CLI writes
+outside the project, in a file the user's login shell executes.
+Items 40–41 are feedback verbs.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -443,6 +446,18 @@ item must carry a trigger that is a routing question rather than a label
 38. **Moving where a read body is repaired, filtering (or unfiltering) what an
     error snippet prints, or wording what `--json` and `Raw` are made of?**
     → evidence: claudedocs/decisions/38-read-body-repair-and-snippet.md
+
+39. **Touching `--fix-path` — which shell startup files it writes, the block it
+    emits, making it implicit, or giving `--check` a row about this machine's
+    PATH?**
+    → evidence: claudedocs/decisions/39-agent-setup-fix-path.md
+
+40. **Touching `app feedback` — message rendering, the `--json` envelope,
+    the reporter fields, or what an empty inbox or a 403/409 claims?**
+    → evidence: claudedocs/decisions/40-app-feedback-is-untrusted-input.md
+
+41. **Changing or exposing `civitai feedback`?**
+    → evidence: claudedocs/decisions/41-platform-feedback.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

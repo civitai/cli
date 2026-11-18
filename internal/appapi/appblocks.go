@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/civitai/cli/internal/redact"
 	"github.com/civitai/cli/pkg/civitai"
 )
 
@@ -63,6 +64,20 @@ type Provenance struct {
 	Commit string
 	// Dirty is the client's assertion about its own work tree. nil ⇒ unknown.
 	Dirty *bool
+	// GitHubOIDCToken is a GitHub Actions OIDC token for the workflow run doing
+	// this submit, or "" when there is none (every submit outside GitHub Actions).
+	// It travels as `githubOidcToken`.
+	//
+	// 🔴 NOT PART OF THE CLAIM ABOVE, AND NEVER DERIVED FROM IT. Commit and Dirty
+	// are what this CLI says; the token is signed by GitHub, and the SERVER checks
+	// it and reads the repository, tag and commit from it (civitai/civitai,
+	// flag `app-blocks-oidc-verified-submit`). The CLI does not parse it, and it
+	// is not sanitised away with a bad Commit: they are separate answers.
+	//
+	// 🔴 A CREDENTIAL. It goes in the request body and nowhere else: never printed,
+	// never in an error, never on argv (which is why it is read from the
+	// environment and has no flag).
+	GitHubOIDCToken string
 }
 
 // sourceCommitRe is the server's own validator, mirrored (civitai/civitai#4061,
@@ -454,6 +469,48 @@ type SubmitResult struct {
 	Slug             string `json:"slug"`
 	Version          string `json:"version"`
 	Status           string `json:"status"`
+	// Listing is the store listing's readiness for the submission just queued
+	// (civitai/civitai#7311). nil when the server sent `null` (it could not read
+	// it; the submit itself still succeeded) or no `listing` key at all (a server
+	// that predates it) — never a zero value, which would read as "not blocked".
+	Listing *SubmitListingReadiness `json:"listing,omitempty"`
+	// StorageMigrationWarnings is the server's App Storage schema-migration notes
+	// for an ACCEPTED submit (civitai/civitai publish-request.service.ts
+	// `storageMigrationWarnings`, filled from checkStorageMigrations' `warnings`):
+	// a declared migration op that covers no breaking change since the previous
+	// approved version (it will not run), a collection no longer declared, an
+	// optional property newly declared on an open schema, or a previous version
+	// whose storage no longer parses. Reported, never refused. Empty or absent (a
+	// server that predates it) prints nothing.
+	StorageMigrationWarnings []string `json:"storageMigrationWarnings,omitempty"`
+	// ActionsRunSourceRecorded is set only when this submit carried a GitHub
+	// Actions OIDC token and the server verified it: true when the run's
+	// repository, tag and commit were stored with the request, false when the
+	// server could not store them. nil when no token was sent, the server's flag
+	// is off (it then ignores the token), or the server predates the field.
+	ActionsRunSourceRecorded *bool `json:"actionsRunSourceRecorded,omitempty"`
+}
+
+// SubmitListingReadiness mirrors the server's SubmitListingReadiness
+// (publish-request.service.ts) returned with a submit.
+type SubmitListingReadiness struct {
+	// ApprovalBlocked is true when a moderator cannot approve this submission
+	// until the listing has an icon and a cover.
+	ApprovalBlocked bool `json:"approvalBlocked"`
+	// Missing names the publish-floor assets the listing lacks ("icon", "cover").
+	Missing []string `json:"missing"`
+	// NextStep is the server's plain-words next step; "" when it sent null.
+	NextStep string `json:"nextStep"`
+	// Problems is every listing problem, blocking and advisory.
+	Problems []SubmitListingProblem `json:"problems"`
+}
+
+// SubmitListingProblem is one entry of SubmitListingReadiness.Problems — the
+// server's computeListingProblems shape.
+type SubmitListingProblem struct {
+	Code     string `json:"code"`
+	Label    string `json:"label"`
+	Severity string `json:"severity"`
 }
 
 // DefaultSubmitPath is the token-authenticated submit-version route.
@@ -622,6 +679,9 @@ type submitBody struct {
 	BundleBase64 string `json:"bundleBase64"`
 	SourceCommit string `json:"sourceCommit,omitempty"`
 	SourceDirty  *bool  `json:"sourceDirty,omitempty"`
+	// GitHubOIDCToken is omitted when empty, so a submit outside GitHub Actions
+	// sends exactly the body it sent before this field existed.
+	GitHubOIDCToken string `json:"githubOidcToken,omitempty"`
 }
 
 // submitBodyEnvelope is the literal JSON document json.Marshal produces for an
@@ -646,10 +706,10 @@ const submitBodyEnvelope = `{"bundleBase64":""}`
 // remembering to update an arithmetic term.
 func submitEnvelopeLen(prov Provenance) int {
 	commit, dirty := prov.sanitised()
-	if commit == "" && dirty == nil {
+	if commit == "" && dirty == nil && prov.GitHubOIDCToken == "" {
 		return len(submitBodyEnvelope)
 	}
-	env, err := json.Marshal(submitBody{SourceCommit: commit, SourceDirty: dirty})
+	env, err := json.Marshal(submitBody{SourceCommit: commit, SourceDirty: dirty, GitHubOIDCToken: prov.GitHubOIDCToken})
 	if err != nil {
 		// Unreachable for these field types; degrade to the no-provenance
 		// envelope rather than reporting a nonsense size.
@@ -781,6 +841,23 @@ var ErrBundleTooLarge = errors.New("bundle too large to upload")
 // doUpload's switch, so the two never compete.
 var ErrNothingSent = errors.New("the request never reached the connection")
 
+// SubmitRefusedError is the submit route ANSWERING with a non-200 status. It
+// carries that status so a caller can tell a refusal the platform caused (a
+// 5xx, or a 400 for a bundle the local validate passed) from one the caller can
+// fix (401/403, 409, 429) without parsing the message — `app submit` prints its
+// `civitai feedback send` hint on that distinction.
+//
+// It is a pure wrapper: Error() is the wrapped error's text byte-for-byte, and
+// Unwrap returns it, so the classification serverError attached (and therefore
+// the exit code) is exactly what it was before this type existed.
+type SubmitRefusedError struct {
+	Status int
+	Err    error
+}
+
+func (e *SubmitRefusedError) Error() string { return e.Err.Error() }
+func (e *SubmitRefusedError) Unwrap() error { return e.Err }
+
 const MaxSubmitBodyBytes = 10485760
 
 // submitRequestSentTrace returns the httptrace hook that records, into sent,
@@ -867,9 +944,10 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 	// stamp must never be able to turn a working submit into a failed one.
 	commit, dirty := prov.sanitised()
 	body, err := json.Marshal(submitBody{
-		BundleBase64: base64.StdEncoding.EncodeToString(zipBytes),
-		SourceCommit: commit,
-		SourceDirty:  dirty,
+		BundleBase64:    base64.StdEncoding.EncodeToString(zipBytes),
+		SourceCommit:    commit,
+		SourceDirty:     dirty,
+		GitHubOIDCToken: prov.GitHubOIDCToken,
 	})
 	if err != nil {
 		// UNREACHABLE for these field types — submitEnvelopeLen says the same of
@@ -991,7 +1069,7 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 		return nil, err
 	}
 	if status != http.StatusOK {
-		return nil, serverError(status, raw)
+		return nil, &SubmitRefusedError{Status: status, Err: serverError(status, raw)}
 	}
 	var out SubmitResult
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -1590,6 +1668,12 @@ type ForgejoCloneInfo struct {
 	Token           string `json:"token"`
 	HTTPURL         string `json:"httpUrl"`
 	CloneURL        string `json:"cloneUrl"`
+	// SourceHTTPURL is the app's SOURCE repository (`civitai-apps-src/<slug>`):
+	// the developer's own git history of a fork or an App Assistant app, which
+	// `app pull` clones when the server returns one. Empty when the app has none.
+	// Pushing there never builds or submits anything. For an app with no build
+	// repository yet the server also returns it as HTTPURL.
+	SourceHTTPURL string `json:"sourceHttpUrl"`
 }
 
 // GetForgejoCloneInfo calls the owner-only getMyForgejoCloneInfo tRPC query for
@@ -1635,27 +1719,18 @@ func (c *Client) GetForgejoCloneInfo(ctx context.Context, app string) (*ForgejoC
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil || env.Result.Data.JSON == nil {
-		return nil, fmt.Errorf("unexpected getMyForgejoCloneInfo response: %s", string(raw))
+		return nil, redact.CredentialBodyError("unexpected getMyForgejoCloneInfo response", raw, err)
 	}
 	return env.Result.Data.JSON, nil
 }
 
 // cloneInfoError maps a non-200 from the clone-info tRPC query to an actionable
-// message. tRPC error bodies are {error:{json:{message,code,...}}}.
+// message. tRPC error bodies are {error:{json:{message,code,...}}}. The route's
+// success payload is a push token, so the body itself is never shown — see
+// redact.CredentialRouteMessage.
 func cloneInfoError(status int, raw []byte) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
-	var env struct {
-		Error struct {
-			JSON struct {
-				Message string `json:"message"`
-				Code    int    `json:"code"`
-			} `json:"json"`
-		} `json:"error"`
-	}
-	msg := strings.TrimSpace(string(raw))
-	if json.Unmarshal(raw, &env) == nil && env.Error.JSON.Message != "" {
-		msg = env.Error.JSON.Message
-	}
+	msg := redact.CredentialRouteMessage(raw)
 	switch status {
 	case http.StatusUnauthorized:
 		return unauthorizedError(msg)
@@ -1671,10 +1746,21 @@ func cloneInfoError(status int, raw []byte) (err error) {
 // Vendored dev-token Buzz-budget bounds. Both mirror
 // civitai/civitai src/server/services/blocks/dev-scoped-mint.service.ts:
 //
-//	export const DEV_BUZZ_BUDGET_CAP = 250;
-//	export const DEV_BUZZ_BUDGET_DEFAULT = 50;
+//	export const DEV_BUZZ_BUDGET_CAP = BUZZ_BUDGET_CAP;
+//	export const DEV_BUZZ_BUDGET_DEFAULT = BUZZ_BUDGET_DEFAULT;
 //
-// which that file's resolveDevBuzzBudget composes as
+// i.e. the INSTALL-token budget bounds, deliberately no lower, so an app is
+// developed at the budget it gets live. Their values live in
+// src/shared/constants/block-scope.constants.ts:
+//
+//	export const BUZZ_BUDGET_CAP = 5000;
+//	export const BUZZ_BUDGET_DEFAULT = 1000;
+//
+// (The dev bounds used to be separate, lower literals — 250 and 50 — and this
+// file kept vendoring those after the server aliased them to the install-token
+// bounds.)
+//
+// The dev mint resolves them in that service's resolveDevBuzzBudget as
 //
 //	Math.min(requestedBudget ?? manifestDefaultBudget ?? DEFAULT, CAP)
 //
@@ -1686,26 +1772,45 @@ func cloneInfoError(status int, raw []byte) (err error) {
 // itself rather than deferring:
 //   - Below 1 the route's zod schema (`z.number().int().positive()`) answers 400.
 //   - ABOVE the cap there is no schema bound at all — the request succeeds and
-//     `Math.min` silently clamps. A developer who asks for 400 gets a 250-budget
+//     `Math.min` silently clamps. A developer who asks for 6000 gets a 5000-budget
 //     token and no indication the number moved, which is the more expensive
 //     failure of the two and cannot be detected after the fact from the CLI.
 //
+// The budget is NOT the only ceiling on a generation: an INLINE customComfy
+// body's `maxBuzz` (which is also its step timeout in seconds) is capped by the
+// server's workflow schema at InlineMaxBuzz whatever the token's budget — see
+// that constant.
+//
 // Neither constant is observable from a minted token (the JWT's budget claim
-// reflects the RESOLVED value, so a clamped 250 and a requested 250 are
+// reflects the RESOLVED value, so a clamped 5000 and a requested 5000 are
 // byte-identical), so there is no sound live drift probe to write here — unlike
 // ListSubmissionsCap above, whose truncation asymmetry makes one possible. These
 // are pinned by TestDevBuzzBudgetBoundsMirrorServer and by the comment above;
 // re-read the server file when touching them.
 const (
 	// DevBuzzBudgetCap is the largest per-generation Buzz budget the dev-token
-	// route will issue. A larger request is clamped, not refused.
-	DevBuzzBudgetCap = 250
+	// route will issue (DEV_BUZZ_BUDGET_CAP = BUZZ_BUDGET_CAP). A larger
+	// request is clamped, not refused.
+	DevBuzzBudgetCap = 5000
 	// DevBuzzBudgetMin is the smallest budget the route's schema accepts.
 	DevBuzzBudgetMin = 1
 	// DevBuzzBudgetDefault is what the server resolves to when NEITHER the
-	// request nor the app's stored manifest names a budget.
-	DevBuzzBudgetDefault = 50
+	// request nor the app's stored manifest names a budget
+	// (DEV_BUZZ_BUDGET_DEFAULT = BUZZ_BUDGET_DEFAULT).
+	DevBuzzBudgetDefault = 1000
 )
+
+// InlineMaxBuzz mirrors civitai/civitai src/server/schema/blocks/workflow.schema.ts
+//
+//	export const INLINE_MAX_BUZZ = 250;
+//
+// the schema bound on an INLINE customComfy body's `maxBuzz`
+// (`z.number().int().min(1).max(INLINE_MAX_BUZZ)`). The server stamps the step
+// timeout from that same number, so it is also the most wall-clock seconds an
+// inline graph can be given. It applies REGARDLESS of the token's budget: a
+// DevBuzzBudgetCap token does not lift it. The CLI only states it in help text;
+// it never validates a graph against it (the server's schema does).
+const InlineMaxBuzz = 250
 
 // DevTokenMinter mints a short-lived dev block token for `npm run dev:live`.
 type DevTokenMinter interface {
@@ -1752,7 +1857,7 @@ type DevTokenMinter interface {
 //	value is the zero value; that is the whole argument.
 //
 //	Contrast BuzzBudget, a pointer for the mirror-image reason: there the
-//	server's absent-resolution (manifest default, then 50) is a value the CLI
+//	server's absent-resolution (manifest default, then DevBuzzBudgetDefault) is a value the CLI
 //	cannot name, so "say nothing" is a real, correct request. Here it is not.
 //
 // Compatibility: the route's zod schema is a non-strict `z.object`, so a
@@ -1821,10 +1926,10 @@ func (c *Client) MintDevToken(ctx context.Context, slug string, scopes []string,
 		Token string `json:"token"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", fmt.Errorf("unexpected /api/v1/blocks/dev-token response: %s", string(raw))
+		return "", redact.CredentialBodyError("unexpected /api/v1/blocks/dev-token response", raw, err)
 	}
 	if out.Token == "" {
-		return "", fmt.Errorf("dev-token response had no token: %s", string(raw))
+		return "", redact.CredentialBodyError("dev-token response had no token", raw, nil)
 	}
 	return out.Token, nil
 }
@@ -1883,7 +1988,14 @@ func devTokenValidationDetail(raw []byte) string {
 // / readOnlyTokenWarning).
 func devTokenError(status int, raw []byte) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
-	msg := serverMessage(raw)
+	// 🔴 CLASSIFY ON reason, SHOW msg. reason is the server's own wording,
+	// unfiltered; msg is what redact lets an error print. Reading the "no live
+	// deployment" phrase off msg meant a message the display filter withheld
+	// (it once refused anything over 200 runes, which a 22+-char blockId pushed
+	// the real 404 past) read as the collision 404 and permanently renamed an
+	// app the developer owns.
+	reason := redact.ErrorMessage(raw)
+	msg := redact.CredentialRouteMessage(raw)
 	switch status {
 	case http.StatusBadRequest:
 		// Report the server's OWN verdict rather than re-deriving one: the CLI
@@ -1900,7 +2012,7 @@ func devTokenError(status int, raw []byte) (err error) {
 		// mint is refused) — that one is rename-retriable, so wrap the sentinel.
 		// The owned-but-not-yet-deployed 404 carries a "no live deployment"
 		// message and is NOT retriable (you own the slug; renaming is wrong).
-		if strings.Contains(strings.ToLower(msg), "no live deployment") {
+		if strings.Contains(strings.ToLower(reason), "no live deployment") {
 			return fmt.Errorf("app not found (404): %s", msg)
 		}
 		return fmt.Errorf("app not found (404): %s — check the slug. (dev-token mints from your local block.manifest.json; a 404 means the slug is registered to a different account.): %w", msg, ErrSlugRegisteredToOtherAccount)

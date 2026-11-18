@@ -142,6 +142,9 @@ func TestDownloadFileRefusesLoopbackIP(t *testing.T) {
 	if !strings.Contains(err.Error(), "private/loopback") {
 		t.Errorf("refusal should cite the private/loopback block: %v", err)
 	}
+	if !strings.Contains(err.Error(), "refusing to download from 127.0.0.1: 127.0.0.1 is a loopback address") {
+		t.Errorf("refusal should name the address and why it was refused: %v", err)
+	}
 }
 
 // TestDownloadFileRedirectTargetSchemeChecked asserts the WIRING: the client

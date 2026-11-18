@@ -268,18 +268,22 @@ func TestTheBlockNeverNamesAScriptTheProjectDoesNotDefine(t *testing.T) {
 }
 
 // TestPageViteIsNotToldAboutPageMoneysScripts is the discriminating case between
-// the two npm templates. Branching only on "is there a package.json" would leave
-// page-vite — which defines `dev`, `build` and `preview` and neither of the two
-// the old block named — reading instructions written for page-money.
+// the npm templates. Branching only on "is there a package.json" would leave
+// page-vite — which defines `dev`, `dev:tunnel`, `build` and `preview`, and no
+// mock-host scripts — reading instructions written for page-money.
+// (page-vite gained `dev:tunnel` when the embed headers became dev-tunnel-only;
+// the block names it because the project defines it, which is the property.)
 func TestPageViteIsNotToldAboutPageMoneysScripts(t *testing.T) {
 	dir := scaffoldInto(t, scaffold.PageVite)
 	block := setupInto(t, dir)
-	if !strings.Contains(block, "`npm run dev`") {
-		t.Errorf("the page-vite block never names `npm run dev`, which is the script it does define:\n%s", block)
+	for _, present := range []string{"`npm run dev`", "`npm run dev:tunnel`"} {
+		if !strings.Contains(block, present) {
+			t.Errorf("the page-vite block never names %s, which is a script it does define:\n%s", present, block)
+		}
 	}
-	for _, absent := range []string{"dev:harness", "dev:live", "dev:tunnel"} {
+	for _, absent := range []string{"dev:harness", "dev:live"} {
 		if strings.Contains(block, absent) {
-			t.Errorf("the page-vite block names %q, which only page-money's package.json defines:\n%s", absent, block)
+			t.Errorf("the page-vite block names %q, which page-vite's package.json does not define:\n%s", absent, block)
 		}
 	}
 }

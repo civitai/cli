@@ -371,9 +371,11 @@ func TestWithdrawHelpRetractsTheFreeRepairFraming(t *testing.T) {
 		// The idempotency sentence is true of the submission and false of the
 		// listing; `--help` used to say it flatly.
 		"idempotent WITH RESPECT TO THE SUBMISSION ONLY",
-		// A rejection discards the draft too (publish-request.service.ts:4969),
-		// which the issue did not know and an author needs to.
+		// A rejection is a third way out of review, and the help has to say
+		// what it can do to the listing: not always discarded (an on-site
+		// draft is kept for the resubmit), but not safe either.
 		"MODERATOR REJECTS",
+		"it can be deleted then too",
 		// The gate itself has to be discoverable from --help, or a script author
 		// meets it for the first time as a CI failure.
 		"CONFIRMATION:",
@@ -477,5 +479,50 @@ func TestCarriesForwardClaimsAreQualifiedEverywhere(t *testing.T) {
 	// vacuous.
 	if strings.Contains(norm(submitHeadsUp.String()), caveat+" and pigs fly") {
 		t.Error("the caveat matcher cannot report a miss, so its hits prove nothing")
+	}
+}
+
+// TestListingCaveatStatesOnlyWhatHoldsOnEveryPath pins the caveat's TEXT, as a
+// literal, on the three surfaces that carry it.
+//
+// The seam guard above compares each surface against the constant, so it moves
+// with a reword and cannot tell a true sentence from a false one. This one is
+// the other half: the sentence used to say a moderator rejecting the submission
+// deletes the listing, which stopped being true once the platform began keeping
+// an on-site app's draft across a reject. Rewording the caveat fails this test
+// on purpose — re-check the claim against the platform before updating it.
+//
+// The literals carry the words on either side of the interpolation, so they
+// also pin that the sentence still reads after "they " and after "It will".
+func TestListingCaveatStatesOnlyWhatHoldsOnEveryPath(t *testing.T) {
+	norm := func(s string) string { return strings.Join(strings.Fields(s), " ") }
+	const want = "carry forward once the app is APPROVED — withdrawing the submission deletes the listing " +
+		"and everything on it, and a rejection can too"
+
+	if withdrawListingCaveat != want {
+		t.Errorf("withdrawListingCaveat changed:\n  got  %s\n  want %s", withdrawListingCaveat, want)
+	}
+
+	var submitHeadsUp bytes.Buffer
+	printListingFloorHeadsUp(&submitHeadsUp)
+	listingHelp, _, err := run(t, "app", "listing", "--help")
+	if err != nil {
+		t.Fatalf("app listing --help: %v", err)
+	}
+	for _, s := range []struct{ name, body, sentence string }{
+		{"`app submit` success output", submitHeadsUp.String(),
+			"You can add them NOW, while the app is in review — they " + want + ":"},
+		{"`app listing --help`", listingHelp,
+			"so its media is settable while pending review. It will " + want + ". Do not hand-caption"},
+		{"README.md", readREADME(t),
+			"A resubmit's store-listing media — icon, cover, screenshots — " + want + ".**"},
+	} {
+		if !strings.Contains(norm(s.body), s.sentence) {
+			t.Errorf("%s does not render the caveat as the sentence:\n  %s", s.name, s.sentence)
+		}
+		// The retracted claim, in the shape it was written in.
+		if strings.Contains(norm(s.body), "a moderator rejecting it, deletes the listing") {
+			t.Errorf("%s still says a rejection deletes the listing, which is false for an on-site app", s.name)
+		}
 	}
 }

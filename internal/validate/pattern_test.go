@@ -58,6 +58,13 @@ type patternFixture struct {
 	// so the row proves the ORIGINAL message survived rather than being
 	// replaced by prose.
 	got string
+	// alsoAt lists OTHER glossed patterns the same value legitimately fails at
+	// the same field. Empty for almost every row. It exists for a field reached
+	// through a `oneOf`: the validator reports every branch's failures, so a
+	// migration op's `path` is checked against EACH branch's `path` pattern and
+	// a bad value trips more than one. Any pattern finding at the field that is
+	// neither the row's own nor listed here still fails the row.
+	alsoAt []string
 }
 
 func patternFixtures() []patternFixture {
@@ -135,6 +142,74 @@ func patternFixtures() []patternFixture {
 			field:    "page.path",
 			got:      "run",
 		},
+		{
+			// A HYPHEN: valid in JSON Pointer, refused here, and the likeliest
+			// thing an author pastes (a kebab-case field name).
+			name:    "storage.ownedModelVersions",
+			pattern: `^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$`,
+			manifest: `{"blockId":"ok-app","storage":{"collections":{"c":{"visibility":"shared","write":"own",` +
+				`"ownedModelVersions":["/model-version"]}}},` + base + `}`,
+			field: "storage.collections.c.ownedModelVersions[0]",
+			got:   "/model-version",
+		},
+		{
+			// A MISSING LEADING "/": the likeliest slip, writing the field name
+			// rather than a pointer to it. `rename` is the only op with a
+			// `from`, so no other oneOf branch reports this field.
+			name:    "storage.migrations.from",
+			pattern: `^(/([^/~]|~[01])+){1,15}$`,
+			manifest: `{"blockId":"ok-app","storage":{"collections":{"c":{"visibility":"private",` +
+				`"migrations":[{"op":"rename","from":"old_title","to":"/title"}]}}},` + base + `}`,
+			field: "storage.collections.c.migrations[0].from",
+			got:   "old_title",
+		},
+		{
+			// The same slip on an acknowledge op. Its `path` is also checked
+			// against the 1-to-15 pattern by the `default` and `remove`
+			// branches of the op's oneOf, which is what alsoAt records.
+			name:    "storage.migrations.acknowledge.path",
+			pattern: `^(/([^/~]|~[01])+){0,15}$`,
+			manifest: `{"blockId":"ok-app","storage":{"collections":{"c":{"visibility":"private",` +
+				`"migrations":[{"op":"acknowledge","path":"title","keyword":"type"}]}}},` + base + `}`,
+			field:  "storage.collections.c.migrations[0].path",
+			got:    "title",
+			alsoAt: []string{`^(/([^/~]|~[01])+){1,15}$`},
+		},
+		{
+			// A TYPESCRIPT SOURCE path: the bundle ships built JavaScript.
+			name:    "storage.hook.file",
+			pattern: `^([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.m?js$`,
+			manifest: `{"blockId":"ok-app","storage":{"collections":{"c":{"visibility":"private",` +
+				`"hook":{"file":"hooks/check.ts","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}}},` + base + `}`,
+			field: "storage.collections.c.hook.file",
+			got:   "hooks/check.ts",
+		},
+		{
+			// UPPERCASE hex: a real digest, in the case some tools print.
+			name:    "storage.hook.sha256",
+			pattern: `^[0-9a-f]{64}$`,
+			manifest: `{"blockId":"ok-app","storage":{"collections":{"c":{"visibility":"private",` +
+				`"hook":{"file":"hooks/check.js","sha256":"E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"}}}},` + base + `}`,
+			field: "storage.collections.c.hook.sha256",
+			got:   "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+		},
+		{
+			// A DISPLAY NAME pasted where the slug belongs — within the length
+			// bounds, so only the pattern fails.
+			name:     "storage.imports.from",
+			pattern:  `^[a-z][a-z0-9-]{1,38}[a-z0-9]$`,
+			manifest: `{"blockId":"ok-app","storage":{"imports":[{"from":"My-Parent-App","collections":["notes"],"access":"read"}]},` + base + `}`,
+			field:    "storage.imports[0].from",
+			got:      "My-Parent-App",
+		},
+		{
+			// KEBAB-CASE where snake_case is required.
+			name:     "storage.imports.collections",
+			pattern:  `^[a-z][a-z0-9_]{0,31}$`,
+			manifest: `{"blockId":"ok-app","storage":{"imports":[{"from":"parent-app","collections":["saved-notes"],"access":"read"}]},` + base + `}`,
+			field:    "storage.imports[0].collections[0]",
+			got:      "saved-notes",
+		},
 	}
 }
 
@@ -167,6 +242,44 @@ func patternFindingFor(t *testing.T, fs []Finding, field string) Finding {
 	}
 	if len(hits) != 1 {
 		t.Fatalf("want exactly 1 pattern finding on %q, got %d\nall findings: %v", field, len(hits), fs)
+	}
+	return hits[0]
+}
+
+// patternFindingAmong is patternFindingFor for a field that legitimately fails
+// more than one pattern (see patternFixture.alsoAt). It returns the single
+// finding for want, and fails if any pattern finding on field belongs to a
+// pattern that is neither want nor listed in also — so the extra findings are
+// an enumerated set, not a licence for anything at that field.
+func patternFindingAmong(t *testing.T, fs []Finding, field, got, want string, also []string) Finding {
+	t.Helper()
+	prefix := func(pat string) string {
+		return field + ": " + (&kind.Pattern{Got: got, Want: pat}).LocalizedString(printer)
+	}
+	var hits []Finding
+	for _, f := range fs {
+		if f.Field != field || !strings.Contains(f.Message, "does not match pattern") {
+			continue
+		}
+		if strings.HasPrefix(f.Message, prefix(want)) {
+			hits = append(hits, f)
+			continue
+		}
+		known := false
+		for _, p := range also {
+			if strings.HasPrefix(f.Message, prefix(p)) {
+				known = true
+				break
+			}
+		}
+		if !known {
+			t.Errorf("unexpected pattern finding on %q (neither %q nor one of %q): %s",
+				field, want, also, f.Message)
+		}
+	}
+	if len(hits) != 1 {
+		t.Fatalf("want exactly 1 finding for pattern %q on %q, got %d\nall findings: %v",
+			want, field, len(hits), fs)
 	}
 	return hits[0]
 }
@@ -257,6 +370,27 @@ func TestPatternGlossesAreTheRightWayRound(t *testing.T) {
 			"a scheme requirement and nothing else"},
 		{`^/`, `must start with a "/"`, "/",
 			"a leading-character requirement on a mount path"},
+		// "field path of 1 to 4 segments" rather than anything about "/": the
+		// page.path row owns the leading-slash wording, and this regex's
+		// distinguishing claim is the bounded segment count.
+		{`^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$`, "field path of 1 to 4 segments", "/workflow/modelVersionId",
+			"a bounded, index-free path into a stored document"},
+		// The two pointer rows differ only in the lower bound on segments, so
+		// the fragments quote exactly that: "1 to 15" against "up to 15".
+		{`^(/([^/~]|~[01])+){1,15}$`, "JSON Pointer of 1 to 15", "/title",
+			"an RFC 6901 pointer with at least one segment"},
+		{`^(/([^/~]|~[01])+){0,15}$`, "JSON Pointer of up to 15", "/tags/*",
+			"the same pointer, where zero segments (the document root) is legal"},
+		{`^([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.m?js$`, ".js or .mjs file", "hooks/check.js",
+			"a relative module path with no dot-led segment"},
+		{`^[0-9a-f]{64}$`, "64 lowercase hexadecimal", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			"a lowercase hex SHA-256 digest"},
+		// "3 to 40 characters" rather than the alphabet: the blockId row owns
+		// the slug-alphabet wording, and what this regex adds is the bound.
+		{`^[a-z][a-z0-9-]{1,38}[a-z0-9]$`, "3 to 40 characters", "parent-app",
+			"a length-bounded blockId slug"},
+		{`^[a-z][a-z0-9_]{0,31}$`, "lowercase snake_case name", "saved_notes",
+			"a snake_case identifier of at most 32 characters"},
 	}
 	if len(ledger) != len(patternRules) {
 		t.Fatalf("%d ledger rows for %d glossed patterns — the ledger must be total, "+
@@ -310,8 +444,6 @@ func TestPatternFindingsCarryTheRuleAndAnExample(t *testing.T) {
 			if !ok {
 				t.Fatalf("fixture names pattern %q, which is not in patternRules", tc.pattern)
 			}
-			f := patternFindingFor(t, manifestOnlyFindings(t, tc.manifest), tc.field)
-
 			// The base half is the LIBRARY's sentence, reconstructed from the
 			// fixture's own value and regex rather than copied out of the
 			// output. That is deliberate: the claim this half makes is
@@ -320,6 +452,14 @@ func TestPatternFindingsCarryTheRuleAndAnExample(t *testing.T) {
 			// escaping of the regex, which a hand-spelled literal would have to
 			// mirror and would then pin to the wrong thing.
 			base := (&kind.Pattern{Got: tc.got, Want: tc.pattern}).LocalizedString(printer)
+
+			fs := manifestOnlyFindings(t, tc.manifest)
+			var f Finding
+			if len(tc.alsoAt) == 0 {
+				f = patternFindingFor(t, fs, tc.field)
+			} else {
+				f = patternFindingAmong(t, fs, tc.field, tc.got, tc.pattern, tc.alsoAt)
+			}
 			// Sanity: the base must actually quote the offending value, or the
 			// exact-match below is pinning a sentence that lost it.
 			if !strings.Contains(base, tc.got) {
@@ -546,7 +686,7 @@ func TestPostsWriteSelfScopeAccepted(t *testing.T) {
 	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
 		`"scopes":["models:read:self","posts:write:self"],` +
 		`"scopeJustifications":{"posts:write:self":"lets the viewer publish the images this app generated for them"},` +
-		`"kind":"page",` +
+		`"kind":"page","page":{"path":"/","title":"x"},` +
 		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
 	for _, f := range manifestOnlyFindings(t, body) {
 		t.Errorf("unexpected finding on %q: %s", f.Field, f.Message)
@@ -557,7 +697,7 @@ func TestPostsWriteSelfScopeAccepted(t *testing.T) {
 	// reason. Without this, a fixture that silently stopped reaching the
 	// validator would pass the loop above by producing nothing.
 	const unjustified = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
-		`"scopes":["models:read:self","posts:write:self"],"kind":"page",` +
+		`"scopes":["models:read:self","posts:write:self"],"kind":"page","page":{"path":"/","title":"x"},` +
 		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
 	var hit bool
 	for _, f := range manifestOnlyFindings(t, unjustified) {
@@ -568,6 +708,37 @@ func TestPostsWriteSelfScopeAccepted(t *testing.T) {
 	}
 	if !hit {
 		t.Fatal("removing the justification produced no scopeJustifications finding naming posts:write:self")
+	}
+}
+
+// TestAppsStoreItemsWriteScopeAccepted is the ACCEPT arm for the scope the
+// vendored schema gained with App Store sub-listings (an app publishing the
+// viewer's own items as store cards). Same shape and reasoning as
+// TestPostsWriteSelfScopeAccepted: the enum-wording test only proves the value
+// appears in a REJECTION message, so this pins the accept path, with its own
+// negative control (minus the justification it must fail, naming this scope —
+// the scope is SENSITIVE server-side).
+func TestAppsStoreItemsWriteScopeAccepted(t *testing.T) {
+	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
+		`"scopes":["models:read:self","apps:store:items:write"],` +
+		`"scopeJustifications":{"apps:store:items:write":"lets the viewer list the presets they built as their own store cards"},` +
+		`"kind":"page","page":{"path":"/","title":"x"},` +
+		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
+	for _, f := range manifestOnlyFindings(t, body) {
+		t.Errorf("unexpected finding on %q: %s", f.Field, f.Message)
+	}
+
+	const unjustified = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
+		`"scopes":["models:read:self","apps:store:items:write"],"kind":"page","page":{"path":"/","title":"x"},` +
+		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
+	var hit bool
+	for _, f := range manifestOnlyFindings(t, unjustified) {
+		if f.Field == "scopeJustifications" && strings.Contains(f.Message, "apps:store:items:write") {
+			hit = true
+		}
+	}
+	if !hit {
+		t.Fatal("removing the justification produced no scopeJustifications finding naming apps:store:items:write")
 	}
 }
 

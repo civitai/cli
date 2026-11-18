@@ -18,7 +18,7 @@ make build       # build ./bin/civitai
 make test        # go test ./...
 make vet         # go vet ./...
 make fmt         # gofmt -s -w .
-make lint        # golangci-lint if installed, else go vet
+make lint        # golangci-lint (required: errors with an install hint if absent)
 make ci-shallow  # go test ./... in a depth-1 clone — what CI actually sees
 ```
 
@@ -124,6 +124,16 @@ go test ./...
 go vet ./...
 gofmt -s -l .        # must print nothing
 ```
+
+`go test ./...` runs everything, and that stays the local contract. CI splits
+the repo-root package in two: the tests that drive a headless browser through
+`scripts/dogfood/` run in the `dogfood-browser` job, and `build-test` runs the
+rest. The split is the list of files in `scripts/dogfood/browser-tier.sh`; a
+new test anywhere else needs nothing, and a new test in one of those files is
+picked up automatically. On a pull request `dogfood-browser` runs only when
+the diff touches its inputs (`scripts/dogfood/browser-suite-relevant.sh`
+decides, failing open on anything it does not recognise); it always runs on
+`main`, and nightly from `dogfood-browser-nightly.yml`.
 
 If your change touches a test that reads git history, also run
 `make ci-shallow` (see above) — a full clone cannot observe that class of

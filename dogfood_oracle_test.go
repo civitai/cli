@@ -38,16 +38,24 @@ import (
 
 const oracleDir = "scripts/dogfood"
 
+// cdpModule is the browser-launch module the oracle tests drive. It lives here,
+// not beside its launch tests in dogfood_cdp_launch_test.go, because that file
+// is `!windows` (it probes pids with syscall.Kill and fakes the browser with a
+// /bin/sh script) while dogfood_oracle_consent_test.go,
+// dogfood_oracle_picker_test.go, dogfood_oracle_post_test.go and
+// dogfood_control_wait_test.go, which build on every OS, also read it.
+const cdpModule = "scripts/dogfood/briefs/_cdp.mjs"
+
 // 🔴 A SKIP IS A GREEN THAT CHECKED NOTHING. Same rule, and the same shape, as
 // dogfoodTool: on a contributor's machine a missing browser skips (with the
 // reason, under -v); under CI it FAILS, because there a skip and a pass are
-// indistinguishable in the log the merge gate is read from. ci.yml's build-test
-// job resolves a browser into CIVITAI_CHROME before `go test ./...` for exactly
-// this reason.
+// indistinguishable in the log the merge gate is read from. Every CI job that
+// runs these resolves a browser into CIVITAI_CHROME first
+// (scripts/dogfood/ci-browser.sh) for exactly this reason.
 //
 // 🔴 `oracleBrowserNames` IS ONE OF FOUR COPIES OF THE SAME PREFERENCE ORDER —
 // the others are in `scripts/dogfood/briefs/_cdp.mjs` (`BROWSER_NAMES`),
-// `scripts/dogfood/oracle.sh` and `.github/workflows/ci.yml`. They must agree,
+// `scripts/dogfood/oracle.sh` and `scripts/dogfood/ci-browser.sh`. They must agree,
 // or this suite resolves a different browser from the one the assertions it
 // drives will pick, and `TestEveryBrowserResolverAgreesOnTheSameOrder` in
 // dogfood_cdp_launch_test.go is what enforces that.
@@ -608,7 +616,14 @@ func runScript(t *testing.T, script string, env []string, args ...string) (strin
 	t.Helper()
 	bash := dogfoodTool(t, "bash")
 	cmd := exec.Command(bash, append([]string{filepath.Join(oracleDir, script)}, args...)...)
-	cmd.Env = append(os.Environ(), env...)
+	// 🔴 THE ONE PLACE A LEAF'S IN-PAGE WAIT IS DECIDED. Every browser leaf in
+	// this package reaches the assertion through here, so the expected-timeout
+	// ledger (dogfood_control_wait_test.go) is applied here and nowhere else —
+	// and the guards that keep a POSITIVE case off the short wait read the
+	// environment the child will actually get, process env included.
+	var budget int
+	var waitLog string
+	cmd.Env, budget, waitLog = controlWaitEnv(t, append(os.Environ(), env...))
 	out, err := cmd.CombinedOutput()
 	code := 0
 	var ee *exec.ExitError
@@ -617,6 +632,7 @@ func runScript(t *testing.T, script string, env []string, args ...string) (strin
 	} else if err != nil {
 		t.Fatalf("running %s: %v\n%s", script, err, out)
 	}
+	checkControlWait(t, budget, waitLog)
 	return string(out), code
 }
 

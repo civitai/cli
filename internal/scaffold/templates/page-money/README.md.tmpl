@@ -9,14 +9,18 @@ weight) → estimate → (lazy consent) → submit → poll → result.
 ## Every hook the SDK exports
 
 The COMPLETE, always-current list is
-<https://developer.civitai.com/apps/reference/hooks.md>. **Fetch it first.** Every
-capability this platform has is a hook, so if it is not there it is not a hook —
-check that page before concluding the platform cannot do something. It is
-generated from the published `@civitai/blocks-react`, so unlike a copy pasted into
-this file it cannot fall behind the package you actually installed.
+<https://developer.civitai.com/apps/reference/hooks.md>. **Fetch it first.** If a
+hook is not on that page it does not exist — check there before concluding the
+SDK has no hook for something. It is generated from the published
+`@civitai/blocks-react`, so unlike a copy pasted into this file it cannot fall
+behind the package you actually installed.
 
-**A declared scope is not a granted scope.** `ai:write:budgeted` and
-`posts:write:self` are consent-gated: they are dropped from the token until the
+Capabilities are hooks AND generation body kinds (a multi-step workflow is a
+`kind` you pass to `useBuzzWorkflow()`, not a hook); the kinds are listed at
+<https://developer.civitai.com/apps/reference/generation.md>.
+
+**A declared scope is not a granted scope.** `ai:write:budgeted`,
+`buzz:read:self` and `posts:write:self` are consent-gated: they are dropped from the token until the
 viewer consents, so you get a 403 while the manifest and the runtime both look
 correct — call `useRequestConsent()` and retry. A hook the reference lists with no
 scope is host-mediated (the host resolves the viewer from your block token).
@@ -56,15 +60,41 @@ linked at the top of this file:
 
 - `useBuzzWorkflow()` — `estimate` / `submit` / `poll` (the spend).
 - `useBuzzBalance()` — the viewer's per-pool balance (`{ blue, green, yellow }`),
-  read host-side via the `GET_BUZZ_BALANCE` bridge — **no `buzz:read:self` scope
-  needed** (the host resolves the viewer from the block token). Use it to *reason*
-  about spend (which account can fund this?), **not** to re-display the balance —
-  the Civitai chrome around your app already shows it.
+  read host-side via the `GET_BUZZ_BALANCE` bridge, which **requires the
+  `buzz:read:self` scope** — so `block.manifest.json` declares it (with a
+  `scopeJustifications` entry). Without it the host's read is refused and the
+  app simply shows no per-account annotation. The scope is **consent-gated**, so
+  the first token is minted without it and the mount read is refused; the app
+  asks for it in the same **Allow Buzz spending** dialog and re-reads the
+  balance when the token's scopes change. Use it to *reason* about spend
+  (which account can fund this?), **not** to re-display the balance — the
+  Civitai chrome around your app already shows it.
 - `useCheckpointPicker()` / `useResourcePicker()` — open the HOST's native
   resource picker for the checkpoint + LoRAs (the app never browses a catalog).
-- `useRequestConsent()` — lazy, on first Generate: `ai:write:budgeted` is
-  consent-gated, so the token mints WITHOUT it; the grant arrives as a
-  `TOKEN_REFRESH` and the app auto-resumes the click.
+- `useRequestConsent()` — the **Allow Buzz spending** button asks for
+  `ai:write:budgeted` and `buzz:read:self` in one dialog. Both are consent-gated,
+  so the token mints WITHOUT them, and the server will not even PRICE a request
+  without `ai:write:budgeted`. The grant arrives as a `TOKEN_REFRESH`; the app
+  then estimates the request, shows the price and re-reads the balance — it
+  never submits on a grant.
+- **Price before spend.** `estimate()` runs as the viewer edits the request, and
+  Generate stays **disabled** until an estimate for exactly the current request
+  succeeds; the button then reads `Generate · N Buzz`. A failed estimate (or one
+  with no price) shows an error with **Retry estimate** and never falls through
+  to `submit()`. The receipt reports the whole debit: a submitted workflow's
+  snapshot carries the generation cost only, so the app adds back the author fee
+  the estimate itemised (`cost.authorFee`).
+- **Comfy prices are approximate.** A Comfy recipe's estimate is a display
+  estimate: submit reserves the recipe's `maxBuzz` ceiling and settles to the
+  actual runtime cost. The estimate reply carries no ceiling, so the button
+  reads `Generate · ≈N Buzz`, and the receipt shows what was actually charged.
+- **Go easy on the estimate allowance.** On a page app it is one bucket per
+  block instance, shared by every viewer of your app. The request is re-priced
+  900 ms after the last edit, and after a rate-limited estimate the next
+  automatic one waits 2 s, doubling up to 30 s (a successful estimate resets
+  it). **Retry estimate** is sent at once, whatever the backoff. The SDK gives a
+  rate limit no code of its own, so `isRateLimitedEstimate` in
+  `src/generation.ts` matches the host's message.
 - `useBlockResize()` — the SDK reports height to the host safely.
 - `useBlockBreakpoint()` — the width tier of your block's own box, for layout
   decisions. See below.
@@ -486,9 +516,9 @@ funded it** — read from `snapshot.spentAccountType` (the account with the LARG
 debit). Note this can be **blue** even when you paid: a gen covered mostly by
 free/earned Buzz reports `blue`. It's informational only.
 
-`accountType` / `spentAccountType` / `useBuzzBalance` require
-`@civitai/app-sdk@^0.54.0` + `@civitai/blocks-react@^0.61.0` (already pinned in
-`package.json`).
+`accountType` / `spentAccountType` / `useBuzzBalance` need `@civitai/app-sdk`
+0.14.0 or later and `@civitai/blocks-react` 0.16.0 or later; the versions
+`package.json` pins already include them.
 
 ## Develop
 
@@ -572,13 +602,15 @@ To use it:
    - **A DEFAULT `civitai login` mints a read/identity-only dev token for this
      app.** The default device-login scope set carries Apps submit but NOT AI
      Services (by design — a plain login shouldn't grant general Buzz spend). A
-     page-money app's manifest declares only `ai:write:budgeted`, and the server
+     page-money app's only spend scope is `ai:write:budgeted`, and the server
      strips that budgeted-spend scope from a token minted by a bearer without AI
      Services, so what's left is **read/identity only**: `dev:live` shows your
-     **viewer** plus catalog/storage, but **estimate → submit → real generation
-     does NOT work**. Fix it by re-running **`civitai login --scopes generate`**
-     (the login is re-runnable and additive — you keep submit + dev-tunnel), or
-     by using the full-scope **personal API key** above.
+     **viewer** and the catalog, but **estimate → submit → real generation
+     does NOT work**. (Storage does not work under `dev:live` with any
+     credential — see "Live v1 scope" below.) Fix it by re-running
+     **`civitai login --scopes generate`** (the login is re-runnable and
+     additive — you keep submit + dev-tunnel), or by using the full-scope
+     **personal API key** above.
 2. If you printed the token instead of using `--env >> …`, paste it into
    `.env.development.local` as `VITE_LIVE_BLOCK_TOKEN=<token>`. Keep the secret in
    `.env.development.local` (git-ignored), NOT the committed `.env.development`.
@@ -601,8 +633,10 @@ The two reads use **different credentials** — by design, and security-critical
 - **Profile name** — `/api/v1/blocks/me`, authed with the page-scoped
   **block token** (`VITE_LIVE_BLOCK_TOKEN`). Faithful to prod: a page app can
   read its own viewer.
-- **Buzz balance** — `/api/trpc/buzz.getBuzzAccount`. The page block token can't
-  read Buzz (no `buzz:read:self`), so the balance needs a buzz-read credential:
+- **Buzz balance** — `/api/trpc/buzz.getBuzzAccount`. That is a signed-in-user
+  route: it does not accept a block token at all (whatever scopes the token
+  carries — the app's own balance read goes through the host's
+  `GET_BUZZ_BALANCE` bridge instead), so the nav needs a buzz-read credential:
   your **personal key**. There is **no public REST Buzz endpoint**; the balance
   lives behind this tRPC procedure.
 
@@ -639,22 +673,39 @@ The two reads use **different credentials** — by design, and security-critical
 > (`estimate`/`submit`/`poll`/`cancel`) AND the resource pickers — it serves a
 > protocol-identical in-harness picker overlay, so `useCheckpointPicker` /
 > `useResourcePicker` work in `dev:live`. It does **not** support
-> `SET_USER_CHECKPOINT` persistence, the App-Storage KV protocol, in-band Buzz
-> purchase, or the `GET_BUZZ_BALANCE` read (`useBuzzBalance`) — those reply "not
-> supported in live v1" (use mock mode for them). So in `dev:live` the balance
+> `SET_USER_CHECKPOINT` persistence, in-band Buzz purchase, or the
+> `GET_BUZZ_BALANCE` read (`useBuzzBalance`) — those reply "not supported in
+> live v1" (use mock mode for them). So in `dev:live` the balance
 > reads as unavailable and the "Spend from" picker simply drops its 0-Buzz
 > annotations — nothing else changes, and the host nav's own balance total (read
 > via your personal key through the proxy) still works. The balance resolves in
 > **`dev:harness`** (synthetic, wired to the `balance` scenario) and on the **real
 > platform** (the civitai host answers `GET_BUZZ_BALANCE` natively).
+>
+> **Storage does not work under `dev:live`**, whatever credential minted the
+> token:
+>
+> - The **document store** (`app.storage.collection` in `@civitai/sdk`) is not
+>   reached at all. `@civitai/sdk` calls it over HTTP, not over the block→host
+>   bridge this harness forwards, and this template does not use `@civitai/sdk`.
+> - **The legacy stores** (`useAppStorage`, `useSharedStorage`) are removed:
+>   civitai.com refuses every call to them, in production too
+>   (`legacy_store_removed`, since 2026-11-10), and the `@civitai/blocks-react`
+>   this template pins no longer exports the two hooks. Do not build on them. Under
+>   `dev:live` the refusal you see may not be `legacy_store_removed`: a
+>   `useAppStorage` call is refused first with `401` `Apps access is not
+>   enabled for this browser session`, because that check runs before the
+>   removal check and a local harness never has a civitai.com browser session.
+>
+> Exercise the document store with `createFakeStorage` from
+> `@civitai/sdk/testing`.
 
 > **`dev:harness` is the wide one — do not infer its limits from `dev:live`'s.**
 > The mock host answers the whole block→host protocol, so hooks that `dev:live`
 > refuses work there, INCLUDING posting: `CREATE_POST_FROM_APP`
 > (`useCreatePostFromApp()`), `PUBLISH_GENERATION_OUTPUTS`, `SAVE_IMAGE`,
-> `GET_IMAGES_BY_IDS`, `SET_COLLECTION_FOLLOW`, `OPEN_IMAGE_UPLOAD`,
-> `GET_WILDCARD_PACK` and the App-Storage + shared-storage message families are
-> all mocked. You do not need to read `mockHost.js` to find that out, and you do
+> `GET_IMAGES_BY_IDS`, `SET_COLLECTION_FOLLOW`, `OPEN_IMAGE_UPLOAD` and
+> `GET_WILDCARD_PACK` are all mocked. You do not need to read `mockHost.js` to find that out, and you do
 > not need beta access or Buzz to exercise any of them. The authority is the set
 > of message types `createMockHost` handles in
 > `@civitai/blocks-react/testing` — this list is checked against it.

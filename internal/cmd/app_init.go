@@ -18,7 +18,6 @@ import (
 
 func newAppInitCmd() *cobra.Command {
 	var templateFlag string
-	var fromSlug string
 	var dirFlag string
 	var nameFlag string
 	var slugFlag string
@@ -30,10 +29,16 @@ func newAppInitCmd() *cobra.Command {
 		Long: `Scaffold a correct, ready-to-build App project.
 
 Templates:
-  static      a no-build page app (index.html + a tiny JS, no build step)
-  page-vite   a vite + React page app (config-as-code build: buildCommand + outputDir)
-  page-money  a vite + React + TS full-page (W10) money-path app wired to the
-              published App SDK (estimate -> consent -> submit -> poll -> Buzz spend)
+  page-elements  [default] a vite + TS full-page app built with web components and
+                 no UI framework: @civitai/sdk for the host bridge, <civitai-*>
+                 elements from @civitai/components (themed by @civitai/theme),
+                 a mock-host dev harness and a test
+  page-money     the React alternative: a vite + React + TS full-page (W10)
+                 money-path app wired to the published App SDK (estimate ->
+                 consent -> submit -> poll -> Buzz spend)
+  page-vite      a vite + React page app with no SDK (config-as-code build:
+                 buildCommand + outputDir)
+  static         a no-build page app (index.html + a tiny JS, no build step)
 
 The display name can be free-form ("My Cool Block"); it is slugified for the
 blockId. A slug-shaped name is used verbatim.
@@ -48,12 +53,21 @@ derivation entirely.
 
 By default the project is created in ./<slug>. Override the output directory with
 a positional [dir] or --dir <path>; override the display name independently with
---name (so name, slug, and directory can all differ).`,
-		Example: `  # A no-build static app in ./my-block.
+--name (so name, slug, and directory can all differ).
+
+The output directory must not exist yet, or must be empty. A directory holding
+only what "civitai agent-setup" wrote into it (AGENTS.md, CLAUDE.md and your
+agent's project MCP config) counts as empty, and those files are kept: only the
+managed block inside AGENTS.md is refreshed for the new project. Anything else in
+the directory is a refusal — nothing is overwritten and there is no --force.`,
+		Example: `  # A web-components app (the page-elements default) in ./my-block.
   civitai app init my-block
 
-  # A page-money app; "My Cool Block" -> slug my-cool-block, dir ./my-cool-block.
+  # The React alternative; "My Cool Block" -> slug my-cool-block, dir ./my-cool-block.
   civitai app init "My Cool Block" --template page-money
+
+  # A no-build static app.
+  civitai app init my-block --template static
 
   # Custom output directory (slug stays my-block; created in ./apps/foo).
   civitai app init my-block --dir ./apps/foo
@@ -65,12 +79,11 @@ a positional [dir] or --dir <path>; override the display name independently with
   civitai app init my-block ./apps/foo --name "My Block"`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAppScaffold(cmd, args, templateFlag, fromSlug, dirFlag, nameFlag, slugFlag, noInput)
+			return runAppScaffold(cmd, args, templateFlag, dirFlag, nameFlag, slugFlag, noInput)
 		},
 	}
 
-	cmd.Flags().StringVarP(&templateFlag, "template", "t", string(scaffold.Static), "project template: static | page-vite | page-money")
-	cmd.Flags().StringVar(&fromSlug, "from", "", fromFlagUsage)
+	cmd.Flags().StringVarP(&templateFlag, "template", "t", string(scaffold.DefaultTemplate), templateFlagUsage)
 	cmd.Flags().StringVar(&dirFlag, "dir", "", "output directory (default ./<slug>)")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "display name (default derived from the name argument)")
 	cmd.Flags().StringVar(&slugFlag, "slug", "", slugFlagUsage)
@@ -78,32 +91,20 @@ a positional [dir] or --dir <path>; override the display name independently with
 	return cmd
 }
 
-// slugFlagUsage / fromFlagUsage are shared by `app init` and `app create` so the
-// two commands cannot drift on the same flag.
+// slugFlagUsage / templateFlagUsage are shared by `app init`
+// and `app create` so the two commands cannot drift on the same flag.
 const (
+	templateFlagUsage = "project template: page-elements | page-money | page-vite | static"
+
 	slugFlagUsage = "explicit blockId (bypasses derivation from the name; 3-40 chars, starts with a letter, lowercase a-z/0-9/hyphens)"
-	// The flag stays discoverable — it is a real roadmap item and hiding it
-	// would only move the surprise to a user who read about it elsewhere — but
-	// the usage string says up front that it cannot work yet, so the failure is
-	// predictable BEFORE the command is run rather than after.
-	fromFlagUsage = "fork from an existing published app slug (NOT AVAILABLE YET — the CLI cannot fetch app source)"
 )
 
 // runAppScaffold is the shared scaffold body behind both `app init` and
 // `app create`. The two commands differ only in the default template; all of
 // the slug/display derivation, dir resolution, rendering, self-validation, and
 // next-steps output lives here so there is a single code path.
-func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, dirFlag, nameFlag, slugFlag string, noInput bool) error {
+func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, dirFlag, nameFlag, slugFlag string, noInput bool) error {
 	out := cmd.OutOrStdout()
-
-	// TODO(server): expose a read endpoint that returns a published app's
-	// canonical source tree by slug, then --from can scaffold from it. Until
-	// then the flag has a 100% failure rate, so the message a user sees is a
-	// plain actionable CLI error — the engineering context stays HERE. An
-	// end-user error is not the place to ship an internal ticket.
-	if fromSlug != "" {
-		return fmt.Errorf("--from is not available yet: this CLI cannot fetch a published app's source. Scaffold a plain project with `%s <name>` and copy the upstream files in by hand", cmd.CommandPath())
-	}
 
 	// An explicit --slug bypasses derivation entirely, so it is checked against
 	// the same server contract a derived slug is. A bad VALUE is a usage error
@@ -234,10 +235,14 @@ func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, d
 		return err
 	}
 
-	written, err := scaffold.Render(tmpl, destDir, scaffold.Data{
+	// 🔴 RenderKeeping, NOT Render: a directory that holds only what
+	// `civitai agent-setup` wrote is the directory the onboarding sends an author
+	// to scaffold into. See agentSetupProjectPaths for the set and
+	// scaffold.RenderKeeping for what "only" means.
+	written, err := scaffold.RenderKeeping(tmpl, destDir, scaffold.Data{
 		Slug: slug,
 		Name: display,
-	})
+	}, agentSetupProjectPaths())
 	if err != nil {
 		return err
 	}
@@ -291,11 +296,12 @@ func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, d
 // reader this defect hurts is an AGENT running non-interactively — `--yes`, no
 // TTY — which is exactly the invocation a prompt cannot reach; a prompt would
 // leave the measured failure untouched and add a question to the one path that
-// was already fine. The write is also as safe as a write gets: `scaffold.Render`
-// has just REFUSED to run in a non-empty directory, so this AGENTS.md is one
-// this command created and no author has touched. `mergeAgentsMD` is used
-// anyway rather than a blind overwrite, so the three-case rule still holds if
-// that ever stops being true.
+// was already fine. `mergeAgentsMD` is what makes the write safe, and it is no
+// longer a belt-and-braces choice: the scaffolder now accepts a directory that
+// holds only `agent-setup`'s own files (agentSetupProjectPaths), so an AGENTS.md
+// can be there before this runs — the one that earlier step wrote, possibly with
+// the author's own text around the managed block. The three-case rule rewrites
+// the span between the markers and nothing else.
 //
 // 🔴 AGENTS.md ONLY — NOT CLAUDE.md, NOT THE MCP CONFIG. Those two are about the
 // AUTHOR'S AGENT, not about the project: which agent it is, where its config
@@ -374,12 +380,27 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 	// server-registered recipe, and an inline graph the app ships itself. Surface
 	// both honestly (each has its own access gate) and point at the README's
 	// Comfy on Civitai section rather than the raw file count.
-	if tmpl.NeedsHarness() {
+	if tmpl == scaffold.PageMoney {
 		fmt.Fprintln(out, ui.Dim("  Includes a txt2img sample + a Comfy on Civitai (customComfy) sample (invite-only beta), with body builders for BOTH arms: a server-registered recipe and an inline ComfyUI graph your own app ships (app developers) — see the Comfy on Civitai section in README.md."))
 	}
 
 	fmt.Fprintln(out, "\n"+ui.Bold("Next steps:"))
 	switch {
+	case tmpl == scaffold.PageElements:
+		// The default template. Same shape as page-money's free path — a mock
+		// host that works today, no Buzz and no beta access — then the same
+		// invite-only dev tunnel. There is no money path or dev:live here, so
+		// neither is named.
+		fmt.Fprintf(out, installStepFmt, destDir)
+		fmt.Fprintln(out, "  2. npm run dev:harness     # mock host on localhost:5186 — works today")
+		fmt.Fprintln(out, "  3. edit src/block.ts and iterate (npm test drives it through the real bridge)")
+		fmt.Fprintln(out, "  4. civitai app submit      # validate + submit for review")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "  When you have beta access (invite-only):")
+		fmt.Fprintln(out, "     npm run dev:tunnel      # in another terminal: serve your app for the tunnel")
+		fmt.Fprintln(out, "     civitai app dev-tunnel  # your LOCAL app INSIDE the real host, prod-fidelity — no submit needed")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, ui.Dim("  Prefer React? `--template page-money` scaffolds the React alternative."))
 	case tmpl.NeedsHarness():
 		// LEAD with the free, works-today path: `npm run dev:harness` mounts a
 		// MOCK host (no Buzz, no beta access, no network) so a newcomer can build
@@ -429,8 +450,9 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 	// this in its own words.)
 	//
 	// BOTH conjuncts are load-bearing even though they are coextensive across
-	// today's three templates (page-money is the only harness template and the
-	// only one with no emitter). Neither should be dropped as redundant:
+	// today's four templates (page-money and page-elements are the harness
+	// templates and the only ones with no emitter — their SDKs ack). Neither
+	// should be dropped as redundant:
 	//   - `ReadyAckPath() != ""` stops the sentence printing with an EMPTY
 	//     filename for a template that ships no emitter. Not hypothetical:
 	//     forcing this condition true is exactly what produced
@@ -498,11 +520,7 @@ func runScaffoldForm(cmd *cobra.Command, defaultTemplate string, askName bool) (
 	}
 	fields = append(fields, huh.NewSelect[string]().
 		Title("Template").
-		Options(
-			huh.NewOption("static — no-build page app (index.html + a tiny JS)", string(scaffold.Static)),
-			huh.NewOption("page-vite — Vite + React page app", string(scaffold.PageVite)),
-			huh.NewOption("page-money — Vite + React + TS SDK money-path app", string(scaffold.PageMoney)),
-		).
+		Options(scaffoldTemplateOptions()...).
 		Value(&in.template))
 	form := huh.NewForm(
 		huh.NewGroup(fields...),
@@ -512,6 +530,20 @@ func runScaffoldForm(cmd *cobra.Command, defaultTemplate string, askName bool) (
 	}
 	in.name = strings.TrimSpace(in.name)
 	return in, nil
+}
+
+// scaffoldTemplateOptions is the prompt's template list, in display order. The
+// default (scaffold.DefaultTemplate) is listed FIRST as well as pre-selected, so
+// the recommended choice is the one a reader meets first even where a terminal
+// renders the cursor poorly. Separate from runScaffoldForm so a test can read
+// it without a TTY.
+func scaffoldTemplateOptions() []huh.Option[string] {
+	return []huh.Option[string]{
+		huh.NewOption("page-elements — Vite + TS + web components (recommended)", string(scaffold.PageElements)),
+		huh.NewOption("page-money — Vite + React + TS SDK money-path app (the React alternative)", string(scaffold.PageMoney)),
+		huh.NewOption("page-vite — Vite + React page app, no SDK", string(scaffold.PageVite)),
+		huh.NewOption("static — no-build page app (index.html + a tiny JS)", string(scaffold.Static)),
+	}
 }
 
 func joinLines(lines []string) string {

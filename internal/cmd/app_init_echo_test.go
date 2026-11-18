@@ -125,7 +125,7 @@ func stubPrompt(t *testing.T, rec *promptRecorder, reply scaffoldInputs) {
 // The assertions are structural, not "some prompt happened": the prompt must be
 // CALLED, it must be told NOT to ask for a name, and the template it returns
 // must be the one the project is built from — which is only observable because
-// the reply (page-vite) differs from `app create`'s default (page-money).
+// the reply (page-vite) differs from `app create`'s default (page-elements).
 func TestSlugFlagDropsTheNameFieldButKeepsTheTemplatePrompt(t *testing.T) {
 	var rec promptRecorder
 	stubPrompt(t, &rec, scaffoldInputs{name: "", template: "page-vite"})
@@ -143,7 +143,7 @@ func TestSlugFlagDropsTheNameFieldButKeepsTheTemplatePrompt(t *testing.T) {
 	if rec.askedName {
 		t.Error("--slug settles the identity, so the NAME field must be dropped from the form")
 	}
-	if rec.defaultTemplate != "page-money" {
+	if rec.defaultTemplate != "page-elements" {
 		t.Errorf("the form should be pre-selected with the command's default template, got %q", rec.defaultTemplate)
 	}
 	// The prompted template is what got built — the whole point of still asking.

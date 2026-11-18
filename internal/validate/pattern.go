@@ -148,6 +148,56 @@ var patternRules = map[string]patternRule{
 		rule:    "must start with a \"/\"",
 		example: "/",
 	},
+	// storage.collections.<name>.ownedModelVersions[] — a path into a stored
+	// document's `data`. Pointer-SHAPED but deliberately narrower than RFC 6901:
+	// no `~` escapes, and a segment cannot start with a digit, so it can never
+	// index into an array. The gloss names those three exclusions because they
+	// are what an author who knows JSON Pointer will try.
+	`^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$`: {
+		rule:    "must be a field path of 1 to 4 segments, each \"/\" then a letter or _ followed by up to 63 letters, digits or _ — no array indexes, \"~\" escapes or hyphens",
+		example: "/workflow/modelVersionId",
+	},
+	// storage.collections.<name>.migrations[] `path` / `from` / `to` — a real RFC
+	// 6901 JSON Pointer into a stored document's `data`, unlike the narrower
+	// ownedModelVersions path above: any characters are legal in a segment once
+	// `~` and `/` are escaped. The schema's separate `not` that refuses a `*`
+	// segment here surfaces as kind.Not and is not this regex's claim.
+	`^(/([^/~]|~[01])+){1,15}$`: {
+		rule:    "must be a JSON Pointer of 1 to 15 non-empty segments, each \"/\" then a field name, with ~ written as ~0 and / written as ~1",
+		example: "/title",
+	},
+	// storage.collections.<name>.migrations[] acknowledge `path` — the same
+	// pointer shape, but ZERO segments is legal: "" is the document root.
+	`^(/([^/~]|~[01])+){0,15}$`: {
+		rule:    "must be \"\" for the document root, or a JSON Pointer of up to 15 non-empty segments, each \"/\" then a field name, with ~ written as ~0 and / written as ~1",
+		example: "/tags/*",
+	},
+	// storage.collections.<name>.hook.file — a bundle-relative module path. The
+	// first-character rule per segment is what refuses ".", ".." and hidden
+	// files; the schema's separate node_modules `not` is not this regex's claim.
+	`^([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.m?js$`: {
+		rule:    "must be a relative path to a .js or .mjs file: \"/\"-separated segments, each starting with a letter, digit, _ or - and then letters, digits, _, . or - (so no leading \"/\", no \".\" or \"..\" segment, no hidden file)",
+		example: "hooks/check.js",
+	},
+	// storage.collections.<name>.hook.sha256 — uppercase hex is the mistake a
+	// tool that prints digests in capitals walks an author into.
+	`^[0-9a-f]{64}$`: {
+		rule:    "must be exactly 64 lowercase hexadecimal characters (a SHA-256 digest)",
+		example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+	},
+	// storage.imports[].from — ANOTHER app's blockId. Bounded (3 to 40) where
+	// the root blockId pattern is not, so the gloss states the length and avoids
+	// the blockId row's wording, which the two must not share.
+	`^[a-z][a-z0-9-]{1,38}[a-z0-9]$`: {
+		rule:    "must be an app's blockId: 3 to 40 characters of a-z, 0-9 and -, starting with a letter and ending with a letter or digit",
+		example: "parent-app",
+	},
+	// storage collection names (storage.imports[].collections[]) and the
+	// counter and mark names on a shared collection.
+	`^[a-z][a-z0-9_]{0,31}$`: {
+		rule:    "must be a lowercase snake_case name: a letter, then up to 31 of a-z, 0-9 or _",
+		example: "saved_notes",
+	},
 }
 
 // patternAdvice returns the trailing gloss for a pattern violation, or "" when

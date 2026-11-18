@@ -1,0 +1,69 @@
+// Asserts the dev server is embeddable from the real Civitai host (for
+// `civitai app dev-tunnel`) WITHOUT loosening the production build.
+import { describe, it, expect } from 'vitest';
+
+import {
+  DEV_ALLOWED_HOSTS,
+  DEV_TUNNEL_HOST_SUFFIX,
+  devServerSecurityHeaders,
+  DEV_TUNNEL_ENV,
+  isDevTunnel,
+} from '../src/dev-embed.js';
+
+describe('dev-tunnel embeddability', () => {
+  it('emits a frame-ancestors CSP that admits every Civitai domain', () => {
+    // Every Civitai domain serves App previews. Spelled out rather than built
+    // from CIVITAI_PARENT_ORIGINS, so the test cannot agree with a wrong list.
+    expect(devServerSecurityHeaders()['Content-Security-Policy']).toBe(
+      "frame-ancestors 'self' https://civitai.com https://civitai.red https://civitai.green",
+    );
+  });
+
+  it('sets Access-Control-Allow-Origin:* so the null-origin sandboxed iframe can load ES modules', () => {
+    // The dev-tunnel embeds this server in App Blocks' PageBlockHost iframe,
+    // which is sandboxed with a null origin. Its ES-module fetches are CORS-
+    // blocked without ACAO, matching how prod app-blocks serve their modules.
+    const headers = devServerSecurityHeaders();
+    expect(headers['Access-Control-Allow-Origin']).toBe('*');
+  });
+
+  it('does NOT restrict connect-src, so the tunnel HMR wss socket is allowed', () => {
+    // `civitai app dev-tunnel` routes Vite HMR over `wss://<tunnel-host>/`. A
+    // `connect-src` CSP directive on the dev server would block that socket; the
+    // dev CSP is frame-ancestors-only. This guards a future CSP tightening from
+    // silently breaking tunnel live-reload.
+    const csp = devServerSecurityHeaders()['Content-Security-Policy'];
+    expect(csp).not.toContain('connect-src');
+    expect(csp).not.toContain('default-src');
+  });
+
+  it('does NOT set X-Frame-Options (would block the cross-origin embed)', () => {
+    const headers = devServerSecurityHeaders();
+    const keys = Object.keys(headers).map((k) => k.toLowerCase());
+    expect(keys).not.toContain('x-frame-options');
+  });
+
+  it('allows the tunnel host suffix in the dev server host check', () => {
+    expect(DEV_ALLOWED_HOSTS).toContain(DEV_TUNNEL_HOST_SUFFIX); // .civit.ai
+    expect(DEV_TUNNEL_HOST_SUFFIX).toBe('.civit.ai');
+  });
+});
+
+describe('dev-tunnel session gate', () => {
+  it('reads the flag the dev:tunnel script and the App Assistant sandbox set', () => {
+    expect(DEV_TUNNEL_ENV).toBe('CIVITAI_DEV_TUNNEL_HMR');
+  });
+
+  it("is on for '1' and 'true'", () => {
+    expect(isDevTunnel({ CIVITAI_DEV_TUNNEL_HMR: '1' })).toBe(true);
+    expect(isDevTunnel({ CIVITAI_DEV_TUNNEL_HMR: 'true' })).toBe(true);
+  });
+
+  it('is off when unset, empty or anything else — plain `npm run dev` sends no embed headers', () => {
+    expect(isDevTunnel({})).toBe(false);
+    expect(isDevTunnel({ CIVITAI_DEV_TUNNEL_HMR: '' })).toBe(false);
+    expect(isDevTunnel({ CIVITAI_DEV_TUNNEL_HMR: '0' })).toBe(false);
+    expect(isDevTunnel({ CIVITAI_DEV_TUNNEL_HMR: 'false' })).toBe(false);
+    expect(isDevTunnel({ SOME_OTHER_FLAG: '1' })).toBe(false);
+  });
+});

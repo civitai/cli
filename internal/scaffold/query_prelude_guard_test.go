@@ -47,18 +47,19 @@ func TestScaffoldTemplatesHaveNoVarInQueryPreludes(t *testing.T) {
 	if scan.FilesRead < 20 {
 		t.Fatalf("read only %d template file(s) — the scanner is not looking at this repo's templates, so a clean verdict here would be a statement about nothing", scan.FilesRead)
 	}
-	// Measured on this tree: 4 real preludes — the two boot-skeleton
-	// `prefers-color-scheme` blocks (page-money + page-vite index.html),
-	// page-vite's `@container` responsive rule, and the fenced copy of that rule
-	// in page-vite's README. Every other textual occurrence is either inside a
-	// comment (stripped) or prose that opens no block (not a prelude).
+	// Measured on this tree after the theme-fix removed the two boot-skeleton
+	// OS-preference media queries (the theme no longer consults the browser;
+	// see bootskeleton_test.go): 2 real preludes — page-vite's `@container`
+	// responsive rule, and the fenced copy of that rule in page-vite's README.
+	// Every other textual occurrence is either inside a comment (stripped) or
+	// prose that opens no block (not a prelude).
 	//
 	// This floor is what makes the comment-stripper's failure visible: a
 	// stripper that ate too much would leave 0 here rather than reporting a
 	// clean tree. If a change legitimately removes a query, lower this
 	// DELIBERATELY — do not let the guard become a guard over nothing.
-	if scan.Preludes < 3 {
-		t.Fatalf("found only %d media/container prelude(s) in the templates — expected at least 3 (two boot-skeleton prefers-color-scheme blocks + page-vite's @container responsive rule). Either the templates lost their queries (lower this floor on purpose), QueryPreludeRe stopped matching, or StripCommentsForQueryScan is eating real code", scan.Preludes)
+	if scan.Preludes < 2 {
+		t.Fatalf("found only %d media/container prelude(s) in the templates — expected at least 2 (page-vite's @container responsive rule + its fenced README copy). Either the templates lost their queries (lower this floor on purpose), QueryPreludeRe stopped matching, or StripCommentsForQueryScan is eating real code", scan.Preludes)
 	}
 
 	// ── THE INVARIANT ───────────────────────────────────────────────────────

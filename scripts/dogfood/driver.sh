@@ -131,6 +131,123 @@ MAX_SUBMISSIONS="${DOGFOOD_MAX_SUBMISSIONS:-}"
 # editing runner.py. Empty => runner.py's own default. It is a ceiling, not a
 # spend cap; money is still bounded by runner.py's --max-cost.
 MAX_TOKENS="${DOGFOOD_MAX_TOKENS:-}"
+# Pass-through for runner.py's --prompt-url: fetch the agent instructions from
+# somewhere other than the hosted prompt.md, so a PROPOSED edit to them can be
+# measured before it ships. Empty => the hosted default, and the whole matrix is
+# then byte-identical to every grid already measured.
+#
+# 🔴 A MATRIX RUN WITH THIS SET IS NOT EVIDENCE ABOUT THE SHIPPED ENTRYPOINT.
+# `grade.sh` reads the CONTAINER, so its verdict line cannot tell you the
+# instructions were patched; the trial's `start` record carries `prompt_url` for
+# exactly that reason. Use a distinct DOGFOOD_TRIAL_PREFIX so the runs are also
+# told apart on disk.
+#
+# 🔴 TRIMMED, NOT WHITESPACE-DELETED, AND NOT VIA A SUBPROCESS. Round 2 of
+# /audit-pr killed the first two attempts at this line, each in a way that was
+# silent and pointed at the file's own named hazard:
+#   - `[ -n "$PROMPT_URL" ]` alone: a BLANK value printed the full "NON-HOSTED
+#     instructions" banner, forwarded `--prompt-url "   "`, and then fed the
+#     trial the HOSTED prompt with no `prompt_url` key, because runner.py
+#     normalises with `.strip()` and this file did not.
+#   - `tr -d '[:space:]'`: that DELETES interior whitespace too, so
+#     `file:///x/my prompt.md` was silently welded to `/x/myprompt.md`, the
+#     preflight passed on the WELDED target, and the trial was fed a sibling
+#     file. Measured. And `tr` is the only subprocess in this file's variable
+#     block: with `tr` off PATH the substitution yields the empty string, which
+#     this code reads as "unset", so the whole feature evaporates and prints
+#     MATRIX COMPLETE over the default grid.
+# Pure parameter expansion trims the ends and nothing else, cannot fail, and
+# matches `.strip()` exactly.
+PROMPT_URL="${DOGFOOD_PROMPT_URL:-}"
+PROMPT_URL="${PROMPT_URL#"${PROMPT_URL%%[![:space:]]*}"}"
+PROMPT_URL="${PROMPT_URL%"${PROMPT_URL##*[![:space:]]}"}"
+# 🔴 SAME REFUSAL THE BRIEF GETS, AND FOR THE SAME REASON. `--prompt-url` feeds
+# the SAME user message as `--brief`, so it is a second instance of what the
+# README calls "the one route by which repo content could reach a blind trial":
+# `DOGFOOD_PROMPT_URL=$(cat somefile)` would inject arbitrary text as the task's
+# FIRST paragraph. runner.py refuses it too; this is the outer of the two.
+# ⚠ NEWLINE-SHAPED, NOT INJECTION-SHAPED: a single-line value carrying " Also:
+# ignore step 2." is still accepted, here and in runner.py, exactly as it is for
+# `--brief`. This closes the file-splat route, not injection in general.
+case "${DOGFOOD_PROMPT_URL:-}" in
+  *$'\n'*|*$'\r'*)
+    echo "DOGFOOD_PROMPT_URL must be a single line — a multi-line value injects" >&2
+    echo "  arbitrary text into the trial's task, which is the one thing the" >&2
+    echo "  harness's blindness depends on not happening." >&2
+    exit 1 ;;
+esac
+# 🔴 USERINFO ONLY, AND THE BLOCKLIST THAT WAS HERE IS DELETED BECAUSE IT WAS
+# WRONG IN BOTH DIRECTIONS. It read `*@*|*token=*|*Signature=*|*X-Amz-*|*sig=*|
+# *key=*`, and round 2 measured both arms: it ADMITTED `?Token=abc` and
+# `?TOKEN=abc` (case-sensitive `case`) along with `?apiKey=`, `?secret=`,
+# `?jwt=`, and any capability URL carrying the secret in the PATH — while
+# REFUSING `?cachekey=7` (the single most likely parameter in this workflow,
+# busting a CDN cache on a re-served prompt) and any path containing `@`, as
+# Gitea/Forgejo raw URLs do. A guard whose description says "the URL must be
+# unauthenticated" cannot be a six-pattern blocklist; keeping it would have
+# meant a hard `exit 1` with no override on legitimate URLs while the shapes it
+# named most plausibly walked past on capitalisation.
+#
+# What IS structural is RFC 3986 userinfo: anything before an `@` in the
+# authority is credential material by definition. That is checked. Everything
+# else is documented rather than guessed at — see the README, which states the
+# seven surfaces this value reaches and that the Redactor scrubs none of them.
+# 🔴 THE EXPLICIT DEFAULT IS "NOT MOVED", AND THE DEFAULT IS READ FROM
+# runner.py RATHER THAN SPELLED TWICE. Round 2: aligning this file with
+# `.strip()` closed the BLANK value and left the other value the two predicates
+# disagree on — the hosted URL typed out in full. The driver's test was
+# non-emptiness; the runner's is `stripped != USER`. So
+# `DOGFOOD_PROMPT_URL="${PATCHED_URL:-https://developer.civitai.com/agent-setup/prompt.md}"`
+# — an ordinary wrapper shape — printed the full "NON-HOSTED instructions"
+# banner over a grid that ran against the hosted prompt, with no `prompt_url` in
+# the transcript. Same symptom, same direction, as the blank-value defect.
+#
+# `runner.py --print-task` with no other argument IS the default task, which is
+# the default URL and nothing else (TestDogfoodTaskDefaultIsByteIdentical pins
+# that). Deriving it here means the two layers cannot drift; a second literal
+# copy in this file would be a new rot surface for the exact claim it fixes.
+if [ -n "$PROMPT_URL" ]; then
+  PROMPT_URL_DEFAULT="$(python3 runner.py --print-task 2>/dev/null)" || PROMPT_URL_DEFAULT=""
+  if [ -z "$PROMPT_URL_DEFAULT" ]; then
+    # Fail LOUD and OPEN: the banner may over-claim, and that is better said than
+    # guessed. runner.py still decides the task and the mark correctly either way.
+    echo "note: could not derive the default prompt URL from runner.py, so the" >&2
+    echo "  banner below cannot tell you whether this URL is actually the default." >&2
+    echo "  The transcript's prompt_url key remains authoritative." >&2
+  elif [ "$PROMPT_URL" = "$PROMPT_URL_DEFAULT" ]; then
+    # Identical to the hosted default => this run IS a default run. Clearing it
+    # makes the banner, the forwarding and the start record agree by
+    # construction, which is what the previous round claimed and did not deliver.
+    PROMPT_URL=""
+  fi
+fi
+# 🔴 THE AUTHORITY IS EXTRACTED, NOT PATTERN-GUESSED. The first attempt wrote
+# `*@*` with a `*/*@*` escape meaning "the @ is in the path" — which only asks
+# whether SOME `/` precedes SOME `@`, and that is a different predicate. Round 3
+# measured it failing OPEN on every URL with a second `@` after any `/`:
+#   https://user:tok@example.com/path@v2/prompt.md        ADMITTED
+#   https://tok@example.com/files/me@example.com/p.md     ADMITTED
+# and the credential then reached the forwarded argv, the banner, the start
+# record, commands.log, the container's curl and the OpenRouter body — the seven
+# surfaces this guard exists for. The DELETED blocklist would have refused all of
+# them, so that attempt was a net REGRESSION dressed as a structural fix.
+#
+# RFC 3986: userinfo is everything before the FIRST `@` in the AUTHORITY, and the
+# authority ends at the first `/`, `?` or `#`. Extracting it is one expansion and
+# is exact, which the pattern never was.
+pf_rest="${PROMPT_URL#*://}"
+pf_auth="${pf_rest%%[/?#]*}"
+case "$pf_auth" in
+  *@*)
+    echo "DOGFOOD_PROMPT_URL carries URL userinfo (user[:password]@host)." >&2
+    echo "  Refused: this value is recorded in the transcript, printed to stderr," >&2
+    echo "  passed to the container's own curl and sent to OpenRouter inside the" >&2
+    echo "  task, and the Redactor only knows strings read from the credential" >&2
+    echo "  FILE — it scrubs none of them. Serve the file unauthenticated." >&2
+    echo "  ⚠ This checks USERINFO ONLY. A token in a query parameter or in the" >&2
+    echo "  path is NOT detected and leaks just as widely — see the README." >&2
+    exit 1 ;;
+esac
 # Same shape, for runner.py's --max-steps. Empty => runner.py's own default of 40.
 #
 # 🔴 40 CANNOT CARRY A BUILD-AND-SHIP BRIEF, AND UNTIL THIS KNOB EXISTED NO
@@ -243,6 +360,58 @@ elif [ "$ALLOW_LISTING_TEXT" = "1" ]; then
   echo "      — an uncredentialed trial reaches no listing to rewrite." >&2
 fi
 
+if [ -n "$PROMPT_URL" ]; then
+  # Loud, on stderr, before any trial starts. Not fatal — this is a supported
+  # mode — but the verdict it produces is about PROPOSED instructions, and
+  # nothing downstream says so: grade.sh reads the container.
+  echo "🔴 DOGFOOD_PROMPT_URL=$PROMPT_URL — the trials below are being fed" >&2
+  echo "   NON-HOSTED instructions. Their verdicts are evidence about that URL," >&2
+  echo "   NOT about the shipped entrypoint. Each trial's start record carries" >&2
+  echo "   prompt_url; grade.sh's verdict line does not." >&2
+  # 🔴 REACHABILITY PREFLIGHT — this file's stated job is "to refuse the two
+  # mistakes that are invisible afterwards", and an unreachable URL is exactly
+  # one. `grade.sh` reads the container, so a model that could not fetch its
+  # instructions produces an ordinary `no`, indistinguishable from a product
+  # defect — after paying up to `timeout 1500` per cell plus the OpenRouter
+  # spend for the whole grid.
+  #
+  # ⚠ IT IS A HOST-SIDE CHECK AND THE TRIAL FETCHES FROM INSIDE A CONTAINER, so
+  # this can pass where the container still cannot reach it (`127.0.0.1` is the
+  # classic case: from the container that is the container). It rules out typos,
+  # an unstarted server and a missing file; it does not certify container
+  # reachability.
+  #
+  # 🔴 `-q` IS LOAD-BEARING AND curl's STDERR IS PRINTED, NOT DISCARDED. Round 2
+  # measured both: without `-q` this reads `~/.curlrc`, and one plausible
+  # hardening line (`--proto =https`) made the preflight hard-refuse the README's
+  # OWN recommended `http://$SRV:8099/...` recipe while blaming the URL; and
+  # `2>/dev/null` threw away the one thing `-S` exists to produce, so a DNS
+  # failure, a 404 and a missing file all emitted the identical three lines. A
+  # guard whose purpose is to replace an opaque failure with a stated reason must
+  # not manufacture a different opaque failure.
+  if [ "${DOGFOOD_SKIP_PROMPT_PREFLIGHT:-}" = "1" ]; then
+    echo "   (preflight SKIPPED by DOGFOOD_SKIP_PROMPT_PREFLIGHT=1 — an unreachable" >&2
+    echo "    URL will present as every cell failing for no stated reason.)" >&2
+  elif command -v curl >/dev/null 2>&1; then
+    pf_err="$(curl -qfsS --proto '=http,https,file' --max-time 10 -o /dev/null "$PROMPT_URL" 2>&1)"
+    pf_rc=$?
+    if [ "$pf_rc" -ne 0 ]; then
+      echo "refusing to run: could not fetch DOGFOOD_PROMPT_URL from this host." >&2
+      echo "  curl said: ${pf_err:-(no message)}" >&2
+      echo "  Every cell would otherwise fail as an ordinary CLOSING_CONDITION=no," >&2
+      echo "  which is indistinguishable from a product defect, after paying for the" >&2
+      echo "  whole grid. If this host cannot reach a URL the CONTAINER can, set" >&2
+      echo "  DOGFOOD_SKIP_PROMPT_PREFLIGHT=1." >&2
+      exit 1
+    fi
+    echo "   (preflight: fetchable from this HOST — not a guarantee the container" >&2
+    echo "    can reach it; 127.0.0.1 would pass here and fail in the trial.)" >&2
+  else
+    echo "   (preflight SKIPPED: no curl on PATH — an unreachable URL will present" >&2
+    echo "    as every cell failing for no stated reason.)" >&2
+  fi
+fi
+
 run_one() {  # model short image ienv trial user
   local model=$1 image=$3 ienv=$4 trial=$5 euser=$6
   # 🔴 GATE ON COMPLETION, NOT ON EXISTENCE. runner.py opens transcript.jsonl in
@@ -263,6 +432,7 @@ run_one() {  # model short image ienv trial user
   [ -n "$ienv" ] && args+=(--agent-env "$ienv")
   [ -n "$BRIEF" ] && args+=(--brief "$BRIEF")
   [ -n "$BRIEF_NAME" ] && args+=(--brief-name "$BRIEF_NAME")
+  [ -n "$PROMPT_URL" ] && args+=(--prompt-url "$PROMPT_URL")
   # The credential is passed as a PATH, never as a value — see runner.py's
   # credential section for the three surfaces that keeps it off.
   [ -n "$CREDENTIAL" ] && args+=(--credential-file "$CREDENTIAL")

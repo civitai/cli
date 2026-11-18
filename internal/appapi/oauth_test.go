@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -522,9 +523,12 @@ func TestOAuthStatusFallbacksAreClassified(t *testing.T) {
 			if !errors.Is(err, tc.want) {
 				t.Errorf("status %d must classify as %v, got %T: %v", tc.status, tc.want, err, err)
 			}
-			// TagStatus adds no visible text.
-			if !strings.Contains(err.Error(), opaqueBody) {
-				t.Errorf("classification must not change the message, got %q", err.Error())
+			// TagStatus adds no visible text. The body itself is never shown on
+			// these credential routes (it was, before the credential-echo
+			// follow-up to #800), so the message ends with its size.
+			wantTail := fmt.Sprintf("(status %d): 18-byte response body not shown because it may carry credentials", tc.status)
+			if !strings.HasSuffix(err.Error(), wantTail) {
+				t.Errorf("classification must not change the message, got %q, want suffix %q", err.Error(), wantTail)
 			}
 		})
 	}

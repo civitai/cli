@@ -33,13 +33,13 @@ import (
 // It needs node, so it is env-gated exactly like the network guard in
 // pins_guard_test.go: `make ci` / `go test ./...` stays Go-only and offline.
 // It has TWO runners:
-//   - .github/workflows/ci.yml, job `ready-ack-runtime` — runs and REPORTS on
+//   - .github/workflows/ci.yml, the `ready-ack-runtime · …` step of job `checks` — runs and REPORTS on
 //     every pull request. The first version had only the scheduled runner
 //     below, so the failure this guard exists to catch (inverting the
 //     `event.source` check) would have surfaced up to 24h after a merge, on a
 //     workflow nobody watches.
 //   - .github/workflows/bump-scaffold-pins.yml, job `ready-ack-runtime` — the
-//     daily sweep, which catches drift on `main` between PRs.
+//     scheduled sweep (every 6 hours), which catches drift on `main` between PRs.
 //
 // 🔴 REPORTING IS NOT GATING — this job does NOT currently block a merge.
 // Measured, not assumed: `gh api repos/civitai/cli/branches/main/protection`
@@ -191,7 +191,7 @@ func runReadyAckDriverArgs(t *testing.T, node, emitter string, extra ...string) 
 
 func TestScaffoldedReadyAckActuallyFires(t *testing.T) {
 	if os.Getenv(readyAckRuntimeEnv) != "1" {
-		t.Skip("runtime guard; set " + readyAckRuntimeEnv + "=1 to run (the daily bump-scaffold-pins workflow does)")
+		t.Skip("runtime guard; set " + readyAckRuntimeEnv + "=1 to run (ci.yml's checks job and the scheduled bump-scaffold-pins workflow do)")
 	}
 	node, err := exec.LookPath("node")
 	if err != nil {

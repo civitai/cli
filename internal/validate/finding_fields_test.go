@@ -73,12 +73,16 @@ func findingFieldLedger() []fieldExpectation {
 			"the schema locates this `not` violation at outputDir"},
 		{"iframe.minHeight: maximum", "iframe.minHeight",
 			"the range constraint is on iframe.minHeight's own value"},
+		{"manifest must declare at least one surface", FieldDocument,
+			"the schema's surface anyOf is located at the object that declares neither page nor targets"},
 
 		// --- validate.go: serverOwnedFieldChecks ------------------------
 		{"trustTier is server-owned", "trustTier",
 			"the remedy is to delete this key; it is the key that must not be there"},
 		{"iframe.src is server-owned", "iframe.src",
 			"same, nested — the sub-key is what must be deleted, not the iframe block"},
+		{"iframe.src is the platform-stamped canonical value", "iframe.src",
+			"the advisory is about that sub-key's own value; deleting it is the optional edit"},
 
 		// --- validate.go: buildCoherence --------------------------------
 		{"buildCommand is too long", "buildCommand",
@@ -173,6 +177,90 @@ func findingFieldLedger() []fieldExpectation {
 			"the finding is about what the browser loads. `page` is what makes the check " +
 				"APPLY and is the one field that is CORRECT — reporting it there would " +
 				"send a consumer to the wrong file entirely"},
+		{"nothing index.html loads does so at mount", FieldProject,
+			"the SDK-mount finding: same reasoning as the row above — the remedy is one " +
+				"call in the root component, and the manifest's `page` is correct"},
+
+		// --- storagemanifest.go: the server's storage refusals -------------
+		{`.kind "log" is not available yet`, "storage.collections.cov_log.kind",
+			"the refused VALUE is the collection's kind; the remedy is to change that key"},
+		{`.write "anyone" is not available yet`, "storage.collections.cov_anyone.write",
+			"the refused value is that collection's write policy"},
+		{`.write "owner" is not available yet`, "storage.collections.cov_owner.write",
+			"same: the write policy is what is not available"},
+		{".ttlSeconds is not available yet", "storage.collections.cov_ttl.ttlSeconds",
+			"the remedy is to delete this key from the collection"},
+		{".dailyWritesPerAuthor is not available yet", "storage.collections.cov_daily.dailyWritesPerAuthor",
+			"the remedy is to delete this key from the collection"},
+		{".registry is not available yet", "storage.collections.cov_registry.registry",
+			"the remedy is to delete this key from the collection"},
+		{".hook is not available yet", "storage.collections.cov_hook.hook",
+			"the remedy is to delete this key from the collection"},
+		{"as both a counter and a mark", "storage.collections.cov_dup",
+			"a relationship between two keys OF ONE collection, either of which may be renamed — " +
+				"the collection is the smallest location that holds both"},
+		{"storage declares cov_kv, cov_posts but scopes does not include", "scopes",
+			"pair rule: storage is SET, apps:storage is MISSING from scopes"},
+		{"lets viewers write documents other users read", "scopes",
+			"pair rule: the viewer-written collection is set, apps:storage:publish is missing from scopes"},
+		{"scopes includes apps:storage but storage declares no collections", "storage",
+			"pair rule, the mirror: the scope is set, the collections it reaches are missing"},
+		{"scopes includes apps:storage:publish but no storage collection", "storage",
+			"pair rule: the publish scope is set, the viewer-written collection it is for is missing"},
+		{"storage imports from cov-parent but scopes does not include", "scopes",
+			"pair rule: an import is SET, apps:storage is MISSING from scopes"},
+		{"which requires the apps:storage:import scope", "scopes",
+			"pair rule: an import is set, apps:storage:import is missing from scopes"},
+		{"scopes includes apps:storage:import but storage declares no imports", "storage",
+			"pair rule, the mirror: the import scope is set, the imports it reaches are missing"},
+		{"names this app itself", "storage.imports[0].from",
+			"the refused value is that import's `from`; the remedy is to change it (or declare collections)"},
+		{`imports from "cov-parent" again`, "storage.imports[2]",
+			"the SECOND import from one source is the offender — the first is legal — and either of its " +
+				"keys may be the edit (merge it into the first, or name another source), so the entry itself"},
+
+		// --- storageschema.go: a collection schema past the server's bounds ---
+		{`does not apply to write "none"`, "storage.collections.cov_schema_none.schema",
+			"the remedy is to delete this key: the collection has no document bodies to check"},
+		{"cov_schema_none.schema: false schema", "storage.collections.cov_schema_none.schema",
+			"the vendored schema's own `false` for the same key, located at the key it forbids"},
+		{"bytes of JSON — a collection schema", "storage.collections.cov_schema_big.schema",
+			"a bound on the whole schema; no single keyword inside it is the one to shrink"},
+		{"is nested too deeply", "storage.collections.cov_schema_deep.schema" +
+			strings.Repeat(".items", 16),
+			"the innermost schema is the one past the limit, and the server's message names it"},
+		{"patterns — a collection schema may declare", "storage.collections.cov_schema_many.schema",
+			"a count over the whole schema; any of the patterns may be the one removed"},
+		{"is greater than maxLength", "storage.collections.cov_schema_bounds.schema.minLength",
+			"the server names the lower bound first; the pair lives in one schema object"},
+		{"must be a whole number of 0 or more", "storage.collections.cov_schema_bounds.schema.maxItems",
+			"the refused value is that keyword's own"},
+		{"patterns across their schemas", "storage.collections",
+			"a count over every collection's schema together; no one collection is the one to cut"},
+		{"is likely refused at submit", "storage.collections.cov_schema_regex.schema.pattern",
+			"the advisory is about that pattern's own value"},
+
+		// --- storagescope.go: what the SOURCE does --------------------------
+		{"is refused with `collection_not_declared`", "storage.collections.cov_notes",
+			"per-key: the name the source uses is the key missing from storage.collections. " +
+				"The source is usually right (it names what it needs); the edit is the declaration"},
+		{"declares no import from", "storage.imports",
+			"per-source: no import names the app the source reads from, so the edit is a new entry in " +
+				"storage.imports — there is no existing entry to point at"},
+		{"Add it to that import's collections", "storage.imports[0].collections",
+			"the import from that source exists; its collections list is what lacks the name"},
+		{"calls the document store", "scopes",
+			"the source is correct — using the store is the feature — and the single edit that fixes " +
+				"it is adding apps:storage to `scopes`. FieldProject would send a consumer to read their " +
+				"own app code looking for a bug that is not there"},
+		{"a legacy store that has been removed", "scopes",
+			"STILL `scopes`, though the store is now removed (civitai.com answers " +
+				"`legacy_store_removed`; @civitai/blocks-react 0.81.0 dropped the hooks) and the advisory " +
+				"now fires on ANY call, whatever scopes are declared. Kept for a stable consumer contract, " +
+				"and because the move it names lands in the manifest too: a `storage` declaration and the " +
+				"`apps:storage` scope. The source edit " +
+				"(the call itself) is named in the message. Until the removal the source was correct and " +
+				"the whole fix was two strings in `scopes`, the contrast with the readyack row above"},
 	}
 }
 
@@ -271,8 +359,8 @@ func TestEveryFindingCarriesItsDocumentedField(t *testing.T) {
 //
 // It is separate from the ledger above on purpose. The ledger says WHAT each
 // field is; this says WHY that set of values is not arbitrary, and it is the
-// test that fails with the right explanation when someone flips a pair. Four
-// pair rules exist across two files, and an inversion of any of them is a
+// test that fails with the right explanation when someone flips a pair. Thirteen
+// pair rules exist across four files, and an inversion of any of them is a
 // plausible-looking refactor that changes nothing else observable.
 func TestPairRuleNamesTheMissingField(t *testing.T) {
 	pairs := []struct {
@@ -286,6 +374,13 @@ func TestPairRuleNamesTheMissingField(t *testing.T) {
 		{"the budget is inert", "page.buzzBudgetPerGen", "scopes"},
 		{"page.buzzBudgetPerGen is not set", "scopes", "page.buzzBudgetPerGen"},
 		{"must also declare an iframe block", "page", "iframe"},
+		{"storage declares cov_kv, cov_posts but scopes does not include", "storage", "scopes"},
+		{"lets viewers write documents other users read", "storage", "scopes"},
+		{"scopes includes apps:storage but storage declares no collections", "scopes", "storage"},
+		{"scopes includes apps:storage:publish but no storage collection", "scopes", "storage"},
+		{"storage imports from cov-parent but scopes does not include", "storage", "scopes"},
+		{"which requires the apps:storage:import scope", "storage", "scopes"},
+		{"scopes includes apps:storage:import but storage declares no imports", "scopes", "storage"},
 	}
 
 	found := corpusFindings(t)

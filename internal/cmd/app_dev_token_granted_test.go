@@ -160,26 +160,49 @@ func TestAppDevTokenUndecodableTokenStillMints(t *testing.T) {
 	}
 }
 
-// TestAppDevTokenWarnsOnBudgetShortfall: the scaffold declares 300, the default
-// mint grants 50, and nothing used to say so — the developer found out from
-// "insufficient buzz budget: recipe ceiling 90 exceeds budget 50" later.
+// TestAppDevTokenWarnsOnBudgetShortfall: the manifest declares more than the
+// token was granted, and nothing used to say so — the developer found out from an
+// "insufficient buzz budget: … exceeds budget <M>" refusal later.
+//
+// This was first measured as the page-money scaffold's 300 against the old
+// default grant of 50. At today's default (appapi.DevBuzzBudgetDefault, 1000) the
+// scaffold's 300 is no shortfall at all — TestAppDevTokenSilentWhenBudgetIsEnough
+// pins that — so the shortfall is now driven by a declaration ABOVE the default,
+// once under the cap (the remedy is the declared figure) and once over it (the
+// remedy is the cap, with the cap note).
 func TestAppDevTokenWarnsOnBudgetShortfall(t *testing.T) {
-	writeManifestWithBudget(t, `{"buzzBudgetPerGen":300}`)
-	jwt := makeJWTClaims(t, map[string]any{
-		"scopes":     []string{"ai:write:budgeted"},
-		"buzzBudget": 50,
-		"exp":        time.Now().Add(4 * time.Hour).Unix(),
-	})
-	_, errOut := devTokenStderr(t, jwt, "--spend")
+	cases := []struct {
+		name     string
+		declared int
+		wantAsk  int
+		wantNote bool
+	}{
+		{"declared above the default, under the cap", 1500, 1500, false},
+		{"declared above the cap", appapi.DevBuzzBudgetCap + 1, appapi.DevBuzzBudgetCap, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			writeManifestWithBudget(t, fmt.Sprintf(`{"buzzBudgetPerGen":%d}`, tc.declared))
+			jwt := makeJWTClaims(t, map[string]any{
+				"scopes":     []string{"ai:write:budgeted"},
+				"buzzBudget": appapi.DevBuzzBudgetDefault,
+				"exp":        time.Now().Add(4 * time.Hour).Unix(),
+			})
+			_, errOut := devTokenStderr(t, jwt, "--spend")
 
-	for _, want := range []string{
-		"page.buzzBudgetPerGen 300",
-		"granted 50/generation",
-		fmt.Sprintf("--budget %d", appapi.DevBuzzBudgetCap),
-	} {
-		if !strings.Contains(errOut, want) {
-			t.Errorf("stderr missing %q; got:\n%s", want, errOut)
-		}
+			for _, want := range []string{
+				fmt.Sprintf("page.buzzBudgetPerGen %d", tc.declared),
+				fmt.Sprintf("granted %d/generation", appapi.DevBuzzBudgetDefault),
+				fmt.Sprintf("--budget %d ", tc.wantAsk),
+			} {
+				if !strings.Contains(errOut, want) {
+					t.Errorf("stderr missing %q; got:\n%s", want, errOut)
+				}
+			}
+			if got := strings.Contains(errOut, "above the platform's per-call cap"); got != tc.wantNote {
+				t.Errorf("cap note present = %v, want %v; got:\n%s", got, tc.wantNote, errOut)
+			}
+		})
 	}
 }
 
@@ -195,6 +218,14 @@ func TestAppDevTokenSilentWhenBudgetIsEnough(t *testing.T) {
 			name: "granted equals declared",
 			page: `{"buzzBudgetPerGen":50}`,
 			jwt:  map[string]any{"scopes": []string{"ai:write:budgeted"}, "buzzBudget": 50},
+		},
+		{
+			// The page-money scaffold declares 300; the server's flat default for
+			// an unsubmitted app is now above that, so a default mint has NO
+			// shortfall to report. (Against the old default of 50 it did.)
+			name: "the scaffold's own 300 against the default grant",
+			page: `{"buzzBudgetPerGen":300}`,
+			jwt:  map[string]any{"scopes": []string{"ai:write:budgeted"}, "buzzBudget": appapi.DevBuzzBudgetDefault},
 		},
 		{
 			name: "granted exceeds declared",

@@ -3,9 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- DARK FIRST, deliberately. The first thing an iframe paints is the UA
-         canvas, and the host sends this block no theme hint before it boots, so
-         the boot theme is a GUESS and the platform's guess is dark. `light dark`
+    <!-- DARK FIRST, deliberately — and the OS preference is NEVER consulted.
+         Civitai apps default to dark; light engages only when the viewer chose
+         light on civitai.com, which the host delivers via the
+         `#civitai-block=v1&theme=…` URL fragment (read by the inline script
+         below BEFORE first paint — both host surfaces append it) and, once the
+         app consumes the theme, via BLOCK_INIT / THEME_CHANGE. `light dark`
          here would default the canvas to LIGHT and flash white. -->
     <meta name="color-scheme" content="dark light" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%231971c2'/></svg>" />
@@ -18,20 +21,24 @@
          over an empty #root and the viewer stares at a blank iframe for the
          whole load — strictly worse than not opting in.
 
-         INLINE, and no JS: an external stylesheet is a second round-trip, which
+         INLINE on purpose: an external stylesheet is a second round-trip, which
          is exactly the window this exists to cover. These rules must paint
          before anything is fetched.
 
-         DARK IS THE BASE. Light lives in a `prefers-color-scheme: light` block
-         and nowhere else. There is deliberately NO `prefers-color-scheme: dark`
-         block: a UA reporting `no-preference`, or one that does not support the
-         query at all, matches neither branch and would fall through to whatever
-         the base rules say — so the base rules have to be the dark ones. -->
+         DARK IS THE BASE. Light is applied ONLY behind
+         `html[data-theme='light']` — the attribute the inline script below
+         sets from the host fragment. There is deliberately NO OS-preference
+         media query anywhere in this document: the browser must never decide
+         this app's theme, and the dark base is exactly what a missing
+         fragment, an unknown theme value, or a UA without the query all get. -->
     <style>
       html {
         /* The strong guarantee. Unlike `color-scheme` this does not depend on
            UA support for anything. */
         background: #101113;
+      }
+      html[data-theme='light'] {
+        background: #ffffff;
       }
       body {
         margin: 0;
@@ -63,15 +70,33 @@
         height: 2.25rem;
         width: 9rem;
       }
-      @media (prefers-color-scheme: light) {
-        html {
-          background: #ffffff;
-        }
-        [data-boot-skeleton] [data-boot-shape] {
-          background: #e9ecef;
-        }
+      html[data-theme='light'] [data-boot-skeleton] [data-boot-shape] {
+        background: #e9ecef;
       }
     </style>
+    <script>
+      /*
+        THEME FAST PATH — synchronous, pre-paint, no fetch. Mirrors the SDK's
+        parse rules (@civitai/app-sdk initFragment): the fragment must carry
+        the `civitai-block=v1` marker or it is not the host's (a hash-routed
+        app's own state must never theme the boot), and only `theme=light` /
+        `theme=dark` are honoured — anything else, an absent fragment
+        included, keeps the dark default. When this app learns to consume the
+        theme (useBlockContext().theme), sync documentElement's data-theme
+        from it too, so BLOCK_INIT can correct a stale fragment and
+        THEME_CHANGE repaints the page behind the app.
+      */
+      (function () {
+        try {
+          var params = new URLSearchParams(location.hash.slice(1));
+          if (params.get('civitai-block') !== 'v1') return;
+          document.documentElement.dataset.theme =
+            params.get('theme') === 'light' ? 'light' : 'dark';
+        } catch (e) {
+          /* a malformed fragment must never block the boot paint */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root">

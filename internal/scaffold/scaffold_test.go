@@ -108,8 +108,9 @@ func TestRenderPageVite(t *testing.T) {
 	mustContain(t, css, ".app-actions")
 	// A VIEWPORT media query is the wrong question inside a block iframe (slot
 	// width is not monotonic in viewport width), so the responsive rule must not
-	// be one. The boot skeleton's prefers-color-scheme block lives in index.html,
-	// not here, so this file legitimately has no @media at all.
+	// be one. The boot skeleton's theme rules live in index.html (and consult
+	// no media query at all — see bootskeleton_test.go), so this file
+	// legitimately has no @media at all.
 	mustNotContain(t, css, "@media")
 	// And the markup must actually use it — a container query over a class
 	// nothing renders is inert.
@@ -134,7 +135,7 @@ func TestRenderPageMoney(t *testing.T) {
 		"src/generation.test.ts", "src/models.test.ts", "src/nav.test.ts",
 		"src/comfy.test.ts",
 		"src/setup-dev-live.test.ts", "src/setup-plugin.test.ts",
-		"src/App.pollretry.test.tsx", "src/responsive.test.tsx", "src/index.css",
+		"src/App.pollretry.test.tsx", "src/App.quote.test.tsx", "src/responsive.test.tsx", "src/index.css",
 		"README.md", ".gitignore", ".env.development", ".env.production", ".env.example",
 		"assets/README.md",
 	} {
@@ -187,10 +188,11 @@ func TestRenderPageMoney(t *testing.T) {
 	// from the `buzzBalance` option AND stamps spentAccountType on succeeded
 	// snapshots natively — so the scaffold no longer ships a mock balance shim) +
 	// @civitai/app-sdk@0.14.0+. The pins track the CURRENT published minors — the
-	// pins-vs-published guard (TestScaffoldPinsSatisfyPublished) fails CI if they
-	// fall behind npm, so bump BOTH assertions here in lockstep with the .tmpl.
-	mustContain(t, pkg, `"@civitai/blocks-react": "^0.61.0"`)
-	mustContain(t, pkg, `"@civitai/app-sdk": "^0.54.0"`)
+	// pins-vs-published CI job (cmd/pins-gate) fails main and pin-touching PRs if
+	// they fall behind npm, so bump BOTH assertions here in lockstep with the .tmpl
+	// (bump-pins does this).
+	mustContain(t, pkg, `"@civitai/blocks-react": "^0.83.0"`)
+	mustContain(t, pkg, `"@civitai/app-sdk": "^0.90.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk"`)
 	mustContain(t, pkg, `"dev:harness"`)
 	mustContain(t, pkg, `"build"`)
@@ -253,12 +255,17 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "MAX_TRANSIENT_ERRORS")
 	mustContain(t, app, "consecutiveErrors")
 
-	// The confirm-spend modal was removed: Generate is one click → consent →
-	// spend (the button already shows the cost).
+	// The confirm-spend modal was removed: the price is ON the Generate button,
+	// which is disabled until an estimate for the current request succeeds
+	// (#880). The click submits only with that quote; behaviour is pinned by the
+	// template's own src/App.price.test.tsx and src/App.quote.test.tsx, run in
+	// the template-page-money job.
 	mustNotContain(t, app, "Confirm generation")
 	mustNotContain(t, app, "setConfirmOpen")
-	// The Generate click runs the gate directly (no intermediate confirm state).
-	mustContain(t, app, "proceed()")
+	mustContain(t, app, "Retry estimate")
+	if _, err := os.Stat(filepath.Join(dest, "src", "App.price.test.tsx")); err != nil {
+		t.Errorf("page-money must ship its price-contract test src/App.price.test.tsx: %v", err)
+	}
 
 	// The "About this block" modal + the "How this works" section/button were
 	// removed (a clean, minimal scaffold). The status Badge near the title was
@@ -330,6 +337,13 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "SegmentedControl")
 	mustContain(t, app, "pm-comfy-beta")
 	mustContain(t, app, "pm-gated")
+	// Both beta alerts route access requests to the onsite form, not to this
+	// repo: requests are reviewed on civitai.com, and an access-request issue
+	// opened here is auto-closed with a pointer back to the form.
+	if n := strings.Count(app, `href="https://civitai.com/apps/build?request-access=1"`); n != 2 {
+		t.Errorf("page-money App.tsx: want the onsite access-request link in BOTH beta alerts (2), got %d", n)
+	}
+	mustNotContain(t, app, `href="https://github.com/civitai/cli`)
 
 	// The INLINE arm — the app ships its own ComfyUI graph. These are presence
 	// checks for DISCOVERABILITY (the dogfood failure was a developer guessing at

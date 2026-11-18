@@ -8,10 +8,9 @@ import (
 )
 
 // TestScanDir is the two-directional correctness proof for the anti-pattern
-// gate: a fixture that uses a dead/superseded surface FAILS (naming the file,
-// pattern, and replacement), a clean fixture PASSES, and — critically — a
-// fixture full of legitimately-REST endpoints that have no bridge does NOT
-// false-flag.
+// gate: a fixture that uses a dead surface FAILS (naming the file, pattern, and
+// replacement), a clean fixture PASSES, and — critically — a fixture full of
+// live REST routes does NOT false-flag.
 func TestScanDir(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -25,7 +24,7 @@ func TestScanDir(t *testing.T) {
 			dir:  "clean",
 		},
 		{
-			name: "legit unbridged REST routes are not flagged",
+			name: "live REST routes are not flagged",
 			dir:  "legit-rest",
 		},
 		{
@@ -33,18 +32,20 @@ func TestScanDir(t *testing.T) {
 			dir:  "skips-deps",
 		},
 		{
-			name:      "removed buzz REST route fails",
-			dir:       "buzz-rest",
-			wantRule:  "buzz-rest",
-			wantFile:  "buzz.ts",
-			wantInMsg: "useBuzzBalance",
+			// A `buzz-rest` rule used to fail this fixture, calling the route
+			// REMOVED. The route is live, so the rule was removed and the
+			// fixture now asserts the read is ACCEPTED.
+			name: "buzz REST route is accepted",
+			dir:  "buzz-rest-ok",
 		},
 		{
-			name:      "superseded shared-storage REST route fails",
-			dir:       "shared-storage-rest",
-			wantRule:  "shared-storage-rest",
-			wantFile:  "store.ts",
-			wantInMsg: "SHARED_APPEND",
+			// The REVERSED case. A `shared-storage-rest` rule used to fail this
+			// fixture; the platform is consolidating on that REST path, so the
+			// rule was removed and the fixture now asserts the path is ACCEPTED.
+			// It carries the prefixed literal in a comment AND the prefix-less
+			// real call sites, i.e. both shapes the removed rule got wrong.
+			name: "shared-storage REST route is accepted, in every shape",
+			dir:  "shared-storage-rest-ok",
 		},
 		{
 			name:      "deprecated blocks-cli reference fails",
@@ -126,14 +127,16 @@ func TestScanDir(t *testing.T) {
 	}
 }
 
-// TestLegitRoutesNeverMatchAnyRule is a focused regression guard: the exact
-// unbridged routes the real scaffolds rely on must never match ANY rule, so the
-// gate can never false-fail a correct scaffold.
+// TestLegitRoutesNeverMatchAnyRule is a focused regression guard: live REST
+// routes must never match ANY rule, so the gate can never false-fail a correct
+// scaffold.
 func TestLegitRoutesNeverMatchAnyRule(t *testing.T) {
 	legit := []string{
 		"await fetch('/api/v1/blocks/models?limit=20')",
 		"await fetch('/api/v1/blocks/images')",
 		"fetch(`${base}/api/v1/blocks/me`)",
+		"fetch(`${base}/api/v1/blocks/buzz`)",
+		"return app.site.get<{ blue: number; green: number; yellow: number }>('blocks/buzz');",
 		"fetch(`${origin}/api/v1/blocks/dev-token`, { method: 'POST' })",
 		"fetch(`${base}/api/trpc/buzz.getBuzzAccount`)",
 	}
@@ -143,6 +146,68 @@ func TestLegitRoutesNeverMatchAnyRule(t *testing.T) {
 				t.Errorf("rule %q FALSE-FLAGGED a legit line:\n  rule:    %s\n  matched: %s", r.ID, r.Pattern, line)
 			}
 		}
+	}
+}
+
+// TestSharedStorageRestIsAccepted is the guard against re-adding a rule that
+// flags the shared-storage REST path, in EITHER direction.
+//
+// The platform is consolidating on `/api/v1/blocks/shared-storage/*` (operator
+// decision, 2026-10-04), so a gate that flags it is an enforced,
+// branch-protection-required check pushing authors the wrong way. The removed
+// rule was also ineffective: measured against the real migrated app
+// (ZacxDev/civitai-app-custom-generators, `src/platform/sharedStorage.ts`), its
+// bare substring matched 1 line — a COMMENT, since ScanDir greps raw lines and
+// strips no comments — and 0 of the real call sites, which carry no `/api/v1`
+// prefix because `@civitai/sdk`'s `app.site.get` prepends it.
+//
+// 🔴 The inverse must stay absent too: the `SHARED_*` bridge still works and
+// apps still use it, so a rule flagging the BRIDGE would fail existing correct
+// apps' CI. Both transports are valid; neither is an anti-pattern.
+//
+// Every absence here is paired with a positive control, because "no rule
+// matched" is also what an empty Rules() produces.
+func TestSharedStorageRestIsAccepted(t *testing.T) {
+	supported := []string{
+		// Prefix-less SDK call sites — the real shapes the live app uses.
+		`return app.site.get<{ items: unknown[] }>('blocks/shared-storage/list', { prefix });`,
+		`await app.site.post('blocks/shared-storage/append', { value });`,
+		`await app.site.post('blocks/shared-storage/vote', { key });`,
+		`if (path === 'blocks/shared-storage/withdraw') {`,
+		// The prefixed literal, in a comment and in a direct fetch.
+		"// The app-global SHARED store, over the routes under `/api/v1/blocks/shared-storage/`.",
+		"return fetch(`${base}/api/v1/blocks/shared-storage/counts`, { method: 'POST' });",
+		`await fetch('/api/v1/blocks/shared-storage/increment', { method: 'POST' });`,
+		// The BRIDGE shapes, which must not be flagged either.
+		`const shared = useSharedStorage();`,
+		`window.parent.postMessage({ type: 'SHARED_APPEND', value }, '*');`,
+		`case 'SHARED_GET_COUNT':`,
+		`postMessage({ type: 'SHARED_VOTE', key });`,
+	}
+
+	for _, r := range Rules() {
+		for _, line := range supported {
+			if r.Pattern.MatchString(line) {
+				t.Errorf("rule %q flags a SUPPORTED shared-storage shape — the platform is "+
+					"consolidating on the REST path and the bridge still works, so neither is an "+
+					"anti-pattern:\n  rule:    %s\n  matched: %s", r.ID, r.Pattern, line)
+			}
+		}
+	}
+
+	// Positive control: the rule set is non-empty and still reaches code, so the
+	// absences above are claims about the rules, not about an empty slice.
+	//
+	// A remaining rule must still match its own line, or the loop above compared
+	// the supported shapes against patterns that match nothing.
+	fired := false
+	for _, r := range Rules() {
+		if r.Pattern.MatchString(findingLine) {
+			fired = true
+		}
+	}
+	if !fired {
+		t.Fatal("no rule matches the control line — every absence asserted above is vacuous")
 	}
 }
 
@@ -249,7 +314,7 @@ func TestResizeIframeBoundary(t *testing.T) {
 
 // TestRuleExtScopeDefaultsToEverything pins that adding Exts to one rule did not
 // silently narrow the others: a nil Exts must still mean "the whole corpus", or
-// the package-name and route rules stop catching a documented dead workflow.
+// the package-name rule stops catching a documented dead workflow.
 func TestRuleExtScopeDefaultsToEverything(t *testing.T) {
 	unscoped := 0
 	for _, r := range Rules() {

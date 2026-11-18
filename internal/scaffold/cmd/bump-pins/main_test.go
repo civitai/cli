@@ -46,7 +46,7 @@ func TestDesiredPin(t *testing.T) {
 	}
 }
 
-// rewritePin is the load-bearing surgical replace — cover both literal shapes,
+// rewritePin is the load-bearing surgical replace — cover the literal shape,
 // the already-current no-op, and the absent-pin no-op.
 func TestRewritePin(t *testing.T) {
 	t.Run("json bumps only the matching pin", func(t *testing.T) {
@@ -68,28 +68,6 @@ func TestRewritePin(t *testing.T) {
 		if !strings.Contains(out, `"@civitai/blocks-react": "^0.29.0"`) ||
 			!strings.Contains(out, `"react": "^19.0.0"`) {
 			t.Errorf("blanket-replaced an unrelated version:\n%s", out)
-		}
-	})
-
-	t.Run("prose bumps the @pkg@^ver form", func(t *testing.T) {
-		in := "requires `@civitai/app-sdk@^0.24.0` + `@civitai/blocks-react@^0.29.0` (pinned)."
-		out, old, did := rewritePin(in, "@civitai/blocks-react", "0.30.0", prosePin)
-		if !did || old != "0.29.0" {
-			t.Fatalf("expected change from 0.29.0, got did=%v old=%q", did, old)
-		}
-		if !strings.Contains(out, "@civitai/blocks-react@^0.30.0") {
-			t.Errorf("blocks-react prose not bumped:\n%s", out)
-		}
-		if !strings.Contains(out, "@civitai/app-sdk@^0.24.0") {
-			t.Errorf("app-sdk prose should be untouched:\n%s", out)
-		}
-	})
-
-	t.Run("prose does not match a subpath import", func(t *testing.T) {
-		in := "import from `@civitai/blocks-react/ui` and `@civitai/blocks-react/testing`."
-		_, _, did := rewritePin(in, "@civitai/blocks-react", "0.30.0", prosePin)
-		if did {
-			t.Errorf("should not have matched a /ui or /testing subpath import")
 		}
 	})
 
@@ -123,10 +101,10 @@ func fakeTokens(pkg, version string) ([]string, error) {
 	return []string{"--civitai-color-text", "--civitai-color-surface", "--civitai-radius"}, nil
 }
 
-// TestRunRewritesAllThreeFilesAndIsIdempotent exercises the full run() against a
-// temp-dir fixture mirroring the three literal sites, with an injected
+// TestRunRewritesEveryPinSiteAndIsIdempotent exercises the full run() against a
+// temp-dir fixture mirroring the four literal pin sites (plus the ledger it writes), with an injected
 // "published" version (no network).
-func TestRunRewritesAllThreeFilesAndIsIdempotent(t *testing.T) {
+func TestRunRewritesEveryPinSiteAndIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir)
 
@@ -146,7 +124,9 @@ func TestRunRewritesAllThreeFilesAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	// 2 packages × 3 pin sites = 6 rewrites, + the design-token ledger.
+	// app-sdk × 4 sites (it is pinned in BOTH templates) + blocks-react × 2
+	// page-money sites = 6 rewrites, + the design-token ledger. @civitai/sdk is
+	// unresolved (ErrPkgNotFound) and skipped.
 	if len(changes) != 7 {
 		t.Fatalf("expected 7 changes (6 pin sites + the ledger), got %d:\n%s", len(changes), buf.String())
 	}
@@ -165,17 +145,20 @@ func TestRunRewritesAllThreeFilesAndIsIdempotent(t *testing.T) {
 	}
 
 	pkgJSON := readFile(t, dir, pkgJSONFile)
-	readme := readFile(t, dir, readmeFile)
 	test := readFile(t, dir, testFile)
 
 	assertContains(t, pkgJSON, `"@civitai/app-sdk": "^0.25.0"`)
 	assertContains(t, pkgJSON, `"@civitai/blocks-react": "^0.30.0"`)
-	assertContains(t, readme, "@civitai/app-sdk@^0.25.0")
-	assertContains(t, readme, "@civitai/blocks-react@^0.30.0")
 	assertContains(t, test, `mustContain(t, pkg, `+"`"+`"@civitai/app-sdk": "^0.25.0"`+"`"+`)`)
 	assertContains(t, test, `mustContain(t, pkg, `+"`"+`"@civitai/blocks-react": "^0.30.0"`+"`"+`)`)
 	// unrelated deps untouched
 	assertContains(t, pkgJSON, `"react": "^19.0.0"`)
+	// app-sdk moved in the page-elements sites too; the skipped package did not.
+	elPkg := readFile(t, dir, elementsPkgJSONFile)
+	elTest := readFile(t, dir, elementsTestFile)
+	assertContains(t, elPkg, `"@civitai/app-sdk": "^0.25.0"`)
+	assertContains(t, elTest, `mustContain(t, pkg, `+"`"+`"@civitai/app-sdk": "^0.25.0"`+"`"+`)`)
+	assertContains(t, elPkg, `"@civitai/sdk": "^0.9.0"`)
 
 	// Second run is a no-op (idempotent).
 	buf.Reset()
@@ -278,10 +261,10 @@ func TestRunSkipsThePinBumpWhenTheTokenReadFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a failed token read must skip, not fail the command: %v", err)
 	}
-	// Only app-sdk's 3 pin sites — blocks-react is skipped entirely, ledger
+	// Only app-sdk's 4 pin sites — blocks-react is skipped entirely, ledger
 	// included.
-	if len(changes) != 3 {
-		t.Fatalf("expected 3 changes (app-sdk only), got %d:\n%s", len(changes), buf.String())
+	if len(changes) != 4 {
+		t.Fatalf("expected 4 changes (app-sdk only), got %d:\n%s", len(changes), buf.String())
 	}
 	pkgJSON := readFile(t, dir, pkgJSONFile)
 	assertContains(t, pkgJSON, `"@civitai/app-sdk": "^0.25.0"`)
@@ -410,8 +393,9 @@ func TestSyncLedgerRewritesOnPinMoveAndOnTokenChange(t *testing.T) {
 func writeFixture(t *testing.T, dir string) {
 	t.Helper()
 	mustWrite(t, filepath.Join(dir, pkgJSONFile), fixturePkgJSON)
-	mustWrite(t, filepath.Join(dir, readmeFile), fixtureReadme)
 	mustWrite(t, filepath.Join(dir, testFile), fixtureTest)
+	mustWrite(t, filepath.Join(dir, elementsPkgJSONFile), fixtureElementsPkgJSON)
+	mustWrite(t, filepath.Join(dir, elementsTestFile), fixtureElementsTest)
 }
 
 func mustWrite(t *testing.T, path, content string) {
@@ -452,13 +436,6 @@ const fixturePkgJSON = `{
 }
 `
 
-const fixtureReadme = `# {{ .Name }}
-
-Wired to ` + "`@civitai/blocks-react/ui`" + ` — a subpath import.
-
-` + "`accountType` / `useBuzzBalance` require `@civitai/app-sdk@^0.24.0` + `@civitai/blocks-react@^0.29.0` (already pinned)." + `
-`
-
 const fixtureTest = `package scaffold
 
 func TestPins(t *testing.T) {
@@ -466,3 +443,53 @@ func TestPins(t *testing.T) {
 	mustContain(t, pkg, ` + "`" + `"@civitai/app-sdk": "^0.24.0"` + "`" + `)
 }
 `
+
+// The page-elements sites: app-sdk shared with page-money, @civitai/sdk only here.
+const fixtureElementsPkgJSON = `{
+  "name": "{{ .Slug }}",
+  "dependencies": {
+    "@civitai/app-sdk": "^0.24.0",
+    "@civitai/sdk": "^0.9.0"
+  }
+}
+`
+
+const fixtureElementsTest = `package scaffold
+
+func TestElementsPins(t *testing.T) {
+	mustContain(t, pkg, ` + "`" + `"@civitai/app-sdk": "^0.24.0"` + "`" + `)
+	mustContain(t, pkg, ` + "`" + `"@civitai/sdk": "^0.9.0"` + "`" + `)
+}
+`
+
+// TestTheRealPinSitesExist runs against THIS repo's scaffold dir: every site the
+// bumper rewrites must exist and every pin it discovers must appear in the
+// matching canary, or the bot opens a PR that moves the template without its
+// assertion (or fails reading a renamed file).
+func TestTheRealPinSitesExist(t *testing.T) {
+	const root = "../.."
+	for _, s := range sites {
+		if _, err := os.Stat(filepath.Join(root, s.file)); err != nil {
+			t.Errorf("pin site %s does not exist: %v", s.file, err)
+		}
+	}
+	for _, pair := range []struct{ pkgFile, canary string }{
+		{pkgJSONFile, testFile},
+		{elementsPkgJSONFile, elementsTestFile},
+	} {
+		pkgs, err := discoverPackages(filepath.Join(root, pair.pkgFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pkgs) == 0 {
+			t.Fatalf("CONTROL failure: no @civitai/* pins discovered in %s", pair.pkgFile)
+		}
+		canary := readFile(t, root, pair.canary)
+		for _, m := range scaffold.CivitaiPinRe.FindAllStringSubmatch(readFile(t, root, pair.pkgFile), -1) {
+			want := `"` + m[1] + `": "` + m[2] + `"`
+			if !strings.Contains(canary, want) {
+				t.Errorf("%s pins %s but its canary %s does not assert %s", pair.pkgFile, m[1], pair.canary, want)
+			}
+		}
+	}
+}

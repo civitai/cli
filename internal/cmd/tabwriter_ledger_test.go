@@ -597,11 +597,13 @@ var tabwriterRenderers = map[string]tabwriterRenderer{
 		"`app status` rows: block id, version, status, deploy state, claimed source commit, date and " +
 			"live URL. It had NO gate at all until #552, which also made it invisible to safeTermCoveredBy"},
 	"printSubmissionDetail": {"app_status.go", gateSingle,
-		"`app status --id` rows: the same fields plus the publish-request id and deploy detail. This row " +
-			"is a claim about its CELLS only — the live URL, the block id in the not-live sentence, and " +
-			"the free-text rejection reason / approval notes sit OUTSIDE the table and are gated " +
-			"separately (safeTermSingle for the first two, safeTerm + indentContinuation for the last " +
-			"two). They were ungated while this row read as coverage; " +
+		"`app status --id` rows: the same fields plus the publish-request id and deploy detail, and the " +
+			"separately-flushed `Live submission` block's cells (version, id, status, deploy state, live URL " +
+			"of the serving row — TestLiveSubmissionBlockCellsCannotBeForged). This row " +
+			"is a claim about its CELLS only — five surfaces sit OUTSIDE the table and are gated " +
+			"separately: the live URL and the block id in the not-live and not-this-row sentences " +
+			"(safeTermSingle), and the free-text rejection reason / approval notes (safeTerm + " +
+			"indentContinuation). The first four were ungated while this row read as coverage; " +
 			"TestGatedRenderersDoNotForgeOutsideTheirTable is what now holds them"},
 	"printListingStatus": {"app_listing.go", gateSingle,
 		"`app listing status`: the listing status. `App:` is the slug the USER typed and is echoed " +

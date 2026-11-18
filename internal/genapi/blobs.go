@@ -1,6 +1,7 @@
 package genapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/civitai/cli/internal/redact"
 	"github.com/civitai/cli/pkg/civitai"
 )
 
@@ -70,7 +72,8 @@ func (c *Client) GetBlobUploadTarget(ctx context.Context) (*BlobUploadTarget, er
 	}
 	var out BlobUploadTarget
 	if err := json.Unmarshal(raw, &out); err != nil || strings.TrimSpace(out.UploadURL) == "" {
-		return nil, fmt.Errorf("unexpected getConsumerBlobUploadUrl response: %s", string(raw))
+		// The reply's whole payload is a presigned PUT URL: never show it.
+		return nil, redact.CredentialBodyError("unexpected getConsumerBlobUploadUrl response", raw, err)
 	}
 	return &out, nil
 }
@@ -80,15 +83,17 @@ func (c *Client) GetBlobUploadTarget(ctx context.Context) (*BlobUploadTarget, er
 //
 // The route answers a caller the orchestrator will not serve with **403 and a
 // bare text body** (not JSON, not a tRPC error envelope) — see the handler's
-// `catch` arm — so the body is surfaced verbatim rather than parsed.
+// `catch` arm — and other refusals with a JSON `{"error": "…"}`, so both are
+// surfaced: redact.CredentialRouteText shows the message field, or the bare text.
+//
+// 🔴 NEVER THE BODY ITSELF. The route's success payload is a presigned PUT URL,
+// and a body under an unexpected status (a 201, a 500 from a half-failed
+// handler) can be that payload — which the old verbatim echo printed. Anything
+// redact does not accept as an error message is reported by its size alone.
 func blobUploadError(status int, raw []byte) error {
-	msg := strings.TrimSpace(string(raw))
-	if len(msg) > 400 {
-		msg = msg[:400] + "…"
-	}
 	base := fmt.Sprintf("the server refused to issue an image-upload URL (%d)", status)
-	if msg != "" {
-		base += ": " + msg
+	if len(bytes.TrimSpace(raw)) > 0 {
+		base += ": " + redact.CredentialRouteText(raw)
 	}
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -134,13 +139,13 @@ func (c *Client) UploadImageBlob(ctx context.Context, up civitai.PresignedUpload
 		return "", fmt.Errorf("reading the image-upload response failed: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		msg := strings.TrimSpace(string(raw))
-		if len(msg) > 400 {
-			msg = msg[:400] + "…"
-		}
+		// The reply can carry the blob's url, which can be a signed read URL —
+		// the same reason the decode-failure arm below withholds it — so only an
+		// error message field is shown — or, for an RFC 7807 reply, its
+		// title/detail.
 		out := fmt.Sprintf("the image upload was rejected (%d)", resp.StatusCode)
-		if msg != "" {
-			out += ": " + msg
+		if len(bytes.TrimSpace(raw)) > 0 {
+			out += ": " + redact.CredentialRouteProblem(raw)
 		}
 		// A presigned URL that has expired reads as a 401/403 here and a token
 		// would not fix it — say what actually helps.
@@ -152,7 +157,8 @@ func (c *Client) UploadImageBlob(ctx context.Context, up civitai.PresignedUpload
 
 	var blob UploadedBlob
 	if err := json.Unmarshal(raw, &blob); err != nil {
-		return "", fmt.Errorf("unexpected image-upload response: %s", string(raw))
+		// The blob's url can be a signed read URL: never show the body.
+		return "", redact.CredentialBodyError("unexpected image-upload response", raw, err)
 	}
 	if strings.TrimSpace(blob.URL) == "" {
 		// See the UploadedBlob doc: an empty/absent url must never reach the
