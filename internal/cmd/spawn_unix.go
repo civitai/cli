@@ -33,3 +33,22 @@ func detachAndStart(cmd *exec.Cmd) error {
 	// an orphan once the parent exits.
 	return startErr
 }
+
+// detachFromTerminal runs cmd in a new session, so it has no controlling
+// terminal. Used for the guard's `git ls-remote` (app_submit_dirty_guard.go):
+// ssh reads a passphrase or a host-key confirmation from /dev/tty, not stdin, so
+// without this a local-only commit would stop `app submit` on a prompt the user
+// never asked for. With no tty the prompt fails, the call fails, and the guard
+// keeps its pre-existing warning.
+//
+// 🔴 IT ALSO REPLACES THE CONTEXT CANCEL, and the two belong together. The
+// default cancel of exec.CommandContext kills only git; a hung ssh child then
+// keeps running, re-parented to init, and Ctrl-C cannot reach it because it is
+// in another session. Setsid makes git the leader of a new process group whose
+// id is its pid, so killing -pid kills git and everything it started.
+func detachFromTerminal(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Cancel = func() error {
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+}

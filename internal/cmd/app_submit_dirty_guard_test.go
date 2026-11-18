@@ -55,6 +55,10 @@ func gitFixtureEnv(t *testing.T) {
 	t.Setenv("GIT_AUTHOR_EMAIL", "cli-test@example.invalid")
 	t.Setenv("GIT_COMMITTER_NAME", "cli-test")
 	t.Setenv("GIT_COMMITTER_EMAIL", "cli-test@example.invalid")
+	// This suite runs IN GitHub Actions, and headIsARemoteTip trusts GITHUB_SHA
+	// there; a fixture must never inherit the CI run's own answer.
+	t.Setenv("GITHUB_ACTIONS", "")
+	t.Setenv("GITHUB_SHA", "")
 }
 
 type gitFixture struct {
