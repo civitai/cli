@@ -55,21 +55,83 @@ import (
 // wording is the point: this line is read by an agent deciding whether to follow
 // the link. Pinning the whole section costs a test edit for a cosmetic reword,
 // which is the price of a machine-readable claim about what the section says.
-const wantDocsSection = `### Docs
+const wantDocsSection = `### Docs — fetch these BEFORE writing code
 
-- Guide: https://developer.civitai.com/apps/guide/
+Nothing in this repository is the API reference. The hooks, the message bridge,
+the manifest fields and the scopes are documented on the docs site, and the
+` + "`.md`" + ` suffix serves the plain-text source an agent can read directly.
+
+- **` + "`https://developer.civitai.com/apps/reference/hooks.md`" + `** — the COMPLETE
+  hook reference. Fetch it first: a hook you cannot find here probably exists
+  under a name you have not guessed.
+- Capabilities are hooks AND generation body kinds (a multi-step workflow is a
+  ` + "`kind`" + `, not a hook); the kinds are listed at
+  https://developer.civitai.com/apps/reference/generation.md
 - Reference (manifest, scopes, hooks, message bridge, CLI):
-  https://developer.civitai.com/apps/reference/
+  https://developer.civitai.com/apps/reference.md
+- Guide: https://developer.civitai.com/apps/guide.md
+- **` + "`https://developer.civitai.com/apps/guide/earning.md`" + `** — the three money
+  rails. Fetch it before declaring a ` + "`goods`" + ` catalog. The three rules below are
+  repeated in this file deliberately, because they are the ones a manifest can
+  break while passing an older ` + "`civitai app validate`" + `: a paid-for-access app (` + "`kind: \"app_unlock\"`" + `)
+  is capped at **5000** Buzz rather than the general 50000, may declare **at
+  most one** unlock per manifest, and MUST carry a ` + "`justification`" + `. All three are
+  enforced at submit; the published JSON Schema does not declare them.
 - Example apps you can read end-to-end:
-  https://developer.civitai.com/apps/examples
-- Full doc index for agents: https://developer.civitai.com/llms.txt`
+  https://developer.civitai.com/apps/examples.md
+- Full doc index for agents: https://developer.civitai.com/llms.txt
+- Some reference pages are long enough that a fetch tool cuts them off without
+  saying so. If what you need is not in what came back, it was probably
+  truncated, not missing: download the whole page and search it, or, if the
+  page links to a narrower page for that part, fetch that one.
+
+Reading ` + "`node_modules/@civitai/blocks-react/dist/*.d.ts`" + ` to find out what the
+SDK can do is the expensive way round. Fetch the reference.`
+
+// wantKindsPointer is the line of wantDocsSection that replaced "every
+// capability this platform has is a hook". It is a POINTER, not a list of the
+// kinds, so AGENTS.md item 36's "the block ships addresses" rule holds.
+// TestTheBlockPointsAtTheGenerationBodyKinds holds it against both SDK branches.
+const wantKindsPointer = `- Capabilities are hooks AND generation body kinds (a multi-step workflow is a
+  ` + "`kind`" + `, not a hook); the kinds are listed at
+  https://developer.civitai.com/apps/reference/generation.md`
+
+// The docs addresses the `@civitai/sdk` branch's generation pointer ships. They
+// are consts HERE, in a ledgered file, so the tests in other files can name them
+// without becoming a new unledgered spelling of a docs URL.
+const (
+	generationKindsURL = "https://developer.civitai.com/apps/reference/generation.md"
+	workflowsGuideURL  = "https://developer.civitai.com/apps/guide/workflows.md"
+	// storageGuideURL is the document-store guide the Gotchas section's storage
+	// bullet points at (agent_setup_storage_test.go pins that bullet).
+	storageGuideURL = "https://developer.civitai.com/apps/guide/storage.md"
+)
+
+// wantElementsGenerationPointer is the `@civitai/sdk` branch's counterpart of
+// wantKindsPointer, whitespace-normalised (compare with normaliseMessage).
+//
+// That branch used to say nothing about generation at all, so an agent on the
+// DEFAULT template had no route to the body kinds and concluded multi-step
+// workflows did not exist. Two ADDRESSES and nothing else, per AGENTS.md item
+// 36: how to make the call is the guide's to say, and to correct.
+const wantElementsGenerationPointer = "- Capabilities include generation body kinds (a multi-step workflow is a `kind`); " +
+	"the kinds are listed at " + generationKindsURL + " " +
+	"- Multi-step workflow guide, which shows the call for this template: " + workflowsGuideURL
 
 // docsLinkRe pulls the link SET out of a section. The expected set is derived
 // from the golden above rather than written out again, so the two cannot
 // disagree. It exists for the failure MESSAGE: a whole-string mismatch reports a
 // diff, while the set reports "a link was added" or "a link was removed", which
 // is the edit somebody actually made.
-var docsLinkRe = regexp.MustCompile(`https?://[^\s)]+`)
+//
+// 🔴 THE EXCLUDED SET INCLUDES A BACKTICK AND AN ASTERISK. The section's first
+// bullet writes its URL inside a code span — `…/hooks.md` — because that bullet
+// is an INSTRUCTION to fetch that exact string, and a bare link in a bullet of
+// links is not read as one. With only `\s` and `)` excluded, the match ran past
+// the closing backtick and every consumer downstream got a URL with punctuation
+// welded to it: the probe fetches a 404, and the ledger walk searches for a
+// needle no file contains.
+var docsLinkRe = regexp.MustCompile("https?://[^\\s)`*]+")
 
 // docsSectionOf returns the `### Docs` section of a rendered block, from its
 // heading to the end of the block, with surrounding whitespace trimmed. The
@@ -247,12 +309,75 @@ func sortedKindNames(set map[projectKind]bool) []string {
 // file that spells the URL twice. A sentence cannot notice a fourth; the walk
 // below can.
 var docsURLSpellingLedger = map[string]string{
+	"internal/cmd/exitcodes_doc.go": "the GENERATED exit-code contract. The front-door reduction " +
+		"moved `## Generate` and `## Validate fidelity` to developer.civitai.com, so exit code 1's and " +
+		"exit code 3's Detail bullets now cross-reference the hosted guides instead of two `###` " +
+		"anchors that no longer exist. This file is the ONLY writable copy: the same sentences are " +
+		"rendered byte-for-byte into README.md and asserted by TestREADMEExitCodeSectionsAreGenerated, " +
+		"so a URL that rots here rots on the published contract too and cannot be repaired in the README",
 	"internal/cmd/templates/agents-app.md": "the literal that SHIPS — this is the one that is written into somebody " +
 		"else's project and cannot be recalled",
 	"internal/cmd/agent_setup_docs_test.go": "wantDocsSection, the golden the template is compared against, plus " +
 		"this file's own prose about the URL",
 	"claudedocs/decisions/36-agents-block-per-project.md": "AGENTS.md item 36's evidence file: it quotes the added " +
 		"line verbatim and tabulates each URL's measured status",
+	"internal/cmd/agent_setup_before_submit_test.go": "wantBeforeSubmitSection and wantFirstReviewPointer, the " +
+		"goldens for the block's `### Before you submit` section and `app submit`'s confirmation pointer, both " +
+		"spelling `/apps/guide/first-review.md` — outside the `### Docs` section TestBlockDocsLinksResolve probes",
+	"internal/cmd/app_submit.go": "firstReviewChecklistURL, the ONE source of `/apps/guide/first-review.md`: " +
+		"`civitai app submit` prints it at its confirmation step and the managed block renders it through the " +
+		"`firstReviewURL` template func. COMPILED INTO the released binary, like app_listing.go's spellings",
+	"internal/scaffold/templates/page-money/README.md.tmpl": "the page-money README now POINTS at the hosted " +
+		"hooks reference instead of shipping a local 36-row copy of it — a SECOND shipped artefact carrying " +
+		"the URL, written into every scaffolded project exactly as the managed block is. It used to be " +
+		"`internal/scaffold/hooks.go`, which rendered the retired index and carried the URL in its footnote; " +
+		"retiring the index moved the spelling into the template rather than removing it",
+	"internal/scaffold/readme_claims_test.go": "the guard that the scaffolded README names the hosted hooks " +
+		"reference within the first 3 KB pins the URL as a const, so it is a third place the spelling can rot",
+	"internal/scaffold/templates/page-money/src/App.tsx.tmpl": "the `useBlockBreakpoint` comment points at " +
+		"`/apps/guide/responsive`. Ledgered only from the day that URL was repaired: it used to spell " +
+		"`/apps/responsive`, which is a 404 and matches none of the block's URLs, so this file was invisible " +
+		"to this walk while shipping a dead link into every `page-money` project. A THIRD shipped artefact " +
+		"carrying a docs URL, and the one with the longest reach — it is source code an author copies from",
+	"internal/scaffold/templates/page-vite/README.md.tmpl": "the `page-vite` README's responsive section points " +
+		"at `/apps/guide/responsive` instead of restating the breakpoint rules. Same repair, same day, same " +
+		"reason it was invisible before it: the dead `/apps/responsive` spelling matched no needle",
+	"internal/scaffold/templates/page-vite/src/index.css.tmpl": "the `@container` block's explanatory comment " +
+		"points at `/apps/guide/responsive`. It is the cheapest spelling in the ledger to overlook and one of " +
+		"the most-read: it sits in the stylesheet an author edits first",
+	"internal/scaffold/query_prelude_guard_test.go": "a FIXTURE, not a link anybody follows: " +
+		"TestStripCommentsForQueryScan's \"a URL is not a comment start\" case needs a URL containing `//` " +
+		"inside a block comment, and names `/apps/guide/responsive`. Ledgered rather than excluded because " +
+		"TestEveryShippedDocsURLResolves probes it like any other spelling — see the comment at that fixture " +
+		"for why it is kept live rather than left on the dead path it used to carry",
+	"claudedocs/decisions/25-listing-media-bounds.md": "AGENTS.md item 25's evidence file: its 2026-09-25 " +
+		"amendment names the page the README's `### Listing media requirements` section was relocated TO, and " +
+		"records the content verification that justified deleting the prose. Not exempt as a dated record — the " +
+		"URL there is a live pointer a reader follows, not just evidence of what was true",
+	"internal/cmd/app_listing.go": "the listing-media `--help` bodies (set-icon / set-cover / add-screenshot) and " +
+		"the two attach-rejection errors name `/apps/guide/store-listing` where they used to name a README section " +
+		"this repo deleted. It is the most expensive spelling in the ledger: these five strings are COMPILED INTO " +
+		"a released binary, so a moved page rots in every version already on somebody's PATH and no docs edit " +
+		"reaches them",
+	"README.md": "the published user contract now LINKS OUT to individual pages under the block's Guide URL " +
+		"(`/apps/guide/local-dev`, `/apps/guide/review-and-deploy`, `/apps/guide/store-listing`) in place of " +
+		"the prose those pages carry, so what matches here is the `/apps/guide/` PREFIX rather than a whole " +
+		"URL. It rots the same way and costs more: a reader sent to a moved page does not get a stale " +
+		"paragraph, they get nothing, because the paragraph was deleted on the grounds that the page carries it",
+	"internal/cmd/troubleshooting_published_test.go": "the VENDORED mirror of the published troubleshooting " +
+		"index, added when README.md's `## Troubleshooting` became a pointer to " +
+		"`/site/guide/cli-troubleshooting`. Two of its rows' `readMore` targets are `/apps/guide/` pages " +
+		"(store-listing, packaging), so the block's docs URLs are spelled here as well. It rots in a way " +
+		"worth naming: these are not links a reader follows out of this repo — they are a RECORD of where " +
+		"the published page sends them, so a rotted spelling here makes the ledger describe a page that " +
+		"does not exist while the live page is fine, and readmeAnchorTarget deliberately treats them as " +
+		"unresolvable so nothing else will notice",
+	"internal/pkgzip/testdata/readme_dotenv_section.golden.txt": "the whitespace-collapsed COPY of README.md's " +
+		"dotenv section that TestREADMEDotenvSectionIsTheReviewedCopy pins. That section now ends in a pointer " +
+		"to `/apps/guide/packaging#which-dotenv-files-end-up-in-the-bundle`, so the URL is spelled here as well " +
+		"as in the README. It is a MECHANICAL MIRROR — repair it by editing README.md and re-running that test " +
+		"with `-update`, never by hand-editing this file — but it is still a second place the spelling rots, " +
+		"and a stale copy reddens that guard for a reason whose message says nothing about the URL",
 }
 
 // docsURLLedgerExemptPrefix is the ONE exemption, and it is not a convenience.
@@ -267,8 +392,19 @@ const docsURLLedgerExemptPrefix = "claudedocs/handoff-"
 // `.gitignore` puts `/.claude/worktrees` there, and each worktree is a FULL COPY
 // of the tree, so a walk that entered it would report every ledgered file a
 // second time under a different path.
+//
+// 🔴 `__pycache__` WAS ADDED AFTER A MEASURED FALSE ATTRIBUTION, and it protects
+// both walks that share this set. Python marshals a module's string constants into
+// its `.pyc`, so `scripts/dogfood/__pycache__/` holds a copy of every docs address
+// `scripts/dogfood/runner.py` spells — and the dogfood tests create it, which
+// means a walk that reads it reports a different corpus depending on whether the
+// suite has run. A finding attributed to a `.pyc` also names a file the reader
+// cannot fix; the source is the spelling. (TestEveryShippedDocsURLResolves skips
+// any file containing a NUL byte as well, which is the general form of this; this
+// entry is the cheap half and keeps the ledger walk honest too.)
 var docsURLLedgerSkipDirs = map[string]bool{
 	".git": true, ".claude": true, "bin": true, "dist": true, "node_modules": true, ".venv": true,
+	"__pycache__": true,
 }
 
 // TestEveryDocsURLSpellingIsLedgered is the bidirectional guard behind the file
@@ -288,9 +424,25 @@ func TestEveryDocsURLSpellingIsLedgered(t *testing.T) {
 	// Match on host+path rather than the full URL: the header comment above names
 	// the examples page without a scheme, and that mention rots exactly like a
 	// link does.
-	needles := make([][]byte, 0, len(urls))
+	//
+	// 🔴 A `.md` URL ALSO CONTRIBUTES ITS DIRECTORY FORM, `<path>/`. The block
+	// links the `.md` rendering of each page (TestEveryDocsPageURLAnAgent-
+	// ReceivesIsMarkdown), while most ledgered files link pages UNDER it by their
+	// HTML route — README.md's `/apps/guide/local-dev`, the scaffolds'
+	// `/apps/guide/responsive`. When the block spelled `/apps/guide/`, that
+	// needle matched those as a PREFIX; `/apps/guide.md` matches none of them,
+	// and 12 ledger rows went "no longer spells ANY" in one edit without a single
+	// URL in those files changing. The directory form restores exactly that
+	// prefix match. It is deliberately not the bare `<path>`, which would also
+	// match unrelated fixtures (internal/redact's `/apps/guide#scopes`) that are
+	// not a place a moved page rots.
+	needles := make([][]byte, 0, 2*len(urls))
 	for _, u := range urls {
-		needles = append(needles, []byte(strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")))
+		hostPath := strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+		needles = append(needles, []byte(hostPath))
+		if page, ok := strings.CutSuffix(hostPath, ".md"); ok {
+			needles = append(needles, []byte(page+"/"))
+		}
 	}
 
 	root := repoRootDir(t)
@@ -382,9 +534,19 @@ func TestEveryDocsURLSpellingIsLedgered(t *testing.T) {
 //
 // 🔴 OPT-IN, NEVER DEFAULT. `make ci` must stay green with no network — a test
 // that fails on a train is a test somebody deletes. This follows the existing
-// pattern in internal/scaffold (CIVITAI_CHECK_PUBLISHED_PINS); no CI job sets
-// this one today, so it is a MANUAL pre-merge check, and saying that out loud is
-// the honest version of "the links are verified".
+// pattern in internal/scaffold (CIVITAI_CHECK_PUBLISHED_PINS).
+//
+// 🔴 IT NOW HAS A CALLER, AND THE OLD WORDING HERE WAS THE DEFECT, NOT A
+// DISCLAIMER. This comment used to end "no CI job sets this one today, so it is a
+// MANUAL pre-merge check, and saying that out loud is the honest version of 'the
+// links are verified'" — honest, and still the worst of the three states, in
+// `.github/workflows/readme-links.yml`'s own words: *a guard nobody runs reads as
+// coverage while providing none, because it stops the next person looking*. It
+// stopped somebody looking: `/apps/responsive` shipped a 404 in four scaffold
+// templates while this file carried a careful four-verdict prober that no job
+// invoked. `.github/workflows/docs-links.yml` is the caller — weekly cron plus
+// `workflow_dispatch`, deliberately NOT a required check (see that file's header
+// for why a live-network required check froze every open PR twice).
 const docsLinkProbeEnv = "CIVITAI_CHECK_DOCS_LINKS"
 
 // mustNotResolve is the probe's NEGATIVE control: a path on the same host that
@@ -414,57 +576,67 @@ type docsProbeResult struct {
 	err      error
 }
 
-// TestBlockDocsLinksResolve fetches every URL the block ships and reports what it
-// found, in four separable verdicts. The split is the point: "gone", "moved",
-// "cannot tell" and "could not reach" lead to four different actions, and the
-// version that printed one message for all of them told a reader to edit the
-// template when the truth was that the prober had been blocked.
+// newDocsProbeClient builds the HTTP client BOTH docs probers use.
 //
-//   - < 300               — live at the spelling that ships.
-//   - 3xx                 — MOVED. The page answers, but not at this spelling.
-//   - 404 / 410           — GONE. This is the dead-link finding.
-//   - other >= 400        — CANNOT TELL: 401/403/429/5xx are what a blocked or
-//     failing edge returns, and are indistinguishable from a
-//     genuinely broken page without a positive control.
-//   - transport error     — COULD NOT REACH. Collected, never fatal, and never a
-//     reason to stop probing the remaining links.
-func TestBlockDocsLinksResolve(t *testing.T) {
-	if os.Getenv(docsLinkProbeEnv) != "1" {
-		t.Skipf("network guard; set %s=1 to run (no CI job does — this is a manual pre-merge check)", docsLinkProbeEnv)
-	}
-
-	// 🔴 REDIRECTS ARE NOT FOLLOWED, BECAUSE THE SPELLING IS THE CLAIM. Go's
-	// default CheckRedirect follows up to 10 hops, so a probe that reports 200 is
-	// reporting on wherever it LANDED, not on the URL written into the block.
-	// Measured 2026-09-11: `/apps/guide` answers 301 to
-	// `http://developer.civitai.com/apps/guide/` — a different spelling, and a
-	// downgrade to cleartext http — which a following probe scores as a clean 200.
-	client := &http.Client{
+// 🔴 REDIRECTS ARE NOT FOLLOWED, BECAUSE THE SPELLING IS THE CLAIM. Go's
+// default CheckRedirect follows up to 10 hops, so a probe that reports 200 is
+// reporting on wherever it LANDED, not on the URL written into the block.
+// Measured 2026-09-11: `/apps/guide` answers 301 to
+// `http://developer.civitai.com/apps/guide/` — a different spelling, and a
+// downgrade to cleartext http — which a following probe scores as a clean 200.
+//
+// 🔴 IT IS SHARED ON PURPOSE, AND THAT IS THE ONE-RULE-ONE-PLACE ARGUMENT, NOT
+// TIDINESS. A second prober with its own client is a second place the
+// no-redirect rule can be dropped, and dropping it there would be invisible:
+// the run goes GREENER, not redder. `TestEveryShippedDocsURLResolves` covers a
+// corpus ~10x this one, so a silently-following copy would launder ten times as
+// many spellings.
+func newDocsProbeClient() *http.Client {
+	return &http.Client{
 		Timeout: 20 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
-	probe := func(url string) docsProbeResult {
-		out := docsProbeResult{url: url}
-		req, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil {
-			out.err = err
-			return out
-		}
-		req.Header.Set("User-Agent", "civitai-cli-docs-link-probe")
-		resp, err := client.Do(req)
-		if err != nil {
-			out.err = err
-			return out
-		}
-		defer func() { _ = resp.Body.Close() }()
-		out.code = resp.StatusCode
-		out.location = resp.Header.Get("Location")
+}
+
+// probeDocsURL fetches one URL and records what came back, diagnosing nothing.
+func probeDocsURL(client *http.Client, url string) docsProbeResult {
+	out := docsProbeResult{url: url}
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		out.err = err
 		return out
 	}
+	req.Header.Set("User-Agent", docsProbeUserAgent)
+	resp, err := client.Do(req)
+	if err != nil {
+		out.err = err
+		return out
+	}
+	defer func() { _ = resp.Body.Close() }()
+	out.code = resp.StatusCode
+	out.location = resp.Header.Get("Location")
+	return out
+}
 
-	control := probe(mustNotResolve)
+// docsProbeUserAgent is named because the failure messages quote it: a reader
+// told "the host may be refusing this probe's User-Agent" needs the string to
+// try in curl, and a message that quotes a literal the code no longer sends
+// sends them hunting the wrong thing.
+const docsProbeUserAgent = "civitai-cli-docs-link-probe"
+
+// runDocsProbeNegativeControl probes mustNotResolve and applies the three
+// verdicts a control can have, identically for every caller. It returns the
+// result so a caller can quote the control's own status in its findings — which
+// is what turns "these look dead" into "these look dead AND an impossible path
+// answered 404, so the host is not refusing us wholesale".
+//
+// It can t.Skip or t.Fatal, so it must be called before any probing worth
+// reporting.
+func runDocsProbeNegativeControl(t *testing.T, client *http.Client) docsProbeResult {
+	t.Helper()
+	control := probeDocsURL(client, mustNotResolve)
 	switch {
 	case control.err != nil:
 		t.Skipf("%s unreachable (%v) — skipping, not failing; the control could not be run either",
@@ -481,19 +653,207 @@ func TestBlockDocsLinksResolve(t *testing.T) {
 			">= 400, read that as 'this prober is being blocked' before reading it as 'the pages are gone'",
 			mustNotResolve, control.code)
 	}
+	return control
+}
 
-	block, err := agentsManagedBlock(allProjectShapesForTest()[0])
-	if err != nil {
-		t.Fatalf("rendering: %v", err)
+// blockDocsBranches are the two `{{ if .ElementsSDK }}` arms of the `### Docs`
+// section. ElementsSDK is a bool, so there are exactly two;
+// TestBlockDocsLinkCorpusCoversBothSDKBranches asserts this list is that literal
+// pair. golden names the test constant that pins each arm's wording, quoted in
+// failure messages so a reader knows which one to edit.
+var blockDocsBranches = []struct {
+	name        string
+	elementsSDK bool
+	golden      string
+}{
+	{"blocks-react (ElementsSDK=false)", false, "wantDocsSection"},
+	{"@civitai/sdk (ElementsSDK=true, the DEFAULT page-elements template)", true, "wantElementsGenerationPointer"},
+}
+
+// blockDocsProbeCorpus is the corpus TestBlockDocsLinksResolve builds its probe
+// list from, and the offline test checks this corpus — not whatever the probe
+// does with it afterwards. The probe applies no filter today; one added there
+// would not be seen offline. It returns the sorted union of `### Docs` links over
+// every project shape × both SDK arms, and the arm names each link was seen in.
+//
+// 🔴 IT RENDERS BOTH ARMS BECAUSE THE PROBE USED TO RENDER ONE.
+// TestBlockDocsLinksResolve rendered `allProjectShapesForTest()[0]` and nothing
+// else, and no shape there sets ElementsSDK — so every address that exists only
+// in the `@civitai/sdk` arm (the default template's, including its multi-step
+// workflow guide pointer) was never fetched by the guard whose doc comment says
+// it "fetches every URL the block ships".
+//
+// Its per-arm POSITIVE CONTROL counts the links UNIQUE to each arm — the ones the
+// other arm lacks — and fails when an arm has none. A raw per-section count
+// cannot do this job: the section's shared tail (Guide, earning, examples,
+// llms.txt) sits outside the `{{ if }}` and supplies four links to BOTH arms, so
+// an arm whose own body rendered empty still counts four.
+func blockDocsProbeCorpus(t *testing.T) (links []string, seenIn map[string][]string) {
+	t.Helper()
+	shapes := allProjectShapesForTest()
+	if len(shapes) < 3 {
+		t.Fatalf("CONTROL failure, not a finding: %d shape(s) to render", len(shapes))
 	}
-	section, ok := docsSectionOf(block)
-	if !ok {
-		t.Fatal("no `### Docs` section to probe")
+	perBranch := map[string]map[string]bool{}
+	for _, br := range blockDocsBranches {
+		perBranch[br.name] = map[string]bool{}
+		for _, shape := range shapes {
+			shape.ElementsSDK = br.elementsSDK
+			block, err := agentsManagedBlock(shape)
+			if err != nil {
+				t.Fatalf("rendering kind %q, branch %s: %v", shape.Kind, br.name, err)
+			}
+			section, ok := docsSectionOf(block)
+			if !ok {
+				t.Fatalf("kind %q, branch %s: the rendered block has no `### Docs` section to probe", shape.Kind, br.name)
+			}
+			for _, l := range docsLinkRe.FindAllString(section, -1) {
+				perBranch[br.name][l] = true
+			}
+		}
 	}
-	links := docsLinkRe.FindAllString(section, -1)
+	seenIn = map[string][]string{}
+	for _, br := range blockDocsBranches {
+		for l := range perBranch[br.name] {
+			seenIn[l] = append(seenIn[l], br.name)
+		}
+	}
+	for _, br := range blockDocsBranches {
+		unique := 0
+		for l := range perBranch[br.name] {
+			if len(seenIn[l]) == 1 {
+				unique++
+			}
+		}
+		if unique == 0 {
+			t.Fatalf("CONTROL failure, not a finding: branch %s yields NO `### Docs` link the other branch lacks. "+
+				"Its own `{{ if .ElementsSDK }}` arm in internal/cmd/templates/agents-app.md contributes nothing to "+
+				"the probe — it rendered empty, or the arms converged (then update %s and rethink this control).",
+				br.name, br.golden)
+		}
+	}
+	for l := range seenIn {
+		links = append(links, l)
+	}
+	sort.Strings(links)
+	return links, seenIn
+}
+
+// TestBlockDocsLinkCorpusCoversBothSDKBranches is the OFFLINE half of the probe's
+// corpus guard: TestBlockDocsLinksResolve is network-gated and skips in `make ci`,
+// so the claim "the corpus it probes from covers both arms" needs a check that
+// runs everywhere.
+//
+// It renders each arm INDEPENDENTLY of blockDocsProbeCorpus and asserts that the
+// corpus contains every link of each — so a corpus function that drops an arm
+// (the original defect) fails here, offline, rather than only shrinking a
+// network run that skips in CI. It checks the corpus the probe is built from,
+// not the probe's own loop: a filter applied inside the probe after the call is
+// outside what this test sees. It also asserts each independently rendered arm
+// has a link the other lacks, which is what makes "contains both" a stronger claim
+// than "contains one".
+func TestBlockDocsLinkCorpusCoversBothSDKBranches(t *testing.T) {
+	if len(blockDocsBranches) != 2 || blockDocsBranches[0].elementsSDK || !blockDocsBranches[1].elementsSDK {
+		t.Fatalf("CONTROL failure, not a finding: blockDocsBranches must be exactly {ElementsSDK=false, "+
+			"ElementsSDK=true}, got %+v", blockDocsBranches)
+	}
+	probed, _ := blockDocsProbeCorpus(t)
+	inProbe := map[string]bool{}
+	for _, l := range probed {
+		inProbe[l] = true
+	}
+
+	own := map[string][]string{}
+	for _, br := range blockDocsBranches {
+		shape := allProjectShapesForTest()[0]
+		shape.ElementsSDK = br.elementsSDK
+		block, err := agentsManagedBlock(shape)
+		if err != nil {
+			t.Fatalf("rendering branch %s: %v", br.name, err)
+		}
+		section, ok := docsSectionOf(block)
+		if !ok {
+			t.Fatalf("branch %s: no `### Docs` section", br.name)
+		}
+		own[br.name] = docsLinkRe.FindAllString(section, -1)
+	}
+	a, b := blockDocsBranches[0], blockDocsBranches[1]
+	for _, pair := range [][2]string{{a.name, b.name}, {b.name, a.name}} {
+		other := map[string]bool{}
+		for _, l := range own[pair[1]] {
+			other[l] = true
+		}
+		unique := 0
+		for _, l := range own[pair[0]] {
+			if !other[l] {
+				unique++
+			}
+		}
+		if unique == 0 {
+			t.Errorf("branch %s, rendered on its own, has no `### Docs` link that branch %s lacks — so 'the probe "+
+				"covers both' cannot be told apart from 'the probe covers one'.", pair[0], pair[1])
+		}
+	}
+	for _, br := range blockDocsBranches {
+		var missing []string
+		for _, l := range own[br.name] {
+			if !inProbe[l] {
+				missing = append(missing, l)
+			}
+		}
+		if len(missing) > 0 {
+			t.Errorf("the corpus TestBlockDocsLinksResolve probes from (blockDocsProbeCorpus) is MISSING %d link(s) the %s "+
+				"branch ships: %s. The live probe would never fetch them. Pinned by %s.",
+				len(missing), br.name, strings.Join(missing, ", "), br.golden)
+		}
+	}
+	t.Logf("probe corpus: %d link(s): %s", len(probed), strings.Join(probed, ", "))
+}
+
+// TestBlockDocsLinksResolve fetches every URL the block ships and reports what it
+// found, in four separable verdicts. The split is the point: "gone", "moved",
+// "cannot tell" and "could not reach" lead to four different actions, and the
+// version that printed one message for all of them told a reader to edit the
+// template when the truth was that the prober had been blocked.
+//
+//   - < 300               — live at the spelling that ships.
+//   - 3xx                 — MOVED. The page answers, but not at this spelling.
+//   - 404 / 410           — GONE. This is the dead-link finding.
+//   - other >= 400        — CANNOT TELL: 401/403/429/5xx are what a blocked or
+//     failing edge returns, and are indistinguishable from a
+//     genuinely broken page without a positive control.
+//   - transport error     — COULD NOT REACH. Collected, never fatal, and never a
+//     reason to stop probing the remaining links.
+//
+// Its corpus is the `### Docs` section rendered for every project shape under
+// BOTH `{{ if .ElementsSDK }}` arms (blockDocsProbeCorpus). It used to render
+// one blocks-react shape only, so the default `@civitai/sdk` template's own
+// addresses were never fetched; TestBlockDocsLinkCorpusCoversBothSDKBranches is
+// the offline guard that keeps both arms in the corpus.
+//
+// 🔴 ITS CORPUS IS THE MANAGED BLOCK AND NOTHING ELSE, AND THAT IS DELIBERATE
+// RATHER THAN AN OVERSIGHT — NOW. The block's URLs are written into somebody
+// else's project and cannot be recalled, so their findings get wording no other
+// spelling deserves, naming the two files to edit. The REST of the repository's
+// docs URLs are probed by TestEveryShippedDocsURLResolves, which is the guard
+// that would have caught `/apps/responsive` in four scaffold templates; this one
+// structurally could not, because a template is not in the block.
+func TestBlockDocsLinksResolve(t *testing.T) {
+	if os.Getenv(docsLinkProbeEnv) != "1" {
+		t.Skipf("network guard; set %s=1 to run", docsLinkProbeEnv)
+	}
+
+	client := newDocsProbeClient()
+	probe := func(url string) docsProbeResult { return probeDocsURL(client, url) }
+	control := runDocsProbeNegativeControl(t, client)
+
+	// The ONE list the probe fetches — see blockDocsProbeCorpus for why one
+	// rendering was not enough and for its per-arm positive control.
+	links, seenIn := blockDocsProbeCorpus(t)
 	if len(links) < 4 {
 		t.Fatalf("CONTROL failure, not a finding: %d link(s) extracted, want >= 4", len(links))
 	}
+	branchesOf := func(url string) string { return strings.Join(seenIn[url], " + ") }
 
 	// Probe EVERY link first. Nothing in this loop can end the run.
 	results := make([]docsProbeResult, 0, len(links))
@@ -539,19 +899,21 @@ func TestBlockDocsLinksResolve(t *testing.T) {
 	for _, r := range gone {
 		t.Errorf("DEAD LINK IN THE MANAGED BLOCK — this URL is written into every project "+
 			"`civitai agent-setup` runs in, and nothing can recall it.\n  url:    %s\n  status: %d\n"+
-			"  fix:    correct it in internal/cmd/templates/agents-app.md AND wantDocsSection in this file "+
-			"(then run TestEveryDocsURLSpellingIsLedgered for the rest), or publish the page before merging.",
-			r.url, r.code)
+			"  branch: %s\n"+
+			"  fix:    correct it in internal/cmd/templates/agents-app.md AND that branch's golden in this file "+
+			"(wantDocsSection for blocks-react, wantElementsGenerationPointer for @civitai/sdk; then run "+
+			"TestEveryDocsURLSpellingIsLedgered for the rest), or publish the page before merging.",
+			r.url, r.code, branchesOf(r.url))
 	}
 	for _, r := range moved {
 		t.Errorf("MOVED LINK IN THE MANAGED BLOCK — the page answers, but NOT at the spelling that ships. "+
 			"This is not a dead link and it is not a live one: a browser follows the hop, and the block is "+
 			"left naming a URL the site no longer serves directly.\n  url:      %s\n  status:   %d\n"+
-			"  location: %s\n"+
+			"  location: %s\n  branch:   %s\n"+
 			"  fix:      if the target is the intended canonical spelling, write THAT into "+
-			"internal/cmd/templates/agents-app.md and wantDocsSection. Check the scheme before you copy it: "+
+			"internal/cmd/templates/agents-app.md and that branch's golden. Check the scheme before you copy it: "+
 			"this host has been measured redirecting https to cleartext http.",
-			r.url, r.code, orNone(r.location))
+			r.url, r.code, orNone(r.location), branchesOf(r.url))
 	}
 	if len(cannotTell) > 0 {
 		var lines []string

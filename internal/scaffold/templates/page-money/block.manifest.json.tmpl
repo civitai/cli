@@ -3,10 +3,12 @@
   "blockId": "{{ .Slug }}",
   "version": "0.1.0",
   "name": "{{ .Name }}",
+  "tagline": "{{ .Tagline }}",
   "type": "block",
-  "scopes": ["ai:write:budgeted"],
+  "scopes": ["ai:write:budgeted", "buzz:read:self"],
   "scopeJustifications": {
-    "ai:write:budgeted": "Runs image generations on the user's behalf, spending from the per-generation Buzz budget the page grants."
+    "ai:write:budgeted": "Runs image generations on the user's behalf, spending from the per-generation Buzz budget the page grants.",
+    "buzz:read:self": "Reads the viewer's per-account Buzz balance to mark which account can fund a generation in the Spend from picker."
   },
   "page": {
     "path": "/",

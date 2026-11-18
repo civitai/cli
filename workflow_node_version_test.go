@@ -74,12 +74,22 @@ const minWorkflowFiles = 9
 //
 //	ci.yml                   → template-page-vite
 //	ci.yml                   → template-page-money
+//	ci.yml                   → template-page-elements (added later; the floor stays 4)
 //	ci.yml                   → scaffold-currency
 //	bump-scaffold-pins.yml   → bump
 //
+// The four ci.yml jobs above are now steps of ONE job, `checks` (they shared a
+// runner to stop paying four runner waits per run), so two jobs match:
+//
+//	ci.yml                   → checks
+//	bump-scaffold-pins.yml   → bump
+//
+// That a gate's steps are still IN `checks` is pinned by the ledger in
+// workflow_checks_job_test.go, which this count can no longer see.
+//
 // If you legitimately remove one, lower this number in the same commit and say
 // which job went and why. Do not lower it to make a red test green.
-const minScaffoldInstallJobs = 4
+const minScaffoldInstallJobs = 2
 
 // minNodeMajor is the floor, not a pin. Newer is fine — the measurement says
 // npm 10 (node 22) is broken for this workload and npm 11 (node 24) is not, so
@@ -338,7 +348,7 @@ func nodeMajorsIn(t *testing.T, file, jobName string, job wfJob) []int {
 // TestReadyAckDriftRunnerMatchesTheGatesNodeMajor pins the OTHER half of the
 // #530 drift, the half the scaffold-and-install rule above structurally cannot
 // see: `ready-ack-runtime` exists TWICE under the same name — as the merge GATE
-// in `ci.yml`, and as the daily DRIFT runner in `bump-scaffold-pins.yml`. That
+// in `ci.yml`, and as the scheduled DRIFT runner in `bump-scaffold-pins.yml`. That
 // job installs nothing, so the rule above never looks at it.
 //
 // Two tiers of the same check running on different node majors is a suite that
@@ -352,20 +362,24 @@ func TestReadyAckDriftRunnerMatchesTheGatesNodeMajor(t *testing.T) {
 	const (
 		gateFile  = "ci.yml"
 		driftFile = "bump-scaffold-pins.yml"
-		jobName   = "ready-ack-runtime"
 	)
+	// The gate is a step of ci.yml's `checks` job (it was the
+	// `ready-ack-runtime` job until the small gates were folded into one);
+	// the drift runner is still a job of that name. Matched per file.
+	jobOf := map[string]string{gateFile: "checks", driftFile: "ready-ack-runtime"}
 
 	workflows := loadWorkflows(t)
 
 	majors := map[string][]int{}
 	for _, file := range []string{gateFile, driftFile} {
+		jobName := jobOf[file]
 		wf, ok := workflows[file]
 		if !ok {
 			t.Fatalf("%s not found under %s — this guard checked nothing", file, workflowDir)
 		}
 		job, ok := wf.Jobs[jobName]
 		if !ok {
-			t.Fatalf("%s has no job %q. The gate and its daily drift runner are matched BY NAME; if one was "+
+			t.Fatalf("%s has no job %q. The gate and its scheduled drift runner are matched BY NAME; if one was "+
 				"renamed, re-point this guard at the pair rather than deleting it.", file, jobName)
 		}
 		m := nodeMajorsIn(t, file, jobName, job)
@@ -377,6 +391,7 @@ func TestReadyAckDriftRunnerMatchesTheGatesNodeMajor(t *testing.T) {
 	}
 
 	for _, file := range []string{gateFile, driftFile} {
+		jobName := jobOf[file]
 		for _, m := range majors[file] {
 			if m < minNodeMajor {
 				t.Errorf("%s → job %q pins node %d, below the floor of %d.\n%s",
@@ -386,12 +401,12 @@ func TestReadyAckDriftRunnerMatchesTheGatesNodeMajor(t *testing.T) {
 	}
 
 	if fmt.Sprint(majors[gateFile]) != fmt.Sprint(majors[driftFile]) {
-		t.Errorf("the `%s` GATE in %s runs node %v, but its daily DRIFT runner in %s runs node %v.\n"+
+		t.Errorf("the `%s` GATE in %s runs node %v, but its scheduled DRIFT runner in %s runs node %v.\n"+
 			"  They must match. The drift runner's whole job is to catch, on `main` and between PRs, what the "+
 			"gate cannot see; running it on a different node major makes the two tiers able to disagree, so a "+
 			"regression can be red in one and structurally invisible in the other. That is exactly the shape of "+
 			"#530: ci.yml moved to node 24 and this sibling was left on 22 for three days.\n%s",
-			jobName, gateFile, majors[gateFile], driftFile, majors[driftFile], nodeMajorRationale())
+			"ready-ack-runtime", gateFile, majors[gateFile], driftFile, majors[driftFile], nodeMajorRationale())
 	}
 }
 

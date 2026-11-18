@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/civitai/cli/internal/validate"
+	"github.com/spf13/cobra"
 )
 
 // simulateInstall writes the lockfile a scaffolded npm project gets from its
@@ -55,19 +57,22 @@ func assertScaffoldValid(t *testing.T, dir string) {
 	}
 }
 
-func TestAppCreateDefaultsToPageMoney(t *testing.T) {
+// TestAppCreatePageMoneyOutput pins page-money's scaffold output. It was
+// TestAppCreateDefaultsToPageMoney until page-elements became the default; the
+// page-money assertions are unchanged, and the template is now named explicitly.
+// The DEFAULT is pinned in app_default_template_test.go.
+func TestAppCreatePageMoneyOutput(t *testing.T) {
 	tmp := t.TempDir()
 	dest := filepath.Join(tmp, "my-block")
 
-	stdout, _, err := run(t, "app", "create", "my-block", dest)
+	stdout, _, err := run(t, "app", "create", "my-block", dest, "--template", "page-money")
 	if err != nil {
-		t.Fatalf("app create: %v\n%s", err, stdout)
+		t.Fatalf("app create --template page-money: %v\n%s", err, stdout)
 	}
 
-	// Defaulted to the batteries-included page-money template (named in the
-	// one-line summary).
+	// The template is named in the one-line summary.
 	if !strings.Contains(stdout, "(page-money)") {
-		t.Errorf("create should default to page-money:\n%s", stdout)
+		t.Errorf("create --template page-money should scaffold page-money:\n%s", stdout)
 	}
 	// The summary reports a file COUNT, not a per-file tree.
 	if !strings.Contains(stdout, "files") {
@@ -240,37 +245,65 @@ func TestAppCreateRefusesNonEmptyDir(t *testing.T) {
 	}
 }
 
-// TestAppCreateFromIsNotWired pins the `--from` refusal for `app create`; the
-// message contract itself (no internal TODO, an actionable next command) is
-// asserted for BOTH commands in TestScaffoldFromErrorShipsNoEngineeringNote.
-func TestAppCreateFromIsNotWired(t *testing.T) {
-	tmp := t.TempDir()
-	dest := filepath.Join(tmp, "out")
-	_, errOut, err := run(t, "app", "create", "my-block", dest, "--from", "some-slug")
-	if err == nil {
-		t.Fatal("expected --from to error (not available yet)")
+// TestScaffoldHasNoFromFlag: `--from` ("fork from an existing published app
+// slug") was declared on `app create` / `app init` but failed 100% of the time,
+// because the CLI cannot fetch a published app's source. It is deleted, not
+// hidden: passing it is an unknown-flag usage error (exit 2), it is not
+// registered, help does not name it, and nothing is scaffolded.
+func TestScaffoldHasNoFromFlag(t *testing.T) {
+	for _, sub := range []string{"create", "init"} {
+		t.Run(sub, func(t *testing.T) {
+			tmp := t.TempDir()
+			dest := filepath.Join(tmp, "out")
+			_, errOut, err := run(t, "app", sub, "forked-app", "--from", "some-published-app", "--dir", dest)
+			if err == nil {
+				t.Fatal("expected --from to be refused as an unknown flag")
+			}
+			if !errors.Is(err, ErrUsage) {
+				t.Errorf("--from should be a usage error (exit 2), got: %v", err)
+			}
+			if blob := err.Error() + errOut; !strings.Contains(blob, "unknown flag: --from") {
+				t.Errorf("error should name the unknown flag:\n%s", blob)
+			}
+			if _, statErr := os.Stat(dest); !os.IsNotExist(statErr) {
+				t.Errorf("a refused --from must scaffold nothing; %s exists (stat err %v)", dest, statErr)
+			}
+
+			out, _, err := run(t, "app", sub, "--help")
+			if err != nil {
+				t.Fatalf("app %s --help: %v", sub, err)
+			}
+			if !strings.Contains(out, "--slug") {
+				t.Fatalf("control: app %s --help does not list --slug:\n%s", sub, out)
+			}
+			if strings.Contains(out, "--from") || strings.Contains(out, "NOT AVAILABLE YET") {
+				t.Errorf("app %s --help still names --from:\n%s", sub, out)
+			}
+		})
 	}
-	if !strings.Contains(err.Error()+errOut, "--from is not available yet") {
-		t.Errorf("--from should report it is unavailable: err=%v stderr=%s", err, errOut)
+	for name, c := range map[string]*cobra.Command{"create": newAppCreateCmd(), "init": newAppInitCmd()} {
+		if c.Flags().Lookup("from") != nil {
+			t.Errorf("app %s still registers a --from flag", name)
+		}
 	}
 }
 
-// TestAppInitStillDefaultsToStatic guards the back-compat alias: the refactor to
-// the shared helper must not change init's default template.
-func TestAppInitStillDefaultsToStatic(t *testing.T) {
+// TestAppInitStaticViaFlag keeps the no-build template reachable by name. It was
+// TestAppInitStillDefaultsToStatic until page-elements became init's default.
+func TestAppInitStaticViaFlag(t *testing.T) {
 	tmp := t.TempDir()
 	dest := filepath.Join(tmp, "init-block")
 
-	stdout, _, err := run(t, "app", "init", "init-block", dest)
+	stdout, _, err := run(t, "app", "init", "init-block", dest, "--template", "static")
 	if err != nil {
-		t.Fatalf("app init: %v\n%s", err, stdout)
+		t.Fatalf("app init --template static: %v\n%s", err, stdout)
 	}
 	if !strings.Contains(stdout, "(static)") {
-		t.Errorf("init should still default to static:\n%s", stdout)
+		t.Errorf("init --template static should scaffold static:\n%s", stdout)
 	}
 	assertScaffoldValid(t, dest)
 	if _, err := os.Stat(filepath.Join(dest, "package.json")); err == nil {
-		t.Error("init's static default should not produce a package.json")
+		t.Error("the static template should not produce a package.json")
 	}
 }
 

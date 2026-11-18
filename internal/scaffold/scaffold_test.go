@@ -108,8 +108,9 @@ func TestRenderPageVite(t *testing.T) {
 	mustContain(t, css, ".app-actions")
 	// A VIEWPORT media query is the wrong question inside a block iframe (slot
 	// width is not monotonic in viewport width), so the responsive rule must not
-	// be one. The boot skeleton's prefers-color-scheme block lives in index.html,
-	// not here, so this file legitimately has no @media at all.
+	// be one. The boot skeleton's theme rules live in index.html (and consult
+	// no media query at all — see bootskeleton_test.go), so this file
+	// legitimately has no @media at all.
 	mustNotContain(t, css, "@media")
 	// And the markup must actually use it — a container query over a class
 	// nothing renders is inert.
@@ -134,7 +135,7 @@ func TestRenderPageMoney(t *testing.T) {
 		"src/generation.test.ts", "src/models.test.ts", "src/nav.test.ts",
 		"src/comfy.test.ts",
 		"src/setup-dev-live.test.ts", "src/setup-plugin.test.ts",
-		"src/App.pollretry.test.tsx", "src/responsive.test.tsx", "src/index.css",
+		"src/App.pollretry.test.tsx", "src/App.quote.test.tsx", "src/responsive.test.tsx", "src/index.css",
 		"README.md", ".gitignore", ".env.development", ".env.production", ".env.example",
 		"assets/README.md",
 	} {
@@ -187,10 +188,11 @@ func TestRenderPageMoney(t *testing.T) {
 	// from the `buzzBalance` option AND stamps spentAccountType on succeeded
 	// snapshots natively — so the scaffold no longer ships a mock balance shim) +
 	// @civitai/app-sdk@0.14.0+. The pins track the CURRENT published minors — the
-	// pins-vs-published guard (TestScaffoldPinsSatisfyPublished) fails CI if they
-	// fall behind npm, so bump BOTH assertions here in lockstep with the .tmpl.
-	mustContain(t, pkg, `"@civitai/blocks-react": "^0.53.0"`)
-	mustContain(t, pkg, `"@civitai/app-sdk": "^0.45.0"`)
+	// pins-vs-published CI job (cmd/pins-gate) fails main and pin-touching PRs if
+	// they fall behind npm, so bump BOTH assertions here in lockstep with the .tmpl
+	// (bump-pins does this).
+	mustContain(t, pkg, `"@civitai/blocks-react": "^0.83.0"`)
+	mustContain(t, pkg, `"@civitai/app-sdk": "^0.90.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk"`)
 	mustContain(t, pkg, `"dev:harness"`)
 	mustContain(t, pkg, `"build"`)
@@ -253,12 +255,17 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "MAX_TRANSIENT_ERRORS")
 	mustContain(t, app, "consecutiveErrors")
 
-	// The confirm-spend modal was removed: Generate is one click → consent →
-	// spend (the button already shows the cost).
+	// The confirm-spend modal was removed: the price is ON the Generate button,
+	// which is disabled until an estimate for the current request succeeds
+	// (#880). The click submits only with that quote; behaviour is pinned by the
+	// template's own src/App.price.test.tsx and src/App.quote.test.tsx, run in
+	// the template-page-money job.
 	mustNotContain(t, app, "Confirm generation")
 	mustNotContain(t, app, "setConfirmOpen")
-	// The Generate click runs the gate directly (no intermediate confirm state).
-	mustContain(t, app, "proceed()")
+	mustContain(t, app, "Retry estimate")
+	if _, err := os.Stat(filepath.Join(dest, "src", "App.price.test.tsx")); err != nil {
+		t.Errorf("page-money must ship its price-contract test src/App.price.test.tsx: %v", err)
+	}
 
 	// The "About this block" modal + the "How this works" section/button were
 	// removed (a clean, minimal scaffold). The status Badge near the title was
@@ -330,6 +337,13 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "SegmentedControl")
 	mustContain(t, app, "pm-comfy-beta")
 	mustContain(t, app, "pm-gated")
+	// Both beta alerts route access requests to the onsite form, not to this
+	// repo: requests are reviewed on civitai.com, and an access-request issue
+	// opened here is auto-closed with a pointer back to the form.
+	if n := strings.Count(app, `href="https://civitai.com/apps/build?request-access=1"`); n != 2 {
+		t.Errorf("page-money App.tsx: want the onsite access-request link in BOTH beta alerts (2), got %d", n)
+	}
+	mustNotContain(t, app, `href="https://github.com/civitai/cli`)
 
 	// The INLINE arm — the app ships its own ComfyUI graph. These are presence
 	// checks for DISCOVERABILITY (the dogfood failure was a developer guessing at
@@ -419,6 +433,71 @@ func TestRenderPageMoney(t *testing.T) {
 		if !strings.Contains(surface, "starter-comfy-txt2img") {
 			t.Errorf("comfySurfaces[%d] does not mention the app's own recipe id — "+
 				"the stale-claim guards above would pass vacuously against it", i)
+		}
+	}
+
+	// The THIRD false invariant, same defect class as the two above and found the
+	// same way. The scaffold told the developer the W6 pack "ships no Slider" — in
+	// the README, in a JSX comment, in the component's docstring and in a styles
+	// comment — and hand-rolled a native range input on the strength of it. The
+	// pack has exported `Slider` since long before this template's pin: it is in
+	// `@civitai/blocks-react@^0.58.0`'s `./ui` barrel, the very subpath this file
+	// already imports from, and its own docstring names LoRA weights as the use
+	// case it was built for. A dogfooding developer spent two of four
+	// node_modules probes confirming the claim was false.
+	//
+	// 🔴 THE STRUCTURAL HALF FIRST, because it is the half a reword cannot walk
+	// past: the generated app must IMPORT and USE the pack's Slider, and must not
+	// hand-roll a range input. A claim that the pack lacks a Slider cannot be
+	// restated in any wording while the file in front of the reader renders one.
+	mustContain(t, app, "  Slider,\n") // the ./ui barrel import, not a prose mention
+	mustContain(t, app, "<Slider")
+	mustNotContain(t, app, `type="range"`)
+	// The hand-rolled chrome that existed ONLY to style that input. Pinning the
+	// symbols too, so re-adding a bespoke range under new style names trips this.
+	for _, deadStyle := range []string{"loraRangeStyle", "loraWeightRowStyle", "loraWeightValueStyle", "loraWeightLabelStyle"} {
+		mustNotContain(t, app, deadStyle)
+	}
+	// And the parse the pack's typed onChange removes — Slider hands back the
+	// NUMBER, so a surviving e.target.value read means the switch was cosmetic.
+	mustNotContain(t, app, "onWeight(l.versionId, Number(")
+
+	// 🔴 THE SPELLED HALF, pinned as WHOLE NORMALISED SENTENCES rather than as
+	// keywords. The claim was wrapped differently at all four sites — across a JSX
+	// comment's line break, behind a ` * ` docstring prefix, behind `// `, and as
+	// flowing markdown — so no raw substring matches more than one of them, and a
+	// one-word grep ("Slider") cannot distinguish the falsehood from the fix.
+	// Normalising to words first is what makes one pinned sentence cover every
+	// site regardless of how it is wrapped or commented.
+	//
+	// Same caveat the two loops above carry, and it is why the structural half
+	// leads: this matches PHRASINGS, so it cannot tell an assertion from a
+	// retraction and cannot catch a new way of spelling the same falsehood. It is
+	// a floor. Describe the old claim; never restate it verbatim.
+	sliderSurfaces := map[string]string{
+		"App.tsx":   normalizeCodeProse(app),
+		"README.md": normalizeCodeProse(comfyReadme),
+	}
+	for _, stale := range []string{
+		"a themed native range input — the W6 pack ships no Slider",
+		"the one exception is each LoRA's weight control (a themed native range `<input>`, since the pack ships no Slider yet)",
+		"plus a themed native range input (the pack ships no Slider)",
+		"The W6 pack ships no Slider, so each LoRA's weight uses a themed native range input",
+	} {
+		for name, surface := range sliderSurfaces {
+			if strings.Contains(surface, normalizeCodeProse(stale)) {
+				t.Errorf("%s still asserts the pack has no Slider: %q\n"+
+					"The pack exports Slider from @civitai/blocks-react/ui at the pinned version. "+
+					"Describe the old claim if you must; do not restate it.", name, stale)
+			}
+		}
+	}
+	// Positive control for the loop above — it asserts ABSENCE, so it is green
+	// against a surface that is empty or read from the wrong path. Each surface
+	// must actually be talking about the weight control at all.
+	for name, surface := range sliderSurfaces {
+		if !strings.Contains(surface, "Slider") {
+			t.Errorf("%s never mentions Slider — the stale-claim guard above would pass vacuously against it", name)
 		}
 	}
 
@@ -818,6 +897,29 @@ func budgetFromManifest(t *testing.T, manifest string) int {
 		t.Fatal("manifest has no page.buzzBudgetPerGen")
 	}
 	return *m.Page.BuzzBudgetPerGen
+}
+
+// normalizeCodeProse reduces a source or markdown file to the WORDS it tells a
+// reader, dropping comment markers and line wrapping — the sibling of
+// normalizeDotenvProse, for `//`, ` * ` and `{/* … */}` comments.
+//
+// It exists so ONE pinned sentence can cover a claim that appears at several
+// sites wrapped differently. A raw substring match is defeated by a line break
+// landing in a different place, and a keyword match cannot tell a false claim
+// from the sentence that corrects it — so a phrasing guard over prose is only
+// meaningful once layout is normalised away.
+func normalizeCodeProse(body string) string {
+	var words []string
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "{/*")
+		line = strings.TrimSuffix(line, "*/}")
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "//")
+		line = strings.TrimPrefix(line, "*")
+		words = append(words, strings.Fields(line)...)
+	}
+	return strings.Join(words, " ")
 }
 
 func readFile(t *testing.T, p string) string {

@@ -1,0 +1,5 @@
+{
+  "name": "@civitai/components",
+  "version": "0.10.0",
+  "customElements": "custom-elements.json"
+}

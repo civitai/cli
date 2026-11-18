@@ -592,9 +592,9 @@ func TestAgentSetupTrackAPIRefuses(t *testing.T) {
 	msg := err.Error()
 	for _, want := range []string{
 		"https://mcp.civitai.com/mcp",
-		"https://orchestration.civitai.com/mcp",
-		"https://developer.civitai.com/site/",
-		"https://developer.civitai.com/orchestration/",
+		"https://orchestration.civitai.com/mcp/v2",
+		"https://developer.civitai.com/site.md",
+		"https://developer.civitai.com/orchestration.md",
 		"coming",
 	} {
 		if !strings.Contains(msg, want) {
@@ -805,7 +805,12 @@ func TestAgentSetupCheckJSONShape(t *testing.T) {
 	for _, c := range payload.Checks {
 		names = append(names, c.Name)
 	}
-	want := []string{checkCLIVersion, checkAgentsMD, checkClaudeMD, "mcp-site", "mcp-orch", checkAuthenticated}
+	// 🔴 `agent-token` WAS APPENDED, NOT SUBSTITUTED. The first six names and their
+	// order are what `developer.civitai.com`'s hosted prompt parses, so a new row
+	// goes on the END and no existing name moves — that is why the split kept
+	// `authenticated` and added a sibling instead of renaming it.
+	want := []string{checkCLIVersion, checkAgentsMD, checkClaudeMD, "mcp-site", "mcp-orch",
+		checkAuthenticated, checkAgentToken}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Errorf("check rows = %v, want %v (the names and their order are published)", names, want)
 	}

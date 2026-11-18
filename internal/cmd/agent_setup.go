@@ -55,6 +55,11 @@ const (
 	checkAgentsMD      = "agents-md"
 	checkClaudeMD      = "claude-md"
 	checkAuthenticated = "authenticated"
+	// checkAgentToken is the MCP/agent half of what `authenticated` used to
+	// conflate. 🔴 ADDED, NEVER A RENAME: the four names above are read by
+	// `developer.civitai.com`'s hosted setup prompt, so renaming `authenticated`
+	// would break a document this repo does not own. See agentTokenCheck.
+	checkAgentToken = "agent-token"
 )
 
 // ErrAgentSetupIncomplete is the sentinel `agent-setup --check` returns when at
@@ -170,8 +175,8 @@ func agentSetupTrackAPIRefusal() error {
 		fmt.Fprintf(&b, "  %-22s %s\n", srv.Name, srv.URL)
 	}
 	b.WriteString("\nRegister both with `civitai agent-setup --track app` (they are the same two servers) and read:\n")
-	b.WriteString("  https://developer.civitai.com/site/\n")
-	b.WriteString("  https://developer.civitai.com/orchestration/\n")
+	b.WriteString("  https://developer.civitai.com/site.md\n")
+	b.WriteString("  https://developer.civitai.com/orchestration.md\n")
 	b.WriteString("\nA dedicated API track is coming; until then nothing about the API is unsupported, only this command's setup for it")
 	return asUsageError(errors.New(b.String()))
 }
@@ -403,6 +408,37 @@ func checkCountsTowardVerdict(name, agent string) bool {
 	switch name {
 	case checkAuthenticated:
 		return false
+	case checkCLIVersion:
+		// 🔴 A STALE CLI IS WORTH UPGRADING, NOT A BROKEN SETUP — and counting it
+		// would build the one thing this file's neighbours already record twice as
+		// the worst outcome: a permanently-red gate, which trains everyone to click
+		// through. Releases here land days apart (`0.1.105` → `0.1.110` inside one
+		// week, five tags), so a verdict-affecting freshness row is red for a large
+		// fraction of all real invocations over a state that is usually harmless.
+		//
+		// 🔴 AND THE HOSTED PROMPT MAKES THE FAILURE MODE ACTIVE, NOT PASSIVE.
+		// `developer.civitai.com`'s step 4 instructs its reader to read `ok` and NOT
+		// the individual rows, so a counted row does not produce "an agent ignores a
+		// warning" — it produces "an agent reads `ok: false`, concludes the setup is
+		// broken, and stops or starts repairing something that was fine". That is a
+		// worse outcome than the staleness it reports, and it would reach every user
+		// of the published prompt.
+		//
+		// ⚠ THE RESIDUAL IS REAL AND IS NOT FIXED HERE: an agent that reads only
+		// `ok` still will not notice a stale CLI. Closing that needs a change to
+		// `prompt.md`'s "read `ok`, not the rows" instruction, which lives outside
+		// this repository. printAgentSetupChecks says so on screen rather than
+		// leaving it implicit.
+		return false
+	case checkAgentToken:
+		// 🔴 THE SAME EXEMPTION, FOR THE SAME REASON — and the reason is
+		// `authenticated`'s, not `claude-md`'s. Work DOES remain (the user must
+		// export the variable) and this CLI deliberately will not do it, which is
+		// exactly the state the setup flow leaves every new user in. Counting it
+		// would make `--check` exit 1 after a completely correct run for everyone
+		// who has not exported yet, and the hosted prompt is told not to report
+		// success if any check fails. The row stays and stays `false`.
+		return false
 	case checkClaudeMD:
 		return agent == agentClaude
 	default:
@@ -442,6 +478,7 @@ func newAgentSetupCmd() *cobra.Command {
 		check   bool
 		jsonOut bool
 		dryRun  bool
+		fixPath bool
 	)
 	cmd := &cobra.Command{
 		Use:   "agent-setup",
@@ -492,12 +529,55 @@ and the output names the exact header to add yourself.
 
 THE TWO SERVERS DIFFER ON ANONYMOUS ACCESS. https://mcp.civitai.com/mcp answers
 without a credential, so a header-less config browses models, images and
-articles as it stands. https://orchestration.civitai.com/mcp returns 401 until
+articles as it stands. https://orchestration.civitai.com/mcp/v2 returns 401 until
 an Authorization header is present, so generation tools need one either way.
 
 AUTHENTICATION IS YOURS TO RUN. The servers are registered before login on
 purpose, and 'civitai login' is a separate store from CIVITAI_TOKEN: it writes
 this CLI's own config, which your coding agent does not read.
+
+WHAT --check REPORTS. It writes nothing and probes no credential. Seven rows:
+cli-version, agents-md, claude-md, mcp-site, mcp-orch, authenticated,
+agent-token. EVERY FILESYSTEM ROW REPORTS PRESENCE, NEVER ACCEPTANCE: an
+mcp-site row is 'ok' because the entry is in your config, not because any
+server accepted it. mcp-orch checks the entry's NAME, not its URL, so an entry
+an older release registered at the frozen v1 /mcp URL still reports 'ok':
+existing installs stay on v1 until you re-run 'civitai agent-setup', which moves
+the entry to /mcp/v2. An ABSENT Authorization header gets no row of its own —
+that is by design, since a header-less setup still reaches the site server. A
+config file that will not parse maps to the mcp-site/mcp-orch rows, carrying
+the parse failure in 'detail'.
+
+'cli-version' IS THE ONE ROW THAT CONTACTS ANYTHING: a single unauthenticated
+GET to GitHub's public releases endpoint, bounded at 2.5s, comparing the running
+build against the newest published release. It FAILS SOFT — an unreachable
+network, a timeout, a non-200 or a tag it cannot parse all report 'ok' true with
+a detail saying the comparison did not happen — so only a successful comparison
+showing this build to be OLDER can make it false. Skip it entirely with
+--no-update-check or CIVITAI_NO_UPDATE_CHECK, the same controls 'version' and
+'upgrade' honour; the row then says it was disabled.
+
+IT DOES NOT FAIL THE VERDICT EITHER, and that is deliberate. Releases land days
+apart, so a counted freshness row would be red for a large share of ordinary runs
+over a state that is usually harmless -- a permanently-red gate people learn to
+click through. READ THE ROW: a consumer that reads only 'ok' will not see a stale
+CLI, which is a real gap and not one this command can close on its own.
+
+'authenticated' and 'agent-token' are the TWO auth rows, and they are separate
+because they are about different stores. 'authenticated' is THIS CLI's
+credential — 'civitai login''s config file or CIVITAI_TOKEN — which is what
+'civitai app dev-token', 'civitai app validate' and 'civitai app submit' read.
+'agent-token' is whether CIVITAI_TOKEN is set in the PROCESS environment, which
+is the only place your agent can resolve the reference in its MCP config from.
+You do NOT need CIVITAI_TOKEN to scaffold, build, dev-run or submit an App; it
+is only for the MCP servers. Neither row can fail the verdict: an
+unauthenticated setup is a success.
+
+The 'ok' verdict is the AND of every row EXCEPT cli-version, authenticated and
+agent-token, minus claude-md for a non-Claude agent, and minus mcp-site/mcp-orch
+for an agent with no resolvable config target. That last exemption is conditional
+and narrow: for a KNOWN agent a missing entry still fails, and the rows stay in
+the report and stay false.
 
 EXIT CODES: --check exits 1 when a check failed, 0 otherwise. A write run exits
 0 when every step happened and 1 when one did not -- a config that does not
@@ -507,8 +587,9 @@ false, never a silent success. THE ONE STEP THAT DOES NOT HAPPEN AND STILL EXITS
 0 is the 'manual' row: --agent other, or a user-scoped agent with no resolvable
 home, where there is no file for this CLI to write and the config is printed for
 you to paste instead. A bad --agent, a --dir that does not exist or is not a
-directory, and --track api all exit 2. 'authenticated' is REPORTED by --check and
-never fails it: an unauthenticated setup is a success, not a failure.
+directory, and --track api all exit 2. 'authenticated' and 'agent-token' are
+REPORTED by --check and never fail it: an unauthenticated setup is a success, not
+a failure.
 
 WHAT --dry-run CAN TELL YOU. It writes nothing and reports the rows the PLAN can
 classify -- for all three files -- with the same 'ok' and the same exit code the
@@ -520,6 +601,26 @@ on the real run where the dry run reported the intended action and exit 0. A ful
 disk and a read-only mount are the same shape and were not measured, so treat
 that as an open list: a green dry run means the plan is sound, not that the write
 will succeed.
+
+WHAT --fix-path DOES, AND WHY IT IS OPT-IN. Every row the AGENTS.md block names
+starts with 'civitai', and an install into a prefix the user owns puts that name
+on PATH for the INSTALLING SHELL ONLY -- so every later agent session, which gets
+a new shell, cannot run any of them. --fix-path appends a marker-guarded block to
+your shell startup files that puts this CLI's own directory on PATH at startup,
+prints the full path of every file it touched, and is idempotent: running it
+twice leaves exactly one block, and nothing outside the markers is ever modified.
+It writes ~/.zshenv (read by every zsh, login or not) and the file a bash login
+shell actually reads -- the first existing of ~/.bash_profile, ~/.bash_login,
+~/.profile, and ~/.profile when none exists. It runs NO shell and probes nothing:
+the 'is it already on PATH' test is a 'case' statement evaluated by your shell at
+startup, so a redundant block is harmless. It does NOT reach 'bash -c', which
+reads no startup file at all. Without the flag NO startup file is read or written.
+--fix-path is REFUSED with --check, which writes nothing by contract; combine it
+with --dry-run to print the exact block instead. It is also REFUSED on Windows
+(exit 1, no startup file written, the project files still written): POSIX shell
+startup files are the only ones it knows, and the drive-letter colon cannot go in
+a PATH entry in the POSIX 'sh' block it emits -- which covers Git Bash and MSYS
+too. Use the Windows environment-variable settings, or run it inside WSL.
 
 --json SHAPES: 'checks' for --check, 'changes' for a write or dry run, and -- for
 a failure that happened before either could be built -- an 'error' string with
@@ -533,6 +634,7 @@ some other reason, which exits 1 and gets the 'error' envelope.`,
   civitai agent-setup --agent cursor        # override the detection
   civitai agent-setup --dir ./my-app        # a project other than the cwd
   civitai agent-setup --dry-run             # print every path, write nothing
+  civitai agent-setup --fix-path            # also put this CLI on a new shell's PATH
   civitai agent-setup --check --json        # verify a setup (scriptable)`,
 		Args: cobra.NoArgs,
 		// 🔴 ONE RETURN, AND THE EMITTER IS BUILT BEFORE THE FIRST THING THAT CAN
@@ -548,7 +650,13 @@ some other reason, which exits 1 and gets the 'error' envelope.`,
 		// where new steps go.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			emit := &agentSetupEmitter{w: cmd.OutOrStdout(), json: jsonOut}
-			resolvedTrack, resolvedAgent, err := agentSetupCommand(emit, track, agent, dir, check, dryRun)
+			// 🔴 THE PERSISTENT FLAG IS READ HERE, NOT FROM A PACKAGE VAR. Its
+			// value lives in a local inside NewRootCmd, and `version` and `upgrade`
+			// already read it this way; `updateCheckDisabled` then folds in
+			// CIVITAI_NO_UPDATE_CHECK. Reading only the env var would leave
+			// `--no-update-check --check` making the call it was told not to.
+			noUpdateCheck, _ := cmd.Flags().GetBool("no-update-check")
+			resolvedTrack, resolvedAgent, err := agentSetupCommand(emit, track, agent, dir, check, dryRun, fixPath, noUpdateCheck)
 			emit.envelope(resolvedTrack, resolvedAgent, err)
 			return err
 		},
@@ -565,6 +673,17 @@ some other reason, which exits 1 and gets the 'error' envelope.`,
 		"emit the result as JSON (scriptable); the exit code is unchanged")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"print every path that would be written and why; write nothing")
+	// 🔴 THE WORD "ALSO" IS LOAD-BEARING, AND SO IS THE FACT THAT THIS IS A FLAG
+	// RATHER THAN A DEFAULT. It edits files OUTSIDE the project — the user's shell
+	// startup files — which nothing else in this CLI does, so it is named, opt-in
+	// and reported. See agent_setup_fixpath.go.
+	// 🔴 NO BACK-QUOTES IN THIS STRING. pflag reads the first back-quoted span of a
+	// usage string as the flag's VALUE NAME, so `civitai` in it would render as
+	// `--fix-path civitai` in --help — a boolean flag documented as taking an
+	// argument. TestGenerateFlagUsageHasNoBackquotes caught exactly that here.
+	cmd.Flags().BoolVar(&fixPath, "fix-path", false,
+		"also add this CLI's directory to your shell startup files, so a NEW shell can run civitai; "+
+			"idempotent, marker-guarded, and it prints every file it writes")
 	return cmd
 }
 
@@ -577,10 +696,25 @@ some other reason, which exits 1 and gets the 'error' envelope.`,
 // Flags first, filesystem second: `--track api` and a mistyped `--agent` are
 // answers about the invocation and must not depend on whether some directory
 // happens to exist.
-func agentSetupCommand(emit *agentSetupEmitter, track, agent, dir string, check, dryRun bool) (string, string, error) {
+func agentSetupCommand(emit *agentSetupEmitter, track, agent, dir string, check, dryRun, fixPath, noUpdateCheck bool) (string, string, error) {
 	resolvedTrack, err := validateTrack(track)
 	if err != nil {
 		return track, "", err
+	}
+	// 🔴 `--check --fix-path` IS A USAGE ERROR, AND REFUSING IT IS THE DECISION
+	// RATHER THAN THE SHORTCUT. `--check` writes nothing and probes no credential;
+	// its `--json` shape is a PUBLISHED CONTRACT that the hosted setup prompt and
+	// `readme_agent_setup_claims_test.go` are both written against. The two ways to
+	// honour `--fix-path` there are to write (which breaks "writes nothing") or to
+	// add a row saying whether the block is present (which puts a MACHINE-dependent
+	// row into a contract whose consumers read `ok`). Both are worse than saying no,
+	// so the combination is refused by name and `--dry-run` is pointed at — it is
+	// what a caller asking "what would this do?" actually wants.
+	if check && fixPath {
+		return resolvedTrack, "", asUsageError(fmt.Errorf(
+			"--check and --fix-path cannot be combined: --check writes nothing, and --fix-path is a write. " +
+				"Run `civitai agent-setup --fix-path --dry-run` to see the exact block and the files it would " +
+				"go in, or `civitai agent-setup --fix-path` to apply it"))
 	}
 	resolvedAgent := ""
 	if strings.TrimSpace(agent) != "" {
@@ -594,7 +728,7 @@ func agentSetupCommand(emit *agentSetupEmitter, track, agent, dir string, check,
 	if err := resolveAgentSetupDir(dir); err != nil {
 		return resolvedTrack, resolvedAgent, err
 	}
-	err = runAgentSetup(emit, &resolvedAgent, resolvedTrack, dir, check, dryRun)
+	err = runAgentSetup(emit, &resolvedAgent, resolvedTrack, dir, check, dryRun, fixPath, noUpdateCheck)
 	return resolvedTrack, resolvedAgent, err
 }
 
@@ -602,7 +736,7 @@ func agentSetupCommand(emit *agentSetupEmitter, track, agent, dir string, check,
 // wraps every failure it can reach. resolvedAgent is a pointer because detection
 // happens in here and the envelope wants the answer even when the run then
 // failed.
-func runAgentSetup(emit *agentSetupEmitter, resolvedAgent *string, track, dir string, check, dryRun bool) error {
+func runAgentSetup(emit *agentSetupEmitter, resolvedAgent *string, track, dir string, check, dryRun, fixPath, noUpdateCheck bool) error {
 	// 🔴 ABSOLUTE, BECAUSE EVERY PATH IN THE PAYLOAD IS BUILT FROM IT.
 	// With the default `--dir .` the `--json` `path` fields came out relative
 	// (`AGENTS.md`, `.mcp.json`) while the README's documented example shows
@@ -619,19 +753,29 @@ func runAgentSetup(emit *agentSetupEmitter, resolvedAgent *string, track, dir st
 		*resolvedAgent = detectAgent(env)
 	}
 
-	// config.Load is the only "network-shaped" thing here and it touches no
-	// network: it reads ~/.config/civitai/config.yaml plus the CIVITAI_*
-	// environment. The token decides whether the MCP entries carry an
-	// Authorization header, and nothing else.
+	// config.Load touches no network: it reads ~/.config/civitai/config.yaml plus
+	// the CIVITAI_* environment. The token decides whether the MCP entries carry
+	// an Authorization header, and nothing else.
+	//
+	// ⚠ THIS COMMENT USED TO SAY config.Load WAS "the only network-shaped thing
+	// here", AND THAT IS NO LONGER TRUE OF THE `--check` PATH — the `cli-version`
+	// row resolves the newest published release. It is still true of a write run
+	// and of everything above this line.
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 
 	if check {
-		return runAgentSetupCheck(emit, env, track, *resolvedAgent, cfg.Token())
+		// 🔴 THE ONE NETWORK CALL IN THIS COMMAND, AND ONLY ON THE `--check` PATH.
+		// A write run still contacts nothing: it has no verdict to be stale about,
+		// and adding a round-trip to the path that scaffolds a project would slow
+		// the first thing a new user runs. It is bounded and fail-soft — see
+		// resolveVersionFreshness.
+		return runAgentSetupCheck(emit, env, track, *resolvedAgent, cfg.Token(),
+			resolveVersionFreshness(updateCheckDisabled(noUpdateCheck)))
 	}
-	return runAgentSetupWrite(emit, env, track, *resolvedAgent, cfg.Token(), dryRun)
+	return runAgentSetupWrite(emit, env, track, *resolvedAgent, cfg.Token(), dryRun, fixPath)
 }
 
 // ---------------------------------------------------------------------------
@@ -640,8 +784,8 @@ func runAgentSetup(emit *agentSetupEmitter, resolvedAgent *string, track, dir st
 
 // runAgentSetupCheck verifies a setup and writes NOTHING. Every filesystem call
 // below is a read.
-func runAgentSetupCheck(emit *agentSetupEmitter, env agentEnv, track, agent, token string) error {
-	checks := agentSetupChecks(env, agent, token)
+func runAgentSetupCheck(emit *agentSetupEmitter, env agentEnv, track, agent, token string, fresh versionFreshness) error {
+	checks := agentSetupChecks(env, agent, token, fresh)
 	payload := agentSetupJSON{
 		Track:  track,
 		Agent:  agent,
@@ -693,10 +837,13 @@ func countFailedChecks(checks []agentCheckJSON, agent string) int {
 // a directory. A function that CAN return an error here is a function that will
 // grow another silent exit, so it cannot: every failure is a row saying which
 // file it was and why it could not be read.
-func agentSetupChecks(env agentEnv, agent, token string) []agentCheckJSON {
-	checks := []agentCheckJSON{
-		{Name: checkCLIVersion, OK: true, Detail: version},
-	}
+// 🔴 IT TAKES THE FRESHNESS VALUE RATHER THAN FETCHING IT, so this function stays
+// a pure read of the filesystem and the environment. The one network call lives in
+// `runAgentSetup`, which is the layer that also knows whether the user opted out.
+// That separation is what lets the stale/current/ahead/unreachable arms of the
+// `cli-version` row be tested from a fixture instead of from a live endpoint.
+func agentSetupChecks(env agentEnv, agent, token string, fresh versionFreshness) []agentCheckJSON {
+	checks := []agentCheckJSON{cliVersionCheck(version, fresh)}
 
 	agentsPath := filepath.Join(env.Dir, agentsFilename)
 	raw, found, err := readIfExists(agentsPath)
@@ -771,22 +918,28 @@ func agentSetupChecks(env agentEnv, agent, token string) []agentCheckJSON {
 	// logged-in-but-not-exported case would change a PUBLISHED row's value for a
 	// setup that is exactly as finished as the one before it. What was wrong was
 	// the sentence, so the sentence is what changed.
+	//
+	// 🔴 AND THE SENTENCE IS NOW SHORTER, BECAUSE THE ROW ONLY MAKES ONE CLAIM.
+	// It used to describe BOTH stores, which is how it came to emit `ok: true`
+	// beside a detail ending "401s until you export CIVITAI_TOKEN" — a verdict
+	// contradicting its own text. The agent's side moved to the `agent-token` row
+	// below, and this one is about THIS CLI's store and nothing else. Measured in
+	// the session that motivated the split: on that machine this row was
+	// legitimately fine, and the row that should have been red did not exist.
 	switch {
-	case token != "" && tokenIsExported(env):
-		checks = append(checks, agentCheckJSON{Name: checkAuthenticated, OK: true,
-			Detail: tokenEnvVar + " is set in this environment, which is where " + agent + " resolves it from — " +
-				"`civitai whoami` verifies the value; this row only checks that one is present"})
 	case token != "":
 		checks = append(checks, agentCheckJSON{Name: checkAuthenticated, OK: true,
-			Detail: "a token is configured for THIS CLI (`civitai login` or the config file), but " + tokenEnvVar +
-				" is NOT set in this environment — the MCP entries reference it by name, so " + agent +
-				" resolves it to an empty string and https://orchestration.civitai.com/mcp 401s until you " +
-				"`export " + tokenEnvVar + "`"})
+			Detail: "this CLI has a credential (`civitai login`'s config file, or " + tokenEnvVar +
+				") — `civitai whoami` verifies the value; this row only checks that one is present"})
 	default:
 		checks = append(checks, agentCheckJSON{Name: checkAuthenticated, OK: false,
-			Detail: "no token in this CLI's config and no " + tokenEnvVar + " in this environment — " +
-				"run `civitai login` for this CLI, and `export " + tokenEnvVar + "` for " + agent})
+			Detail: "no credential for this CLI — run `civitai login`. " + appTrackTokenNote})
 	}
+
+	// 🔴 THE SECOND HALF, AS ITS OWN ROW. See agentTokenCheck for why it is
+	// separate, why only the reference-written case can be `false`, and why it is
+	// excluded from the verdict.
+	checks = append(checks, agentTokenCheck(env, agent))
 	return checks
 }
 
@@ -898,7 +1051,15 @@ func printAgentSetupChecks(w io.Writer, payload agentSetupJSON) {
 	default:
 		fmt.Fprintln(w, st.ErrorMsg("Setup is incomplete — re-run `civitai agent-setup`."))
 	}
-	fmt.Fprintln(w, st.Dim("`authenticated` is reported but never fails this check — setup stops before login on purpose."))
+	fmt.Fprintln(w, st.Dim("`"+checkAuthenticated+"` and `"+checkAgentToken+"` are reported but never fail this "+
+		"check — setup stops before login on purpose."))
+	// 🔴 THE EXEMPTION IS STATED WITH ITS RESIDUAL, NOT JUST ITS REASON. The row is
+	// deliberately uncounted (see checkCountsTowardVerdict), which means a consumer
+	// reading only `ok` cannot see a stale CLI — and the hosted prompt tells its
+	// reader to do exactly that. Naming the gap on screen is the honest half; the
+	// fix for it is not in this repository.
+	fmt.Fprintln(w, st.Dim("`"+checkCLIVersion+"` likewise: a stale CLI is worth upgrading, not a broken setup. "+
+		"Read the row — a consumer that reads only `ok` will not see it."))
 	if payload.Agent != agentClaude {
 		fmt.Fprintln(w, st.Dim("`claude-md` likewise: "+payload.Agent+" reads "+agentsFilename+" directly, so the shim is inert for it."))
 	}
@@ -962,7 +1123,7 @@ func mcpCheckNameList() string {
 // The run still exits NON-ZERO, and `ok` is false. Degrading is not pretending:
 // a script that reads `ok: true` and exit 0 must be able to conclude every step
 // happened, so a partial run says so in both channels at once.
-func runAgentSetupWrite(emit *agentSetupEmitter, env agentEnv, track, agent, token string, dryRun bool) error {
+func runAgentSetupWrite(emit *agentSetupEmitter, env agentEnv, track, agent, token string, dryRun, fixPath bool) error {
 	var changes []agentChangeJSON
 
 	// 🔴 A PLAN-TIME REFUSAL IS A `blocked` ROW FOR *EVERY* FILE, NOT JUST THE
@@ -1001,6 +1162,54 @@ func runAgentSetupWrite(emit *agentSetupEmitter, env agentEnv, track, agent, tok
 	}
 	mcpRow := len(changes)
 	changes = append(changes, mcpChange)
+
+	// 🔴 THE PATH ROWS GO LAST, AND ONLY WHEN ASKED. Appending keeps `changes[0..2]`
+	// the three files every existing consumer indexes; and because the planning is
+	// skipped entirely without the flag, a default run neither reads nor names a
+	// single file outside the project. TestWithoutFixPathNoShellProfileIsEverWritten
+	// is the guard, and it is what makes "byte-identical by default" a property
+	// rather than a promise.
+	pathReport := pathFixReport{Requested: fixPath}
+	var pathPlans []pathFixPlan
+	pathRow := len(changes)
+	if fixPath {
+		plans, dir, err := planPathFix(env)
+		if err != nil {
+			// No target exists to name: every early return in pathFixTargets
+			// arrives here, and that function is the only authority on which
+			// those are.
+			//
+			// ⚠ NO COUNT OF CAUSES BELONGS HERE, AND RESTORING ONE IS THE
+			// DEFECT. This comment claimed "the only cause is an unresolvable
+			// home" until cli#777 round 4's F5, which replaced it with "TWO
+			// CAUSES, NOT ONE" — itself short by one, since the
+			// `filepath.Abs(home)` refusal had been a third early return since
+			// round 1. Two wrong counts in two rounds, in a comment whose own
+			// subject was the first one; the authority is the function, not a
+			// number copied out of it. This is still the row's construction
+			// site, so it is the first thing anyone debugging an
+			// empty-`path` `blocked` row reads.
+			//
+			// It is `blocked`, not `manual`: the user asked for a write in as many
+			// words, so reporting success would be the one thing a script must not
+			// be told. An empty `path` is the same convention a `manual` row uses
+			// when there is no file for this CLI to name — and README.md's
+			// absolute-path sentence names this row as the other exception.
+			changes = append(changes, agentChangeJSON{
+				Path: "", Action: actionBlocked, Reason: err.Error(),
+			})
+		} else {
+			pathPlans = plans
+			if dir != "" {
+				pathReport.Dir = dir
+				pathReport.Block = pathFixBlock(dir)
+			}
+			for _, p := range plans {
+				pathReport.Paths = append(pathReport.Paths, p.Path)
+				changes = append(changes, planRow(p.Path, p.Action, p.Reason, p.Err))
+			}
+		}
+	}
 
 	// 🔴 A WRITE THAT FAILS IS A `blocked` ROW, NOT AN EMPTY STDOUT — AND EACH
 	// FILE IS ATTEMPTED INDEPENDENTLY. Both halves are fixes for a measured
@@ -1048,6 +1257,21 @@ func runAgentSetupWrite(emit *agentSetupEmitter, env agentEnv, track, agent, tok
 			}
 			return writeMCPConfig(mcpPath, mcpData)
 		})
+		// The startup files are attempted the same way and with the same
+		// independence: one of them being refused does not stop the other, and a
+		// write failure becomes that row's `blocked` reason rather than an empty
+		// stdout. writeProjectFile is reused deliberately — a shell startup file
+		// wants exactly its behaviour (preserve the existing mode, 0644 for a new
+		// file, atomic replace) and carries no credential, unlike an MCP config.
+		for i, p := range pathPlans {
+			plan := p
+			attempt(pathRow+i, func() error {
+				if plan.Action == actionUnchanged {
+					return nil
+				}
+				return writeProjectFile(plan.Path, plan.Content)
+			})
+		}
 	}
 
 	// 🔴 `ok`, THE EXIT CODE AND THE ERROR ALL READ THE ROWS. One predicate, so
@@ -1058,7 +1282,7 @@ func runAgentSetupWrite(emit *agentSetupEmitter, env agentEnv, track, agent, tok
 	if err := emit.emit(agentSetupJSON{
 		Track: track, Agent: agent, OK: blocked == "", Changes: changes, DryRun: dryRun,
 	}, func(w io.Writer, p agentSetupJSON) {
-		printAgentSetupWrite(w, env, agent, token, p.Changes, mcpAuth, dryRun)
+		printAgentSetupWrite(w, env, agent, token, p.Changes, mcpAuth, dryRun, pathReport)
 	}); err != nil {
 		return err
 	}
@@ -1273,7 +1497,7 @@ func agentSetupHeadline(changes []agentChangeJSON, dryRun bool) (lead, tail stri
 }
 
 // printAgentSetupWrite renders the human report and the next-step block.
-func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, changes []agentChangeJSON, cov mcpAuthCoverage, dryRun bool) {
+func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, changes []agentChangeJSON, cov mcpAuthCoverage, dryRun bool, pf pathFixReport) {
 	st := ui.For(w)
 	lead, tail := agentSetupHeadline(changes, dryRun)
 	fmt.Fprintf(w, "%s %s for Civitai App development in %s%s\n\n", lead, st.Bold(agent), env.Dir, tail)
@@ -1296,6 +1520,8 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 			fmt.Fprintf(w, "  %s\n", st.Dim("          "+c.Reason))
 		}
 	}
+
+	printPathFixFootprint(w, st, changes, pf, dryRun)
 
 	target, known := agentTargets[agent]
 	if !known {
@@ -1351,6 +1577,25 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 
 	fmt.Fprintln(w, "\nNext:")
 	n := 1
+	// 🔴 THE "NEW SHELL" STEP IS THE WHOLE POINT OF THE FLAG, SO IT COMES FIRST
+	// WHEN THE FLAG WAS USED. The shell this ran in is NOT changed — a startup file
+	// is read at startup — and a reader who does not know that re-runs
+	// `civitai --version` in the same shell, sees the same failure, and concludes
+	// the flag did nothing.
+	//
+	// 🔴 AND IT IS GATED ON A ROW THAT IS NOT `blocked`, READ OUT OF THE ROWS
+	// THEMSELVES. A run whose every startup file was refused has nothing for a new
+	// shell to pick up, and telling the reader to open one would be the headline
+	// disagreeing with the report — the defect agentSetupHeadline documents, one
+	// surface over. No file is NAMED here on purpose: the files are listed above,
+	// and naming only one of the two sends a zsh user to the bash file.
+	if pf.Requested && !dryRun && pathFixApplied(changes, pf) > 0 {
+		fmt.Fprintf(w, "  %d. Open a NEW shell — THIS shell's PATH is unchanged, because a startup file\n", n)
+		fmt.Fprintf(w, "     is only read at startup. (Or %s one of the files above; the block is POSIX sh,\n",
+			st.Code("source"))
+		fmt.Fprintf(w, "     so any shell can read it.) Then: %s\n", st.Code("command -v civitai"))
+		n++
+	}
 	if dryRun {
 		fmt.Fprintf(w, "  %d. Re-run without --dry-run — nothing above was written.\n", n)
 	} else {
@@ -1366,6 +1611,22 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 		n++
 		fmt.Fprintf(w, "  %d. Export the token where %s can see it — the config above references it by name:\n", n, agent)
 		fmt.Fprintf(w, "       %s\n", st.Code("export "+tokenEnvVar+"="+tokenPlaceholder))
+		// 🔴 THE SCOPE OF THIS STEP, BEFORE THE INSTRUCTIONS FOR CARRYING IT OUT —
+		// AND THIS IS THE LINE WHOSE ABSENCE COST 110 MINUTES. `prompt.md` §5
+		// requires an agent to relay this block VERBATIM and forbids it from
+		// explaining the authentication itself, so whatever this block does not say
+		// is not said to the operator at all. It said how to export and never said
+		// what would break if they did not, so a step that blocks nothing on the
+		// app track read as a prerequisite: the operator went looking for a
+		// credential, found no command that prints one (correctly — see
+		// printTokenSourceNote), and came back two hours later. Measured in the same
+		// session: the agent scaffolded, built, tested, validated and SUBMITTED the
+		// App with this variable never set, and made 0 MCP tool calls.
+		//
+		// 🔴 BEFORE printTokenSourceNote, NOT AFTER. That note tells the reader
+		// where to MINT a key — i.e. it is the start of a task — so a caveat placed
+		// under it is read after the reader has already left to do the task.
+		fmt.Fprintf(w, "     %s\n", st.Dim(appTrackTokenNote))
 		printTokenSourceNote(w, st, "     ")
 		if exported {
 			fmt.Fprintf(w, "     %s\n", st.Dim(tokenEnvVar+" is already set in this shell. Put it in your shell "+
@@ -1398,6 +1659,11 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 		fmt.Fprintf(w, "  %d. Already authenticated — run %s again only if you need different scopes.\n",
 			n, st.Code("civitai login"))
 	}
+	// The one non-failure feedback hint (feedback_hint.go): the moment a new
+	// project's agent is set up is the moment to tell it where platform
+	// friction goes. Human view only — this function is never the --json path.
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, agentSetupFeedbackLine())
 }
 
 // printAgentSetupAuthNote says what was — and was not — written about auth.

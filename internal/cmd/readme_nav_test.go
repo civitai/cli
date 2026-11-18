@@ -126,21 +126,6 @@ func readmeSectionByAnchor(t *testing.T, md, slug string) string {
 	return strings.Join(lines[start:], "\n")
 }
 
-// readmeRowPlusLinkedSections returns a command-table row concatenated with
-// every README section its cross-reference links point at — i.e. everything a
-// reader who follows the row actually reads.
-func readmeRowPlusLinkedSections(t *testing.T, md, row string) string {
-	t.Helper()
-	parts := []string{row}
-	for _, m := range readmeAnchorRe.FindAllStringSubmatch(row, -1) {
-		parts = append(parts, readmeSectionByAnchor(t, md, m[1]))
-	}
-	if len(parts) == 1 {
-		t.Fatalf("command-table row carries no cross-reference to follow:\n%s", row)
-	}
-	return strings.Join(parts, "\n")
-}
-
 // TestREADMEAnchorSlugMatchesKnownGitHubAnchors is the positive control for the
 // slug algorithm. Every pair below is a heading plus the anchor the README
 // ALREADY linked it by before this guard existed — i.e. anchors observed to
@@ -158,13 +143,27 @@ func readmeRowPlusLinkedSections(t *testing.T, md, row string) string {
 //
 // The heading LEVEL is not an input: GitHub computes the slug from the heading
 // text alone, and so does readmeAnchorSlug — which takes the text and nothing
-// else. The corpus bears that out empirically rather than by assertion: seven of
-// the eight pairs below are `###` headings in this very README, and only
-// `Submit & auth` is a `##`. So the `###` entries the table of contents gained
-// are not a new anchor FORM, and each one's distinguishing character class is
-// already pinned by an observed anchor — a leading emoji dropping to a bare
-// hyphen by `🔴 Silent model substitution`, and an apostrophe vanishing without
-// a separator by `there aren't twelve` → `there-arent-twelve`.
+// else. So a `###` is not a new anchor FORM, and each distinguishing character
+// class here is pinned by an observed anchor — a leading emoji dropping to a
+// bare hyphen by `🔴 Silent model substitution`, and an apostrophe vanishing
+// without a separator by `there aren't twelve` → `there-arent-twelve`.
+//
+// 🔴 SIX OF THESE EIGHT HEADINGS NO LONGER EXIST IN README.md, and that is
+// CORRECT rather than rot. The front-door reduction moved `## Generate`,
+// `## Validate fidelity` and most of `## Submit & auth` to
+// developer.civitai.com, taking `The --json result shape`,
+// `🔴 Silent model substitution`, `After you submit: review → approve → deploy`,
+// `Exit codes specific to generate` and `The content flags, and why there
+// aren't twelve` with them; only `Submit & auth` and `The host handshake
+// (BLOCK_READY)` are still headings here.
+//
+// The corpus is deliberately NOT pruned to match. Its value is that every pair
+// is an anchor OBSERVED to work on github.com — a historical measurement, not a
+// statement about the current document — and this test never reads README.md,
+// so a heading's departure cannot make a pair wrong. Pruning it would shrink
+// the only real control on readmeAnchorSlug for no gain, and would silently
+// drop the four naive-implementation cases named above. Do not "tidy" it by
+// deleting rows whose heading has moved.
 func TestREADMEAnchorSlugMatchesKnownGitHubAnchors(t *testing.T) {
 	cases := map[string]string{
 		"Submit & auth":                                  "submit--auth",
@@ -195,9 +194,33 @@ func TestREADMEAnchorSlugMatchesKnownGitHubAnchors(t *testing.T) {
 // together and stays green while every anchor in the file silently changes. A
 // literal expected value is the only thing that notices.
 func TestREADMEWidenedTOCEntriesSlugAsExpected(t *testing.T) {
+	// 🔴 RE-POINTED by the front-door reduction. The original pair —
+	// "🔴 A checkpoint does not carry its ecosystem" and "Reading a workflow's
+	// Buzz transactions" — were `###` children of `## Generate`, whose body now
+	// lives at developer.civitai.com/site/guide/cli-generate*. Their slugs were
+	// derived from readmeAnchorSlug, never observed on github.com, so they were
+	// never part of the observed corpus above and nothing is lost from THAT
+	// control by their going.
+	//
+	// What this test is worth (see the block above) is that a literal expected
+	// value notices an algorithm change which would otherwise move heading and
+	// link together and stay green. That requires headings the README really
+	// carries, so the pair is replaced by two that survive and that exercise the
+	// same character classes the old pair did:
+	//
+	//   apostrophe-vanishing-without-a-separator: "app's" -> "apps"
+	//     (was "workflow's" -> "workflows")
+	//   a backticked token with an underscore that must SURVIVE, plus parens
+	//     that must vanish
+	//
+	// The leading-emoji class the old first entry covered is NOT orphaned: it is
+	// pinned by "🔴 Silent model substitution" in
+	// TestREADMEAnchorSlugMatchesKnownGitHubAnchors, which is a pure-function
+	// test over an OBSERVED anchor and reads no heading, so it keeps working
+	// with that heading gone from the file.
 	cases := map[string]string{
-		"🔴 A checkpoint does not carry its ecosystem": "-a-checkpoint-does-not-carry-its-ecosystem",
-		"Reading a workflow's Buzz transactions":      "reading-a-workflows-buzz-transactions",
+		"Pull your app's repository (`app pull`)": "pull-your-apps-repository-app-pull",
+		"The host handshake (`BLOCK_READY`)":      "the-host-handshake-block_ready",
 	}
 	for heading, want := range cases {
 		if got := readmeAnchorSlug(heading); got != want {
@@ -345,9 +368,19 @@ func readmeSections(t *testing.T, md string) []readmeSection {
 // per omission and reads as a to-do list, whereas naming the section states a
 // rule a future author can apply to a subsection that does not exist yet.
 //
-// Both entries are the same shape — a section whose `###` children are an
-// ENUMERATION of the index directly above them, not topics a reader navigates
-// to. Everything else in the README is in scope.
+// 🔴 IT HAS ONE ENTRY, NOT TWO, AND THE SECOND WAS DROPPED RATHER THAN KEPT AS
+// A RULE. `## Troubleshooting` was exempt because its five `###` children were
+// the bucket headers of ONE lookup table. That table is now published at
+// developer.civitai.com/site/guide/cli-troubleshooting and the README section is
+// a pointer with no `###` children at all — so the exemption exempts nothing,
+// which the loop in TestREADMETableOfContentsCoversEverySection reports as a
+// stale rule nobody can check ("drop it"). Leaving the key would have been a
+// RED run, not a silent one; it is named here because a reader of this map will
+// wonder where the second entry went.
+//
+// The remaining entry is a section whose `###` children are an ENUMERATION of
+// the index directly above them, not topics a reader navigates to. Everything
+// else in the README is in scope.
 var readmeTOCExemptSections = map[string]string{
 	"Exit codes": "its `### Exit code N` subsections are GENERATED from exitCodeDocs " +
 		"(internal/cmd/exitcodes_doc.go) and asserted byte-for-byte by " +
@@ -357,13 +390,6 @@ var readmeTOCExemptSections = map[string]string{
 		"Each is already reachable by name from the `[Detail](#exit-code-N)` link in the " +
 		"table the generator renders alongside them. Putting them in the TOC is a " +
 		"decision to generate the TOC too, not a line to add by hand.",
-	"Troubleshooting": "its `###` children are the column headers of ONE lookup table — " +
-		"the section's own first line is \"Look up the message you got\", and the TOC " +
-		"entry for it already says \"look the error message up here\". A reader arrives " +
-		"by searching for their error string, not by picking `Generating` over " +
-		"`Everything else`, so the buckets are an ordering of the index rather than " +
-		"destinations. Every row already carries its own cross-reference into the " +
-		"section that holds the detail, and those ARE in the TOC.",
 }
 
 // readmeTOCMinSubsections is the anti-vacuity floor for the widened gate: the
@@ -394,7 +420,41 @@ var readmeTOCExemptSections = map[string]string{
 // the next time a section is reorganised — which is exactly what happened here,
 // twice, the second time in the very PR that reorganised them. If you want the
 // number, run it.
-const readmeTOCMinSubsections = 25
+// 🔴 LOWERED 25 -> 7 by the front-door reduction (README 237,568 -> ~134,000 B),
+// and this is the ANTI-VACUITY control being re-based, NOT a content floor being
+// waived. The `###` population did not shrink because a section was EXEMPTED —
+// it shrank because `## Generate` (12 `###`), `## Validate fidelity` (1),
+// `## Scripting with --json` (1) and two of `## Submit & auth`'s subsections
+// became pointers into developer.civitai.com, so the headings are gone from the
+// document the walk reads. A floor of 25 over a population of 9 is not a
+// vacuity check, it is an unconditional red.
+//
+// The purpose is preserved at the new number rather than merely satisfied:
+// the control exists to catch an over-broad PARENT-KEYED exemption, and the
+// largest exemptable section is now `## Install` with 5 children. Exempting it
+// leaves 4, which is below 7 and still a RED run — the same property the 25
+// bought against `## Generate` when the population was 26.
+//
+// 🔴 NOT LOWERED AGAIN BY THE `## Global flags` / `## Troubleshooting` CUT, AND
+// THE MEASUREMENT IS WHY. That change removed `### What a table cell can contain`
+// (the only in-scope `###` under `## Global flags`) and the five `###` buckets
+// under `## Troubleshooting` — but the buckets were EXEMPT, so they were never
+// counted here. The in-scope population therefore went 9 -> 8, and 8 is still
+// above 7: the constant needs no move, and moving it would be the ratchet the
+// comment above warns about.
+//
+// The purpose still holds at 8. The largest exemptable section is `## Install`
+// with 5 children; exempting it leaves 3, which is below 7 and a RED run — the
+// same property the 25 bought when the population was 26 and the 7 bought when
+// it was 9. (A one-child section can be exempted without tripping this at either
+// population — true before this change and after it, so nothing was lost.)
+//
+// Measured after this change: 8 in-scope `###` — `## Install` 5,
+// `## Set up your coding agent` 1, `## Submit & auth` 2.
+// Recorded as a measurement with its date-of-measure, not as a standing claim;
+// the comment above this constant already warns that a census in a comment goes
+// stale silently, so re-run it rather than trusting this line.
+const readmeTOCMinSubsections = 7
 
 // TestREADMETableOfContentsCoversEverySection requires each top-level (`##`)
 // section AND each in-scope second-level (`###`) subsection to be reachable from
@@ -591,143 +651,6 @@ func TestREADMETableOfContentsListsNothingElse(t *testing.T) {
 			"readmeTOCExemptSections holds those sections' `###` children OUT of the TOC wholesale, so a single "+
 			"one listed there is the half-covered state the exemption exists to prevent. Either drop the line, or "+
 			"drop the exemption and list every sibling.", len(offLimits), strings.Join(offLimits, "\n    "))
-	}
-}
-
-// readmeCommandReferenceTable returns the body of `## Command reference` — the
-// heading to the next heading at the same or a higher level — and is the ONE
-// place that decides where that table ENDS. Two extractors need that bound:
-// readmeCommandTableSubjects below, and readmeCommandSynopses in
-// readme_command_synopsis_test.go. Until phase 4 each open-coded it, so each
-// carried the same defect.
-//
-// ⚠ A third site reads the same section — readme_install_accuracy_test.go's
-// `readmeSectionByAnchor(t, md, "command-reference")` — and deliberately does
-// NOT route through here: it slices the PREAMBLE above the table, so where the
-// section ends is not an input to it and it gains nothing from this function's
-// control. "ONE place" is a claim about the END bound, not about who may look
-// at the section.
-//
-// 🔴 THE BOUND USED TO BE "THE FIRST `### ` AFTER THE HEADING", AND THAT WAS
-// ONLY EVER A PROXY FOR THE END OF THE SECTION. It happened to be right because
-// six App-authoring subsections were nested under this section, so its first
-// `###` was also its last line. Phase 4 promoted those six to `##` — and the
-// proxy did not fail, it silently WIDENED: the next `###` in the file was now
-// the first subsection of `## Set up your coding agent`, so the extracted body
-// grew from 10,304 B to 12,193 B and kept reading 1,889 bytes that are not the
-// table. The whole suite stayed GREEN, because the extra window happened to
-// contain no `| `civitai` row. That is the reassuring direction: a scoping bug
-// that costs nothing today is still a guard reporting a scope it does not have.
-//
-// Measured rather than asserted, because "costs nothing today" is a claim about
-// today. Planting one row — `| `civitai app validate --definitely-not-a-flag` |`
-// — in the first 1,889 bytes of `## Set up your coding agent` is INVISIBLE under
-// this bound (correct: it is not in the table) and reddens
-// TestREADMECommandSynopsesNameRealFlags under the old one. So the old bound did
-// not merely read further, it adjudicated a flag claim in a section it does not
-// own.
-//
-// The replacement is not a better raw scan, it is NO raw scan:
-// readmeSectionByAnchor already bounds a section at the next heading of the same
-// or a higher LEVEL, which is the rule the old `### ` scan was standing in for,
-// and it strips fenced code first so a ``` block holding a `## ` line cannot cut
-// the body short either. Preferring to delete a parse over teaching it a better
-// bound is this arc's own lesson, applied to the parse that made it necessary.
-// Measured on the phase-4 tree, and the antecedent matters: what it REPLACES is
-// the `\n### ` scan, which returned 12,193 B. It is byte-identical to the
-// `\n## ` scan — the obvious alternative repair, NOT taken — at 10,304 B / 25
-// rows, because the section carries no fences today. The point of using the
-// anchor helper rather than that alternative is the day one is added.
-func readmeCommandReferenceTable(t *testing.T, md string) string {
-	t.Helper()
-	body := readmeSectionByAnchor(t, md, "command-reference")
-	// Positive control. A bound that matched at offset 0, or a heading that had
-	// been renamed out from under the Index above, yields a body with no table in
-	// it — and an empty row set reads to every caller below as "the table
-	// documents nothing", which their own floors then report as their own
-	// failure rather than as this extractor's.
-	if !strings.Contains(body, "\n| `civitai") {
-		t.Fatalf("CONTROL failure: the `## Command reference` body holds no `| `civitai` row — "+
-			"this extractor is reading the wrong block, so every verdict derived from it is about "+
-			"text that is not the command table:\n%s", body)
-	}
-	return body
-}
-
-// readmeCommandTableSubjects returns the first-column cell of every
-// `| `civitai …` |` row inside the "## Command reference" table.
-//
-// Scoped to that table on purpose: the strings `civitai app list` and
-// `civitai app pull` also appear in prose and in shell examples, so a
-// whole-file search would report a command as "documented in the table" when it
-// is merely mentioned somewhere.
-func readmeCommandTableSubjects(t *testing.T, md string) []string {
-	t.Helper()
-	body := readmeCommandReferenceTable(t, md)
-
-	var subjects []string
-	for _, line := range strings.Split(body, "\n") {
-		if !strings.HasPrefix(line, "| `civitai") {
-			continue
-		}
-		cells := strings.Split(line, "|")
-		if len(cells) < 3 {
-			continue
-		}
-		subjects = append(subjects, strings.TrimSpace(cells[1]))
-	}
-	return subjects
-}
-
-// TestREADMECommandTableDocumentsEveryAppSubcommand derives the expected rows
-// from the COBRA TREE rather than a hardcoded list, so a command cannot be added
-// to `civitai app` without being documented.
-//
-// It exists because three already had been: `app list`, `app view` and
-// `app pull` were all shipped and reachable from `civitai app --help` while the
-// README's command table named none of them (issue #260). `app pull` in
-// particular carries a token-in-URL security warning that a README-only reader
-// had no way to reach.
-func TestREADMECommandTableDocumentsEveryAppSubcommand(t *testing.T) {
-	root := NewRootCmd()
-	appCmd, _, err := root.Find([]string{"app"})
-	if err != nil {
-		t.Fatalf("the `app` command group is not in the tree: %v", err)
-	}
-
-	subjects := readmeCommandTableSubjects(t, readREADME(t))
-	// Positive control: zero extracted rows would make every lookup below fail
-	// for the wrong reason (or, with a Contains-any check, pass for one).
-	if len(subjects) < 15 {
-		t.Fatalf("extracted only %d command-reference rows — the table extractor is reading the wrong block", len(subjects))
-	}
-
-	documented := func(want string) bool {
-		for _, s := range subjects {
-			if strings.Contains(s, want) {
-				return true
-			}
-		}
-		return false
-	}
-
-	checked := 0
-	for _, sub := range appCmd.Commands() {
-		name := sub.Name()
-		if sub.Hidden || sub.IsAdditionalHelpTopicCommand() || name == "help" || name == "completion" {
-			continue
-		}
-		checked++
-		want := "civitai app " + name
-		if !documented(want) {
-			t.Errorf("`%s` is registered on the app command tree but has no row in the README's "+
-				"command-reference table. Add one (and a section it can link to) — a command a "+
-				"README-only reader cannot see is a command that does not exist for them.", want)
-		}
-	}
-	// A tree that resolved to nothing would report a serene pass above.
-	if checked < 10 {
-		t.Fatalf("only %d app subcommands were checked — the tree walk is wrong", checked)
 	}
 }
 

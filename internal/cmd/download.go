@@ -104,9 +104,13 @@ Identify the version deterministically by its numeric version id:
 
   civitai download 691639
 
-…or resolve a model's default (first published) version with --model:
+…or resolve a model's default version with --model. The default is the FIRST
+version the API lists for the model — the top of the creator's version order,
+usually but not always the newest, and NOT the first published:
 
   civitai download --model 4384
+
+To get any other version of the model, name it by its version id.
 
 The positional id is normally a model-VERSION id, but 'civitai models search'
 and 'civitai models get' list MODEL ids — so handing a model id as the positional
@@ -117,10 +121,18 @@ numbers), the CLI STOPS and asks you to disambiguate rather than silently
 downloading an unrelated model's version — re-run with --model <id> (the model's
 default version) or --version <id> (that version as-is). Use --version to name a
 version id explicitly and skip that stop; --yes proceeds on the version
-interpretation and echoes exactly which version it is downloading.
+interpretation and echoes exactly which version it is downloading. If the
+model-id check itself fails (rate limited, server or network error), the
+download stops; with --yes it proceeds with the version and says the check
+failed and why.
 
 Use --dry-run to print the resolved plan (files, sizes, SHA256, target paths,
-and whether auth is required) without transferring anything.
+and whether auth is required) without transferring anything. It creates no
+file at all — not even a ".part".
+
+When a positional model id is resolved to a version, the note reads:
+
+  note: <id> is a model id — downloading its default version <v>
 
 By default the version's PRIMARY file is downloaded into the current directory
 under its server-provided name. Any file type downloads — model weights, but
@@ -147,11 +159,73 @@ Folder routing: pass --layout <a1111|comfyui> (with an optional --root <dir>,
 default ".") to write each file into the correct subfolder for that app, routed
 by the file/model type — so --all fans a bundled VAE into the VAE folder
 instead of polluting the checkpoint folder. --layout is mutually exclusive with
---out/--out-dir.
+--out/--out-dir; --root only applies with --layout. The routed folder map:
+
+  Civitai type                     A1111 / Forge           ComfyUI
+  ------------------------------   ---------------------   ---------------------
+  Checkpoint                       models/Stable-diffusion models/checkpoints
+  VAE (standalone OR bundled)      models/VAE              models/vae
+  LORA / LoCon / DoRA              models/Lora             models/loras
+  TextualInversion (embedding)     embeddings              models/embeddings
+  Hypernetwork                     models/hypernetworks    models/hypernetworks
+  Controlnet                       models/ControlNet       models/controlnet
+  Upscaler                         models/ESRGAN           models/upscale_models
+
+Sources: the AUTOMATIC1111 wiki plus the sd-webui-controlnet models/ControlNet
+default, and the ComfyUI models docs (docs.comfy.org). An UNMAPPED type (Poses,
+Wildcards, Archive, …) is written to --root with a stderr note rather than
+silently misplaced.
+
+Mis-file warning, WITHOUT --layout: when --all would place files of differing
+types into one directory, the CLI prints a one-line stderr warning naming the
+off-type file(s) and suggesting --layout. It is a warning, not an error, and a
+single-type download stays quiet.
 
 Compatibility: --for-base "<baseModel>" warns on stderr when the version's base
 model is in a confidently different family than your target (e.g. an SD 1.5
-embedding for an SDXL model). The version's base model is always shown.
+embedding for an SDXL model). The version's base model is always shown. The
+check is deliberately conservative: it groups the common bases into
+architecture families — SD1.x, SD2.x, the SDXL family (SDXL/Pony/Illustrious/
+NoobAI, treated loosely as one), SD3, Flux, video — and warns ONLY on an
+architecture-level mismatch. It never warns on near-neighbours (Pony vs
+Illustrious) or on a base it cannot classify.
+
+ControlNet preprocessor: when the parent model is a ControlNet, the CLI prints
+a one-line stderr note. A ControlNet model needs a matching preprocessor or
+annotator (e.g. the ComfyUI comfyui_controlnet_aux custom node — OpenPose,
+Canny, Depth) to derive the control image from your input, and that
+preprocessor is a SEPARATE install, not hosted on Civitai. Informational only;
+it never blocks the download.
+
+Transport: the Civitai download URL 302-redirects to signed storage and the CLI
+follows it. Large files (10+ GB) are never buffered in memory, and TTY-aware
+progress is printed to STDERR.
+
+Transient-failure retry applies to the READ endpoints (search / model / version
+/ images / tags / creators / users / articles / collections), which retry a
+transient 502/503/504 or network error a few times with exponential backoff and
+jitter, noting each retry on stderr. A 429 is retried ONLY when it carries a
+Retry-After header; a 429 without one is terminal, because Civitai's
+deterministic deep-paging limit arrives that way. The download STREAM is not
+retried mid-transfer.
+
+Server-supplied text is sanitised on every message here — a file name is the
+UPLOADER's string, so invisible and terminal-controlling characters are removed
+first, and newlines and tabs become spaces. Each of these is a single-line
+surface, so a newline in a file name would otherwise let an uploader write a
+whole line of their own — a forged "Saved … (SHA256 verified)" above a transfer
+that never finished, say. On the PROGRESS LINE the name is additionally cut at
+120 characters and marked with a "…", because removing newlines does not stop a
+name long enough to WRAP: the terminal, not the CLI, puts the overflow at
+column zero, and a wrap has no character in it to remove. That shortening is
+the progress line only — the "Saved …" line, the "SHA256 mismatch" line and the
+download plan all print the name in full. Two deliberate exceptions, which do
+NOT share a reason: (1) the "server returned an unusable filename" refusal
+renders through %q, which ESCAPES a newline to a visible \n, so collapsing it
+would hide what the server actually sent; (2) multi-line server text outside
+this path — a prompt, a generation failure reason — is printed RAW and
+INDENTED, not escaped, because its newlines are real and the indentation is
+what keeps a continuation line off column zero.
 
 Integrity: the streamed bytes are verified against the file's SHA256 by default
 (--no-verify to skip; a file with no published SHA256 is downloaded with a
@@ -175,7 +249,7 @@ the CLI notes this on stderr. Only download models from creators you trust.`,
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.modelID, "model", "", "resolve+download a MODEL's default (first published) version instead of a version id")
+	f.StringVar(&o.modelID, "model", "", "resolve+download a MODEL's default version (the first the API lists: the creator's top version, not the first published) instead of a version id")
 	f.StringVar(&o.version, "version", "", "download this model-VERSION id explicitly (skips the ambiguous model-id safety stop the bare positional id triggers)")
 	f.BoolVar(&o.yes, "yes", false, "proceed past the ambiguous-id safety stop (a bare id that is BOTH a model id and a version id): download the version as typed")
 	f.StringVar(&o.file, "file", "", "select one file by numeric file id, or by name (exact, else a unique case-insensitive substring); use the id to pick one of two same-named files")
@@ -379,7 +453,7 @@ func downloadSelected(ctx context.Context, dl civitai.Downloader, out, errW io.W
 // (stderr) describing any automatic resolution.
 //
 //   - --version <id> / --model <id> resolve deterministically (a --model resolves
-//     the model's default (first published) version) — no ambiguity handling.
+//     the model's default version, the first the API lists) — no ambiguity handling.
 //   - A bare positional id is classified by looking it up as BOTH a version and a
 //     model, then handled by resolveBarePositionalVersion.
 func resolveDownloadVersion(ctx context.Context, client civitai.Reader, positional string, o *downloadOpts) (*civitai.ModelVersionDetail, string, error) {
@@ -398,8 +472,10 @@ func resolveDownloadVersion(ctx context.Context, client civitai.Reader, position
 }
 
 // resolveExplicitVersionID returns the version id for the explicit --version /
-// --model paths. For --model, the API returns modelVersions default/latest-first,
-// so the model's default version is modelVersions[0]; its primary file downloads
+// --model paths. For --model, the API returns modelVersions in the creator's
+// version order (the `index` field, ascending — measured on models 139562, 112902
+// and 4384), so the model's default version is modelVersions[0]: usually but NOT
+// always the newest, and never chosen as "the first published"; its primary file downloads
 // regardless of file type (a "Workflows" model's Archive, training data, or plain
 // weights all download the same way).
 func resolveExplicitVersionID(ctx context.Context, client civitai.Reader, o *downloadOpts) (string, error) {
@@ -463,7 +539,18 @@ func resolveBarePositionalVersion(ctx context.Context, client civitai.Reader, po
 
 	// The id IS a valid version. Is it ALSO a confirmable model id? If so it's the
 	// ambiguity footgun.
-	m := lookupConfirmedModel(ctx, client, positional, n)
+	m, merr := lookupConfirmedModel(ctx, client, positional, n)
+	if merr != nil {
+		// The model lookup failed for a reason other than "no such model"
+		// (#878): the ambiguity check could not run. --yes already means "the
+		// version as typed", so it proceeds, saying the check failed and why.
+		// Without --yes, stop rather than read the failure as version-only and
+		// download what may be an unrelated model's version.
+		if o.yes {
+			return v, modelCheckFailedYesNote(positional, merr), nil
+		}
+		return nil, "", fmt.Errorf("%s is a valid version id, but checking whether it is also a model id failed, so the download was stopped — retry, or say which you mean with --version %s or --model %s: %w", positional, positional, positional, merr)
+	}
 	if m == nil {
 		return v, "", nil // version-only — unambiguous, download as today.
 	}
@@ -477,22 +564,38 @@ func resolveBarePositionalVersion(ctx context.Context, client civitai.Reader, po
 
 // lookupConfirmedModel returns the model for id only when it resolves as a model
 // whose returned id ECHOES the queried id (a mismatch means the lookup didn't
-// actually resolve that id). Any lookup failure or id mismatch returns nil ("not
-// a confirmable model id").
-func lookupConfirmedModel(ctx context.Context, client civitai.Reader, id string, n int) *civitai.ModelDetail {
+// actually resolve that id). A 404 or an id mismatch returns (nil, nil): "not a
+// confirmable model id".
+//
+// Every OTHER lookup failure — a 429, a 5xx, a network error — is returned
+// (#878). It means the CLI could not tell whether id is also a model, and
+// collapsing it to nil read as "version-only", which skipped the ambiguity stop
+// that exists to keep an unrelated model's version from being downloaded.
+func lookupConfirmedModel(ctx context.Context, client civitai.Reader, id string, n int) (*civitai.ModelDetail, error) {
 	m, _, err := client.GetModel(ctx, id)
-	if err != nil || m == nil || m.ID != n {
-		return nil
+	if err != nil {
+		if errors.Is(err, civitai.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
 	}
-	return m
+	if m == nil || m.ID != n {
+		return nil, nil
+	}
+	return m, nil
 }
 
 // autoResolveModelDefault handles a bare positional that is a valid MODEL id but
-// NOT a valid version id: it resolves the model's default (first published)
-// version and returns its detail plus a one-line note. handled=false means the id
-// is not a confirmable model id → the caller keeps the original version error.
+// NOT a valid version id: it resolves the model's default version (the first
+// the API lists) and returns its detail plus a one-line note. handled=false
+// means the id is not a confirmable model id → the caller keeps the original version error.
 func autoResolveModelDefault(ctx context.Context, client civitai.Reader, id string, n int) (v *civitai.ModelVersionDetail, note string, handled bool, err error) {
-	m := lookupConfirmedModel(ctx, client, id, n)
+	m, merr := lookupConfirmedModel(ctx, client, id, n)
+	if merr != nil {
+		// The version 404'd but the model lookup failed for another reason:
+		// that failure is the real problem, not the version's not-found.
+		return nil, "", true, fmt.Errorf("%s is not a version id, and checking whether it is a model id failed: %w", id, merr)
+	}
 	if m == nil {
 		return nil, "", false, nil
 	}
@@ -505,6 +608,16 @@ func autoResolveModelDefault(ctx context.Context, client civitai.Reader, id stri
 		return nil, "", true, gerr
 	}
 	return dv, fmt.Sprintf("note: %s is a model id — downloading its default version %s", id, defVerID), true, nil
+}
+
+// modelCheckFailedYesNote is the --yes echo when the model check itself failed
+// (#878): the version as typed is downloaded, and the note says the ambiguity
+// check did not run and why. The reason is err's own text, printed as main
+// prints any error: pkg/civitai already filters the server snippet inside it
+// (AGENTS.md item 38), and a second filter here would also mangle the parts
+// that echo what the user typed (civitai/cli#393).
+func modelCheckFailedYesNote(id string, err error) string {
+	return fmt.Sprintf("--yes: model check failed: %s; downloading version %s as requested", err.Error(), id)
 }
 
 // ambiguousYesNote is the --yes echo for an ambiguous id: it spells out EXACTLY
@@ -1123,8 +1236,8 @@ func downloadStatusError(status int, name string) (err error) {
 	case status >= 200 && status < 300:
 		return nil
 	case status == http.StatusUnauthorized:
-		// Civitai requires a token to download ANY model file — even public ones —
-		// so an anonymous download 401s. Point the user straight at login.
+		// Most model files need a token (some public ones do not), and this one
+		// answered 401 to the request as sent. Point the user straight at login.
 		return fmt.Errorf("downloading %s requires authentication (401) — run `civitai login` (or set CIVITAI_TOKEN); this file needs a token (most model files do; some public files don't)", name)
 	case status == http.StatusForbidden:
 		// Authenticated but refused: the file is gated, not a login problem.

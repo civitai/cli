@@ -68,6 +68,17 @@ func ReadyAckSource() []byte {
 //
 // (Measured from fresh npm tarballs at the versions named, 2026-08.)
 //
+// A SEVENTH package, added with the `page-elements` template (2026-10):
+//
+//	@civitai/sdk            0.10.1  ACKS — dist/core/transports/iframe-transport.js:274
+//	                                `this.#dispatch('BLOCK_READY', { height: 0 })`
+//
+// Re-measured at the versions `page-elements` pins, same date: `@civitai/app-sdk`
+// 0.58.0 still does NOT (its one runtime hit is the string in the
+// BLOCK_TO_PARENT_MESSAGE_TYPES list in dist/blocks/messages.js — a type table,
+// not a post), and `@civitai/components` 0.9.2 (112 .js) and `@civitai/theme`
+// 0.5.2 (6 .js) contain no BLOCK_READY at all.
+//
 // Treating the whole scope as evidence is therefore wrong for FOUR of the six,
 // and wrong in the expensive direction: `@civitai/theme` and `@civitai/components`
 // are exactly what a hand-written, no-build page app would install, so a scope
@@ -80,6 +91,7 @@ func ReadyAckSource() []byte {
 // and record the version you measured.
 var ackingPackages = map[string]bool{
 	"@civitai/blocks-react": true,
+	"@civitai/sdk":          true,
 }
 
 // PackageAcksReady reports whether an npm dependency named `name` performs the

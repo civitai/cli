@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/civitai/cli/internal/redact"
 	"github.com/civitai/cli/pkg/civitai"
 )
 
@@ -68,8 +70,11 @@ var (
 	// applied and must never be worded as "nothing changed".
 	trpcUpdateListing = listingRoute{"/api/trpc/appListings.updateListing", listingOpChange}
 
-	trpcSetIcon               = listingRoute{"/api/trpc/appListings.setIcon", listingOpChange}
-	trpcSetCover              = listingRoute{"/api/trpc/appListings.setCover", listingOpChange}
+	trpcSetIcon  = listingRoute{"/api/trpc/appListings.setIcon", listingOpChange}
+	trpcSetCover = listingRoute{"/api/trpc/appListings.setCover", listingOpChange}
+	// The civitai.red-only icon / cover override (one proc, a `slot` and an
+	// `imageId` that is null to clear) — `set-icon|set-cover --red`, `clear-red`.
+	trpcSetRedMedia           = listingRoute{"/api/trpc/appListings.setRedMedia", listingOpChange}
 	trpcAddScreenshot         = listingRoute{"/api/trpc/appListings.addScreenshot", listingOpChange}
 	trpcRemoveScreenshot      = listingRoute{"/api/trpc/appListings.removeScreenshot", listingOpChange}
 	trpcReorderScreenshots    = listingRoute{"/api/trpc/appListings.reorderScreenshots", listingOpChange}
@@ -180,6 +185,43 @@ type ListingEditView struct {
 		Cover       ListingAsset        `json:"cover"`
 		Screenshots []ListingScreenshot `json:"screenshots"`
 	} `json:"assets"`
+	// RedMedia is the civitai.red-only icon / cover override of the SAME edit
+	// target as Assets (the shadow revision on a live listing). It is read here,
+	// from the OWNER-ONLY edit view, and nowhere else: the public
+	// `GET /api/v1/apps/<slug>` detail never carries an override slot. The CLI
+	// reads it only to confirm, by image id, that a `--red` attach landed.
+	//
+	// Available is the server's `redMedia.available`: false while this
+	// environment has no override slots (a write would be refused). A POINTER on
+	// purpose: nil is a server that predates the flag, which must NOT read as
+	// "unavailable" — only an explicit false does.
+	RedMedia struct {
+		Available *bool        `json:"available"`
+		Icon      ListingAsset `json:"icon"`
+		Cover     ListingAsset `json:"cover"`
+	} `json:"redMedia"`
+}
+
+// ErrRedSlotsUnavailable reports that the civitai.red-only icon / cover override
+// slots do not exist on the Civitai environment the CLI is talking to (the
+// server's columns for them are not applied there yet). It is a rollout limit of
+// that environment, never a property of the author's image, so no image advice
+// may be attached to it. Two sources produce it: setRedMedia's refusal (see
+// listingError) and an edit view reporting `redMedia.available: false`.
+var ErrRedSlotsUnavailable = errors.New("a civitai.red-only icon or cover is not available on this Civitai environment yet — this is a platform rollout limit, not a problem with your image, and the override was not written; the listing keeps showing its own icon and cover everywhere")
+
+// redSlotsUnavailablePrefix is the stable head of the server's
+// RED_SLOTS_UNAVAILABLE_MESSAGE (civitai/civitai#6343,
+// src/shared/constants/listing-media-split.constants.ts). The wire carries NO
+// distinct code for it — the server throws a plain TRPCError BAD_REQUEST with
+// that message — so, as with isModeratorTakedownMsg, the message is the only
+// discriminator. Only the clause naming the slots and "not available" is
+// matched; the trailing sentence ("The listing shows its own icon …") is prose
+// the server may reword, so it is deliberately not part of the match.
+const redSlotsUnavailablePrefix = "A civitai.red-only icon or cover is not available"
+
+func isRedSlotsUnavailableMsg(msg string) bool {
+	return strings.HasPrefix(strings.TrimSpace(msg), redSlotsUnavailablePrefix)
 }
 
 // AttachResult is the (loosely-parsed) union result of setIcon/setCover/
@@ -196,9 +238,12 @@ type ListingEditView struct {
 // `Status == "pending"` is the legacy `allowPending: false` variant and means
 // NOTHING was written; the live listing-media procs never return it.
 type AttachResult struct {
-	Status      string `json:"status"`
-	IconID      *int   `json:"iconId,omitempty"`
-	CoverID     *int   `json:"coverId,omitempty"`
+	Status  string `json:"status"`
+	IconID  *int   `json:"iconId,omitempty"`
+	CoverID *int   `json:"coverId,omitempty"`
+	// ImageID is setRedMedia's echo: the image now in the slot written (absent
+	// with status "cleared"). The echoed `slot` is not decoded — nothing reads it.
+	ImageID     *int   `json:"imageId,omitempty"`
 	ID          string `json:"id,omitempty"` // screenshot id
 	Order       *int   `json:"order,omitempty"`
 	ScanPending bool   `json:"scanPending,omitempty"`
@@ -733,7 +778,7 @@ func (c *Client) MintImageUpload(ctx context.Context) (id, uploadURL string, err
 		UploadURL string `json:"uploadURL"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil || out.ID == "" || out.UploadURL == "" {
-		return "", "", fmt.Errorf("unexpected image-upload response: %s", string(raw))
+		return "", "", redact.CredentialBodyError("unexpected image-upload response", raw, err)
 	}
 	return out.ID, out.UploadURL, nil
 }
@@ -805,6 +850,23 @@ func (c *Client) SetIcon(ctx context.Context, listingID string, imageID int) (*A
 func (c *Client) SetCover(ctx context.Context, listingID string, imageID int) (*AttachResult, error) {
 	var out AttachResult
 	if err := c.trpcMutation(ctx, trpcSetCover, map[string]any{"listingId": listingID, "imageId": imageID}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SetRedMedia sets (imageID non-nil) or clears (nil) the listing's
+// civitai.red-only override in `slot` ("icon" or "cover"). The same owner and
+// live-listing revision rules as SetIcon / SetCover apply server-side; clearing
+// sends an explicit JSON null, which is how the server tells "clear" from a
+// missing field.
+func (c *Client) SetRedMedia(ctx context.Context, listingID, slot string, imageID *int) (*AttachResult, error) {
+	var out AttachResult
+	in := map[string]any{"listingId": listingID, "slot": slot, "imageId": nil}
+	if imageID != nil {
+		in["imageId"] = *imageID
+	}
+	if err := c.trpcMutation(ctx, trpcSetRedMedia, in, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -992,12 +1054,22 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 	if json.Unmarshal(raw, &env) == nil && env.Error.JSON.Message != "" {
 		msg = env.Error.JSON.Message
 	}
+	// reason is what the arms below CLASSIFY on; msg is what they SHOW.
+	reason := msg
+	if route == imageUploadRoute {
+		// The image-upload mint's success payload is a presigned PUT URL, so its
+		// body is never shown — see redact.CredentialRouteMessage. The arms still
+		// classify on the server's unfiltered words (redact.ErrorMessage): a
+		// message the display filter withholds must not lose its classification.
+		reason = redact.ErrorMessage(raw)
+		msg = redact.CredentialRouteMessage(raw)
+	}
 	name := route.name()
 	switch status {
 	case http.StatusUnauthorized:
 		return unauthorizedError("")
 	case http.StatusForbidden:
-		if isInsufficientScopeMsg(msg) {
+		if isInsufficientScopeMsg(reason) {
 			return fmt.Errorf("listing media needs the Apps submit scope (403): %s — re-run `civitai login` (an old token may predate the scope), or use a full-scope personal API key", msg)
 		}
 		// 🔴 A MODERATOR TAKEDOWN IS NOT AN ACCESS PROBLEM, and the fallback
@@ -1013,7 +1085,7 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		// that can work. It is deliberately NOT a new exit code: 403 is tagged
 		// by the deferred TagStatus above, so this stays exit 3, which is what
 		// README publishes for "a moderator removed the listing".
-		if isModeratorTakedownMsg(msg) {
+		if isModeratorTakedownMsg(reason) {
 			return fmt.Errorf("this listing is under a moderator takedown (403): %s — your account's access is not the problem and no CLI command reverses this; ask a Civitai moderator to relist it", msg)
 		}
 		// 🔴 THE THIRD INSTANCE OF THE WRONG-SUBJECT CLASS (#374/#391 on the 400
@@ -1045,7 +1117,7 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		// sentence is then confidently wrong about a listing that no longer
 		// exists. It is not a regression — the catch-all it replaces was equally
 		// false there — but do not tighten the wording without re-reading that.
-		if isNotOwnedMsg(msg) {
+		if isNotOwnedMsg(reason) {
 			return fmt.Errorf("this listing belongs to another account (403): %s — your account's access is not the problem, and being a moderator does not help: sign in as the app's owner (`civitai whoami` shows who you are), accept a pending collaborator invite if you were sent one, or ask the owner to make the change", msg)
 		}
 		return fmt.Errorf("not permitted for your account (403): %s — managing store listings needs Apps-author access (invite-only beta)", msg)
@@ -1059,6 +1131,13 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		// The default: arm below keeps the method name, which is where a
 		// genuinely unexpected status makes it worth reporting.
 		//
+		// The ONE 400 that is not about the request: setRedMedia refusing because
+		// the override slots do not exist on this environment yet. It must not
+		// reach the change arm below ("may have partially applied" is false — the
+		// server refuses before writing) nor the caller's image advice.
+		if route == trpcSetRedMedia && isRedSlotsUnavailableMsg(reason) {
+			return fmt.Errorf("%w (400: %s)", ErrRedSlotsUnavailable, msg)
+		}
 		// The SUBJECT comes from the ROUTE's op, not from the status and not
 		// from the HTTP verb: naming the operation keeps the error identifiable
 		// without the proc name, and a read or an image ingest must not be

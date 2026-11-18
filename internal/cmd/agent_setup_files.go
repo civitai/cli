@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/template"
+
+	"github.com/civitai/cli/internal/appapi"
 )
 
 // The two instruction files `agent-setup` writes into the project, and the rule
@@ -55,6 +58,41 @@ const (
 	claudeShim = "@" + agentsFilename + "\n"
 )
 
+// agentSetupProjectPaths is every path `agent-setup` can CREATE inside a project
+// directory, each as segments relative to it: the two instruction files, plus
+// the MCP config of every agent whose config is project-scoped.
+//
+// It exists for `civitai app create`. The onboarding runs `agent-setup` in an
+// empty directory and then scaffolds, and the scaffolder used to refuse that
+// directory as "not empty" because of the files the previous step had just
+// written into it. This is the set it now tolerates (scaffold.RenderKeeping).
+//
+// 🔴 DERIVED FROM agentTargets, NOT SPELLED. A hand-written list here would be
+// right until the next project-scoped agent is added to that table, and then the
+// refusal comes back for that agent's users only. User-scoped targets are absent
+// because they live under $HOME, never in the project.
+//
+// 🔴 `PreferExisting` IS DELIBERATELY NOT IN IT. Those are alternative spellings
+// `agent-setup` merges into when the AUTHOR already has one (`opencode.jsonc`);
+// it never creates them, so one being present means the directory held the
+// author's file before setup ran.
+//
+// The shell startup files `--fix-path` writes are outside the project and are
+// not this function's business.
+func agentSetupProjectPaths() [][]string {
+	paths := [][]string{{agentsFilename}, {claudeFilename}}
+	for _, t := range agentTargets {
+		if t.UserScoped {
+			continue
+		}
+		paths = append(paths, append([]string(nil), t.Parts...))
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		return filepath.Join(paths[i]...) < filepath.Join(paths[j]...)
+	})
+	return paths
+}
+
 // fileAction is what a run did (or would do) to one file. It is reported in
 // `--dry-run`, in the human output and in `--json`, from one value, so the three
 // cannot describe the same run differently.
@@ -76,7 +114,23 @@ const (
 // panics at init rather than turning every `agent-setup` into a runtime error
 // about a file the user cannot see. TestAgentsTemplateRendersForEveryShape is
 // what makes that safe: it executes the template for all three shapes.
-var agentsTemplate = template.Must(template.New(agentsFilename).Parse(agentsAppTemplate))
+//
+// `firstReviewURL` is the template's ONLY way to spell the first-review checklist
+// address: the block and `civitai app submit`'s confirmation step both read
+// firstReviewChecklistURL, so the two cannot name different pages.
+//
+// The `devBudget*` funcs are likewise the block's ONLY way to state the dev-token
+// budget bounds: it used to type them (50 and 250), and since the block is written
+// into every project agent-setup runs in, a literal that went stale there stayed
+// stale in each of those projects. They read the vendored appapi constants.
+var agentsTemplate = template.Must(template.New(agentsFilename).
+	Funcs(template.FuncMap{
+		"firstReviewURL":   func() string { return firstReviewChecklistURL },
+		"devBudgetDefault": func() int { return appapi.DevBuzzBudgetDefault },
+		"devBudgetMin":     func() int { return appapi.DevBuzzBudgetMin },
+		"devBudgetCap":     func() int { return appapi.DevBuzzBudgetCap },
+	}).
+	Parse(agentsAppTemplate))
 
 // agentsManagedBlock is the block as it is written into a file: the embedded
 // template rendered for THIS project, with no leading or trailing blank lines,

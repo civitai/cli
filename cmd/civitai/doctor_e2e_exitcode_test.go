@@ -38,6 +38,25 @@ import (
 // fake answer the route the binary really asks for.
 const doctorListMinePath = "/api/trpc/appListings.listMine"
 
+// doctorRolloutProbePath is the ACCOUNT-level App-Blocks rollout probe, spelled
+// here for the same reason: this package cannot see internal/appapi's route
+// constants, and a literal is what makes the fake answer the route the binary
+// really asks for.
+//
+// 🔴 THE ARMS BELOW DRIVE IT TO 503 — "NOT IN THE ROLLOUT" — ON EVERY CASE, AND
+// THAT IS THE POINT OF PUTTING IT HERE AT ALL. This file measures the PROCESS
+// exit status, so what it has to prove about the new check is that the loudest
+// thing it can report moves NO published code: three of the nine arms below
+// expect 0 while the report says NOT ENROLLED in capitals. A fake answering 200
+// would have left that claim untested, and 503 is the status `civitai.TagStatus`
+// classifies as ErrNetwork — exit 5 — if anything ever propagates it.
+const doctorRolloutProbePath = "/api/v1/blocks/submissions"
+
+// doctorRolloutNotEnrolledBody is the submissions route's own refusal envelope
+// at its `app-blocks-enabled` gate. Carried verbatim so the fake is shaped like
+// the server; no production branch matches the text.
+const doctorRolloutNotEnrolledBody = `{"message":"Apps are not enabled"}`
+
 // e2eDoctorProblem / e2eDoctorRow build server-shaped fixtures. The slugs and
 // ids are distinct from anything asserted, so no assertion can pass on a value
 // copied from elsewhere.
@@ -144,6 +163,22 @@ func TestDoctorProcessExitStatusEndToEnd(t *testing.T) {
 			wantWhy: "nothing is wrong",
 			mustSay: "No problems",
 		},
+
+		// 🔴 THE ROLLOUT ARM, AT THE PROCESS LEVEL AND IN ITS OWN ROW. Every
+		// case in this table is served a 503 by the probe, so every expected
+		// code here is ALREADY a claim that the check moves none of them — but
+		// no row SAYS so, and a reader cannot tell a deliberate 0 from a 0 that
+		// happens to be right. This row names it: the report shouts NOT ENROLLED
+		// in capitals, the listing is clean, and the process exits 0 rather than
+		// the 5 a propagated 503 would have produced.
+		{
+			name:    "NOT ENROLLED is reported and does not fail the build",
+			rows:    []map[string]any{e2eDoctorRow()},
+			args:    []string{"app", "doctor"},
+			want:    0,
+			wantWhy: "the rollout is held pre-GA on purpose, so being outside it is a supported state and not a broken listing; a propagated 503 would have exited 5",
+			mustSay: "NOT ENROLLED",
+		},
 		{
 			name: "--json uses the same codes",
 			rows: []map[string]any{e2eDoctorRow(
@@ -207,14 +242,19 @@ func TestDoctorProcessExitStatusEndToEnd(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rows := tc.rows
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != doctorListMinePath {
+				switch r.URL.Path {
+				case doctorListMinePath:
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"result": map[string]any{"data": map[string]any{"json": rows}},
+					})
+				case doctorRolloutProbePath:
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = w.Write([]byte(doctorRolloutNotEnrolledBody))
+				default:
 					t.Errorf("unexpected request to %s", r.URL.Path)
 					w.WriteHeader(http.StatusInternalServerError)
-					return
 				}
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"result": map[string]any{"data": map[string]any{"json": rows}},
-				})
 			}))
 			defer srv.Close()
 
@@ -271,13 +311,18 @@ func TestDoctorVerdictPrintsNoErrorPrefix(t *testing.T) {
 		e2eDoctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking"))}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != doctorListMinePath {
+		switch r.URL.Path {
+		case doctorListMinePath:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"result": map[string]any{"data": map[string]any{"json": blocked}},
+			})
+		case doctorRolloutProbePath:
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(doctorRolloutNotEnrolledBody))
+		default:
 			w.WriteHeader(http.StatusInternalServerError)
-			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"result": map[string]any{"data": map[string]any{"json": blocked}},
-		})
 	}))
 	defer srv.Close()
 	env := []string{

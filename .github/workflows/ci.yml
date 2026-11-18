@@ -23,6 +23,23 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels that PR's previous, still-running CI
+# run: nobody reads the verdict on a commit that is no longer the head, and the
+# superseded run's jobs hold runners the new run is waiting for. Measured over
+# 2026-11-10..17: 4 of 93 pull_request/dispatch runs were superseded while
+# still running, holding ~64 runner-minutes after their verdict stopped mattering.
+#
+# 🔴 ONLY pull requests share a group. Every other event (push to main,
+# workflow_dispatch) gets a group of its own run id, so it is never cancelled
+# AND never queued behind another run. A shared group with
+# `cancel-in-progress: false` is NOT a queue: GitHub keeps at most one PENDING
+# run per group and cancels the older pending one when a third arrives, so
+# back-to-back merges to main would lose verdicts. Guarded by
+# workflow_dogfood_gate_test.go.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # VACUOUS GREEN — the shared rationale every positive control below points at.
 #
@@ -50,10 +67,13 @@ permissions:
 #       look at our code?) and, where cheap, a NEGATIVE control (can it still go
 #       red at all?).
 #
-#   (3) A `-count=1`-LESS TEST CAN BE REPLAYED FROM GOCACHE, which
-#       `actions/setup-go` with `cache: true` restores across runs. That matters
+#   (3) A `-count=1`-LESS TEST CAN BE REPLAYED FROM GOCACHE, which every job
+#       here restores across runs (.github/actions/setup-go). That matters most
 #       for the NETWORK guards, whose entire value is the round-trip; see the
-#       measurement at `pins-vs-published`.
+#       measurement at `pins-vs-published`. It holds for every other test that
+#       reads something the test binary does not itself open, so EVERY
+#       `go test` in a workflow carries `-count=1`, pinned by
+#       `TestEveryWorkflowGoTestDisablesTheResultCache`.
 #
 # ERREXIT NOTE, the trap behind #316 and #313: GitHub runs every `run:` block as
 # `bash -e {0}`, so errexit is ON before the first line and `set -uo pipefail`
@@ -71,13 +91,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-go
+        id: go
         with:
           go-version: "1.25"
-          cache: true
 
       - name: go vet
         run: go vet ./...
+
+      # Every job here runs on Linux, so a file that only compiles on Unix
+      # breaks the Windows build and nothing notices: Go compiles a package's
+      # tests as one unit, so one `syscall.Kill` stops the whole package from
+      # building on Windows and none of its tests run there (#798). Cross-
+      # compiling every package for Windows under vet catches that on this
+      # runner. It checks that the code compiles, not that it behaves the same
+      # on Windows. Measured: red at 5f151c2 (`dogfood_cdp_launch_test.go:334:22:
+      # undefined: syscall.Kill`), clean from 7b25f79. Suggested by xsvm in #798.
+      - name: go vet (GOOS=windows)
+        run: GOOS=windows go vet ./...
+
+      # 🔴 THE RENDER-ORACLE TESTS REFUSE TO SKIP UNDER CI, so a job running
+      # them has to give them a browser that LAUNCHES — resolved, then smoke-
+      # tested through the harness's own launch(), with a negative control.
+      # This job still needs one: dogfood_t1_floor_test.go stays in the always
+      # tier (it reads internal/cmd/app_doctor.go) and drives the browser. The
+      # logic, and the measured flake it exists for, is in the script — ONE
+      # copy, shared with `dogfood-browser`.
+      - name: resolve and smoke-test a browser for the render-oracle tests
+        run: ./scripts/dogfood/ci-browser.sh
 
       # Shape (2): `gofmt -s -l .` prints NOTHING and exits 0 both when every
       # file is clean AND when it walked zero files, so its silence is not by
@@ -125,11 +166,40 @@ jobs:
       # ambiguity of their own, and the floor below already proves the module
       # resolves to ~19 real packages in this same job. A third floor would
       # assert the same fact a third time.
+      #
+      # 🔴 THE ROOT PACKAGE IS SPLIT, AND THIS STEP RUNS ONLY ITS ALWAYS TIER.
+      # Its browser tier — the tests that drive headless Chrome through
+      # scripts/dogfood, ~85% of this job's old wall time — runs in the
+      # `dogfood-browser` job below. The split is ONE list of files,
+      # scripts/dogfood/browser-tier.sh; this step skips those files' tests and
+      # that job runs exactly them. This step then requires the tests it
+      # reported to be exactly (`go test -list` of the real binary − that
+      # list), and that job requires its PASS lines to be exactly the list — so
+      # always ∪ browser is the whole package and nothing runs twice. Locally `go test ./...` / `make ci`
+      # still run everything.
       - name: test
         run: |
           set -uo pipefail
 
-          go test ./... 2>&1 | tee "$RUNNER_TEMP/gotest.log"
+          # Every package but the root: unchanged.
+          mapfile -t pkgs < <(go list ./... | grep -vx 'github.com/civitai/cli')
+          go test -count=1 "${pkgs[@]}" 2>&1 | tee "$RUNNER_TEMP/gotest.log"
+
+          # The root package, minus the browser tier. -json so the tests that
+          # RAN can be counted; rendered back to plain text for the log. -count=1
+          # everywhere: see .github/actions/setup-go (a restored GOCACHE could
+          # replay a cached PASS).
+          skip=$(./scripts/dogfood/browser-tier.sh regex)
+          ./scripts/dogfood/browser-tier.sh names > "$RUNNER_TEMP/browser.txt"
+          # `^(Test|Example|Fuzz)`, not `.*`: -list also prints Benchmark
+          # names, and a plain `go test` never runs a benchmark, so one would
+          # read as "a test that did not run". Examples WITH an `// Output:`
+          # comment and Fuzz targets (seed corpus) DO run and DO report, so
+          # they stay in the expected set. (An Example with no Output comment
+          # is compiled, not run — and `-list` does not print it either.)
+          go test -count=1 -list '^(Test|Example|Fuzz)' . | grep -v '^ok' | LC_ALL=C sort > "$RUNNER_TEMP/golist.txt"
+          go test -json -count=1 -skip "$skip" . | tee "$RUNNER_TEMP/root.json" \
+            | jq -rj 'select(.Action == "output") | .Output' | tee -a "$RUNNER_TEMP/gotest.log"
 
           # Measured on this tree: 19 packages report ok, 1 has no test files.
           # The floor sits below that so ordinary churn does not trip it.
@@ -140,8 +210,134 @@ jobs:
             exit 1
           fi
 
+          # 🔴 THE -skip FILTER MUST LEAVE EXACTLY (the binary's tests − the
+          # browser tier). An over-broad filter would drop always-tier tests
+          # with the job green; a browser name the binary does not hold means
+          # the list is stale. SKIP is accepted (a test may skip by design);
+          # neither line is not.
+          LC_ALL=C comm -23 "$RUNNER_TEMP/golist.txt" "$RUNNER_TEMP/browser.txt" > "$RUNNER_TEMP/always.txt"
+          jq -r 'select((.Action == "pass" or .Action == "skip") and .Test != null and (.Test | contains("/") | not)) | .Test' \
+            "$RUNNER_TEMP/root.json" | LC_ALL=C sort > "$RUNNER_TEMP/always-ran.txt"
+          echo "root package: $(wc -l < "$RUNNER_TEMP/golist.txt") tests in the binary, $(wc -l < "$RUNNER_TEMP/browser.txt") in the browser tier, $(wc -l < "$RUNNER_TEMP/always-ran.txt") reported here"
+          if [ ! -s "$RUNNER_TEMP/always-ran.txt" ] || ! diff "$RUNNER_TEMP/always.txt" "$RUNNER_TEMP/always-ran.txt"; then
+            echo "::error::the root package's always tier did not run exactly (binary's tests − browser tier). Diff above: < expected but not reported, > reported but not expected. See scripts/dogfood/browser-tier.sh."
+            exit 1
+          fi
+
       - name: build
         run: go build ./...
+
+      # THE ONE SAVE IN THIS FILE — see .github/actions/setup-go/action.yml for
+      # why every other job, and every pull request, only restores.
+      #
+      # It is this job because its cache is a superset of what the others
+      # compile: vet, the test build of every package and `go build ./...`.
+      # It runs last so that is what gets saved, and it is skipped when an
+      # entry for this week's key already exists, which is what bounds the
+      # number of live entries (see the action for the arithmetic).
+      - name: save the Go cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.go.outputs.exact-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.go.outputs.paths }}
+          key: ${{ steps.go.outputs.primary-key }}
+
+  # ── the root package's BROWSER tier ──────────────────────────────────────
+  #
+  # The render-oracle tests (headless Chrome against a served block, through
+  # scripts/dogfood) were ~85% of `build-test`'s wall time. They run here, in
+  # ONE job, serially, exactly as they did inside `build-test`.
+  #
+  # ⚠ NOT SHARDED, AND THAT WAS MEASURED. A 4-shard version of this job cut
+  # the unqueued critical path to ~105–135 s, and then waited 147–1123 s per
+  # shard for a runner on a saturated pool: observed wall 432–865 s, worse
+  # than one job. One job, one runner slot.
+  #
+  # 🔴 THIS JOB IS ITS OWN LEDGER. `go test -run <filter>` exits 0 when the
+  # filter matches nothing, so scripts/dogfood/ci-browser-tests.sh requires
+  # the top-level PASS lines to be EXACTLY the browser tier. With
+  # `build-test`'s mirror-image check, always ∪ browser is the whole package,
+  # each test once.
+  #
+  # 🔴 ON A PULL REQUEST IT RUNS THE SUITE ONLY WHEN ITS INPUTS CHANGED, AND IT
+  # FAILS OPEN. The decision is this job's own `decide` step, ONE
+  # implementation: scripts/dogfood/browser-suite-relevant.sh (table-tested in
+  # dogfood_browser_relevance_test.go). Any event but a pull request, a failed
+  # or empty diff, and any path not positively classified irrelevant all run
+  # the suite. The step is `continue-on-error`, and every step after it runs
+  # unless the step SUCCEEDED and said `run=false` — so a classifier that
+  # crashed, or published nothing, runs the suite too. On "irrelevant" the job
+  # ends green after the checkout, which branch protection counts as
+  # satisfied, so this name stays required.
+  #
+  # ⚠ THE CLASSIFIER USED TO BE ITS OWN JOB (`dogfood-browser-changes`, which
+  # this one `needs:`-ed). That put a SECOND runner wait in series on the
+  # run's slowest path: this job finished last in all 54 runs that ran the
+  # suite (2026-11-10..17), and the classifier job's queue + ~6 s of work
+  # delayed even QUEUEING this one by p50 10 s / p90 ~8 min. Do not split it
+  # back out. Guarded by workflow_dogfood_gate_test.go.
+  #
+  # The diff is the PR's merge commit against its first parent — exactly what
+  # merging would change on the base, whatever the base is. `fetch-depth: 2`
+  # is what makes HEAD^1 present.
+  #
+  # 🔴 `--no-renames` IS LOAD-BEARING. With rename detection, a file MOVED out
+  # of scripts/dogfood is listed under its NEW path only; if that path is
+  # irrelevant the classifier never sees that a harness file disappeared, and
+  # skips. Without it the move is a delete plus an add, and the old path is
+  # in the list.
+  #
+  # (The nightly run of the same suite, and its failure reporter, live in
+  # dogfood-browser-nightly.yml: this workflow requests no write permission.)
+  dogfood-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: classify the change
+        id: decide
+        continue-on-error: true
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -uo pipefail
+          rc=0
+          : > "$RUNNER_TEMP/paths.txt"
+          if [ "$EVENT" = "pull_request" ]; then
+            git diff --name-only --no-renames HEAD^1 HEAD > "$RUNNER_TEMP/paths.txt" || rc=$?
+          fi
+          echo "changed paths ($(wc -l < "$RUNNER_TEMP/paths.txt")):"
+          cat "$RUNNER_TEMP/paths.txt"
+          ./scripts/dogfood/browser-suite-relevant.sh "$EVENT" "$RUNNER_TEMP/paths.txt" "$rc"
+
+      - name: why this job is (not) running the suite
+        env:
+          DECIDE_OUTCOME: ${{ steps.decide.outcome }}
+          DECIDE_RUN: ${{ steps.decide.outputs.run }}
+          DECIDE_REASON: ${{ steps.decide.outputs.reason }}
+        run: |
+          echo "decision: outcome=$DECIDE_OUTCOME run='$DECIDE_RUN' reason='$DECIDE_REASON'"
+          if [ "$DECIDE_OUTCOME" != "success" ]; then
+            echo "::warning title=dogfood-browser classifier failed::the change classifier did not succeed, so the suite is running (fail open). Fix the classifier."
+          fi
+
+      # Restore-only, like every job but build-test (see the action).
+      - uses: ./.github/actions/setup-go
+        if: steps.decide.outcome != 'success' || steps.decide.outputs.run != 'false'
+        with:
+          go-version: "1.25"
+
+      - name: resolve and smoke-test a browser for the render-oracle tests
+        if: steps.decide.outcome != 'success' || steps.decide.outputs.run != 'false'
+        run: ./scripts/dogfood/ci-browser.sh
+
+      - name: browser tests
+        if: steps.decide.outcome != 'success' || steps.decide.outputs.run != 'false'
+        env:
+          CIVITAI_ASSERT_WAIT_LOG: ${{ runner.temp }}/dogfood-waits.jsonl
+        run: ./scripts/dogfood/ci-browser-tests.sh
 
   # Static-analysis gate: golangci-lint over the whole module using the curated
   # linter set in .golangci.yml (staticcheck / govet / ineffassign / unused /
@@ -151,10 +347,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      # golangci-lint-action caches only its own analysis results
+      # (~/.cache/golangci-lint); loading the packages it lints still compiles
+      # them, which is what the restored Go build cache saves. It used to run
+      # with no Go cache at all.
+      - uses: ./.github/actions/setup-go
         with:
           go-version: "1.25"
-          cache: false # golangci-lint-action manages its own build/analysis cache
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
@@ -165,110 +364,52 @@ jobs:
   # `civitai app validate`) must stay identical to the canonical the platform
   # publishes at civitai.com/schemas/app-block/v1.json (the single source of
   # truth). Fails if a server-side contract change leaves the CLI stale.
-  schema-drift:
+  # ── checks: six small gates, ONE runner ─────────────────────────────────
+  #
+  # pins-vs-published, ready-ack-runtime, template-page-vite,
+  # template-page-elements, template-page-money and scaffold-currency used to
+  # be six jobs. Each did 18–52 s of work, and each waited for its own
+  # GitHub-hosted runner first. On this repo that wait — not the work — is
+  # what a run's wall time is made of: the runner pool hands out runners
+  # slowly, so a run that asks for ten jobs pays the wait ten times over. They
+  # are now steps of this one job, and every step's name is prefixed with the
+  # job it came from (`<former job> · <step>`), so a red run still says which
+  # gate failed. pins-vs-published runs LAST: on a push to main it fails
+  # whenever npm has published a newer @civitai/* minor, and as the first
+  # step it would skip the other five on every main run until the bump bot's
+  # PR merged (stale windows have run 34 h). It reads only commits (its diff
+  # is HEAD^1..HEAD) and npm, never the working tree, so it has no ordering
+  # dependency on the scaffolds before it.
+  #
+  # 🔴 THE REQUIRED CONTEXT IS NOW `checks`. Branch protection used to name
+  # five of the six jobs (pins-vs-published, ready-ack-runtime,
+  # template-page-vite, template-page-elements, scaffold-currency); this PR
+  # cannot change protection, so the old names have to be swapped for
+  # `checks` in the same window as the merge. template-page-money was NOT
+  # required before and now gates, because it shares this job.
+  #
+  # ⚠ ONE FAILURE NOW STOPS THE REST. Steps run with GitHub's default
+  # `success()`, so the first red step skips every step after it — a run that
+  # breaks two gates reports the first, and the second shows on the next run.
+  # That is the price of one runner; it can only hide a red behind another
+  # red, never turn one green. Do not paper over it with `continue-on-error`:
+  # see the pins-vs-published notes below, and workflow_checks_job_test.go.
+  #
+  # The shared setup runs once: checkout at `fetch-depth: 2` (pins-gate reads
+  # the merge commit's two parents — see below), the Go cache restore, and
+  # node 24. Every scaffold writes its own `_ci-*` directory, so the former
+  # jobs share no files. Guarded by workflow_checks_job_test.go.
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: check canonical schema
-        run: ./scripts/check-canonical-schema.sh
+        with:
+          fetch-depth: 2
 
-  # Rot-guard: assert each scaffold template's `@civitai/*` pin still ADMITS the
-  # version npm currently publishes as `latest`. A pre-1.0 caret (`^0.24.0`)
-  # locks the minor, so a pin that falls behind npm silently ships apps that are
-  # born stale — and `npm install` won't catch it (it resolves the caret to the
-  # newest version the stale range still admits). This is the network half of
-  # the scaffold guard; it's env-gated so the default `go test ./...` stays
-  # offline, and it SKIPS (never false-fails) when npm is unreachable.
-  pins-vs-published:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      # Restore-only, like every job but build-test (see the action).
+      - uses: ./.github/actions/setup-go
         with:
           go-version: "1.25"
-          cache: true
-
-      - name: check scaffold pins vs npm latest
-        env:
-          CIVITAI_CHECK_PUBLISHED_PINS: "1"
-        run: |
-          set -uo pipefail
-
-          # 🔴 `-count=1` IS LOAD-BEARING HERE, NOT HYGIENE — shape (3). Measured
-          # locally, this exact command run twice in a row:
-          #     --- PASS: TestScaffoldPinsSatisfyPublished (0.46s)
-          #     ok  github.com/civitai/cli/internal/scaffold  0.460s
-          #     --- PASS: TestScaffoldPinsSatisfyPublished (0.46s)
-          #     ok  github.com/civitai/cli/internal/scaffold  (cached)
-          # The second run contacted npm ZERO times and replayed the first run's
-          # timing and PASS line verbatim out of GOCACHE — which `setup-go` with
-          # `cache: true` restores across runs, keyed on go.sum. Go's test cache
-          # tracks the env vars a test reads; it does NOT track what npm
-          # published. So the NETWORK half of the scaffold guard — a required
-          # check whose whole value is the round-trip — could report green on a
-          # pin that had already gone stale.
-          #
-          # Note the two devices close DIFFERENT holes and neither substitutes
-          # for the other: a cached result replays the `--- PASS:` line too, so
-          # the control below cannot see a stale cache, and `-count=1` cannot see
-          # a renamed test.
-          go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -count=1 -v 2>&1 \
-            | tee "$RUNNER_TEMP/pins.log"
-
-          # POSITIVE CONTROL — shape (1). Require the test's own result line.
-          #
-          # SKIP is accepted here, and ONLY here in this file: this guard skips
-          # by design when npm is unreachable (pins_guard_test.go returns a
-          # t.Skipf rather than false-failing on DNS/timeout/5xx/429). What is
-          # NOT acceptable is neither line appearing, which is what a rename, a
-          # moved file or a changed CIVITAI_CHECK_PUBLISHED_PINS gate produces.
-          if ! grep -Eq -- '^ *--- (PASS|SKIP): TestScaffoldPinsSatisfyPublished( |/|$)' "$RUNNER_TEMP/pins.log"; then
-            echo "::error::the pins guard exited 0 without running TestScaffoldPinsSatisfyPublished — the -run pattern matched no test (renamed? moved? CIVITAI_CHECK_PUBLISHED_PINS gate changed?). A green here would have been a claim about nothing."
-            exit 1
-          fi
-
-          # A skip is a legitimate green, but it is not a statement about the
-          # pins — say so in the run rather than letting the colour imply it.
-          if grep -Eq -- '^ *--- SKIP: TestScaffoldPinsSatisfyPublished' "$RUNNER_TEMP/pins.log"; then
-            echo "::notice title=pins-vs-published::the guard SKIPPED — npm was unreachable, so this green says nothing about whether the scaffold pins still admit npm's published latest. Re-run later."
-          fi
-
-  # Guard B for the block->host ready-ack (issue #206) — the RUNTIME half.
-  #
-  # `internal/scaffold/ready_ack_contract_test.go` runs in the build-test job
-  # above and proves each SDK-free page template ships a byte-identical copy of
-  # `internal/blockproto/ready-ack.js` that the entry point RESOLVES to. It
-  # cannot prove the ack FIRES — no Go static check can prove JavaScript
-  # executes, and an emitter with an inverted `event.source` check passes every
-  # static assertion while being completely inert.
-  #
-  # This job executes the emitter in node against a fake host. It is env-gated
-  # so `make ci` stays Go-only and offline. The daily `bump-scaffold-pins` sweep
-  # runs it too, but a daily runner reports up to 24h AFTER a merge, on a
-  # workflow nobody watches — running it per-PR puts the result in front of a
-  # reviewer while the change is still open.
-  #
-  # 🔴 NOTE: this both reports AND gates. `main`'s required contexts are
-  # `pins-vs-published`, `scaffold-currency`, `build-test`, `ready-ack-runtime`
-  # and `template-page-vite` (no rulesets), so a red run here blocks the merge.
-  # That was a policy change made after this job landed — it did NOT gate when
-  # it shipped. Re-measure with
-  # `gh api repos/civitai/cli/branches/main/protection` before calling any job
-  # here a gate; see AGENTS.md item 11.
-  #
-  # -v so the run REPORTS its controls (an inert emitter and a naive ack are
-  # driven through the same assertions and must be rejected) rather than just an
-  # exit code.
-  ready-ack-runtime:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
-          cache: true
 
       # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
       # `Cannot read properties of null (reading 'edgesOut')` while walking
@@ -282,7 +423,35 @@ jobs:
         with:
           node-version: "24"
 
-      - name: scaffolded ready-ack actually fires
+      # ── ready-ack-runtime ─────────────────────────────────────────────────────
+      #
+      # Guard B for the block->host ready-ack (issue #206) — the RUNTIME half.
+      #
+      # `internal/scaffold/ready_ack_contract_test.go` runs in the build-test job
+      # above and proves each SDK-free page template ships a byte-identical copy of
+      # `internal/blockproto/ready-ack.js` that the entry point RESOLVES to. It
+      # cannot prove the ack FIRES — no Go static check can prove JavaScript
+      # executes, and an emitter with an inverted `event.source` check passes every
+      # static assertion while being completely inert.
+      #
+      # This job executes the emitter in node against a fake host. It is env-gated
+      # so `make ci` stays Go-only and offline. The scheduled `bump-scaffold-pins` sweep
+      # (every 6 hours) runs it too, but a scheduled runner reports hours AFTER a
+      # merge, on a workflow nobody watches — running it per-PR puts the result in front of a
+      # reviewer while the change is still open.
+      #
+      # 🔴 NOTE: this both reports AND gates. It is a step of `checks`, which is
+      # meant to be a required context (it replaced the five required former
+      # jobs), so a red run here blocks the merge. It did NOT gate when it
+      # shipped. Re-measure with
+      # `gh api repos/civitai/cli/branches/main/protection` before calling any job
+      # here a gate; see AGENTS.md item 11.
+      #
+      # -v so the run REPORTS its controls (an inert emitter and a naive ack are
+      # driven through the same assertions and must be rejected) rather than just an
+      # exit code.
+
+      - name: ready-ack-runtime · scaffolded ready-ack actually fires
         env:
           CIVITAI_CHECK_SCAFFOLD_RUNTIME: "1"
         run: |
@@ -303,69 +472,51 @@ jobs:
           # completely inert). Disarming it would remove the last thing standing
           # between `main` and a page app that never reaches `ready`.
           #
-          # A SKIP is a FAILURE here, unlike pins-vs-published: there is no
+          # A SKIP is a FAILURE here (pins-vs-published once accepted one; it no
+          # longer runs a test at all, see pins-gate): there is no
           # legitimate skip path when the gate env var is set — the test even
           # t.Fatal()s rather than skipping when node is missing, on purpose.
           # Requiring PASS specifically is what encodes that.
           #
-          # Same control as the daily drift runner in bump-scaffold-pins.yml
+          # Same control as the scheduled drift runner in bump-scaffold-pins.yml
           # (#332). Two copies on purpose: they guard two different runners, and
-          # the daily one cannot block a merge.
+          # the scheduled one cannot block a merge.
           if ! grep -Eq -- '^ *--- PASS: TestScaffoldedReadyAckActuallyFires( |/|$)' "$RUNNER_TEMP/ready-ack.log"; then
             echo "::error::the ready-ack runtime check exited 0 without running TestScaffoldedReadyAckActuallyFires — the -run pattern matched no test (renamed? moved? CIVITAI_CHECK_SCAFFOLD_RUNTIME gate changed?). A green here would have been a claim about nothing, on the only check that proves the scaffolded handshake actually fires (issue #206)."
             exit 1
           fi
 
-  # Rot-guard: build the page-vite template. It is the only SDK-free template
-  # with a build step, and nothing else in CI builds it — `template-page-money`
-  # and `scaffold-currency` both scaffold page-money.
-  #
-  # Since #206 its entry module has a HARD RESOLUTION DEPENDENCY on
-  # `./civitai-host.js`, so a wrong import path is a build failure rather than a
-  # subtle one. Measured: `import '../nonexistent/civitai-host.js'` survived the
-  # entire Go suite, and would have shipped a template that cannot build at all.
-  #
-  # The bundle assertion is separate from Guard A on purpose. Guard A pins the
-  # SOURCE tree; Vite output is what the platform actually serves, and a
-  # tree-shaken or mis-externalised side-effect import would leave a bundle with
-  # no handshake in it. Control pair, both measured locally: with the import the
-  # bundle carries BLOCK_INIT/BLOCK_READY, with it commented out it carries
-  # neither — while the positive control (the app's display name) matches in
-  # both cases, proving the grep reads the bundle either way.
-  template-page-vite:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # ── template-page-vite ────────────────────────────────────────────────────
+      #
+      # Rot-guard: build the page-vite template. It is the only SDK-free template
+      # with a build step, and nothing else in CI builds it — `template-page-money`
+      # and `scaffold-currency` both scaffold page-money.
+      #
+      # Since #206 its entry module has a HARD RESOLUTION DEPENDENCY on
+      # `./civitai-host.js`, so a wrong import path is a build failure rather than a
+      # subtle one. Measured: `import '../nonexistent/civitai-host.js'` survived the
+      # entire Go suite, and would have shipped a template that cannot build at all.
+      #
+      # The bundle assertion is separate from Guard A on purpose. Guard A pins the
+      # SOURCE tree; Vite output is what the platform actually serves, and a
+      # tree-shaken or mis-externalised side-effect import would leave a bundle with
+      # no handshake in it. Control pair, both measured locally: with the import the
+      # bundle carries BLOCK_INIT/BLOCK_READY, with it commented out it carries
+      # neither — while the positive control (the app's display name) matches in
+      # both cases, proving the grep reads the bundle either way.
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
-          cache: true
-
-      # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
-      # `Cannot read properties of null (reading 'edgesOut')` while walking
-      # vitest -> its optional `jsdom@*` peer -> canvas, during `npm install`
-      # of a scaffolded page-money app. That froze EVERY PR in this repo
-      # (scaffold-currency is required + enforce_admins) with no code change,
-      # the moment vitest@5.0.0 published upstream. Measured: npm 10.9.9 fails
-      # on the unmodified template, npm 11.19.0 succeeds; overriding jsdom or
-      # pinning vitest does NOT fix it. Do not drop back to 22.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - name: scaffold page-vite
+      - name: template-page-vite · scaffold page-vite
         run: go run ./cmd/civitai app init "CI Vite Block" --dir ./_ci-page-vite --template page-vite
 
-      - name: install
+      - name: template-page-vite · install
         working-directory: ./_ci-page-vite
         run: npm install --no-audit --no-fund
 
-      - name: build
+      - name: template-page-vite · build
         working-directory: ./_ci-page-vite
         run: npm run build
 
-      - name: the ready-ack survives bundling
+      - name: template-page-vite · the ready-ack survives bundling
         working-directory: ./_ci-page-vite
         run: |
           set -euo pipefail
@@ -411,109 +562,158 @@ jobs:
           done
           exit "$rc"
 
-      - name: validate
+      # The REAL dev server, asked what `civitai app dev-tunnel` depends on, in
+      # both dev modes: plain `npm run dev` must NOT send the embed headers (any
+      # page in the browser could read the dev server's source), a dev-tunnel
+      # session (CIVITAI_DEV_TUNNEL_HMR=1) must. One script for all three Vite
+      # templates; what it asserts and why is in its header.
+      - name: template-page-vite · dev server embed headers (plain vs dev-tunnel)
+        working-directory: ./_ci-page-vite
+        run: ../scripts/ci/dev-tunnel-embed-probe.sh
+
+      - name: template-page-vite · validate
         working-directory: ./_ci-page-vite
         run: go run ../cmd/civitai app validate
 
-  # Rot-guard: scaffold the page-money template and run its JS toolchain against
-  # the PUBLISHED SDK (@civitai/blocks-react). Catches a template that renders
-  # but no longer installs / typechecks / tests / builds after an SDK bump — the
-  # out-of-the-box contract the template promises.
-  template-page-money:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # ── template-page-elements ────────────────────────────────────────────────
+      #
+      # Rot-guard: scaffold the DEFAULT template (page-elements — web components,
+      # @civitai/sdk + @civitai/components + @civitai/theme) and run its JS toolchain
+      # against the PUBLISHED packages: install, typecheck, the app's own tests,
+      # build, validate. It scaffolds with NO --template, so it is also the check
+      # that plain `civitai app init` still produces a project that builds — the
+      # thing a first-time author runs. This job is the template's one end-to-end
+      # check; `bump-scaffold-pins.yml` repeats the same steps after a pin bump.
+      #
+      # It gates as part of `checks` (AGENTS.md item 11: measure, never infer,
+      # which contexts branch protection requires).
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
-          cache: true
+      - name: template-page-elements · scaffold the default template
+        run: |
+          set -euo pipefail
+          go run ./cmd/civitai app init "CI Elements Block" --dir ./_ci-page-elements --yes | tee scaffold.out
+          # The default must BE page-elements, or every step below is checking
+          # some other template while reporting on this one.
+          grep -F '(page-elements)' scaffold.out
 
-      # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
-      # `Cannot read properties of null (reading 'edgesOut')` while walking
-      # vitest -> its optional `jsdom@*` peer -> canvas, during `npm install`
-      # of a scaffolded page-money app. That froze EVERY PR in this repo
-      # (scaffold-currency is required + enforce_admins) with no code change,
-      # the moment vitest@5.0.0 published upstream. Measured: npm 10.9.9 fails
-      # on the unmodified template, npm 11.19.0 succeeds; overriding jsdom or
-      # pinning vitest does NOT fix it. Do not drop back to 22.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
+      - name: template-page-elements · install
+        working-directory: ./_ci-page-elements
+        run: npm install --no-audit --no-fund
 
-      - name: scaffold page-money
+      - name: template-page-elements · typecheck
+        working-directory: ./_ci-page-elements
+        run: npm run typecheck
+
+      - name: template-page-elements · test
+        working-directory: ./_ci-page-elements
+        run: npm test
+
+      - name: template-page-elements · build
+        working-directory: ./_ci-page-elements
+        run: npm run build
+
+      # Same probe as template-page-vite; see scripts/ci/dev-tunnel-embed-probe.sh.
+      - name: template-page-elements · dev server embed headers (plain vs dev-tunnel)
+        working-directory: ./_ci-page-elements
+        run: ../scripts/ci/dev-tunnel-embed-probe.sh
+
+      - name: template-page-elements · validate
+        working-directory: ./_ci-page-elements
+        run: go run ../cmd/civitai app validate
+
+      # The scaffold's scratch/ promise — a type error or a failing test there
+      # cannot fail `npm run typecheck` / `npm test` — is checked by a Go test
+      # that renders its own copy, npm-installs it and runs tsc + vitest. It
+      # SKIPS ITSELF unless CIVITAI_SCAFFOLD_TYPECHECK=1, so `build-test`'s plain
+      # `go test ./...` never executes it; this step is what does.
+      - name: template-page-elements · scratch/ probes cannot fail typecheck or tests
+        env:
+          CIVITAI_SCAFFOLD_TYPECHECK: "1"
+        run: |
+          set -uo pipefail
+          T=TestPageElementsScratchProbesCannotFailTypecheckOrTests
+          go test ./internal/scaffold -run "^${T}\$" -count=1 -v 2>&1 | tee "$RUNNER_TEMP/scratch-typecheck.log"
+          # POSITIVE CONTROL: `go test -run` exits 0 when the pattern matches
+          # nothing, and a SKIP also prints `ok` — so require the test's own
+          # PASS line and name the SKIP case separately (a skip means the env
+          # gate above stopped reaching the test: a defect in this step).
+          if grep -q -- "--- SKIP: ${T}" "$RUNNER_TEMP/scratch-typecheck.log"; then
+            echo "::error::${T} SKIPPED itself — CIVITAI_SCAFFOLD_TYPECHECK did not reach it. NOTHING about scratch/ was verified."
+            exit 1
+          fi
+          if ! grep -q -- "--- PASS: ${T}" "$RUNNER_TEMP/scratch-typecheck.log"; then
+            echo "::error::${T} did not PASS (failed, or the -run pattern matched no test)."
+            exit 1
+          fi
+
+      # ── template-page-money ───────────────────────────────────────────────────
+      #
+      # Rot-guard: scaffold the page-money template and run its JS toolchain against
+      # the PUBLISHED SDK (@civitai/blocks-react). Catches a template that renders
+      # but no longer installs / typechecks / tests / builds after an SDK bump — the
+      # out-of-the-box contract the template promises.
+
+      - name: template-page-money · scaffold page-money
         run: go run ./cmd/civitai app init "CI Money Block" --dir ./_ci-page-money --template page-money
 
-      - name: install
+      - name: template-page-money · install
         working-directory: ./_ci-page-money
         run: npm install --no-audit --no-fund
 
-      - name: typecheck
+      - name: template-page-money · typecheck
         working-directory: ./_ci-page-money
         run: npm run typecheck
 
-      - name: test (node + dom suites)
+      - name: template-page-money · test (node + dom suites)
         working-directory: ./_ci-page-money
         run: npm test
 
-      - name: build
+      - name: template-page-money · build
         working-directory: ./_ci-page-money
         run: npm run build
 
-      - name: validate
+      # Same probe as template-page-vite; see scripts/ci/dev-tunnel-embed-probe.sh.
+      - name: template-page-money · dev server embed headers (plain vs dev-tunnel)
+        working-directory: ./_ci-page-money
+        run: ../scripts/ci/dev-tunnel-embed-probe.sh
+
+      - name: template-page-money · validate
         working-directory: ./_ci-page-money
         run: go run ../cmd/civitai app validate
 
-  # Scaffold-currency guard — the "born-broken app" gate. Two rot-classes that
-  # pins-vs-published + template-page-money both MISS:
-  #
-  #   (a) ANTI-PATTERN gate — scaffold the SDK template, then scan the generated
-  #       source for a curated denylist of dead/superseded platform surfaces
-  #       (the REMOVED /api/v1/blocks/buzz route, the superseded shared-storage
-  #       REST route, the deprecated @civitai/blocks-cli). A scaffold can compile
-  #       and pass the pins guard yet still fetch a route that 404s at runtime —
-  #       exactly how playable-collections shipped 3 broken features. The denylist
-  #       is precise: it does NOT flag legitimately-REST unbridged endpoints
-  #       (catalog /models, /images; the /me viewer read; the /dev-token mint).
-  #       Logic + fixtures live in internal/antipattern (offline table test); this
-  #       runs it against the real `civitai app init` output.
-  #
-  #   (b) LATEST-SDK build — install the ACTUAL newest published @civitai/app-sdk
-  #       + @civitai/blocks-react (not the pinned caret npm resolves to) and
-  #       re-typecheck + re-build. pins-vs-published catches "the pin can't admit
-  #       latest"; THIS catches "the template code breaks against latest" (a
-  #       removed/renamed SDK export). Network-dependent, so it mirrors the
-  #       pins-vs-published SKIP-on-unreachable contract: a reachability PROBE
-  #       gates the install/typecheck/build steps — an npm outage (network / DNS /
-  #       5xx / 429) SKIPS them (job stays green, indistinguishable-from-real is
-  #       avoided) while a reachable registry runs them and FAILS on a genuine
-  #       code-breaks-against-latest signal. (A peer-dep incompat where the pin
-  #       can't admit latest is already caught by pins-vs-published, so treating an
-  #       install failure under a REACHABLE registry as real is correct.) The
-  #       offline anti-pattern scan is hermetic and always runs.
-  scaffold-currency:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      # ── scaffold-currency ─────────────────────────────────────────────────────
+      #
+      # Scaffold-currency guard — the "born-broken app" gate. Two rot-classes that
+      # pins-vs-published + template-page-money both MISS:
+      #
+      #   (a) ANTI-PATTERN gate — scaffold the SDK template, then scan the generated
+      #       source for a curated denylist of dead platform surfaces (the
+      #       deprecated @civitai/blocks-cli, the dead RESIZE_IFRAME host message).
+      #       A scaffold can compile and pass the pins guard yet still ship code
+      #       that does nothing at runtime. The denylist holds NO /api/v1/blocks/*
+      #       REST route: REST is the supported path for data, so the `buzz-rest`
+      #       and `shared-storage-rest` rules were removed — this job is required
+      #       and was enforcing the wrong direction.
+      #       Logic + fixtures live in internal/antipattern (offline table test); this
+      #       runs it against the real `civitai app init` output.
+      #
+      #   (b) LATEST-SDK build — install the ACTUAL newest published @civitai/app-sdk
+      #       + @civitai/blocks-react (not the pinned caret npm resolves to) and
+      #       re-typecheck + re-build. pins-vs-published catches "the pin can't admit
+      #       latest"; THIS catches "the template code breaks against latest" (a
+      #       removed/renamed SDK export). Network-dependent, so it keeps the
+      #       SKIP-on-unreachable contract pins-vs-published USED to have (that job
+      #       now FAILS a gating run when npm is unreachable — see pins-gate): a
+      #       reachability PROBE
+      #       gates the install/typecheck/build steps — an npm outage (network / DNS /
+      #       5xx / 429) SKIPS them (job stays green, indistinguishable-from-real is
+      #       avoided) while a reachable registry runs them and FAILS on a genuine
+      #       code-breaks-against-latest signal. (A peer-dep incompat where the pin
+      #       can't admit latest is already caught by pins-vs-published, so treating an
+      #       install failure under a REACHABLE registry as real is correct.) The
+      #       offline anti-pattern scan is hermetic and always runs.
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
-          cache: true
-
-      # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
-      # `Cannot read properties of null (reading 'edgesOut')` while walking
-      # vitest -> its optional `jsdom@*` peer -> canvas, during `npm install`
-      # of a scaffolded page-money app. That froze EVERY PR in this repo
-      # (scaffold-currency is required + enforce_admins) with no code change,
-      # the moment vitest@5.0.0 published upstream. Measured: npm 10.9.9 fails
-      # on the unmodified template, npm 11.19.0 succeeds; overriding jsdom or
-      # pinning vitest does NOT fix it. Do not drop back to 22.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-
-      - name: scaffold page-money
+      - name: scaffold-currency · scaffold page-money
         run: go run ./cmd/civitai app init "CI Currency Block" --dir "$GITHUB_WORKSPACE/_ci-currency" --template page-money
 
       # (a) Anti-pattern gate on the scaffolded app.
@@ -522,7 +722,7 @@ jobs:
       #     the repo root, so a relative `./_ci-currency` would resolve under the
       #     package dir and lstat-fail. github.workspace anchors it to where the
       #     scaffold step wrote the app.
-      - name: anti-pattern scan (scaffolded app)
+      - name: scaffold-currency · anti-pattern scan (scaffolded app)
         env:
           CIVITAI_ANTIPATTERN_SCAN_DIR: ${{ github.workspace }}/_ci-currency
         run: |
@@ -538,7 +738,7 @@ jobs:
           # expands to nothing, produces `--- SKIP` at exit 0: the scan never
           # opens the scaffolded app and this required job goes green anyway.
           # Requiring PASS rather than PASS-or-SKIP is what makes that visible —
-          # unlike pins-vs-published, this check has no network to be
+          # unlike a network check, this one has no registry to be
           # unreachable and no legitimate reason to skip once CI has set the var.
           if ! grep -Eq -- '^ *--- PASS: TestScanDirFromEnv( |/|$)' "$RUNNER_TEMP/antipattern.log"; then
             echo "::error::the anti-pattern scan exited 0 without PASSing TestScanDirFromEnv — either the -run pattern matched no test (renamed? moved?) or the test SKIPPED because CIVITAI_ANTIPATTERN_SCAN_DIR was empty. Either way the scaffolded app was never scanned."
@@ -547,11 +747,12 @@ jobs:
 
       # (b) Build against the LATEST published SDK, not just the pinned caret.
       #     Probe npm first; if the registry is unreachable (network/DNS/5xx/429)
-      #     the build steps SKIP so a transient outage can't red the job (mirrors
-      #     the pins-vs-published skip-on-unreachable contract). A 200 on the
+      #     the build steps SKIP so a transient outage can't red the job (the
+      #     skip-on-unreachable contract pins-vs-published used to share; it
+      #     now fails gating runs instead). A 200 on the
       #     /latest metadata means "reachable" — a real SDK break then fails at
       #     typecheck/build, not here.
-      - name: probe npm reachability
+      - name: scaffold-currency · probe npm reachability
         id: npmprobe
         run: |
           code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
@@ -578,7 +779,7 @@ jobs:
       #
       # Assert the probe actually published one of its two verdicts. This does
       # NOT re-decide reachability — it only refuses the third state.
-      - name: the reachability verdict exists
+      - name: scaffold-currency · the reachability verdict exists
         env:
           REACHABLE: ${{ steps.npmprobe.outputs.reachable }}
         run: |
@@ -592,22 +793,127 @@ jobs:
             echo "::notice title=scaffold-currency::the latest-SDK build check did not run this time — npm was unreachable. This job's green is a statement about the offline anti-pattern scan only."
           fi
 
-      - name: install (pinned)
+      - name: scaffold-currency · install (pinned)
         if: steps.npmprobe.outputs.reachable == 'true'
         working-directory: ./_ci-currency
         run: npm install --no-audit --no-fund
 
-      - name: install @latest SDK
+      - name: scaffold-currency · install @latest SDK
         if: steps.npmprobe.outputs.reachable == 'true'
         working-directory: ./_ci-currency
         run: npm install --no-audit --no-fund @civitai/app-sdk@latest @civitai/blocks-react@latest
 
-      - name: typecheck against latest SDK
+      - name: scaffold-currency · typecheck against latest SDK
         if: steps.npmprobe.outputs.reachable == 'true'
         working-directory: ./_ci-currency
         run: npm run typecheck
 
-      - name: build against latest SDK
+      - name: scaffold-currency · build against latest SDK
         if: steps.npmprobe.outputs.reachable == 'true'
         working-directory: ./_ci-currency
         run: npm run build
+
+      # ── pins-vs-published ─────────────────────────────────────────────────────
+      #
+      # Rot-guard: assert each scaffold template's `@civitai/*` pin still ADMITS the
+      # version npm currently publishes as `latest`. A pre-1.0 caret (`^0.24.0`)
+      # locks the minor, so a pin that falls behind npm silently ships apps that are
+      # born stale — and `npm install` won't catch it (it resolves the caret to the
+      # newest version the stale range still admits). This is the network half of
+      # the scaffold guard.
+      #
+      # 🔴 THIS JOB IS A REQUIRED CONTEXT THAT COMPARES AGAINST SOMETHING NO PULL
+      # REQUEST CONTROLS, and until this was rewritten it failed EVERY open PR the
+      # moment a `@civitai/*` minor was published. Measured over the 399 CI runs of
+      # 2026-09-20..10-12: this job failed 72 times, and every one of those logs is
+      # a STALE SCAFFOLD PIN verdict. Across the 118 PRs merged in that window it
+      # was the ONLY failing job on 52 of their 264 CI runs, and 25 of those PRs hit
+      # it at least once — only 5 of the 25 touched a pin input. Each waited on the
+      # bump bot's PR and then a re-push, for a version number on a registry.
+      #
+      # So the step now ALWAYS REPORTS and only SOMETIMES BLOCKS, and the decision is
+      # made in ONE place — `internal/scaffold/cmd/pins-gate`, table-tested there:
+      #
+      #   pull_request, diff touches NO pin input   stale       → ::warning + summary, step GREEN
+      #                                             npm down    → ::warning (distinct title), step GREEN
+      #                                             pin invalid → step RED
+      #   pull_request, diff touches a pin input    any of them → step RED   (as before)
+      #   push to main / workflow_dispatch /        any of them → step RED
+      #   schedule / any event it does not know
+      #
+      # A red step fails `checks`, the required context. Three things here are
+      # load-bearing and each is pinned by `workflow_pins_gate_test.go`, with a
+      # broken variant per assertion:
+      #
+      #   * THE JOB KEY. Branch protection requires the context `checks` by NAME
+      #     (it was `pins-vs-published` while this was its own job). Renamed, the
+      #     required check is never reported and every PR hangs "expected"; that
+      #     is why this is a downgrade inside the step and not a `paths:` filter
+      #     or a second job.
+      #   * NO `continue-on-error` anywhere in `checks`, and NO `if:` on the job
+      #     or on this step. Either makes the gate unable to block ANYWHERE — main
+      #     included — while still painting the context green. A skipped required
+      #     job satisfies protection.
+      #   * `fetch-depth: 2`. The pull request's diff is read off the merge commit
+      #     checkout leaves at HEAD (`HEAD^1` is the base, `HEAD^2` the PR head). At
+      #     the default depth 1 neither parent is visible, pins-gate cannot tell
+      #     what the PR changed, and — because it fails CLOSED — every PR gates
+      #     again. Nothing would look broken; the downgrade would just be inert.
+      #
+      # 🔴 "npm UNREACHABLE" IS NO LONGER A GREEN ON A RUN THAT GATES. It used to be
+      # a `t.Skipf` with a ::notice — on main and on a PR that changed a pin alike.
+      # Now that most runs do not gate, the ones that still do carry the whole
+      # weight, and a gate that could not look reporting success is a claim about
+      # nothing. pins-gate retries three times first; if the registry is still down
+      # a gating run fails with its own title (`NOT CHECKED, npm unreachable`), and
+      # the fix is to re-run it.
+      #
+      # The pin-input list, and why it is wider than "the templates", lives beside
+      # `pinInputs` in pins-gate/main.go. It is held to the build graph by a test,
+      # so this comment deliberately does not copy it.
+
+      - name: pins-vs-published · check scaffold pins vs npm latest
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+
+          # `go run`, not `go test -run`: the two vacuous greens the old step
+          # needed controls for are gone by construction. There is no name
+          # pattern to match nothing (shape 1), and a binary cannot be replayed
+          # from GOCACHE the way a test RESULT can (shape 3). That second one
+          # was measured on the old step, which is why it carried `-count=1` —
+          # the same `go test -run TestScaffoldPinsSatisfyPublished -v` twice:
+          #     --- PASS: TestScaffoldPinsSatisfyPublished (0.46s)
+          #     ok  github.com/civitai/cli/internal/scaffold  0.460s
+          #     --- PASS: TestScaffoldPinsSatisfyPublished (0.46s)
+          #     ok  github.com/civitai/cli/internal/scaffold  (cached)
+          # The second run contacted npm ZERO times and replayed the first run's
+          # timing and PASS line verbatim out of GOCACHE — which every job here
+          # restores across runs (.github/actions/setup-go). Go's test cache
+          # tracks the env vars a test reads; it does NOT track what npm
+          # published. If this step ever goes back to `go test`, `-count=1` goes
+          # back with it.
+          #
+          # `$GITHUB_EVENT_NAME` comes from the runner, NOT from a literal here:
+          # a literal would let this file decide which runs gate.
+          #
+          # errexit is on (see the ERREXIT NOTE at the top), so a non-zero exit
+          # from pins-gate kills the step AT THE PIPE — that is the gate.
+          go run ./internal/scaffold/cmd/pins-gate \
+            -event "$GITHUB_EVENT_NAME" -pr-head "$PR_HEAD_SHA" 2>&1 \
+            | tee "$RUNNER_TEMP/pins.log"
+
+          # POSITIVE CONTROL — the remaining vacuous green. Exit 0 must mean
+          # "pins-gate reached a verdict over at least one pin", so require its
+          # own last line. `pins=[1-9]` is the ONLY thing that rejects a green
+          # over zero pins: pins-gate refuses that itself, but the refusal sits
+          # behind `go:embed`, so no Go test can present it with zero pins and
+          # it survives a mutation battery. `workflow_pins_gate_test.go` fails
+          # if this line is deleted or loosened. `verdict=broken` and `exit=1|2` are deliberately not
+          # accepted: they cannot reach this line, and if one ever does the
+          # command and its exit code have come apart.
+          if ! grep -Eq -- '^pins-gate: mode=(gate|advise) verdict=(ok|stale|unreachable) pins=[1-9][0-9]* blocking=0 exit=0$' "$RUNNER_TEMP/pins.log"; then
+            echo "::error::pins-gate exited 0 without printing a passing verdict line over at least one pin. A green here would have been a claim about nothing."
+            exit 1
+          fi

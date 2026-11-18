@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/civitai/cli/internal/redact"
 )
 
 // The two orchestrator workflow-collection procedures.
@@ -218,7 +220,9 @@ func (c *Client) QueryWorkflows(ctx context.Context, opts ListOptions) (*Workflo
 	}
 	var out WorkflowPage
 	if err := json.Unmarshal(payload, &out); err != nil {
-		return nil, nil, fmt.Errorf("unexpected orchestrator.queryGeneratedImages payload: %s", string(payload))
+		// A workflow's outputs carry blob URLs, which can be signed read
+		// URLs: report the payload's size, never the payload.
+		return nil, nil, redact.CredentialBodyError("unexpected orchestrator.queryGeneratedImages payload", payload, err)
 	}
 	return &out, payload, nil
 }

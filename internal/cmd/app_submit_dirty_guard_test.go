@@ -1014,8 +1014,10 @@ func TestDirtyGuardNoRepoAtAllProceedsSilently(t *testing.T) {
 // what the guard checks, and it is the state most likely to produce an
 // untraceable release. But it is not "repo, dirty" either: every path is
 // refused, including the manifest, which surprises anyone who reads the matrix.
-// So it is DOCUMENTED (README Troubleshooting) and pinned here, and the scaffold
-// path is unaffected because `civitai app scaffold` runs no `git init`.
+// So it is DOCUMENTED (the published troubleshooting index at
+// developer.civitai.com/site/guide/cli-troubleshooting — no longer a README
+// section) and pinned here, and the scaffold path is unaffected because
+// `civitai app scaffold` runs no `git init`.
 func TestDirtyGuardRefusesAFreshRepoWithNoCommits(t *testing.T) {
 	f := newGitFixture(t) // init only — never committed
 	writeManifestVersion(t, f.root, dirtySlug, "0.6.1")

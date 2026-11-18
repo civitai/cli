@@ -296,6 +296,7 @@ func newAppSubmitCmd() *cobra.Command {
 	var allowDowngrade bool
 	var allowDirty bool
 	var allowOversize bool
+	var allowIncompleteListing bool
 
 	cmd := &cobra.Command{
 		Use:   "submit [dir]",
@@ -309,6 +310,10 @@ prebuilt dist. The platform rebuilds from source.
 Excluded DIRECTORIES, by name, at any depth:
   ` + wrapCommaList(pkgzip.ExcludedNames(), 6) + `
 ...and by pattern: ` + pkgzip.DirectoryPatternSummary() + `
+
+Excluded DIRECTORIES, by name, at the PROJECT ROOT only:
+  ` + wrapCommaList(pkgzip.RootExcludedNames(), 6) + `
+...a directory of that name deeper in the tree (src/x/scratch/) IS packaged.
 
 Excluded FILES, by base name:
   ` + wrapCommaList(pkgzip.ExcludedFilePatterns(), 6) + `
@@ -368,6 +373,42 @@ Build provenance:
   all rather than a guess — and --allow-dirty still stamps, marking the
   submission dirty, because that is the case worth being able to look up.
 
+Listing-completeness gate:
+  A submit that would really upload also checks the app's STORE LISTING and
+  REFUSES while it is missing something you can fix now: a missing icon or
+  cover, and — on an off-site listing, whose copy you own — an empty tagline or
+  description. Each refusal names the command that fixes it. --yes does NOT
+  waive this; --allow-incomplete-listing does, for submitting on purpose before
+  the listing is finished.
+
+  It is deliberately narrower than ` + "`civitai app doctor`" + `. No screenshots, an
+  empty category, a still-scanning asset and a BLOCKED asset are reported and
+  NOT refused — a blocked screenshot's remedy ends at a moderator approval, and
+  a category on an on-site app is a moderator's to set, so refusing either would
+  block your submit on somebody else's queue. An on-site app's tagline and
+  description come from block.manifest.json and are re-read when a version is
+  approved, so a tagline already in your manifest is reported as fixed rather
+  than refused.
+
+  Your FIRST submit is what creates the store listing, so there is nothing to
+  check yet and nothing is refused; the gate applies from the second one on.
+
+GitHub Actions:
+  When CIVITAI_GITHUB_OIDC_TOKEN is set (the civitai/app-submit-action Action
+  sets it on a tag push), the token is sent with the submit. The server checks
+  it with GitHub and records the workflow run's repository, tag and commit
+  with the submission; a token that fails that check refuses the submit, and
+  the error says why. It is read from the environment only (there is no flag,
+  so it never appears on the command line) and is never printed.
+
+Storage migration notes:
+  An app that declares App Storage collections is checked by the SERVER
+  against the previous approved version. An accepted submit prints the
+  server's migration notes under the success line — for example a
+  storage.collections.<name>.migrations op that covers nothing and so will
+  never run. They never block the submit. (A breaking change no migration
+  covers refuses the submit, and the server's error lists each one.)
+
 Defaults to the current directory.`,
 		Example: `  civitai app submit                    # validate + package + confirm + submit
   civitai app submit --yes              # skip the confirmation prompt (scripts/CI)
@@ -375,6 +416,7 @@ Defaults to the current directory.`,
   civitai app submit --allow-downgrade  # deliberate rollback below the approved version
   civitai app submit --allow-dirty      # submit uncommitted working-tree changes on purpose
   civitai app submit --allow-oversize   # submit past the vendored body-size ceiling
+  civitai app submit --allow-incomplete-listing  # submit before the store listing is finished
   civitai app submit -o my-block.zip ./my-block`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -492,6 +534,15 @@ Defaults to the current directory.`,
 				if err != nil {
 					return err
 				}
+				// 2a'. GITHUB ACTIONS OIDC TOKEN, when the environment carries one
+				// (the civitai/app-submit-action Action sets it on a tag push). The
+				// server verifies it and records the run's repository, tag and
+				// commit; see githubOIDCTokenFromEnv. Only on the upload path: the
+				// paths that send nothing carry nothing.
+				if tok := githubOIDCTokenFromEnv(); tok != "" {
+					prov.GitHubOIDCToken = tok
+					fmt.Fprintf(cmd.ErrOrStderr(), "Sending the GitHub Actions OIDC token from %s with this submit.\n", GitHubOIDCTokenEnv)
+				}
 
 				if err := confirmSubmit(cmd, m, cfg.BaseURL(), assumeYes); err != nil {
 					return err
@@ -521,6 +572,36 @@ Defaults to the current directory.`,
 					ctx = context.Background()
 				}
 				if err := checkVersionNotRegression(ctx, client.ListSubmissions, cmd.ErrOrStderr(), m.BlockID, m.Version, allowDowngrade); err != nil {
+					return err
+				}
+
+				// 2c. LISTING-COMPLETENESS GATE (civitai/cli#762), after the version
+				// guard and before any packaging.
+				//
+				// 🔴 AFTER confirmSubmit, FOR THE SAME REASON THE VERSION GUARD
+				// IS: it reads the API, and
+				// TestAppSubmit_NonTTYRefusesWithoutYes_NoNetworkCall pins a bare
+				// non-TTY `civitai app submit` as touching no network. Moving it
+				// above the prompt would acquire a network dependency for the
+				// accidental-footgun invocation.
+				//
+				// 🔴 AFTER THE VERSION GUARD, NOT BEFORE. Both are one network
+				// read, so the order is about which answer is worth having first:
+				// a version regression means this bundle must not be submitted AT
+				// ALL under this version, which is true whatever the listing
+				// looks like. Reporting incomplete listing work first would send
+				// the author off to spend an afternoon on artwork for a submit
+				// that is going to be refused anyway.
+				//
+				// It runs only on the canUpload path, like both guards above:
+				// --package-only and the no-token fallback never reach the
+				// server, so neither can carry an incomplete listing forward.
+				//
+				// 🔴 THE WARNINGS GO TO STDERR, THE REFUSAL IS THE RETURN. Same
+				// split as the version guard — stdout stays the submit's own
+				// report.
+				if err := checkListingComplete(ctx, client.ListMyListings, cmd.ErrOrStderr(),
+					m.BlockID, m.Tagline, cfg.BaseURL(), allowIncompleteListing); err != nil {
 					return err
 				}
 			}
@@ -599,20 +680,41 @@ Defaults to the current directory.`,
 	cmd.Flags().BoolVar(&allowDowngrade, "allow-downgrade", false, "submit even when the version is not above the highest approved one (deliberate rollback)")
 	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "submit even when the packaged directory has uncommitted git changes")
 	cmd.Flags().BoolVar(&allowOversize, "allow-oversize", false, "submit even when the body exceeds the size the server is expected to accept")
+	// 🔴 NOT COVERED BY --yes, AND THE USAGE STRING SAYS SO. --yes is the flag a
+	// script or an agent already passes, so an author reading only the flag list
+	// has to be told here that it is not the waiver — otherwise the first attempt
+	// to get past this gate is a retry that cannot work.
+	cmd.Flags().BoolVar(&allowIncompleteListing, "allow-incomplete-listing", false,
+		"submit even when the app's store listing is missing media or copy (--yes does NOT waive that gate)")
 	return cmd
 }
+
+// firstReviewChecklistURL is the docs-site checklist of review feedback that
+// recurred on agent-built apps (civitai-app-starters#573). It is the ONE spelling:
+// the managed AGENTS.md block reaches it through the `firstReviewURL` template
+// func, and the confirmation step below prints it.
+const firstReviewChecklistURL = "https://developer.civitai.com/apps/guide/first-review.md"
+
+// firstReviewPointer is the one advisory line confirmSubmit prints. It is a
+// pointer, never a gate: it changes no exit code and asks nothing.
+const firstReviewPointer = "Before you submit: run the first-review checklist — " + firstReviewChecklistURL
 
 // confirmSubmit gates the actual moderator-review submission behind an explicit
 // confirmation, so a bare `civitai app submit` never fires an outward-facing,
 // hard-to-reverse publish request by accident.
 //
-//   - --yes/-y  → proceed without prompting.
+//   - --yes/-y  → proceed without prompting (the first-review pointer goes to
+//     stderr, so stdout is unchanged).
 //   - non-TTY stdin (pipe/CI) without --yes → REFUSE (clear error, non-zero
 //     exit) rather than hang waiting on input or submit silently.
 //   - interactive TTY → print what will happen, prompt "Submit for review?
 //     [y/N]", and proceed only on an explicit yes.
 func confirmSubmit(cmd *cobra.Command, m *manifest.Manifest, baseURL string, assumeYes bool) error {
 	if assumeYes {
+		// --yes is how scripts and agents submit, so the checklist pointer is
+		// printed here too — on STDERR, beside this command's other advisories,
+		// so stdout stays what a script captured before. It never gates.
+		fmt.Fprintln(cmd.ErrOrStderr(), firstReviewPointer)
 		return nil
 	}
 	if !stdinIsTTY() {
@@ -624,6 +726,7 @@ func confirmSubmit(cmd *cobra.Command, m *manifest.Manifest, baseURL string, ass
 	fmt.Fprintf(out, "About to submit %s@%s for moderator review at %s.\n", m.BlockID, m.Version, base)
 	fmt.Fprintln(out, "This creates a real pending moderator-review request — reversible only via `civitai app withdraw`.")
 	fmt.Fprintln(out, "(Use --package-only to just write the .zip without submitting.)")
+	fmt.Fprintln(out, firstReviewPointer)
 	fmt.Fprint(out, "Submit for review? [y/N]: ")
 
 	r := bufio.NewReader(cmd.InOrStdin())
@@ -710,22 +813,71 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 		case !errors.Is(err, civitai.ErrUnauthorized) && !errors.Is(err, civitai.ErrRateLimited):
 			printSubmitSizeDiagnosis(cmd.ErrOrStderr(), zipBytes, prov)
 		}
+		// The platform refused a bundle the caller could not have known to fix
+		// (feedback_hint.go): one line on stderr, after the diagnosis, with
+		// the error returned unchanged.
+		if submitRefusalIsPlatformFriction(err) {
+			printFeedbackHint(cmd.ErrOrStderr(), feedbackHintSubmitRefused)
+		}
 		return err
 	}
 	base := strings.TrimRight(baseURL, "/")
 	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Submitted — %s is pending moderator review.", r.PublishRequestID)))
+	printActionsRunSourceRecorded(out, r.ActionsRunSourceRecorded)
+	printSubmitListingReadiness(out, r.Listing)
+	printStorageMigrationWarnings(out, r.StorageMigrationWarnings)
 	fmt.Fprintf(out, "\nWhat's next: a moderator reviews it; on approval it builds + deploys to %s (usually a few minutes).\n", ui.URL(fmt.Sprintf("https://%s.civit.ai", r.Slug)))
 	fmt.Fprintln(out, "\nTrack it:")
 	fmt.Fprintf(out, "  %s                          # review + deploy status\n", ui.Code("civitai app status"))
 	fmt.Fprintf(out, "  %s/apps/my-submissions               # your submissions\n", base)
-	printListingFloorHeadsUp(out)
+	// The server's readiness block above already says what the listing lacks;
+	// the fixed reminder is only for a server that sends no `listing`.
+	if r.Listing == nil {
+		printListingFloorHeadsUp(out)
+	}
 	printMoneyPathNote(out, m)
 	return nil
+}
+
+// GitHubOIDCTokenEnv names the environment variable `app submit` reads a GitHub
+// Actions OIDC token from.
+const GitHubOIDCTokenEnv = "CIVITAI_GITHUB_OIDC_TOKEN"
+
+// githubOIDCTokenFromEnv returns the GitHub Actions OIDC token to send with a
+// submit, or "" when there is none.
+//
+// 🔴 ENVIRONMENT ONLY, NO FLAG. A flag value sits on argv, where any process on
+// the runner can read it and where shells and CI logs echo it. The token is a
+// short-lived credential, so it is read here and goes into the request body and
+// nowhere else; nothing prints it.
+//
+// The CLI does not request, parse or check the token: the server verifies it
+// (signature, audience, expiry, one use, a tag push whose tag is the manifest
+// version) and refuses the submit when it fails. A server whose
+// `app-blocks-oidc-verified-submit` flag is off ignores it.
+func githubOIDCTokenFromEnv() string {
+	return strings.TrimSpace(os.Getenv(GitHubOIDCTokenEnv))
+}
+
+// printActionsRunSourceRecorded reports what the server did with a GitHub
+// Actions OIDC token. nil (no token sent, the server's flag off, or an older
+// server) prints nothing.
+func printActionsRunSourceRecorded(out io.Writer, recorded *bool) {
+	if recorded == nil {
+		return
+	}
+	if *recorded {
+		fmt.Fprintln(out, "GitHub Actions run verified and recorded with this submission.")
+		return
+	}
+	fmt.Fprintln(out, "GitHub Actions run verified, but the server could not record it with this submission.")
 }
 
 // printListingFloorHeadsUp is a non-fatal reminder (issue #186 point 4) that a
 // store listing won't publish without an icon + cover, with the exact commands
 // to add them. Kept static (no server call) so it works even pre-first-listing.
+// Printed only when the submit response has no `listing` (an older server);
+// otherwise printSubmitListingReadiness reports the same thing from the server.
 // This submit MINTED the store listing as a draft, so the media is settable NOW —
 // no need to wait for approval.
 //
@@ -745,6 +897,49 @@ func printListingFloorHeadsUp(out io.Writer) {
 	fmt.Fprintf(out, "  %s\n", ui.Code("civitai app listing set-icon <file>"))
 	fmt.Fprintf(out, "  %s\n", ui.Code("civitai app listing set-cover <file>"))
 	fmt.Fprintf(out, "  %s   # what's attached vs. required\n", ui.Code("civitai app listing status"))
+}
+
+// printSubmitListingReadiness prints the store listing's readiness the server
+// returned with the submit (civitai/civitai#7311), directly under the success
+// line so it is not lost below the generic follow-up text.
+//
+//   - approvalBlocked with a next step: a WARNING line — a moderator cannot
+//     approve this submission until the author acts, and the submit having
+//     succeeded is exactly when that is easy to miss.
+//   - a next step without approvalBlocked (e.g. no listing row yet): a plain note.
+//   - problems: one `code  label [severity]` line each, in the server's order.
+//
+// nil (an older server, or `listing: null` when the server could not read it)
+// prints nothing, so the output is what it was before the field existed. Every
+// string here is SERVER text, so each goes through safeTermSingle: escape bytes
+// stripped and newlines flattened, so none can forge a line of its own.
+func printSubmitListingReadiness(out io.Writer, l *appapi.SubmitListingReadiness) {
+	if l == nil {
+		return
+	}
+	st := ui.For(out)
+	next := strings.TrimSpace(safeTermSingle(l.NextStep))
+	switch {
+	case l.ApprovalBlocked && next != "":
+		fmt.Fprintln(out, st.Warn("Approval blocked: "+next))
+	case l.ApprovalBlocked:
+		// The server sets nextStep whenever it blocks; this arm only keeps a
+		// blocked verdict from printing nothing if that ever changes.
+		fmt.Fprintln(out, st.Warn("Approval blocked: a moderator cannot approve this until the store listing has an icon and a cover."))
+	case next != "":
+		fmt.Fprintln(out, "Listing: "+next)
+	}
+	if len(l.Problems) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "Listing problems reported by the server:")
+	for _, p := range l.Problems {
+		line := "  " + safeTermSingle(p.Code) + "  " + safeTermSingle(p.Label)
+		if sev := safeTermSingle(p.Severity); sev != "" {
+			line += " [" + sev + "]"
+		}
+		fmt.Fprintln(out, line)
+	}
 }
 
 // manifestNeedsSpend reports whether the manifest declares a Buzz-spend scope

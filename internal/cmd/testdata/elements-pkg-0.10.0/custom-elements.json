@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "1.0.0",
+  "modules": [
+    {"kind": "javascript-module", "path": "src/elements/civitai-button.ts", "declarations": [
+      {
+        "kind": "class",
+        "name": "CivitaiButton",
+        "tagName": "civitai-button",
+        "superclass": {"name": "CivitaiElement", "module": "/src/elements/base.js"},
+        "customElement": true,
+        "attributes": [
+          {"name": "variant", "type": {"text": "ButtonVariant"}, "default": "'filled'", "description": "Visual style.", "fieldName": "variant"},
+          {"name": "color", "type": {"text": "Intent | ''"}, "default": "''", "description": "Recolours every variant; absent keeps the primary accent.", "fieldName": "color"},
+          {"name": "href", "type": {"text": "string"}, "default": "''", "description": "Renders an anchor instead. Navigation is a link, whatever it looks like.", "fieldName": "href"},
+          {"name": "size", "type": {"text": "ButtonSize"}, "default": "'md'", "description": "Size preset.", "fieldName": "size"},
+          {"name": "loading", "type": {"text": "boolean"}, "default": "false", "description": "Shows a spinner and, like the React binding, disables the control.", "fieldName": "loading"},
+          {"name": "disabled", "type": {"text": "boolean"}, "default": "false", "fieldName": "disabled"},
+          {"name": "full-width", "type": {"text": "boolean"}, "default": "false", "fieldName": "fullWidth"},
+          {"name": "type", "type": {"text": "'button' | 'submit' | 'reset'"}, "default": "'button'", "description": "Matches the native attribute, including its `submit`/`reset` behaviour.", "fieldName": "type"}
+        ],
+        "members": [
+          {"kind": "field", "name": "form", "type": {"text": "HTMLFormElement | null"}, "description": "The form this button would submit, exactly as a native button reports it."}
+        ],
+        "slots": [
+          {"name": ""},
+          {"name": "left"},
+          {"name": "right"}
+        ],
+        "cssParts": [
+          {"name": "button"}
+        ]
+      }
+    ]},
+    {"kind": "javascript-module", "path": "src/elements/civitai-text-input.ts", "declarations": [
+      {
+        "kind": "class",
+        "name": "CivitaiTextInput",
+        "tagName": "civitai-text-input",
+        "superclass": {"name": "CivitaiField", "module": "/src/elements/field-base.js"},
+        "customElement": true,
+        "attributes": [
+          {"name": "placeholder", "type": {"text": "string"}, "default": "''", "fieldName": "placeholder"},
+          {"name": "type", "type": {"text": "string"}, "default": "'text'", "fieldName": "type"},
+          {"name": "readonly", "type": {"text": "boolean"}, "default": "false", "fieldName": "readOnly"},
+          {"name": "maxlength", "type": {"text": "number"}, "default": "0", "description": "0 means unbounded, matching an absent native `maxlength`.", "fieldName": "maxLength"},
+          {"name": "autocomplete", "type": {"text": "string"}, "default": "''", "fieldName": "autocomplete"}
+        ]
+      }
+    ]}
+  ]
+}

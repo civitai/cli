@@ -108,10 +108,13 @@ func TestAppInitScaffoldsAndValidates(t *testing.T) {
 	if !strings.Contains(out, "Created App") {
 		t.Errorf("unexpected init output: %s", out)
 	}
-	// Manifest must exist and validate clean.
+	// Manifest must exist and validate clean — after the install step the
+	// default (npm) template's next steps name first, which writes the lockfile
+	// `validate` requires.
 	if _, err := os.Stat(filepath.Join(tmp, "my-block", "block.manifest.json")); err != nil {
 		t.Fatalf("scaffolded manifest missing: %v", err)
 	}
+	simulateInstall(t, filepath.Join(tmp, "my-block"))
 	if _, _, err := run(t, "app", "validate", filepath.Join(tmp, "my-block")); err != nil {
 		t.Errorf("scaffolded project should validate: %v", err)
 	}
@@ -265,21 +268,6 @@ func TestAppInitRequiresName(t *testing.T) {
 	chdir(t, tmp)
 	if _, _, err := run(t, "app", "init"); err == nil {
 		t.Fatal("expected error when no name is given")
-	}
-}
-
-// TestAppInitFromIsNotWired pins the `--from` refusal for `app init`; the
-// message contract itself (no internal TODO, an actionable next command) is
-// asserted for BOTH commands in TestScaffoldFromErrorShipsNoEngineeringNote.
-func TestAppInitFromIsNotWired(t *testing.T) {
-	tmp := t.TempDir()
-	chdir(t, tmp)
-	_, _, err := run(t, "app", "init", "forked", "--from", "some-slug")
-	if err == nil {
-		t.Fatal("expected --from to be reported as not wired")
-	}
-	if !strings.Contains(err.Error(), "--from is not available yet") {
-		t.Errorf("error should say --from is not available yet: %v", err)
 	}
 }
 

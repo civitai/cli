@@ -1,0 +1,1 @@
+Build a Civitai App Block that converts Celsius to Fahrenheit: a number input with data-testid="celsius", a button labelled Convert, and an element with data-testid="fahrenheit" that after the click shows the converted number and nothing else.

@@ -10,9 +10,12 @@ zsh and curl — nothing else. **Blindness is a mount namespace, not an
 instruction:** this repo, its `AGENTS.md` and the operator's home directory are
 not reachable from inside, so an agent cannot read the source even by accident.
 
-No Civitai credential is involved at any point, so no trial can spend Buzz or
-touch a real account. The only credential is the operator's OpenRouter key, read
-from `OPENROUTER_API_KEY` and never written anywhere.
+By default no Civitai credential is involved at any point, so no trial can spend
+Buzz or touch a real account. The only credential is then the operator's
+OpenRouter key, read from `OPENROUTER_API_KEY` and never written anywhere.
+`--credential-file` opts one trial into a **credentialed run** — see
+[Credentialed trials](#credentialed-trials-and-the-run-caps) for what that
+changes, what it bounds, and what it does not.
 
 ### 🔴 What is isolated, and what is NOT
 
@@ -22,10 +25,10 @@ model an unsandboxed root shell in half of these images.
 | | bounded? | by what |
 |---|---|---|
 | filesystem — repo, `$HOME`, credentials | **yes** | mount namespace; the container has none of them |
-| Civitai account / Buzz | **yes** | no Civitai credential exists in a trial |
+| Civitai account / Buzz | **yes, unless `--credential-file`** | no Civitai credential exists in a default trial; with one, see the caps below |
 | processes | yes | `--pids-limit 512` |
 | memory / CPU | yes | `--memory 2g --cpus 2` |
-| money | yes | `--max-cost` (default $1/trial) — a step cap is not a spend cap |
+| money | yes | `--max-cost` (default $1/trial) — a step cap is not a spend cap, and a turn the provider does not price ends the trial (`unpriced-turn`) rather than counting as $0 |
 | **network** | **NO** | egress is open and must be: the trial has to fetch `prompt.md` and reach npm |
 | **disk** | **NO** | see below |
 
@@ -60,7 +63,680 @@ bash grade.sh t-claude-noderoot-claudeid root   # grade one finished trial
 DOGFOOD_MODELS='google/gemini-3.8-flash|gemini' DOGFOOD_ENVS='df-node-root|noderoot|root' bash driver.sh
 ```
 
-Trial ids are `t-<model>-<env>-<identity>`. The three identities are `claudeid`
+## Two kinds of trial: setup, and app-build
+
+By default a trial's whole task is the hosted URL — *can an agent reach a
+working setup?* Give it a **brief** and the task becomes the URL plus one
+operator-typed line, and the question becomes *can an agent BUILD something?*
+
+```bash
+# preview the exact task. Starts no container, calls no API, spends nothing.
+python3 runner.py --print-task --brief "$(cat briefs/celsius.brief.txt)"
+
+# one app-build trial
+python3 runner.py --model "$MODEL" --image df-node-root --trial ab-01 \
+  --brief "$(cat briefs/celsius.brief.txt)" --brief-name celsius
+
+# the whole matrix as app-build trials, in their own trial-id namespace
+DOGFOOD_BRIEF_NAME=celsius DOGFOOD_TRIAL_PREFIX=ta bash driver.sh
+```
+
+- **With no brief the task is BYTE-IDENTICAL to what it has always been** — not
+  "equivalent". An app-build trial is a setup trial plus one appended
+  paragraph, so every setup grid already measured stays comparable.
+  `--print-task` exists so that can be diffed rather than asserted.
+- **The brief is appended raw**, with no framing sentence of the harness's own.
+  Framing would be Civitai knowledge injected by the rig, and the trial's
+  premise is that the only such knowledge is the URL and what the operator
+  typed. Blindness is a mount namespace; this keeps the message channel honest
+  about the same thing.
+- **One line, enforced.** Both `runner.py --brief` and `DOGFOOD_BRIEF` refuse a
+  value containing a newline: a multi-line brief is nearly always a file that
+  got splatted onto the command line, which is the one route by which repo
+  content could reach a blind trial.
+- **`brief` is written into the transcript's `start` record, always** — empty
+  string included. A graded cell has to be traceable to the brief it was run
+  with, and the trial id cannot carry that (same reason `grade.sh` reads the
+  agent identity out of the container rather than out of the filename).
+- 🔴 **`brief_name` rides alongside it, on the same contract, because the PROSE
+  IS NOT AN IDENTIFIER.** The render oracle has to map a graded cell back to
+  `briefs/<name>.assert.mjs`, and from prose alone the only route is an exact
+  match against `briefs/*.brief.txt` — which stops resolving every already-run
+  trial the moment a brief file is reworded, and cannot resolve an ad-hoc brief
+  at all. `--brief-name` / `DOGFOOD_BRIEF_NAME` records it, and `driver.sh` also
+  derives it when you paste a committed brief's text, so the two cannot
+  disagree. `runner.py` refuses a name with no assertion behind it, or one whose
+  committed text is not the text being sent, **before** a container or an API
+  call exists — a mislabelled name is recorded as a fact and then believed by
+  every later grade. An ad-hoc brief still runs and simply records no name.
+- 🔴 **`driver.sh` REFUSES to run a brief under the default `t-` prefix.** Trial
+  ids are `<prefix>-<model>-<env>-<identity>` and the resume guard skips any id
+  whose transcript already has an `end` record — so an app matrix in the setup
+  matrix's namespace would skip every cell, each "complete" from a *different
+  task*, while printing `MATRIX COMPLETE`. Set `DOGFOOD_TRIAL_PREFIX`.
+
+## Credentialed trials, and the run caps
+
+A default trial has no Civitai credential, so `civitai generate` — the CLI's only
+irreversibly money-spending surface — and every `app` command that reaches the
+account are **structurally unreachable**. `--credential-file` opts one trial into
+reaching them.
+
+```bash
+python3 runner.py --model "$MODEL" --image df-node-root --trial c-01 \
+  --brief "$(cat briefs/genpost.brief.txt)" --brief-name genpost \
+  --credential-file ~/.config/civitai/config.yaml \
+  --app-prefix dogfood4- --max-generations 3 --max-submissions 1
+
+# the whole matrix, credentialed (driver.sh refuses without DOGFOOD_APP_PREFIX)
+DOGFOOD_CREDENTIAL_FILE=~/.config/civitai/config.yaml \
+DOGFOOD_APP_PREFIX=dogfood4- DOGFOOD_MAX_GENERATIONS=3 DOGFOOD_MAX_SUBMISSIONS=1 \
+DOGFOOD_BRIEF_NAME=genpost DOGFOOD_TRIAL_PREFIX=tc bash driver.sh
+```
+
+### 🔴 The secret does not reach the artifacts
+
+The flag takes a **path**, never a value, and the file is `docker cp`'d in and
+installed by a fixed script. That keeps the credential off the three surfaces a
+run leaves behind:
+
+| surface | what keeps it off |
+|---|---|
+| **process argv** (`ps`) | only the path is ever an argument. `docker run -e CIVITAI_TOKEN=…` would put the value in argv for every process on the host; `TestDogfoodCredentialIsInjectedByPathNotByValue` fails if anyone reintroduces it |
+| **`transcript.jsonl` / `commands.log` / stdout** | every value written goes through a redactor keyed on the credential's own strings, so even a trial in which the model `cat`s the config file records `[REDACTED:<sha8>]` |
+| **the container's shell history** | `docker exec … bash -lc` is non-interactive, so bash writes no history file — and nothing in the install path holds the value anyway |
+
+What is recorded is `credentialed: true` plus `credential_sha256`, a 12-hex
+prefix of the file's digest: not reversible, not a substring, and enough to tell
+two runs apart.
+
+⚠ **What this does NOT do.** The credential is a real file inside the container
+and the model runs shell as a user who can read it — it must, or the CLI cannot
+authenticate. The guarantee is about what leaves the container and lands in the
+artifacts you keep, not about hiding the credential from the trial.
+
+**Prove it rather than trusting this table:**
+`go test . -run 'TestDogfoodCredential|TestDogfoodLogin' -v`. `TestDogfoodCredentialNeverLeaks`
+plants a canary, runs a trial that `cat`s the config, greps all three surfaces
+for zero hits — and runs the same grep over the un-redacted file first, because a
+grep that finds nothing because its PATTERN is wrong is indistinguishable from
+one that finds nothing because there is nothing there.
+
+### 🔴 The install is VERIFIED, not reported
+
+`credential_install` in the `start` record is a statement about a **read**:
+`read back as <user> from <path>: present, readable, and byte-identical to the
+file that was copied in`. After `docker cp` + the installer, runner.py runs the
+file back out **as the trial's own user** — not as root, because root can read a
+file the trial cannot — and compares its digest to the bytes that were copied in.
+Either check failing **raises**, so the trial dies before its first provider call
+with `stop: "credential install failed: …"` and the `credential_install` key is
+absent entirely rather than carrying a sentence.
+
+It used to return the installer's own stdout — `installed
+/root/.config/civitai/config.yaml` — which was the installer's **claim about a
+write**, so `jq .credential_install` returned a sentence whether or not the trial
+could read the file. The install path is where a capability confound enters
+unseen: a credential the trial cannot read grades as an ordinary "not
+authenticated" failure.
+
+🔴 **What it does NOT check is that the credential WORKS, and that is the gap the
+incident behind it actually sits in.** Trial `at2-mimo-noderoot-claudeid`
+(2026-09-27) died at `rc=124` with `generations: 0` after spending 18 of its 23
+minutes on `civitai login`. The first reading — that its installed credential was
+absent — is **refuted by its own transcript**: step 60's
+`cat ~/.config/civitai/config.yaml` exited **0** and printed the file (redacted).
+What failed was **validity** — steps 55 and 62 both returned `device login
+failed: Invalid grant: refresh token is invalid (invalid_grant)`. The container's
+`~/.config/civitai` is empty *today* because the trial's own `rm -f` at step 68
+removed the file; the directory's mtime (22:04) matches that step, not the
+install, and both directories are mode 0777, which the installer never sets.
+**So this read-back would have PASSED on that run.** An EXPIRED credential is
+still detected by nothing in this harness — declared gap, not a solved one. The
+thing that would have saved that run is the login gate below.
+
+⚠ One more place the value exists, and it is in the runner process: the read-back
+`cat`s the file back, so the bytes are in memory for as long as it takes to
+digest them. They are never written, logged, raised or returned — what leaves
+that function is a sentence naming the path and the user, and the mismatch error
+carries two byte COUNTS and nothing else.
+
+### The caps — what is mechanical and what is not
+
+| cap | flag | mechanical? |
+|---|---|---|
+| app-name prefix on anything the trial creates or mutates | `--app-prefix` | **yes** — a mismatched `app init` / `create` / `submit` / `listing` is refused and never executed. It reads the positional app-name argument plus the value of any flag `GATED_FLAGS` (runner.py) marks slug-bearing — `--slug`, `--name`, `--dir` — in both the `--slug x` and `--slug=x` spelling. With no slug on the command line it reads every `block.manifest.json` under `/work` and requires all of them to carry the prefix. **Other flags' values are not app names:** `--template static` used to be refused as if `static` were a slug, and the agent that believed it measured the wrong scaffold |
+| generation cap | `--max-generations N` | **yes** — the N+1th `civitai generate` is refused before the `docker exec` |
+| submission cap | `--max-submissions N` | **yes** — same, for `civitai app submit`, and it counts SUBMISSIONS rather than attempts. Each attempt is charged before it runs and **refunded** when its own result proves nothing was contacted: it exited non-zero *and* carried the CLI's pre-flight refusal for lack of `--yes`. `--package-only` contacts nothing by construction and is never charged. 🔴 **The refund direction is deliberate and it is the fail-CLOSED one.** Deciding up front — "only charge a submit carrying `--yes`" — makes the harness depend on the CLI continuing to refuse, so the day that stops it silently under-counts and permits unlimited real submissions; a refund that stops firing merely over-refuses. Both facts live in Go and are pinned by the seam guards in `dogfood_submission_cap_seam_test.go`, which run the real CLI against a recording server. Measured defect: trial `ab-ship-mimo-01` charged a refused submit, then blocked the `--yes` retry the model reached for on its very next step, and graded `SHIP=no` for an app that was never submitted |
+| `app withdraw` | `--allow-withdraw` to permit | **yes** — refused by default. It permanently destroys a listing's captioned screenshots and names a publication-request id no prefix check can resolve to an app. **Not threaded through `driver.sh`** — a matrix run cannot reach it at all |
+| `app listing set-text` | `--allow-listing-text` to permit | **yes** — refused by default. It rewrites the listing's public tagline/description/category **in place on every listing status** — not a "material" change, so no revision and no moderator review — and this CLI has no command that restores the previous value. **`driver.sh` threads it, OFF by default**, behind `DOGFOOD_ALLOW_LISTING_TEXT=1`: only the literal `1` arms it (`0`/`false`/`no` are a hard refusal rather than a silent off, because guessing either way is wrong for a write with no undo), and arming it under a credential prints a banner before the first cell. Why it exists: without it the matrix could not reach the command that sets a listing DESCRIPTION, so a trial leaving `empty-description` behind was measuring the harness rather than the product — which is the blind spot `civitai app submit`'s listing-completeness gate was added for |
+| `civitai login` | none — **always refused, credential or not** | **yes** — refused before the `docker exec`, in *every* trial. Neither login path can complete here: the browser device flow needs a human to approve the request, and `--token <key>` needs a personal API key minted in the web UI. See below |
+| command log | always on | **yes** — `runs/<trial>/commands.log`, one line per command with its verdict and the counters |
+
+🔴 **They classify COMMAND TEXT, and that is the boundary.** A model that writes
+a command into a file and runs the file, or builds it at runtime out of pieces
+the classifier does not see, is not stopped. The fail-closed rule narrows this —
+a segment naming the CLI *and* a spending or publishing verb, with no invocation
+the harness can parse (`eval "civitai app submit"`), is refused —
+and it does not close it. **A HERE-DOCUMENT BODY IS NOT COMMAND TEXT** and is
+stripped before any of this runs (`strip_heredoc_bodies`): it is stdin for the
+opener's command, the shell never executes it, and classifying it refused an
+agent's own `block.manifest.json` for quoting "Civitai" next to the word
+"generated". ⚠ Inline redirect content that is an *argument* (`echo '…' > f`) IS
+still classified, because to a shell it genuinely is command text. ⚠ And
+`c=civitai; $c app submit` is **not** refused, at this ref or before it: segment 1
+names the CLI with no verb, segment 2 names a verb with no "civitai", so neither
+trips the rule. The threat model is the one
+`claudedocs/handoff-dogfood-3.md` settled on: a **cooperative** agent. These stop
+the ordinary accident, not an adversary. The bound people want for an adversary
+needs a second uid, a container with no credential in it, or a platform-capped
+token; a better classifier is not that.
+
+🔴 **`--slug=NAME` used to walk straight past the prefix cap, and `--slug NAME`
+did not.** The classifier dropped every token starting with `-`, so the attached
+form of a flag offered no slug candidate at all; `_prefix_ok` then fell through
+to its "read every `block.manifest.json` under `/work`" branch, which PASSES —
+the workspace manifests were all created by the trial and all carry the prefix,
+while `--slug` pointed at a real listing on the account. cobra treats the two
+spellings as identical and this did not. It defeated the cap for **every** gated
+verb (`app init`, `app create`, `app submit`, the whole `app listing` group), not
+only the one it was found on. An `--opt=value` token now contributes its VALUE;
+`TestDogfoodAttachedSlugFlagDoesNotBypassThePrefixCap` is red at `4d4a45e` on
+seven commands and green here, with
+`TestDogfoodAttachedSlugOnTheTrialsOwnAppStillRuns` as the over-refusal control.
+
+🔴 **`civitai app listing status` is NOT a read, and the comment in `runner.py`
+used to say it was.** On a LIVE listing it calls `getMyListingForEdit`, which
+idempotently **opens a shadow revision draft** server-side — the CLI's own
+`--help` says so — and there is no `discard-revision` command anywhere in this
+CLI to close it. It happened to the operator's `panorama-360` listing on
+2026-09-25. It submits nothing and destroys nothing, so it stays inside the
+prefix gate rather than being promoted to a refused-by-default verb: refusing it
+would take away the trial's only way to observe its own listing, which changes
+what the harness measures, for a side effect that costs nothing irreversible.
+⚠ The old comment listed `status` among the ungated reads. That is true of
+`civitai app status` and false of `civitai app listing status` — `listing` is in
+`APP_MUTATING`, so the whole group including `status` goes through the prefix
+gate. A report written off that comment asserted the opposite of what the code
+does; `TestDogfoodAppStatusAndAppListingStatusAreGatedDifferently` pins the two
+behaviours so the next reader does not have to trust the prose.
+
+🔴 **`civitai login` is refused in every trial, and it is deliberately NOT a
+cap.** It has no flag, no counter and no arming condition, because both of its
+paths need a human and neither can complete in a container: the device flow needs
+someone to approve the request in a browser, and `--token <key>` needs a personal
+API key minted in the web UI. What it does instead is burn the wall clock —
+measured on `at2-mimo-noderoot-claudeid`, steps 56–74 were login attempts,
+several backed by five-minute `sleep` loops, and **four of them deleted the stored
+credential first** (`rm -f ~/.config/civitai/config.yaml && civitai login …`,
+steps 63/66/68/70), reaching for a login that cannot replace it. Refusing the
+whole tool call is what stops that `rm` too. **This is the fix that would have
+saved that run**, not the read-back above.
+
+🔴 **And the trial was not being stupid — read this before weakening the
+message.** Its credential was installed and readable; it was **expired**
+(`invalid_grant` at steps 55 and 62). A genuine auth failure with no way to tell
+that re-authenticating is impossible is exactly what produces 18 minutes of login
+attempts.
+
+So the refusal carries what the trial needs, and that differs by case: a
+credentialed trial is told a credential **is installed** and readable — the two
+things the harness actually verified, deliberately *not* that it is
+authenticated, which nothing here checks — where the file is, not to delete it,
+and **what to do if a command reports it is not authenticated anyway** (the
+credential is installed but not working, possibly expired; say so and carry on).
+An uncredentialed one is told no credential exists and to report that and carry
+on. ⚠ The difference does reveal that a credential exists —
+which leaks nothing `ls ~/.config/civitai` does not already answer (the guarantee
+above is about what leaves the container, explicitly not about hiding the
+credential from the trial), and withholding it is what cost the 18 minutes. The
+**task** is untouched and still byte-identical in both cases: a refusal is a tool
+result, not the task text.
+
+🔴 **The gate reads the segment through `bare_segment`, and two of the four real
+commands are invisible without it.** Steps 70 and 71 were
+`timeout 10 civitai login --no-browser` and `(civitai login --no-browser 2>&1) &`;
+`invocation()` tested `10` against "civitai" for the first and `(civitai` for the
+second, because a subshell's paren glues itself to the command word under shlex.
+A hand-written table of eight login spellings was entirely green while those two
+walked through — which is why
+`TestDogfoodTheMeasuredRunsLoginCommandsAreRefused` feeds the **literal bytes**
+out of the transcript, through `FAKE_TOOL_COMMANDS_JSON` (the newline-separated
+knob would turn one multi-line command into several turns and the classifier would
+never see the shape).
+
+🔴 **That normalisation is deliberately NOT inside `invocation()`, and the reason
+is measured.** One predicate in one place is the right instinct and it is wrong
+here: `invocation()` is the parser `Caps.judge` reads the **spend** caps through,
+and widening it moves these shapes out from under the fail-closed rule into the
+precise gates — which are token-fragile at that boundary.
+`(civitai app listing set-icon ./i.png --slug sensei)` then yields the candidate
+`sensei)`, which fails the slug shape test, so `_prefix_ok` finds no offender and
+**allows** a command aimed at a real listing on the account: refused before,
+allowed after. A refusal that fires for a blunt reason beats a gate that fails
+open, so the caps keep reading the raw segment and
+`TestDogfoodTheCapsStillReadTheRawSegment` fails if anyone consolidates it.
+
+⚠ Three stated limits. It reads COMMAND TEXT like every other classifier here, so
+`eval "civitai login"`, `$(civitai login)` and `c=civitai; $c login` are not
+caught. `login` is deliberately **not** added to `DANGEROUS_VERBS` — that rule's
+refusal says "a spending or publishing verb", and a message that misnames what it
+caught is the defect `_prefix_ok`'s remedy line was fixed for. And
+`civitai login --help` is refused along with the rest: the point is to end the
+whole line of attack in one reply rather than let the model read the flags and try
+the next spelling, which is the sequence the measured run actually walked.
+
+**The caps arm themselves when a credential is present**, so an operator does not
+have to remember three flags for the bound to exist. With no credential and no
+cap flag **no cap is judged** — the login gate above is the one refusal that
+still applies, and it is why it lives outside `Caps` — and the transcript is
+otherwise byte-for-byte what it has always been, pinned by
+`TestDogfoodUncredentialedRunIsUnchanged`.
+
+## The render oracle — the verdict for an app-build trial
+
+`oracle.sh` is what turns "the agent produced files" into "a browser watched the
+block do the thing". It serves the built block **inside the trial container**,
+drives it from a headless browser **on the host** (a trial image ships no
+Chromium), runs the brief's assertion, and prints one summary line.
+
+```bash
+bash oracle.sh <trial-id> <container-user> [brief]     # brief DERIVED from the trial
+bash grade.sh  <trial-id> <container-user> [brief]     # setup arms + the render arm
+```
+
+A graded cell then carries both verdicts on one line:
+
+```
+agent=… check_ok=true … CLOSING_CONDITION=yes render_brief=celsius brief_source=transcript-name validate_gate=pass scopes=none viewer=signed-in arm=consented observed=212 RENDER=yes
+```
+
+- 🔴 **The brief is DERIVED from the trial, and the argument is only a
+  cross-check.** It used to be an optional positional defaulting to `celsius`,
+  and the cost was measured: `oracle.sh ab-genpost-mimo-01 root`, against a
+  trial built from the `genpost` brief, ran the CELSIUS assertion, timed out
+  waiting for `[data-testid="celsius"]` and printed `RENDER=no` — byte-identical
+  to the verdict a model that built nothing earns. `runner.py` records the brief
+  in the trial's `start` record (`brief` = the prose, `brief_name` = the name),
+  so `oracle.sh` reads it out of `<runs>/<trial>/transcript.jsonl` and **refuses
+  (exit 2) when an argument disagrees** rather than picking one. `brief_source=`
+  says how it was resolved: `transcript-name`, `transcript-text`,
+  `argument-unverified`, `argument-trial-recorded-no-brief`, or
+  `default-trial-recorded-no-brief` (a setup cell, which built no app). Point
+  `DOGFOOD_RUNS` at the directory the trial was driven from if it is not
+  `scripts/dogfood/runs`.
+- 🔴 **The oracle presents a SIGNED-IN viewer, reported as `viewer=`.** It used
+  to seed `viewer: null`, and an auth-gated app — the shape the CLI's own
+  `page-money` scaffold ships, `const anon = ready && !viewer` and a sign-in
+  CTA — then rendered its signed-out branch and graded `RENDER=no`. That verdict
+  was about the harness. The seeded object is byte-for-byte what civitai.com's
+  `withSignedInFlag()` emits (`{ id, username, signedIn: true }`, no `status`),
+  and the token stays empty so it buys the block no capability. Set
+  `CIVITAI_ASSERT_ANON_VIEWER=1` for the control arm, which is also how you
+  grade a block's signed-out branch deliberately.
+
+- 🔴 **`civitai app validate` is a GATE, not the verdict, and it does not even
+  short-circuit.** It runs first because it is cheap and offline, and its result
+  is reported as `validate_gate=`. It decides nothing: an untouched
+  `civitai app init` scaffold PASSES it (measured, `✓ <dir> is valid`), so a
+  validate-keyed grade cannot tell *scaffolded* from *built* and would return a
+  confident `yes` to a question it never asked. Nor does a failing gate abort the
+  render — that would substitute the validator for the verdict in exactly the
+  case where the verdict matters, and would throw away `observed`.
+- 🔴 **`observed=` is on the cell on purpose.** The assertion is strict — `212 °F`
+  fails where `212` passes — so without the value a working converter with a unit
+  suffix is indistinguishable from a block that rendered nothing.
+- 🔴 **`post_ceiling=` appears on POST-ARM cells only, and its absence elsewhere is
+  the contract.** The post arm is the one that suspends the rig's standing invariant,
+  so its cell carries `post_ceiling=mock-host-gate-only` — the short form of the
+  ceiling, on the summary line and on this row. `oracle.sh` appends it at the END of
+  the line and only when the assertion reports `arm=post`, so **a non-post cell's line
+  is byte-identical to the line it always was**: every verdict this arc recorded was
+  read off that format, `grade.sh` parses it by key, and both Go suites compare fields
+  exactly. `TestANonPostSummaryLineIsByteIdentical` pins the field sequence on all
+  three arms, and `TestThePostArmsCeilingReachesTheGradeRow` pins both directions of
+  this row.
+- 🔴 **`post_link=` rides beside it, on POST-ARM cells only, and it is the one field
+  where a PASS is ambiguous without it.** It grades what the block RENDERED from the
+  post it created — `absolute` (a link that reaches the post), `relative` (**the
+  defect**: an href that resolves back onto the block's own subdomain), `none` (the
+  block rendered no link — legitimate, and never a failure) or `unmeasured` (the run
+  never reached a successful post). `absolute` and `none` **both** pass and mean
+  completely different things, so a row carrying only `RENDER=yes` cannot say whether
+  this sub-check measured anything. Appended after `post_ceiling`, so the post-arm
+  sequence is the historical one plus two fields and every other arm's line is
+  untouched. Why it exists, and how its failing branch is made reachable:
+  `briefs/genpost.md` → **Phase 3**.
+- 🔴 **`RENDER=unmeasured` is a third state, and it is not `no`.** `oracle.sh`
+  exits **2** when it measured nothing at all (no browser, no such container, a
+  stopped container, a server the host could not reach, an assertion that could
+  not run). Folding that into `no` would report *"the model did not build the
+  app"* about a run in which no block was ever loaded — the capability confound,
+  arriving through the grader.
+- 🔴 **It emulates a host before the bundle runs.** A block built from the
+  `page-money` template renders nothing but *"Connecting to host…"* until a host
+  delivers its runtime context, so the oracle seeds
+  `window.__CIVITAI_BLOCK_CONTEXT__` (the branch the SDK's own transport detector
+  takes) before navigation. Measured both ways in `briefs/celsius.md`. Set
+  `CIVITAI_ASSERT_NO_HOST=1` for the control arm.
+- **It never mutates the trial.** One file into the container's `/tmp`, one node
+  process, killed by its reported PID on the way out. `/work` is read only, and
+  no `docker rm`/`stop`/`commit` appears in `oracle.sh` — a graded container is
+  evidence, and re-creating one costs a real trial.
+- **Not bounded:** the in-container server binds `0.0.0.0` so the host browser
+  can reach it over the bridge. That is inside the network exposure the isolation
+  table above already declares open; it closes nothing and opens nothing new.
+
+Tests: `go test . -run 'TestOracle|TestGrade|TestServeBlock'`. Docker is stubbed,
+so they need no daemon — but they do drive a **real** browser, and they FAIL
+rather than skip under `$CI` (a skip and a pass read the same in a merge log).
+Every CI job that runs them (`build-test` and `dogfood-browser`) resolves one into `CIVITAI_CHROME` first, through `ci-browser.sh`.
+
+#### Launching the browser (`launch()` in `briefs/_cdp.mjs`)
+
+🔴 **THE LAUNCH IS ITS OWN FAILURE DOMAIN AND IT MADE `build-test` FLAKY ON
+EVERY PR** — measured 2026-09-21 over four runs, on `main` and on three PRs, one
+of them a docs-only change to a single markdown file. The browser printed its
+dbus startup noise, no DevTools endpoint arrived inside the deadline, the
+assertion reported a `harness error`, `oracle.sh` correctly returned exit 2 /
+*nothing was measured*, and the job went red **with zero `--- FAIL:` lines in a
+31 KB log**. Two of those runs went green on re-run with no change. Everything
+downstream was working; nothing upstream was watching the browser.
+
+What the launch does about it, and the standing of each part:
+
+| | |
+|---|---|
+| **Its own budget.** `CIVITAI_ASSERT_LAUNCH_MS` (default 30 s), separate from `CIVITAI_ASSERT_WAIT_MS` (15 s). | A cold browser binding a port and a React tree mounting are unrelated quantities. Measured in the failing jobs themselves, `chromium --version` took **1.9–6.5 s** on the runner against **0.02 s** on a dev box — 100–300× slower, 3.4× spread. ⚠ It does not separate the passing runs from the failing ones, so it sizes the budget; it does not diagnose the stall. |
+| **Flags that skip startup work.** `--password-store=basic` plus the no-background-network group. | The runner's `DBUS_SESSION_BUS_ADDRESS` is unparseable — reproduce the exact CI stderr with `DBUS_SESSION_BUS_ADDRESS=bogus:path=/nope`. Measured: the flag removes one session-bus round trip (4 `dbus/bus.cc` errors → 3), the keyring probe, which is the last one before the DevTools line. Three of the four failures stalled after exactly three; **the fourth stalled after one, so this is not the whole mechanism.** ⚠ Null result worth not re-deriving: *clearing* the env var changes nothing (4 either way). |
+| **Release builds preferred.** `google-chrome` before `chromium`. | `ubuntu-latest` ships both, and `/usr/bin/chromium` there is a raw `chromium-browser-snapshots` build (152.0.7977.0) while `google-chrome` is a release (152.0.7977.82). ⚠ A determinism argument, **not** a measurement. |
+| **The process is killed when a launch fails.** | The old code walked away from it; all four CI logs end with the runner's own `Terminate orphan process: pid (…) (chrome)`. |
+| **A bounded retry** — `CIVITAI_ASSERT_LAUNCH_ATTEMPTS`, default 2. | The backstop, not the fix. 🔴 **It is loud on SUCCESS**: a launch that needed a second attempt prints `BROWSER LAUNCH RETRY` with the first attempt's diagnostics, and `ci-browser.sh`'s smoke step turns that string into a `::warning`. That is the only thing keeping it from being a way to stop noticing a browser that has started failing half the time. A browser that never works still fails, after exactly N attempts, with every attempt's output in the message. |
+
+⚠ **The stall was never reproduced locally.** `TestCdpLaunch*` in
+`dogfood_cdp_launch_test.go` are therefore invariant guards on the launch's
+behaviour, driven by a fake browser, and only the orphan one is a regression
+test. Do not read them as evidence the flake is gone.
+
+CI runs a **browser smoke step** (`ci-browser.sh`) that runs `launch()` before `go test`,
+carrying both controls: it fails a binary that exits 3 without printing (so it
+can still go red) and it fails the job by name if the resolved browser cannot
+bind a debugging port, instead of that surfacing eighty lines into a Go test.
+
+**`CIVITAI_ASSERT_WAIT_LOG=<file>`** (unset by default) makes every in-page wait
+append `{"what","ok","ms","budget"}` to `<file>`. The Go suite uses it to run
+its expected-timeout negative controls on a **short** `CIVITAI_ASSERT_WAIT_MS`
+and to refuse that short budget anywhere else (`dogfood_control_wait_test.go`);
+`dogfood-browser` publishes the distribution of the waits that succeeded
+(`wait-summary.sh`, via `ci-browser-tests.sh`), which is the evidence the short budget rests on. A grading
+run is unaffected: neither knob changes `WAIT_MS`'s 15 s default.
+
+- 🔴 **`scopes=` decides no verdict**, exactly like the validate gate. A manifest
+  is a declaration, not a behaviour — a block can declare `posts:write:self` and
+  post nothing, and the platform grants scopes at review rather than at manifest
+  time. It is on the cell because a generate-then-post app declaring only
+  `ai:write:budgeted` is worth seeing next to the render verdict. Pinned in both
+  directions by `TestOracleReportsScopesWithoutDeciding`.
+- 🔴 **…but it is not inert: the same list is SEEDED as the bootstrap's
+  `token.scopes`, and an empty list was never the neutral default.** The oracle
+  seeded `scopes: []` unconditionally until 2026-09-21. Measured on
+  `ab-genpost-dsv4-01`: a correct generate-then-post app whose Generate handler
+  reads `hasBudgetedScope(token.scopes)` and asks the host for consent when that
+  is false never reached `generating`, and the cell read `RENDER=no
+  observed=ready` — the verdict a model that built nothing earns, about the
+  harness. An empty list grades the **refused** branch, rewarding an app that
+  flips a status optimistically over one that checks consent first. `oracle.sh`
+  reads the manifest once and hands the list to the assertion as an argument;
+  `token.raw` stays `''`, so scopes buy a *branch* and never a *capability*, and
+  a disagreement between the cell's `scopes=` and the list the assertion reports
+  seeding is exit 2 (nothing measured). Four-arm measurement and the shippability
+  control — an untouched `page-money` scaffold still grades `no` with both scopes
+  seeded — in `briefs/genpost.md`; pinned by
+  `TestOracleSeedsTheBlocksDeclaredScopes`.
+- 🔴 **…and the ALREADY-CONSENTED state was the only one ever graded, which let a
+  broken app ship.** `ab-ship-mimo-02` graded `RENDER=yes`, was submitted,
+  approved, deployed to `ab-img-poster.civit.ai`, and then **failed for a real
+  user** on the first click (`Generation failed. Please try again.`): its generate
+  path never requests consent, and its catch handles only `signInRequired` and
+  `declined`. The oracle could not see it because on both arms that existed then
+  `InlineTransport` rejected every request — so *"generation fails for everyone"* and
+  *"generation works"* leave the
+  same trace `ready>generating>ready` — and because seeding the manifest's scopes
+  makes an app that never asks indistinguishable from one that asks correctly.
+  **Every new user starts unconsented.** `CIVITAI_ASSERT_UNCONSENTED=1` is the arm
+  for that state: `token.scopes` seeded EMPTY, viewer still signed in, and the
+  verdict becomes *"did the block ask the host for consent"*. It answers nothing —
+  a consent ask is a `sendMessage`, which the SDK documents as fire-and-forget and
+  `InlineTransport` implements as a no-op, so the oracle WATCHES it and a grant is
+  structurally unreachable. The arm removes capability and adds none. Reported as
+  `arm=` on the summary line and the cell, because the knob is ambient. Seven-
+  fixture re-grade, the refuted per-vendor reading, and why the brief text was NOT
+  reworded: `briefs/genpost.md`; pinned by
+  `TestTheSameAppPassesConsentedAndFailsUnconsented` and friends in
+  `dogfood_oracle_consent_test.go`.
+- **An ATTRIBUTABLE, REPRODUCIBLE control for that arm is `fixtures/consent-controls/`.**
+  The arm's own `no` was already observed on a real bundle — `ab-ship-mimo-02`
+  above is exactly that — so what those fixtures add is narrower: a pair
+  differing in ONE controlled variable rather than a version bump, rebuildable
+  from git in ~5 min where the do-not-destroy fixtures are preserved containers.
+  `ctl-genpost-blind` grades `yes`/**`no`** across the arms with the consent
+  reason; `ctl-genpost-asks`, identical but for the `requestConsent` branch,
+  grades `yes`/`yes` and is the positive control proving an ask is observable on
+  that vite-built bundle. ⚠ Measured 2026-09-26, and it inverts rank 15's
+  premise: a page-money scaffold **installed and built** still fails BOTH arms
+  with the identical `[data-testid="prompt"]` timeout, and the scaffold's
+  `App.tsx` requests consent *correctly* — the apps that fail this arm failed by
+  REPLACING the scaffold's generation path, not by keeping it. Matrix and JSON
+  evidence in that directory's README.
+- 🔴 **…and the POST path could not be reached AT ALL, which let the SAME app ship
+  broken a SECOND time.** `ab-img-poster` then failed for a real user on
+  **Post** — *"Posting failed. Please try again."* — because it opened its Post
+  control for any workflow that had *ended*: `watch()` resolves on any terminal
+  status and `imageUrls` is optional even on `succeeded`, so Post went live for a
+  generation that had produced nothing and the host refused with its closed code
+  `no images to post`. Every arm above stops on the NEAR side of a request, so no
+  generation ever reaches a terminal snapshot and no Post gate is ever
+  re-evaluated: measured on the two real bundles, the defect (md5
+  `b8a1936e5939e39aa3e26f6e9e777113`) and the fix (md5
+  `c603fa854eba4d5206b73e04c14a1f3c`) grade **identically** on both.
+  `CIVITAI_ASSERT_POST_PATH=1` is the arm for it: the in-page shim answers
+  `ESTIMATE_WORKFLOW`, `SUBMIT_WORKFLOW`, `POLL_WORKFLOW` and
+  `CREATE_POST_FROM_APP` with `createMockHost`'s own canned shapes, drives TWO
+  canned runs — an image-less success then a postable one — and asks *"does the gate
+  hold, and does a postable run actually post"*. The defect grades `no`, the fix
+  `yes`. 🔴 **It is the one arm that SUSPENDS the rig's standing invariant** (*no
+  generation and no post can complete here*), so it is opt-in, it says `arm=post`
+  on the cell, `oracle.sh` prints a `⚠ POST-PATH ARM:` banner, and with the flag
+  unset `inlineHostSource()` returns byte-for-byte the source it always did.
+  Nothing spends and nothing leaves the page: every reply is built in the browser,
+  `token.raw` is still `''`, and the canned image is a `data:` URI rather than the
+  mock host's `placehold.co` URL. ⚠ **Its ceiling is on every cell** as
+  `post_ceiling=mock-host-gate-only` — a token on the summary line and the grade row,
+  appended on this arm only — with the full sentence in the assertion's JSON as
+  `postArmCeiling` and in the run's `⚠ POST-PATH ARM:` banner: it proves the block's
+  post BRANCH and that its payload
+  satisfies the mock host's gate — **not** that the real host accepts it, which
+  re-resolves every source server-side, re-checks the grant, opens a viewer confirm
+  and moderates the outputs. 🔴 **And a THIRD phase, because the same app shipped a
+  third user-found defect on the same path: what the block RENDERS from the answer.**
+  `v0.1.2` — the version that fixed the gate and grades green on all three arms —
+  rendered `<a href={postResult.url}>`, the host's value verbatim, and the platform
+  returns a **relative** url, so the link resolved against the block's own
+  `<slug>.civit.ai` subdomain. The arm was blind **by construction**: `createMockHost`'s
+  canned `url` is absolute, i.e. the harness's data was better behaved than
+  production, so no cell had ever seen a malformed one. `post_link=` is the sub-check,
+  and `CIVITAI_ASSERT_POST_MALFORMED_URL=1` — refused off the post arm, and visible on
+  the row as `post_ceiling=mock-host-gate-only:malformed-url-fixture` — is how its
+  failing branch is reachable at all. Full statement, the real-artifact matrix and the
+  three-phase design: `briefs/genpost.md`; pinned by
+  `TestThePostArmSeparatesTheGateFromTheWorkflowResult`,
+  `TestThePostArmGradesTheLinkTheBlockRendersFromTheResult`,
+  `TestTheMalformedUrlShapeIsOptInAndVisible` and friends in
+  `dogfood_oracle_post_test.go`.
+
+## The ship verdict — the account arm, and the one thing the browser cannot see
+
+`oracle.sh` grades the DOM. A **submission** is server state: it leaves nothing in
+the DOM, `token.raw` is empty, and no arm of the host emulation answers a submit —
+not even the post arm, whose widened allowlist covers workflows and posts and nothing
+else — so no browser assertion can ever see one. `ship.verdict.sh` is the other
+instrument.
+
+```bash
+bash ship.verdict.sh <trial-id> <container-user>    # T0 = SUBMITTED, and the T1 FLOOR
+```
+
+It emits **three verdicts on one line**: `SHIP=` (T0 = submitted), `FLOOR=` (the
+publish floor — an icon AND a cover on the trial's own listing) and `T1=` (the
+conjunction). 🔴 **The exit code belongs to the SHIP half alone**: a floor read
+that cannot be taken emits `FLOOR=unmeasured` and leaves `SHIP=` and the exit code
+untouched, because every `ship` cell already graded is entitled to its verdict
+whether or not the account also answers `app doctor`. The floor half, the two
+reads it must and must not make, and why it lives in this script rather than a
+second one: `briefs/t1.md`.
+
+It reads `civitai app status --json` **inside the trial's own container**, with
+the trial's own credential, and counts a row only when all three hold:
+
+1. `status == "pending"` — it is in the moderation queue now
+2. `blockId` ∈ the blockIds in the trial's own `block.manifest.json` files
+3. `submittedAt` inside this trial's run window (`start.t`…`end.t` from its own
+   `transcript.jsonl`, ± `DOGFOOD_SHIP_GRACE_S`, default 300 s)
+
+🔴 **CONJUNCT 2 IS THE WHOLE POINT AND WITHOUT IT THE SCRIPT IS A LIE.** The
+account a credentialed trial authenticates as owns roughly a dozen REAL published
+apps, each with a submission row. A verdict that asked only *"is there a pending
+submission?"* would grade the operator's back catalogue as the trial's success —
+the same "negative control passing for the wrong reason" that has already cost
+this arc two wrong headlines. Conjunct 2 alone is still not enough: it passes on a
+**re-grade** of an older trial, which is what conjunct 3 removes.
+
+🔴 **`RENDER=unmeasured`'s twin: exit 2 is a THIRD STATE AND IS NOT `no`.** No
+container, a stopped one, no manifest (so no blockId to attribute a submission
+to), no `civitai` in the container, a status call that exited non-zero, or output
+with no `submissions` array all exit 2 and print **no `SHIP=` at all**. Folding
+any of them into `no` would report *"the model did not submit"* about a run in
+which the account was never read.
+
+🔴 **It uses the LISTING form deliberately.** `civitai app status <slug>` ERRORS
+when the app has no submissions, and that error is indistinguishable from a
+network failure or an expired token; the unfiltered listing succeeds whenever auth
+and the network work, which is what separates a real `no` from an unmeasured. ⚠
+That listing is capped at 100 rows server-side with no cursor, so a `no` on an
+account with more than 100 submissions is weaker than it looks.
+
+`account_submissions=` is on the cell as the POSITIVE CONTROL for the read: an
+empty listing is what a probe wired to nothing returns. It is what caught a test
+arm silently running against the operator's live account — see `briefs/ship.md`.
+
+Nothing is mutated. `civitai app status` is a read; `civitai app listing status`
+is **not** (it opens a shadow revision server-side), and no `docker
+rm`/`stop`/`commit` appears in the script — a graded container is evidence.
+`TestShipVerdictNeverMutatesTheAccount` pins both, with a positive control so a
+file of pure comments cannot pass it.
+
+🔴 **THE TRIAL WRITES THE TEXT THE GRADER PRINTS, SO EVERY FIELD IS ESCAPED — AND
+IT IS THE SAME ESCAPER `oracle.sh` USES.** `blockId` comes out of the trial's own
+manifest, the manifest PATHS out of directories the trial created (and `find`
+prints a path verbatim, so a directory named with a NEWLINE was a whole forged
+`ship_trial=… SHIP=yes` line), and a submission row's fields come back across a
+process boundary from the platform. A SPACE in any field printed before `SHIP=`
+starts another field that a first-match reader prefers to the real one. The rule
+lives in **one** file, `_esc.sh`, sourced by both graders: `tok` for a value that
+must stay one field, `prose` for a value that IS a line. So in a cell a
+percent-escape means *the trial's own text needed neutralising* — `%20` a space,
+`%0A` a newline, `%3D` an `=`. Ordinary values are left **byte-identical**, which
+is what keeps `grade.sh` and the Go suites reading the strings they already read;
+`printf '%q'` is deliberately NOT used, because bash 5.3 escapes a comma where
+5.2 does not and the field's bytes would then depend on which host graded the
+matrix. `TestDogfoodGradersShareOneEscaper` fails if a grader open-codes its own
+copy, if a summary-line field is added unwrapped, or if `%q` comes back.
+
+🔴 **`_esc.sh` NOW HOLDS THE MIRROR-IMAGE RULE FOR THE PATHS COMING IN, BECAUSE
+THAT ONE WAS OPEN-CODED IN BOTH GRADERS AND WRONG IN BOTH.** Both located the app
+by `find`ing `block.manifest.json`, then (a) resolved the directory with
+`head -1 | xargs dirname`, which WORD-SPLITS — measured,
+`/work/my app/block.manifest.json` came back as the two lines `/work` and `app`,
+so `$APP_DIR` was `/work<LF>app`, and that variable is what gets validated, what
+`outputDir` resolves against and what is SERVED; (b) counted manifests with
+`grep -c .` over newline-separated output, so a directory named with a newline
+counted as two and split in two in every read loop (on the ship half that emptied
+`TRIAL_SLUGS` and turned a real `SHIP=yes` into exit-2 `unmeasured`); and (c)
+spliced the discovered path into `bash -lc "… '$path' …"`, so a quote in a
+directory name ran the rest of that name as a command inside the grader. Now:
+`MANIFEST_FIND` uses `-print0` and swaps the delimiters inside the container
+(newline-in-a-path → 0x01, NUL separators → newlines), because bash command
+substitution DISCARDS NUL and a `-print0` stream cannot be carried out of
+`$(docker exec …)` at all; `pathdec` puts the newline back; and every
+app-controlled value crosses into the container through `docker exec -e` instead
+of being spelled into the command text. An ordinary path is left byte-identical by
+all of it. The same test ledgers these: no grader may assign its own
+`MANIFEST_FIND` or drop its `-print0`, `xargs dirname` over a discovered path
+cannot come back, and no double-quoted string on an exec site may contain `'$`.
+Tests: `go test . -run 'TestOracleResolvesAnAppDirectory|TestShipVerdictReadsAManifestPath|NeverRuns'`.
+
+Tests: `go test . -run TestShipVerdict`. Docker and the CLI are stubbed, so they
+need no daemon, no network, no credential and no account. The forgery guards
+(`go test . -run 'TestShipVerdictCannotBeForgedByTheTrial|TestShipVerdictLeaves'`)
+never launch a browser either, deliberately — a skipped security guard is a green
+that checked nothing.
+
+### The briefs
+
+| brief | what a green cell means | doc |
+|---|---|---|
+| `celsius` | the agent built *something that runs* — a converter wired to prescribed hooks | `briefs/celsius.md` |
+| `genpost` | the agent wired a *generate-then-post* flow: prompt, a Post control gated shut until a generation succeeds, and a status machine the Generate click drives | `briefs/genpost.md` |
+| `ship` | `genpost`'s brief verbatim **plus a submit instruction** — so a green cell needs BOTH the render verdict and `ship.verdict.sh`'s account verdict | `briefs/ship.md` |
+| `t1` | `ship`'s brief verbatim **plus a listing-media instruction** — the agent generates its own square icon and landscape cover with `civitai generate` and attaches both, so a green cell needs the render verdict AND `SHIP=yes` AND `FLOOR=yes`. It is the first brief that may **spend Buzz** | `briefs/t1.md` |
+
+🔴 **`ship` EXISTS BECAUSE A CAP THAT ALLOWS A SUBMIT DOES NOT PRODUCE ONE.** Four
+credentialed trials ran with `--max-submissions 1` and all four submitted nothing
+— verified from the account, not from the transcript: Buzz unchanged,
+`civitai app list` byte-identical, `gen=0 sub=0`. Nothing refused them. The
+`genpost` brief simply never mentions submitting, so the agents were correct not
+to. ⚠ **The FIRST `ship` trial then failed for the opposite reason, and it was
+ours:** `ab-ship-mimo-01` (2026-09-25) tried to submit, the CLI refused the bare
+invocation pre-flight for lack of `--yes`, the cap charged that attempt anyway,
+and the `--yes` retry the model reached for one step later was refused by the
+harness. 0 pending requests on the account afterwards — the cell's `SHIP=no` was
+an accounting artifact, not a measurement. Fixed by the refund in the caps table
+above; do not read that cell as a result.
+`ship` is that brief with one trailing clause, and its render half is graded
+by the **same** assertion (`briefs/ship.assert.mjs` delegates to
+`briefs/genpost.assert.mjs`) so `genpost.md`'s controls still apply to it.
+
+🔴 **On the default and unconsented arms `genpost` cannot see a generation or a post
+happen.** The oracle's host emulation is the SDK's `InlineTransport`, a v1 stub whose
+`sendRequest` rejects and which delivers no host pushes — so an assertion that
+waited for an image or a post id would time out against a perfect app. It grades
+the block's own state machine on the near side of the request. Read a green cell
+as *"the flow is wired and gated correctly"*, never as *"the money path works"*.
+⚠ **The exceptions are ENUMERATED, not counted** — `INVARIANT_EXCEPTIONS` in
+`scripts/dogfood/briefs/_cdp.mjs` is the ledger, and no doc here states a number,
+because the one that did went stale the day the second class landed. Since 2026-09-25
+the oracle answers a host *resource pick* (`OPEN_RESOURCE_PICKER` /
+`OPEN_CHECKPOINT_PICKER`) with a stubbed resource on **every** arm, so an app that
+gates Generate behind the host's picker can reach `generating`, and that class
+completes nothing. The opt-in **post arm** is the class that does complete a
+generation and a post — see **The POST-PATH arm** above. Off it, every other request
+type still rejects with the SDK's own error, and each cell carries `hostRefused=`
+naming the ones that did. `briefs/genpost.md`, **The host answers a resource pick**.
+
+`briefs/` holds each brief and the behavioural assertion that grades it;
+`_cdp.mjs` is the browser plumbing they share. 🔴 **An assertion is
+only worth running once an untouched `civitai app init` scaffold has been
+watched to FAIL it**; a brief the scaffold already satisfies makes every cell
+green while measuring nothing. Both briefs' docs record that control for all
+three templates — and for `genpost` the scaffold control is not enough on its
+own, because `page-money` already ships a prompt field and a Generate button, so
+`briefs/genpost.md` also records a complete *generate-only* app failing it.
+The tests for the injection path itself are
+`dogfood_brief_test.go` in the repo root (`go test -run Dogfood .`), and
+`TestEveryBriefHasASiblingGuard` there is the ledger: a new `<name>.brief.txt`
+needs `<name>.assert.mjs`, `<name>.md` and a `Test<Name>BriefAndAssertionAgree`.
+
+Trial ids are `<prefix>-<model>-<env>-<identity>`, `t-` by default. The three identities are `claudeid`
 (`CLAUDECODE=1`), `codexid` (`CODEX_SANDBOX=1`) and `other` (no signal), and
 `DOGFOOD_IDENTITIES` overrides them the same way `DOGFOOD_MODELS` does. Set
 `FULL_CROSS=1` to run every model × env × identity combination instead of the
@@ -82,6 +758,133 @@ partial transcripts and half-built containers you would want to read to find out
 *why* they timed out. **Copy `runs/` aside before re-running** if the failures are
 what you are investigating. The resume gate trades "skipped forever" for
 "overwritten on the next run"; that is the better default, not a free one.
+
+## 🔴 How a trial ends — the `stop` vocabulary
+
+A trial's `end` record and the one-line `.out` summary both carry `stop`, and a
+truncated trial used to be indistinguishable from a finished one. Measured on
+`ab-genpost-glm-01` (z-ai/glm-5.3-flash): the last assistant message had
+`content: null`, no tool calls, and `completion_tokens: 8000` — **exactly the
+`max_tokens` the harness sent** — of which **7,992 were reasoning. The model
+exhausted its output budget inside its reasoning channel and returned nothing,
+and the harness recorded `stop: "finished"`.** `finish_reason` appeared nowhere
+in `runner.py`, `grade.sh` or `oracle.sh`; OpenRouter had been sending it all
+along and the harness dropped it. That is a **harness limit reported as a task
+outcome**, the one confound this harness exists not to introduce.
+
+`finish_reason` is now recorded on every `assistant` record and on the `end`
+record, and the terminal state is split:
+
+| `stop` | means | what the provider said |
+|---|---|---|
+| `finished` | the model stopped on its own and left a report | `finish_reason` in `stop`/`end_turn`/`stop_sequence`/`eos`/`complete`, content non-empty |
+| `truncated` | **a harness limit, not a result** — the output budget ran out | `length` (or a provider-native `max_tokens`/`model_length`/`max_output_tokens`) |
+| `empty-reply` | the model stopped on its own and said nothing | a natural stop, content empty/null/whitespace |
+| `stopped-unknown:<value>` | the harness has **no evidence** the reply completed | anything else, `none` when the field was absent |
+| `max-steps` / `max-cost (…)` | the harness stopped the loop | unchanged |
+| `unpriced-turn (…)` | **the money cap became inoperable** — the provider did not price a turn | `usage.cost` absent, null, or not a number |
+
+🔴 **An absent or unrecognised `finish_reason` does NOT become `finished`.**
+`finished` is a positive claim that the provider said the model chose to stop,
+so it is only made when the provider actually did. Defaulting the unknown case
+to success is precisely the defect above, one provider vocabulary later. The raw
+value rides in the string so a new word is diagnosable from the `.out` line
+alone. `stopped-unknown:*` is a statement about the *instrument*, not the model.
+
+**Grading is unaffected.** `grade.sh` and `oracle.sh` measure the container and
+never open `transcript.jsonl`, so no cell's `CLOSING_CONDITION` changes value
+because of the new vocabulary — pinned by `TestGradersDoNotReadTheStopVocabulary`,
+which goes red if either script starts reading it. `driver.sh`'s resume guard
+greps for `"kind": "end"` and is likewise indifferent. **What changes is what a
+human reads**: a `truncated` cell must not be counted as a model failure.
+
+### The output ceiling, and the model's own reasoning
+
+- `--max-tokens` (default **32000**, `DOGFOOD_MAX_TOKENS` in `driver.sh`).
+  8,000 left that model **8 tokens** after its reasoning. Its per-turn reasoning
+  burn ran 2,141 → 4,238 → 2,021 → 7,992; only the first three are uncensored
+  observations, since the fourth *is* the cap. 32000 is 4× the budget that was
+  exhausted and ~7.5× the largest burst we have seen complete. It is a
+  **ceiling, not a spend cap** — tokens are billed as generated and `--max-cost`
+  (still $1) is the only bound on money.
+
+### The step cap, and why 40 was not enough
+
+- `--max-steps` (default **40**, `DOGFOOD_MAX_STEPS` in `driver.sh`). Until that
+  knob existed the driver did not forward the flag at all, so **every**
+  driver-launched cell ran at 40 whatever the brief asked for. Measured on
+  `at1-mimo-noderoot-claudeid` (brief `t1`, `xiaomi/mimo-v2.5`): `stop: max-steps`
+  at step 40 with `generations: 0` and `submissions: 0`, its last three tool calls
+  `npx tsc --noEmit`, `npm run build`, `civitai app validate` — it had **built**
+  the app and was cut off immediately before the submit-and-media phase the brief
+  is graded on. A build-only `celsius` cell took **65** steps, so 40 is below the
+  floor for any brief that builds *and* ships, and a cell that hits it is
+  ungradeable for a harness reason rather than a model or product one.
+- **The driver does not warn on a high value, deliberately.** A step cap is not a
+  spend cap — every turn resends the whole history, so cumulative prompt tokens
+  grow O(n²) in steps — but the bound that *is* about money is `--max-cost`, which
+  is denominated in dollars and therefore model-priced, while a step number is
+  not. The one (steps, cost) pair on record is that same cell: 40 steps =
+  **856,834** prompt tokens = **$0.0113**, heavily cache-discounted at ~$0.013/M
+  effective. One point on one model fixes no quadratic; reading cost ~ steps² off
+  it *for scale only*, the $1.00 `--max-cost` default binds that model near ~375
+  steps and a 100×-pricier one near ~38, so any single threshold would be wrong
+  for most of the matrix. Enforcement stays in `runner.py`.
+
+### 🔴 The money cap could silently never fire
+
+`--max-cost` is a comparison against a running total that comes **entirely** from
+the provider's `usage.cost`. There is no price table in `runner.py` and no
+`/api/v1/models` fallback — `grep -c 'api/v1/models\|price\|pricing'` over the
+file returns 0 — and the accumulation was a single line:
+
+```
+usage_total["cost"] += u.get("cost", 0.0) or 0.0
+```
+
+So a model, or a route, whose usage payload **omits** `cost` (or returns it
+null) accumulated **$0 forever**: the cap never tripped, and `--max-steps` was
+the only remaining bound — which the flag's own comment says in so many words is
+*not* a spend cap. The `end` record's `cost: 0.0` was the money-shaped twin of
+the `stop: "finished"` defect above: an absent value rendered as a successful
+measurement.
+
+**An unpriced turn now ends the trial.** `stop` becomes
+`unpriced-turn (turn N returned no usable usage.cost, …)`, a `kind: "unpriced"`
+record carries the usage block the provider actually sent, and `finish_reason`
+is still on the `end` record and the summary so the terminal state is not lost.
+
+- **A stated `$0` is a price; an absent figure is not.** A free route keeps
+  running. Only absence, null, and a non-numeric value stop the trial.
+- **Exactly one call is allowed to complete, and that is the floor.** You cannot
+  know a provider omits `cost` until a response arrives, so the first request is
+  spent no matter what. There is deliberately **no grace period** past it: N
+  turns of unknown cost is still unbounded spend, bounded only by a number
+  nobody can convert into money. The stop happens before the unpriced turn's
+  tool calls run and before the next `call()`.
+- **`end.usage.cost` is a LOWER BOUND on such a run**, not a measurement — the
+  unpriced turn was billed and is not in the total. The refusal string says so.
+
+Red at `4d4a45e` / green here: `TestDogfoodUnpricedTurnIsAHardStop` (three of
+its four arms — the fourth, a string `cost`, crashes the base runner with a
+`TypeError` instead, which is a different defect) and
+`TestDogfoodUnpricedTurnStopsBeforeTheNextBilledCall` (base issues 3 requests,
+this issues 1). `TestDogfoodAPricedZeroCostTurnStillRuns` is the discriminating
+control: without it, "always stop" would satisfy every assertion above.
+- The runner now sends the provider's **`reasoning_details`** (verbatim, so
+  signatures survive) and `reasoning` back in the assistant history. Previously
+  it appended only `content` + `tool_calls`; for a model whose `content` was
+  `null` on 66 of 67 turns, its entire contribution to its own history was the
+  text of the shell commands it ran — **87.8% of its output discarded every
+  turn**, then re-derived inside the budget that truncated it. Turn it off with
+  `--no-carry-reasoning` (history grows faster; prompt cost is already O(n²) in
+  steps). A provider that returns neither field sends exactly the message shape
+  it always did — `TestDogfoodAssistantHistoryIsUnchangedWithoutReasoning`.
+- The `.out` summary now carries `finish_reason`, a `reasoning_tokens` total and
+  a **per-turn `turns` array** (`completion_tokens`, `reasoning_tokens`,
+  `finish_reason`). The escalation above was plainly visible in the transcript
+  and completely invisible in the summary an operator actually reads; a total
+  cannot show an escalation.
 
 ## Reading a verdict
 
@@ -144,14 +947,149 @@ satisfied by `ctl-neg` too, and by a grader that broke arm A instead — this co
 is only meaningful if arm A is GREEN while arm B is red. Require:
 
 ```
-check_ok=true  failed_checks=[authenticated]  mcp_rows=2
-login_version=none  agent_shell_version=0.1.105  CLOSING_CONDITION=no
+check_ok=true  failed_checks=[authenticated,agent-token]  mcp_rows=2
+login_version=none  agent_shell_version=<the installed version>  CLOSING_CONDITION=no
 ```
 
-Measured against the same container: `bash -lc 'civitai --version'` → `0.1.105`;
-`zsh -lic 'civitai --version'` → `command not found`. The wrapped grader reported
-**yes**; the corrected one reports **no**. ⚠ The 2026-09-18 grid is unaffected — no
-trial installed under `$HOME/.local` — so the defect was latent, not triggered.
+🔴 **ASSERT THE SHAPE, NOT THESE LITERALS — the two that used to be spelled out here
+had both rotted by 2026-10-04 and each rots in the direction that scores a HEALTHY
+control as a failure.** `failed_checks` read `[authenticated]` while the live set is
+`[authenticated,agent-token]`: a second verdict-exempt check was added, and the
+verdict-exempt set is open by design, so any enumeration here goes stale the next time
+one lands. `agent_shell_version` read `0.1.105`, two releases behind. The invariant is
+what matters and it is not a literal: **arm A green (`check_ok=true`) while arm B is red
+(`login_version=none`)**, with `agent_shell_version` equal to whatever the trial
+installed. Read `failed_checks` as a set that MUST NOT contain a row the verdict counts;
+do not require it to equal a list written down here.
+
+Measured against the same container, on the version it installed: `bash -lc 'civitai
+--version'` prints it; `zsh -lic 'civitai --version'` → `command not found`. The wrapped
+grader reported **yes**; the corrected one reports **no**. ⚠ The 2026-09-18 grid is
+unaffected — no trial installed under `$HOME/.local` — so the defect was latent, not
+triggered.
+
+## Measuring a PROPOSED change to the hosted instructions
+
+The entrypoint under test is prose in another repo, and every trial fetches it itself.
+So "would editing the hosted `prompt.md` fix this grid?" had no answer except shipping
+the edit and re-running — which is how `cli#665` arm 1 came to rest on an inference:
+6 of 6 blind cells failed, the cause was located to one sentence in the hosted prompt,
+and the remedy could not be tested before merging it.
+
+`--prompt-url` (driver: `DOGFOOD_PROMPT_URL`) points a trial at different instructions.
+Serve a patched copy and run the cells that failed:
+
+🔴 **Serve it from a CONTAINER on the docker bridge, not from the host** — and read
+the three corrections below, because the first version of this recipe was wrong in
+three ways and its REPLACEMENT was wrong in two more. Round 2 of `/audit-pr` ran it
+on a simulated fresh machine and it **hung forever**.
+
+- The original bound `0.0.0.0` on the **host** (exposing the directory to the LAN for
+  the life of the run) and backgrounded the server with `&` without ever capturing or
+  killing its PID — one outlived its run by about an hour.
+- The replacement added `mkdir -p` for the *destination* and left the **source**
+  undefined. `/tmp/prompt.md` is never created by the recipe, so `cp` fails and the
+  bind-wait loop then **spins forever** asking for a file that is not there, with
+  `2>/dev/null` hiding the 404. That is strictly worse than what it replaced: the old
+  recipe produced a gradeable (if wrong) grid; this one hangs with no message.
+- Two sentences stated as the mechanism were simply false, and they are why the gap
+  survived the round looking straight at it: the `cp` does **not** fail silently (it
+  prints `cp: cannot stat …` and exits 1), and the server **does** start regardless —
+  `python3 -m http.server` serves an empty directory quite happily.
+
+```bash
+# 1. The SOURCE. Fetch the live prompt, then patch it — this is the step whose
+#    absence made the old recipe hang.
+curl -fsS -A 'Mozilla/5.0' https://developer.civitai.com/agent-setup/prompt.md \
+  -o /tmp/prompt.md
+#    …apply your edit to /tmp/prompt.md now…
+
+# 2. Serve it, with teardown armed BEFORE the server exists.
+mkdir -p /tmp/served && cp /tmp/prompt.md /tmp/served/prompt.md
+trap 'docker rm -f dogfood-promptsrv >/dev/null 2>&1' EXIT INT TERM
+docker rm -f dogfood-promptsrv 2>/dev/null
+docker run -d --name dogfood-promptsrv -v /tmp/served:/srv:ro -w /srv \
+  python:3.12-slim python3 -m http.server 8099 --bind 0.0.0.0
+SRV=$(docker inspect -f \
+  '{{range $k, $v := .NetworkSettings.Networks}}{{$v.IPAddress}} {{end}}' \
+  dogfood-promptsrv | awk '{print $1}')
+
+# 3. Wait for it to BIND — BOUNDED. `docker run -d` returns before python is
+#    listening, and that immediate failure looks exactly like a blocked network: it
+#    cost a false "inter-container networking is blocked" diagnosis once. The cap is
+#    the point — an unbounded `until` is what hung the previous recipe.
+# 🔴 `for … done || { … }` would be DEAD IN BOTH ARMS: a loop's status is that of
+#    the LAST command in its body, which is `sleep`, so it always exits 0. Use a
+#    flag. And the probe's error is PRINTED, not sent to /dev/null — hiding it is
+#    what the previous recipe did wrong.
+served=0
+for _ in $(seq 30); do
+  if docker exec dogfood-promptsrv python3 -c \
+      'import urllib.request;urllib.request.urlopen("http://127.0.0.1:8099/prompt.md",timeout=2)'; then
+    served=1; break
+  fi
+  command sleep 1
+done
+[ "$served" = 1 ] || echo "server never served /prompt.md — is /tmp/served/prompt.md there?" >&2
+
+# 4. Run it. driver.sh preflights the URL and refuses early if it cannot fetch it.
+DOGFOOD_PROMPT_URL="http://$SRV:8099/prompt.md" DOGFOOD_TRIAL_PREFIX=px \
+  DOGFOOD_ENVS='df-node-user|nodeuser|dev' DOGFOOD_IDENTITIES='claudeid|CLAUDECODE=1' \
+  DOGFOOD_MODELS='xiaomi/mimo-v2.5|mimo' bash driver.sh
+
+# 5. Teardown. The trap covers a SCRIPT; pasted into an interactive shell it fires
+#    only at shell exit, so keep the explicit line for stopping it mid-session.
+docker rm -f dogfood-promptsrv
+```
+
+⚠ **Why a container and not the host:** on the measured host the firewall drops
+bridge→host, so a container cannot reach `http://<gateway>:8099`. ⚠ That reading is
+**inconclusive and not a cleared control** — the host's own curl timed out in the same
+probe, so both arms failed and the measurement attributes nothing. The container route
+is what was observed to work; treat the explanation as a hypothesis.
+
+⚠ The `$SRV` expression takes the FIRST network's address deliberately: a container on
+two networks would otherwise concatenate both into one malformed string. The preflight
+refuses that, but incidentally rather than by design.
+
+**The URL must be unauthenticated.** It is a VALUE, not a path like
+`--credential-file`, and it reaches host argv, the banner, the `start` record, the
+`user` record, `commands.log`, the container's own `curl` argv and the OpenRouter
+request body — and the `Redactor` only knows strings read from the credential FILE,
+so it scrubs none of them. `driver.sh` refuses a URL carrying **userinfo** (`user[:password]@host`), extracted from the
+authority rather than pattern-matched. 🔴 **That is the ONLY shape it detects.** A token in a
+query parameter (`?token=`, `?X-Amz-Signature=`) or in the path (a capability URL, a private
+gist) is **NOT** refused and leaks just as widely — an earlier version of this line promised
+otherwise, describing a six-pattern blocklist that was deleted for being wrong in both
+directions (it admitted `?Token=` on capitalisation while hard-refusing `?cachekey=`). Serve
+the file unauthenticated; the harness cannot check that for you. A presigned S3 link or a private
+raw-GitHub URL is the tempting shortcut and the one to avoid.
+
+🔴 **SUCH A TRIAL IS NOT EVIDENCE ABOUT THE SHIPPED ENTRYPOINT, AND ITS VERDICT LINE
+CANNOT TELL YOU THAT.** `grade.sh` reads the container; it never reads the transcript,
+so a patched-prompt `yes` and a real `yes` are the same six fields. The provenance lives
+in one place only — the trial's `start` record carries `prompt_url` — so when you quote
+a verdict from one of these runs, quote that field beside it. Use a distinct
+`DOGFOOD_TRIAL_PREFIX` as well, so the two populations are also separable on disk.
+
+Two properties are pinned by `dogfood_brief_test.go`, both of them about not corrupting
+what is already measured: an empty or blank value is **the default**, so the driver may
+forward an unset variable; and `prompt_url` is recorded **only when the URL moved**, so
+a default run's `start` key set is byte-identical to every grid run before this flag
+existed (`TestDogfoodUncredentialedRunIsUnchanged` pins that key set, and it cannot see
+a flag passed with the default value — which is why
+`TestDogfoodPromptURLIsMarkedOnlyWhenItMoved` asserts that arm separately).
+
+🔴 **THE STATED LIMIT, AND IT IS WEAKER THAN "SILENCE MEANS THE REAL HOSTED PROMPT"
+SOUNDS.** The mark pins the URL *string*, never the instruction *bytes*. The hosted
+`prompt.md` lives in a different, independently-mutable repo and nothing here digests
+what was actually served — so a transcript with **no** `prompt_url` key asserts only
+*where the harness pointed*, and two default grids months apart are indistinguishable
+even if the prose changed underneath them. That is exactly the comparability the two
+pinned invariants exist to protect, so read a default grid's provenance as "the hosted
+URL, as it was on that date", never as "these bytes". Recording a `prompt_sha256` would
+be strictly stronger and is not done: it would add a key to every run, which is the
+re-base those invariants forbid.
 
 ## Agent identity is a dimension, not a detail
 

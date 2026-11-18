@@ -58,6 +58,360 @@ IDENTITIES=(
 # an `IDENT_FOR` variable that has never existed.)
 FULL_CROSS="${FULL_CROSS:-0}"
 
+# ── the app brief ────────────────────────────────────────────────────────────
+# DOGFOOD_BRIEF turns every cell from a SETUP trial into an APP-BUILD trial by
+# appending one operator-typed line to the task (runner.py's --brief). Empty =>
+# the matrix this file has always run, with a byte-identical task.
+#
+#   DOGFOOD_BRIEF="$(cat briefs/celsius.brief.txt)" DOGFOOD_TRIAL_PREFIX=ta bash driver.sh
+#
+# 🔴 AND IT REFUSES TO RUN UNDER THE DEFAULT PREFIX, BECAUSE THE RESUME GUARD
+# WOULD OTHERWISE SKIP THE WHOLE MATRIX. Trial ids are `<prefix>-<model>-<env>-
+# <identity>` and the guard in run_one() skips any id whose transcript already
+# carries an `end` record. Run the setup matrix, then run an app matrix under
+# the same prefix, and EVERY cell is skipped as "complete" while this script
+# prints MATRIX COMPLETE — the third instance of the failure the two comments
+# in run_one() and in the identity loop below already exist to prevent, and the
+# only one where the skipped cells hold a DIFFERENT task. Make the operator say
+# which namespace the run lands in; there is no safe default to guess.
+#
+# 🔴 AND IT CARRIES THE BRIEF'S NAME, NOT JUST ITS TEXT. The grader has to map a
+# graded cell back to `briefs/<name>.assert.mjs`, and from prose alone the only
+# route is an exact match against `briefs/*.brief.txt` — which stops resolving
+# every already-run trial the moment a brief file is reworded. Two ways in, and
+# they cannot disagree:
+#
+#   DOGFOOD_BRIEF_NAME=genpost                      # reads briefs/genpost.brief.txt
+#   DOGFOOD_BRIEF="$(cat briefs/genpost.brief.txt)" # name derived by exact match
+#
+# An ad-hoc DOGFOOD_BRIEF matching no brief file is still allowed and still
+# runs — it simply records no name, and oracle.sh will then require the brief to
+# be named explicitly (and say that it was not verified).
+BRIEF="${DOGFOOD_BRIEF:-}"
+BRIEF_NAME="${DOGFOOD_BRIEF_NAME:-}"
+PREFIX="${DOGFOOD_TRIAL_PREFIX:-t}"
+if [ -n "$BRIEF_NAME" ] && [ -z "$BRIEF" ]; then
+  [ -f "briefs/$BRIEF_NAME.brief.txt" ] || {
+    echo "DOGFOOD_BRIEF_NAME=$BRIEF_NAME has no briefs/$BRIEF_NAME.brief.txt" >&2
+    exit 1
+  }
+  BRIEF="$(cat "briefs/$BRIEF_NAME.brief.txt")"
+fi
+if [ -z "$BRIEF_NAME" ] && [ -n "$BRIEF" ]; then
+  for f in briefs/*.brief.txt; do
+    [ -f "$f" ] || continue
+    [ "$(cat "$f")" = "$BRIEF" ] && BRIEF_NAME="$(basename "$f" .brief.txt)"
+  done
+fi
+case "$BRIEF" in
+  *$'\n'*|*$'\r'*)
+    echo "DOGFOOD_BRIEF must be a single line — runner.py refuses a multi-line brief" >&2
+    exit 1 ;;
+esac
+if [ -n "$BRIEF" ] && [ "$PREFIX" = "t" ]; then
+  cat >&2 <<'MSG'
+refusing to run: DOGFOOD_BRIEF is set but DOGFOOD_TRIAL_PREFIX is still the
+default `t`, which is the SETUP matrix's namespace. An app-build cell would
+collide with the setup cell of the same name, and the resume guard would skip
+it as already complete — reporting MATRIX COMPLETE having run nothing.
+Set a distinct namespace, e.g. DOGFOOD_TRIAL_PREFIX=ta
+MSG
+  exit 1
+fi
+
+# ── the credential and the run caps ──────────────────────────────────────────
+# A credentialed matrix reaches a REAL account. Everything here is pass-through
+# to runner.py, which owns the enforcement; the driver's only job is to refuse
+# the two mistakes that are invisible afterwards.
+CREDENTIAL="${DOGFOOD_CREDENTIAL_FILE:-}"
+APP_PREFIX="${DOGFOOD_APP_PREFIX:-}"
+MAX_GENERATIONS="${DOGFOOD_MAX_GENERATIONS:-}"
+MAX_SUBMISSIONS="${DOGFOOD_MAX_SUBMISSIONS:-}"
+# Pass-through so a matrix can be run under a different output ceiling without
+# editing runner.py. Empty => runner.py's own default. It is a ceiling, not a
+# spend cap; money is still bounded by runner.py's --max-cost.
+MAX_TOKENS="${DOGFOOD_MAX_TOKENS:-}"
+# Pass-through for runner.py's --prompt-url: fetch the agent instructions from
+# somewhere other than the hosted prompt.md, so a PROPOSED edit to them can be
+# measured before it ships. Empty => the hosted default, and the whole matrix is
+# then byte-identical to every grid already measured.
+#
+# 🔴 A MATRIX RUN WITH THIS SET IS NOT EVIDENCE ABOUT THE SHIPPED ENTRYPOINT.
+# `grade.sh` reads the CONTAINER, so its verdict line cannot tell you the
+# instructions were patched; the trial's `start` record carries `prompt_url` for
+# exactly that reason. Use a distinct DOGFOOD_TRIAL_PREFIX so the runs are also
+# told apart on disk.
+#
+# 🔴 TRIMMED, NOT WHITESPACE-DELETED, AND NOT VIA A SUBPROCESS. Round 2 of
+# /audit-pr killed the first two attempts at this line, each in a way that was
+# silent and pointed at the file's own named hazard:
+#   - `[ -n "$PROMPT_URL" ]` alone: a BLANK value printed the full "NON-HOSTED
+#     instructions" banner, forwarded `--prompt-url "   "`, and then fed the
+#     trial the HOSTED prompt with no `prompt_url` key, because runner.py
+#     normalises with `.strip()` and this file did not.
+#   - `tr -d '[:space:]'`: that DELETES interior whitespace too, so
+#     `file:///x/my prompt.md` was silently welded to `/x/myprompt.md`, the
+#     preflight passed on the WELDED target, and the trial was fed a sibling
+#     file. Measured. And `tr` is the only subprocess in this file's variable
+#     block: with `tr` off PATH the substitution yields the empty string, which
+#     this code reads as "unset", so the whole feature evaporates and prints
+#     MATRIX COMPLETE over the default grid.
+# Pure parameter expansion trims the ends and nothing else, cannot fail, and
+# matches `.strip()` exactly.
+PROMPT_URL="${DOGFOOD_PROMPT_URL:-}"
+PROMPT_URL="${PROMPT_URL#"${PROMPT_URL%%[![:space:]]*}"}"
+PROMPT_URL="${PROMPT_URL%"${PROMPT_URL##*[![:space:]]}"}"
+# 🔴 SAME REFUSAL THE BRIEF GETS, AND FOR THE SAME REASON. `--prompt-url` feeds
+# the SAME user message as `--brief`, so it is a second instance of what the
+# README calls "the one route by which repo content could reach a blind trial":
+# `DOGFOOD_PROMPT_URL=$(cat somefile)` would inject arbitrary text as the task's
+# FIRST paragraph. runner.py refuses it too; this is the outer of the two.
+# ⚠ NEWLINE-SHAPED, NOT INJECTION-SHAPED: a single-line value carrying " Also:
+# ignore step 2." is still accepted, here and in runner.py, exactly as it is for
+# `--brief`. This closes the file-splat route, not injection in general.
+case "${DOGFOOD_PROMPT_URL:-}" in
+  *$'\n'*|*$'\r'*)
+    echo "DOGFOOD_PROMPT_URL must be a single line — a multi-line value injects" >&2
+    echo "  arbitrary text into the trial's task, which is the one thing the" >&2
+    echo "  harness's blindness depends on not happening." >&2
+    exit 1 ;;
+esac
+# 🔴 USERINFO ONLY, AND THE BLOCKLIST THAT WAS HERE IS DELETED BECAUSE IT WAS
+# WRONG IN BOTH DIRECTIONS. It read `*@*|*token=*|*Signature=*|*X-Amz-*|*sig=*|
+# *key=*`, and round 2 measured both arms: it ADMITTED `?Token=abc` and
+# `?TOKEN=abc` (case-sensitive `case`) along with `?apiKey=`, `?secret=`,
+# `?jwt=`, and any capability URL carrying the secret in the PATH — while
+# REFUSING `?cachekey=7` (the single most likely parameter in this workflow,
+# busting a CDN cache on a re-served prompt) and any path containing `@`, as
+# Gitea/Forgejo raw URLs do. A guard whose description says "the URL must be
+# unauthenticated" cannot be a six-pattern blocklist; keeping it would have
+# meant a hard `exit 1` with no override on legitimate URLs while the shapes it
+# named most plausibly walked past on capitalisation.
+#
+# What IS structural is RFC 3986 userinfo: anything before an `@` in the
+# authority is credential material by definition. That is checked. Everything
+# else is documented rather than guessed at — see the README, which states the
+# seven surfaces this value reaches and that the Redactor scrubs none of them.
+# 🔴 THE EXPLICIT DEFAULT IS "NOT MOVED", AND THE DEFAULT IS READ FROM
+# runner.py RATHER THAN SPELLED TWICE. Round 2: aligning this file with
+# `.strip()` closed the BLANK value and left the other value the two predicates
+# disagree on — the hosted URL typed out in full. The driver's test was
+# non-emptiness; the runner's is `stripped != USER`. So
+# `DOGFOOD_PROMPT_URL="${PATCHED_URL:-https://developer.civitai.com/agent-setup/prompt.md}"`
+# — an ordinary wrapper shape — printed the full "NON-HOSTED instructions"
+# banner over a grid that ran against the hosted prompt, with no `prompt_url` in
+# the transcript. Same symptom, same direction, as the blank-value defect.
+#
+# `runner.py --print-task` with no other argument IS the default task, which is
+# the default URL and nothing else (TestDogfoodTaskDefaultIsByteIdentical pins
+# that). Deriving it here means the two layers cannot drift; a second literal
+# copy in this file would be a new rot surface for the exact claim it fixes.
+if [ -n "$PROMPT_URL" ]; then
+  PROMPT_URL_DEFAULT="$(python3 runner.py --print-task 2>/dev/null)" || PROMPT_URL_DEFAULT=""
+  if [ -z "$PROMPT_URL_DEFAULT" ]; then
+    # Fail LOUD and OPEN: the banner may over-claim, and that is better said than
+    # guessed. runner.py still decides the task and the mark correctly either way.
+    echo "note: could not derive the default prompt URL from runner.py, so the" >&2
+    echo "  banner below cannot tell you whether this URL is actually the default." >&2
+    echo "  The transcript's prompt_url key remains authoritative." >&2
+  elif [ "$PROMPT_URL" = "$PROMPT_URL_DEFAULT" ]; then
+    # Identical to the hosted default => this run IS a default run. Clearing it
+    # makes the banner, the forwarding and the start record agree by
+    # construction, which is what the previous round claimed and did not deliver.
+    PROMPT_URL=""
+  fi
+fi
+# 🔴 THE AUTHORITY IS EXTRACTED, NOT PATTERN-GUESSED. The first attempt wrote
+# `*@*` with a `*/*@*` escape meaning "the @ is in the path" — which only asks
+# whether SOME `/` precedes SOME `@`, and that is a different predicate. Round 3
+# measured it failing OPEN on every URL with a second `@` after any `/`:
+#   https://user:tok@example.com/path@v2/prompt.md        ADMITTED
+#   https://tok@example.com/files/me@example.com/p.md     ADMITTED
+# and the credential then reached the forwarded argv, the banner, the start
+# record, commands.log, the container's curl and the OpenRouter body — the seven
+# surfaces this guard exists for. The DELETED blocklist would have refused all of
+# them, so that attempt was a net REGRESSION dressed as a structural fix.
+#
+# RFC 3986: userinfo is everything before the FIRST `@` in the AUTHORITY, and the
+# authority ends at the first `/`, `?` or `#`. Extracting it is one expansion and
+# is exact, which the pattern never was.
+pf_rest="${PROMPT_URL#*://}"
+pf_auth="${pf_rest%%[/?#]*}"
+case "$pf_auth" in
+  *@*)
+    echo "DOGFOOD_PROMPT_URL carries URL userinfo (user[:password]@host)." >&2
+    echo "  Refused: this value is recorded in the transcript, printed to stderr," >&2
+    echo "  passed to the container's own curl and sent to OpenRouter inside the" >&2
+    echo "  task, and the Redactor only knows strings read from the credential" >&2
+    echo "  FILE — it scrubs none of them. Serve the file unauthenticated." >&2
+    echo "  ⚠ This checks USERINFO ONLY. A token in a query parameter or in the" >&2
+    echo "  path is NOT detected and leaks just as widely — see the README." >&2
+    exit 1 ;;
+esac
+# Same shape, for runner.py's --max-steps. Empty => runner.py's own default of 40.
+#
+# 🔴 40 CANNOT CARRY A BUILD-AND-SHIP BRIEF, AND UNTIL THIS KNOB EXISTED NO
+# DRIVER-LAUNCHED CELL COULD RUN UNDER ANY OTHER NUMBER. Measured on
+# `at1-mimo-noderoot-claudeid` (brief `t1`, xiaomi/mimo-v2.5): the trial ended
+# `stop: max-steps` at step 40 with `generations: 0`, `submissions: 0`, and its
+# last three tool calls were `npx tsc --noEmit`, `npm run build`,
+# `civitai app validate` — it had BUILT the app and was cut off immediately
+# before the submit-and-media phase the brief is graded on. A plain build-only
+# `celsius` cell took 65 steps, so 40 is below the floor for any brief that
+# builds AND ships, and that cell was ungradeable for a reason that had nothing
+# to do with the model or the product. Every rank-3-style "caps 80/$0.50" run on
+# record must therefore have been a direct runner.py invocation; the driver could
+# not have produced one.
+#
+# 🔴 AND THERE IS DELIBERATELY NO WARNING ON A HIGH VALUE. A step cap is not a
+# spend cap (runner.py's own comment at the flag says so: every turn resends the
+# whole history, so cumulative prompt tokens grow O(n^2) in steps). The bound
+# that IS about money is --max-cost, which is denominated in dollars and so is
+# model-priced; a step number is not. The only (steps, cost) pair we have is that
+# same cell — 40 steps = 856,834 prompt tokens = $0.0113, heavily cache-
+# discounted at ~$0.013/M effective — one point on one model, which fixes no
+# quadratic. Reading cost ~ steps^2 off it FOR SCALE ONLY (an extrapolation, not
+# a measurement), the $1.00 --max-cost default binds that model near ~375 steps
+# and a 100x-pricier one near ~38: any single threshold typed here would be wrong
+# for most of the matrix while --max-cost is right for all of it. Enforcement
+# stays in runner.py.
+MAX_STEPS="${DOGFOOD_MAX_STEPS:-}"
+
+# ── `app listing set-text`: OFF by default, and the opt-in is loud ───────────
+# runner.py refuses `civitai app listing set-text` under a credential unless
+# --allow-listing-text is passed, and until now that flag was reachable only by
+# invoking runner.py directly. So the one instrument that drives real agents end
+# to end could not reach the command that sets a listing DESCRIPTION, which made
+# it blind to exactly the defect `civitai app submit`'s listing-completeness gate
+# was added for: a matrix trial physically could not have fixed an
+# `empty-description`, so its leaving one behind measured the harness, not the
+# product.
+#
+# 🔴 THE DEFAULT STAYS OFF, AND THAT IS NOT CAUTION FOR ITS OWN SAKE. `set-text`
+# rewrites a listing's public tagline/description/category IN PLACE on every
+# listing status — not a "material" change, so no revision and no moderator
+# review — it is public the moment it returns, and this CLI ships NO command that
+# restores the previous value. The account a credentialed matrix runs against owns
+# real published listings. runner.py's own comment at APP_LISTING_DESTRUCTIVE
+# carries the rest.
+#
+# 🔴 ONLY THE LITERAL `1` ARMS IT, AND ANYTHING ELSE IS A HARD REFUSAL RATHER THAN
+# A SILENT OFF. The obvious `[ -n "$X" ]` test arms on `0`, on `false` and on `no`
+# — three spellings an operator reaching for OFF would plausibly type — and for a
+# write with no undo, guessing in either direction is wrong. An unset variable is
+# the only quiet default.
+ALLOW_LISTING_TEXT="${DOGFOOD_ALLOW_LISTING_TEXT:-}"
+case "$ALLOW_LISTING_TEXT" in
+  ""|1) ;;
+  *)
+    cat >&2 <<MSG
+refusing to run: DOGFOOD_ALLOW_LISTING_TEXT=$ALLOW_LISTING_TEXT is not a value
+this script will act on. It permits \`civitai app listing set-text\`, which
+rewrites a listing's PUBLIC tagline/description/category in place with no undo,
+so it is armed by the literal 1 and by nothing else. Unset it to leave the
+default refusal in place.
+MSG
+    exit 1 ;;
+esac
+
+if [ -n "$CREDENTIAL" ]; then
+  # 🔴 SAME RESUME-GUARD TRAP AS THE BRIEF, AND WORSE. A credentialed cell run
+  # under the setup matrix's namespace is skipped as "complete" by an
+  # UNCREDENTIALED transcript of the same id — so the run that was supposed to
+  # reach the account reaches nothing, and MATRIX COMPLETE is printed over it.
+  if [ "$PREFIX" = "t" ]; then
+    cat >&2 <<'MSG'
+refusing to run: DOGFOOD_CREDENTIAL_FILE is set but DOGFOOD_TRIAL_PREFIX is
+still the default `t`, the SETUP matrix's namespace. Set a distinct namespace,
+e.g. DOGFOOD_TRIAL_PREFIX=tc
+MSG
+    exit 1
+  fi
+  [ -s "$CREDENTIAL" ] || {
+    echo "refusing to run: DOGFOOD_CREDENTIAL_FILE=$CREDENTIAL is missing or empty" >&2
+    exit 1
+  }
+  # 🔴 A CREDENTIALED MATRIX WITH NO APP PREFIX CANNOT BE TOLD FROM THE
+  # ACCOUNT'S REAL APPS AFTERWARDS, and the prefix is also what the runner's
+  # refusal keys on — without it, every mutating `app` command is ungated.
+  [ -n "$APP_PREFIX" ] || {
+    echo "refusing to run: a credentialed matrix needs DOGFOOD_APP_PREFIX, e.g." >&2
+    echo "  DOGFOOD_APP_PREFIX=dogfood4-  — it is what keeps the trial off the" >&2
+    echo "  account's existing apps and what makes its own apps identifiable." >&2
+    exit 1
+  }
+  # 🔴 ANNOUNCED ONCE, BEFORE ANY CELL STARTS, AND ONLY WHERE IT CAN BITE. The
+  # flag is inert without a credential (runner.py's refusals are conditional on
+  # `armed`), so a banner on an uncredentialed run would teach the operator to
+  # skip the one they need to read. The prefix is quoted because it is the only
+  # thing keeping the writes off the account's own listings.
+  if [ "$ALLOW_LISTING_TEXT" = "1" ]; then
+    echo "🔴 DOGFOOD_ALLOW_LISTING_TEXT=1 — every cell of this matrix may run" >&2
+    echo "   \`civitai app listing set-text\` against the REAL account. It rewrites a" >&2
+    echo "   listing's public tagline/description/category IN PLACE, on any listing" >&2
+    echo "   status, with no revision, no moderator review and NO undo in this CLI." >&2
+    echo "   Only listings under DOGFOOD_APP_PREFIX=$APP_PREFIX should be reachable." >&2
+  fi
+elif [ "$ALLOW_LISTING_TEXT" = "1" ]; then
+  # Not fatal: an uncredentialed matrix reaches no account, so the flag changes
+  # nothing. Said out loud anyway, because an operator who set it meant to arm
+  # something and is entitled to know it did not.
+  echo "note: DOGFOOD_ALLOW_LISTING_TEXT=1 is inert without DOGFOOD_CREDENTIAL_FILE" >&2
+  echo "      — an uncredentialed trial reaches no listing to rewrite." >&2
+fi
+
+if [ -n "$PROMPT_URL" ]; then
+  # Loud, on stderr, before any trial starts. Not fatal — this is a supported
+  # mode — but the verdict it produces is about PROPOSED instructions, and
+  # nothing downstream says so: grade.sh reads the container.
+  echo "🔴 DOGFOOD_PROMPT_URL=$PROMPT_URL — the trials below are being fed" >&2
+  echo "   NON-HOSTED instructions. Their verdicts are evidence about that URL," >&2
+  echo "   NOT about the shipped entrypoint. Each trial's start record carries" >&2
+  echo "   prompt_url; grade.sh's verdict line does not." >&2
+  # 🔴 REACHABILITY PREFLIGHT — this file's stated job is "to refuse the two
+  # mistakes that are invisible afterwards", and an unreachable URL is exactly
+  # one. `grade.sh` reads the container, so a model that could not fetch its
+  # instructions produces an ordinary `no`, indistinguishable from a product
+  # defect — after paying up to `timeout 1500` per cell plus the OpenRouter
+  # spend for the whole grid.
+  #
+  # ⚠ IT IS A HOST-SIDE CHECK AND THE TRIAL FETCHES FROM INSIDE A CONTAINER, so
+  # this can pass where the container still cannot reach it (`127.0.0.1` is the
+  # classic case: from the container that is the container). It rules out typos,
+  # an unstarted server and a missing file; it does not certify container
+  # reachability.
+  #
+  # 🔴 `-q` IS LOAD-BEARING AND curl's STDERR IS PRINTED, NOT DISCARDED. Round 2
+  # measured both: without `-q` this reads `~/.curlrc`, and one plausible
+  # hardening line (`--proto =https`) made the preflight hard-refuse the README's
+  # OWN recommended `http://$SRV:8099/...` recipe while blaming the URL; and
+  # `2>/dev/null` threw away the one thing `-S` exists to produce, so a DNS
+  # failure, a 404 and a missing file all emitted the identical three lines. A
+  # guard whose purpose is to replace an opaque failure with a stated reason must
+  # not manufacture a different opaque failure.
+  if [ "${DOGFOOD_SKIP_PROMPT_PREFLIGHT:-}" = "1" ]; then
+    echo "   (preflight SKIPPED by DOGFOOD_SKIP_PROMPT_PREFLIGHT=1 — an unreachable" >&2
+    echo "    URL will present as every cell failing for no stated reason.)" >&2
+  elif command -v curl >/dev/null 2>&1; then
+    pf_err="$(curl -qfsS --proto '=http,https,file' --max-time 10 -o /dev/null "$PROMPT_URL" 2>&1)"
+    pf_rc=$?
+    if [ "$pf_rc" -ne 0 ]; then
+      echo "refusing to run: could not fetch DOGFOOD_PROMPT_URL from this host." >&2
+      echo "  curl said: ${pf_err:-(no message)}" >&2
+      echo "  Every cell would otherwise fail as an ordinary CLOSING_CONDITION=no," >&2
+      echo "  which is indistinguishable from a product defect, after paying for the" >&2
+      echo "  whole grid. If this host cannot reach a URL the CONTAINER can, set" >&2
+      echo "  DOGFOOD_SKIP_PROMPT_PREFLIGHT=1." >&2
+      exit 1
+    fi
+    echo "   (preflight: fetchable from this HOST — not a guarantee the container" >&2
+    echo "    can reach it; 127.0.0.1 would pass here and fail in the trial.)" >&2
+  else
+    echo "   (preflight SKIPPED: no curl on PATH — an unreachable URL will present" >&2
+    echo "    as every cell failing for no stated reason.)" >&2
+  fi
+fi
+
 run_one() {  # model short image ienv trial user
   local model=$1 image=$3 ienv=$4 trial=$5 euser=$6
   # 🔴 GATE ON COMPLETION, NOT ON EXISTENCE. runner.py opens transcript.jsonl in
@@ -76,6 +430,20 @@ run_one() {  # model short image ienv trial user
   fi
   local args=(--model "$model" --image "$image" --trial "$trial" --user "$euser" --out runs)
   [ -n "$ienv" ] && args+=(--agent-env "$ienv")
+  [ -n "$BRIEF" ] && args+=(--brief "$BRIEF")
+  [ -n "$BRIEF_NAME" ] && args+=(--brief-name "$BRIEF_NAME")
+  [ -n "$PROMPT_URL" ] && args+=(--prompt-url "$PROMPT_URL")
+  # The credential is passed as a PATH, never as a value — see runner.py's
+  # credential section for the three surfaces that keeps it off.
+  [ -n "$CREDENTIAL" ] && args+=(--credential-file "$CREDENTIAL")
+  [ -n "$APP_PREFIX" ] && args+=(--app-prefix "$APP_PREFIX")
+  [ -n "$MAX_GENERATIONS" ] && args+=(--max-generations "$MAX_GENERATIONS")
+  [ -n "$MAX_SUBMISSIONS" ] && args+=(--max-submissions "$MAX_SUBMISSIONS")
+  [ -n "$MAX_TOKENS" ] && args+=(--max-tokens "$MAX_TOKENS")
+  [ -n "$MAX_STEPS" ] && args+=(--max-steps "$MAX_STEPS")
+  # Passed only on the literal 1 — see the ALLOW_LISTING_TEXT block above. Omitted
+  # otherwise, so runner.py's own default refusal is what applies.
+  [ "$ALLOW_LISTING_TEXT" = "1" ] && args+=(--allow-listing-text)
   ( timeout 1500 python3 runner.py "${args[@]}" >"logs/$trial.out" 2>"logs/$trial.err"
     echo "done $trial rc=$?" ) &
 }
@@ -102,7 +470,7 @@ for m in "${MODELS[@]}"; do
          && [ "$is" != "${IDENTITIES[0]%%|*}" ]; then
         continue
       fi
-      run_one "$model" "$ms" "$image" "$ienv" "t-${ms}-${es}-${is}" "$euser"
+      run_one "$model" "$ms" "$image" "$ienv" "${PREFIX}-${ms}-${es}-${is}" "$euser"
       N=$((N+1))
       if [ $((N % 4)) -eq 0 ]; then wait; fi
     done

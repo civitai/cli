@@ -2,7 +2,9 @@ package saferune
 
 import (
 	"fmt"
+	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -474,63 +476,99 @@ func TestStripRemovesTheBidiControlAndKeepsTheScript(t *testing.T) {
 // IT CANNOT CHANGE SILENTLY IN EITHER DIRECTION.
 //
 // The class contains the join controls, so every script that uses them to make
-// an orthographic distinction loses that distinction. The first version of this
-// sheet listed two cases (emoji, Persian) and the audit measured eight more.
-// Each expectation is written as the surviving SEQUENCE, spelled out — never as
-// `Strip(in)` — so it cannot be derived from the implementation it tests.
+// an orthographic distinction loses that distinction. Each expectation is written
+// as the surviving SEQUENCE, spelled out — never as `Strip(in)` — so it cannot be
+// derived from the implementation it tests.
+//
+// 🔴 THIS COMMENT SAID "listed two cases (emoji, Persian) and the audit measured
+// eight more". BOTH NUMBERS WERE WRONG, and it was wrong on the day it was
+// committed: 2+8=10 while the sheet it sat beside already had 13 rows. Measured
+// against git — 41d41bf covered THREE cases as t.Run blocks (emoji ZWJ,
+// subdivision flag, Persian), and 512e90d replaced them with the 13-row table, so
+// the audit added TEN. It is corrected here rather than deleted because a later
+// reader used it to reconstruct the package doc's retracted "nine", and got a
+// ten-row sheet that never existed. Do not derive a count from prose; derive it
+// from the rows.
 //
 // Malayalam is the sharpest: the chillu is a different LETTER, not a different
 // shape of the same one.
+//
+// 🔴 EVERY ROW DECLARES ITS `script`, and that field is not decoration: it is
+// what makes the package doc's COUNT derivable instead of hand-maintained.
+// TestDegradationScriptsMatchThePackageDoc reads it. A row whose script is ""
+// asserts "this degradation is not a script losing an orthographic distinction",
+// and has to be named in nonScriptDegradations to say so out loud.
+var documentedDegradations = []struct{ name, script, in, want, note string }{
+	{
+		"emoji ZWJ sequence", "", "\U0001F468\u200d\U0001F469\u200d\U0001F467",
+		"\U0001F468\U0001F469\U0001F467", "one family becomes three people",
+	},
+	{
+		"subdivision flag", "",
+		"\U0001F3F4\U000E0067\U000E0062\U000E0073\U000E0063\U000E0074\U000E007F",
+		"\U0001F3F4", "the tag characters are Cf; the flag falls back to black",
+	},
+	{
+		"emoji TEXT presentation selector", "", "✈︎", "✈",
+		"VS15 is stripped, so a deliberately-monochrome glyph may render as emoji",
+	},
+	{
+		"Persian ZWNJ", "Persian/Arabic", "می\u200cروم", "میروم", "the prefix joins the stem",
+	},
+	{
+		"Malayalam chillu", "Malayalam", "ണ്\u200d", "ണ്",
+		"chillu-N becomes NA + virama — a DIFFERENT letter, not a variant shape",
+	},
+	{
+		"Devanagari half-form", "Devanagari", "क्\u200dष", "क्ष",
+		"the explicit half-form request is lost; the renderer picks its own conjunct",
+	},
+	{
+		"Devanagari forced conjunct-break", "Devanagari", "क्\u200cष", "क्ष",
+		"the explicit NON-joining request is lost, which is the opposite change",
+	},
+	{
+		"Bengali conjunct", "Bengali", "ক্\u200dষ", "ক্ষ", "same mechanism as Devanagari",
+	},
+	{
+		"Tamil non-joining", "Tamil", "க்\u200cஷ", "க்ஷ", "same mechanism",
+	},
+	{
+		"Kannada half-form", "Kannada", "ಕ್\u200d", "ಕ್", "same mechanism",
+	},
+	{
+		"Sinhala repaya", "Sinhala", "ර්\u200dය", "ර්ය", "the repaya form is lost",
+	},
+	{
+		"Mongolian vowel separator", "Mongolian", "ᠮᠣᠩ\u180eᠭᠣᠯ", "ᠮᠣᠩᠭᠣᠯ", "U+180E is Cf",
+	},
+	{
+		"Mongolian free variation selector", "Mongolian", "ᠨ᠋", "ᠨ",
+		"FVS1 is Variation_Selector, newly in the class — it selects a letter's shape",
+	},
+}
+
+// nonScriptDegradations names the rows that are NOT a script losing an
+// orthographic distinction, so they do not count toward the package doc's
+// number. Ledgered rather than inferred from `script == ""`, because a script row
+// that merely FORGOT its label would otherwise be absorbed here silently and the
+// published count would drift DOWN with the whole suite green — the same
+// direction of failure as the "at least nine" this comment's subject used to be.
+var nonScriptDegradations = map[string]string{
+	"emoji ZWJ sequence":               "an emoji sequence, not a script",
+	"subdivision flag":                 "an emoji flag sequence, not a script",
+	"emoji TEXT presentation selector": "a presentation choice on one glyph, not an orthographic distinction",
+}
+
 func TestStripDocumentedDegradations(t *testing.T) {
-	for _, tc := range []struct{ name, in, want, note string }{
-		{
-			"emoji ZWJ sequence", "\U0001F468\u200d\U0001F469\u200d\U0001F467",
-			"\U0001F468\U0001F469\U0001F467", "one family becomes three people",
-		},
-		{
-			"subdivision flag",
-			"\U0001F3F4\U000E0067\U000E0062\U000E0073\U000E0063\U000E0074\U000E007F",
-			"\U0001F3F4", "the tag characters are Cf; the flag falls back to black",
-		},
-		{
-			"emoji TEXT presentation selector", "✈︎", "✈",
-			"VS15 is stripped, so a deliberately-monochrome glyph may render as emoji",
-		},
-		{
-			"Persian ZWNJ", "می\u200cروم", "میروم", "the prefix joins the stem",
-		},
-		{
-			"Malayalam chillu", "ണ്\u200d", "ണ്",
-			"chillu-N becomes NA + virama — a DIFFERENT letter, not a variant shape",
-		},
-		{
-			"Devanagari half-form", "क्\u200dष", "क्ष",
-			"the explicit half-form request is lost; the renderer picks its own conjunct",
-		},
-		{
-			"Devanagari forced conjunct-break", "क्\u200cष", "क्ष",
-			"the explicit NON-joining request is lost, which is the opposite change",
-		},
-		{
-			"Bengali conjunct", "ক্\u200dষ", "ক্ষ", "same mechanism as Devanagari",
-		},
-		{
-			"Tamil non-joining", "க்\u200cஷ", "க்ஷ", "same mechanism",
-		},
-		{
-			"Kannada half-form", "ಕ್\u200d", "ಕ್", "same mechanism",
-		},
-		{
-			"Sinhala repaya", "ර්\u200dය", "ර්ය", "the repaya form is lost",
-		},
-		{
-			"Mongolian vowel separator", "ᠮᠣᠩ\u180eᠭᠣᠯ", "ᠮᠣᠩᠭᠣᠯ", "U+180E is Cf",
-		},
-		{
-			"Mongolian free variation selector", "ᠨ᠋", "ᠨ",
-			"FVS1 is Variation_Selector, newly in the class — it selects a letter's shape",
-		},
-	} {
+	// CONTROL: the sheet is the thing under test, so an emptied or truncated
+	// slice must fail here rather than pass vacuously.
+	if len(documentedDegradations) < 13 {
+		t.Fatalf("CONTROL failure, not a finding: the degradation sheet carries only %d row(s) — "+
+			"rows were removed, so every assertion below covers less than it reads as covering",
+			len(documentedDegradations))
+	}
+	for _, tc := range documentedDegradations {
 		t.Run(tc.name, func(t *testing.T) {
 			// CONTROL: the fixture really does carry something to lose.
 			if tc.in == tc.want {
@@ -542,6 +580,234 @@ func TestStripDocumentedDegradations(t *testing.T) {
 			}
 		})
 	}
+}
+
+// degradationScriptSet returns the distinct scripts the sheet measures, and
+// fails when a row is neither labelled with one nor declared non-script.
+func degradationScriptSet(t *testing.T) map[string]bool {
+	t.Helper()
+	set := map[string]bool{}
+	for _, tc := range documentedDegradations {
+		if tc.script == "" {
+			if _, declared := nonScriptDegradations[tc.name]; !declared {
+				t.Errorf("UNLABELLED ROW: degradation %q carries no `script` and is not in "+
+					"nonScriptDegradations. Either name the script it costs a distinction in — which moves "+
+					"the number the package doc publishes — or say here why it is not a script degradation. "+
+					"An unlabelled row silently LOWERS the published count.", tc.name)
+			}
+			continue
+		}
+		if why, declared := nonScriptDegradations[tc.name]; declared {
+			t.Errorf("CONTRADICTORY ROW: degradation %q is labelled script %q AND declared non-script "+
+				"(%q). One of the two is wrong.", tc.name, tc.script, why)
+		}
+		set[tc.script] = true
+	}
+	// Bidirectional: a nonScriptDegradations entry for a row that no longer
+	// exists reads as coverage of a case the sheet has stopped measuring.
+	have := map[string]bool{}
+	for _, tc := range documentedDegradations {
+		have[tc.name] = true
+	}
+	for name := range nonScriptDegradations {
+		if !have[name] {
+			t.Errorf("STALE non-script declaration: %q is not a row in documentedDegradations. Remove the "+
+				"entry, or restore the row it exempts.", name)
+		}
+	}
+	return set
+}
+
+// TestDegradationScriptsMatchThePackageDoc is the guard the "at least nine
+// scripts" defect needed and did not have: the package doc published a COUNT of
+// scripts, the measured sheet enumerated a different number, and nothing in the
+// tree compared the two.
+//
+// 🔴 IT PINS ONLY WHAT IS DERIVED FROM THE SHEET, AND IT USED TO PIN MORE. Two
+// further legs were deleted after being MEASURED useless: a keyword ban on
+// retracted and exhaustiveness wording, and a pair of presence checks for the
+// "rows are not scripts" sentences. Both were SPELLED guards — satisfiable by a
+// document that contains the words and states the opposite — which is green while
+// false, the worse failure direction. The sibling measurement that settled it: in
+// internal/cmd, 1,031 bytes of the README's repaired echo paragraph were replaced
+// with keyword-stuffed filler ending "every path is printed raw", and the
+// equivalent legs there returned ok. Do not re-add a leg here that asserts the
+// doc CONTAINS a phrase.
+//
+// What survives is a relationship no rewording satisfies: both numbers in the doc
+// are COMPUTED from the sheet — len(distinct scripts) and len(rows) — and the doc
+// must carry them in one derived sentence, plus name every script measured. A row
+// added to the sheet moves a number and reddens this; a reworded doc that keeps
+// the numbers right is correctly allowed to pass.
+//
+// The doc comment is read out of saferune.go rather than restated here; restating
+// it would make this test pass against its own copy of the prose.
+func TestDegradationScriptsMatchThePackageDoc(t *testing.T) {
+	src, err := os.ReadFile("saferune.go")
+	if err != nil {
+		t.Fatalf("read saferune.go: %v", err)
+	}
+	doc := string(src)
+	if i := strings.Index(doc, "\npackage saferune"); i >= 0 {
+		doc = doc[:i]
+	}
+	// CONTROL: we really are holding the package doc, not an empty slice of it.
+	if !strings.Contains(doc, "THE ACCEPTED COST") || len(doc) < 2000 {
+		t.Fatalf("CONTROL failure, not a finding: the extracted package doc is %d byte(s) and does not "+
+			"contain THE ACCEPTED COST — the extractor is reading the wrong region, so every assertion "+
+			"below is about the wrong text", len(doc))
+	}
+
+	scripts := degradationScriptSet(t)
+	// CONTROL: a non-trivial set, or leg 1 checks nothing.
+	if len(scripts) < 5 {
+		t.Fatalf("CONTROL failure, not a finding: the sheet measures only %d distinct script(s) (%v) — "+
+			"too few for this guard to be meaningful", len(scripts), sortedKeys(scripts))
+	}
+
+	// The doc is a wrapped comment, so every assertion about a PHRASE has to run
+	// against the whitespace-normalised form: "EIGHT\n// scripts" is the same
+	// claim as "EIGHT scripts" and a raw Contains misses it. Measured — the first
+	// cut of this guard read `doc` and reported the fixed comment as unfixed.
+	flat := strings.Join(strings.Fields(strings.ReplaceAll(doc, "//", " ")), " ")
+
+	// --- Leg 1: naming, both directions. ---
+	for _, s := range sortedKeys(scripts) {
+		if !strings.Contains(flat, s) {
+			t.Errorf("the package doc does not name %q, which TestStripDocumentedDegradations MEASURES as "+
+				"losing an orthographic distinction. The doc's list is what a reader takes as the cost of "+
+				"the strip; a measured script missing from it is an undocumented cost.\n  measured: %v",
+				s, sortedKeys(scripts))
+		}
+	}
+	// 🔴 BOTH NUMBERS, IN ONE DERIVED SENTENCE. The published defect was a SCRIPT
+	// count that did not match the sheet, and the reconstruction that replaced it
+	// confused scripts with ROWS — so the doc has to carry both figures, and both
+	// are computed here rather than spelled. No word-spelling table: the sentence
+	// is built from the data, so a sheet of any size produces the string the doc
+	// must contain.
+	want := fmt.Sprintf("%d distinct scripts across %d rows", len(scripts), len(documentedDegradations))
+	if !strings.Contains(flat, want) {
+		t.Errorf("the package doc does not state %q.\n"+
+			"  measured: %d distinct script(s) %v across %d row(s)\n\n"+
+			"The doc publishes both figures and they have to be THE sheet's. Two defects came from this "+
+			"pair: \"at least nine scripts\" beside an eight-script enumeration, and a replacement that "+
+			"read nine as a ROW count of a ten-row sheet that never existed. Re-derive the sentence from "+
+			"the numbers above; do not adjust this test.",
+			want, len(scripts), sortedKeys(scripts), len(documentedDegradations))
+	}
+
+	// 🔴 WHICH ROWS, NOT JUST HOW MANY — the leg that was missing, and the gap it
+	// left produced the defect this whole guard exists to prevent, INSIDE the fix.
+	// The doc's parenthetical named "the subdivision flag, VS15, Mongolian FVS1" as
+	// the three non-script rows. Mongolian FVS1 carries script "Mongolian" — it IS
+	// a script row — and the emoji-ZWJ row was omitted. Read literally that makes
+	// 13−3=10 script rows with Devanagari ×2 and Mongolian ×1, i.e. NINE distinct
+	// scripts: the paragraph explaining why "nine" was wrong regenerated nine. The
+	// totals were right, so a count-only check was green throughout.
+	//
+	// So the list is derived from nonScriptDegradations, whose keys ARE the answer,
+	// and it is checked inside the sentence that makes the claim rather than
+	// anywhere in the doc — a name appearing elsewhere (Mongolian is named twice as
+	// a legitimate script) must not satisfy or break it.
+	//
+	// 🔴 THE CANONICAL PHRASING IS LOAD-BEARING, AND THE DIAGNOSTIC DEGRADES WITHOUT
+	// IT. The name checks are scoped to the sentence located by the derived count
+	// phrase, so a doc that says the same thing in other words — the defect's actual
+	// wording was "three rows (the subdivision flag, VS15, Mongolian FVS1)" — reddens
+	// on the COUNT phrase and then on this block's own control, never reaching the
+	// informative "names a script row" message. Measured. That is a caught defect
+	// with a worse error message, not a miss; the remedy CI prints is still "state
+	// the derived sentence", after which these checks bind. Do not read a green here
+	// as "the enumeration is right" unless the count phrase is present.
+	nonScript := make([]string, 0, len(nonScriptDegradations))
+	for name := range nonScriptDegradations {
+		nonScript = append(nonScript, name)
+	}
+	sort.Strings(nonScript)
+
+	wantCount := fmt.Sprintf("%d rows are not script degradations", len(nonScript))
+	if !strings.Contains(flat, wantCount) {
+		t.Errorf("the package doc does not state %q. nonScriptDegradations declares %d: %v",
+			wantCount, len(nonScript), nonScript)
+	}
+	// Scope to the claiming sentence, so the check is about the enumeration.
+	sentence := ""
+	if i := strings.Index(flat, wantCount); i >= 0 {
+		end := len(flat)
+		if j := strings.IndexAny(flat[i:], "."); j >= 0 {
+			end = i + j
+		}
+		sentence = flat[i:end]
+	}
+	// CONTROL: an empty sentence would make both loops below vacuous.
+	if len(sentence) < len(wantCount) {
+		t.Fatalf("CONTROL failure, not a finding: could not isolate the non-script sentence from the doc "+
+			"(got %q) — the two assertions below would pass by absence", sentence)
+	}
+	for _, name := range nonScript {
+		if !strings.Contains(sentence, name) {
+			t.Errorf("the doc's non-script sentence does not name the row %q, which nonScriptDegradations "+
+				"declares as NOT a script degradation.\n  sentence: %q\n  declared: %v",
+				name, sentence, nonScript)
+		}
+	}
+	// The other direction, which is the one that actually fired: a SCRIPT row must
+	// not be listed among the non-script rows.
+	for _, tc := range documentedDegradations {
+		if tc.script == "" {
+			continue
+		}
+		if strings.Contains(sentence, tc.name) {
+			t.Errorf("the doc's non-script sentence names %q, which carries script %q and IS a script "+
+				"degradation. Listing it there subtracts it from the script count in prose while the "+
+				"derived figure keeps it — that disagreement is how \"nine\" was regenerated inside the "+
+				"paragraph retracting it.\n  sentence: %q", tc.name, tc.script, sentence)
+		}
+	}
+
+	// 🔴 NO FIGURE MAY BE RESTATED AS A WORD. Measured: with the count spelled
+	// "EIGHT" in two other sentences, adding a 14th row with a 9th script fired the
+	// guard with exactly two remedies, and applying exactly those left the module
+	// GREEN with the doc reading "EIGHT scripts are MEASURED" beside "9 distinct
+	// scripts across 14 rows". A guard that cannot see a copy cannot keep it
+	// honest, so the copies are banned rather than checked.
+	//
+	// 🔴 QUOTED SPANS ARE REMOVED FIRST, and that is not optional: this comment's own
+	// retraction has to quote "at least nine scripts" in order to retract it, and the
+	// paragraph above has to quote the mutant's "EIGHT scripts are MEASURED" output
+	// to record the measurement. A ban that cannot tell a mention from an assertion
+	// forbids the most useful prose here — the same too-strict half that
+	// internal/cmd's readmeAssertsFlagWinsRule documents. The mechanism differs on
+	// purpose: there, ONE known claim is tested for adjacency to quote marks; here,
+	// ANY figure is scanned for, so the quoted regions are excised instead.
+	unquoted := regexp.MustCompile("\"[^\"]*\"|`[^`]*`").ReplaceAllString(flat, " ")
+	// CONTROL: excision must not have eaten the document.
+	if len(unquoted) < len(flat)/2 {
+		t.Fatalf("CONTROL failure, not a finding: stripping quoted spans left %d of %d bytes — the ban "+
+			"below would pass by absence", len(unquoted), len(flat))
+	}
+	for _, w := range []string{
+		"FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN", "ELEVEN", "TWELVE", "THIRTEEN",
+		"FOURTEEN", "FIFTEEN", "SIXTEEN",
+	} {
+		re := regexp.MustCompile(`(?i)\b` + w + `\b ?(?:distinct )?(?:scripts?|rows?)\b`)
+		if m := re.FindString(unquoted); m != "" {
+			t.Errorf("the package doc states a figure as a WORD, unquoted: %q. Only the derived digit "+
+				"sentence may carry a count — a word-spelled copy is invisible to the derivation and WILL "+
+				"drift out of agreement with it (measured). Delete the restatement, or quote it if you are "+
+				"retracting it.", m)
+		}
+	}
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Strip only ever REMOVES: no rune is added, replaced or reordered, and running

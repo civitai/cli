@@ -90,36 +90,41 @@ that wrote it, flagged as such there.
 
 ## State now
 
-- ✅ **RELEASED — `v0.1.106` is live on npm and Homebrew**, re-confirmed independently:
-  a container that never built the CLI installed it from the PUBLIC registry and
-  completed setup end-to-end (the `ctl-pos` grader control).
-- ✅ **Rank 33 — `cli#669` MERGED** (`d0b79ae`) and **MEASURED**: mechanism A is CLOSED.
-  All four `other`-identity cells measured post-ship grade `CLOSING_CONDITION=yes`,
-  against 4-of-4 failing on 2026-09-18.
-- ✅ **Rank 35 — `civitai-developer-docs#89` MERGED AND LIVE** (7433 B, step 4 keys on `ok`).
-- ✅ **Rank 36 — the matrix RAN and is graded: 18/18, 12 `yes` / 6 `no`.** The verdict is
-  now a function of **prefix-writable alone**; identity no longer determines anything.
-  Full grid and limits in the investigation block below. ⚠ Its comparison clause is
-  **partly unmet** — see rank 36.
-- ⚠ **Rank 34 / `cli#665` — UNFIXED, and the remedy analysis is aimed at the wrong
-  path.** 6 of 6 failing containers (complete enumeration) installed the CLI at
-  `$HOME/.npm-global/bin/civitai`, reachable from NEITHER login shell. The issue's
-  candidate (b) is `--prefix="$HOME/.local"`; **no agent took it.**
-- ✅ **`cli#673` MERGED** (`9588fb0`, squash) — grader identity in the verdict line, and a
-  stale stderr-ordering claim corrected. Verified by CONTENT with a negative control:
-  `AGENT_ID` 3× at `origin/main`, 0× at `origin/main~1`. 13/13 checks green SHA-pinned.
-- **Deploy/verify status:** nothing new deployed. `#673` touches only the harness.
-- ⚠ **No `clawgate-task:` field**: `clawgate_handoff.sh resolve` exited **5**. An unknown
-  session id answers 200 with an empty array, so that zero cannot distinguish "touched no
-  task" from "wrong id". Not a clean bill of health.
-- ⚠ **Live worktrees**, remove by EXACT path: `cli-dogfood36` (holds `runs/` and `logs/` —
-  the ONLY copy of this session's 21 transcripts), `cli-ho674` (this doc), `cli-rank33`
-  and `cli-cc-fix` (both merged — safe to remove).
-- ⚠ **21 `dogfood-*` trial containers + 3 `dogfood-ctl-*` controls are RUNNING**, plus four
-  `df-*` images at 342 MB each. 🔴 `grade.sh` can only read a RUNNING container and
-  refuses a stopped one by name, so tearing these down means any re-grade needs a
-  **re-run** — and `runner.py` opens each transcript `"w"`, so a re-run DESTROYS the
-  transcripts too. Copy `runs/` aside before any re-run.
+✅ **THE ARC IS CLOSED.** `cli#665` arm 1 is MET against the **live** hosted prompt and the issue
+is closed. Nothing is in flight: no open PR, no running container, no worktree, no held claim.
+
+- **The closing measurement:** 5 of 6 blind cells `CLOSING_CONDITION=yes`, every `yes` reading
+  `login_version=0.1.113 agent_shell_version=0.1.113`, all 6 `stop=finished`, $0.058.
+  🔴 **The provenance control ran BEFORE any verdict was read: 0 of 6 `start` records carry a
+  `prompt_url` key**, so none was fed patched instructions. `grade.sh` reads the container, so
+  that control is the only thing that can tell a patched run from a real one.
+- **Merged, each verified BY CONTENT with a negative control** (never by ancestry — a squash
+  makes that permanently false): `docs#152` `021ec58f` (the EACCES-branch edit — *this* is what
+  moved the number) · `cli#784` `7df6e273` (doc, corrected before merge) · `cli#785` `efa1d6c2`
+  (`--prompt-url` + the provenance mark) · `cli#787` (residuals, batched). Controls: docs `main~1` inverted (0/1), cli `main~2` `pf_auth`=0; `docs#152` probed
+  SERVING and `cmp`-identical to the bytes the trials were fed.
+- 🔴 **WHAT CLOSED IT WAS PROSE, AND THE RATIO IS THE POINT.** `cli#777` shipped `--fix-path` in
+  `v0.1.112` and changed **nothing** (0 of 6). Same file, same cells: prose *asking* the agent to
+  run it → **1 of 3**; the command **inside the fenced install block** → **5 of 6**. Across all 15
+  patched-and-live trials the correlation never broke: every cell that executed `--fix-path`
+  graded `yes`; every cell that did not graded `no`.
+- ⚠ **5 of 6, not 6 of 6** — the live `no` (`mimo-v2.5` × `node-user`) is the cell that did not
+  run the flag. Scope: 3 cheap models, `claude` identity, 2 envs, Linux only; the Homebrew branch
+  never executes and **WebFetch-summarisation** is still untested, as `#665`'s scope note said.
+- **`cli#785` ran audit rounds 0–3, each finding real defects** — three in code I had just called
+  verified. Stopped after round 3 by operator decision; blockers fixed, residuals filed.
+- **No `clawgate-task:` field**: `resolve` exited **5** (0 tasks) and `field` exited **1**. An
+  unknown session id answers 200 with an empty array, so that zero cannot distinguish "touched no
+  task" from "wrong id" — not a clean bill of health. 🔴 Captured directly; a `| head` ate the
+  status first time, which is the trap the skill names.
+- **Evidence** at `~/.cache/dogfood-runs-2026-10-04-{r38,r42,live}/`, each with controls
+  (end-records matching trial count, nonsense-string control at 0); `-live/` carries
+  `prompt-as-served.md`, `cmp`-identical to `origin/main`.
+- **Release provenance and the arm-2 evidence** (`v0.1.112` publish time, Homebrew tap
+  `46ebc701`, and the agents' own "it is **not** permanent" finals) are verbatim in `#665`'s
+  closing comment — deliberately not re-copied into a doc 2.2x its ceiling.
+- **Cleanup verified:** 25 containers removed by EXACT resolved name (the unrelated app-author
+  arc's 15 untouched), 3 worktrees by exact path + prune, no listener on `:8099`.
 
 ## Open investigations — live diagnosis state
 
@@ -140,273 +145,19 @@ It is one `Edit` call and nobody ever comes back for it.
 
 ### ❌ SUPERSEDED (2026-09-12) — "The repo is frozen: `pins-vs-published` is red on `main`"
 
-🔴 **RESOLVED. Superseded by "✅ RESOLVED — the repo freeze (`pins-vs-published`)" below
-(cli#529).** Do NOT run this block's "Next probe": it was written to separate two
-mechanisms, and the answer is already known — the npm/arborist crash was real and the
-SDK was innocent. Kept for its measurements only.
-
-- **Symptom + exact repro:** nothing merges in `civitai/cli`. Every PR shows
-  `mergeStateStatus: BLOCKED`. Reproduce the cause directly:
-  ```bash
-  cd /home/zach/workspace/civit/cli
-  CIVITAI_CHECK_PUBLISHED_PINS=1 go test ./internal/scaffold \
-      -run TestScaffoldPinsSatisfyPublished -count=1
-  ```
-- **Observed (with values):**
-  - Guard output, verbatim: `STALE SCAFFOLD PIN — templates/page-money/package.json.tmpl`;
-    `@civitai/app-sdk` pinned `^0.37.0` vs published **0.39.0**;
-    `@civitai/blocks-react` pinned `^0.46.0` vs published **0.49.0**. Pre-1.0
-    caret locks the minor, so neither pin admits the published version.
-  - Branch protection: `gh api repos/civitai/cli/branches/main/protection` →
-    required contexts `["pins-vs-published","scaffold-currency","build-test","ready-ack-runtime","template-page-vite"]`,
-    `enforce_admins: true`, `strict: false`.
-  - `bump-scaffold-pins` nightly: **failed 09-06 (34030852777), 09-07
-    (34127760960), 09-08 (34224413110)**; last green **09-05 (33962879680)**;
-    09-04 also failed.
-  - In run 34224413110 the bump itself WORKS — steps 4 `bump stale @civitai/*
-    scaffold pins`, 6 `validate — pins now satisfy published (network guard)` and
-    7 `validate — full scaffold suite (offline)` all **succeed**. It dies at step
-    9 `validate — scaffold builds against the bumped SDK` with:
-    `npm error Cannot read properties of null (reading 'edgesOut')`.
-    Step 10 `open PR if pins changed` is therefore **skipped** — which is why no
-    bump PR ever appears.
-  - The last full `ci.yml` run on `main` (33909583100, 09-04, `d9b4e29`) was
-    green on all 8 jobs including `pins-vs-published` — a **stored green with an
-    expiry date**, since the guard queries live npm and upstream published after.
-- **Ruled out:** that the bump logic is broken — steps 4/6/7 pass, including the
-  network guard against the NEW pins. `via: measurement` (`gh run view
-  34224413110 --json jobs`, per-step conclusions). · That `pins-vs-published`
-  might be a stale/false alarm — the guard was run locally against live npm and
-  fails for real. `via: command`. · That this is caused by anything in the
-  agent-setup work — it predates it by three days. `via: measurement` (run dates).
-- **Leading hypothesis:** an **npm/arborist install crash** on the scaffolded
-  app under node 24 / npm 11 (`aebd2fb` moved CI to node 24), NOT a removed or
-  renamed SDK export. 🔴 **Issue #524's body says the opposite** — *"Pins were
-  rewritten and satisfy npm, but a fresh `civitai app init … --template
-  page-money` then failed to install, typecheck or build against them… this is
-  the removed/renamed SDK export case, and it is a real upstream break rather
-  than a bot bug."* That body is **rewritten by every failing run** and its
-  classification contradicts the log line above. Do not adopt it without
-  reproducing.
-- **Next probe:** reproduce the install locally against the bumped pins, which
-  separates the two mechanisms in one command:
-  ```bash
-  cd $(mktemp -d) && civitai app init probe --template page-money && cd probe
-  sed -i 's/\^0\.37\.0/^0.39.0/; s/\^0\.46\.0/^0.49.0/' package.json
-  npm install 2>&1 | tail -30      # edgesOut crash here ⇒ npm bug, not an SDK break
-  ```
-  If it crashes: the fix is an npm pin / `--legacy-peer-deps` in the workflow,
-  and the SDK is innocent. If it installs and then a typecheck fails naming a
-  missing export: #524 is right and 0.46→0.49 really did break `page-money`.
-  Per the `cli/scaffold` cairn entry, the method that clears a `blocks-react`
-  bump is `npm pack` both versions and diff `dist/` recursively, reading the
-  verdict off `internal/transport`, `internal/liveHost`, `internal/mockHost`,
-  `hooks/useBuzzWorkflow`, `hooks/useAppWorkflows` by name.
-
 ### ❌ SUPERSEDED (2026-09-12) — "`developer.civitai.com` returns 403 to `Python-urllib` — IN FLIGHT, delegated"
-
-🔴 **RESOLVED. Superseded by "✅ RESOLVED — `developer.civitai.com` 403 to
-`Python-urllib`" below.** Its leading hypothesis (a UA denylist in the docs repo's
-`nginx.conf`) is **REFUTED** — the cause was Cloudflare Browser Integrity Check, fixed
-by a Configuration Rule. **Do NOT run its "Next probe" and do NOT look in
-`nginx.conf`.** Re-measured live 2026-09-12: `Python-urllib/3.11` → **200**,
-`python-requests/2.31` → **200** on `/agent-setup/prompt.md`.
-
-- **Symptom + exact repro:**
-  ```bash
-  curl -sI -A 'Python-urllib/3.11' https://developer.civitai.com/ | head -1   # 403
-  curl -sI -A 'python-requests/2.31' https://developer.civitai.com/ | head -1 # 200
-  ```
-- **Observed (with values):** 403 for `Python-urllib/3.11`; 200 for default
-  curl, `python-requests`, `ClaudeBot/1.0`, and browsers. Naive agent fetchers
-  using urllib are hard-blocked — which breaks the pasted-URL pattern before it
-  starts. Separately, per-page `.md` URLs return 200 but with
-  `Content-Type: text/plain`, not `text/markdown`.
-- **Ruled out:** nothing yet — this was measured, not diagnosed. `via: assumed`
-  that it is in `nginx.conf` (the docs repo ships one); the subagent was briefed
-  to check there FIRST and to say plainly if it turns out to be upstream in a
-  CDN/WAF rather than fake a fix.
-- **Leading hypothesis:** a UA denylist in the docs repo's own `nginx.conf`.
-- **Next probe:** read the docs PR's report. If it says upstream, the fix is not
-  in this repo and needs whoever owns the edge config.
 
 ### ✅ RESOLVED — the repo freeze (`pins-vs-published`)
 
-**Closed by cli#529.** Pins bumped to `^0.39.0` / `^0.49.0`; the guard passes and
-four queued PRs merged. The diagnosis recorded below was **half right**: the
-`edgesOut` crash is real and still open (see below), but issue #524's
-classification — *"the removed/renamed SDK export case … a real upstream break"* —
-was **wrong**.
-
-- **Ruled out:** that 0.46→0.49 broke the scaffold. Scaffolded page-money,
-  hand-bumped, `npm install` → 142 packages rc 0, `typecheck` clean, `build`
-  clean. `via: command`
-- **Ruled out:** that it was a contract inversion like 0.44's. `npm pack`ed both
-  `blocks-react` versions and diffed `dist/` by name: `useBuzzWorkflow` and
-  `useAppWorkflows` **byte-identical**; `transport`/`liveHost`/`mockHost` differ
-  by **zero removed lines** — purely additive. `via: measurement`
-- **Ruled out:** that node 24 was the cause. `template-page-money` and
-  `scaffold-currency` scaffold and build against the bumped pins on the same
-  node-24 runners and **pass**. `via: measurement`
-
 ### ❌ SUPERSEDED (2026-09-12) — "🔴 STILL OPEN — `bump-scaffold-pins` cannot land its own fix (cli#530)"
-
-🔴 **NOT OPEN. Superseded by "✅ RESOLVED — `bump-scaffold-pins` could not land its own
-bump (cli#530)" below** — closed by cli#540 (`5557b6a`), verified 2026-09-11 by run
-34559798234. Issue **#530 is CLOSED**, re-verified 2026-09-12. Kept for the control
-pair (node 22/npm 10 vs node 24/npm 11), which is the durable evidence.
-
-The nightly bumps correctly (steps 4/6/7 green, incl. the network guard against
-the NEW pins) then dies at step 9 `validate — scaffold builds against the bumped
-SDK` with `npm error Cannot read properties of null (reading 'edgesOut')`, which
-**skips step 10 `open PR if pins changed`**. So no bump PR is ever opened and the
-repo re-freezes on its own the next time upstream publishes.
-
-- 🔴 **DIAGNOSED 2026-09-08 — the two hypotheses below this line were BOTH
-  WRONG; do not re-derive either.** The cause is that
-  `bump-scaffold-pins.yml` still pinned `node-version: "22"` in both its jobs.
-  `ci.yml` moved to node 24 in `aebd2fb` (PR #520) **for this exact crash**; the
-  sibling nightly was never updated. Measured on a fresh
-  `civitai app init … --template page-money` at the pins of the day
-  (`@civitai/app-sdk ^0.39.0`, `@civitai/blocks-react ^0.49.0`), a separate
-  clean directory per arm:
-  - node **22.23.2 / npm 10.9.8** (the runner's exact versions, from the failing
-    run log) → `npm install --no-audit --no-fund` exits **1** with
-    `npm error Cannot read properties of null (reading 'edgesOut')`.
-  - node **24.19.0 / npm 11.17.0** → install + typecheck + build all exit **0**,
-    116 modules transformed.
-
-  Run-date corroboration: green 09-01/02/03/05 (pins already current ⇒ step 9
-  skipped by its `if:`), red 09-04/06/07/08 (the bumper changed something ⇒ step 9
-  ran).
-- ❌ **RETRACTED — "the nightly installs into a tree its own earlier steps just
-  rewrote."** Refuted: step 9 scaffolds into a fresh `$RUNNER_TEMP/bump-validate`,
-  and the crash reproduces on a fresh scaffold outside CI entirely.
-- ❌ **RETRACTED — #524's "a removed/renamed SDK export … a real upstream break
-  rather than a bot bug."** That sentence was **generated by this workflow's own
-  `classify` job**, not by a human diagnosis, and it was false. The classifier
-  has been rewritten to state the measurement and enumerate the causes without
-  picking one.
-- 🔴 **Independent of the cause:** a step-9 failure should not silently suppress
-  step 10. Opening the PR as a draft, or letting its own CI carry the red,
-  surfaces the break without taking the repo down. **Done** — the PR step now
-  runs under `always()`, downgrading to a draft on a build failure while pins/suite
-  failures still withhold it.
-- **Closing condition is still the operator's to observe:** a real scheduled run
-  that either goes green or fails step 9 and STILL produces a PR. Nothing here
-  can run the workflow.
 
 ### ❌ SUPERSEDED (2026-09-12) — "⚠ STILL OPEN — `Python-urllib` 403 at the Cloudflare edge" (1 of 2)
 
-🔴 **NOT OPEN.** Superseded by "✅ RESOLVED — `developer.civitai.com` 403 to
-`Python-urllib`" below. The 403 is **GONE**, re-measured live 2026-09-12 (200 for both
-`Python-urllib/3.11` and `python-requests/2.31`). This is the FIRST of two identical
-stale headings; the second is a few blocks down.
-
-Re-measured after every deploy, unchanged: `Python-urllib/3.11` → **403**
-(`error code: 1010`, Browser Integrity Check), `python-requests` / `curl` /
-`ClaudeBot` → 200. Case-sensitive and prefix-anchored.
-
-- **Ruled out:** that it is in this repo. The same `nginx.conf` run locally
-  returns 200 to the blocked UA, and there is no `_headers`/`_redirects`/
-  `wrangler.*` anywhere in the docs repo. `via: measurement`
-- **Next step is not a probe:** it needs a Cloudflare dashboard change by someone
-  with zone access. Not actionable from a repo.
-
 ### ✅ RESOLVED — `bump-scaffold-pins` could not land its own bump (cli#530)
-
-🔴 **SUPERSEDES the "🔴 STILL OPEN — `bump-scaffold-pins` cannot land its own fix"
-block above. That block's "Leading hypothesis" and "Next probe" are both WRONG and
-must not be run** — the hypothesis it names was refuted, and the probe it suggests
-(checking for a reused workspace between steps) investigates a mechanism that does
-not exist here.
-
-- **Closed by cli#540** (`5557b6a`), **verified 2026-09-11** by an actual run.
-- **Root cause: node 22 / npm 10.** `ci.yml` moved to node 24 in `aebd2fb`
-  (cli#520) *for this exact arborist crash*; the sibling nightly was left at
-  `node-version: "22"` in **both** jobs.
-- **Ruled out — the step-order hypothesis** ("the nightly installs into a tree its
-  own earlier steps just rewrote"): step 9 scaffolds into a fresh
-  `$RUNNER_TEMP/bump-validate`, and the crash reproduces on a fresh scaffold
-  outside CI entirely. `via: measurement`
-- **Ruled out — #524's "removed/renamed SDK export … a real upstream break"**:
-  that body is generated by this workflow's own `classify` job, and the sentence
-  has since been rewritten so it no longer asserts a cause it cannot know.
-  `via: measurement`
-- **Observed (control pair, same scaffold and pins, fresh dir per arm):**
-  node 22.23.2 / npm 10.9.8 → `npm error Cannot read properties of null (reading
-  'edgesOut')`, rc **1**. node 24.19.0 / npm 11.17.0 → install + typecheck +
-  build clean, rc **0**. `via: command`
-- 🔴 **A green scheduled run could NOT have proved this.** Both runs after #540
-  merged went green with **steps 6–12 skipped** — pins current ⇒ `detect changes`
-  false ⇒ step 9 never executes. Exercised deliberately instead
-  ([run 34559798234](https://github.com/civitai/cli/actions/runs/34559798234)):
-  step 9 **success**, step 11 **success**, opened PR #546 (closed, branches
-  deleted). `via: measurement`
 
 ### ❌ SUPERSEDED (2026-09-12) — "⚠ STILL OPEN — `Python-urllib` 403 at the Cloudflare edge" (2 of 2)
 
-🔴 **NOT OPEN.** Superseded by the `✅ RESOLVED` block immediately below. It WAS
-actionable and it WAS actioned — a Configuration Rule on the `civitai.com` zone
-disabling BIC for `developer.civitai.com`.
-
-Unchanged this session and **not actionable from a repo**. Needs a Cloudflare
-dashboard change by someone with zone access. `via: measurement` (ruled out as
-ours: the same `nginx.conf` returns 200 locally to the blocked UA, and there is no
-`_headers`/`_redirects`/`wrangler.*` anywhere in the docs repo).
-
 ### ✅ RESOLVED — `developer.civitai.com` 403 to `Python-urllib`
-
-🔴 **The block below titled *"returns 403 to `Python-urllib` — IN FLIGHT, delegated"*
-is RETIRED. Do NOT run its "Next probe", and do NOT look in `nginx.conf`.** Its
-leading hypothesis — *"a UA denylist in the docs repo's own `nginx.conf`"*, tagged
-`via: assumed` — is **REFUTED**. The block is left intact above only because a
-corrected reading is worth more than a deleted one.
-
-**Root cause: Cloudflare Browser Integrity Check (BIC)**, a zone-level setting on
-the `civitai.com` zone. Never the origin, never the docs repo.
-
-- **Symptom + exact repro (now fixed — this reproduces nothing today):**
-  ```bash
-  curl -s -o /dev/null -w '%{http_code}\n' -A 'Python-urllib/3.12' \
-    https://developer.civitai.com/agent-setup/prompt.md      # was 403, now 200
-  ```
-- **Observed (with values), measured 2026-09-09 → 2026-09-11:**
-  - Cloudflare firewall events (GraphQL `firewallEventsAdaptive`, zone
-    `civitai.com`, host `developer.civitai.com`):
-    `action=block  source=bic  ruleId=bic` on `/agent-setup/prompt.md` for
-    `Python-urllib/3.11`, `Python-urllib/3.12`, `Python-urllib`, `libwww-perl/6.0`.
-  - Block body was **17 bytes**, `content-type: text/plain`: `error code: 1010`
-    — Cloudflare's BIC error code.
-  - The 403 carried **none** of the origin's headers (no `etag`, no
-    `x-content-type-options`, no `cf-cache-status`), while the 200 carried all
-    three. The request never reached nginx.
-  - Zone settings: `browser_check = "on"` (zone-wide, `editable: true`),
-    `security_level = "essentially_off"`. BIC is independent of security level.
-  - 🔴 **The denylist is exact-string and case-sensitive, and mostly porous:**
-    `Python-urllib/3.11` → 403 but `python-urllib/3.11` → **200**;
-    `MyAgent (urllib inside)` → 200; `<empty UA>` → **200**; `Wget/1.21`,
-    `Go-http-client/1.1`, `node-fetch`, `axios`, `okhttp`, `Mozilla/5.0` → all 200.
-    Only `Python-urllib*` and `libwww-perl*` were blocked. Cloudflare publishes no
-    list, no versioning and no changelog for it.
-- **Ruled out:** that it is in the docs repo's `nginx.conf` — the 403 carries no
-  origin headers at all and Cloudflare's own events attribute it to `bic`.
-  `via: measurement` · That a WAF **managed** ruleset did it — events name `bic`,
-  not a ruleset id, and BIC is a zone product a managed-rules skip cannot reach.
-  `via: measurement` · That a **custom** firewall rule did it — all 14 read; none
-  matches `urllib`/`libwww`, and the host-scoped ones target `civitai.com` and
-  `image.civitai.com` only. `via: command` · That **AI Crawl Control** could fix
-  it — it manages known, self-identifying crawlers; `Python-urllib` is neither
-  recognised nor verifiable. `via: doc`
-  (https://developers.cloudflare.com/ai-crawl-control/features/manage-ai-crawlers/)
-- **Resolution:** a **Configuration Rule** on the `civitai.com` zone:
-  `(http.host eq "developer.civitai.com")` → `action: set_config`,
-  `action_parameters: {"bic": false}`. `browser_check` stays **`on`** zone-wide,
-  so `civitai.com` and `image.civitai.com` keep BIC.
-- **Verified (content, not just status):** `Python-urllib/3.12` now receives
-  byte-identical content to a known-good UA on `/`, `/index.html`, `/llms.txt`,
-  `/apps/` and `/agent-setup/prompt.md` — `prompt.md` 6,949 B and `llms.txt`
-  13,066 B, `cmp` clean both, `content-type: text/markdown`, origin `etag` present.
 
 ### ⚠ OPEN — The docs repo cannot be built locally from a pristine `main`, while CI builds it green
 
@@ -444,199 +195,15 @@ repo. Rank 15. The block below is the diagnosis as of 2026-09-11.
   generator is reading something outside the repo.
 
 ### ✅ RESOLVED — was cli#596 audited? (the previous handoff said no)
-- as-of: 2026-09-14
-
-Resolved by measurement, not by argument: it had been, twice, and the handoff was written
-before those rounds' commits were read back.
-
-- **Observed (with values):** `gh pr view 596 --json commits` returns **three** commits, not
-  one — `2d509d3`, `382c7fc`, `19455c0`. `382c7fc`'s message opens *"Round 0 on #596"*;
-  `19455c0`'s answers a nine-axis pass. A fenced `audit-claims round=1
-  audited=2d509d3..19455c0c` block with 14 claims is posted as an issue comment on the PR,
-  timestamped 2026-09-14T04:26:02Z.
-- **Ruled out:** that a round-0 dispatch was still owed — `audit-dispatch.py 596 --round 2`
-  parsed the round-1 block and emitted a delta range with **silent stderr**, i.e. no
-  `the newest claims block says round=N` widening warning, which is what fires when an
-  intermediate round posted nothing. `via: command`
-- **Ruled out:** that the handoff's named worktree was where the work was — `/home/zach/workspace/civit/cli-574`
-  does not exist; `git worktree list` shows `cli-596b` on `fix/generate-blob-forgery-r0` at
-  `19455c0`. `via: command`
 
 ### ~~✅ DECIDED (2026-09-19) — an agent the CLI does not know can never reach `ok: true` (rank 33)~~ IMPLEMENTED 2026-09-19 — see "✅ IMPLEMENTED — rank 33 shipped as cli#669" below
-
-🔴 **NOT OPEN, AND ITS CLOSING BULLET IS NOW WRONG.** The block below ends *"Next
-probe: none … what is missing is a DECISION"* — the decision was made **and
-implemented**; `checkCountsTowardVerdict` now excludes the `mcp-*` rows when
-`agentTargets[agent]` is unknown. Read the IMPLEMENTED block at the bottom of this
-section for what actually shipped and for the **three corrections the decision
-record's plan needed**. Measurements below are kept — they are still the baseline.
 - as-of: 2026-09-18, from 19 blind trials; **argument rewritten the same day after
-  a round-0 audit refuted its original framing — read the RETRACTED bullet below
-  before acting on any part of this block**
-
-For `agent == other` — every agent with no entry in the CLI's table — `--check`
-returns `ok: false` and exit 1 after a **completely correct** setup, forever.
-
-- **Symptom + exact repro:**
-  ```bash
-  docker run -d --name x node:22-bookworm-slim sleep infinity
-  docker exec -w /work x bash -lc \
-    'mkdir -p /work && npm install -g @civitai/cli && civitai agent-setup --track app
-     civitai agent-setup --check --json; echo "rc=$?"'
-  ```
-- **Observed (with values):** `{"agent":"other","ok":false,…}`, rc **1**, with
-  `mcp-site` and `mcp-orch` both false and detail *"agent other has no config file
-  this CLI knows — register … by hand"*. `authenticated` is correctly excluded
-  (the error says "2 check(s) failed", not 3). 4 of 4 such trials hit it; the
-  three de-confounding trials show it follows the IDENTITY, not the model —
-  claude-sonnet-5 on `other` fails, gemini and grok on `claude` pass.
-- **Ruled out:** that this is model behaviour — see the swap above. `via: measurement`
-  · That `authenticated` is the cause — it is already excluded by
-  `checkCountsTowardVerdict`. `via: code`
-- **Mechanism, located:** `internal/cmd/agent_setup.go` `checkCountsTowardVerdict`
-  excludes `authenticated` and `claude-md` and nothing else, so the two MCP rows
-  count even for an agent the CLI has no config target for.
-- ❌ **RETRACTED — "this is the same shape the file's own comments have already
-  recognised TWICE; third instance, not a new class."** Refuted by a round-0
-  audit. The two existing exclusions apply where **no work remains** (auth is out
-  of scope; the CLAUDE.md shim is inert for a non-Claude agent); on `other` work
-  remains and the user must paste. 🔴 **And `agent_setup.go:739-742` — the
-  docstring of the function emitting these rows — records the opposite decision
-  in words: *"An agent this CLI has no target for … are both genuinely unfinished
-  setups"*.** The first draft read a switch as an omission while a sibling
-  function stated the intent. **Do not re-derive the exclusion fix from the
-  switch alone.**
-- **What bites the entrypoint, and is not contested:** `prompt.md` step 4 says
-  *"Do not report success if any check fails"* while this path fails one
-  permanently by design — those cannot both stand; and the CLI's own remediation
-  line, "re-run `civitai agent-setup` to fix what it can write", names an action
-  that can never change the outcome here.
-- 🔴 **Which surface moves is a DESIGN CALL, not a diagnosis.** `prompt.md`'s
-  wording or the verdict semantics — and the `--json` contract has ledgered
-  consumers (`readme_agent_setup_claims_test.go`), so it belongs to whoever owns
-  that contract. This block reports; it does not decide.
-- 🔴 **A2 — the escape hatch exists and the entrypoint never mentions it.**
-  `prompt.md` contains `--agent` **zero** times, while
-  `civitai agent-setup --track app --agent cursor` yields `{"ok":true}` on the spot.
-  The one trial that recovered gracefully did so by **asking the user** which editor
-  they use — the one thing the prompt tells the agent not to do — because nothing it
-  was given mentions the flag. ⚠ **`--agent` is NOT a blanket fix**: it is right when
-  detection merely FAILED for an agent that IS in the table, and wrong when the agent
-  genuinely is not (it writes a config the running agent never reads, and `--check`
-  then reports green on a setup that does not work). Any prompt change here has to
-  separate those two cases, and it does not remove the need to fix A.
-- **Next probe:** none. Nothing here is undiagnosed — what is missing is a DECISION,
-  and this block does not get to make it. 🔴 **Neither candidate is recommended here.**
-  An earlier version of this very bullet said the verdict fix was *"recommended,
-  matches precedent"* — the exact two words the retraction above kills — and left it
-  in the ACTION bullet, which is where the next session looks. That is the failure
-  this block exists to prevent, committed inside the block that prevents it.
 
 ### ~~⚠ OPEN — the documented `--prefix` remedy leaves the CLI unreachable (rank 34)~~ PARTLY ADDRESSED 2026-09-19 — see "✅ SHIPPED — ranks 33/34/35 and v0.1.106" below
-
-🔴 **STILL OPEN AS AN ISSUE, BUT ITS SECOND-ORDER HARM IS FIXED.** The measured
-defect below is unchanged — nothing shipped installs the CLI anywhere a later
-shell can reach, and cli#665's own closing condition is NOT met. What HAS shipped
-(cli#671, in v0.1.106) is the `AGENTS.md` half: the block now tells a reader what
-to do when `civitai` is not on PATH, which addresses the **0 of 8** finding below.
-🔴 **Do NOT read the "Next probe: none" line as current** — the remedies were
-re-opened, two probe-based drafts were built and DELETED, and the reasoning is in
-the shipped block. Measurements below stand.
 - as-of: 2026-09-18, from 19 blind trials
-
-- **Symptom + exact repro:** on any machine where npm's global prefix is not
-  writable, follow `prompt.md` §2 "If the install fails" exactly, then open a new
-  shell:
-  ```bash
-  npm install -g --prefix="$HOME/.npm-global" @civitai/cli
-  PATH="$HOME/.npm-global/bin:$PATH"; civitai --version   # works
-  bash -lc 'command -v civitai'                           # nothing
-  zsh -lic 'civitai --version'                            # command not found
-  ```
-- **Observed (with values):** **8 of 8** trials on the two non-writable-prefix
-  environments ended this way, across all four models. The binary is present at
-  `~/.npm-global/bin/civitai` the whole time. What the agents reported: **8/8**
-  relayed the PATH line as step 5 requires, **6/8** also warned it is not
-  persistent and named the profile file, **2/8** (both gpt-5.6-terra) gave no
-  persistence warning, and **0/8** connected it to the `AGENTS.md` just written.
-- ⚠ **CORRECTED — an earlier draft of this block said "5 of 8 still declared
-  success", from a keyword regex, and that overstated the defect.** Read by hand,
-  most agents relay a usable manual remedy. **The defect is not that agents lie;
-  it is that step 3's durable artifact is written against a binary that only
-  exists in the installing shell.** `AGENTS.md` tells every future agent session
-  to run `civitai …`, and every future session gets a new shell.
-- **Ruled out:** that the agents skipped or garbled the documented remedy — every
-  one ran it verbatim and relayed the PATH line. `via: measurement`
-- **Why step 4 cannot catch it:** step 4's `civitai --version` runs in the *same*
-  shell as the install, which is the one shell where it works.
-- 🔴 **The second-order cost is the real one:** step 3 writes an `AGENTS.md` that
-  tells every future agent session to run `civitai …`. Those sessions get a new
-  shell, so the file the setup exists to produce names a binary the setup left
-  unreachable.
-- 🔴 **This is "success measured in an environment the user does not have" on a NEW
-  operand.** The recorded instance was a *stale* binary and was fixed with
-  `civitai upgrade`; this is an *unreachable* binary produced by the prompt's own
-  remedy. A fix aimed at the earlier operand did not generalise.
-- **Next probe:** none — the remedies and what is measured about them live in ranked
-  item 34, which is the ONE place they are maintained. 🔴 **Do not restate them here.**
-  A copy of the ranking lived in this bullet through four audit rounds and was missed by
-  a sweep note that named only three surfaces; ranked item 34, the evidence doc and
-  issue cli#665 are the other three.
 
 ### ✅ IMPLEMENTED — rank 33 shipped as cli#669, and the decision record's plan needed three corrections
 - as-of: 2026-09-19
-
-**Supersedes the `✅ DECIDED (2026-09-19)` block above, whose "Next probe: none —
-what is missing is a DECISION" is now wrong.** The decision was made *and*
-implemented. The durable rule lives in
-`claudedocs/decisions/35-agent-setup-merges-a-users-file.md`
-§"The `mcp-*` rows for an agent this CLI has no target for".
-
-🔴 **Each correction below was MEASURED, not reasoned. The decision record
-(`claudedocs/refs/agent-setup-verdict-decision-2026-09-19.md`) has been updated with
-all three, and its header retracted.**
-
-- **Correction 1 — the prescribed code does not compile.** The record's sketch reads
-  `case checkMCPSite, checkMCPOrch:`; **those constants do not exist**. The check
-  names are bare literals on the `civitaiMCPServers` table (`agent_setup_mcp.go`).
-  Shipped as a derived `isMCPCheckName` lookup against that table, which is also what
-  `TestREADMEVerdictExemptionsAreLedgeredAgainstTheCode`'s own docstring demands so a
-  third server is covered the moment it is added. `via: command` (build failure)
-- **Correction 2 — coupled edit 3 predicted the WRONG DIRECTION, and the guard was
-  BLIND.** The plan said `readme_agent_setup_claims_test.go` "goes red until the
-  README sentence names the exemption". Measured, in this order:
-  1. code change alone → `go test ./internal/cmd` **ok**, whole package green, with
-     the README sentence left false;
-  2. then adding `` `mcp-site` `` / `` `mcp-orch` `` to that sentence → **FAIL**:
-     *"the README's exemption sentence names \"mcp-site\" as excluded from `ok`, but
-     checkCountsTowardVerdict COUNTS it."* — **which is itself false.**
-
-  Cause: the guard derives `exemptForOther` with `"cursor"` — an agent that **IS** in
-  `agentTargets` — so "other" there has only ever meant *not claude*, never *not in
-  the table*. There are **three** agent classes and it sampled two. Following its
-  failure message leads to de-backticking the names (round 3 of #641's measured wrong
-  fix) or to reverting correct code. Widened to sample the unknown class, assert that
-  identity is absent from `agentTargets`, and pin the clause whole. `via: measurement`
-- **Correction 3 — coupled edit 6's `AGENTS.md` item and its forced eviction were NOT
-  NEEDED.** Item **35** already routes here: its trigger sentence names *"`--check`'s
-  verdict"* verbatim, its Code header already lists `checkCountsTowardVerdict`, and
-  decision 35 already carries the verdict-exemption table this change extends.
-  `AGENTS.md` is **unchanged at 30,493 bytes** and no eviction was paid.
-  ⚠ **This is the ONE place the implementation departs from the decision as written.**
-  It is reversible; the `--json` contract's owner can overrule it by minting a new
-  numbered item and paying the eviction. `via: code`
-- **Ruled out — that the change is a blanket exemption.** Negative control with the
-  MCP config removed, same binary: `claude` ok=false rc=1 · `cursor` ok=false rc=1 ·
-  `vscode` ok=false rc=1 · `other` ok=true rc=0. `via: measurement`
-- **Verification matrix** for the new behavioural guard
-  `TestMCPRowsDoNotFailTheVerdictForAnAgentWithNoConfigTarget`: **RED at
-  `origin/main` (`07e9031`)** on `a correct setup for an unknown agent is ok and
-  exits 0`; green at HEAD; a blanket-exemption mutant dies on its own distinct arm
-  (`a KNOWN agent with no MCP config still fails`). The widened README ledger kills
-  three mutants, each with its own message. `make ci-shallow` (depth-1 tier,
-  committed state) **21/21**. `via: measurement`
-- **Next probe:** none for the mechanism. What remains is **merge sequencing** —
-  #668 then #667 then the doc branch then rebase #669.
 
 ### ⚠ OPEN — `pins-vs-published` is red on cli#669, and it is the repo freeze recurring a THIRD time
 
@@ -675,273 +242,209 @@ all three, and its header retracted.**
 ### ✅ SHIPPED — ranks 33/34/35 and v0.1.106, and the three-round arc on rank 34
 - as-of: 2026-09-19
 
-**Supersedes the `⚠ OPEN — the documented --prefix remedy` block above**, whose
-"Next probe: none" is no longer current.
-
-- **Rank 33 shipped as decided**, with three corrections the decision record needed:
-  its Go snippet **did not compile** (`checkMCPSite`/`checkMCPOrch` are not constants —
-  the names are bare literals on `civitaiMCPServers`); its coupled-edit-3 prediction was
-  **inverted** (the README ledger guard derives its exempt set with `"cursor"`, an agent
-  that IS in `agentTargets`, so it sampled two of THREE agent classes and stayed green
-  while the README was false — and went red, falsely, once the rows were named); and its
-  `AGENTS.md` eviction was **unnecessary** because item 35 already routes there.
-- 🔴 **RANK 34 TOOK THREE ATTEMPTS, AND TWO OF THEM REINTRODUCED THE CLASS THE PREVIOUS
-  AUDIT RAISED.** Both drafts detected the unreachable-CLI condition by running a login
-  shell and wrote the binary's ABSOLUTE PATH into `AGENTS.md`:
-  1. stripping `PATH` alone left the profile's idempotence sentinel
-     (`__NIXOS_SET_ENVIRONMENT_DONE`) set, so the profile built **no PATH at all** and a
-     correctly-installed CLI read as unreachable — on the maintainer's own platform;
-  2. stripping sentinels fixed that, and the `cmd.WaitDelay` added for an unrelated hang
-     introduced a THIRD inversion: `exec.ErrWaitDelay` returns **with the shell exited 0
-     and the resolved path already on stdout**, which the probe scored "not reachable"
-     while discarding that answer. Measured: 2s deadline, **30.0s** elapsed, `err=nil`.
-  **Neither fix had a guard that could catch its removal** — deleting `WaitDelay` left
-  the suite green; reverting the sentinel strip left the suite green. Both guards
-  re-implemented their subject instead of calling it, and one asserted the opposite in
-  its own comment.
-- 🔴 **THE FIX WAS DELETING THE PROBE, NOT PATCHING IT A THIRD TIME.** The recurring
-  fault was never a single bug: it was a **per-machine signal whose only consumer was a
-  write into a COMMITTED file**, so every inversion channel put a developer's home
-  directory and a bold-red false directive into a repo other people pull. 631 insertions
-  became 116. Durable rule recorded in
-  `claudedocs/decisions/36-agents-block-per-project.md`: this block may depend on the
-  PROJECT, never on the MACHINE.
-- **Ruled out — that the row was worth keeping.** Measured baseline: 8/8 trials already
-  relayed the PATH line, 6/8 already warned it would not persist. The row's marginal
-  value was ~0 against that. `via: measurement`
-- **Next probe:** the dogfood matrix — see ranked item 36.
-
 ### ~~⏳ IN FLIGHT — rank 36: the first post-ship dogfood measurement, and a 25× cost error in this doc~~ ✅ MEASURED 2026-09-19 — the matrix completed; see "✅ MEASURED — rank 36" below. The cost and control findings here STAND; only the "in flight" status is superseded.
 - as-of: 2026-09-19
 
-- **Symptom + exact repro:** the arc shipped ranks 33 and 35 to move the 12-of-16
-  failing cells recorded on 2026-09-18, and nobody had re-measured. Preconditions were
-  met for the first time this session (CLI published, hosted prompt live).
-
-- **Observed (with values) — the grader was validated in BOTH directions FIRST**, on the
-  merged `#673` code, asserting the FIELDS and not just the verdict word:
-
-  | control | verdict line |
-  |---|---|
-  | `ctl-neg` (bare container) | `agent=unknown check_ok=parse-error mcp_rows=unreadable login_version=none agent_shell_version=none CLOSING_CONDITION=no` |
-  | `ctl-pos` (public npm install) | `agent=claude check_ok=true failed_checks=[authenticated] mcp_rows=2 login_version=0.1.106 agent_shell_version=0.1.106 CLOSING_CONDITION=yes` |
-  | `ctl-profile` (`--prefix=$HOME/.local`) | `agent=claude check_ok=true failed_checks=[authenticated] mcp_rows=2 login_version=none agent_shell_version=0.1.106 CLOSING_CONDITION=no` |
-
-  `ctl-profile` is the one that carries weight: arm A GREEN while arm B is RED, which is
-  the false-green shape the README pins, and it reproduces mechanism B directly —
-  `bash -lc 'civitai --version'` → `0.1.106`, `zsh -lic 'civitai --version'` →
-  `command not found`.
-
-- **Observed (with values) — the 3-trial smoke matrix** (`gemini-3.8-flash`, `node-root`,
-  all three identities), graded from the containers:
-
-  | cell | recorded 2026-09-18 | measured 2026-09-19 on v0.1.106 |
-  |---|---|---|
-  | `gemini × node-root × claude` | ✅ yes | ✅ `yes` |
-  | `gemini × node-root × codex` | *(never run)* | ✅ `yes` |
-  | `gemini × node-root × other` | ❌ **no** (mechanism A) | ✅ **`yes`** |
-
-  The `other` cell verbatim: `agent=other check_ok=true
-  failed_checks=[mcp-site,mcp-orch,authenticated] mcp_rows=2 login_version=0.1.106
-  agent_shell_version=0.1.106 CLOSING_CONDITION=yes` — both MCP rows still PRESENT and
-  still `false`, which is rank 33's design, and both halves of the closing condition
-  green on a machine that never built the CLI. All three trials stopped `"finished"` in
-  9–10 steps.
-
-- 🔴 **`#673` EARNED ITS KEEP ON ITS FIRST RUN.** The `agent=` field is read from the
-  container's own `--check` JSON, and it matched the trial-id label in all three cells —
-  which is the first time identity has been *measured* rather than asserted by whoever
-  named the trial.
-
-- 🔴 **Ruled out — that a full matrix costs ~$24.** `--max-cost` is a per-trial CAP, not
-  an estimate, and this doc's rank 36 quoted "24 trials at $1/trial" as though it were
-  one. The 3 smoke trials cost **$0.083 total** ($0.028/trial), and this repo's own
-  evidence doc records the entire 19-trial matrix of 2026-09-18 at **$0.66**. A full
-  24-cell run is ~$1. `via: measurement` (the `end` records' `usage.cost`, and
-  `claudedocs/refs/agent-setup-dogfood-matrix-2026-09-18.md` line 469).
-
-- **Ruled out — that a stale model slug would kill the run.** All four default slugs and
-  all three operator-chosen ones resolve live on OpenRouter, and each advertises `tools`
-  + `tool_choice`, which `runner.py` requires. `via: command`
-  (`curl -s https://openrouter.ai/api/v1/models`, 447 models enumerated).
-
-- ⚠ **`~/.config/repo-cos/env` holds a LIVE PAID OpenRouter key** — $49.69 of a $50
-  weekly limit remaining, no expiry — while `<devrc>/SECRETS.md` documents that file as
-  belonging to a service retired 2026-09-07 and says it is safe to delete. That entry is
-  wrong about the key being dead. `via: measurement` (the free `/api/v1/key` endpoint).
-
-- **Leading hypothesis:** mechanism A is closed by the shipped v0.1.106 and mechanism B
-  (rank 34 / `cli#665`) is not, so the post-ship grid should show the four `other` cells
-  flipping to `yes` while every unwritable-prefix cell stays `no`. One of the four is now
-  measured; three are not.
-
-- 🔴 **Stated limit — the model axis was CHANGED mid-run at the operator's direction**,
-  from the recorded `claude-sonnet-5 / gpt-5.6-terra / gemini-3.8-flash / grok-4.6` to
-  `z-ai/glm-5.3-flash / xiaomi/mimo-v2.5 / deepseek/deepseek-v4-pro`. The two sets are
-  DISJOINT, so rank 36's "compare the `other` cells against the recorded 4-of-4 failure"
-  cannot be done cell-for-cell — the in-flight run tests whether the recorded
-  MODEL-INDEPENDENCE holds on three models never tried, which is a different and arguably
-  stronger question. 🔴 **The confound to watch when reading it: a cheap model that
-  simply cannot drive the task produces the same `CLOSING_CONDITION=no` as a broken
-  product.** Only the transcript separates those two; the verdict line cannot.
-
-- **Next probe:** grade every finished container and tabulate by (identity, prefix
-  writable), then read the transcript of any `no` cell before attributing it to the
-  product:
-  ```bash
-  D=/home/zach/workspace/civit/cli-dogfood36/scripts/dogfood
-  for t in "$D"/runs/t-{glm,mimo,dsv4}-*/; do
-    id=$(basename "$t"); u=root
-    case "$id" in *-nodeuser-*|*-ubuntu-*) u=dev ;; esac
-    printf '%-34s ' "$id"; bash "$D/grade.sh" "$id" "$u" 2>&1 | tail -1
-  done
-  ```
-
 ### ✅ MEASURED — rank 36: mechanism A is closed, mechanism B is not, and agents do not take the documented remedy
-
 - as-of: 2026-09-19
 
-**Supersedes the "⏳ IN FLIGHT — rank 36" block above** (its status only; its cost and
-grader-control findings stand).
+### ~~⚠ OPEN — `cli#665`'s arm 1 is ungraded, and three sequenced steps stand between #777 and grading it~~ SUPERSEDED 2026-10-04 — arm 1 is now GRADED; see "⚠ OPEN — `cli#665` arm 1 is GRADED and NOT MET" below
+- as-of: 2026-10-04
 
-- **Observed (with values) — the full grid.** 18 trials, all stopped `"finished"` in 7–11
-  steps, graded from the containers with the `#673` grader:
+### ⚠ OPEN — five fixes in `cd1a5db` are FIXED-BUT-UNAUDITED, with the gaps enumerated
+- as-of: 2026-10-04
 
-  | env | prefix writable | identity | glm-5.3-flash | mimo-v2.5 | deepseek-v4-pro |
-  |---|---|---|---|---|---|
-  | node-root | yes | claude | ✅ yes | ✅ yes | ✅ yes |
-  | node-root | yes | codex | ✅ yes | ✅ yes | ✅ yes |
-  | node-root | yes | **other** | ✅ **yes** | ✅ **yes** | ✅ **yes** |
-  | stale-cli 0.1.101 | yes | claude | ✅ yes | ✅ yes | ✅ yes |
-  | node-user | **no** | claude | ❌ no | ❌ no | ❌ no |
-  | ubuntu-apt | **no** | claude | ❌ no | ❌ no | ❌ no |
+- **Symptom + exact repro:** round 5's two 🟡 and three 🟢 were fixed without a round 6. The fixes
+  are mutation-checked individually but no independent pass read the result. `gh pr view 777
+  --comments` carries the full list.
+- **Observed (with values):** the gaps the fix round stated rather than hid — (a) **no pin exists
+  for "every outer error of `pathFixTargets`"**, so a *fourth* early return would again be invisible;
+  only the row's shape is guarded. (b) **The third cause has no automated test** — reaching
+  `filepath.Abs(home)` failing needs `os.Chdir` into a deleted directory, process-global and racy
+  against parallel tests, and a flaky guard was judged worse than none; it was measured once with
+  the real binary (`HOME=relhome` from a deleted cwd → empty-path `blocked` row, exit 1).
+  (c) The template prose guard does not catch a contradiction that never names "Windows".
+  (d) `multiShellMinDirShapes`' count floor cannot fail alone, being implied by five distinct names.
+  (e) **`ineffassign` did not fire** on a `got := ""` immediately-overwritten initialiser despite
+  being enabled — unexplained; staticcheck is demonstrably live, so this is an instrument property
+  nobody has diagnosed.
+- **Ruled out:** that the enumeration should have been corrected to "three" rather than deleted —
+  this ladder rotted **three** hand-maintained counts (file-corpus totals, `### Round N` sections,
+  the cause count), so the fix names `pathFixTargets` as the authority instead. `via: measurement`
+  · That the third cause was recent drift — its message dates to `667c59c`, round 1's own R6/M23, so
+  round 4's "TWO" was short by one **on arrival**. `via: command`
+- **Leading hypothesis:** (a)–(d) are accepted costs with stated reasons; (e) is the only one that
+  is genuinely unknown.
+- **Next probe:** for (e), `golangci-lint run --disable-all --enable=ineffassign` over a minimal
+  reproducer of `got := ""` followed by an unconditional assignment, at v2.12.2 — that separates a
+  config problem from a linter behaviour.
 
-  Every `yes` reads `login_version=0.1.106 agent_shell_version=0.1.106 mcp_rows=2`; every
-  `other` cell reads `failed_checks=[mcp-site,mcp-orch,authenticated]` with both MCP rows
-  PRESENT and `false`, which is rank 33's design. Every `no` reads
-  `agent=unknown check_ok=parse-error mcp_rows=unreadable`.
+### ~~⚠ OPEN — `cli#665` arm 1 is ungraded, and the issue's closure hides that~~ GRADED 2026-10-04 — see "⚠ OPEN — `cli#665` arm 1 is GRADED and NOT MET" below
+- as-of: 2026-10-04
 
-- 🔴 **MECHANISM A IS CLOSED.** The `other` identity passes on all three models. With the
-  `gemini × node-root × other` smoke cell — which IS one of the recorded four — that is
-  **four `other` cells measured post-ship, all `yes`**, against 4-of-4 failing before.
+### ⚠ OPEN — `--fix-path` writes `$HOME/.zshenv`, which zsh ignores under `ZDOTDIR` (cli#781)
+- as-of: 2026-10-04
+- **Symptom + exact repro:** on a host with `ZDOTDIR` set, `--fix-path` writes `$HOME/.zshenv`,
+  reports success and names the file, and no later zsh ever reads it.
+- **Observed (with values):** a synthetic `~/.zshenv` prepending a marker dir was LOST under
+  `zsh -lic`, `-ic` and `-c` with `ZDOTDIR=/home/zach/.config/zsh` set, and SURVIVED with it unset
+  or pointed at the test HOME. End-to-end, with `ZDOTDIR` set the npm binaries dir was absent from
+  `$path` entirely.
+- **Ruled out:** that the suite would catch it — `agent_setup_fix_path_shell_test.go` **strips
+  `ZDOTDIR`**, with a comment saying otherwise "every assertion below would be vacuous". So the
+  suite is blind to the axis by construction. `via: code`
+- **Ruled out:** that it is already disclosed — `ZDOTDIR` appears nowhere in
+  `internal/cmd/agent_setup_fixpath.go` or in decision 39's "WHAT IT DOES NOT REACH". Decision 39
+  discusses whether zsh is INSTALLED, a different question. `via: code`
+- **Leading hypothesis:** two legitimate fixes, and choosing is a product call — honour it
+  (`${ZDOTDIR:-$HOME}/.zshenv`) or disclose it. See cli#781 for both.
+- **Next probe:** none needed to diagnose; the decision is the blocker.
 
-- 🔴 **MECHANISM B IS UNFIXED, AND THE REMEDY ANALYSIS IS AIMED AT A PATH NOBODY WALKS.**
-  Enumerated, not sampled — **6 of 6** failing containers:
-  `installed_at=/home/dev/.npm-global/bin/civitai bash_login=none zsh_login=none`.
-  The install SUCCEEDS; nothing makes it reachable. The hosted prompt documents candidate
-  **(b)** as `--prefix="$HOME/.local"`, and this doc's measured objection to (b) is that
-  the stock `~/.profile` block serves bash but not zsh — **but all six agents
-  independently chose `~/.npm-global`, which `~/.profile` does not add at all**, so
-  neither shell finds it. That is one step WORSE than the modelled case, and the
-  `ctl-profile` control reproduces (b), not what agents do. `via: measurement`
+### ⚠ OPEN — `cli#665` arm 1 is GRADED and NOT MET: the fix works, the hosted prompt forbids it
+- as-of: 2026-10-04
 
-- **Ruled out — that the six failures are a capability failure of cheap models.** This was
-  the confound flagged before the run: a model that cannot drive the task yields the same
-  `CLOSING_CONDITION=no` as a broken product. It does not apply — every trial stopped
-  `"finished"`, and all six failures hit `EACCES` (5–7 occurrences each) and attempted
-  prefix remedies (8–14 mentions each). `via: measurement` (transcript scan)
+**Supersedes both earlier `cli#665` blocks**, whose headings are retired above — one modelled the
+gap as release sequencing, the other as an environment problem. Both are measured wrong.
 
-- **Ruled out — that the verdict is model-dependent.** Identical outcomes across three
-  models absent from every prior grid. `via: measurement`
-
-- 🔴 **Stated limit — the comparison clause is PARTLY UNMET.** Rank 36 asks that the
-  `other` cells be compared against the recorded 4-of-4 failure. **One** of those four
-  (`gemini × node-root × other`) was re-measured directly and flipped; the other three
-  (`gemini × stale`, `grok × node-root`, `grok × stale`) were NOT re-run, and the three
-  new `other` cells are on models absent from the record. The claim "mechanism A is
-  closed" therefore rests on 1 direct re-measurement plus model-independence, not on 4
-  direct ones. Closing that gap is three trials at ~$0.08.
-
-- **Observed — cost, against the `--max-cost` ceiling that framed this item.** 21 trials
-  totalled **$0.1211** (mean $0.0058) against a $21 cap. Per model: mimo $0.0009–0.0013,
-  glm $0.0013–0.0026, deepseek $0.0029–0.0054, **gemini $0.0248–0.0297** — the frontier
-  model was 5–20× dearer than any of the three.
-
-- **Next probe:** the three missing recorded cells, which is the whole remaining gap:
+- **Symptom + exact repro:** on a machine where npm's global prefix is not writable, a blind agent
+  given only the hosted URL installs the CLI successfully and leaves it unreachable from every
+  later shell, so `zsh -lic 'civitai --version'` fails and arm 1 never goes green. Reproduce:
   ```bash
-  D=/home/zach/workspace/civit/cli-dogfood36/scripts/dogfood
-  cd "$D" && DOGFOOD_MODELS='x-ai/grok-4.6|grok' DOGFOOD_ENVS='df-node-root|noderoot|root df-stale-cli|stale|root' \
-    DOGFOOD_IDENTITIES='other|' bash driver.sh
+  WT=/home/zach/workspace/civit/cli-r38; cd "$WT"/scripts/dogfood
+  for e in node-user ubuntu-apt; do docker build -q -t "df-$e" -f "envs/$e.Dockerfile" .; done
+  set -a; . ~/.config/repo-cos/env; set +a
+  DOGFOOD_MODELS='z-ai/glm-5.3-flash|glm xiaomi/mimo-v2.5|mimo deepseek/deepseek-v4-pro|dsv4' \
+  DOGFOOD_ENVS='df-node-user|nodeuser|dev df-ubuntu-apt|ubuntu|dev' \
+  DOGFOOD_IDENTITIES='claudeid|CLAUDECODE=1' DOGFOOD_TRIAL_PREFIX=r38 bash driver.sh
   ```
-  🔴 Then the `gemini × stale × other` cell separately — and note the driver's
-  non-crossed envs run the FIRST identity in the list, which is why `DOGFOOD_IDENTITIES`
-  must name `other` first or the stale cell silently runs a different identity.
+- **Observed (with values) — the grid.** Every cell `agent=unknown check_ok=parse-error
+  failed_checks=[] mcp_rows=unreadable login_version=none agent_shell_version=none`:
+
+  | cell | stop | steps | cost | `fix-path` in transcript | verdict |
+  |---|---|---|---|---|---|
+  | glm × node-user | finished | 8 | $0.00246 | 0 | ❌ no |
+  | glm × ubuntu-apt | finished | 10 | $0.00381 | 0 | ❌ no |
+  | mimo × node-user | finished | 9 | $0.00252 | **7** | ❌ no |
+  | mimo × ubuntu-apt | finished | 9 | $0.00117 | 0 | ❌ no |
+  | dsv4 × node-user | finished | 10 | $0.01258 | 0 | ❌ no |
+  | dsv4 × ubuntu-apt | finished | 10 | $0.01371 | 0 | ❌ no |
+
+- 🔴 **Observed — the mechanism, in the agent's OWN WORDS.** `mimo × node-user` found the flag from
+  `agent-setup --help` and refused to use it: *"(`civitai agent-setup --fix-path` can also append a
+  marker-guarded block to your startup files for you — **I didn't run it since editing your shell
+  profile is yours to decide.**)"* The hosted `prompt.md` EACCES branch ends: *"Report it verbatim
+  in step 5 so the user can make it permanent — **do not edit their shell profile yourself.**"*
+  The agent obeyed the prompt. `grep -c 'fix-path' /tmp/prompt.md` → **0** (http 200, 7,433 B).
+- **Observed — `AGENTS.md` is the wrong channel, measured.** `grep -ac 'AGENTS.md'` is non-zero in
+  the transcripts only as `agent-setup`'s own `✓ create /work/AGENTS.md` line and the agent's final
+  report; **no cell read the file.** The flag's only prose home is its line 35.
+- **Ruled out — that the installs failed.** Complete enumeration, 6 of 6 containers:
+  `installed=/home/dev/.npm-global/bin/civitai`, `bash_login=none`, `zsh_login=none`,
+  **no `~/.zshenv` written**. Identical to the pre-#777 state. `via: measurement`
+- **Ruled out — that cheap models cannot drive the task.** All 6 `stop=finished` in 8–10 steps,
+  5–8 `EACCES` hits and 14–20 `npm-global` mentions each; every one installed the CLI and reported
+  a verified setup. `via: measurement`
+- **Ruled out — that `--fix-path` is inert on this path.** New control `ctl-reach`, published
+  v0.1.112 in a blind `df-node-user` container, reproducing the `~/.npm-global` install 6/6 agents
+  choose: BEFORE → `bash -lc` and `zsh -lic` both `command not found`; AFTER
+  `civitai agent-setup --fix-path` → **both print `civitai 0.1.112`**, having written
+  `/home/dev/.zshenv` and `/home/dev/.profile`. The "before" reading is the negative control.
+  `via: measurement`
+- **Ruled out — that the CLI should have warned at runtime and did not.** It is deliberate:
+  `TestEveryBlockTellsYouWhatToDoWhenTheCLIIsNotOnPATH` is *"deliberately UNCONDITIONAL"* and
+  decision 36 forbids a per-machine claim — two earlier drafts that detected the condition were
+  each measured wrong. So `fix-path in agent-setup stdout = 0` is correct behaviour, NOT a gap.
+  🔴 Do not re-derive "add a runtime PATH warning" from the grid; it was already tried and rejected.
+  `via: code`
+- **Ruled out — that the grader is at fault.** All three documented controls were run first, on
+  v0.1.112: `ctl-neg` → `no`/`parse-error`/`unreadable`; `ctl-pos` → `yes`, both arms `0.1.112`;
+  `ctl-profile` → `check_ok=true` with `login_version=none` ⇒ `no`, i.e. arm A green while arm B
+  red, which is the discriminating one. `via: measurement`
+- **Leading hypothesis:** the remaining gap is one sentence of prose in another repo. Editing the
+  `prompt.md` EACCES branch to run `civitai agent-setup --fix-path` — and deleting the
+  "do not edit their shell profile yourself" instruction that contradicts it — is predicted to flip
+  these cells. ⚠ **PREDICTED, NOT MEASURED**: it rests on one agent's stated reason plus `ctl-reach`.
+- **Next probe:** make the prediction testable before shipping the wording. `runner.py` hardcodes
+  the prompt URL at line 51 and has no override, so add a `--prompt-url` flag (plumbed through
+  `driver.sh`), serve a patched `prompt.md` locally, and re-run 3 cells at ~$0.02. That converts
+  the inference into a measurement and is the only probe that can.
+
+### ⚠ OPEN — arm 1 is unmeasured against the LIVE entrypoint; every number so far used a patched copy
+- as-of: 2026-10-04
+
+- **Symptom + exact repro:** arm 1 is graded from a blind trial fed the **hosted** `prompt.md`.
+  Every measurement in this arc was fed a locally-served patched copy — evidence about proposed
+  wording, not about the shipped entrypoint.
+- **Observed (with values):** `docs#152` merged 20:36:52Z, squash `021ec58f`; `origin/main` has
+  `--fix-path` 1 / forbidding sentence 0, `main~1` exactly inverted. Patched grid 5 of 6 `yes`.
+  Hosted grid: **not run**.
+- **Ruled out — that patched runs substitute.** They are marked `prompt_url`, and `grade.sh`
+  reads the container so its verdict cannot tell them apart. `via: code`
+- **Ruled out — that merging is serving.** `docs#147` merged while the live `.md` twins still
+  served the old text with `build-site` queued. `via: measurement`
+- **Leading hypothesis:** the live grid reproduces 5 of 6, because the served bytes are
+  `cmp`-identical to what was measured. A prediction, not a result.
+- **Next probe:**
+  ```bash
+  curl -sS -A 'Mozilla/5.0' https://developer.civitai.com/agent-setup/prompt.md \
+    | grep -c 'agent-setup --fix-path'     # 1 => serving
+  D=/tmp/wt-prompturl/scripts/dogfood
+  cd "$D" && DOGFOOD_TRIAL_PREFIX=live DOGFOOD_ENVS='df-node-user|nodeuser|dev' \
+    DOGFOOD_IDENTITIES='claudeid|CLAUDECODE=1' \
+    DOGFOOD_MODELS='z-ai/glm-5.3-flash|glm xiaomi/mimo-v2.5|mimo deepseek/deepseek-v4-pro|dsv4' \
+    bash driver.sh                        # NO DOGFOOD_PROMPT_URL — that is the point
+  for id in live-{glm,mimo,dsv4}-nodeuser-claudeid; do bash grade.sh "$id" dev | tail -1; done
+  ```
+  🔴 Each `start` record must carry **no** `prompt_url`. If one does, the run is patched and
+  cannot close `#665`.
+
+### ~~⚠ OPEN — arm 1 is unmeasured against the LIVE entrypoint~~ ✅ RESOLVED 2026-10-04 — 5 of 6 live, `#665` CLOSED
+- as-of: 2026-10-04
+
+🔴 **ITS `Next probe` WAS RUN AND ITS PREDICTION HELD** — 5 of 6 live, provenance control clean,
+served bytes `cmp`-identical to what was measured. Nothing in it is open; its measurements stay as
+the baseline the live run was compared against.
 
 ## Next steps (ranked)
 
-🔴 **Ranks 1–14, 18–24 are DONE — numbering preserved** so live `claim-work` slugs keep
-pointing at what they were taken for. **33, 35, 36 and 37 are DONE; 34 is the only
-product work left.**
+🔴 **THE ARC IS CLOSED. Everything below is either DONE or was always independent of it.**
+Numbering preserved so live `claim-work` slugs keep resolving.
 
-➡ **Ranks 23, 28, 30, 31 and 32 were the FORGERY effort and have MOVED** to
-[`handoff-terminal-line-forgery.md`](handoff-terminal-line-forgery.md), which carries its own
-closing condition. Their numbers are retired HERE rather than reused.
-
-🔴 **THE SPLIT MINTS A SECOND SLUG FOR ONE ITEM, AND `claim-work` LOCKS PER SLUG — FORWARD IT
-BY HAND BEFORE TAKING ANY OF THESE.** `claim-work --slug-for` derives the slug from the DOC, so
-the same work has two canonical names and **both compare-and-swaps succeed independently**.
-
-| retired slug (here) | now | live slug |
-|---|---|---|
-| `agent-setup-onboarding-32` | rank 1 of the forgery doc | `terminal-line-forgery-1` |
-| `agent-setup-onboarding-23` / `-28` / `-30` / `-31` | CLOSED (#574, #605+#624, #604, #612) | none — do not take |
-| `agent-setup-onboarding-33` / `-35` / `-36` / `-37` | released | free to re-take |
-
-⚠ The only MECHANICAL backstop is the `gh pr list --state open` sweep, which is the one thing
-that catches an UNCLAIMED duplicate.
-
-15. **The docs repo does not build from a pristine `main` locally.** Unchanged, NOT
-    re-verified. `/home/zach/workspace/civit/civitai-developer-docs`.
+15. **The docs repo does not build from a pristine `main` locally.** NOT re-verified.
     forcing: gate
-16. **`images search --help` sits 14 runes under the 1400 budget.** ⚠ RECOMMENDED FOR
-    RETIREMENT.
+16. **`images search --help` 14 runes under budget.** ⚠ RETIRE.
     forcing: none
-17. **Audit at MERGE time.** ⚠ RECOMMENDED FOR CONVERSION, not work.
+17. **Audit at MERGE time.** ⚠ CONVERT, not work.
     forcing: none
-25. **cli#579 — `saferune.Strip`'s doc claims a byte-for-byte subsequence.** Explicitly inert.
+25. **cli#579 — `saferune.Strip` doc claims a byte-for-byte subsequence.** Inert.
     forcing: none
-26. **cli#575 R2–R4.** ⚠ R2/R3 RECOMMENDED FOR DEFERRAL. R4 has the real coverage value.
+26. **cli#575 R2–R4.** ⚠ R2/R3 DEFER; R4 has the coverage value.
     forcing: none
 27. **cli#586 — three near-identical AST expression renderers.**
     forcing: none
-29. ⚠ **HALF DONE — the gotcha split is still not done.** The `## Gotchas` section is
-    filed by date, so forgery and agent-setup lessons remain interleaved.
-    ❌ The other two playbook steps are also untouched: **evicting what has CLOSED**, and
-    **demoting dated evidence to `claudedocs/refs/`** behind a pointer.
-    🔴 Do NOT satisfy this by deleting an open investigation, a gotcha or a ruled-out theory.
-    ⚠ The doc is now **158 KB against the tool's 65 KB ceiling** — over by 92 KB. No gate
-    enforces it; it is purely what the next session must read.
-    forcing: none
-33. ✅ **DONE — merged (`d0b79ae`), RELEASED in v0.1.106, and MEASURED**: mechanism A is
-    closed across four post-ship `other` cells. Claim released.
+29. ⚠ **PARTLY DONE** (eviction run 4×). ❌ Left: the `## Gotchas` split, and demoting dated
+    evidence to `claudedocs/refs/`.
+    forcing: gate
+34. ✅ DONE — `cli#777` → `v0.1.112` → `docs#126`.
     forcing: gate — satisfied
-34. 🔴 **THE ONLY PRODUCT WORK LEFT — `cli#665` is OPEN and its remedy is aimed at the
-    wrong path.** `cli#671` shipped the `AGENTS.md` half; the install half did not.
-    🔴 **NEW, MEASURED 2026-09-19 (enumerated 6 of 6, not sampled):** agents resolve
-    `EACCES` by installing to **`~/.npm-global`**, NOT the `--prefix="$HOME/.local"` the
-    hosted prompt documents as candidate (b). `~/.profile` does not add `~/.npm-global`,
-    so **neither** `bash -lc` nor `zsh -lic` finds the binary — worse than (b), whose
-    known limit was bash-only. Any fix must be designed against `~/.npm-global`.
-    ⚠ An earlier draft of this item said "5 of 8 reported success anyway" — from a keyword
-    regex, RETRACTED. The number that carries the item is **0 of 8** (agents that connected
-    the failure to the `AGENTS.md` they had just written). 8/8 relayed the PATH line and
-    6/8 warned it would not persist — the agents were never the weak link.
-    forcing: gate — cli#665 is open and its closing condition is unmet
-35. ✅ **DONE — docs#89 merged and verified LIVE** (7433 B, new step 4 present, old
-    wording gone). Claim released.
+38. ✅ DONE — arm 1 graded 6/6 `no`; cause was delivery, not the CLI.
     forcing: gate — satisfied
-36. ✅ **DONE — the matrix ran, 18/18 graded, grid recorded in the investigation block.**
-    ⚠ **Its comparison clause is PARTLY UNMET and that is deliberate, not an oversight:**
-    3 of the recorded 4 `other` cells (`gemini × stale`, `grok × node-root`,
-    `grok × stale`) were not re-run — the operator declined the ~$0.08 gap-filling run.
-    So "mechanism A is closed" rests on ONE direct re-measurement plus model-independence.
-    Anyone wanting the literal clause should run the `Next probe` in that block.
-    closing-condition: `scripts/dogfood/grade.sh` reports the per-cell verdicts for a
-    full matrix run, and the `other`-identity cells are compared against the recorded
-    4-of-4 failure.
-    forcing: gate — satisfied for the grid; 3 comparison cells outstanding
-37. ✅ **DONE — `cli#673` merged** (`9588fb0`), verified by content with a negative
-    control at `main~1`. Claim released.
+39. 🔴 **THE ONLY OPEN ITEM WITH URGENCY, AND NOT THIS ARC'S.** Decide `cli#781` (ZDOTDIR):
+    honour `${ZDOTDIR:-$HOME}/.zshenv` or disclose. `--fix-path` writes `$HOME/.zshenv`, which zsh
+    ignores under `ZDOTDIR`, and `agent_setup_fix_path_shell_test.go` **strips** the variable — so
+    the suite is blind to the axis by construction and a fix needs one probe that does not strip
+    it. No container that closed `#665` set `ZDOTDIR`, so this arc's green says nothing about it.
+    forcing: gate — cli#781 is open
+40. **The app-author onboarding arc — its own doc when it next grows.** `docs#151` carries the
+    three remaining routing pointers.
+    forcing: user — an external app author reported being blocked and the second half is unfixed
+41. ✅ DONE — `docs#147` verified SERVING.
+    forcing: gate — satisfied
+42. ✅ DONE — `docs#152` merged (`021ec58f`), operator decision for arm 1.
+    forcing: gate — satisfied
+43. ✅ DONE — arm 1 MET live, 5 of 6, control clean; `#665` CLOSED.
+    forcing: gate — satisfied
+44. ✅ DONE — `cli#785` merged (`efa1d6c2`); residuals are `cli#787`.
     forcing: gate — satisfied
 
 ## Gotchas / decisions / dead-ends
@@ -2222,48 +1725,204 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   credibility. **The cure is the same every time: name the object you are asking about,
   and read the field that answers for THAT object.**
 
+- 🔴 **2026-10-04 — A HAND-MAINTAINED COUNT IN PROSE ROTS; DELETE THE ENUMERATION AND NAME THE
+  AUTHORITY.** Three separate counts rotted inside one audit ladder on cli#777: a sweep's file-corpus
+  totals (745/746, reproducible under no corpus definition), the decision record's `### Round N`
+  section count ("grows by one per round" — returned 3 after five rounds), and `pathFixTargets`'
+  cause count ("TWO CAUSES" where the code had three, and short by one **on arrival** — the third
+  return dated to the same ladder's round 1). Each was *corrected* once and rotted again. The fix
+  that held was deleting the number and naming the function that decides. **A count beside the thing
+  it counts will drift; a pointer to the authority cannot.**
+- 🔴 **2026-10-04 — AN AUDIT FINDING IS A POINTER TO VERIFY, NOT A SPEC TO BRIEF.** On cli#777 I
+  relayed audit findings into fix briefs without re-measuring and authored **four** wrong
+  instructions that way: "add `:` to the refusal" (a literal `:` refuses every Windows path, so the
+  agent correctly deviated to `os.PathListSeparator` — which was *also* wrong, because the emitted
+  block is POSIX `sh` and always splits on `:`); "no `GOOS` gate, it would break MSYS" (the colon
+  refusal already refuses MSYS, through a different line); "say two causes" (there are three); and
+  "add the phrase to the `forbidden` list" (a **spelled** guard — the fix agent proved by mutation
+  that a reworded contradiction survives it, and pinned a *relationship* instead). Every one was
+  caught by the next round, which is the only reason they are not in `main`. **Re-measure a finding
+  before you brief it, and when a subagent deviates with a measurement, read the measurement.**
+- 🔴 **2026-10-04 — A GUARD THAT PINS A WORD IS WALKABLE BY THE HOUSE IDIOM.** cli#777's
+  `strings.Count(code, "runtime.GOOS") != 1` was defeated by `env.GOOS == "windows"` — the package's
+  own injected-OS seam, used in exactly that shape elsewhere in the same package. The mutant survived
+  the **entire module**. A count of one spelling cannot be repaired by counting another: the cure was
+  switching the gate to the injected seam so the refusal became **behaviourally** testable, then
+  asserting the behaviour. Same lesson one level up: a prose claim must be pinned as the whole
+  normalised sentence *and* by a relationship (the block may mention "Windows" only inside the
+  pinned claim), because `strings.Contains` proves a claim is PRESENT, never UNCONTRADICTED.
+- ⚠ **2026-10-04 — THIS LADDER ENDED ON ZERO-EXECUTABLE-PAYLOAD, NOT ON CONVERGENCE, AND THE
+  ATTRIBUTION GATE COULD NOT FIRE.** Payload ran 161 → 151 → 189 → 189 → 71 lines with executable
+  sub-splits 60 → 18 → 35 → 35 → **0**. The gate needs two consecutive payload-free rounds; this
+  PR's diff is *mixed* rather than purely prose, so neither that gate nor the prose-regime escape
+  hatch applied, and by the letter the ladder ends only by converging. It was stopped by operator
+  decision on the executable-zero signal instead — recorded as fixed-but-unaudited. **When a ladder's
+  executable payload hits zero while findings keep arriving, the findings are about the ladder.**
+
+### Added 2026-10-04 — shipping rank 34, and four rounds of audit on a 29-line docs PR
+
+- 🔴 **A HEALTHY NIGHTLY THAT RAN RECENTLY IS NOT EVIDENCE THE NEXT ONE IS NEAR.** `pins-vs-published`
+  blocked the whole repo for a ~19h window: the bot swept at `12:34Z` and correctly opened nothing
+  (`0.55.0` was still latest), then `app-sdk` published `0.56.0` at `16:48Z` and `0.56.1` at `23:43Z`.
+  The previous handoff's "the next scheduled run opens the bump PR" was right in mechanism and wrong
+  in timing. **Read the publish timestamp against the cron, and `gh workflow run` it** — the workflow
+  carries `workflow_dispatch`, so dispatching is the bot authoring its own bump, not the hand-authored
+  PR this doc forbids.
+- 🔴 **A `GITHUB_TOKEN`-OPENED PR GETS NO CHECKS, AND SHOWS **ZERO** — WHICH READS AS "NOTHING TO
+  WORRY ABOUT" ON THE ONE PR NOBODY VERIFIED.** `docs#126` sat open from 2026-09-28 while the
+  committed CLI-help snapshot stayed three releases behind. One human empty commit made the checks
+  dispatch and three went red immediately. **The empty commit did not cause them, it revealed them.**
+- 🔴 **A DOCS-SNAPSHOT BUMP CAN RED CHECKS THAT ARE NOTHING TO DO WITH IT — ESTABLISH A `main`
+  BASELINE BEFORE ATTRIBUTING ANY OF IT.** Of three reds on #126, two were introduced (one phrase:
+  `app create`'s long description changed `app developers only` → `page tokens only`) and one was
+  pre-existing. The discriminator was dispatching the three required workflows against `main` via
+  `workflow_dispatch`; they are `pull_request`-only, so CI history has no baseline to read.
+- 🔴 **`git checkout -- <file>` TO UNDO A PLANTED CONTROL REVERTED THREE REAL EDITS IN THE SAME FILE.**
+  Caught immediately, but RULES already says copy aside and restore by copying back. Second time this
+  session a cleanup step destroyed adjacent work.
+- 🔴 **I RELAYED AN AGENT'S FINDING WITHOUT CHECKING IT AND IT WAS WRONG, IN THE DIRECTION THAT SHIPS
+  A FALSE DOC.** A research pass said "only `dev-tunnel` is gated"; measured at `origin/release`,
+  `dev-token` and `submit-version` gate on the SAME two flags and the tunnel adds a third. So
+  quickstart's "both are invite-gated" was LITERALLY TRUE and I nearly "fixed" it into something
+  false. Retracted publicly on `docs#147`.
+- 🔴 **THE SAME DEFECT SHAPE FOUR TIMES IN ONE PR: A CLAIM NARROWED IN ONE PLACE AND LEFT STANDING IN
+  ITS TWIN.** Round 0 found the PR reproducing the defect class it was written to fix (two sentences
+  asserting builder access is SUFFICIENT to generate, when a default `civitai login` cannot spend);
+  round 1 found the same shape displaced onto `dev-tunnel`, where the unsubmitted-spend gate is
+  **mods-only** so an authoring tester gets an app that renders and cannot generate; round 2 found two
+  more; round 3 found a claim I had read off an adjacent **docstring's parenthetical** instead of the
+  code (`ENV_KEYS` is `['VITE_LIVE_BLOCK_TOKEN','CIVITAI_HOST_KEY']` and PRESERVES the origins key).
+  **The fix is the SWEEP, never the reported line.**
+- 🔴 **I PUT `<slug>` IN A ```bash FENCE CARRYING `>>`** — an input redirect, so the binary never runs
+  and the error names nothing in the doc. `CLAUDE.md` warns about exactly this. Promoting a command
+  from prose-inline to a fence is what arms it.
+- 🔴 **THE PROSE STOP-CRITERION IS A MEASUREMENT, AND IT INVERTED MY OWN NARRATIVE.** I called round
+  2's findings "the ladder auditing itself"; the ladder-authored share of its pre-image lines measured
+  **0.375**, so it was still converging on the PR's own content — and round 3 measured **0.714**, which
+  is what actually ended the ladder. Compute it (`git diff -U0 -w -M` hunks → `git blame -w -M` at the
+  round's `<from>` → `merge-base --is-ancestor <sha> <round-1 tip>`) rather than narrating it.
+- **Two `audit-dispatch.py` refusals, both correct:** a `round=0` claims block (exit 4 — it would
+  mis-anchor the next delta onto a tip that fixed nothing; record round 0 as PROSE), and passing a
+  RANGE to `--audited` where it wants the single sha the round READ. And the payload reading **fails
+  open cross-repo** — re-run the assembly from a checkout holding the commits to get it MEASURED.
+- **`sops`/`gh` aside:** `gh pr update-branch <n>` defaults to a MERGE, which is what preserves an
+  audit ladder's anchor shas; verify with `git log -1 --format='%p'` showing two parents.
+- 🔴 **CARRIED FORWARD off a REPLACE heading so it survives: THE DOCS CHAIN IS RELEASE → SNAPSHOT →
+  PROSE, NEVER RELEASE → PROSE.** `civitai-developer-docs`' `scripts/check-agent-setup.mjs` check 1
+  requires every flag named in a `prompt.md` code block or command-shaped inline span to appear in
+  `appblocks-snapshots/civitai-cli-help.txt`, and `cli-snapshot-refresh.yml` captures that file by
+  `gh release download` of a **published release asset**, deliberately never from `main` — so the
+  site cannot document a binary nobody can install. A snapshot-refresh PR therefore sits between any
+  CLI release and any prose that names a new flag, and the guard is repo-local so it cannot be waited
+  out. Also homed in the subsystem store at `civitai-developer-docs/guards`.
+
+### Added 2026-10-04 (second session) — grading rank 38, and three instruments checked before one verdict
+
+- 🔴 **A SHIPPED FLAG IS NOT A DELIVERED FLAG, AND THE TWO FAILED IN OPPOSITE DIRECTIONS HERE.**
+  `--fix-path` was merged, published to npm, tapped in Homebrew, and documented in the generated CLI
+  reference — four green shipping signals — and **changed nothing measurable**, because the agent it
+  exists for is never told to run it and is told not to. The transferable test: for any remedy aimed
+  at an agent, name the ONE document that agent reads and check the remedy is IN it. `AGENTS.md`
+  looked like that document and is not: 0 of 6 agents opened the file they had just created.
+- 🔴 **THE CONTRADICTION IS WORSE THAN THE OMISSION, AND ONLY A TRANSCRIPT SHOWS IT.** A missing
+  mention would make the flag merely undiscovered; *"do not edit their shell profile yourself"*
+  makes a discovering agent **refuse**. 1 of 6 found the flag via `--help` and declined in those
+  words. A grid of verdicts cannot see this — the cell reads `no` either way. **Read the transcript
+  of a `no` before attributing it to anything.**
+- 🔴 **MY OWN FIRST READING OF THE REACHABILITY CONTROL WAS AN ARTEFACT OF MY SETUP, AND THE FIX
+  WAS TO READ THE CODE, NOT TO RE-RUN.** `fix-path in agent-setup stdout = 0` looked like a missing
+  runtime warning — but I had exported `PATH` before that step, so the CLI could legitimately have
+  suppressed one. The discriminator was not another container: it was `agent_setup_path_note_test.go`,
+  whose docstring says the delivery is *"deliberately UNCONDITIONAL"* prose and records that two
+  detection drafts were each measured wrong. **A behavioural absence that a design decision already
+  explains is not a finding.**
+- ⚠ **THE README's GRADER-CONTROL ASSERTION IS STALE — it now under-reports the exempt set.** It
+  pins `failed_checks=[authenticated]` and `agent_shell_version=0.1.105` for `ctl-pos`/`ctl-profile`;
+  live on v0.1.112 both read `failed_checks=[authenticated,agent-token]`. A new `agent-token` check
+  exists and is also verdict-exempt. The controls still pass on SHAPE; a reader asserting the
+  documented literals would score three healthy controls as failures.
+- **A `--max-cost` sanity note, third recurrence of the same lesson:** 6 cells cost **$0.036** total
+  against a $6 cap. Key budget after the run: `$49.579` remaining of `$50`. The cheap models remain
+  5–20× cheaper than a frontier model for this task and all three resolved live with `tools`.
+- **Operational:** `runs/` lives inside whichever checkout you run from, so running the matrix in a
+  dedicated worktree isolates it from the primary clone's transcripts for free — `runner.py` opens
+  each transcript `"w"`, and this is the cheapest way to make that harmless.
+
+### Added 2026-10-04 (third session) — a two-arm condition, and four self-inflicted lessons
+
+- 🔴 **A CLOSING CONDITION WITH AN `either/or` CAN BE HALF-SATISFIED BY THE THING YOU ARE ABOUT
+  TO DELETE.** This arc graded arm 1, reported `0 of 6`, and proposed removing a sentence that
+  was arm 2's implementation, already working 6 of 6. The grid could not show it: `grade.sh`
+  implements arm 1 only, so arm 2 appeared in no verdict line. **Read the condition's text before
+  quoting a grader at it**, and report every arm or name the one you measured.
+- 🔴 **"THIS REVERSES A DELIBERATE POSTURE" WAS REFUTED BY THE FILE I WAS EDITING.** Two
+  pre-existing lines in the same document said the opposite. **Grep the artifact for the intent**
+  before asserting a change reverses it — the removed sentence was an *exception* to the
+  document's standing instruction, and the measured agent behaviour was agents resolving that
+  contradiction.
+- 🔴 **A STRUCTURAL FIX BEAT A PROSE FIX 5-OF-6 AGAINST 1-OF-3 ON THE SAME FILE.** Asking an
+  agent to run a command gets it relayed to the user; putting the command in the fenced block
+  gets it run. The house preference for deterministic over prompt-tuning, with a number.
+- 🔴 **I PUBLISHED TWO FALSE AUDIT DISPOSITIONS AND A LATER ROUND CAUGHT THEM.** `D3=deleted`
+  when the literal was still present byte-identically; `D4=kept: collapsed` when it had gone
+  5→6, i.e. grown. Both were one `grep` away. **A disposition is a measurement, not a summary of
+  intent** — run the count before writing the word.
+- 🔴 **A SURVIVING MUTANT IS A CLAIM ABOUT THE MUTANT FIRST.** Removing only the leading half of
+  a two-line trim left the trailing half, which still emptied a blank value — the guard looked
+  uncovered and was not. Conversely two of my own guards *did* survive a green run because the
+  reachability preflight killed their tests instead: **a different guard's error passing your
+  test is indistinguishable from coverage**, and the fix is asserting the guard's own message,
+  never a non-zero exit.
+- ⚠ **`dispositions=` is COMMA-separated; a comma inside a reason breaks it and semicolons are
+  not a separator.** Three postings before it parsed. Never a blocker (`4 recorded, 0 unrecorded`
+  throughout) but the `UNREADABLE` list accumulates every attempt — get it right once.
+- ⚠ **The attribution gate cannot measure payload for a CROSS-REPO ladder:** `git log
+  --remerge-diff <range>` exits 128 because the assembly checkout is another repository, so every
+  `payload=` falls back to the author's own classification. Structural. Say so when quoting one.
+- **A 0 ms connection failure to a container you just started is a RACE, not a block.** `docker
+  run -d` returns before the server binds, and that failure reads exactly like a firewall drop —
+  it cost one false "inter-container networking is blocked" diagnosis.
+
+### Added 2026-10-04 (fourth session) — arc closed; the lessons are in the STORE, not here
+
+🔴 **A pointer, not a narrative — deliberately.** This doc is 147 KB against a 65 KB ceiling, so a
+CLOSED arc's lessons belong where they are recalled on demand. Both entries were written this
+session, and the two earlier `OPEN:` bullets rewritten `RESOLVED efa1d6c2:` / `RESOLVED 021ec58f:`
+in the same turn: `$DEVRC/scripts/cairn-ops/read.sh recall --repo /home/zach/workspace/civit/cli
+--ref dogfood` (and `--ref agent-setup`).
+
+- 🔴 **A delivery fix can be worth more than the feature, and the ratio was measured** — merged,
+  published, tapped, documented, and **0 of 6**; one prose edit took it to **5 of 6**. Prose
+  *asking* an agent to run a command scored 1 of 3; the command **in the fenced block**, 5 of 6.
+- 🔴 **Calling a guard structural does not make it structural**, and **two of my own guards passed
+  for the wrong reason** — another guard's error killed their tests.
+- 🔴 **An `either/or` closing condition can be half-satisfied by the sentence you are deleting.**
+- 🔴 **I published two false audit dispositions.** A disposition is a measurement, not intent.
+
 ## How to verify
 
-**Rank 33's closing condition, verbatim — a fresh machine with no agent env var:**
-
 ```bash
-docker run -d --name v33 node:22-bookworm-slim sleep 300
-CGO_ENABLED=0 go -C <cli-worktree> build -o /tmp/civitai-static ./cmd/civitai
-docker cp /tmp/civitai-static v33:/usr/local/bin/civitai
-docker exec v33 bash -lc 'mkdir -p /work && cd /work && civitai agent-setup --track app >/dev/null 2>&1; cd /work && civitai agent-setup --check --json; echo "rc=$?"'
-docker rm -f v33
+# 1. #665 closed, and read BOTH arms — it is an either/or
+gh issue view 665 --repo civitai/cli --json state,stateReason --jq '"\(.state)/\(.stateReason)"'
+gh issue view 665 --repo civitai/cli --json body --jq .body | sed -n '/## Closing condition/,+6p'
+
+# 2. The docs change is SERVING (branch-tracked => merge is deploy, but not instant)
+curl -sS -A 'Mozilla/5.0' https://developer.civitai.com/agent-setup/prompt.md > /tmp/p.md
+grep -c 'agent-setup --fix-path' /tmp/p.md            # 1
+grep -c 'do not edit their shell profile' /tmp/p.md   # 0
+
+# 3. The cli merge, BY CONTENT with a negative control (a squash makes ancestry false)
+C=/home/zach/workspace/civit/cli
+git -C "$C" show origin/main:scripts/dogfood/driver.sh   | grep -c 'pf_auth'   # 2
+git -C "$C" show origin/main~2:scripts/dogfood/driver.sh | grep -c 'pf_auth'   # 0
+
+# 4. The closing evidence and its provenance control — the 0 is the load-bearing half
+R=~/.cache/dogfood-runs-2026-10-04-live/runs
+grep -l '"prompt_url"' "$R"/live-*/transcript.jsonl | wc -l   # 0 — none fed a patched prompt
+grep -o '"stop": "[a-z-]*"' "$R"/live-*/transcript.jsonl | sort | uniq -c   # 6 x finished
 ```
-Expect `"agent": "other"`, `"ok": true`, **rc 0**, and both `mcp-site` / `mcp-orch`
-rows PRESENT with `"ok": false`. 🔴 **Build with `CGO_ENABLED=0`** — a cgo binary in
-that image fails with `cannot execute: required file not found`, rc 127, which reads
-like a missing binary rather than a link error.
+## Defects (batched)
 
-**🔴 VALIDATE THE GRADER BEFORE READING ANY VERDICT FROM IT — three controls, $0 of API
-spend, and assert the FIELDS, not the verdict word.** The full commands are in
-`scripts/dogfood/README.md`; the values they must produce on v0.1.106 are in the rank-36
-investigation block above. `ctl-profile` is the one that matters: arm A green while arm B
-is red. A `CLOSING_CONDITION=no` alone is also what a grader broken on arm A produces.
-
-**The guard matrix (what makes the change more than a green suite):**
-
-```bash
-# RED at base: revert ONLY the isMCPCheckName branch, keep the test, then
-go -C <cli-worktree> test ./internal/cmd -run TestMCPRowsDoNotFailTheVerdictForAnAgentWithNoConfigTarget -count=1
-# blanket mutant: make that branch `return false` unconditionally — the
-# "a KNOWN agent with no MCP config still fails" arm must go red, on its own message
-```
-
-**The tier CI actually runs — reads COMMITTED state, so commit before running it:**
-
-```bash
-cd <cli-worktree> && make ci-shallow      # expect: 21/21, 0 failures, 0 timeouts
-```
-🔴 `make ci` is **not** what CI runs — it is a full clone. `make ci-shallow` is the
-depth-1 tier, and it grades committed state only.
-
-**The freeze, if `pins-vs-published` is red:**
-
-```bash
-CIVITAI_CHECK_PUBLISHED_PINS=1 go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -count=1
-gh pr list --repo civitai/cli --state open   # a bump PR probably already exists — do not author a second
-```
+- `cli#787` — the test stub answers `--print-task` regardless of script path, so the default-URL
+  **derivation** is untestable; and the bash trim misses U+00A0. Both measured and bounded; the
+  issue carries the evidence and a mechanical closing condition.

@@ -1,11 +1,12 @@
 # Auto-bump the scaffold's @civitai/* pins when they fall behind npm.
 #
-# The page-money template pins @civitai/app-sdk and @civitai/blocks-react with
+# The page-money and page-elements templates pin @civitai/* packages with
 # pre-1.0 carets that LOCK THE MINOR, so every new minor those packages publish
-# turns the `pins-vs-published` guard red until a human hand-bumps the pins in
-# three places. This job runs `bump-pins` (which rewrites the literals in the
-# template + README + the scaffold_test.go canary), validates the result IN THIS
-# JOB, and opens a PR when anything changed — so the hand-fix never recurs.
+# turns the `pins-vs-published` guard red until a human hand-bumps the pins.
+# This job runs `bump-pins` (which rewrites the literals in both templates'
+# package.json and each template's test canary),
+# validates the result IN THIS JOB, and opens a PR when anything changed — so
+# the hand-fix never recurs.
 #
 # 🔴 "OPENS A PR WHEN ANYTHING CHANGED" IS THE WHOLE POINT, AND IT USED TO BE
 # FALSE. Until #530 the PR step required every validation to have passed, so one
@@ -48,15 +49,18 @@ name: bump-scaffold-pins
 
 on:
   schedule:
-    # DAILY at 07:17 UTC (off the top-of-hour rush; the minute is offset from the
-    # sibling drift-bots — revendor-canonical-schema :37 every 6h,
+    # EVERY 6 HOURS at :17 (off the top-of-hour rush; the minute is offset from
+    # the sibling drift-bots — revendor-canonical-schema :37 every 6h,
     # bump-flake-vendorhash 07:47). Cron literal in YAML needs quoting so the `*`
-    # isn't parsed as a YAML alias.
+    # isn't parsed as a YAML alias. It was DAILY at 07:17; why it moved is below.
     #
     # This was weekly (`17 7 * * 1`) and that cadence was measurably too slow.
     # `pins-vs-published` is a REQUIRED check on `main` and it reads npm's
     # published latest, so from the moment a `@civitai/*` minor lands until this
-    # job bumps the pins, EVERY open PR is blocked regardless of its content.
+    # job bumps the pins, that check is red. When the cadence moved to daily it
+    # blocked EVERY open PR regardless of content; since
+    # `internal/scaffold/cmd/pins-gate` it blocks only `main` and the PRs that
+    # touch a pin input, and warns on the rest.
     # (The sibling `scaffold-currency` is required too but is NOT affected: it
     # installs `@latest` explicitly, overriding the template pins, so it reds on
     # a broken SDK export rather than on a stale caret.)
@@ -68,25 +72,54 @@ on:
     # swept, so a large fraction of each week sat red and the pins had to be
     # hand-bumped twice in two days (#194, #203).
     #
-    # Daily bounds that window at ~24h instead of ~168h. A no-op run is cheap:
-    # `detect changes` gates every downstream step, so an already-current sweep
-    # is just checkout + setup-go + the bumper's npm metadata reads.
-    - cron: "17 7 * * *"
+    # Daily bounded that window at ~24h instead of ~168h — on paper. Two
+    # measurements moved it again (2026-09-20..10-12):
+    #
+    #   * GitHub does not run this at 07:17. The scheduled runs of that window
+    #     STARTED between 12:34 and 16:44 UTC — five to nine hours late, every
+    #     day — so "daily at 07:17" was "once, sometime in the afternoon".
+    #   * `pins-vs-published` sat red in 18 episodes, the longest 34.4h from
+    #     first red to first green, across 6 branches.
+    #
+    # So: EVERY 6 HOURS. The cost is small and measured: the 15 runs before this change took 0.7–5.0 min each, and
+    # a no-op sweep is cheap — `detect changes` gates every downstream step.
+    # The two drift jobs (`ready-ack-runtime`, `scaffold-typecheck`) now run
+    # four times a day too; their reporting is one issue rewritten in place
+    # (failure-issue.yml), so a persistent failure does not become four.
+    #
+    # It matters less than it did and is still worth it: `pins-vs-published`
+    # no longer blocks a pull request that touches no pin input
+    # (`internal/scaffold/cmd/pins-gate`), so a stale window now blocks only
+    # PRs that touch the scaffold — and `main`, which stays red until this
+    # bot's PR merges. Shortening the window shortens exactly that.
+    - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
       drill:
-        description: "Fire drill: fail one or both jobs on purpose so the FAILURE path and the issue it files can be rehearsed. Opens a REAL issue — close it when you are done. It cannot open a PR or rewrite a pin: the drill fails at the bumper step, which is upstream of every step that writes anything."
+        description: "Fire drill: fail one or more jobs on purpose so the FAILURE path and the issue it files can be rehearsed. Opens a REAL issue — close it when you are done. It cannot open a PR or rewrite a pin: the drill fails at the bumper step, which is upstream of every step that writes anything. `both` fails every job, so it also rehearses the multi-failure report."
         type: choice
         default: none
         options:
           - none
           - bump
           - ready-ack
+          - scaffold-typecheck
           - both
 
 permissions:
   contents: write
   pull-requests: write
+
+# Two runs at once — a scheduled sweep beside a hand dispatch, or a slow run
+# overlapping the next tick — would race to push `automation/bump-scaffold-pins`,
+# and the loser's red `bump` job would file an issue about nothing. With
+# `cancel-in-progress: false` a run in progress is never cancelled; ONE run waits
+# behind it, and a third arrival CANCELS that waiting run and takes its place
+# (GitHub keeps at most one pending run per group). A cancelled run's `signal`
+# never runs, which is harmless here: the run that replaced it reports instead.
+concurrency:
+  group: bump-scaffold-pins
+  cancel-in-progress: false
 
 jobs:
   # Runtime half of the ready-ack contract (issue #206). The offline guard in
@@ -98,8 +131,8 @@ jobs:
   # `{type:'BLOCK_READY',payload:{height:0}}` goes out.
   #
   # 🔴 This is the DRIFT runner, NOT the gate. The gate is the identically-named
-  # job in ci.yml, which runs on every pull request. A daily job cannot block a
-  # merge — a regression would land green and surface up to 24h later, on a
+  # job in ci.yml, which runs on every pull request. A scheduled job cannot block
+  # a merge — a regression would land green and surface hours later, on a
   # workflow with no dependent job — so this copy alone would be a guard that
   # gates nothing. It exists to catch drift on `main` between PRs (a merged-tree
   # interaction, a node bump, an npm-side change), and is deliberately
@@ -127,7 +160,7 @@ jobs:
       # succeeds). Read one of them before changing this.
       #
       # It matters HERE, in a job that runs no npm install, for a second reason:
-      # this is the daily DRIFT runner for the identically-named GATE job in
+      # this is the scheduled DRIFT runner for the identically-named GATE job in
       # ci.yml. A drift runner on a different node major than the gate it mirrors
       # is a two-tier suite — the two tiers can disagree, and a failure visible in
       # one can be structurally invisible in the other, which is the exact shape
@@ -170,6 +203,89 @@ jobs:
           # line, so this job's colour is a claim about the ack.
           if ! grep -q -- '--- PASS: TestScaffoldedReadyAckActuallyFires' "$RUNNER_TEMP/ready-ack.log"; then
             echo "::error::the ready-ack runtime check exited 0 without running TestScaffoldedReadyAckActuallyFires — the -run pattern matched no test (renamed? moved? CIVITAI_CHECK_SCAFFOLD_RUNTIME gate changed?). A green here would have been a claim about nothing."
+            exit 1
+          fi
+
+  # Does the page-money scaffold still typecheck on an install shape that does
+  # NOT silently repair it?
+  #
+  # 🔴 WHY THIS IS A SEPARATE SCHEDULED JOB AND NOT A STEP IN `ci.yml`. The guard
+  # needs the network and ~60s, and `ci.yml`'s `scaffold-currency` job is
+  # REQUIRED with `enforce_admins` — a network-dependent assertion there has
+  # frozen every open PR in this repo TWICE (#530 is one of them). A scheduled drift
+  # runner that files an issue is the right blast radius for a check that can
+  # fail for reasons no PR author controls.
+  #
+  # 🔴 WHY IT IS NOT COVERED BY THE `bump` JOB'S `validate — scaffold builds
+  # against the bumped SDK` STEP, which looks like it already does this. That
+  # step runs a PLAIN `npm install`, and npm >= 7 AUTO-INSTALLS PEERS — so it
+  # repairs the very defect this guard exists for and cannot go red for it.
+  # Measured both ways 2026-09-25 (npm 11.19.0): pre-fix template + plain
+  # install → typechecks CLEAN; pre-fix template + `--legacy-peer-deps` → 7 ×
+  # TS2305. The test below installs with `--legacy-peer-deps` deliberately, so
+  # it is a question about what the TEMPLATE DECLARES rather than about what the
+  # runner's npm happens to paper over. That step is also gated on
+  # `changed == 'true'`, so on a day with no pin movement it does not run at
+  # all, while this defect arrives from a TEMPLATE edit rather than a pin bump.
+  #
+  # The defect it guards cost two blind dogfood trials, the second losing ~26%
+  # of its run to it. `CIVITAI_SCAFFOLD_TYPECHECK` was set by ZERO workflows
+  # before this job existed.
+  scaffold-typecheck:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      # 🔴 node 24 — same invariant as every other scaffold-and-install job here;
+      # the reason is at ci.yml's `node-version: "24"` sites (npm 10's arborist
+      # crashes installing a scaffolded page-money app). This job DOES run
+      # `npm install`, so it is the literal case that rule is about.
+      # `workflow_node_version_test.go` fails if anyone drops it back.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: the page-money scaffold typechecks its own shipped tests
+        id: typecheck
+        env:
+          CIVITAI_SCAFFOLD_TYPECHECK: "1"
+          DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || 'none' }}
+        run: |
+          set -uo pipefail
+
+          if [ "$DRILL" = "scaffold-typecheck" ] || [ "$DRILL" = "both" ]; then
+            # Fire drill, upstream of every step that does work — same input the
+            # classifier reads on a real regression, so the rehearsal drives the
+            # genuine reporting path rather than a mock of it.
+            echo "⚠️  FIRE DRILL — failing the scaffold typecheck on purpose to rehearse the reporting path."
+            echo "    No test was run, nothing was installed, nothing on disk was touched."
+            exit 1
+          fi
+
+          go test ./internal/scaffold -run TestPageMoneyScaffoldTypechecksItsOwnShippedTests -count=1 -v 2>&1 \
+            | tee "$RUNNER_TEMP/scaffold-typecheck.log"
+
+          # POSITIVE CONTROL, and here it is load-bearing twice over. `go test
+          # -run <name>` exits 0 when the pattern matches NOTHING, AND this test
+          # SKIPS ITSELF unless CIVITAI_SCAFFOLD_TYPECHECK=1 reaches it — a skip
+          # also prints `ok`. So an exit-code-only read scores "the guard never
+          # ran" identically to "the scaffold builds". Require the test's own
+          # PASS line, and name the SKIP case separately: a skip here means the
+          # env gate above stopped reaching the test, which is a defect in THIS
+          # job, not in the scaffold.
+          if grep -q -- '--- SKIP: TestPageMoneyScaffoldTypechecksItsOwnShippedTests' "$RUNNER_TEMP/scaffold-typecheck.log"; then
+            echo "::error::the scaffold typecheck SKIPPED itself — CIVITAI_SCAFFOLD_TYPECHECK did not reach the test (renamed const? gate rewritten?). NOTHING about the scaffold's build was verified by this run."
+            exit 1
+          fi
+          if ! grep -q -- '--- PASS: TestPageMoneyScaffoldTypechecksItsOwnShippedTests' "$RUNNER_TEMP/scaffold-typecheck.log"; then
+            echo "::error::the scaffold typecheck exited 0 without running TestPageMoneyScaffoldTypechecksItsOwnShippedTests — the -run pattern matched no test (renamed? moved?). A green here would have been a claim about nothing."
             exit 1
           fi
 
@@ -241,19 +357,22 @@ jobs:
         if: steps.changed.outputs.changed == 'true'
         env:
           CIVITAI_CHECK_PUBLISHED_PINS: "1"
-        run: go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -v
+        run: go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -count=1 -v
 
       - name: validate — full scaffold suite (offline)
         id: validate_suite
         if: steps.changed.outputs.changed == 'true'
-        run: go test ./internal/scaffold/...
+        run: go test -count=1 ./internal/scaffold/...
 
       # Prove the scaffolded app still BUILDS against the newly-pinned SDK — the
       # pins guard only proves the pin ADMITS the published minor, NOT that the
       # template code still compiles against it (a removed/renamed SDK export
       # would slip through otherwise, since this PR won't auto-run scaffold-
-      # currency). Mirrors the template-page-money CI job. Scaffold into
-      # RUNNER_TEMP so the generated app never pollutes the auto-PR diff.
+      # currency). Mirrors the template-page-money AND template-page-elements CI
+      # jobs: bump-pins rewrites both templates' pins, so both are rebuilt here.
+      # page-elements also runs its own tests and `civitai app validate`, as its
+      # CI job does. Scaffold into RUNNER_TEMP so the generated apps never
+      # pollute the auto-PR diff.
       #
       # 🔴 THIS STEP FAILING NO LONGER SUPPRESSES THE PR — it downgrades it to a
       # DRAFT (see the `open PR if pins changed` step). It used to gate it, and
@@ -282,11 +401,16 @@ jobs:
         id: validate_build
         if: steps.changed.outputs.changed == 'true'
         run: |
+          set -euo pipefail
+          echo "── page-money ──"
           go run ./cmd/civitai app init "Bump Validation" --dir "$RUNNER_TEMP/bump-validate" --template page-money
-          cd "$RUNNER_TEMP/bump-validate"
-          npm install --no-audit --no-fund
-          npm run typecheck
-          npm run build
+          (cd "$RUNNER_TEMP/bump-validate" && npm install --no-audit --no-fund && npm run typecheck && npm run build)
+
+          echo "── page-elements ──"
+          go run ./cmd/civitai app init "Bump Validation Elements" --dir "$RUNNER_TEMP/bump-validate-elements" --template page-elements
+          civitai_bin="$RUNNER_TEMP/civitai-bump"
+          go build -o "$civitai_bin" ./cmd/civitai
+          (cd "$RUNNER_TEMP/bump-validate-elements" && npm install --no-audit --no-fund && npm run typecheck && npm test && npm run build && "$civitai_bin" app validate)
 
       # Compose the PR body HERE rather than inline in the action's `body:`,
       # because it has to be conditional and a GitHub expression cannot hold a
@@ -325,11 +449,14 @@ jobs:
           >
           > The pin rewrite validated (npm admits the new pins, and the offline
           > scaffold suite is green), but the LAST check did not: a fresh
-          > `civitai app init … --template page-money` at these pins failed to
-          > install, typecheck or build. The bump is proposed anyway because
+          > `civitai app init … --template page-money` (or `page-elements`) at
+          > these pins failed to install, typecheck, test, build or validate —
+          > the run log's `── page-money ──` / `── page-elements ──` markers say
+          > which. The bump is proposed anyway because
           > withholding it froze the repo for three days (#530) —
           > `pins-vs-published` is a REQUIRED check with `enforce_admins`, so
-          > un-bumped pins block every open PR regardless of its content.
+          > un-bumped pins keep `main` red and block every open PR that
+          > touches a pin input (other PRs are warned, not blocked).
           >
           > **A human decides which failure this is.** Read the run log, then
           > this PR's own `template-page-money` / `scaffold-currency` checks —
@@ -341,14 +468,19 @@ jobs:
             cat <<'BODY'
           Automated by the `bump-scaffold-pins` workflow (`internal/scaffold/cmd/bump-pins`).
 
-          One or more `@civitai/*` packages published a new minor, so the
-          page-money scaffold's pre-1.0 caret pins fell behind npm and the
-          `pins-vs-published` guard would go red. This PR rewrites the literal
-          pins in all three sites:
+          One or more `@civitai/*` packages published a new minor, so a
+          scaffold's pre-1.0 caret pins fell behind npm and the
+          `pins-vs-published` guard would go red. This PR rewrites the stale
+          literal pins wherever they appear:
 
           - `internal/scaffold/templates/page-money/package.json.tmpl`
-          - `internal/scaffold/templates/page-money/README.md.tmpl`
-          - `internal/scaffold/scaffold_test.go` (the `mustContain` canary)
+          - `internal/scaffold/scaffold_test.go` (page-money's `mustContain` canary)
+          - `internal/scaffold/templates/page-elements/package.json.tmpl`
+          - `internal/scaffold/page_elements_test.go` (page-elements' pin canary)
+
+          and regenerates `internal/scaffold/testdata/design-tokens.txt` (the
+          design-token ledger) when the `@civitai/blocks-react` pin or its
+          token set moved, or the ledger is missing.
 
           The pins are rewritten as **literals** (not templated) on purpose:
           the guard reads the raw `^X.Y.Z` bytes out of the `.tmpl`, so
@@ -367,7 +499,9 @@ jobs:
 
           The first two must pass or this PR is not opened at all. The third
           does NOT block it — a failure there opens this PR as a **draft**
-          instead, because withholding the bump freezes the whole repo (#530).
+          instead, because withholding the bump keeps `main` red and blocks every
+          PR that touches a pin input (#530 was the whole repo, before that was
+          narrowed).
           Its result for this run is stated on the last line below; do not read
           "the bump job validates" as "everything passed".
           BODY
@@ -385,8 +519,8 @@ jobs:
       #
       # This job was audited against that failure and does not have it: the only
       # step that writes into the repo is the bumper, and `bump-pins` writes
-      # exclusively under its `--dir` (default `internal/scaffold`) to three
-      # constant sites. Everything else writes outside the tree — `go test`
+      # exclusively under its `--dir` (default `internal/scaffold`) to its
+      # constant sites (the `sites` list in bump-pins/main.go). Everything else writes outside the tree — `go test`
       # writes nothing, and `validate — scaffold builds` scaffolds and runs npm
       # in `$RUNNER_TEMP` on purpose (see that step's comment). Measured, not
       # just read: `git status --porcelain` is clean of artifacts after the test
@@ -487,8 +621,8 @@ jobs:
   # `always()` so it still runs after a failed job; `!= 'cancelled'` on both
   # needs so a hand cancellation is not filed as a defect.
   classify:
-    needs: [ready-ack-runtime, bump]
-    if: always() && needs.ready-ack-runtime.result != 'cancelled' && needs.bump.result != 'cancelled'
+    needs: [ready-ack-runtime, scaffold-typecheck, bump]
+    if: always() && needs.ready-ack-runtime.result != 'cancelled' && needs.scaffold-typecheck.result != 'cancelled' && needs.bump.result != 'cancelled'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -501,6 +635,7 @@ jobs:
         id: classify
         env:
           J_READY: ${{ needs.ready-ack-runtime.result }}
+          J_TYPECHECK: ${{ needs.scaffold-typecheck.result }}
           J_BUMP: ${{ needs.bump.result }}
           R_BUMP: ${{ needs.bump.outputs.r_bump }}
           R_CHANGED: ${{ needs.bump.outputs.r_changed }}
@@ -526,6 +661,20 @@ jobs:
           A red here means a \`page\` app scaffolded from \`main\` today may never reach \`ready\` in the host and would end at a failure card, which is issue #206 all over again. It can also mean the job's own positive control fired: it refuses to pass unless \`--- PASS: TestScaffoldedReadyAckActuallyFires\` is in the output, so a renamed/moved test reports here too. **The run log distinguishes them.**"
           fi
 
+          # ---- the scaffold typecheck's verdict --------------------------------
+          typecheck_state=""
+          typecheck_title=""
+          typecheck_detail=""
+          if [ "$J_TYPECHECK" != "success" ]; then
+            typecheck_state=scaffold-typecheck-failed
+            typecheck_title="the page-money scaffold no longer typechecks its own shipped tests"
+            typecheck_detail="The \`scaffold-typecheck\` job failed. It renders \`page-money\`, installs with \`npm install --legacy-peer-deps\` and runs the template's OWN \`tsc -p tsconfig.json --noEmit\`.
+
+          The install shape is the point: npm >= 7 auto-installs peer dependencies, so a PLAIN \`npm install\` silently repairs a package the template forgot to declare — which is why the \`bump\` job's \`validate — scaffold builds against the bumped SDK\` step is green on this defect and this job is not. A red here means the template depends on something it does not declare, and every install path that does not paper over it (\`--legacy-peer-deps\`, \`--force\`, \`pnpm\`, yarn classic, \`npm ci\` from any lockfile produced by those) ships an app whose own \`npm run build\` fails out of the box. Two blind dogfood trials hit exactly that; the second lost ~26% of its run to it.
+
+          It can also mean this job's own controls fired: it refuses to pass unless \`--- PASS: TestPageMoneyScaffoldTypechecksItsOwnShippedTests\` is in the output, and it reports a SKIP separately (a skip means \`CIVITAI_SCAFFOLD_TYPECHECK\` stopped reaching the test — a defect in the job, not the scaffold). **The run log distinguishes all three.**"
+          fi
+
           # ---- the pin bumper's verdict ---------------------------------------
           bump_state=""
           bump_title=""
@@ -534,7 +683,7 @@ jobs:
             if [ "$R_BUMP" = "failure" ]; then
               bump_state=bump-failed
               bump_title="the scaffold pin bumper could not run the bumper"
-              bump_detail="The \`bump stale @civitai/* scaffold pins\` step failed — \`go run ./internal/scaffold/cmd/bump-pins\` exited non-zero. It exits 2 only on a hard error (the template holds no \`@civitai/*\` pins at all, or one of the three literal sites could not be read/written); a transient npm lookup failure is a per-package SKIP inside the tool, not a failure, so this is not a network blip."
+              bump_detail="The \`bump stale @civitai/* scaffold pins\` step failed — \`go run ./internal/scaffold/cmd/bump-pins\` exited non-zero. It exits 2 only on a hard error (the template holds no \`@civitai/*\` pins at all, or one of the four literal pin sites or the design-token ledger could not be read/written); a transient npm lookup failure is a per-package SKIP inside the tool, not a failure, so this is not a network blip."
             elif [ "$R_CHANGED" = "failure" ]; then
               bump_state=detect-failed
               bump_title="the scaffold pin bumper failed while checking for changes"
@@ -546,7 +695,7 @@ jobs:
             elif [ "$R_SUITE" = "failure" ]; then
               bump_state=validate-suite-failed
               bump_title="the scaffold pin bumper broke the offline scaffold suite"
-              bump_detail="Pins were rewritten and satisfy npm, but \`go test ./internal/scaffold/...\` then failed. **No PR was opened.** The usual cause is the bumper rewriting only some of the three literal sites, leaving the \`scaffold_test.go\` \`mustContain\` canary disagreeing with the template."
+              bump_detail="Pins were rewritten and satisfy npm, but \`go test ./internal/scaffold/...\` then failed. **No PR was opened.** The usual cause is the bumper rewriting only some of the four literal pin sites, leaving a test canary (\`scaffold_test.go\` / \`page_elements_test.go\`) disagreeing with its template."
             elif [ "$R_BUILD" = "failure" ]; then
               # 🔴 THE SENTENCE THAT USED TO BE HERE COST THREE DAYS. It asserted
               # "**No PR was opened**, on purpose — this is the removed/renamed
@@ -566,11 +715,11 @@ jobs:
               elif [ "$R_PR" = "success" ]; then
                 pr_line="**A DRAFT PR was opened anyway**, deliberately, because withholding it is what froze the repo — but its URL did not reach this report, so open the run's \`bump\` job to find it. Draft means it cannot merge until a human marks it ready."
               else
-                pr_line="**No PR was opened** — the \`open PR if pins changed\` step did not succeed either (\`r_pr=$R_PR\`), which is a SECOND failure on top of the build one. So the pin fix is un-merged and \`pins-vs-published\` (a REQUIRED check on \`main\`) stays red, blocking every open PR, until someone bumps the pins by hand."
+                pr_line="**No PR was opened** — the \`open PR if pins changed\` step did not succeed either (\`r_pr=$R_PR\`), which is a SECOND failure on top of the build one. So the pin fix is un-merged and \`pins-vs-published\` (a REQUIRED check on \`main\`) stays red on \`main\` and on every PR that touches a pin input (other PRs are warned, not blocked), until someone bumps the pins by hand."
               fi
               bump_state=validate-build-failed
               bump_title="the scaffold did not build against the newly-bumped @civitai/* pins"
-              bump_detail="**What was measured.** Pins were rewritten and they satisfy npm's published latest; the offline scaffold suite is green. The LAST check then failed: a fresh \`civitai app init … --template page-money\` at the bumped pins did not install, typecheck or build. The step runs \`npm install\` → \`npm run typecheck\` → \`npm run build\` and this report does not record which of the three died — **the run log does, and it is the first thing to read.**
+              bump_detail="**What was measured.** Pins were rewritten and they satisfy npm's published latest; the offline scaffold suite is green. The LAST check then failed: a fresh \`civitai app init … --template page-money\` (then \`page-elements\`) at the bumped pins did not install, typecheck, test, build or validate. The step runs \`npm install\` → \`npm run typecheck\` → \`npm run build\` for page-money, then the same plus \`npm test\` and \`civitai app validate\` for page-elements, and this report does not record which template or step died — **the run log does, and it is the first thing to read.**
 
           $pr_line
 
@@ -593,7 +742,7 @@ jobs:
             elif [ "$R_PR" = "failure" ]; then
               bump_state=pr-failed
               bump_title="the scaffold pin bumper could not open its PR"
-              bump_detail="The pins were bumped and fully validated, but opening the PR failed — usually \`secrets.BUMP_SCAFFOLD_PINS_TOKEN\` being expired or missing. **The fix is still un-merged**, so \`pins-vs-published\` (a REQUIRED check on \`main\`) stays red and blocks EVERY open PR regardless of its content, until someone bumps the pins by hand or repairs the token."
+              bump_detail="The pins were bumped and fully validated, but opening the PR failed — usually \`secrets.BUMP_SCAFFOLD_PINS_TOKEN\` being expired or missing. **The fix is still un-merged**, so \`pins-vs-published\` (a REQUIRED check on \`main\`) stays red on \`main\` and blocks every PR that touches a pin input (other PRs are warned, not blocked), until someone bumps the pins by hand or repairs the token."
             elif [ "$R_READY" = "failure" ]; then
               bump_state=pr-ready-failed
               bump_title="the scaffold pin bumper opened its PR but could not take it out of draft"
@@ -609,30 +758,50 @@ jobs:
           fi
 
           # ---- combine ---------------------------------------------------------
-          if [ -n "$ready_state" ] && [ -n "$bump_state" ]; then
-            state="$ready_state+$bump_state"
-            title="both scheduled scaffold checks are failing"
-            detail="**Two independent failures in one run.** They are unrelated jobs; treat them as two problems.
+          # ---- compose ---------------------------------------------------------
+          # 🔴 N-WAY, NOT PAIRWISE, AND THAT IS THE WHOLE REASON THIS BLOCK WAS
+          # REWRITTEN. It used to be an if/elif over TWO jobs — 3 branches. A
+          # third job makes it 7, a fourth 15, and the branch nobody writes is
+          # the one where the report silently names only one of the failures.
+          # The accumulator is identical in behaviour for 0 and 1 failures (the
+          # single-failure body is still the bare detail, with no "## 1."
+          # heading) and stays correct as jobs are added.
+          fail_states=(); fail_titles=(); fail_details=(); fail_names=()
+          if [ -n "$ready_state" ]; then
+            fail_states+=("$ready_state"); fail_titles+=("$ready_title")
+            fail_details+=("$ready_detail"); fail_names+=("ready-ack runtime")
+          fi
+          if [ -n "$typecheck_state" ]; then
+            fail_states+=("$typecheck_state"); fail_titles+=("$typecheck_title")
+            fail_details+=("$typecheck_detail"); fail_names+=("scaffold typecheck")
+          fi
+          if [ -n "$bump_state" ]; then
+            fail_states+=("$bump_state"); fail_titles+=("$bump_title")
+            fail_details+=("$bump_detail"); fail_names+=("pin bumper")
+          fi
 
-          ## 1. ready-ack runtime
-
-          $ready_detail
-
-          ## 2. pin bumper
-
-          $bump_detail"
-          elif [ -n "$ready_state" ]; then
-            state="$ready_state"
-            title="$ready_title"
-            detail="$ready_detail"
-          elif [ -n "$bump_state" ]; then
-            state="$bump_state"
-            title="$bump_title"
-            detail="$bump_detail"
-          else
+          n=${#fail_states[@]}
+          if [ "$n" -eq 0 ]; then
             state=green
             title=""
             detail=""
+          elif [ "$n" -eq 1 ]; then
+            state="${fail_states[0]}"
+            title="${fail_titles[0]}"
+            detail="${fail_details[0]}"
+          else
+            state="$(IFS=+; printf '%s' "${fail_states[*]}")"
+            title="$n scheduled scaffold checks are failing"
+            detail="**$n independent failures in one run.** They are unrelated jobs; treat them as separate problems."
+            i=1
+            for idx in "${!fail_states[@]}"; do
+              detail="$detail
+
+          ## $i. ${fail_names[$idx]}
+
+          ${fail_details[$idx]}"
+              i=$((i + 1))
+            done
           fi
 
           DRILL_NOTE=""
@@ -652,11 +821,11 @@ jobs:
             echo "$detail"
             echo
             echo "---"
-            echo "This workflow runs two independent daily checks: \`ready-ack-runtime\` (does the scaffolded handshake still fire on \`main\`) and \`bump\` (are the template's \`@civitai/*\` pins still current). Either one failing files this issue."
+            echo "This workflow runs three independent scheduled checks (every 6 hours): \`ready-ack-runtime\` (does the scaffolded handshake still fire on \`main\`), \`scaffold-typecheck\` (does the page-money template still typecheck on an install shape that does not silently repair it) and \`bump\` (are the template's \`@civitai/*\` pins still current). Any one of them failing files this issue."
             echo "SCAFFOLD_PINS_BODY_EOF"
           } >> "$GITHUB_OUTPUT"
 
-  # File a report when either check is broken, and close it when both recover.
+  # File a report when any check is broken, and close it when all recover.
   # See `failure-issue.yml` for why this is an issue rather than email, and for
   # the rules that stop it becoming noise.
   #
@@ -665,15 +834,15 @@ jobs:
   # which is a real state and not silence. "The check could not run" must be as
   # visible as "the check failed".
   signal:
-    needs: [ready-ack-runtime, bump, classify]
-    if: always() && needs.ready-ack-runtime.result != 'cancelled' && needs.bump.result != 'cancelled' && needs.classify.result != 'cancelled'
+    needs: [ready-ack-runtime, scaffold-typecheck, bump, classify]
+    if: always() && needs.ready-ack-runtime.result != 'cancelled' && needs.scaffold-typecheck.result != 'cancelled' && needs.bump.result != 'cancelled' && needs.classify.result != 'cancelled'
     uses: ./.github/workflows/failure-issue.yml
     permissions:
       contents: read
       issues: write
     with:
       marker: "[scaffold-pins-bot]"
-      failing: ${{ needs.ready-ack-runtime.result != 'success' || needs.bump.result != 'success' || needs.classify.result != 'success' }}
+      failing: ${{ needs.ready-ack-runtime.result != 'success' || needs.scaffold-typecheck.result != 'success' || needs.bump.result != 'success' || needs.classify.result != 'success' }}
       state: ${{ needs.classify.outputs.state || 'unknown' }}
       title: "${{ needs.classify.outputs.title || '[scaffold-pins-bot] the scaffold bots failed and could not say why' }}"
-      body: "${{ needs.classify.outputs.body || 'The `classify` job did not produce a verdict, so this report cannot name which of `ready-ack-runtime` / `bump` went wrong, or how. Open the run and read both jobs. This state is itself a defect in the reporting path — `classify` only runs a shell script over the two job results.' }}"
+      body: "${{ needs.classify.outputs.body || 'The `classify` job did not produce a verdict, so this report cannot name which of `ready-ack-runtime` / `scaffold-typecheck` / `bump` went wrong, or how. Open the run and read all three jobs. This state is itself a defect in the reporting path — `classify` only runs a shell script over the three job results.' }}"

@@ -36,7 +36,7 @@ func TestStartDevTunnelRequestResponse(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "tok-1", "")
-	sess, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 AAAAKEY", nil)
+	sess, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 AAAAKEY", nil, "")
 	if err != nil {
 		t.Fatalf("StartDevTunnel: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestStartDevTunnelDeclaredScopes(t *testing.T) {
 
 	c := New(srv.URL, "tok-1", "")
 	scopes := []string{"ai:write:budgeted", "user:read:self"}
-	if _, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 AAAAKEY", scopes); err != nil {
+	if _, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 AAAAKEY", scopes, ""); err != nil {
 		t.Fatalf("StartDevTunnel: %v", err)
 	}
 	var wire struct {
@@ -121,6 +121,29 @@ func TestStartDevTunnelDeclaredScopes(t *testing.T) {
 	// It rides under the tRPC `json` envelope (not top-level).
 	if !strings.Contains(gotBody, `"declaredScopes":["ai:write:budgeted","user:read:self"]`) {
 		t.Errorf("declaredScopes should serialize as a string array under json: %s", gotBody)
+	}
+}
+
+// TestStartDevTunnelDeclaredAuth: the local manifest's `auth` rides along as
+// `declaredAuth`, and is omitted when the caller has none.
+func TestStartDevTunnelDeclaredAuth(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"json":{"message":"dark"}}}`))
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "tok-1", "")
+
+	_, _ = c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 AAAAKEY", nil, "oauth")
+	if !strings.Contains(gotBody, `"declaredAuth":"oauth"`) {
+		t.Errorf("declaredAuth should be sent: %s", gotBody)
+	}
+	_, _ = c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 AAAAKEY", nil, "")
+	if strings.Contains(gotBody, "declaredAuth") {
+		t.Errorf("empty auth must omit the declaredAuth key: %s", gotBody)
 	}
 }
 
@@ -213,7 +236,7 @@ func TestStartDevTunnelErrorMapping(t *testing.T) {
 			})
 		}))
 		c := New(srv.URL, "tok", "")
-		_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K", nil)
+		_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K", nil, "")
 		srv.Close()
 		if err == nil {
 			t.Fatalf("status %d: expected error", tc.status)
@@ -238,7 +261,7 @@ func TestStartDevTunnel401DropsServerMessage(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(srv.URL, "tok", "")
-	_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K", nil)
+	_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K", nil, "")
 	if err == nil {
 		t.Fatal("expected error on 401")
 	}
@@ -264,7 +287,7 @@ func TestStartDevTunnel404SlugTakenOrInvalid(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(srv.URL, "tok", "")
-	_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K", nil)
+	_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K", nil, "")
 	if err == nil {
 		t.Fatal("expected error on 404")
 	}
@@ -306,7 +329,7 @@ func TestStartDevTunnelForbiddenClassifiesScope(t *testing.T) {
 			}))
 			defer srv.Close()
 			c := New(srv.URL, "tok", "")
-			_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K", nil)
+			_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K", nil, "")
 			var forbidden *DevTunnelForbiddenError
 			if !errors.As(err, &forbidden) {
 				t.Fatalf("403 should map to *DevTunnelForbiddenError, got %v", err)

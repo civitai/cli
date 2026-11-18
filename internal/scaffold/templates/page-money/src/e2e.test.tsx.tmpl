@@ -5,19 +5,32 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { App } from './App.js';
 import { installMockMoneyHost } from './mock-buzz.js';
 
+/**
+ * Generate is DISABLED until the current request has been priced; wait for the
+ * priced label ("Generate · N Buzz"), then click. Clicking earlier is a no-op —
+ * see App.price.test.tsx for that contract.
+ */
+async function clickWhenPriced(user: ReturnType<typeof userEvent.setup>) {
+  const generate = screen.getByTestId('pm-generate');
+  // `≈` marks a Comfy recipe's display estimate (see App.tsx).
+  await waitFor(() => expect(generate).toHaveTextContent(/^Generate · ≈?\d[\d,]* Buzz$/), { timeout: 3000 });
+  await user.click(generate);
+}
+
 // End-to-end proof of the money wiring: this drives the FULL page money path
 // through the REAL SDK transport (NO hook mocking) against the mock host. It is
-// the regression guard that estimate -> consent -> submit -> poll stays wired,
+// the regression guard that consent -> estimate -> submit -> poll stays wired,
 // plus the per-account-buzz surface (pick a pool -> accountType on the body,
-// spentAccountType feedback, disallowed-pool reset). Generate is ONE click — no
-// confirm modal (consent is the real, host-driven spend gate):
+// spentAccountType feedback, disallowed-pool reset). No confirm modal: the
+// price is ON the Generate button, which stays disabled until it is:
 //
 //   render <App/> (consent WITHHELD)
 //     -> type a prompt
-//     -> click Generate
+//     -> click "Allow Buzz spending"
 //     -> App asks the host for consent (REQUEST_CONSENT)
 //     -> host grants + pushes a TOKEN_REFRESH carrying ai:write:budgeted
-//     -> App auto-resumes: estimate -> submit -> poll
+//     -> App prices the request: Generate reads "Generate · N Buzz"
+//     -> click Generate -> submit -> poll
 //     -> succeeded snapshot -> result image + spent-cost success Alert
 //
 // `installMockMoneyHost` is a thin createMockHost wrapper. 0.18 answers the
@@ -75,16 +88,17 @@ describe('App money path (e2e)', () => {
     fireEvent.change(weight, { target: { value: '0.6' } });
     expect(weight.value).toBe('0.6');
 
-    // Enter a prompt (Generate is disabled while empty).
+    // Enter a prompt. The scope is withheld, so there is no price yet and
+    // Generate stays disabled.
     await user.type(screen.getByLabelText(/prompt/i), 'a serene mountain lake');
-    expect(generate).toBeEnabled();
+    expect(generate).toBeDisabled();
 
-    // Click Generate. Scope is withheld so the App requests consent first, then
-    // auto-resumes once the host grants it.
-    await user.click(generate);
+    // Grant the spend scope. The host grants + token-refreshes; the App prices
+    // the request (and does NOT submit), then the priced click runs
+    // submit -> poll -> succeeded. Assert the terminal success UI.
+    await user.click(screen.getByTestId('pm-consent'));
+    await clickWhenPriced(user);
 
-    // The host grants consent + token-refreshes; the App auto-resumes through
-    // estimate -> submit -> poll -> succeeded. Assert the terminal success UI.
     const result = await screen.findByAltText(/generated result/i, {}, { timeout: 5000 });
     expect(result).toBeInTheDocument();
 
@@ -122,7 +136,7 @@ describe('App money path (e2e)', () => {
     await user.click(screen.getByTestId('pm-account-yellow'));
     expect(screen.getByTestId('pm-account-yellow')).toHaveAttribute('aria-checked', 'true');
     await user.type(screen.getByLabelText(/prompt/i), 'a cat');
-    await user.click(screen.getByTestId('pm-generate'));
+    await clickWhenPriced(user);
 
     await screen.findByAltText(/generated result/i, {}, { timeout: 5000 });
 
@@ -153,7 +167,7 @@ describe('App money path (e2e)', () => {
     // Leave the picker on Auto (the default).
     expect(screen.getByTestId('pm-account-auto')).toHaveAttribute('aria-checked', 'true');
     await user.type(screen.getByLabelText(/prompt/i), 'a cat');
-    await user.click(screen.getByTestId('pm-generate'));
+    await clickWhenPriced(user);
 
     await screen.findByAltText(/generated result/i, {}, { timeout: 5000 });
     expect(submittedBodies.at(-1)).not.toHaveProperty('accountType');
@@ -175,7 +189,7 @@ describe('App money path (e2e)', () => {
 
     await user.click(screen.getByTestId('pm-account-green'));
     await user.type(screen.getByLabelText(/prompt/i), 'a cat');
-    await user.click(screen.getByTestId('pm-generate'));
+    await clickWhenPriced(user);
 
     // The App surfaces a friendly "not available" note and falls back to Auto.
     expect(await screen.findByTestId('pm-account-rejected')).toBeInTheDocument();
@@ -216,7 +230,7 @@ describe('App money path (e2e)', () => {
 
     // The mock host is fail-open for customComfy, so the sample runs end-to-end.
     await user.type(screen.getByLabelText(/prompt/i), 'a seamless galaxy pattern');
-    await user.click(screen.getByTestId('pm-generate'));
+    await clickWhenPriced(user);
 
     const result = await screen.findByAltText(/generated result/i, {}, { timeout: 5000 });
     expect(result).toBeInTheDocument();
@@ -239,9 +253,9 @@ describe('App money path (e2e)', () => {
 
     render(<App />);
 
-    const generate = await screen.findByTestId('pm-generate');
+    await screen.findByTestId('pm-generate');
     await user.type(screen.getByLabelText(/prompt/i), 'a cat');
-    await user.click(generate);
+    await clickWhenPriced(user);
 
     // The failed snapshot carries insufficient-Buzz text -> the App swaps to
     // the Top-Up warning Alert and renders no image.

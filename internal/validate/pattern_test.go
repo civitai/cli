@@ -1,10 +1,14 @@
 package validate
 
 import (
+	"bytes"
 	"encoding/json"
+	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -24,9 +28,14 @@ import (
 //   - TestEnumFindingsKeepTheirExactWording — the CONTROL. The enum messages are
 //     the standard the pattern gloss was written to match, so a rewrite of the
 //     finding renderer that regressed them has to fail here. Byte-exact.
-//   - TestPatternRulesCoverTheVendoredSchema — the LEDGER, bidirectional against
-//     the vendored schema. `patternRules` is a mirror of a mirror, and an
-//     unmaintained mirror is the failure mode AGENTS.md item 1 is about.
+//   - TestPatternRulesCoverTheVendoredSchema — the LEDGER, TOTAL against the
+//     vendored schema: every pattern the schema can surface is either GLOSSED in
+//     `patternRules` or listed as an acknowledged DEBT in
+//     `pattern_gloss_owed.json`. `patternRules` is a mirror of a mirror, and an
+//     unmaintained mirror is the failure mode AGENTS.md item 1 is about. The
+//     reconciliation itself is a pure function (`glossLedgerProblems`) so each of
+//     its four classes can be broken and watched to fail on its own message —
+//     see TestGlossLedgerReconciliation.
 //   - TestPatternRuleExamplesSatisfyTheirPattern — each example is a CLAIM about
 //     the regex it sits under. Shipping an example the schema rejects would be
 //     the worst possible version of this feature: authoritative-looking advice
@@ -49,6 +58,13 @@ type patternFixture struct {
 	// so the row proves the ORIGINAL message survived rather than being
 	// replaced by prose.
 	got string
+	// alsoAt lists OTHER glossed patterns the same value legitimately fails at
+	// the same field. Empty for almost every row. It exists for a field reached
+	// through a `oneOf`: the validator reports every branch's failures, so a
+	// migration op's `path` is checked against EACH branch's `path` pattern and
+	// a bad value trips more than one. Any pattern finding at the field that is
+	// neither the row's own nor listed here still fails the row.
+	alsoAt []string
 }
 
 func patternFixtures() []patternFixture {
@@ -61,6 +77,17 @@ func patternFixtures() []patternFixture {
 			manifest: `{"blockId":"My First App!",` + base + `}`,
 			field:    "blockId",
 			got:      "My First App!",
+		},
+		{
+			// A SPACE and a "!", the same shape as the blockId fixture, because
+			// the two patterns' messages must be told apart while the offending
+			// value looks identical — the cross-row absence assertion is what
+			// reads this row.
+			name:     "goods.id",
+			pattern:  `^[a-z0-9][a-z0-9_-]*$`,
+			manifest: `{"blockId":"ok-app","goods":[{"id":"Extra Credits!","title":"Extra credits","priceBuzz":100}],` + base + `}`,
+			field:    "goods[0].id",
+			got:      "Extra Credits!",
 		},
 		{
 			name:     "version",
@@ -115,6 +142,74 @@ func patternFixtures() []patternFixture {
 			field:    "page.path",
 			got:      "run",
 		},
+		{
+			// A HYPHEN: valid in JSON Pointer, refused here, and the likeliest
+			// thing an author pastes (a kebab-case field name).
+			name:    "storage.ownedModelVersions",
+			pattern: `^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$`,
+			manifest: `{"blockId":"ok-app","storage":{"collections":{"c":{"visibility":"shared","write":"own",` +
+				`"ownedModelVersions":["/model-version"]}}},` + base + `}`,
+			field: "storage.collections.c.ownedModelVersions[0]",
+			got:   "/model-version",
+		},
+		{
+			// A MISSING LEADING "/": the likeliest slip, writing the field name
+			// rather than a pointer to it. `rename` is the only op with a
+			// `from`, so no other oneOf branch reports this field.
+			name:    "storage.migrations.from",
+			pattern: `^(/([^/~]|~[01])+){1,15}$`,
+			manifest: `{"blockId":"ok-app","storage":{"collections":{"c":{"visibility":"private",` +
+				`"migrations":[{"op":"rename","from":"old_title","to":"/title"}]}}},` + base + `}`,
+			field: "storage.collections.c.migrations[0].from",
+			got:   "old_title",
+		},
+		{
+			// The same slip on an acknowledge op. Its `path` is also checked
+			// against the 1-to-15 pattern by the `default` and `remove`
+			// branches of the op's oneOf, which is what alsoAt records.
+			name:    "storage.migrations.acknowledge.path",
+			pattern: `^(/([^/~]|~[01])+){0,15}$`,
+			manifest: `{"blockId":"ok-app","storage":{"collections":{"c":{"visibility":"private",` +
+				`"migrations":[{"op":"acknowledge","path":"title","keyword":"type"}]}}},` + base + `}`,
+			field:  "storage.collections.c.migrations[0].path",
+			got:    "title",
+			alsoAt: []string{`^(/([^/~]|~[01])+){1,15}$`},
+		},
+		{
+			// A TYPESCRIPT SOURCE path: the bundle ships built JavaScript.
+			name:    "storage.hook.file",
+			pattern: `^([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.m?js$`,
+			manifest: `{"blockId":"ok-app","storage":{"collections":{"c":{"visibility":"private",` +
+				`"hook":{"file":"hooks/check.ts","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}}},` + base + `}`,
+			field: "storage.collections.c.hook.file",
+			got:   "hooks/check.ts",
+		},
+		{
+			// UPPERCASE hex: a real digest, in the case some tools print.
+			name:    "storage.hook.sha256",
+			pattern: `^[0-9a-f]{64}$`,
+			manifest: `{"blockId":"ok-app","storage":{"collections":{"c":{"visibility":"private",` +
+				`"hook":{"file":"hooks/check.js","sha256":"E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"}}}},` + base + `}`,
+			field: "storage.collections.c.hook.sha256",
+			got:   "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+		},
+		{
+			// A DISPLAY NAME pasted where the slug belongs — within the length
+			// bounds, so only the pattern fails.
+			name:     "storage.imports.from",
+			pattern:  `^[a-z][a-z0-9-]{1,38}[a-z0-9]$`,
+			manifest: `{"blockId":"ok-app","storage":{"imports":[{"from":"My-Parent-App","collections":["notes"],"access":"read"}]},` + base + `}`,
+			field:    "storage.imports[0].from",
+			got:      "My-Parent-App",
+		},
+		{
+			// KEBAB-CASE where snake_case is required.
+			name:     "storage.imports.collections",
+			pattern:  `^[a-z][a-z0-9_]{0,31}$`,
+			manifest: `{"blockId":"ok-app","storage":{"imports":[{"from":"parent-app","collections":["saved-notes"],"access":"read"}]},` + base + `}`,
+			field:    "storage.imports[0].collections[0]",
+			got:      "saved-notes",
+		},
 	}
 }
 
@@ -147,6 +242,44 @@ func patternFindingFor(t *testing.T, fs []Finding, field string) Finding {
 	}
 	if len(hits) != 1 {
 		t.Fatalf("want exactly 1 pattern finding on %q, got %d\nall findings: %v", field, len(hits), fs)
+	}
+	return hits[0]
+}
+
+// patternFindingAmong is patternFindingFor for a field that legitimately fails
+// more than one pattern (see patternFixture.alsoAt). It returns the single
+// finding for want, and fails if any pattern finding on field belongs to a
+// pattern that is neither want nor listed in also — so the extra findings are
+// an enumerated set, not a licence for anything at that field.
+func patternFindingAmong(t *testing.T, fs []Finding, field, got, want string, also []string) Finding {
+	t.Helper()
+	prefix := func(pat string) string {
+		return field + ": " + (&kind.Pattern{Got: got, Want: pat}).LocalizedString(printer)
+	}
+	var hits []Finding
+	for _, f := range fs {
+		if f.Field != field || !strings.Contains(f.Message, "does not match pattern") {
+			continue
+		}
+		if strings.HasPrefix(f.Message, prefix(want)) {
+			hits = append(hits, f)
+			continue
+		}
+		known := false
+		for _, p := range also {
+			if strings.HasPrefix(f.Message, prefix(p)) {
+				known = true
+				break
+			}
+		}
+		if !known {
+			t.Errorf("unexpected pattern finding on %q (neither %q nor one of %q): %s",
+				field, want, also, f.Message)
+		}
+	}
+	if len(hits) != 1 {
+		t.Fatalf("want exactly 1 finding for pattern %q on %q, got %d\nall findings: %v",
+			want, field, len(hits), fs)
 	}
 	return hits[0]
 }
@@ -209,6 +342,14 @@ func TestPatternGlossesAreTheRightWayRound(t *testing.T) {
 	}{
 		{`^[a-z][a-z0-9-]*[a-z0-9]$`, "lowercase letters, digits and hyphens", "my-first-app",
 			"a slug alphabet with a first- and last-character rule"},
+		// The fragment names UNDERSCORES because that is the whole difference
+		// from the blockId row above: same lowercase-slug family, one extra
+		// legal character and no last-character rule. A fragment quoting the
+		// shared part would sit inside blockId's rule too and the absence half
+		// would stop working — which is exactly what the pairwise
+		// non-containment check below is there to catch.
+		{`^[a-z0-9][a-z0-9_-]*$`, "underscores and hyphens", "extra-credits",
+			"a slug alphabet that also admits _ and constrains only the FIRST character"},
 		{`^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`, "semantic version", "1.0.0",
 			"exactly three numeric components plus an optional prerelease"},
 		{`\S`, "non-whitespace", "A tiny image tool",
@@ -229,6 +370,27 @@ func TestPatternGlossesAreTheRightWayRound(t *testing.T) {
 			"a scheme requirement and nothing else"},
 		{`^/`, `must start with a "/"`, "/",
 			"a leading-character requirement on a mount path"},
+		// "field path of 1 to 4 segments" rather than anything about "/": the
+		// page.path row owns the leading-slash wording, and this regex's
+		// distinguishing claim is the bounded segment count.
+		{`^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$`, "field path of 1 to 4 segments", "/workflow/modelVersionId",
+			"a bounded, index-free path into a stored document"},
+		// The two pointer rows differ only in the lower bound on segments, so
+		// the fragments quote exactly that: "1 to 15" against "up to 15".
+		{`^(/([^/~]|~[01])+){1,15}$`, "JSON Pointer of 1 to 15", "/title",
+			"an RFC 6901 pointer with at least one segment"},
+		{`^(/([^/~]|~[01])+){0,15}$`, "JSON Pointer of up to 15", "/tags/*",
+			"the same pointer, where zero segments (the document root) is legal"},
+		{`^([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.m?js$`, ".js or .mjs file", "hooks/check.js",
+			"a relative module path with no dot-led segment"},
+		{`^[0-9a-f]{64}$`, "64 lowercase hexadecimal", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+			"a lowercase hex SHA-256 digest"},
+		// "3 to 40 characters" rather than the alphabet: the blockId row owns
+		// the slug-alphabet wording, and what this regex adds is the bound.
+		{`^[a-z][a-z0-9-]{1,38}[a-z0-9]$`, "3 to 40 characters", "parent-app",
+			"a length-bounded blockId slug"},
+		{`^[a-z][a-z0-9_]{0,31}$`, "lowercase snake_case name", "saved_notes",
+			"a snake_case identifier of at most 32 characters"},
 	}
 	if len(ledger) != len(patternRules) {
 		t.Fatalf("%d ledger rows for %d glossed patterns — the ledger must be total, "+
@@ -282,8 +444,6 @@ func TestPatternFindingsCarryTheRuleAndAnExample(t *testing.T) {
 			if !ok {
 				t.Fatalf("fixture names pattern %q, which is not in patternRules", tc.pattern)
 			}
-			f := patternFindingFor(t, manifestOnlyFindings(t, tc.manifest), tc.field)
-
 			// The base half is the LIBRARY's sentence, reconstructed from the
 			// fixture's own value and regex rather than copied out of the
 			// output. That is deliberate: the claim this half makes is
@@ -292,6 +452,14 @@ func TestPatternFindingsCarryTheRuleAndAnExample(t *testing.T) {
 			// escaping of the regex, which a hand-spelled literal would have to
 			// mirror and would then pin to the wrong thing.
 			base := (&kind.Pattern{Got: tc.got, Want: tc.pattern}).LocalizedString(printer)
+
+			fs := manifestOnlyFindings(t, tc.manifest)
+			var f Finding
+			if len(tc.alsoAt) == 0 {
+				f = patternFindingFor(t, fs, tc.field)
+			} else {
+				f = patternFindingAmong(t, fs, tc.field, tc.got, tc.pattern, tc.alsoAt)
+			}
 			// Sanity: the base must actually quote the offending value, or the
 			// exact-match below is pinning a sentence that lost it.
 			if !strings.Contains(base, tc.got) {
@@ -327,8 +495,49 @@ func TestPatternFindingsCarryTheRuleAndAnExample(t *testing.T) {
 //
 // The enum messages are the standard the pattern gloss was written to match, so
 // they are the thing a rewrite of schemaErrors is most likely to change by
-// accident. They are asserted BYTE-EXACT, not by fragment: the point is that
-// they did not move at all.
+// accident. The message is asserted BYTE-EXACT, not by fragment: the point is
+// that it did not move at all.
+//
+// 🔴 WHAT IS PINNED IS THE SHAPE, AND WHAT IS DERIVED IS THE CONTENT — because
+// pinning both made this guard SELF-BLOCKING, measured. `schema/` is a vendored
+// mirror (AGENTS.md item 1) re-synced by `revendor-canonical-schema.yml`, which
+// runs the suite on its own output before opening a PR. This test used to spell
+// out all thirteen scopes, so the canonical adding `goods:read:self` /
+// `goods:purchase:self` reddened it — and the automation whose whole job is to
+// land that change could not land it: it could never accept a canonical that
+// ADDS an enum member, which is the ordinary way a capability list changes. So
+// WHICH values are allowed now comes from the vendored schema, and the sentence
+// they are rendered into is spelled here.
+//
+// 🔴 AND THAT FIX MOVED THE SELF-BLOCK ONE FIELD OVER RATHER THAN REMOVING IT,
+// which is why this paragraph must not be read as "resolved". The rewrite freed
+// `scopes` and then fed the SCHEMA's `contentRating` enum into the shape anchor
+// below, so a canonical growing the RATINGS reddened this test exactly as an
+// added scope used to — and `ci.yml` runs `schema-drift` on every PR in the repo
+// with no path filter, so that reds an unrelated human's check until someone
+// hand-edits a literal. The anchor now compares two hand-written operands and
+// reads no schema at all.
+//
+// ⚠ IT ALSO HAD A SECOND, INDEPENDENT SPELLING in
+// `internal/cmd/message_quality_test.go`, which is the part that makes a one-site
+// fix read as complete when it is not. Measured there, and the asymmetry is the
+// reusable half: that site compared with `strings.Contains`, so APPENDING a
+// rating left it GREEN — the literal is a prefix of the longer message — while
+// this file went red. Only an INSERT or a reorder reddened both. A fix verified
+// with an append-only mutant therefore looks finished and is not.
+// `content_rating_literal_ledger_test.go` is what now fails if either literal
+// comes back.
+//
+// 🔴 THIS UNBLOCKS ENUM GROWTH ONLY — IT DOES NOT MAKE THE RE-VENDOR BOT
+// SELF-SUFFICIENT, and do not read it as doing so. There are TWO guards over the
+// mirror and this is one of them: a canonical that adds a `pattern` still reds
+// `TestPatternRulesCoverTheVendoredSchema` until a human writes the gloss, so
+// the bot could not have self-landed even the change that motivated this edit
+// (the `goods` canonical added BOTH two scopes and the `goods[].id` pattern).
+// That is deliberate — a gloss is English prose about what a regex MEANS, which
+// cannot be derived, and a bot shipping a bare regex to app authors would be
+// worse than a red check. Expect a canonical that adds a pattern to need a
+// human; expect an enum-only one not to.
 func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"zz",` +
 		`"scopes":["models:read:self","bogus:scope"],"kind":"page",` +
@@ -337,13 +546,117 @@ func TestEnumFindingsKeepTheirExactWording(t *testing.T) {
 	for _, f := range manifestOnlyFindings(t, body) {
 		got[f.Field] = f.Message
 	}
+
+	// enumMessage is the SHAPE, written out once and literally: the field
+	// prefix, the library's lead-in, each value in single quotes, ", " between
+	// them, schema order preserved. Nothing here is read out of the code under
+	// test.
+	enumMessage := func(field string, allowed []string) string {
+		quoted := make([]string, len(allowed))
+		for i, v := range allowed {
+			quoted[i] = "'" + v + "'"
+		}
+		return field + ": value must be one of " + strings.Join(quoted, ", ")
+	}
+
+	// 🔴 THE TEMPLATE IS ANCHORED, NOT TRUSTED. If both halves were derived, the
+	// shape claim would rest on this file's own template and nothing could fail:
+	// reword the library's lead-in and `want` moves with `got`. So the template
+	// must first REPRODUCE, byte for byte, a message a human wrote out in full.
+	//
+	// 🔴 BOTH OPERANDS ARE HAND-WRITTEN AND NEITHER READS THE SCHEMA. That is
+	// the whole point of this anchor and it is why it cannot self-block: the
+	// list below is a FROZEN SPECIMEN of an enum, not a mirror of the live
+	// `contentRating` set, so a canonical that grows the ratings cannot reach
+	// this comparison. The previous version fed `schemaEnum(…"contentRating"…)`
+	// into the template and compared it against this literal, which made the
+	// anchor red on exactly the additive canonical change the re-vendor bot
+	// exists to land — the same self-block this guard was rewritten to remove,
+	// moved one field over rather than removed. Do NOT re-derive either side
+	// here; the schema-sensitive claim is the `want` map below.
+	//
+	// What this still catches, which is the only thing it claims: a change to
+	// `enumMessage` itself. A reword of the library's lead-in shows up in the
+	// `want` comparison below (template vs REAL output), and the obvious way to
+	// paper that over is to edit the template to match — which reds this.
+	//
+	// ⚠ What it STOPPED catching, and where that went: as a schema-vs-frozen-string
+	// comparison it also detected a rating being RETIRED upstream. Making both
+	// operands hand-written gives that up, and that gap is ACCEPTED — deliberately,
+	// after measurement. Do not "restore" it without reading the rest of this note.
+	//
+	// 🔴 A SHRINK GUARD WAS BUILT HERE AND THEN REMOVED, BECAUSE IT WAS A SELF-BLOCK
+	// IN THE OTHER DIRECTION. It iterated a frozen specimen and asserted each value
+	// was still in the schema. Measured: retiring a rating then reds `go test ./...`,
+	// so `revendor-canonical-schema.yml` — which runs the suite before opening its
+	// PR — opens NO PR, the vendored mirror stays stale, and `schema-drift` reds
+	// until a human intervenes. Its own failure message asked for FOUR hand edits
+	// producing ZERO behaviour change, because a resynced mirror already rejects a
+	// retired value correctly. Upstream retirement is a demonstrated event class
+	// here (four scopes have been retired), so that was a real cost paid against a
+	// hazard with no recorded instance.
+	//
+	// ⚠ WHAT IS ACTUALLY UNCOVERED, stated plainly: a `contentRating` value retired
+	// or renamed upstream reaches the CLI with no test reddening. `schema-drift`
+	// cannot see it either — it diffs the mirror against the live canonical, so once
+	// the mirror resyncs both agree. The judgement is that this needs no local guard:
+	// the resynced mirror rejects the retired value on its own, and `contentRating`
+	// has not changed in any commit that has ever touched the schema. If you want it
+	// covered, cover it WITHOUT gating the re-vendor bot's own suite — a scheduled
+	// probe, not an assertion inside `go test`.
+	const wantContentRating = "contentRating: value must be one of 'g', 'pg', 'pg13', 'r', 'x'"
+	if tmpl := enumMessage("contentRating", []string{"g", "pg", "pg13", "r", "x"}); tmpl != wantContentRating {
+		t.Fatalf("the enum message TEMPLATE no longer reproduces a hand-written message, so every "+
+			"expectation derived from it below is meaningless — this is about `enumMessage` in this "+
+			"file, NOT about the schema's contentRating enum, which this comparison does not read\n"+
+			"  want: %s\n  got:  %s", wantContentRating, tmpl)
+	}
+
+	scopes := schemaEnum(t, "properties", "scopes", "items", "enum")
+	// CONTENT control on the derived half. schemaEnum already fatals on a
+	// missing or empty enum, but not on resolving to the WRONG array, and a
+	// set that lost long-standing members is a real regression rather than
+	// growth. These two are the oldest and the most consequential member.
+	//
+	// 🔴 IT NAMES TWO MEMBERS AND GUARDS ONLY THOSE TWO — it is NOT a shrink
+	// detector for the enum as a whole, and must not be quoted as one. Measured:
+	// dropping `apps:storage:read` or `collections:write:self` from the vendored
+	// enum leaves this whole package GREEN.
+	//
+	// 🔴 AND `schema-drift` DOES NOT COVER THAT GAP — an earlier version of this
+	// comment called it "a strictly stronger instrument than a hand-typed list
+	// here", and that was FALSE. `scripts/check-canonical-schema.sh` runs
+	// `diff <(jq -S . "$VENDORED") <(jq -S . "$tmp")`: it compares the mirror
+	// against the LIVE canonical, so it only ever sees the two DISAGREEING. It
+	// reds on a value dropped from the mirror alone — and is blind to a value the
+	// CANONICAL itself retires, because once the mirror resyncs both sides agree
+	// and the diff is empty. A hand-typed list here is the only thing that could
+	// see an upstream retirement, and this list does not attempt it: it guards
+	// two members, not the set.
+	//
+	// So the shrink direction is covered for mirror-only drops and UNCOVERED for
+	// upstream retirements. Closing it properly means a growth-tolerant SHRINK
+	// ledger (assert a known set is a SUBSET of the schema's, so growth passes
+	// and a retirement reds) — deliberately not built here, because it is a new
+	// guard rather than the removal of a self-block, and a ledger written wrong
+	// re-creates exactly the block this file was rewritten to remove.
+	for _, must := range []string{"models:read:self", "posts:write:self"} {
+		if !slices.Contains(scopes, must) {
+			t.Fatalf("the schema's scope enum does not contain %q — %d values read, so this "+
+				"is reading the wrong node or the canonical lost a scope: %v", must, len(scopes), scopes)
+		}
+	}
+
+	// Both rows DERIVE their values from the schema and spell the lead-in by
+	// hand, so an enum that grows moves `want` and `got` together (green) while a
+	// reword of the library's rendering moves only `got` (red). `contentRating`
+	// used to be pinned to the literal above; that is what blocked an additive
+	// canonical, so it derives here like `scopes` always has.
+	ratings := schemaEnum(t, "properties", "contentRating", "enum")
+
 	want := map[string]string{
-		"contentRating": "contentRating: value must be one of 'g', 'pg', 'pg13', 'r', 'x'",
-		"scopes[1]": "scopes[1]: value must be one of 'models:read:self', 'user:read:self', " +
-			"'ai:write:budgeted', 'buzz:read:self', 'social:tip:self', 'apps:storage:read', " +
-			"'apps:storage:write', 'apps:storage:shared:read', 'apps:storage:shared:write', " +
-			"'collections:read:self', 'collections:write:self', 'collections:read:private', " +
-			"'posts:write:self'",
+		"contentRating": enumMessage("contentRating", ratings),
+		"scopes[1]":     enumMessage("scopes[1]", scopes),
 	}
 	for field, wantMsg := range want {
 		if got[field] != wantMsg {
@@ -373,7 +686,7 @@ func TestPostsWriteSelfScopeAccepted(t *testing.T) {
 	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
 		`"scopes":["models:read:self","posts:write:self"],` +
 		`"scopeJustifications":{"posts:write:self":"lets the viewer publish the images this app generated for them"},` +
-		`"kind":"page",` +
+		`"kind":"page","page":{"path":"/","title":"x"},` +
 		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
 	for _, f := range manifestOnlyFindings(t, body) {
 		t.Errorf("unexpected finding on %q: %s", f.Field, f.Message)
@@ -384,7 +697,7 @@ func TestPostsWriteSelfScopeAccepted(t *testing.T) {
 	// reason. Without this, a fixture that silently stopped reaching the
 	// validator would pass the loop above by producing nothing.
 	const unjustified = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
-		`"scopes":["models:read:self","posts:write:self"],"kind":"page",` +
+		`"scopes":["models:read:self","posts:write:self"],"kind":"page","page":{"path":"/","title":"x"},` +
 		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
 	var hit bool
 	for _, f := range manifestOnlyFindings(t, unjustified) {
@@ -396,6 +709,84 @@ func TestPostsWriteSelfScopeAccepted(t *testing.T) {
 	if !hit {
 		t.Fatal("removing the justification produced no scopeJustifications finding naming posts:write:self")
 	}
+}
+
+// TestAppsStoreItemsWriteScopeAccepted is the ACCEPT arm for the scope the
+// vendored schema gained with App Store sub-listings (an app publishing the
+// viewer's own items as store cards). Same shape and reasoning as
+// TestPostsWriteSelfScopeAccepted: the enum-wording test only proves the value
+// appears in a REJECTION message, so this pins the accept path, with its own
+// negative control (minus the justification it must fail, naming this scope —
+// the scope is SENSITIVE server-side).
+func TestAppsStoreItemsWriteScopeAccepted(t *testing.T) {
+	const body = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
+		`"scopes":["models:read:self","apps:store:items:write"],` +
+		`"scopeJustifications":{"apps:store:items:write":"lets the viewer list the presets they built as their own store cards"},` +
+		`"kind":"page","page":{"path":"/","title":"x"},` +
+		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
+	for _, f := range manifestOnlyFindings(t, body) {
+		t.Errorf("unexpected finding on %q: %s", f.Field, f.Message)
+	}
+
+	const unjustified = `{"blockId":"ok-app","name":"x","version":"1.0.0","contentRating":"pg",` +
+		`"scopes":["models:read:self","apps:store:items:write"],"kind":"page","page":{"path":"/","title":"x"},` +
+		`"iframe":{"sandbox":"allow-scripts","minHeight":100,"resizable":false}}`
+	var hit bool
+	for _, f := range manifestOnlyFindings(t, unjustified) {
+		if f.Field == "scopeJustifications" && strings.Contains(f.Message, "apps:store:items:write") {
+			hit = true
+		}
+	}
+	if !hit {
+		t.Fatal("removing the justification produced no scopeJustifications finding naming apps:store:items:write")
+	}
+}
+
+// schemaEnum returns the `enum` the VENDORED schema declares at an explicit key
+// path, in the schema's own order — which is the order the library renders them
+// in, so a derived message matches byte for byte.
+//
+// The path is spelled by the caller rather than searched for: a search would
+// find "some enum" and could silently move to a different one, which is the
+// failure mode the callers' own content controls exist to catch. Every way of
+// not-finding it is FATAL, because an expectation derived from a missing or
+// empty enum is vacuous rather than wrong — `enum: []` would render "value must
+// be one of " on BOTH sides and agree.
+func schemaEnum(t *testing.T, path ...string) []string {
+	t.Helper()
+	var doc any
+	if err := json.Unmarshal(cli.SchemaJSON, &doc); err != nil {
+		t.Fatalf("vendored schema does not decode: %v", err)
+	}
+	node := doc
+	for i, key := range path {
+		m, ok := node.(map[string]any)
+		if !ok {
+			t.Fatalf("schema path %v: %v is not an object, so %q cannot be read",
+				path, path[:i], key)
+		}
+		if node, ok = m[key]; !ok {
+			t.Fatalf("schema path %v: no %q — this test is reading a shape the schema "+
+				"no longer has", path, key)
+		}
+	}
+	arr, ok := node.([]any)
+	if !ok {
+		t.Fatalf("schema path %v is a %T, not an array of enum values", path, node)
+	}
+	if len(arr) == 0 {
+		t.Fatalf("schema path %v is an EMPTY enum — a message derived from it would be "+
+			"vacuously equal to the one the validator produced", path)
+	}
+	out := make([]string, 0, len(arr))
+	for i, v := range arr {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("schema path %v item %d is a %T, not a string", path, i, v)
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // schemaPatterns walks the VENDORED schema and returns every `pattern` that can
@@ -435,17 +826,487 @@ func schemaPatterns(t *testing.T) map[string]bool {
 	return out
 }
 
-// TestPatternRulesCoverTheVendoredSchema is a BIDIRECTIONAL ledger.
+// glossOwedPath is the committed ledger of schema patterns that have NO gloss
+// and whose absence has been ACKNOWLEDGED. Relative, because `go test` runs with
+// the package directory as its working directory.
+const glossOwedPath = "pattern_gloss_owed.json"
+
+// glossOwedWhy is written into the file so a human who opens it cold — most
+// likely a reviewer of the re-vendor bot's PR, seeing a row appear — learns what
+// the row means without leaving the diff.
+const glossOwedWhy = "Schema `pattern`s that have NO author-facing gloss in " +
+	"internal/validate/pattern.go, and whose absence has been ACKNOWLEDGED. A row here is a " +
+	"DEBT, not a decision: an author who trips this pattern gets the bare regex back. Clear a " +
+	"row by writing its gloss in patternRules. See the header of internal/validate/pattern.go " +
+	"and TestPatternRulesCoverTheVendoredSchema."
+
+// updateGlossLedger rewrites glossOwedPath instead of asserting against it.
 //
-// Growth direction: the vendored schema gains a `pattern` and nobody writes a
-// gloss — the author gets the raw regex back for that field, silently. Shrink
-// direction: the schema drops a pattern and the gloss sits in the table looking
-// like coverage for a rule that no longer exists.
+// 🔴 THIS FLAG IS THE WHOLE POINT OF THE REDESIGN, so read why before deleting
+// it. `schema/` is re-vendored from the live canonical by
+// `.github/workflows/revendor-canonical-schema.yml`, which runs `go test ./...`
+// on its own output BEFORE opening a PR. The growth half of this ledger used to
+// be an unconditional failure, so a canonical that added a `pattern` made the
+// automation whose entire job is to land that change unable to land it — twice,
+// issues #486 and #743.
+//
+// 🔴 THE COST WAS NEVER "THE BOT STALLED", which is why two instances are worth
+// a redesign. `ci.yml`'s `schema-drift` job runs on `pull_request:` with no path
+// filter — every PR in this repo — and it compares the vendored mirror against
+// the live canonical, so it stays RED for as long as the mirror is stale. A
+// blockage here therefore reddens a check on every unrelated human PR, and the
+// only thing that clears it is a human writing a gloss. Both instances were TRUE
+// POSITIVES and both were cleared fast — measured from the issues, #486 was open
+// 31 minutes (2026-08-24 18:45→19:15Z) and #743 eleven hours (2026-09-28
+// 04:51→15:51Z). Zero false positives.
+//
+// ⚠️ RETRACTED, and recorded rather than quietly dropped: an earlier revision of
+// this comment said "five times, issues #323 #486 #607 #695 #743, roughly
+// monthly", implying one recurring class under one title. Measured from the
+// issues and their run logs, that is wrong in the direction that inflates the
+// case. #323 was a HAND-DISPATCHED FIRE DRILL whose own body says "NOT a real
+// failure of the bot", filed under the different title "could not re-vendor";
+// #607 was `TestEnumFindingsKeepTheirExactWording` alone (the enum half, fixed
+// by #745); #695 was `TestBuildExcludesGitFileInSubmodule` in `internal/pkgzip`,
+// unrelated to the schema, which files under the same headline only because the
+// bot's validate gate is `go test ./...`. So: three schema-shape blockages
+// (#486, #607, #743), of which two were this guard.
+//
+// A gloss is English prose about what a regex MEANS and cannot be derived, so
+// the bot cannot WRITE one. What it can do is RECORD that one is owed, which is
+// what this flag does: the debt lands in the PR diff where a reviewer is already
+// looking, and the workflow keeps a `gloss-owed` issue open until the row is
+// cleared. The author-facing behaviour is unchanged either way — patternAdvice
+// already fails soft and emits exactly the base library message for an unglossed
+// pattern (TestPatternAdviceFailsSoft), so this was never a correctness gate.
+// It is a NOTIFICATION gate, and the fix moves the notification off the path
+// that blocks the bot rather than deleting it.
+var updateGlossLedger = flag.Bool("update-gloss-ledger", false,
+	"rewrite pattern_gloss_owed.json so every vendored-schema pattern with no gloss is "+
+		"recorded as an acknowledged debt, instead of failing on it")
+
+// glossOwedFile is the on-disk shape of the ledger.
+type glossOwedFile struct {
+	Why  string   `json:"_why"`
+	Owed []string `json:"owed"`
+}
+
+// loadGlossOwed loads the acknowledged-debt ledger, returning an error rather
+// than failing a test, so the ways it must REFUSE a file can themselves be
+// asserted (TestGlossOwedFileRoundTrips) instead of only being reached by
+// accident.
+//
+// Every way of not getting a usable list is an error, because an expectation
+// built on a silently-empty list is vacuous rather than wrong: the totality
+// assertion compares "unglossed" against "acknowledged", and an acknowledgement
+// set that quietly read as empty would demand a gloss for everything (loud,
+// fine) — but one that quietly read as FULL would demand nothing, which is the
+// exact failure this ledger exists to prevent. Unknown fields are rejected so a
+// typo'd key (`owned`) cannot decode to an empty list and read as "nothing is
+// owed".
+func loadGlossOwed(path string) ([]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("unreadable (it must exist even when its list is empty — a "+
+			"missing file would leave the coverage assertion with nothing to compare against): %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var f glossOwedFile
+	if err := dec.Decode(&f); err != nil {
+		return nil, fmt.Errorf("does not decode (unknown keys are rejected on purpose: a typo'd "+
+			"key would decode to an EMPTY owed list and read as \"no gloss is owed\"): %w", err)
+	}
+	if !slices.IsSorted(f.Owed) {
+		return nil, fmt.Errorf("`owed` is not sorted — the file is machine-written (see "+
+			"-update-gloss-ledger) and an unsorted list produces a churning diff: %v", f.Owed)
+	}
+	for i := 1; i < len(f.Owed); i++ {
+		if f.Owed[i] == f.Owed[i-1] {
+			return nil, fmt.Errorf("`owed` lists %q twice", f.Owed[i])
+		}
+	}
+	return f.Owed, nil
+}
+
+// readGlossOwed is loadGlossOwed with every refusal promoted to a FATAL: a
+// reconciliation run against a ledger we could not read is not a weaker check,
+// it is no check.
+func readGlossOwed(t *testing.T, path string) []string {
+	t.Helper()
+	owed, err := loadGlossOwed(path)
+	if err != nil {
+		t.Fatalf("the acknowledged-debt ledger %s: %v", path, err)
+	}
+	return owed
+}
+
+// writeGlossOwed rewrites the ledger. owed must be non-nil so an empty ledger
+// marshals as `[]` rather than `null` — `null` would decode back to an empty
+// slice and be indistinguishable, but it reads in the diff like a broken file.
+func writeGlossOwed(path string, owed []string) error {
+	if owed == nil {
+		owed = []string{}
+	}
+	raw, err := json.MarshalIndent(glossOwedFile{Why: glossOwedWhy, Owed: owed}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(raw, '\n'), 0o600)
+}
+
+// unglossedPatterns returns, sorted, every pattern the vendored schema can
+// surface as a kind.Pattern finding that patternRules has no gloss for.
+//
+// Sorted because the result is written to a committed file: an unordered walk
+// over a Go map would rewrite that file's line order on every run.
+func unglossedPatterns(inSchema map[string]bool, glossed map[string]patternRule) []string {
+	out := []string{}
+	for p := range inSchema {
+		if _, ok := glossed[p]; !ok {
+			out = append(out, p)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// glossLedgerProblems reconciles the three sets that must agree — the patterns
+// the vendored schema can surface, the patterns `patternRules` glosses, and the
+// patterns whose missing gloss has been acknowledged — and returns one message
+// per disagreement, sorted so the output is stable.
+//
+// It is a PURE FUNCTION over its three arguments rather than a run of `t.Error`
+// calls inside the test, so each of its four classes can be driven with a
+// synthetic input and watched to fail on ITS OWN message
+// (TestGlossLedgerReconciliation). Breaking a class by mutating the real schema
+// instead would take two or three of the other tests in this file down with it,
+// and a mutant killed by a different guard's error is green for the wrong
+// reason.
+//
+// The four classes, and what each one is for:
+//
+//   - UNACKNOWLEDGED — the schema grew a pattern, nobody glossed it and nobody
+//     recorded the debt. This is the growth direction, and it is the ONLY class
+//     the re-vendor bot can clear on its own (with -update-gloss-ledger).
+//   - STALE DEBT — an acknowledgement for a pattern the schema no longer has.
+//   - CONTRADICTION — a pattern both glossed and listed as owed, so the ledger
+//     no longer says which patterns are explained.
+//   - STALE GLOSS — a gloss for a pattern the schema no longer has. This is the
+//     SHRINK direction, it is deliberately NOT mechanically clearable, and it
+//     still blocks the bot: deleting English prose is a human call, and a table
+//     row claiming to explain a rule that no longer exists reads as coverage.
+func glossLedgerProblems(inSchema map[string]bool, glossed map[string]patternRule, owed []string) []string {
+	owedSet := make(map[string]bool, len(owed))
+	for _, p := range owed {
+		owedSet[p] = true
+	}
+	var problems []string
+	for _, p := range unglossedPatterns(inSchema, glossed) {
+		if !owedSet[p] {
+			problems = append(problems, fmt.Sprintf("UNACKNOWLEDGED: schema pattern %q has no gloss "+
+				"in patternRules — an author hitting it gets a bare regex back and nobody has been "+
+				"told. Write the gloss (plus its ledger row in TestPatternGlossesAreTheRightWayRound "+
+				"and its fixture in patternFixtures), or record the debt with: "+
+				"go test ./internal/validate -run TestPatternRulesCoverTheVendoredSchema "+
+				"-update-gloss-ledger -count=1", p))
+		}
+	}
+	for _, p := range owed {
+		if !inSchema[p] {
+			problems = append(problems, fmt.Sprintf("STALE DEBT: %s acknowledges %q, which is not a "+
+				"reachable pattern in the vendored schema — an acknowledgement for a rule that no "+
+				"longer exists reads like a pending task that can never be done", glossOwedPath, p))
+		}
+		if _, ok := glossed[p]; ok {
+			problems = append(problems, fmt.Sprintf("CONTRADICTION: %q is BOTH glossed in patternRules "+
+				"and acknowledged as unglossed in %s — delete the ledger row", p, glossOwedPath))
+		}
+	}
+	for p := range glossed {
+		if !inSchema[p] {
+			problems = append(problems, fmt.Sprintf("STALE GLOSS: patternRules glosses %q, which is not "+
+				"a reachable pattern in the vendored schema — a stale row looks like coverage", p))
+		}
+	}
+	slices.Sort(problems)
+	return problems
+}
+
+// TestGlossLedgerUpdateFlagDefaultsOff is the guard for the one mutation that
+// would leave every other guard in this file GREEN while disarming the ledger
+// completely: `-update-gloss-ledger` defaulting to true.
+//
+// With it on, TestPatternRulesCoverTheVendoredSchema regenerates the ledger and
+// returns before asserting anything, on every ordinary run — so the coverage
+// claim silently becomes "whatever the schema says", and nothing anywhere fails.
+// A one-character edit to the flag declaration does it. DefValue is read rather
+// than the pointer so passing the flag deliberately (as the bot does) cannot
+// satisfy this test by accident.
+func TestGlossLedgerUpdateFlagDefaultsOff(t *testing.T) {
+	f := flag.Lookup("update-gloss-ledger")
+	if f == nil {
+		t.Fatal("the -update-gloss-ledger flag is not registered — the bot's reconcile step " +
+			"passes it and `go test` rejects an unknown flag, so this would break the re-vendor " +
+			"workflow rather than this suite")
+	}
+	if f.DefValue != "false" {
+		t.Fatalf("-update-gloss-ledger defaults to %q. On by default, "+
+			"TestPatternRulesCoverTheVendoredSchema rewrites the ledger and returns without "+
+			"asserting on EVERY run, and the coverage guard is inert with nothing to say so.", f.DefValue)
+	}
+}
+
+// TestUnglossedPatternsIsSortedAndTotal pins the two properties the WRITER
+// depends on, which the round-trip test cannot see because it feeds an
+// already-sorted list.
+//
+// Sortedness is not cosmetic here: the result is written to a committed file, so
+// an unsorted walk over a Go map rewrites that file's line order on every run and
+// the bot opens a PR churning the ledger whether or not anything changed.
+func TestUnglossedPatternsIsSortedAndTotal(t *testing.T) {
+	// Deliberately in non-alphabetical order, and enough of them that an
+	// unsorted map walk coming out sorted by chance is negligible (1 in 8!).
+	unglossed := []string{"^h$", "^b$", "^f$", "^a$", "^g$", "^c$", "^e$", "^d$"}
+	inSchema := map[string]bool{"^glossed$": true}
+	for _, p := range unglossed {
+		inSchema[p] = true
+	}
+	got := unglossedPatterns(inSchema, map[string]patternRule{"^glossed$": {rule: "r", example: "e"}})
+	if !slices.IsSorted(got) {
+		t.Errorf("unglossedPatterns must return a sorted list — the ledger it writes is "+
+			"committed, and an unstable order churns the file on every run: %v", got)
+	}
+	want := slices.Clone(unglossed)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("unglossedPatterns\n  want: %v\n  got:  %v", want, got)
+	}
+}
+
+// TestGlossLedgerReconciliation drives each class of glossLedgerProblems with a
+// synthetic input, so a deleted branch fails HERE, by name, on its own message.
+//
+// The fixture patterns are pairwise non-substring so a message naming the wrong
+// one is visible, and none of them is a real schema pattern — a fixture that
+// happened to equal a live regex would let the all-clear case pass for the wrong
+// reason.
+func TestGlossLedgerReconciliation(t *testing.T) {
+	const (
+		glossedPat  = "^fixture-alpha$"
+		owedPat     = "^fixture-bravo$"
+		strayPat    = "^fixture-charlie$"
+		vanishedPat = "^fixture-delta$"
+	)
+	for _, p := range []string{glossedPat, owedPat, strayPat, vanishedPat} {
+		if _, live := patternRules[p]; live {
+			t.Fatalf("fixture %q is a REAL glossed pattern — the cases below would be testing "+
+				"the production table instead of the reconciler", p)
+		}
+	}
+	gloss := func(pats ...string) map[string]patternRule {
+		m := map[string]patternRule{}
+		for _, p := range pats {
+			m[p] = patternRule{rule: "r " + p, example: "e " + p}
+		}
+		return m
+	}
+	schema := func(pats ...string) map[string]bool {
+		m := map[string]bool{}
+		for _, p := range pats {
+			m[p] = true
+		}
+		return m
+	}
+
+	cases := []struct {
+		name string
+		// wantClass is the prefix the single problem must carry. Empty means the
+		// input must produce NO problems at all.
+		wantClass string
+		// wantPattern is the regex the problem must name. Asserted separately
+		// from the class so a branch that fires on the wrong pattern is visible.
+		wantPattern string
+		inSchema    map[string]bool
+		glossed     map[string]patternRule
+		owed        []string
+	}{
+		{
+			// NEGATIVE CONTROL for the whole function: a fully reconciled ledger
+			// must be silent, or every "exactly one problem" below could be
+			// satisfied by a reconciler that complains about everything.
+			name:     "reconciled",
+			inSchema: schema(glossedPat, owedPat),
+			glossed:  gloss(glossedPat),
+			owed:     []string{owedPat},
+		},
+		{
+			name:        "a new schema pattern with no gloss and no acknowledgement",
+			wantClass:   "UNACKNOWLEDGED",
+			wantPattern: strayPat,
+			inSchema:    schema(glossedPat, owedPat, strayPat),
+			glossed:     gloss(glossedPat),
+			owed:        []string{owedPat},
+		},
+		{
+			name:        "an acknowledgement the schema no longer has a pattern for",
+			wantClass:   "STALE DEBT",
+			wantPattern: vanishedPat,
+			inSchema:    schema(glossedPat),
+			glossed:     gloss(glossedPat),
+			owed:        []string{vanishedPat},
+		},
+		{
+			name:        "a pattern both glossed and acknowledged",
+			wantClass:   "CONTRADICTION",
+			wantPattern: glossedPat,
+			inSchema:    schema(glossedPat),
+			glossed:     gloss(glossedPat),
+			owed:        []string{glossedPat},
+		},
+		{
+			name:        "a gloss the schema no longer has a pattern for",
+			wantClass:   "STALE GLOSS",
+			wantPattern: vanishedPat,
+			inSchema:    schema(glossedPat),
+			glossed:     gloss(glossedPat, vanishedPat),
+			owed:        nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := glossLedgerProblems(tc.inSchema, tc.glossed, tc.owed)
+			if tc.wantClass == "" {
+				if len(got) != 0 {
+					t.Fatalf("a reconciled ledger must produce no problems, got %d:\n%s",
+						len(got), strings.Join(got, "\n"))
+				}
+				return
+			}
+			if len(got) != 1 {
+				t.Fatalf("want exactly 1 %s problem, got %d:\n%s",
+					tc.wantClass, len(got), strings.Join(got, "\n"))
+			}
+			if !strings.HasPrefix(got[0], tc.wantClass+":") {
+				t.Errorf("problem is not a %s:\n%s", tc.wantClass, got[0])
+			}
+			if !strings.Contains(got[0], tc.wantPattern) {
+				t.Errorf("problem does not name %q:\n%s", tc.wantPattern, got[0])
+			}
+		})
+	}
+}
+
+// TestGlossOwedFileRoundTrips pins the file format against the pair that writes
+// and reads it, in a temp dir so the committed ledger is untouched.
+//
+// It exists because -update-gloss-ledger makes the WRITER the thing the bot
+// relies on: a writer that emitted an unsorted list, dropped an entry, or wrote
+// a key the reader rejects would leave the bot committing a file that reds the
+// very suite it just ran.
+func TestGlossOwedFileRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), glossOwedPath)
+	want := []string{"^aaa$", "^bbb$", "^ccc$"}
+	if err := writeGlossOwed(path, want); err != nil {
+		t.Fatalf("writeGlossOwed: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if !bytes.HasSuffix(raw, []byte("\n")) {
+		t.Error("the ledger must end in a newline — a file without one shows as a no-newline " +
+			"marker in every later diff")
+	}
+	if got := readGlossOwed(t, path); !slices.Equal(got, want) {
+		t.Errorf("round trip\n  want: %v\n  got:  %v", want, got)
+	}
+
+	// An empty ledger must marshal as `[]`, not `null` — asserted on the BYTES,
+	// because both decode to a zero-length slice and the round trip above cannot
+	// tell them apart.
+	if err := writeGlossOwed(path, nil); err != nil {
+		t.Fatalf("writeGlossOwed(nil): %v", err)
+	}
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if !bytes.Contains(raw, []byte(`"owed": []`)) {
+		t.Errorf("an empty ledger must be written as `\"owed\": []`:\n%s", raw)
+	}
+
+	// NEGATIVE CONTROLS on the loader: each of these must be REFUSED, because
+	// each one decodes to a plausible-looking list that the reconciliation would
+	// then trust. Graded on the error message so a refusal for the wrong reason is
+	// not counted as a kill.
+	for _, bad := range []struct {
+		name, body, wantErr string
+	}{
+		{
+			// The expensive one: `owned` decodes to an EMPTY list under a
+			// permissive decoder, which reads as "no gloss is owed" — a
+			// reassuring zero from a file that is not wired to anything.
+			name: "the list key is misspelled", body: `{"_why":"x","owned":["^zzz$"]}`,
+			wantErr: "does not decode",
+		},
+		{
+			name: "the list is unsorted", body: `{"_why":"x","owed":["^bbb$","^aaa$"]}`,
+			wantErr: "not sorted",
+		},
+		{
+			name: "the list repeats an entry", body: `{"_why":"x","owed":["^aaa$","^aaa$"]}`,
+			wantErr: "twice",
+		},
+	} {
+		t.Run(bad.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), glossOwedPath)
+			if err := os.WriteFile(p, []byte(bad.body+"\n"), 0o600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			owed, err := loadGlossOwed(p)
+			if err == nil {
+				t.Fatalf("accepted, returning %v — the reconciliation would have trusted it", owed)
+			}
+			if !strings.Contains(err.Error(), bad.wantErr) {
+				t.Errorf("refused for the wrong reason\n  want an error mentioning: %s\n  got: %v",
+					bad.wantErr, err)
+			}
+		})
+	}
+	// POSITIVE CONTROL for the three rows above: a well-formed ledger must be
+	// ACCEPTED, or a loader that refused everything would satisfy all of them.
+	good := filepath.Join(t.TempDir(), glossOwedPath)
+	if err := os.WriteFile(good, []byte(`{"_why":"x","owed":["^aaa$","^bbb$"]}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if owed, err := loadGlossOwed(good); err != nil {
+		t.Errorf("a well-formed ledger was refused: %v", err)
+	} else if !slices.Equal(owed, []string{"^aaa$", "^bbb$"}) {
+		t.Errorf("a well-formed ledger loaded as %v", owed)
+	}
+}
+
+// TestPatternRulesCoverTheVendoredSchema is a TOTAL ledger over the vendored
+// schema's patterns: each one is either glossed in `patternRules` or recorded as
+// an acknowledged debt in pattern_gloss_owed.json.
 //
 // It is a GATE rather than a nicety because `schema/` is a vendored mirror
 // (AGENTS.md item 1): the next sync with the server is exactly when this drifts,
 // and the failure it produces is invisible in the output — a message that is
 // merely terse, not wrong.
+//
+// 🔴 WHAT CHANGED AND WHY, because the obvious reading of this test is that it
+// got weaker. The growth direction used to fail outright, which made it the
+// second of the two guards that stopped the re-vendor bot from landing a
+// canonical change (the first was the enum wording; see
+// TestEnumFindingsKeepTheirExactWording's header). Growth is now clearable
+// MECHANICALLY — by recording the debt, not by inventing prose — so the bot can
+// land a pattern-adding canonical unaided while a human is still told. The
+// notification moved, it was not deleted: the debt row lands in the bot's PR
+// diff, and the workflow files a `gloss-owed` issue that stays open until the
+// row is cleared. The SHRINK direction (STALE GLOSS) is unchanged and still
+// blocks, deliberately.
 func TestPatternRulesCoverTheVendoredSchema(t *testing.T) {
 	inSchema := schemaPatterns(t)
 	// Positive control. A walker wired to nothing returns an empty set, and an
@@ -470,17 +1331,25 @@ func TestPatternRulesCoverTheVendoredSchema(t *testing.T) {
 		}
 	}
 
-	for pat := range inSchema {
-		if _, ok := patternRules[pat]; !ok {
-			t.Errorf("schema pattern %q has no gloss in patternRules — an author hitting it "+
-				"gets a bare regex back", pat)
+	// 🔴 THE CONTROLS ABOVE ARE WHAT MAKES -update-gloss-ledger SAFE, so it is
+	// placed AFTER them and not at the top of the test. A walker wired to nothing
+	// returns an empty set; regenerating the ledger from THAT would write an empty
+	// `owed` list, acknowledge nothing, and leave the reconciliation below
+	// vacuously silent — a green suite over a ledger that describes no schema at
+	// all. Rewriting only once the walker has been shown to observe the real
+	// schema is the difference.
+	if *updateGlossLedger {
+		owed := unglossedPatterns(inSchema, patternRules)
+		if err := writeGlossOwed(glossOwedPath, owed); err != nil {
+			t.Fatalf("rewriting %s: %v", glossOwedPath, err)
 		}
+		t.Logf("-update-gloss-ledger: %s now records %d unglossed pattern(s) of %d in the schema: %v",
+			glossOwedPath, len(owed), len(inSchema), owed)
+		return
 	}
-	for pat := range patternRules {
-		if !inSchema[pat] {
-			t.Errorf("patternRules glosses %q, which is not a reachable pattern in the "+
-				"vendored schema — a stale row looks like coverage", pat)
-		}
+
+	for _, problem := range glossLedgerProblems(inSchema, patternRules, readGlossOwed(t, glossOwedPath)) {
+		t.Error(problem)
 	}
 }
 

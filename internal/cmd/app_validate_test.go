@@ -25,7 +25,10 @@ type issueJSON struct {
 func TestAppValidateJSONOK(t *testing.T) {
 	tmp := t.TempDir()
 	chdir(t, tmp)
-	if _, _, err := run(t, "app", "init", "clean-block"); err != nil {
+	// --template static: the subject is a CLEAN manifest, and static is the one
+	// template that validates clean with no install step (the default,
+	// page-elements, needs the lockfile its first `npm install` writes).
+	if _, _, err := run(t, "app", "init", "clean-block", "--template", "static"); err != nil {
 		t.Fatalf("app init: %v", err)
 	}
 	dir := filepath.Join(tmp, "clean-block")

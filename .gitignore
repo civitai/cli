@@ -35,3 +35,11 @@ coverage.html
 # sweep a matrix of them in, the same reasoning as /node_modules/ above.
 /scripts/dogfood/runs/
 /scripts/dogfood/logs/
+
+# `runner.py` is imported as a module by `scripts/dogfood/testdata/fake_trial.py`
+# (the offline trial driver the brief tests use), and an import writes bytecode
+# next to the source. Nothing here should ever be committed — and a stale entry
+# is worse than noise: CPython validates a cache on the source's mtime in whole
+# SECONDS plus its size, so a same-length edit landing in the same second as the
+# last import is invisible and the ORIGINAL code runs.
+__pycache__/

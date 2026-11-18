@@ -546,10 +546,11 @@ func downloadOutputs(ctx context.Context, fetch blobFetcher, out, errw io.Writer
 				// SAID HERE BECAUSE NO LEDGER CAN SAY IT. It is
 				// planOutputTarget(outName, outDir, …): the server's
 				// {workflow} expands into the leaf, and the directory is the
-				// user's own --out-dir. So this is the documented saferune
-				// exception, not an oversight — AGENTS.md names "download's
-				// mixed-origin target path" as one of the two, downloadBlobTo's
-				// own :420 refusal already resolves it the same way, and
+				// user's own --out-dir. So this is a documented saferune
+				// exception, not an oversight — `download`'s mixed-origin target
+				// path is one of the two saferune's package doc names (that set
+				// is NOT closed; see it for the measured residue),
+				// downloadBlobTo's own :420 refusal resolves it the same way, and
 				// bareIdentArgs records the twin `downloadBlobTo::target` as
 				// MIXED for the same trade.
 				//

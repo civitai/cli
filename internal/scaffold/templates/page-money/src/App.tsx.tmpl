@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   useBlockBreakpoint,
@@ -19,6 +19,7 @@ import {
   Card,
   Group,
   SegmentedControl,
+  Slider,
   Stack,
   Textarea,
   injectBlocksStyles,
@@ -30,12 +31,16 @@ import {
   PROMPT_MAX,
   accountLabel,
   buildWorkflowBody,
+  estimateBackoffMs,
+  estimateFailureMessage,
   firstImageUrl,
   formatCost,
   hasBudgetedScope,
   isBusyPhase,
+  isRateLimitedEstimate,
   phaseForSnapshot,
   phaseForSubmitError,
+  receiptFor,
   spentAccountLabel,
   submitErrorReason,
   isTerminalStatus,
@@ -49,6 +54,8 @@ import {
   MAX_LORAS,
   addLora,
   checkpointFromPick,
+  checkpointRejectionReason,
+  dropIncompatibleLoras,
   loraFromPick,
   removeLora,
   setLoraWeight,
@@ -80,18 +87,25 @@ injectBlocksStyles();
  * {{ .Name }} — a full-page (W10) money-path App whose ENTIRE interface is
  * built from the `@civitai/blocks-react/ui` W6 component pack (Button, Textarea,
  * Card, Stack, Group, Alert, Badge). It exercises the page money path end-to-end:
- * estimate -> (lazy consent) -> submit -> poll -> real Buzz spend, using the
+ * (consent) -> estimate -> SHOW THE PRICE -> submit -> poll -> real Buzz spend, using the
  * published SDK hooks (NEVER raw postMessage to the parent with a wildcard origin
  * — the SDK does the origin-checked messaging safely).
  *
  * Page-native constraints:
  *  - slot = app.page (entity=none) via the top-level `page:{}` manifest object.
- *  - scopes = ['ai:write:budgeted'] ONLY. The viewer's per-pool balance is read
- *    via the host-mediated `useBuzzBalance()` bridge (GET_BUZZ_BALANCE) — the
- *    host resolves the viewer from the block token, so NO `buzz:read:self` scope
- *    is needed and the block never touches the balance API directly. The app does
- *    NOT render a balance readout: your app runs inside the Civitai chrome, which
- *    already shows the viewer's balance — duplicating it is noise. The balance is
+ *  - scopes = ['ai:write:budgeted', 'buzz:read:self']. The viewer's per-pool
+ *    balance is read via the host-mediated `useBuzzBalance()` bridge
+ *    (GET_BUZZ_BALANCE -> the server's `blocks.getMyBuzzBalance`), which REQUIRES
+ *    `buzz:read:self` on the block token — the host resolves the viewer from the
+ *    token, but the scope is the viewer's consent to the read, so the manifest
+ *    must declare it. Without it the read is refused and the picker below simply
+ *    goes unannotated. `buzz:read:self` is CONSENT-GATED like the spend scope:
+ *    the first token is minted without it, so the mount read is refused, and the
+ *    app asks for both scopes in one "Allow Buzz spending" dialog and re-reads
+ *    the balance when the grant lands. The block never touches the balance API
+ *    directly. The app does NOT render a balance readout: your app runs inside
+ *    the Civitai chrome, which already shows the viewer's balance — duplicating
+ *    it is noise. The balance is
  *    read only to annotate the "Spend from" account picker. (Insufficient Buzz is
  *    still ALSO surfaced from a `failed` snapshot, as a backstop.)
  *  - budget comes from manifest `page.buzzBudgetPerGen`; a page is stateless.
@@ -105,9 +119,19 @@ injectBlocksStyles();
  *    an adjustable weight; they ride along as `additionalResources` in the body.
  *    LoRA picks + weights are ALSO discovery only — the server re-validates
  *    (LoRA-only? base-model compatible? entitled?) + re-prices before any spend.
- *  - `ai:write:budgeted` is consent-gated -> withheld at mint, requested lazily
- *    on first Generate via useRequestConsent; the grant arrives as a
- *    TOKEN_REFRESH carrying the scope, which we observe + retry.
+ *  - `ai:write:budgeted` is consent-gated -> withheld at mint. The ESTIMATE needs
+ *    it too (the server refuses a price to a token without it), so the app asks
+ *    for it up front via useRequestConsent ("Allow Buzz spending"); the grant
+ *    arrives as a TOKEN_REFRESH carrying the scope, and the app then PRICES the
+ *    request. A grant never submits anything by itself.
+ *  - PRICE BEFORE SPEND. The request is estimated as the viewer edits it, and
+ *    Generate stays DISABLED until an estimate for exactly the current request
+ *    has succeeded — the button then reads "Generate · N Buzz", and that click
+ *    is the viewer's informed decision. An estimate that fails (or returns no
+ *    price) shows an error with a "Retry estimate" button and NEVER falls
+ *    through to a submit. A Comfy recipe's estimate is a display estimate, not
+ *    a quote (it bills measured runtime up to the recipe's ceiling), so that
+ *    button reads "Generate · ≈N Buzz" and the receipt reports what was charged.
  *
  * Per-account Buzz: the viewer can pick which pool (Blue/Green/Yellow) funds the
  * generation, or leave it on Auto (the default — host-chosen order, UNCHANGED
@@ -119,6 +143,18 @@ injectBlocksStyles();
  */
 export function App() {
   const { ready, viewer, theme } = useBlockContext();
+  // Keep the PAGE (documentElement) in step with the host theme, so a live
+  // THEME_CHANGE repaints the background behind the shell too — not just the
+  // components under data-theme. index.html's inline script seeds the same
+  // attribute from the URL fragment before first paint; this effect owns it
+  // from BLOCK_INIT onward (the payload is authoritative — it must be able to
+  // correct a stale fragment). Gated on `ready`: before BLOCK_INIT `theme` is
+  // the transport's 'light' sentinel (transport.ts), which would clobber the
+  // fragment seed of a dark host.
+  useEffect(() => {
+    if (!ready) return;
+    document.documentElement.dataset.theme = theme;
+  }, [ready, theme]);
   const token = useBlockToken();
   const { estimate, submit, poll } = useBuzzWorkflow();
   const { requestConsent } = useRequestConsent();
@@ -129,7 +165,8 @@ export function App() {
   // overlay), and on the real platform. A pick is DISCOVERY ONLY.
   const { open: openCheckpointPicker } = useCheckpointPicker();
   const { open: openResourcePicker } = useResourcePicker();
-  // The viewer's per-pool Buzz balance, read host-side (no scope needed). NOT
+  // The viewer's per-pool Buzz balance, read host-side; needs the
+  // `buzz:read:self` scope the manifest declares (refused without it). NOT
   // rendered as a balance readout — the surrounding Civitai chrome already shows
   // the viewer's balance, so an in-app copy is redundant. It is read for ONE
   // purpose: annotating which account can actually fund a generation in the
@@ -165,7 +202,7 @@ export function App() {
   //
   // Re-render safety: the hook stores the resolved TIER, not the width, so
   // dragging a window edge 200px inside one tier re-renders this block zero
-  // times. Full guide: https://developer.civitai.com/apps/responsive
+  // times. Full guide: https://developer.civitai.com/apps/guide/responsive
   const bp = useBlockBreakpoint(rootRef);
   // ONE structural decision, deliberately. `below('sm')` is the "am I in a narrow
   // slot?" question every block eventually asks; everything else here is fluid
@@ -179,8 +216,16 @@ export function App() {
   const [touched, setTouched] = useState(false);
   const [account, setAccount] = useState<AccountChoice>('auto');
   const [phase, setPhase] = useState<GenPhase>('idle');
-  const [estimatedCost, setEstimatedCost] = useState<number | null>(null);
+  // The price of the CURRENT request. `key` is the serialized body it priced, so
+  // a quote for an older request can never enable Generate for a newer one.
+  const [estimateState, setEstimateState] = useState<EstimateState>({ status: 'idle' });
+  // Bumped by "Retry estimate" to re-run the estimate effect for the same body.
+  const [estimateNonce, setEstimateNonce] = useState(0);
   const [actualCost, setActualCost] = useState<number | null>(null);
+  // The author fee QUOTED for the request that was submitted: a submitted
+  // workflow's snapshot reports the generation cost only, so the receipt adds
+  // this back in (see receiptFor). `null` = the quote did not itemise a fee.
+  const [chargedFee, setChargedFee] = useState<number | null>(null);
   const [spentAccount, setSpentAccount] = useState<BuzzAccountType | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -196,9 +241,14 @@ export function App() {
   // True while a host picker modal is open, so the trigger button shows progress
   // and we don't fire a second open over the first.
   const [pickerBusy, setPickerBusy] = useState(false);
+  // Set when a pick was REFUSED by the block (today: a non-image checkpoint from
+  // the unconstrained picker) so the viewer is told why nothing changed. Null
+  // whenever the last pick was accepted.
+  const [modelNotice, setModelNotice] = useState<string | null>(null);
 
-  // True once the user clicked Generate while the scope was missing — so when
-  // the consent grant lands (granted flips true) we auto-resume the submit.
+  // True while the viewer has been asked for the spend scope, so the "confirm in
+  // the dialog" note can clear once the grant lands. A grant only PRICES the
+  // request; it never submits.
   const consentPendingRef = useRef(false);
   // Cancellation token for the in-flight poll loop.
   const pollCancelRef = useRef<{ cancelled: boolean } | null>(null);
@@ -207,6 +257,9 @@ export function App() {
   // instance without re-subscribing.
   const pollRef = useRef(poll);
   pollRef.current = poll;
+  // Same for estimate, so the estimate effect below is keyed on the REQUEST only.
+  const estimateRef = useRef(estimate);
+  estimateRef.current = estimate;
 
   useEffect(() => {
     return () => {
@@ -218,6 +271,23 @@ export function App() {
   useEffect(() => {
     if (phase === 'succeeded') refetchBalance();
   }, [phase, refetchBalance]);
+
+  // Re-read the balance when the token's scopes change. `buzz:read:self` is
+  // consent-gated, so the first token is minted WITHOUT it and
+  // useBuzzBalance's mount read is refused; the grant arrives as a
+  // TOKEN_REFRESH carrying the new scopes. Without this, a new viewer would
+  // see no balance until their first generation. Keyed on the scope SET (not
+  // the token object, which is new on every refresh); the mount itself is
+  // skipped because useBuzzBalance already reads once on mount.
+  const scopesKey = [...(token.scopes ?? [])].sort().join(' ');
+  const refetchBalanceRef = useRef(refetchBalance);
+  refetchBalanceRef.current = refetchBalance;
+  const seenScopesRef = useRef(scopesKey);
+  useEffect(() => {
+    if (seenScopesRef.current === scopesKey) return;
+    seenScopesRef.current = scopesKey;
+    refetchBalanceRef.current();
+  }, [scopesKey]);
 
   // The server rejected the picked pool for this app's content-rating domain.
   // Surface a friendly note and fall back to Auto so the retry just works.
@@ -322,62 +392,147 @@ export function App() {
     [applySnapshot],
   );
 
-  // The estimate->submit->poll sequence, factored out so both the direct click
-  // and the post-consent auto-resume can call it.
-  const runGeneration = useCallback(async () => {
+  // The request the viewer is pricing / about to run. The ONLY difference between
+  // the two samples is the body: a textToImage body (checkpoint + LoRAs) vs a
+  // customComfy recipe body (server-owned graph). Everything downstream —
+  // consent/estimate/submit/poll — is shared. Auto ('auto') threads NO
+  // accountType — today's default host funding order.
+  const body = useMemo(
+    () =>
+      mode === 'comfy'
+        ? buildComfyBody(prompt, account)
+        : buildWorkflowBody(prompt, checkpoint, loras, account),
+    [mode, prompt, checkpoint, loras, account],
+  );
+  const bodyKey = useMemo(() => JSON.stringify(body), [body]);
+
+  // Classify a submit/estimate error into a terminal phase. The `'gated'`
+  // (Comfy on Civitai invite-only-beta) panel is COMFY-MODE-SCOPED via
+  // phaseForSubmitError: the real gate strings ("Apps are not enabled" flag
+  // gate, "Apps authoring is not enabled" author gate, and the pre-deploy
+  // unknown-recipe enum rejection) are SHARED with the txt2img path, so a
+  // txt2img failure must NEVER render the Comfy-specific copy — it falls through
+  // to the failed/insufficient/account-rejected classification.
+  const classifyError = useCallback(
+    (msg: string | null | undefined): GenPhase => phaseForSubmitError(msg, mode === 'comfy'),
+    [mode],
+  );
+
+  // 1) PRICE the current request, before the viewer can submit it.
+  //
+  // Runs whenever the request changes, debounced (ESTIMATE_DEBOUNCE_MS), so
+  // typing a prompt prices it once per pause rather than once per keystroke:
+  // on a page app the estimate allowance is ONE bucket per block instance,
+  // shared by every viewer of the app. A refused (rate-limited) estimate holds
+  // the next AUTOMATIC one back, exponentially (estimateBackoffMs). Needs a
+  // signed-in viewer who has granted `ai:write:budgeted`: the server refuses
+  // to price for a token without it.
+  //
+  // An estimate that fails or comes back with no price leaves Generate DISABLED
+  // and shows an error with "Retry estimate". It never falls through to a submit:
+  // the viewer must see the price of the request before the click that spends.
+  //
+  // The state stays on the PREVIOUS result until the request is actually sent,
+  // so during the debounce a priced quote for the old request is still in
+  // state — `quote` below only accepts it for the exact body on screen.
+  const canEstimate = ready && !!viewer && granted && prompt.trim().length > 0;
+  const estimateSeqRef = useRef(0);
+  // Consecutive rate-limited estimates, and the earliest time (ms epoch) the
+  // next automatic estimate may be sent.
+  const rateLimitStrikesRef = useRef(0);
+  const estimateNotBeforeRef = useRef(0);
+  // The Retry nonce the effect last ran for: a run whose nonce moved was caused
+  // by the "Retry estimate" button, not by an edit.
+  const handledNonceRef = useRef(estimateNonce);
+  useEffect(() => {
+    const seq = ++estimateSeqRef.current;
+    const manualRetry = estimateNonce !== handledNonceRef.current;
+    handledNonceRef.current = estimateNonce;
+    if (!canEstimate) {
+      setEstimateState({ status: 'idle' });
+      return;
+    }
+    // "Retry estimate" is the viewer's own click, so it is sent at once and
+    // overrides any backoff. An edit waits for a pause in typing AND for the
+    // rate-limit backoff to run out.
+    const delay = manualRetry
+      ? 0
+      : Math.max(ESTIMATE_DEBOUNCE_MS, estimateNotBeforeRef.current - Date.now());
+    // A customComfy estimate is a DISPLAY estimate: the recipe bills measured
+    // runtime, reserving its `maxBuzz` ceiling and settling to the actual cost.
+    // The estimate reply carries no ceiling (BlockWorkflowSnapshot.cost has only
+    // `total` / `authorFee` in @civitai/app-sdk 0.89), so it is shown as "≈N".
+    const approx = body.kind === 'customComfy';
+    const timer = setTimeout(async () => {
+      setEstimateState({ status: 'loading', key: bodyKey });
+      try {
+        const est = await estimateRef.current(body);
+        if (seq !== estimateSeqRef.current) return; // a newer request superseded this one
+        rateLimitStrikesRef.current = 0;
+        estimateNotBeforeRef.current = 0;
+        const total = est.cost?.total;
+        if (typeof total !== 'number' || !Number.isFinite(total)) {
+          // A safety check for @civitai/blocks-react below 0.43: from 0.43 on,
+          // estimate() itself REJECTS a reply with no usable price, so this arm
+          // only runs against an older SDK that resolves one.
+          setEstimateState({
+            status: 'error',
+            key: bodyKey,
+            message: estimateFailureMessage({ code: 'no-cost' }),
+            gated: false,
+          });
+          return;
+        }
+        setEstimateState({
+          status: 'ready',
+          quote: { key: bodyKey, total, authorFee: est.cost?.authorFee ?? null, approx },
+        });
+      } catch (err) {
+        if (seq !== estimateSeqRef.current) return;
+        if (isRateLimitedEstimate(err)) {
+          rateLimitStrikesRef.current += 1;
+          estimateNotBeforeRef.current = Date.now() + estimateBackoffMs(rateLimitStrikesRef.current);
+        }
+        // Branch on the server's reason (never render it): a picked pool the
+        // app's rating forbids resets to Auto, which re-prices by itself; the
+        // Comfy beta gate gets its own panel (and no Retry — retrying cannot
+        // admit the viewer to the beta). Everything else is a pricing failure
+        // the viewer can retry.
+        const estPhase = classifyError(submitErrorReason(err, ''));
+        if (estPhase === 'account-rejected') {
+          setPhase((cur) => (isBusyPhase(cur) ? cur : 'account-rejected'));
+          handleAccountRejected();
+        } else if (estPhase === 'gated') {
+          setPhase((cur) => (isBusyPhase(cur) ? cur : 'gated'));
+        }
+        setEstimateState({
+          status: 'error',
+          key: bodyKey,
+          message: estimateFailureMessage(err),
+          gated: estPhase === 'gated',
+        });
+      }
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [canEstimate, body, bodyKey, estimateNonce, classifyError, handleAccountRejected]);
+
+  // The quote for EXACTLY the request on screen, or null.
+  const quote =
+    estimateState.status === 'ready' && estimateState.quote.key === bodyKey
+      ? estimateState.quote
+      : null;
+
+  // 2) + 3) Submit the PRICED request and poll it to terminal. Only reachable
+  // with a quote for this exact body (see onGenerateClick).
+  const runGeneration = useCallback(async (priced: Quote) => {
     setError(null);
     setImageUrl(null);
     setActualCost(null);
     setSpentAccount(null);
-    // The ONLY difference between the two samples is the body: a textToImage body
-    // (checkpoint + LoRAs) vs a customComfy recipe body (server-owned graph).
-    // Everything downstream — estimate/consent/submit/poll — is shared. Auto
-    // ('auto') threads NO accountType — today's default host funding order.
-    const body =
-      mode === 'comfy'
-        ? buildComfyBody(prompt, account)
-        : buildWorkflowBody(prompt, checkpoint, loras, account);
-
-    // Classify a submit/estimate error into a terminal phase. The `'gated'`
-    // (Comfy on Civitai invite-only-beta) panel is COMFY-MODE-SCOPED via
-    // phaseForSubmitError: the real gate strings ("Apps are not enabled" flag
-    // gate, "Apps authoring is not enabled" author gate, and the pre-deploy
-    // unknown-recipe enum rejection) are SHARED with the txt2img path, so a
-    // txt2img failure must NEVER render the Comfy-specific copy — it falls through
-    // to the failed/insufficient/account-rejected classification, unchanged from
-    // before the Comfy sample.
-    const classifyError = (msg: string | null | undefined): GenPhase =>
-      phaseForSubmitError(msg, mode === 'comfy');
-
-    // 1) Estimate (best-effort — a failed estimate doesn't block submit; the
-    //    host re-prices at submit anyway). A gate / disallowed-account /
-    //    insufficient estimate DOES short-circuit (submitting would fail-closed).
-    setPhase('estimating');
-    try {
-      const est = await estimate(body);
-      if (est.status === 'failed' || est.error) {
-        const estPhase = classifyError(est.error);
-        if (estPhase === 'gated') {
-          setPhase('gated');
-          return;
-        }
-        if (estPhase === 'account-rejected') {
-          setPhase('account-rejected');
-          handleAccountRejected();
-          return;
-        }
-        if (estPhase === 'insufficient') {
-          setPhase('insufficient');
-          setError(est.error ?? 'Not enough Buzz.');
-          return;
-        }
-        setEstimatedCost(null);
-      } else {
-        setEstimatedCost(est.cost?.total ?? null);
-      }
-    } catch {
-      setEstimatedCost(null);
-    }
+    // The fee the quote itemised. A customComfy body prices NO author fee (the
+    // SDK lists it among "the kinds that price no fee"), so there the realized
+    // cost IS the whole charge and the receipt says "Spent N Buzz".
+    setChargedFee(priced.authorFee ?? (body.kind === 'customComfy' ? 0 : null));
 
     // 2) Submit (the real spend).
     setPhase('submitting');
@@ -402,48 +557,28 @@ export function App() {
     // 3) Poll to terminal.
     setPhase('polling');
     if (snap.workflowId) runPollLoop(snap.workflowId);
-  }, [
-    mode,
-    prompt,
-    checkpoint,
-    loras,
-    account,
-    estimate,
-    submit,
-    applySnapshot,
-    runPollLoop,
-    handleAccountRejected,
-  ]);
+  }, [body, submit, applySnapshot, runPollLoop, handleAccountRejected, classifyError]);
 
-  // The actual gate: sign-in -> consent -> generate. Wired straight to the
-  // Generate button — the cost is already shown on the button, so there's no
-  // separate confirm step (consent is the real, host-driven spend gate).
-  const proceed = useCallback(() => {
-    // Anon: convert the click into a host login prompt. Generate is server-gated
-    // anyway (an anon token carries no budgeted scope).
-    if (!viewer) {
-      requestSignIn();
-      return;
-    }
-    // Lazy consent: if the budgeted scope isn't granted yet, ask the host to
-    // open its consent UI and remember the intent. The grant arrives as a
-    // TOKEN_REFRESH (granted flips true) -> the effect below auto-resumes.
-    if (!granted) {
-      consentPendingRef.current = true;
-      setPhase('needs-consent');
-      requestConsent({ scopes: ['ai:write:budgeted'] });
-      return;
-    }
-    void runGeneration();
-  }, [viewer, granted, requestSignIn, requestConsent, runGeneration]);
+  // Ask the host for the spend scope AND the balance-read scope, in one dialog.
+  // The spend scope is needed BEFORE a price can be shown (the estimate
+  // requires it); `buzz:read:self` is consent-gated too, so the balance read is
+  // refused until it is granted. The grant arrives as a TOKEN_REFRESH (granted
+  // flips true), which re-runs the estimate effect above and re-reads the
+  // balance — and nothing else: the viewer still has to click the priced
+  // Generate button.
+  const askConsent = useCallback(() => {
+    consentPendingRef.current = true;
+    setPhase('needs-consent');
+    requestConsent({ scopes: ['ai:write:budgeted', 'buzz:read:self'] });
+  }, [requestConsent]);
 
-  // Auto-resume after a consent grant.
+  // Clear the "confirm in the dialog" note once the grant lands.
   useEffect(() => {
     if (granted && consentPendingRef.current) {
       consentPendingRef.current = false;
-      void runGeneration();
+      setPhase((cur) => (cur === 'needs-consent' ? 'idle' : cur));
     }
-  }, [granted, runGeneration]);
+  }, [granted]);
 
   // Switch the sample being driven. Cancels any in-flight poll and clears the
   // transient result state so the two samples never show each other's output.
@@ -454,8 +589,8 @@ export function App() {
     setPhase('idle');
     setError(null);
     setImageUrl(null);
-    setEstimatedCost(null);
     setActualCost(null);
+    setChargedFee(null);
     setSpentAccount(null);
   }, []);
 
@@ -466,33 +601,74 @@ export function App() {
   // pick is DISCOVERY ONLY — the server re-validates + re-prices the id at
   // estimate/submit, so threading a pick into the body is money-safe.
 
-  // Open the host's Checkpoint picker, pre-filtered to the current base-model
-  // family + pre-highlighting the current pick. On a selection, map it into the
-  // checkpoint state. A dismissal (`selected` undefined) leaves the pick as-is.
+  // Open the host's Checkpoint picker, pre-highlighting the current pick. On a
+  // selection, map it into the checkpoint state. A dismissal (`selected`
+  // undefined) leaves the pick as-is.
+  //
+  // 🔴 NO `baseModelGroup` — the pick is UNCONSTRAINED, and that is the point.
+  // `baseModelGroup` is a FILTER: the host hides every checkpoint outside the
+  // family it is given. Passing `checkpoint.baseModel` here — the family the
+  // user is already in — means the picker offers only the ecosystem they are
+  // trying to leave, so no viewer could ever reach another family. Omitting it
+  // makes the host apply no base-model narrowing and offer every checkpoint the
+  // viewer can generate with. Omit the key; never send '' (on the host an empty
+  // string resolves to the real ecosystem key 'Other' and would narrow instead).
+  //
+  // Changing the checkpoint can change the ECOSYSTEM, which strands any LoRA
+  // belonging to the old family — hence dropIncompatibleLoras. Leaving those on
+  // the body would make the server reject the next generation at estimate/submit
+  // with nothing on screen explaining why.
+  //
+  // 🔴 AND THE SECOND COST OF UNCONSTRAINING: the picker gates on generation
+  // COVERAGE, not media type, so it legitimately offers VIDEO and AUDIO
+  // checkpoints (31 of the host's 109 base-model families). This app builds a
+  // `kind: 'textToImage'` body, and the host does NOT refuse the mismatch — it
+  // silently rewrites the ecosystem and keeps the video version id — so the block
+  // has to refuse it here, visibly, and keep the previous checkpoint. Same
+  // principle as the LoRA drop: never let a pick become an unexplained failure.
   const onChangeModel = useCallback(async () => {
     setPickerBusy(true);
     try {
       const { selected } = await openCheckpointPicker({
-        baseModelGroup: checkpoint.baseModel,
         currentVersionId: checkpoint.versionId,
       });
-      if (selected) setCheckpoint(checkpointFromPick(selected));
+      if (selected) {
+        const next = checkpointFromPick(selected);
+        const rejection = checkpointRejectionReason(next);
+        if (rejection) {
+          // Refused: keep the current checkpoint AND the current LoRA stack —
+          // nothing about the body changes — and say so on screen.
+          setModelNotice(rejection);
+          return;
+        }
+        setModelNotice(null);
+        setCheckpoint(next);
+        setLoras((cur) => dropIncompatibleLoras(cur, next.baseModel));
+      }
     } finally {
       setPickerBusy(false);
     }
-  }, [openCheckpointPicker, checkpoint.baseModel, checkpoint.versionId]);
+  }, [openCheckpointPicker, checkpoint.versionId]);
 
   // Open the host's resource picker filtered to LoRAs, in the checkpoint's
   // base-model family. Append the pick (deduped + MAX_LORAS-capped via addLora).
   // A dismissal (`null`) is a no-op.
+  //
+  // The family we ask for is recorded ON the resulting LoRA (`requestedFamily`),
+  // because the host collapses this group to an ecosystem and hands back picks
+  // carrying their OWN base-model name — so the group is the only value that can
+  // later be compared against a new checkpoint. See dropIncompatibleLoras.
   const onAddLora = useCallback(async () => {
     setPickerBusy(true);
+    const requestedFamily = checkpoint.baseModel;
     try {
       const picked = await openResourcePicker({
         resourceType: 'LORA',
-        baseModelGroup: checkpoint.baseModel,
+        baseModelGroup: requestedFamily,
       });
-      if (picked) setLoras((cur) => addLora(cur, loraFromPick(picked)));
+      if (picked) {
+        setLoras((cur) => addLora(cur, loraFromPick(picked, undefined, requestedFamily)));
+      }
     } finally {
       setPickerBusy(false);
     }
@@ -548,13 +724,20 @@ export function App() {
     );
   }
 
-  // Generate is one click: validate the prompt, then run the gate
-  // (sign-in -> consent -> spend). The button already shows the live cost, so
-  // there's no separate confirm step — consent is the real host-driven gate.
+  // The estimate failure for the request on screen, if any.
+  const estimateError =
+    estimateState.status === 'error' && estimateState.key === bodyKey ? estimateState : null;
+  // A price for this request is on its way (debouncing, backing off, or in
+  // flight) — not failed, and not blocked on consent / an empty prompt.
+  const pricing = canEstimate && !quote && !estimateError;
+
+  // Generate submits the request whose price is ON the button. Without a quote
+  // for exactly this request it does nothing (and is disabled) — the viewer
+  // must see the price before the click that spends.
   const onGenerateClick = () => {
     setTouched(true);
-    if (prompt.trim().length === 0) return;
-    proceed();
+    if (prompt.trim().length === 0 || !quote || busy) return;
+    void runGeneration(quote);
   };
 
   return (
@@ -587,9 +770,9 @@ export function App() {
               <code>recipe</code> id (<code>{STARTER_COMFY_RECIPE}</code>) + a prompt; the server
               owns the graph and a hard per-job Buzz ceiling. Invite-only beta on live civitai.com —
               works end-to-end against the <strong>mock host</strong> (<code>npm run dev:harness</code>).
-              Request tester access at{' '}
-              <a href="https://github.com/civitai/cli/issues/new" target="_blank" rel="noreferrer">
-                github.com/civitai/cli
+              Request access while signed in to Civitai at{' '}
+              <a href="https://civitai.com/apps/build?request-access=1" target="_blank" rel="noreferrer">
+                civitai.com/apps/build
               </a>
               .
             </Alert>
@@ -645,12 +828,21 @@ export function App() {
                     {modelRow}
                   </Group>
                 )}
+                {/* Why a pick did not take effect. Only ever set by a REFUSED
+                    pick (a non-image checkpoint) — the block cannot use it and
+                    the host will not refuse it, so this is the viewer's only
+                    signal. Cleared by the next accepted pick. */}
+                {modelNotice && (
+                  <Alert color="warning" title="Model not changed" data-testid="pm-model-notice">
+                    {modelNotice}
+                  </Alert>
+                )}
               </div>
 
               {/* LoRA control. Add up to MAX_LORAS LoRAs on top of the checkpoint
                   via the HOST's resource picker (useResourcePicker, type=LORA),
-                  each with an adjustable weight (a themed native range input — the
-                  W6 pack ships no Slider). Every LoRA + weight is DISCOVERY ONLY:
+                  each with an adjustable weight (the W6 pack's own `Slider`).
+                  Every LoRA + weight is DISCOVERY ONLY:
                   the server re-validates (LoRA-only? base-model compatible?
                   entitled?) + re-prices the whole body at estimate/submit. */}
               <LoraSelector
@@ -668,6 +860,23 @@ export function App() {
             <AccountPicker value={account} onChange={setAccount} balance={balance} disabled={busy} />
           )}
 
+          {/* Spending needs the viewer's consent, and so does PRICING (the
+              estimate requires the same scope). Ask for it here — granting it
+              prices the request; it never submits anything. */}
+          {!anon && !granted && (
+            <Alert color="info" title="Allow this app to spend Buzz" data-testid="pm-consent-note">
+              <Stack gap={8}>
+                <span>
+                  Generating costs Buzz. Allow it to see the price of your request — nothing is
+                  spent until you click Generate.
+                </span>
+                <Button variant="light" size="sm" onClick={askConsent} data-testid="pm-consent">
+                  Allow Buzz spending
+                </Button>
+              </Stack>
+            </Alert>
+          )}
+
           {anon ? (
             <Button fullWidth onClick={() => requestSignIn()} data-testid="pm-signin">
               Sign in to generate
@@ -676,21 +885,39 @@ export function App() {
             <Button
               fullWidth
               loading={busy}
-              disabled={prompt.trim().length === 0}
+              disabled={busy || !quote}
               onClick={onGenerateClick}
               data-testid="pm-generate"
             >
               {busy
                 ? phaseLabel(phase)
-                : estimatedCost != null
-                  ? `Generate · ${formatCost(estimatedCost)} Buzz`
-                  : 'Generate'}
+                : quote
+                  ? `Generate · ${quote.approx ? '≈' : ''}${formatCost(quote.total)} Buzz`
+                  : pricing
+                    ? 'Getting price…'
+                    : 'Generate'}
             </Button>
+          )}
+
+          {!anon && estimateError && !estimateError.gated && (
+            <Alert color="warning" title="No price for this request" data-testid="pm-estimate-error">
+              <Stack gap={8}>
+                <span>{estimateError.message} Nothing has been spent.</span>
+                <Button
+                  variant="light"
+                  size="sm"
+                  onClick={() => setEstimateNonce((n) => n + 1)}
+                  data-testid="pm-retry-estimate"
+                >
+                  Retry estimate
+                </Button>
+              </Stack>
+            </Alert>
           )}
 
           {phase === 'needs-consent' && (
             <Alert color="info" title="Grant access to generate">
-              Confirm in the Civitai dialog. If you dismissed it, click Generate again.
+              Confirm in the Civitai dialog. If you dismissed it, click Allow Buzz spending again.
             </Alert>
           )}
 
@@ -715,9 +942,9 @@ export function App() {
           {phase === 'gated' && (
             <Alert color="info" title="Comfy on Civitai recipes are in invite-only beta" data-testid="pm-gated">
               Your account isn&apos;t in the tester cohort yet, so this recipe can&apos;t run on live
-              civitai.com. Request access at{' '}
-              <a href="https://github.com/civitai/cli" target="_blank" rel="noreferrer">
-                github.com/civitai/cli
+              civitai.com. Request access while signed in to Civitai at{' '}
+              <a href="https://civitai.com/apps/build?request-access=1" target="_blank" rel="noreferrer">
+                civitai.com/apps/build
               </a>
               . Meanwhile it works end-to-end in the mock harness (<code>npm run dev:harness</code>).
             </Alert>
@@ -737,7 +964,7 @@ export function App() {
           {phase === 'succeeded' && imageUrl && (
             <Stack gap={8}>
               <Alert color="success" title="Done" data-testid="pm-spent">
-                Spent <strong>{formatCost(actualCost)}</strong> Buzz
+                <ReceiptText generationCost={actualCost} quotedAuthorFee={chargedFee} />
                 <SpentAccountNote spentAccount={spentAccount} />.
               </Alert>
               <img src={imageUrl} alt="Generated result" style={imageStyle} />
@@ -751,9 +978,9 @@ export function App() {
 
 /**
  * The LoRA selector: an "Add LoRA" button (opens the HOST resource picker) + the
- * selected rows, each with a weight control + Remove. Built from the W6 pack
- * (Group/Stack/Badge/Button) plus a themed native range input (the pack ships no
- * Slider). Every pick + weight is DISCOVERY ONLY — server-revalidated + re-priced.
+ * selected rows, each with a weight control + Remove. Built ENTIRELY from the W6
+ * pack (Group/Stack/Badge/Button/Slider) — no hand-rolled inputs. Every pick +
+ * weight is DISCOVERY ONLY — server-revalidated + re-priced.
  */
 function LoraSelector({
   selected,
@@ -803,21 +1030,30 @@ function LoraSelector({
                   Remove
                 </Button>
               </div>
-              <label style={loraWeightRowStyle}>
-                <span style={loraWeightLabelStyle}>weight</span>
-                <input
-                  type="range"
-                  min={LORA_STRENGTH_MIN}
-                  max={LORA_STRENGTH_MAX}
-                  step={0.05}
-                  value={l.weight}
-                  onChange={(e) => onWeight(l.versionId, Number(e.target.value))}
-                  aria-label={`${l.label} weight`}
-                  data-testid="pm-lora-weight"
-                  style={loraRangeStyle}
-                />
-                <span style={loraWeightValueStyle}>{l.weight.toFixed(2)}</span>
-              </label>
+              {/* The pack's own Slider. It wraps a native range input, so it stays
+                  keyboard-operable (arrows / Home / End / PageUp / PageDown) and
+                  carries role="slider" + aria-valuemin/max/now for free, and it
+                  wires the label to the input itself — that is the whole reason to
+                  reach for it instead of hand-rolling. `onChange` hands back the
+                  NUMBER, so there is no `Number(e.target.value)` parse here.
+                  `showValue` renders the current weight at the end of the label
+                  row; setLoraWeight rounds to 2dp, so no float noise reaches it.
+                  `aria-label` names the row's LoRA, because the visible label is
+                  just "weight" and repeats down the list — it CONTAINS that visible
+                  text, so the accessible name still satisfies WCAG 2.5.3 (Label in
+                  Name). Extra props (aria-label, data-testid) pass through to the
+                  input. */}
+              <Slider
+                label="weight"
+                showValue
+                min={LORA_STRENGTH_MIN}
+                max={LORA_STRENGTH_MAX}
+                step={0.05}
+                value={l.weight}
+                onChange={(w) => onWeight(l.versionId, w)}
+                aria-label={`${l.label} weight`}
+                data-testid="pm-lora-weight"
+              />
             </div>
           ))}
         </Stack>
@@ -891,6 +1127,39 @@ function AccountPicker({
   );
 }
 
+/**
+ * The success receipt's amount. The submitted workflow's snapshot reports the
+ * GENERATION cost only; the app's author fee is charged separately and was
+ * itemised on the quote, so the whole debit is the two together. When the
+ * quote did not itemise a fee the receipt says it is the generation cost —
+ * never calls that number the whole spend.
+ */
+function ReceiptText({
+  generationCost,
+  quotedAuthorFee,
+}: {
+  generationCost: number | null;
+  quotedAuthorFee: number | null;
+}) {
+  const r = receiptFor(generationCost, quotedAuthorFee);
+  if (r.kind === 'unknown') return <>Generation finished (the host reported no cost)</>;
+  if (r.kind === 'generation-only') {
+    return (
+      <>
+        Generation cost <strong>{formatCost(r.generation)}</strong> Buzz (not including any app fee)
+      </>
+    );
+  }
+  return (
+    <>
+      Spent <strong>{formatCost(r.total)}</strong> Buzz
+      {r.authorFee > 0
+        ? ` (${formatCost(r.generation)} generation + ${formatCost(r.authorFee)} app fee)`
+        : ''}
+    </>
+  );
+}
+
 /** " from your Yellow account" — reads the succeeded snapshot's spentAccountType. */
 function SpentAccountNote({ spentAccount }: { spentAccount: BuzzAccountType | null }) {
   const label = spentAccountLabel(spentAccount ?? undefined);
@@ -903,8 +1172,25 @@ function SpentAccountNote({ spentAccount }: { spentAccount: BuzzAccountType | nu
   );
 }
 
+/** Quiet time after the last edit before the request is re-priced. */
+const ESTIMATE_DEBOUNCE_MS = 900;
+
+/**
+ * A successful estimate for one serialized request body. `approx` marks a
+ * display estimate (customComfy) rather than a quote: the charge settles to the
+ * actual runtime cost.
+ */
+type Quote = { key: string; total: number; authorFee: number | null; approx: boolean };
+
+type EstimateState =
+  | { status: 'idle' }
+  | { status: 'loading'; key: string }
+  | { status: 'ready'; quote: Quote }
+  // `gated`: the Comfy beta gate refused it — the gate panel explains it, so
+  // no "Retry estimate" is offered.
+  | { status: 'error'; key: string; message: string; gated: boolean };
+
 function phaseLabel(phase: GenPhase): string {
-  if (phase === 'estimating') return 'Estimating…';
   if (phase === 'submitting') return 'Submitting…';
   if (phase === 'polling') return 'Generating…';
   return 'Working…';
@@ -973,8 +1259,9 @@ function pickerBtnStyle(selected: boolean, disabled: boolean): React.CSSProperti
   };
 }
 
-// The W6 pack ships no Slider, so each LoRA's weight uses a themed native range
-// input. These read the same pack CSS vars so the LoRA list matches the surface.
+// LoRA row chrome. These read the same pack CSS vars so the list matches the
+// surface the pack paints. The weight control itself is NOT styled here — it is
+// the pack's own `Slider` (see LoraSelector), which themes itself.
 const loraListStyle: React.CSSProperties = { marginTop: 4 };
 const loraRowStyle: React.CSSProperties = {
   display: 'grid',
@@ -996,15 +1283,6 @@ const loraNameStyle: React.CSSProperties = {
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
-};
-const loraWeightRowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8 };
-const loraWeightLabelStyle: React.CSSProperties = { fontSize: 12, opacity: 0.8, minWidth: 44 };
-const loraRangeStyle: React.CSSProperties = { flex: 1, accentColor: 'var(--civitai-color-primary)' };
-const loraWeightValueStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontVariantNumeric: 'tabular-nums',
-  minWidth: 36,
-  textAlign: 'right',
 };
 const loraAddWrapStyle: React.CSSProperties = {
   display: 'flex',

@@ -83,14 +83,25 @@ type gitOutputFunc func(dir string, args ...string) (string, error)
 // which repository it is looking at. Every one of them BEATS `-C`, so leaving
 // them in place makes the "which directory's repo" decision above a lie.
 //
-// 🔴 THIS IS NOT HYPOTHETICAL: git EXPORTS GIT_DIR and GIT_INDEX_FILE to its
-// hooks. A release script that runs `civitai app submit` from a `pre-push` /
-// `post-commit` hook, or under `git rebase -x`, therefore inherits a GIT_DIR
-// pointing at the repo that invoked the hook. Measured on git 2.55.0: a dirty
-// app directory exits 1 with the refusal, and the SAME invocation with GIT_DIR
-// and GIT_WORK_TREE aimed at an unrelated clean repo exits 5 with zero
-// refusals. It is the "gitOutput dropped its -C" defect reached through the
-// environment instead of argv.
+// 🔴 THE HAZARD IS REAL AND THE MEASUREMENT BELOW STANDS — but the REACHABILITY
+// sentence that used to open this paragraph was FALSE, and it had been copied
+// into app_pull.go before anyone checked it. It claimed git exports GIT_DIR to
+// its hooks, so `civitai app submit` run from a `pre-push` / `post-commit` hook
+// or under `git rebase -x` inherits one. Measured on git 2.55.0, dumping the
+// seven from real hooks: pre-push, post-merge, post-checkout and `rebase -x`
+// export NONE of them, and the commit-family hooks export only a RELATIVE
+// `GIT_INDEX_FILE=.git/index`, which is harmless here. Hooks are not the vector.
+//
+// What IS: a child of `git --git-dir=X --work-tree=Y <alias>` (both exported,
+// absolute), a server-side receive hook, or anything setting an ABSOLUTE
+// GIT_INDEX_FILE. See app_pull.go's runner for the full measured table — keep
+// the two in step, since this is where the wrong version was copied FROM.
+//
+// The damage, unchanged and still measured on git 2.55.0: a dirty app directory
+// exits 1 with the refusal, and the SAME invocation with GIT_DIR and
+// GIT_WORK_TREE aimed at an unrelated clean repo exits 5 with zero refusals. It
+// is the "gitOutput dropped its -C" defect reached through the environment
+// instead of argv.
 //
 // 🔴 THEY MUST BE REMOVED FROM THE ENVIRONMENT, NEVER SET TO "". git does not
 // read an empty value as unset: `GIT_DIR= git status` fails with

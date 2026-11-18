@@ -75,7 +75,19 @@ func TestValidateEnumFindingWordingIsUnchanged(t *testing.T) {
 	if err == nil {
 		t.Fatal("PREMISE BROKEN: the fixture validated clean")
 	}
-	const want = "contentRating: value must be one of 'g', 'pg', 'pg13', 'r', 'x'"
+	// 🔴 THE VALUES ARE DERIVED, THE WORDING IS SPELLED. This used to be a
+	// hand-typed copy of the whole rating set, which made an additive canonical
+	// red a check on every PR in the repo — the second copy of the self-block
+	// `internal/validate/pattern_test.go` was rewritten to remove.
+	// The lead-in and the quoting are still written out here, so a reword of the
+	// library's rendering still fails; only the SET moves with the schema.
+	//
+	// ⚠ MEASURED, and it is why this site needed its own mutant: the old literal
+	// was checked with `strings.Contains`, so APPENDING a rating left it GREEN
+	// (the literal is a prefix of the longer message) while `internal/validate`
+	// went red. Only an INSERT or reorder reddened it. A one-site fix verified
+	// with an append-only mutant therefore READS complete and is not.
+	want := schemaEnumFindingMessage(t, "contentRating", "properties", "contentRating", "enum")
 	if !strings.Contains(unwrapped(stderr), want) {
 		t.Errorf("the enum finding's wording changed\n  want: %s\n  got:\n%s", want, stderr)
 	}
@@ -204,15 +216,19 @@ func TestValidateJSONCarriesTheLocationAndTheGloss(t *testing.T) {
 }
 
 // TestAppCreateIntoNonEmptyDirNamesTheRemedy — issue #260 item 7, fourth
-// bullet. The README's Troubleshooting section already had the remedy; the CLI
-// did not print it.
+// bullet. The troubleshooting index already had the remedy; the CLI did not
+// print it.
 //
 // 🔴 BOTH SCAFFOLD COMMANDS ARE DRIVEN, not just `app create`. The exit-code
 // half of this guard reddened exactly ONE leaf subtest when only `create` was
 // covered — the "a battery rested on a single row" shape of AGENTS.md item 24,
 // where deleting the row takes the guard with it. `app init` is the other user
-// of the same refusal and is the command the README's Troubleshooting entry
-// names.
+// of the same refusal and is the command the published troubleshooting entry
+// names (developer.civitai.com/site/guide/cli-troubleshooting; its symptom string
+// is vendored in internal/cmd/troubleshooting_published_test.go). 🔴 DO NOT DROP
+// `init` FROM THE LOOP ON THE GROUNDS THAT README NO LONGER SAYS SO — that index
+// moved off README.md, it still names `app init`, and dropping the verb is exactly
+// the single-row collapse this paragraph warns about.
 func TestAppCreateIntoNonEmptyDirNamesTheRemedy(t *testing.T) {
 	for _, verb := range []string{"create", "init"} {
 		t.Run(verb, func(t *testing.T) {

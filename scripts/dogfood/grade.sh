@@ -2,17 +2,38 @@
 # Grade one finished trial against the arc's frozen closing condition, by
 # measuring the container — never by reading what the agent said it did.
 #
-#   grade.sh <trial-id> <container-user>
+#   grade.sh <trial-id> <container-user> [brief-name]
 #
 # Both halves are required:
 #   A. `civitai agent-setup --check --json` reports ok: true
 #   B. `zsh -lic 'civitai --version'` prints a version in the USER's LOGIN shell
 #      (the half that was green-by-accident once: ok:true inside the agent's own
 #      shell while the login shell still served the old binary).
+#
+# ── the app-build arc ────────────────────────────────────────────────────────
+# A THIRD arm exists for app-build trials and is OPT-IN: pass a brief name (or
+# set DOGFOOD_ASSERT) and oracle.sh serves the built block inside this same
+# container, drives it with a headless browser, and its `RENDER=` + `observed=`
+# are appended to the verdict line below.
+#
+# ⚠ The brief name you pass is a REQUEST, not the brief. oracle.sh derives the
+# brief from the trial's own transcript and REFUSES (exit 2 -> RENDER=unmeasured)
+# when the two disagree, so the `render_brief=` on the verdict line below is the
+# RESOLVED name read back off the oracle, never the string handed in here.
+#
+# 🔴 OPT-IN, AND SILENT OTHERWISE, ON PURPOSE. The setup grid of 2026-09-18 was
+# graded by the two arms above and nothing else. Running a render oracle by
+# default would append fields to every already-measured cell's line and make an
+# app-build `no` — which a setup trial MUST produce, it never built an app —
+# look like a regression in a grid that never asked the question.
 set -uo pipefail
 TRIAL="${1:?trial id}"
 U="${2:-root}"
+BRIEF="${3:-${DOGFOOD_ASSERT:-}}"
 C="dogfood-$TRIAL"
+HERE="$(dirname "$0")"
+# Guard the VALUE, not just the cd (`cd ""` is a silent no-op on bash <= 5.2).
+[ -n "$HERE" ] && [ -d "$HERE" ] || { echo "cannot resolve script dir" >&2; exit 2; }
 
 # 🔴 POSITIVE CONTROL ON THE INSTRUMENT ITSELF. Without this, a grade against a
 # container that does not exist returns empty stdout, which is byte-identical to
@@ -113,5 +134,70 @@ MCP_ROWS=$(printf '%s' "$CHECK_OUT" | jq -r '[.checks[]|select(.name|startswith(
 PASS=no
 if [ "$OK" = "true" ] && [ "$LOGIN_RC" = "0" ] && [ -n "$LOGIN_VER" ] \
    && [ "$LOGIN_VER" = "$AGENT_VER" ] && [ "$MCP_ROWS" = "2" ]; then PASS=yes; fi
-printf 'agent=%s check_ok=%s failed_checks=[%s] mcp_rows=%s rows=[%s] login_version=%s agent_shell_version=%s CLOSING_CONDITION=%s\n' \
-  "$AGENT_ID" "$OK" "${FAILED:-}" "$MCP_ROWS" "${ROWS:-}" "${LOGIN_VER:-none}" "${AGENT_VER:-none}" "$PASS"
+
+# ── the render arm, when a brief was named ───────────────────────────────────
+# 🔴 THE ORACLE'S EXIT CODE IS PART OF THE READING, NOT NOISE. It exits 2 when
+# it measured NOTHING (no browser, unreachable server, a container that went
+# away). Folding that into `RENDER=no` would report "the model did not build the
+# app" about a run in which no block was ever loaded — the capability confound,
+# arriving through the grader. It becomes `RENDER=unmeasured` instead, which no
+# reader can mistake for a verdict.
+RENDER_FIELDS=
+if [ -n "$BRIEF" ]; then
+  printf -- '--- C: render oracle (%s)\n' "$BRIEF"
+  ORACLE_OUT=$(bash "$HERE/oracle.sh" "$TRIAL" "$U" "$BRIEF" 2>&1)
+  ORACLE_RC=$?
+  printf '%s\n' "$ORACLE_OUT"
+  if [ "$ORACLE_RC" != "0" ]; then
+    RENDER_FIELDS=" render_brief=$BRIEF RENDER=unmeasured"
+  else
+    SUMMARY=$(printf '%s\n' "$ORACLE_OUT" | grep -a '^brief=' | tail -1)
+    R_GATE=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^gate=//p' | head -1)
+    R_OBS=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^observed=//p' | head -1)
+    R_PASS=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^RENDER=//p' | head -1)
+    # REPORTED, not part of the verdict — see the note in oracle.sh.
+    R_SCOPES=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^scopes=//p' | head -1)
+    # 🔴 THE BRIEF ON THE CELL IS THE ONE THE ORACLE RESOLVED, NOT THE ONE THIS
+    # SCRIPT WAS HANDED. The oracle derives the brief from the trial's own
+    # transcript and refuses on a disagreement, so labelling the cell with
+    # `$BRIEF` would be re-asserting the unverified request next to a verdict
+    # measured under the verified one.
+    R_BRIEF=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^brief=//p' | head -1)
+    R_SRC=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^brief_source=//p' | head -1)
+    # Which viewer the block was shown. A `no` graded against an anonymous
+    # viewer is a different finding from a `no` graded against a signed-in one.
+    R_VIEWER=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^viewer=//p' | head -1)
+    # 🔴 WHICH ARM, AND IT IS CARRIED FOR A DIFFERENT REASON FROM THE FIELDS
+    # ABOVE. The arm is chosen by an AMBIENT environment variable, so without this
+    # a stale `CIVITAI_ASSERT_UNCONSENTED=1` in an operator's shell turns a whole
+    # matrix into consent verdicts that read as ordinary render verdicts. A cell
+    # saying `arm=unconsented` cannot be mistaken for one; a cell with no arm field
+    # at all can.
+    R_ARM=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^arm=//p' | head -1)
+    # 🔴 THE POST ARM'S CEILING TOKEN, CARRIED ONTO THE ROW. "The cell" in this rig is
+    # this row and the summary line it is built from, and the post arm is the one whose
+    # green is easiest to over-read as "posting works on civitai.com" — so the TOKEN
+    # `oracle.sh` appends must reach here too, or nothing about the ceiling reaches the
+    # layer a matrix is read off. The ceiling's full SENTENCE rides on neither layer:
+    # it is `postArmCeiling` in the assertion's JSON and the `⚠ POST-PATH ARM:` banner
+    # in the run stream, which this script re-prints. Appended only when the oracle
+    # sent one (post arm only), which leaves every other row byte-identical.
+    R_CEIL=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^post_ceiling=//p' | head -1)
+    CEIL_FIELD=
+    [ -n "$R_CEIL" ] && CEIL_FIELD=" post_ceiling=$R_CEIL"
+    # 🔴 AND THE POST-LINK SUB-CHECK'S OUTCOME, FOR A REASON THE OTHER FIELDS DO NOT
+    # HAVE: two of its four values PASS and they mean different things. `absolute` is
+    # "the block rendered a link to the post and it works"; `none` is "the block
+    # rendered no link, so this sub-check measured nothing" — legitimate, never a
+    # defect, and indistinguishable from the former on a row that carries only
+    # `RENDER=yes`. Appended only when the oracle sent one (post arm only), which
+    # leaves every other row byte-identical.
+    R_LINK=$(printf '%s\n' "$SUMMARY" | tr ' ' '\n' | sed -n 's/^post_link=//p' | head -1)
+    LINK_FIELD=
+    [ -n "$R_LINK" ] && LINK_FIELD=" post_link=$R_LINK"
+    RENDER_FIELDS=" render_brief=${R_BRIEF:-$BRIEF} brief_source=${R_SRC:-unknown} validate_gate=${R_GATE:-unknown} scopes=${R_SCOPES:-unknown} viewer=${R_VIEWER:-unknown} arm=${R_ARM:-unknown} observed=${R_OBS:-} RENDER=${R_PASS:-unreadable}${CEIL_FIELD}${LINK_FIELD}"
+  fi
+fi
+
+printf 'agent=%s check_ok=%s failed_checks=[%s] mcp_rows=%s rows=[%s] login_version=%s agent_shell_version=%s CLOSING_CONDITION=%s%s\n' \
+  "$AGENT_ID" "$OK" "${FAILED:-}" "$MCP_ROWS" "${ROWS:-}" "${LOGIN_VER:-none}" "${AGENT_VER:-none}" "$PASS" "$RENDER_FIELDS"

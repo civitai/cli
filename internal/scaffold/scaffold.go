@@ -27,26 +27,46 @@ const (
 	// PageVite is a vite+React page block with config-as-code build fields.
 	PageVite Template = "page-vite"
 	// PageMoney is a vite+React+TS page block wired to the published App SDK
-	// for the money path (estimate → consent → submit → poll → Buzz spend).
+	// for the money path (estimate → consent → submit → poll → Buzz spend). It
+	// is the React alternative to PageElements.
 	PageMoney Template = "page-money"
+	// PageElements is a vite+TS page block with no UI framework: `@civitai/sdk`
+	// for the host bridge and `@civitai/components` `<civitai-*>` custom
+	// elements (themed by `@civitai/theme`) for the UI. It mirrors the
+	// `civitai-block-starter` starter in civitai/civitai-app-starters,
+	// declared as a page rather than a model slot like every template here.
+	PageElements Template = "page-elements"
 )
 
-// AllTemplates lists the templates available to `civitai app init`.
-func AllTemplates() []Template { return []Template{Static, PageVite, PageMoney} }
+// DefaultTemplate is what `civitai app init` and `civitai app create` scaffold
+// when no --template is given, and what their interactive prompt pre-selects.
+//
+// 🔴 ONE CONSTANT FOR BOTH COMMANDS. They used to default differently (init to
+// `static`, create to `page-money`), each spelled at its own flag definition;
+// web components became the default for both at once, and a single constant is
+// what keeps a later change from moving one and not the other.
+const DefaultTemplate = PageElements
 
-// SDKTemplates are templates whose dev loop needs a mock host (`dev:harness`)
-// rather than a plain `dev` (which renders blank without a host).
-func (t Template) NeedsHarness() bool { return t == PageMoney }
+// AllTemplates lists the templates available to `civitai app init`, default
+// first — the same order the --template usage string and the interactive prompt
+// list them in.
+func AllTemplates() []Template { return []Template{PageElements, PageMoney, PageVite, Static} }
+
+// NeedsHarness reports whether the template's dev loop runs against a local mock
+// host (`npm run dev:harness`) rather than a plain `dev` (which renders blank
+// without a host).
+func (t Template) NeedsHarness() bool { return t == PageMoney || t == PageElements }
 
 // ReadyAckPath is where this template's rendered tree carries the canonical
 // block -> host ready-ack emitter (blockproto.ReadyAckSource), or "" when the
 // template does not need one.
 //
 // Every template declares a `page` surface, and the host will not reveal a
-// page app until it posts `BLOCK_READY`. page-money gets that for free —
-// `@civitai/blocks-react`'s IframeTransport acks internally — so shipping a
-// second emitter there would double-post into a rate-limited inbound channel
-// for no gain. The two SDK-free templates have to say hello themselves.
+// page app until it posts `BLOCK_READY`. page-money and page-elements get that
+// for free — `@civitai/blocks-react`'s and `@civitai/sdk`'s iframe transports
+// ack internally — so shipping a second emitter there would double-post into a
+// rate-limited inbound channel for no gain. The two SDK-free templates have to
+// say hello themselves.
 //
 // The path is relative to the project root and uses forward slashes.
 // `internal/scaffold/ready_ack_contract_test.go` enumerates AllTemplates() and
@@ -78,6 +98,8 @@ func ParseTemplate(s string) (Template, error) {
 		return PageVite, nil
 	case PageMoney:
 		return PageMoney, nil
+	case PageElements:
+		return PageElements, nil
 	default:
 		names := make([]string, 0, len(AllTemplates()))
 		for _, t := range AllTemplates() {
@@ -87,12 +109,27 @@ func ParseTemplate(s string) (Template, error) {
 	}
 }
 
+// templateFuncs are the constants every template may call. Each returns the
+// same value on every render; anything that varies per app belongs on Data.
+var templateFuncs = template.FuncMap{
+	// The Civitai host origins, comma separated: a VITE_BLOCK_ALLOWED_PARENT_ORIGINS value.
+	"civitaiParentOriginsCSV": blockproto.CivitaiParentOriginsCSV,
+	// The same origins as JavaScript array elements, one per line.
+	"civitaiParentOriginsJS": blockproto.CivitaiParentOriginsJS,
+}
+
 // Data is the values passed to every template.
 type Data struct {
 	// Slug is the block slug (blockId): lowercase, hyphen-separated.
 	Slug string
 	// Name is the human-readable display name.
 	Name string
+	// Tagline is the manifest's store tagline. Leave it EMPTY and Render derives
+	// one from Name (TaglineFromName) — that is the normal path and the only one
+	// `civitai app init` takes, so a caller never has to know this field exists.
+	// Setting it explicitly overrides the derivation; it is not validated here,
+	// because `app init` validates the manifest it writes.
+	Tagline string
 }
 
 // outputName maps an embedded template filename to its on-disk name.
@@ -127,10 +164,75 @@ func outputName(rel string) string {
 // Render writes the chosen template into destDir, creating it if needed.
 // It refuses to overwrite an existing non-empty directory.
 func Render(tmpl Template, destDir string, data Data) ([]string, error) {
+	return RenderKeeping(tmpl, destDir, data, nil)
+}
+
+// RenderKeeping is Render for a destination that may already hold a known set
+// of files, which it leaves exactly as they are.
+//
+// 🔴 WHY IT EXISTS. `civitai agent-setup` supports an empty directory as its
+// starting point and writes its instruction and MCP files into it; the next
+// documented step is `civitai app create`, which then refused that same
+// directory as "not empty". The onboarding path ended in a subdirectory and two
+// AGENTS.md files. `keep` is how the caller names the files the previous step
+// wrote, so a directory holding ONLY those counts as empty here.
+//
+// Each element of keep is a path RELATIVE to destDir, as segments. It is a
+// parameter rather than a list in this package because the set belongs to the
+// command that writes those files, and a second copy here would drift from it.
+//
+// 🔴 A NAME IS NOT ENOUGH. An entry is tolerated only when it is the kind of
+// thing the keep path says it is: a REGULAR FILE at the last segment, a real
+// directory at every segment before it. A directory, a symlink, a socket or a
+// device carrying a kept name still refuses, and so does a kept directory
+// holding anything else — a `.vscode/` with the author's own settings.json in
+// it is the author's, not this command's.
+//
+// 🔴 NOTHING IN keep IS EVER WRITTEN. The check below refuses, before the first
+// byte is written, a template whose output would land on a file that is already
+// there. No template emits one of those names today (TestNoTemplateEmitsAKeptPath
+// in internal/cmd pins the real set); the check is what makes "leaves them
+// exactly as they are" a property of this function and not of today's templates.
+func RenderKeeping(tmpl Template, destDir string, data Data, keep [][]string) ([]string, error) {
 	root := "templates/" + string(tmpl)
 
-	if err := ensureEmptyDir(destDir); err != nil {
+	if err := ensureEmptyDir(destDir, keep); err != nil {
 		return nil, err
+	}
+	if err := refuseIfOutputExists(tmpl, destDir); err != nil {
+		return nil, err
+	}
+
+	// 🔴 THE TEMPLATES SEE `Data` AND NOTHING ELSE that varies (they may also call
+	// the constant `templateFuncs`, see the end of this note). There used to be an unexported `renderData` WRAPPER carrying a
+	// derived `HookIndex` — a 36-row markdown table of every
+	// `@civitai/blocks-react` hook, generated from a Go table (`hooks.go`) and
+	// rendered into the page-money README. It was retired: the hosted developer
+	// reference (spelled once, in `README.md.tmpl`) is canonical, the README now
+	// points at it, and keeping a second copy in this repo was a
+	// drift surface for a route no measured trial took (two graded dogfood runs
+	// read the scaffolded README zero times and fetched the hosted page four).
+	// `Data` is a struct, so a template still referencing `{{ .HookIndex }}`
+	// fails execution with `can't evaluate field HookIndex` rather than rendering
+	// a blank — the removal cannot be half-done.
+	//
+	// 🔴 `Tagline` IS DERIVED HERE AND IS NOT A RETURN OF THAT WRAPPER. It fills a
+	// FIELD ON `Data` rather than a wrapper around it, so the sentence above stays
+	// literally true and every caller keeps working unchanged. And it is not the
+	// thing the wrapper was retired for: `HookIndex` duplicated a document that
+	// lives somewhere else, so the two could drift; nothing anywhere else holds a
+	// copy of a scaffolded app's tagline. Deriving it in Render rather than at the
+	// call site is what makes it ONE rule — every entry point, including the tests
+	// that render a template directly, gets a schema-valid tagline without
+	// knowing it has to ask for one.
+	//
+	// The templates also call `templateFuncs`, which are CONSTANTS, not data:
+	// the Civitai host origins, so that a dev server's frame-ancestors CSP and
+	// the app's postMessage allowlist are rendered from ONE list
+	// (blockproto.CivitaiParentOrigins) instead of each template spelling it.
+	view := data
+	if strings.TrimSpace(view.Tagline) == "" {
+		view.Tagline = TaglineFromName(view.Name)
 	}
 
 	var written []string
@@ -151,12 +253,12 @@ func Render(tmpl Template, destDir string, data Data) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		t, err := template.New(rel).Option("missingkey=error").Parse(string(raw))
+		t, err := template.New(rel).Option("missingkey=error").Funcs(templateFuncs).Parse(string(raw))
 		if err != nil {
 			return fmt.Errorf("parse template %s: %w", rel, err)
 		}
 		var buf bytes.Buffer
-		if err := t.Execute(&buf, data); err != nil {
+		if err := t.Execute(&buf, view); err != nil {
 			return fmt.Errorf("render template %s: %w", rel, err)
 		}
 		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
@@ -195,10 +297,13 @@ func Render(tmpl Template, destDir string, data Data) ([]string, error) {
 // directory that already holds files (issue #260, item 7).
 //
 // The refusal itself was already right — clobbering an author's directory is
-// not recoverable — but it named no way forward, while the README's
-// Troubleshooting section carried the remedy the CLI did not print. AGENTS.md's
-// house rule is that an error names the next command to run, so the remedy
-// moved into the message and the README now agrees with the binary.
+// not recoverable — but it named no way forward, while the troubleshooting index
+// carried the remedy the CLI did not print. AGENTS.md's house rule is that an
+// error names the next command to run, so the remedy moved into the message and
+// the docs agree with the binary. (The index is now published at
+// developer.civitai.com/site/guide/cli-troubleshooting rather than being a README
+// section; this message is the surface that has to be right either way, which was
+// the point of moving the remedy into it.)
 //
 // 🔴 IT ENDS BY SAYING THERE IS NO `--force`, and that sentence is the point
 // rather than a hedge. Without it the natural next move on reading "refusing to
@@ -214,7 +319,7 @@ func Render(tmpl Template, destDir string, data Data) ([]string, error) {
 const NotEmptyRemedy = "refusing to overwrite. Scaffold somewhere else (`--dir <new path>`, or a different name), " +
 	"or remove the directory first — there is no --force"
 
-func ensureEmptyDir(dir string) error {
+func ensureEmptyDir(dir string, keep [][]string) error {
 	info, err := os.Stat(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -225,12 +330,103 @@ func ensureEmptyDir(dir string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("%s exists and is not a directory", dir)
 	}
-	entries, err := os.ReadDir(dir)
+	only, err := holdsOnlyKept(dir, keep)
 	if err != nil {
 		return err
 	}
-	if len(entries) > 0 {
+	if !only {
 		return fmt.Errorf("%s is not empty — %s", dir, NotEmptyRemedy)
 	}
 	return nil
 }
+
+// holdsOnlyKept reports whether every entry under dir is accounted for by keep:
+// a regular file where a keep path ends, a real directory where one continues.
+// With no keep paths it is exactly "dir is empty".
+//
+// It reads the entry's OWN type (os.ReadDir does not follow links), which is the
+// point: a symlink named like a kept file is a symlink, whatever it points at.
+func holdsOnlyKept(dir string, keep [][]string) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range entries {
+		var isFile bool
+		var deeper [][]string
+		for _, k := range keep {
+			if len(k) == 0 || k[0] != e.Name() {
+				continue
+			}
+			if len(k) == 1 {
+				isFile = true
+			} else {
+				deeper = append(deeper, k[1:])
+			}
+		}
+		switch {
+		case isFile && e.Type().IsRegular():
+			// A kept file, and it is one.
+		case len(deeper) > 0 && e.Type().IsDir():
+			only, err := holdsOnlyKept(filepath.Join(dir, e.Name()), deeper)
+			if err != nil || !only {
+				return false, err
+			}
+		default:
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// refuseIfOutputExists refuses a render that would write over something already
+// in destDir. After ensureEmptyDir the only things there are kept files, so this
+// fires exactly when a template and the keep set name the same path — and it
+// runs before anything is written, so a refusal never leaves half a scaffold.
+func refuseIfOutputExists(tmpl Template, destDir string) error {
+	outs, err := outputPaths(tmpl)
+	if err != nil {
+		return err
+	}
+	for _, rel := range outs {
+		if _, err := os.Lstat(filepath.Join(destDir, rel)); err == nil {
+			return fmt.Errorf("%s already holds %s, which this template would write — %s", destDir, rel, NotEmptyRemedy)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// outputPaths lists every path, relative to the destination, that rendering tmpl
+// writes: the template files under their output names plus the ready-ack emitter.
+func outputPaths(tmpl Template) ([]string, error) {
+	root := "templates/" + string(tmpl)
+	var outs []string
+	err := fs.WalkDir(templatesFS, root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
+		}
+		outs = append(outs, outputName(rel))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if rel := tmpl.ReadyAckPath(); rel != "" {
+		outs = append(outs, filepath.FromSlash(rel))
+	}
+	sort.Strings(outs)
+	return outs, nil
+}
+
+// OutputPaths is outputPaths for callers outside this package that need to hold
+// a set of names against what a template writes.
+func OutputPaths(tmpl Template) ([]string, error) { return outputPaths(tmpl) }

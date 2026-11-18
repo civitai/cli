@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/viper"
@@ -391,13 +390,13 @@ var boolValueCandidates = []string{
 // `internal/ui` reads the standard variables with envSet/envTrue instead, where
 // any non-empty value counts.
 //
-// The guard has three legs, because the claim spans three surfaces and a check
-// on one of them would go stale against the other two:
+// The guard has TWO legs. It had a third, over the README's `## Global flags`
+// section; that section is now a pointer to the published guide, and the leg was
+// RETIRED rather than re-pointed — the argument is recorded where it used to be,
+// at the end of this function.
 //  1. BEHAVIOURAL — the same viper binding root.go uses, exercised per value.
 //  2. LEDGER — root.go must still bind and read those keys that way; a switch to
-//     GetString/envSet semantics reddens this and forces the README to be redone.
-//  3. DOCUMENT — the README must name every accepted spelling and at least one
-//     value that silently does nothing.
+//     GetString/envSet semantics reddens this and forces the docs to be redone.
 func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 	var accepted, rejected []string
 	for _, v := range boolValueCandidates {
@@ -408,10 +407,21 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 		}
 	}
 	// POSITIVE CONTROL on the derivation: both halves must be non-trivial, or the
-	// document assertions below are checking an empty set.
+	// per-value loops below are iterating over an empty set.
+	//
+	// 🔴 IT NO LONGER GUARDS A DOCUMENT ASSERTION — IT IS THE LAST COUPLING TO THE
+	// PUBLISHED LIST. This comment used to say "or the document assertions below are
+	// checking an empty set"; leg 3 was the only document assertion and it was
+	// deleted (see the note at the end of this function). So what this `!= 12` now
+	// does is fail the build if Go's boolean grammar or boolValueCandidates ever
+	// stops yielding exactly the twelve spellings the published output contract
+	// enumerates — which is the only thing left in this repository tying that page's
+	// number to the code. Do not weaken it to a floor: a control described as
+	// protecting something that no longer exists is the shape that gets deleted as
+	// vacuous, which is why it is re-stated here rather than left stale.
 	if len(accepted) != 12 {
 		t.Fatalf("CONTROL failure: strconv.ParseBool accepts %d of the %d candidate(s) (%v), want exactly 12. "+
-			"The Go boolean grammar changed, or boolValueCandidates lost entries — re-derive the README's list "+
+			"The Go boolean grammar changed, or boolValueCandidates lost entries — re-derive the PUBLISHED list "+
 			"rather than adjusting this number", len(accepted), len(boolValueCandidates), accepted)
 	}
 	if len(rejected) < 5 {
@@ -433,7 +443,7 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 				t.Fatalf("BindEnv(%q, %q): %v", key, envName, err)
 			}
 			if got := vp.GetBool(key); got != want {
-				t.Errorf("%s=%q resolves to %v, want %v — the README's documented value set is derived from "+
+				t.Errorf("%s=%q resolves to %v, want %v — the PUBLISHED value set is derived from "+
 					"strconv.ParseBool and this value does not follow it", envName, v, got, want)
 			}
 		}
@@ -445,7 +455,7 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 		t.Fatalf("BindEnv: %v", err)
 	}
 	if vp.GetBool("no_color") {
-		t.Fatal("CIVITAI_NO_COLOR=yes now disables colour — the README says it does nothing. Re-derive both.")
+		t.Fatal("CIVITAI_NO_COLOR=yes now disables colour — the published output contract says it does nothing. Re-derive both.")
 	}
 
 	// --- Leg 1b: the ASYMMETRY. `NO_COLOR=yes` really does disable colour. ---
@@ -463,7 +473,7 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 	t.Setenv("NO_COLOR", "yes")
 	ui.Configure(ui.Options{Writer: io.Discard})
 	if ui.EnabledFor(io.Discard) {
-		t.Error("NO_COLOR=yes did not disable colour — the README says any non-empty NO_COLOR does, " +
+		t.Error("NO_COLOR=yes did not disable colour — the published output contract says any non-empty NO_COLOR does, " +
 			"in contrast with CIVITAI_NO_COLOR=yes which does nothing")
 	}
 
@@ -493,8 +503,8 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 		t.Error("NO_COLOR=0 did not disable colour, with CLICOLOR_FORCE=yes forcing it on. internal/ui " +
 			"reads NO_COLOR with envSet — PRESENT and non-empty, the VALUE is not parsed — so `0` " +
 			"disables colour like any other non-empty value. That is the no-color.org contract and the " +
-			"README states it outright. If envSet grew a `v != \"0\"` clause (harmonising it with " +
-			"envTrue, which legitimately has one for CLICOLOR_FORCE), the README is now wrong in two " +
+			"published output contract states it outright. If envSet grew a `v != \"0\"` clause (harmonising " +
+			"it with envTrue, which legitimately has one for CLICOLOR_FORCE), that contract is wrong in two " +
 			"places: re-derive both, do not adjust this test.")
 	}
 	// The OTHER half of the same sentence, at the SAME value: CIVITAI_NO_COLOR is
@@ -509,7 +519,8 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 	if vpZero.GetBool("no_color") {
 		t.Error("CIVITAI_NO_COLOR=0 now disables colour. It is read as a BOOLEAN (GetBool → cast.ToBool " +
 			"→ strconv.ParseBool), so `0` is a real false that leaves colour alone — which is exactly " +
-			"the contrast the README draws against NO_COLOR=0, where the same value DOES disable. " +
+			"the contrast the published output contract draws against NO_COLOR=0, where the same value DOES " +
+			"disable. " +
 			"Re-derive both.")
 	}
 	t.Setenv("CIVITAI_NO_COLOR", "")
@@ -526,114 +537,46 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 		`GetBool("color")`,
 	} {
 		if !strings.Contains(string(rootSrc), want) {
-			t.Errorf("internal/cmd/root.go no longer contains %s. The README's documented value set is a claim "+
+			t.Errorf("internal/cmd/root.go no longer contains %s. The PUBLISHED value set is a claim "+
 				"about GetBool (→ cast.ToBool → strconv.ParseBool); a different read (GetString, an envSet-style "+
 				"presence test) accepts a DIFFERENT set of values and makes that prose wrong. Re-derive both.", want)
 		}
 	}
 
-	// --- Leg 3: the document. ---
-	md := readREADME(t)
-	body := readmeSectionByAnchor(t, md, "global-flags")
-	if len(strings.TrimSpace(body)) < 800 {
-		t.Fatalf("CONTROL failure: the README's `## Global flags` section is only %d byte(s) long — "+
-			"the extractor is reading the wrong block", len(strings.TrimSpace(body)))
-	}
-	flat := flattenWS(body)
-	for _, v := range accepted {
-		if !strings.Contains(flat, "`"+v+"`") {
-			t.Errorf("the README's `## Global flags` section does not name the accepted value `%s` for "+
-				"CIVITAI_NO_COLOR / CIVITAI_COLOR. strconv.ParseBool accepts exactly %v and the section has to "+
-				"enumerate them, because every OTHER value parses as false and does nothing with no warning.",
-				v, accepted)
-		}
-	}
-	// It must also say, by example, that an unlisted value is inert — an
-	// enumeration a reader does not know is EXHAUSTIVE is not one.
-	if !strings.Contains(flat, "`yes`") {
-		t.Errorf("the README's `## Global flags` section does not name `yes` as a value that does nothing. " +
-			"strconv.ParseBool rejects it, so CIVITAI_NO_COLOR=yes silently leaves colour on — the single " +
-			"symptom this documentation exists to prevent.")
-	}
-	for _, want := range []string{
-		"CIVITAI_NO_COLOR=yes",
-		"not interchangeable",
-	} {
-		if !strings.Contains(strings.ToLower(flat), strings.ToLower(want)) {
-			t.Errorf("the README's `## Global flags` section does not state %q. The two pairs of variables "+
-				"accept different value sets, and presenting them as equivalent is the defect being fixed.", want)
-		}
-	}
-}
+	// --- Leg 3 (the document) WAS HERE, AND IT WAS RETIRED RATHER THAN RE-POINTED.
+	//
+	// 🔴 IT WAS UNREACHABLE VIA BOTH TRIGGERS ITS OWN COMMENT CLAIMED. The comment
+	// said it fires "when Go's boolean grammar or boolValueCandidates changes and
+	// the published sentence has not been re-synced". Neither can reach it: both
+	// inputs feed `accepted`, and the `len(accepted) != 12` CONTROL above is a
+	// t.Fatalf ~150 lines earlier in this same function, so it always wins.
+	// MEASURED: dropping "True" from boolValueCandidates dies at that control
+	// ("accepts 11 of the 22 candidate(s) … want exactly 12") and leg 3's own
+	// message never appears.
+	//
+	// Its ONLY reachable trigger was editing the vendored constant it read — which
+	// is what the mutation that "proved" it worked actually mutated. That is
+	// breakable, not reachable: RULES.md's unreachable-guards case, where a guard
+	// dies to an earlier check while its own assertion never executes.
+	//
+	// 🔴 AND THE CONSTANT WAS NOT THE TRANSCRIPT ITS HEADER CLAIMED. Diffed
+	// clause-by-clause against the raw page (curl + strip tags, per
+	// claudedocs/readme-reduction-plan.md's "diff against the raw page, never a
+	// summary of it"): two of its four clauses were the DELETED README's wording,
+	// not the page's. The page says CIVITAI_NO_COLOR/CIVITAI_COLOR "are **bound
+	// into the CLI's config layer** and read as booleans", and splits the
+	// =yes/=1/=0 clause into three sentences ending "— unlike NO_COLOR=0, where the
+	// same value disables it". So it asserted phrasing the publisher did not
+	// choose — the very thing the old leg's own residual dropped
+	// "not interchangeable" to avoid.
+	//
+	// Legs 1 and 2 pin the BEHAVIOUR (through the viper binding root.go uses) and
+	// the MECHANISM (root.go must still BindEnv/GetBool those keys) against
+	// internal/ui and root.go. They are untouched, and they are what made the
+	// twelve-spelling claim true in the first place. The published page is
+	// developer.civitai.com/site/guide/cli-output; nothing in this repository
+	// asserts on its prose, and that is now stated rather than simulated.
 
-// TestREADMECommandReferencePointsAtTheReadCommandTable pins the pointer added
-// to `## Command reference`, whose table covers the authoring and account
-// commands only.
-//
-// 🔴 IT IS DERIVED FROM THE COBRA TREE, not from a hardcoded list, so a read
-// command added to the CLI is covered the day it lands. For each root command
-// that the reference table does NOT carry a row for, the section must name it —
-// otherwise a reader who lands there is told neither that the table is partial
-// nor where the rest is.
-func TestREADMECommandReferencePointsAtTheReadCommandTable(t *testing.T) {
-	md := readREADME(t)
-	subjects := readmeCommandTableSubjects(t, md)
-	if len(subjects) < 15 {
-		t.Fatalf("CONTROL failure: extracted only %d command-reference rows — the table extractor is "+
-			"reading the wrong block", len(subjects))
-	}
-
-	section := readmeSectionByAnchor(t, md, "command-reference")
-	// The prose above the table, which is where the pointer has to be: a reader
-	// must meet it before the table, not after 25 rows of it.
-	preamble := section
-	if i := strings.Index(preamble, "| Command | What it does |"); i >= 0 {
-		preamble = preamble[:i]
-	}
-	// NOT a control — this is the defect. Before this guard landed the section
-	// opened straight onto its table, so a reader was never told it is partial.
-	if len(strings.TrimSpace(preamble)) < 50 {
-		t.Errorf("the `## Command reference` section has only %d byte(s) of prose before its table, so it "+
-			"carries no pointer at all. Its table covers the authoring and account commands only; the note "+
-			"saying so has to sit ahead of the table it qualifies.", len(strings.TrimSpace(preamble)))
-	}
-	if !strings.Contains(preamble, "#browse-the-public-api") {
-		t.Errorf("the `## Command reference` preamble does not link #browse-the-public-api. Its table does not " +
-			"cover the public-API read commands, so a reader has to be told where they are — with a working " +
-			"in-page anchor, not a bare mention.")
-	}
-
-	root := NewRootCmd()
-	undocumented := 0
-	for _, sub := range root.Commands() {
-		name := sub.Name()
-		if sub.Hidden || sub.IsAdditionalHelpTopicCommand() || name == "help" || name == "completion" {
-			continue
-		}
-		inTable := false
-		for _, s := range subjects {
-			if strings.Contains(s, "civitai "+name) {
-				inTable = true
-				break
-			}
-		}
-		if inTable {
-			continue
-		}
-		undocumented++
-		if !strings.Contains(preamble, "`"+name+"`") && !strings.Contains(preamble, "`civitai "+name+"`") {
-			t.Errorf("`civitai %s` has no row in the command-reference table AND is not named in the pointer "+
-				"above it. A reader in that section is told neither that the table is partial nor where %s is "+
-				"documented — add it to the pointer, or give it a row.", name, name)
-		}
-	}
-	// A tree walk that matched everything would report a serene pass: the table
-	// really does omit the read commands, and that is the premise of the pointer.
-	if undocumented < 5 {
-		t.Fatalf("CONTROL failure: only %d root command(s) are missing from the command-reference table. "+
-			"The pointer exists because the read commands are omitted; if that is no longer true the pointer "+
-			"is stale and this guard is checking nothing", undocumented)
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -643,203 +586,6 @@ func TestREADMECommandReferencePointsAtTheReadCommandTable(t *testing.T) {
 // reason homebrewMacOSOnlyClaim states — the artifact under test is prose, and a
 // keyword guard is walkable by rewording.
 // ---------------------------------------------------------------------------
-
-// readmeCivitaiCommandTable is one markdown table whose header's first column is
-// `Command` AND whose rows document `civitai …` invocations, recorded with the
-// `##` section holding it and its whole header row — the table's SCHEMA.
-//
-// The `civitai` row requirement is what keeps `### Local dev loop`'s
-// `| Command | Mode | What it does |` table (its rows are `npm run …`) out of
-// the count: it is a table of npm scripts, not a table of CLI commands, and
-// counting it would make "there are two command tables" true for the wrong
-// reason.
-type readmeCivitaiCommandTable struct {
-	sectionSlug string
-	section     string
-	header      string
-	rows        int
-}
-
-func readmeCivitaiCommandTables(t *testing.T, md string) []readmeCivitaiCommandTable {
-	t.Helper()
-	lines := strings.Split(stripFencedCode(md), "\n")
-	var out []readmeCivitaiCommandTable
-	section, slug := "", ""
-	for i := 0; i < len(lines); i++ {
-		if m := anyHeadingRe.FindStringSubmatch(lines[i]); m != nil {
-			if len(m[1]) == 2 {
-				section, slug = m[2], readmeAnchorSlug(m[2])
-			}
-			continue
-		}
-		if !strings.HasPrefix(lines[i], "| Command |") {
-			continue
-		}
-		tbl := readmeCivitaiCommandTable{sectionSlug: slug, section: section, header: strings.TrimSpace(lines[i])}
-		for j := i + 1; j < len(lines) && strings.HasPrefix(lines[j], "|"); j++ {
-			cells := strings.Split(lines[j], "|")
-			if len(cells) > 1 && strings.Contains(cells[1], "`civitai ") {
-				tbl.rows++
-			}
-		}
-		if tbl.rows > 0 {
-			out = append(out, tbl)
-		}
-	}
-	return out
-}
-
-// onlySectionSlug renders the section set for the reverse branch's message. It
-// is a message helper, not a predicate: the branch is decided by len(sections).
-func onlySectionSlug(sections map[string]readmeCivitaiCommandTable) string {
-	slugs := make([]string, 0, len(sections))
-	for s := range sections {
-		slugs = append(slugs, s)
-	}
-	sort.Strings(slugs)
-	return strings.Join(slugs, ", ")
-}
-
-// readmeTOCEntry returns the `## Contents` list item linking `anchor`, including
-// its wrapped continuation lines (a TOC entry with a qualifier spans two lines,
-// and reading only the first would make the qualifier invisible to every
-// assertion below — the exact shape of a guard that reads as coverage while
-// providing none).
-func readmeTOCEntry(t *testing.T, md, anchor string) string {
-	t.Helper()
-	toc := readmeSectionByAnchor(t, md, "contents")
-	lines := strings.Split(toc, "\n")
-	start := -1
-	for i, l := range lines {
-		if !strings.HasPrefix(strings.TrimSpace(l), "- [") || !strings.Contains(l, "("+anchor+")") {
-			continue
-		}
-		if start >= 0 {
-			t.Fatalf("the `## Contents` list has two entries linking %s (lines %q and %q) — "+
-				"this guard would pin whichever came first and silently ignore the other", anchor, lines[start], l)
-		}
-		start = i
-	}
-	if start < 0 {
-		t.Fatalf("the `## Contents` list has no entry linking %s. Either the TOC lost the entry this guard "+
-			"pins, or the section walk is reading the wrong text", anchor)
-	}
-	end := start + 1
-	for end < len(lines) {
-		s := strings.TrimSpace(lines[end])
-		if s == "" || strings.HasPrefix(s, "- ") || strings.HasPrefix(s, "* ") || strings.HasPrefix(s, "**") {
-			break
-		}
-		end++
-	}
-	return strings.Join(lines[start:end], "\n")
-}
-
-// tocCommandReferenceEntry is the `## Contents` entry for `## Command
-// reference`, pinned whole and already normalised (flattenWS form).
-const tocCommandReferenceEntry = "- [Command reference](#command-reference) — one table of the authoring & " +
-	"account commands (the public-API reads have their own)"
-
-// tocCommandReferenceRetracted is the claim that shipped in that slot and was
-// false: the section's table has never covered the public-API read commands.
-const tocCommandReferenceRetracted = "every command, one table"
-
-// TestREADMETOCCommandReferenceEntryNamesTheTableSplit pins the Contents entry
-// for `## Command reference` against a fact derived from the document itself:
-// there is MORE THAN ONE `civitai …` command table, and they sit in DIFFERENT
-// `##` sections.
-//
-// 🔴 THE SECTION COUNT IS THE WHOLE DERIVATION, and the schema count is
-// reporting detail only. The entry's claim is "the public-API reads have their
-// own [table]", which is true exactly while a `civitai …` command table exists
-// somewhere OTHER than `## Command reference` — a question about WHERE the
-// tables are, not about what columns they carry. The first version of this guard
-// gated the reverse branch on `len(sections) < 2 || len(schemas) < 2`, so
-// collapsing the read table's header from `| Command | What it does | Notable
-// flags |` to `| Command | What it does |` — pure formatting, both tables still
-// present in two sections — fired the reverse branch and told the reader "the
-// tables were merged … Re-derive it". Following that instruction deletes a
-// qualifier that is still true and republishes the defect the entry was written
-// to fix.
-//
-// 🔴 IT FAILS IN BOTH DIRECTIONS.
-//   - The tables are split (today): the entry must not tell a reader the section
-//     holds "every command, one table", and must carry the qualifier naming the
-//     split. The TOC is the first thing a reader meets, so a wrong entry here
-//     sends them to the wrong section before any other prose can correct it.
-//   - The tables are merged into one (someone folded the read commands into the
-//     reference table): the split qualifier must be REMOVED. That is the silent
-//     direction — an entry promising a second table that no longer exists.
-func TestREADMETOCCommandReferenceEntryNamesTheTableSplit(t *testing.T) {
-	md := readREADME(t)
-	tables := readmeCivitaiCommandTables(t, md)
-
-	// POSITIVE CONTROL ON THE DERIVATION. An extractor that found nothing — a
-	// changed header spelling, a fence-stripping bug — would take the "merged"
-	// branch below and report a serene pass on a document it never read.
-	if len(tables) == 0 {
-		t.Fatalf("CONTROL failure: found no `| Command | … |` table with any `civitai …` row in README.md. " +
-			"The table extractor is reading the wrong text, so every verdict below is about nothing")
-	}
-	sections := map[string]readmeCivitaiCommandTable{}
-	schemas := map[string]bool{}
-	for _, tb := range tables {
-		sections[tb.sectionSlug] = tb
-		schemas[tb.header] = true
-	}
-	if _, ok := sections["command-reference"]; !ok {
-		var got []string
-		for s := range sections {
-			got = append(got, s)
-		}
-		sort.Strings(got)
-		t.Fatalf("CONTROL failure: no `civitai …` command table was found under `## Command reference` "+
-			"(sections with one: %v). The entry this guard pins describes that table; without it the "+
-			"guard is checking a claim about a table it cannot see", got)
-	}
-
-	entry := readmeTOCEntry(t, md, "#command-reference")
-	flat := flattenWS(entry)
-
-	if len(sections) < 2 {
-		// Reverse direction: every `civitai …` command table now lives in ONE
-		// section, so there is no second table for the entry to point at.
-		if strings.Contains(flat, "have their own") {
-			t.Errorf("README.md now has %d `civitai …` command table(s), all inside the single `##` section "+
-				"%q, but the `## Contents` entry still says the public-API reads \"have their own\":\n  %s\n\n"+
-				"There is no longer a command table outside `## Command reference`, so the entry promises a "+
-				"second table a reader cannot find. Re-derive it.\n\n"+
-				"(If the tables are still in two sections and you are reading this, the derivation is wrong, "+
-				"not the prose — do NOT delete the qualifier.)",
-				len(tables), onlySectionSlug(sections), flat)
-		}
-		return
-	}
-
-	// Forward direction: the tables really are split.
-	if regexp.MustCompile(`(?i)every command,?\s+one table`).MatchString(flat) {
-		var where []string
-		for slug, tb := range sections {
-			where = append(where, slug+" "+tb.header)
-		}
-		sort.Strings(where)
-		t.Errorf("the `## Contents` entry for `## Command reference` claims %q:\n  %s\n\n"+
-			"It is false. README.md carries %d `civitai …` command tables, with %d different schemas, in "+
-			"%d different sections:\n    %s\n\nThe Contents list is the first thing a reader meets; an entry "+
-			"promising one complete table sends anyone looking for `civitai models` or `civitai download` to "+
-			"a section that does not document them.",
-			tocCommandReferenceRetracted, flat, len(tables), len(schemas), len(sections), strings.Join(where, "\n    "))
-	}
-	if flat != tocCommandReferenceEntry {
-		t.Errorf("the `## Contents` entry for `## Command reference` is not the pinned statement.\n\n"+
-			"want (normalised): %s\n\ngot  (normalised): %s\n\n"+
-			"It is pinned WHOLE rather than by keyword because the artifact is prose: \"Command reference\", "+
-			"\"table\" and \"commands\" all appear just as readily in an entry that re-claims completeness. "+
-			"If the wording is genuinely being improved, change the constant and this message together — and "+
-			"re-run the revert proof, which is what makes the new string a claim rather than a restatement.",
-			tocCommandReferenceEntry, flat)
-	}
-}
 
 // configPrecedenceClaim is the README's per-setting precedence block, pinned as
 // one WHOLE normalised string. Every bullet is a separate contract an operator
@@ -869,11 +615,6 @@ const retractedFlagWinsClaim = "the flag wins over the environment"
 // retractedFlagWinsClaim, mark it as a MENTION of the claim rather than an
 // ASSERTION of it.
 var mentionDelims = map[rune]bool{'"': true, '“': true, '”': true, '\'': true, '`': true, '‘': true, '’': true}
-
-// flagWinsRe matches retractedFlagWinsClaim case-insensitively. It is a regexp
-// rather than a strings.Index over a lowercased copy so that the match indices
-// address the ORIGINAL string — see readmeAssertsFlagWinsRule.
-var flagWinsRe = regexp.MustCompile(`(?i)` + regexp.QuoteMeta(retractedFlagWinsClaim))
 
 // readmeAssertsFlagWinsRule reports whether `flat` — a flattenWS-normalised
 // document — STATES the retracted rule, and returns the surrounding text of the
@@ -921,20 +662,16 @@ func readmeAssertsFlagWinsRule(flat string) (bool, string) {
 	// as an assertion, which is the false-positive direction this whole exemption
 	// exists to remove. Caught by the F4ctl control in the revert matrix, not by
 	// the hand-written fixtures — they are pure ASCII and cannot drift.
-	for _, loc := range flagWinsRe.FindAllStringIndex(flat, -1) {
-		i, end := loc[0], loc[1]
-		before, _ := utf8.DecodeLastRuneInString(flat[:i])
-		after, _ := utf8.DecodeRuneInString(flat[end:])
-		if mentionDelims[before] && mentionDelims[after] {
-			continue // quoted: the document is retracting the claim, not making it.
-		}
-		lo := max(0, i-90)
-		hi := min(len(flat), end+90)
-		// The window is a byte slice of a normalised document, so it can land
-		// mid-rune; the caller only ever prints it.
-		return true, strings.ToValidUTF8(flat[lo:hi], "")
-	}
-	return false, ""
+	//
+	// 🔴 THE BODY IS NOW ONE CALL, AND THAT IS THE POINT. This function and
+	// readme_output_contract_test.go's assertsUnquotedClaim were two copies of the
+	// same predicate over two byte-identical tables of quotation delimiters — the
+	// exact duplication the second one's own comment warned about ("two tables of
+	// quotation characters that disagree is how one of them starts admitting a
+	// claim the other rejects") while shipping it. One rule, one place: the
+	// mechanism lives there, mentionDelims lives here, and both callers get the
+	// same answer by construction rather than by two maintainers agreeing.
+	return assertsUnquotedClaim(flat, retractedFlagWinsClaim)
 }
 
 // TestREADMEConfigPrecedenceIsPerSetting ties the `## Configuration` precedence

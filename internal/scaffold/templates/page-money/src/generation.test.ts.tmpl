@@ -7,6 +7,8 @@ import {
   accountLabel,
   buildWorkflowBody,
   clampPrompt,
+  estimateBackoffMs,
+  estimateFailureMessage,
   firstImageUrl,
   formatCost,
   hasBudgetedScope,
@@ -14,10 +16,12 @@ import {
   isDisallowedAccountError,
   isFeatureGated,
   isInsufficientBuzz,
+  isRateLimitedEstimate,
   isTerminalStatus,
   phaseForError,
   phaseForSnapshot,
   phaseForSubmitError,
+  receiptFor,
   spentAccountLabel,
   submitErrorReason,
 } from './generation.js';
@@ -39,6 +43,62 @@ describe('formatCost', () => {
   it('rounds fractional costs and separates large ones', () => {
     expect(formatCost(1234.6)).toBe('1,235');
     expect(formatCost(1_234_567)).toBe((1_234_567).toLocaleString());
+  });
+});
+
+describe('receiptFor', () => {
+  it('adds the quoted author fee to the realized generation cost', () => {
+    expect(receiptFor(6, 1)).toEqual({ kind: 'total', total: 7, generation: 6, authorFee: 1 });
+  });
+  it('a quoted fee of 0 is a known whole debit', () => {
+    expect(receiptFor(6, 0)).toEqual({ kind: 'total', total: 6, generation: 6, authorFee: 0 });
+  });
+  it('an un-itemised fee is NOT read as 0 — generation cost only', () => {
+    expect(receiptFor(25, undefined)).toEqual({ kind: 'generation-only', generation: 25 });
+    expect(receiptFor(25, null)).toEqual({ kind: 'generation-only', generation: 25 });
+  });
+  it('no realized cost -> unknown', () => {
+    expect(receiptFor(null, 1)).toEqual({ kind: 'unknown' });
+    expect(receiptFor(undefined, undefined)).toEqual({ kind: 'unknown' });
+  });
+});
+
+describe('estimateFailureMessage', () => {
+  it('branches on the SDK error code, never renders server text', () => {
+    const server = 'upstream returned 503 (server-authored detail)';
+    expect(estimateFailureMessage({ code: 'no-cost', message: server })).toBe(
+      "We couldn't get a price for this request. Try adjusting it, or retry.",
+    );
+    expect(estimateFailureMessage({ code: 'failed', snapshot: { error: server } })).toBe(
+      'Pricing is unavailable right now. Retry in a moment.',
+    );
+    expect(estimateFailureMessage(new Error(server))).toBe(
+      'Pricing is unavailable right now. Retry in a moment.',
+    );
+  });
+});
+
+describe('isRateLimitedEstimate', () => {
+  // The host's own words for a refused estimate (civitai blocks.router.ts),
+  // carried on a WorkflowEstimateError with code 'failed'.
+  const RATE_LIMITED = 'Rate limit exceeded, please retry shortly.';
+  it('true for a failed estimate carrying the host rate-limit text', () => {
+    expect(isRateLimitedEstimate({ code: 'failed', snapshot: { error: RATE_LIMITED } })).toBe(true);
+  });
+  it('false for any other failure, a no-cost reply, or a non-SDK error', () => {
+    expect(isRateLimitedEstimate({ code: 'failed', snapshot: { error: 'mock: estimate failed' } })).toBe(false);
+    expect(isRateLimitedEstimate({ code: 'no-cost', snapshot: { error: RATE_LIMITED } })).toBe(false);
+    expect(isRateLimitedEstimate({ code: 'failed', snapshot: {} })).toBe(false);
+    expect(isRateLimitedEstimate(new Error(RATE_LIMITED))).toBe(false);
+    expect(isRateLimitedEstimate(null)).toBe(false);
+  });
+});
+
+describe('estimateBackoffMs', () => {
+  it('doubles from 2 s and caps at 30 s', () => {
+    expect([0, 1, 2, 3, 4, 5, 6, 12].map(estimateBackoffMs)).toEqual([
+      0, 2000, 4000, 8000, 16000, 30000, 30000, 30000,
+    ]);
   });
 });
 
@@ -157,7 +217,10 @@ describe('isFeatureGated', () => {
     // (a) app-blocks flag gate — assertAppBlocksEnabledForTokenUser.
     expect(isFeatureGated('Apps are not enabled')).toBe(true);
     expect(isFeatureGated('UNAUTHORIZED: Apps are not enabled')).toBe(true);
-    // (b) author gate — assertViewerIsAppDeveloper.
+    // (b) author gate — assertViewerIsAppDeveloper. 🔴 NOT reachable on a
+    //     customComfy submit or estimate: neither arm runs that gate, which lives
+    //     on the app-AUTHORING procs. This fixture pins the string match only, and
+    //     is NOT evidence that the platform gates Comfy by developer status.
     expect(isFeatureGated('Apps authoring is not enabled for this account')).toBe(true);
     // (c) unknown-recipe Zod enum rejection — the server's registry holds no such
     //     id. `starter-comfy-txt2img` IS registered, so this is the "you pointed
@@ -379,7 +442,7 @@ describe('submitErrorReason', () => {
 
 describe('isBusyPhase', () => {
   it('true only for the in-flight phases', () => {
-    for (const p of ['estimating', 'submitting', 'polling'] as const) {
+    for (const p of ['submitting', 'polling'] as const) {
       expect(isBusyPhase(p)).toBe(true);
     }
     for (const p of [

@@ -1,0 +1,873 @@
+# `genpost` — the generate-then-post brief and its behavioural assertion
+
+The second brief. `celsius` measures whether a blind agent can build *anything*
+that runs; this one measures whether it can wire the two platform surfaces that
+cost something — **generation** (`ai:write:budgeted`) and **posting**
+(`posts:write:self`) — and gate them in the right order.
+
+Same shape as `celsius`: one line of operator-typed text (`genpost.brief.txt`)
+plus one deterministic predicate a headless browser makes about the rendered
+block (`genpost.assert.mjs`).
+
+## The brief
+
+`genpost.brief.txt`, verbatim, one line:
+
+> Build a Civitai App Block that generates an image from a prompt and then posts
+> it to Civitai: a text input with data-testid="prompt", a button labelled
+> Generate, a button labelled Post that starts disabled and only becomes enabled
+> once a generation has succeeded, and an element with data-testid="status"
+> holding exactly ready before anything is clicked and exactly generating while a
+> generation is in flight.
+
+It reaches the model as the second paragraph of the task, after the hosted
+`prompt.md` URL and with no framing sentence added by the harness:
+
+```bash
+python3 runner.py --model "$MODEL" --image "$IMAGE" --trial "$TRIAL" \
+  --brief "$(cat briefs/genpost.brief.txt)"
+```
+
+## 🔴 What this assertion can and cannot see
+
+**On the default and unconsented arms it cannot see a generation or a post happen.
+Not on any machine, not with a credential.** The oracle emulates a host by seeding
+`window.__CIVITAI_BLOCK_CONTEXT__`, which the SDK's transport detector answers
+with `InlineTransport` — a v1 stub whose `sendRequest` REJECTS and which never
+delivers a host push. An assertion that waited for a rendered image or a post id
+would time out against a perfect app, every time, and the cell would read as a
+statement about the model. **The exceptions are enumerated, not counted:**
+`INVARIANT_EXCEPTIONS` in `scripts/dogfood/briefs/_cdp.mjs` is the ledger, and the
+opt-in **post arm** is the class that does complete both (see **The POST-PATH arm**
+below). No doc in this tree states a count — the one that did went stale the day the
+second class landed.
+
+⚠ **THE PICK IS ANSWERED ON EVERY ARM, AND IT IS NOT A SPENDING ONE.** Since
+2026-09-25 the oracle answers a **host resource pick** —
+`OPEN_RESOURCE_PICKER` and `OPEN_CHECKPOINT_PICKER` — with the stubbed resource
+the SDK's own mock host resolves with, because an app that gates Generate behind
+`openPicker` could otherwise never reach `generating` (measured on
+`ab-ship-mimo-02`; see **The host answers a resource pick** below). Off the post arm
+every OTHER request type still rejects with the SDK's own
+`InlineTransport.sendRequest is not implemented in v1`, and the cell carries
+`hostRefused=` naming the ones that did, so the sentence above is checked per
+cell rather than asserted here. A pick is a host **discovery** call: it hands the
+block an id the author could have hardcoded, and the platform re-validates every
+id server-side at estimate/submit regardless.
+
+What is deterministic on the near side of that request is the block's **own
+state machine**: the prompt input, the `ready` resting state, the Post gate being
+CLOSED before anything has been generated, and the Generate click driving the
+machine into `generating`. That is what this grades.
+
+⚠ **The verdict is scoped to what follows the Generate click.** The assertion may
+now click a host affordance before Generate (see below), with the status recorder
+already live, so `pass` is `seq.slice(<index at the click>).includes('generating')`
+rather than `seq.includes('generating')` — otherwise an app whose *picker* button
+drove the machine would grade green. `observed` is still the whole sequence.
+
+## 🔴 It grades the SIGNED-IN branch, and that is a decision, not an oversight
+
+The oracle presents a signed-in viewer: `BLOCK_INIT.viewer` is the object
+civitai.com's own `withSignedInFlag()` builds — `{ id, username, signedIn: true }`,
+and deliberately **no `status`** (the platform withholds the viewer's moderation
+state from third-party iframes, civitai #2521). `context.viewerUserId` /
+`viewerUsername` track it, because on the page slot the host sends the identity
+through both channels.
+
+It used to present `viewer: null`, and that made this brief **ungradeable for
+the apps most likely to pass it**. Measured on `ab-genpost-mimo-01`
+(2026-09-21): a reasonable generate-then-post app rendered
+`<div data-testid="status">ready</div><p>Please sign in to generate images.</p>`
+and scored `RENDER=no`, `observed=ready`, `reason: timed out … waiting for
+[data-testid="prompt"]`. Nothing about that verdict was about the model.
+
+Three reasons the signed-in branch is the right one to grade, in order of weight:
+
+1. **The platform refuses this brief's behaviour to an anonymous viewer.** A
+   block token minted for an anonymous viewer carries `sub: "anon"`, and
+   civitai's block-scope middleware hard-rejects `posts:write:self` for that
+   subject and requires a positive `buzzBudget` claim for `ai:write:budgeted`.
+   So an anonymous-only oracle grades a branch in which the thing the brief asks
+   for cannot exist — the capability confound arriving through the instrument.
+2. **The `page-money` scaffold every cell derives from ships an explicit
+   signed-out branch**: `const anon = ready && !viewer`, and where the signed-in
+   tree renders the Generate button (`data-testid="pm-generate"`) the anonymous
+   one renders `Sign in to generate` (`data-testid="pm-signin"`) instead. ⚠ Be
+   precise about the blast radius — the prompt field and the rest of the form
+   still render for an anonymous viewer, which is why `celsius.md`'s scaffold
+   measurement shows "the full generation form". What an anonymous viewer does
+   NOT get is a control labelled `generate`, which is step 4 of this assertion.
+   So a scaffold-derived app that keeps the template's branch cannot reach a
+   `yes` for any reason that is about the model.
+3. **Every other host emulation in the ecosystem defaults to signed-in and makes
+   anonymous the opt-IN**: the SDK's `createMockHost`
+   (`DEFAULT_VIEWER = { id: 2, username: 'dev-viewer', signedIn: true }`),
+   `createLiveHost` (whose anonymous viewer is a *fallback*), and this repo's own
+   page-money harness, where `?viewer=anon` is the knob you add.
+
+⚠ **It buys the block nothing.** The seeded token stays `raw: ''`, and on the
+platform every privileged path re-derives identity from the JWT `sub` rather than
+from anything the block was handed — so a populated `viewer` cannot make a
+generation or a post appear to succeed. `InlineTransport.sendRequest` rejects
+everything outside the running arm's answered set regardless — off the post arm, every
+request but a resource pick (see **The host answers a resource pick** below) — and the
+viewer widens that set by nothing. `TestOracleSeedsTheProductionViewerAndNoCredential`
+asserts the seeded object from inside the page rather than by reading the source.
+The scope list is *not* empty — see **Scopes are seeded, and decide no verdict**
+below — and that changes which branch a block takes, never what it can complete.
+
+**The control arm is `CIVITAI_ASSERT_ANON_VIEWER=1`**, which is also how to grade
+a block's signed-out branch on purpose. Measured both ways on
+`ab-genpost-mimo-01`, 2026-09-21:
+
+| viewer | `RENDER` | `observed` |
+|---|---|---|
+| signed-in (the default) | **yes** | `ready>generating>ready` |
+| `CIVITAI_ASSERT_ANON_VIEWER=1` | no | `ready` (body: *"Please sign in to generate images."*) |
+
+⚠ **That `observed` string lengthened when the scope seed landed** — it read
+`ready>generating` while the oracle seeded an empty scope list. With `mimo`'s
+declared scopes presented, consent is already granted, so the app reaches the
+submit, the stub transport rejects it, and the machine settles back on `ready`.
+The verdict is `generating` appearing in the sequence after the Generate click, so
+it is unaffected. Re-measured 2026-09-21 on `ab-genpost-mimo-01`, and again
+2026-09-25 with the picker fix: still `ready>generating>ready`.
+
+⚠ The brief says nothing about anonymity, so a `no` under the control arm is not
+a finding about the model — it is the branch the harness selected. The cell
+carries `viewer=` for exactly that reason.
+
+**Read a green cell as exactly:** *the model wired a generate-then-post flow
+whose controls and status machine behave as the brief specified.* Not *"a
+generation ran"*. Not *"a post was created"*. Those need a credentialed live run
+(`civitai app dev-token` → `npm run dev:live`, or a real submitted app), which is
+a different instrument and spends real Buzz.
+
+## The assertion
+
+`PASS` iff every step succeeds:
+
+1. Load the block's entry document and wait for `[data-testid="prompt"]` to
+   exist (up to `CIVITAI_ASSERT_WAIT_MS`, default 15 s).
+2. Wait for `[data-testid="status"]` to hold text; its trimmed value must be
+   exactly `ready`.
+3. Find the clickable whose visible label, trimmed and lowercased, is `post`. It
+   must **exist** and must be **disabled** (`.disabled === true` or
+   `aria-disabled="true"`). Missing and enabled are different findings and the
+   `reason` says which.
+4. Find the clickable labelled `generate`. It must exist.
+5. Install a `MutationObserver` recording every value `[data-testid="status"]`
+   holds, then **type** the prompt with real key/input events and click Generate.
+6. Wait for the recorded sequence to contain a value other than `ready`.
+   `PASS` iff `generating` is in that sequence.
+
+🔴 **Step 5 records rather than polls, on purpose.** The stub host rejects the
+request, so a correct app can pass *through* `generating` and out the other side
+faster than any poll interval — and a missed transition would grade a correct app
+as one whose button does nothing. The observer catches an in-place text mutation
+*and* a wholesale re-render that replaces the element, which React does depending
+on how the tree is keyed.
+
+🔴 **`observed` is the whole SEQUENCE, not the final value** (`ready>generating`,
+`ready>generating>failed`). Reporting where it *ended* would make every correct
+app look broken, because with a stub host every correct app ends in failure. The
+sequence shows the transition that matters. Any oracle built on this brief must
+carry that field through to the cell — `oracle.sh` does.
+
+**Why the Post gate is the load-bearing step.** The `page-money` scaffold
+already ships a prompt field and a Generate button wired to a real
+`submitWorkflow`, so an assertion keyed on generation alone is satisfied by an
+untouched scaffold and measures nothing. Posting is the half **no template
+ships**: no `posts:write:self` in any scaffold manifest, no Post control, no
+gate. Keying the verdict on the Post button existing *and* being disabled is what
+makes a page-money-derived cell separable from a page-money scaffold.
+
+**Why the brief names the test ids.** Same trade as `celsius`: realism for
+determinism. Without prescribed hooks the predicate would have to guess at
+markup, and an ambiguous verdict is worse here than a narrow one.
+
+## Controls — measured, not reasoned
+
+Run against the committed `genpost.assert.mjs` on Chromium 153.0.8010.47 /
+node 24.20.0, 2026-09-21, CLI `v0.1.106-8-g39c2785`. Re-run them rather than
+trusting the table: a control nobody has watched is a claim about itself.
+
+| fixture | expected | `pass` | evidence |
+|---|---|---|---|
+| `pos` — prompt + Generate + disabled Post + `ready`→`generating` | **yes** | `true` | `observed: "ready>generating"`, `postDisabled: true` |
+| `neg-nopost` — same app, Post button removed | **no** | `false` | `reason: no clickable element labelled "post" — nothing posts`, `buttonLabels: ["Generate"]` |
+| `neg-postenabled` — Post present but enabled at rest | **no** | `false` | `reason: the "post" control is enabled before any generation has succeeded`, `postDisabled: false` |
+| `neg-inertbutton` — everything present, Generate does nothing | **no** | `false` | `reason: timed out … waiting for the status to move after clicking generate`, `observed: "ready"` |
+| 🔴 **`civitai app init` scaffold, untouched** | **no** | `false` | all three templates, below |
+
+🔴 **`neg-nopost` is the control that matters most**, and it is not the scaffold
+control. It is a complete, working generate-only app with the exact test ids the
+brief names — the thing a model that read only the first half of the brief would
+build — and it fails. Without it, a green cell would be evidence about the test
+ids and nothing about posting.
+
+⚠ `neg-nopost` is a hand-written fixture, not a patched `page-money` build. A
+patched-scaffold version was not attempted: the template's output is a React
+bundle, so adding the test ids means editing source and rebuilding, which
+measures a hand-edit rather than the brief.
+
+### The scaffold control — all three templates fail
+
+🔴 **This is what decides whether the arc measures anything**, and it is the
+question `celsius.md` answers for its own brief. Measured by `civitai app init`
+with no edits, `npm install && npm run build` for the two page templates:
+
+| template | `pass` | reason | body at the moment of failure |
+|---|---|---|---|
+| `static` (the `app init` default) | `false` | timed out waiting for `[data-testid="prompt"]` | `<main id="app"><h1>Sc Static</h1><p>This is a Civitai App (static template)…</p><button id="ping">Click me</button></main>` |
+| `page-vite` (built) | `false` | same | `<div id="root"><main class="app">…<button>count is 0</button><button>reset</button></main></div>` — React had **mounted**, so this is a real absence and not a load failure |
+| `page-money` (built) | `false` | same | the **full generation form** rendered — `Sc Money / Text to image / Prompt* / Describe what you want to generate…` — so the host handshake worked and the block was alive; it simply has no `data-testid="prompt"`, no `data-testid="status"` and no Post control |
+
+⚠ The `page-money` row is the informative one. Its scaffold uses `pm-`-prefixed
+test ids (`pm-generate`, `pm-model-label`, …) and ships **no** Post control and
+`"scopes": ["ai:write:budgeted"]` — generation only. So the scaffold fails at
+step 1 (the test id), and `neg-nopost` is what proves step 3 would have caught it
+even if the ids had matched.
+
+⚠ **`civitai app validate` passes on all three untouched scaffolds.** That is
+the whole reason the frozen closing condition refuses it as the verdict; it stays
+the cheap offline fail-fast gate, reported as `validate_gate=`.
+
+### Scopes are seeded, and decide no verdict
+
+`oracle.sh` reads `scopes` out of the trial's `block.manifest.json` with one
+`jq`, puts them on the cell as `scopes=`, and hands the same list to the
+assertion, which seeds it as the bootstrap's `token.scopes`. **It decides no
+verdict** — same standing as `validate_gate=`. A manifest is a declaration, not a
+behaviour: a block can declare `posts:write:self` and post nothing, and the
+platform grants scopes at review, not at manifest time.
+`TestOracleReportsScopesWithoutDeciding` pins both directions — a manifest
+declaring nothing can still grade `yes`, one declaring both can still grade `no`.
+
+🔴 **But it is not inert, and an empty list was never the neutral choice.** The
+oracle seeded `scopes: []` unconditionally until 2026-09-21, and the cost was
+measured on `ab-genpost-dsv4-01`: a correct generate-then-post app whose Generate
+handler reads `hasBudgetedScope(token.scopes)` and, when that is false, asks the
+host for consent *instead of* generating — the consent-first shape the SDK's own
+`useRequestConsent` exists for — never reached `setStatus('generating')`. The
+assertion timed out and the cell read `RENDER=no observed=ready`, which is
+byte-identical to the verdict a model that built nothing earns. An empty list
+does not grade a neutral branch; it grades the **refused** one, rewarding an app
+that flips a status optimistically and penalising one that checks consent first.
+
+One knob (`token.scopes`), four arms, same oracle build, same containers,
+2026-09-21:
+
+| arm | scopes | `RENDER` | `observed` |
+|---|---|---|---|
+| `dsv4` (deepseek) | empty | no | `ready` |
+| `dsv4` | `ai:write:budgeted,posts:write:self` | **yes** | `ready>generating>ready` |
+| `glm` — unmodified `page-money` scaffold (negative control) | `ai:write:budgeted` (its own manifest's) | **no** | `''` |
+| `mimo` (positive control) | seeded | yes | `ready>generating>ready` |
+
+🔴 **The third row is the one that decides shippability**: seeding scopes is not
+permissiveness. `TestOracleSeedsTheBlocksDeclaredScopes` carries all of it — the
+consent-gated app graded `yes`, the *same* app under a manifest declaring nothing
+graded `no` (so the value provably comes from the manifest and not from a list
+baked into the harness), and a generate-only app plus an untouched scaffold still
+graded `no` with both scopes seeded.
+
+🔴 **`raw` stays empty, and that is the load-bearing half.** Scopes buy the block
+a *branch*, never a *capability*: `InlineTransport.sendRequest` rejects everything
+outside the running arm's answered set — off the post arm, everything but a resource
+pick (see the next section) — whatever the scope list says, so the scope seed leaves
+this brief's "no generation and no post can complete here" premise untouched. (The
+one thing that does suspend that premise is the opt-in post arm, below;
+`INVARIANT_EXCEPTIONS` in `_cdp.mjs` is the ledger of both classes.)
+`TestOracleSeedsTheProductionViewerAndNoCredential` asserts both halves from
+inside the page — the scopes match the manifest, and `token.raw` is `''` — and
+`oracle.sh` refuses (exit 2) if its own `scopes=` field and the list the
+assertion reports having seeded ever disagree.
+
+## The host answers a resource pick, and decides no verdict
+
+🔴 **Third instance of one class.** `#686` seeded no signed-in viewer, so
+auth-gated apps rendered a branch production never exhibits. `#690` seeded
+`token.scopes: []`, so consent-gated apps could never reach `generating`. This is
+the same shape: an app that asks the **host** to open its resource picker and
+gates Generate on the pick could never reach `generating` either, because
+`InlineTransport.sendRequest` rejected the request and no `model` ever came back.
+
+Measured on `ab-ship-mimo-02` (2026-09-25). `src/App.jsx` line 36 calls
+`await openPicker({ resourceType: 'Checkpoint' })` and line 154 reads
+`disabled={isGenerating || !prompt.trim() || !model}`. The cell read
+**`RENDER=no observed=ready generateDisabled=true`** — and the app is a
+*reasonable* one, arguably better than the hardcoded checkpoint the passing cells
+shipped. The brief never forbade a picker.
+
+Two halves make it gradeable, and both are needed:
+
+1. **The oracle answers the pick.** `patchInlineTransport` in `_cdp.mjs` rewrites
+   the SDK's one v1 stub expression — found by the SDK's own error string — to
+   consult a page shim, which resolves `OPEN_RESOURCE_PICKER` /
+   `OPEN_CHECKPOINT_PICKER` with the SDK's `DEFAULT_CHECKPOINT_PICK` /
+   `DEFAULT_LORA_PICK` (the objects `createMockHost` resolves with, field for
+   field) and **rejects everything else with the SDK's own error**.
+2. **The assertion clicks the affordance.** With the prompt typed, a still-disabled
+   Generate makes it click up to four other ENABLED controls — never Generate,
+   never Post — until Generate opens, recording what it clicked in `prereqClicks`.
+
+| arm | `RENDER` | `observed` | evidence |
+|---|---|---|---|
+| `ab-ship-mimo-02`, picker answered | **yes** | `ready>generating>ready` | `prereqClicks: ["Select Model"]`, `hostAnswered: OPEN_RESOURCE_PICKER:Checkpoint`, `hostRefused: ESTIMATE_WORKFLOW` |
+| `ab-ship-mimo-02` at `origin/main` (before) | no | `ready` | `generateDisabled: true` |
+| `CIVITAI_ASSERT_NO_HOST_PICKS=1` (control) | no | `ready` | `reason: the "generate" control is still disabled with the prompt typed` |
+| `ab-genpost-glm-01` — unmodified `page-money` scaffold (negative control) | **no** | `''` | unchanged: it never renders `[data-testid="prompt"]` at all |
+
+🔴 **`hostRefused` is the invariant, measured per cell.** `ab-ship-mimo-02`'s own
+generation attempt appears there — the app reached `generating`, asked the host to
+estimate a workflow, and was refused. A pick buys a **branch**, never a
+capability. ⚠ Stated precisely: the SDK's stub no longer rejects *unconditionally*
+in a patched page; it rejects everything except the two picker types. What the PICK
+leaves unchanged is the property that matters — nothing a pick answers can complete a
+generation, a post or a purchase, so off the post arm nothing here can — and it is
+held by
+`TestOracleRefusesEveryRequestThatIsNotAPick` plus
+`TestOracleInlineHostAnswersOnlyThePickerLedger`, which walks the SDK's whole
+47-entry `BLOCK_TO_PARENT_MESSAGE_TYPES` and fails if the answered set grows *or*
+shrinks.
+
+**The control arm is `CIVITAI_ASSERT_NO_HOST_PICKS=1`**, which is also how to
+grade a block's dismissed-picker branch on purpose. It grades `no`, not
+`unmeasured`: there the operator deliberately turned the picker off and the cell
+says so (`pickerShim: unanswered:…`).
+
+### 🔴 A pick that could not be answered is `unmeasured`, never `no`
+
+`sites=0` is a **silent instrument failure**, and the harmless reading of it is
+not the one that matters. If the needle stops matching a bundle — a minifier
+reshapes the reject expression, the SDK rewords its stub — then a pick is never
+answered, Generate stays shut, the status never leaves `ready`, and the cell reads
+`RENDER=no`: byte-identical to the verdict `ab-ship-mimo-02` earned above, and
+attributed to the model. The bug comes back silently, through somebody else's
+build tool.
+
+It is not hypothetical: the needle **was** wrong on the second real bundle anyone
+looked at (blocks-react 0.53.1 emits ``Error(`…`)`` with no `new`) and patched 0
+sites while that cell stayed green — only because that app never opens a picker.
+
+So the assertion has a **third state**. When a served response carries the stub's
+*message* (a string literal a minifier must preserve) in a spelling no needle
+matched — `pickerShim: …,unmatched=N` — **and** the Generate gate did not open
+with the prompt typed, it exits **2**, which `oracle.sh` renders as
+`RENDER=unmeasured` with no verdict line at all. That is the state this harness
+already keeps for exactly this confound.
+
+⚠ **Deliberately NOT "`sites === 0`"**, which is the common, harmless case — a
+block that does not bundle the SDK's inline transport at all — and which must keep
+its ordinary verdict. And it degrades exactly one outcome: a blind run that still
+reaches `generating`, or that fails for a reason an unanswered pick cannot produce
+(no Post control, the wrong resting word, no prompt element), is still a verdict.
+`TestABlindPickerInstrumentReportsUnmeasuredNotNo` carries both arms — the refusal
+*and* the non-refusal.
+
+## 🔴 The UNCONSENTED arm — the state every new user is in
+
+`CIVITAI_ASSERT_UNCONSENTED=1` seeds `token.scopes` **empty** and replaces the
+predicate: instead of *"did the Generate click drive the machine to
+`generating`"*, the question is *"did the block **ask the host for consent**"*.
+Both arms are real verdicts about the same trial, and the cell's `arm=` field is
+what says which one you are reading.
+
+### Why it exists: this oracle graded a LIVE, BROKEN app `RENDER=yes`
+
+`ab-ship-mimo-02` was graded `yes` above, submitted, approved, and deployed to
+`https://ab-img-poster.civit.ai/`. It then **failed for a real user** on the first
+click: Generate produced `Generation failed. Please try again.`, and the operator
+had to find "review permissions" by hand. Measured in `dogfood-ab-ship-mimo-02` at
+`/work/ab-img-poster/src/App.jsx`:
+
+- `handleGenerate` calls `estimate` then `submit` and **never requests consent**;
+- its catch branches on `err?.signInRequired` and `err?.declined` only, so a
+  consent-required / missing-scope refusal falls through to the generic
+  `setError('Generation failed. Please try again.')`;
+- `requestConsent` appears once in the file, inside `handlePost`, for
+  `posts:write:self` — unreachable until a generation has succeeded.
+
+**Three things compounded to make the oracle blind to it:**
+
+1. On both arms that existed then — the default and the unconsented one —
+   `InlineTransport` **rejected** every request, so *"generation fails for
+   everyone"* and *"generation works"* produced the identical trace
+   `ready>generating>ready`.
+   The default predicate grades the status word, and both apps produce it. (Past
+   tense: at HEAD a resource pick is answered on every arm and the post arm answers
+   four more types, so "rejects every request" is no longer true of any arm — but no
+   generation completes on either of those two, so the blindness is unchanged.)
+2. `#690` seeds `token.scopes` and `#708` answers resource picks. Both fixed real
+   false negatives — and **together they mean an app that never asks for consent
+   is indistinguishable from one that asks correctly**, because the harness has
+   already granted what the ask was for.
+3. **Every new user starts unconsented.** That is the DEFAULT state, and the
+   oracle exclusively graded the already-consented path.
+
+This is the **fourth instance of one class with the sign flipped**: `#686`, `#690`
+and `#708` were false NEGATIVES (the harness presented *less* than a host does);
+this is a false POSITIVE, and the fix is the mirror image — present the state a
+host presents *first*, before anything is granted.
+
+### What a consent ask looks like from inside the page, and why nothing answers it
+
+Read off the SDK rather than assumed. `useRequestConsent`
+(blocks-react `src/hooks/useRequestConsent.ts`) does exactly two things:
+
+```
+armConsentRefusalLatch(transport);
+transport.sendMessage({ type: 'REQUEST_CONSENT', ...(payload ? { payload } : {}) });
+```
+
+🔴 **It is a `sendMessage`, not a `sendRequest` — which is why `#708`'s shim could
+never have seen it.** And `InlineTransport.sendMessage` is an *intentional no-op*
+in v1 (an empty body with a `// v2 will invoke platform APIs directly` comment in
+it), so a consent ask has historically produced **nothing at all**: no request, no
+rejection, no DOM change, no console line.
+
+So the oracle **watches** that method and answers nothing. That is not a
+compromise — it is what the host does. The SDK is explicit: *"Fire-and-forget: the
+host doesn't reply. On grant the host re-mints the block token and pushes a
+TOKEN_REFRESH"* — and `InlineTransport.onMessage` returns a no-op unsubscribe, so
+inline mode receives **no pushes at all** and a `TOKEN_REFRESH` could not be
+delivered even if this oracle invented one. **Granting is unreachable here, and
+observing is both necessary and sufficient**: the question is whether the app
+asked, and the answer it would have got changes nothing it can complete.
+
+Mechanically: `patchInlineTransport` gained a second needle that **inserts** a
+recorder call at the start of a `sendMessage` whose body is whitespace-and-`//`-
+comments and whose class carries the stub message within 400 characters. It
+refuses a non-empty body, so a future v2 implementation is reported
+(`messageShim: …,unmatched=N`) rather than silently instrumented. Measured
+2026-09-25 across **7 real spellings** — five trial bundles (blocks-react 0.53.1
+and 0.57.x, two minifiers), the published `dist`, and the TypeScript source — 1
+hit each; and 0 on a real-bodied `sendMessage`, on a class with no stub nearby, on
+one 500 characters away, and on a v2-style implementation.
+
+### 🔴 It removes capability and adds none
+
+`[]` is the list `_cdp.mjs` seeded *unconditionally* before `#690`, `token.raw` is
+still `''`, the viewer is still **signed in** (unconsented is not anonymous — the
+SDK's consent path is for a logged-in viewer whose token lacks a scope), and the
+arm answers no new request type. So the invariant `#690` and `#708` were careful
+about is not merely preserved, it is **strictly stronger**: this arm cannot make
+anything succeed that the default arm could not.
+`TestTheUnconsentedArmGrantsTheBlockNothing` asserts the bootstrap from inside the
+page against literals; `TestAConsentAskBuysNoSpendOnTheUnconsentedArm` shows a
+`SUBMIT_WORKFLOW` still refused with the SDK's own error *after* an ask; and
+`TestTheMessageLedgerAnswersNothingAtAll` walks the SDK's whole 47-entry
+`BLOCK_TO_PARENT_MESSAGE_TYPES` and fails if the message path ever returns a value,
+throws, or stops recording.
+
+### The seven-fixture re-grade — measured 2026-09-25
+
+Every fixture, run three times: `origin/main`, this change's default arm, and the
+unconsented arm. **No default verdict moved** — every `RENDER` and every `observed`
+string is byte-identical between the first two columns.
+
+| fixture | model | base (default) | new (default) | new (**unconsented**) | evidence on the unconsented arm |
+|---|---|---|---|---|---|
+| `ab-curve-01` | glm | yes | yes | **n/a** | `celsius` brief — no SDK in the bundle, so the arm has no consent predicate to apply. Its transcript was destroyed by a worktree cleanup, so it grades only with the brief passed by hand (`brief_source=argument-unverified`). |
+| `ab-genpost-glm-01` | glm (unmodified scaffold) | no | no | **no** (same reason) | Never built: `outputDir 'dist'` absent, the source tree served, `timed out … waiting for [data-testid="prompt"]`. `messageShim: sites=0` — **not** a consent verdict. Negative control holds on both arms. |
+| `ab-genpost-mimo-01` | mimo-v2.5 | yes | yes | **yes** | `hostMessages: RESIZE_IFRAME,REQUEST_CONSENT` · `hostRefused: REQUEST_TOKEN` (no workflow request attempted) |
+| `ab-genpost-dsv4-01` | deepseek-v4 | yes | yes | **yes** | `hostMessages: RESIZE_IFRAME,REQUEST_CONSENT:ai:write:budgeted` · `hostRefused: REQUEST_TOKEN` |
+| `ab-genpost-dsv4-02` | deepseek-v4 | yes | yes | **no** | `consentRequested: false` · `hostRefused: ESTIMATE_WORKFLOW,SUBMIT_WORKFLOW` — it spent without asking |
+| `ab-ship-mimo-01` | mimo-v2.5 | yes | yes | **no** | `consentRequested: false` · `hostRefused: ESTIMATE_WORKFLOW` |
+| `ab-ship-mimo-02` | mimo-v2.5 | yes | yes | **no** ← the live defect | `consentRequested: false` · `hostAnswered: OPEN_RESOURCE_PICKER:Checkpoint` · `hostRefused: ESTIMATE_WORKFLOW` |
+
+🔴 **IT IS NOT A PER-VENDOR STORY, and the expectation that it would be was
+refuted.** The prior reading was "mimo's apps fail and deepseek's passes". Both
+halves are wrong: **mimo's `ab-genpost-mimo-01` passes** and **deepseek's
+`ab-genpost-dsv4-02` fails**. The split is 2 of 3 mimo apps failing and 1 of 2
+deepseek apps failing — the discriminator is the app, not who wrote it.
+
+⚠ **Three lesser findings the ledger makes visible, none of them verdicts:**
+
+- `ab-genpost-mimo-01` asks with **no scopes hint** (`REQUEST_CONSENT` with no
+  `:hint`). Per the SDK that still opens the dialog, but
+  `resolveUngrantableConsentNotice` returns "no notice" unless the hint holds at
+  least one non-empty string — so that app can never receive a
+  `CONSENT_UNAVAILABLE` and would show silence on an un-grantable surface. The
+  ledger records the hint for exactly this reason.
+- `ab-ship-mimo-02` calls `await requestConsent('posts:write:self')` — a string
+  where the SDK takes `{ scopes: [...] }`, and `await` on a function that returns
+  `void`. Not reachable on this arm (it is inside `handlePost`), so it is reported
+  here and graded nowhere.
+- The three failing apps all fired a **workflow request** with no consent behind
+  it. `hostRefused` is the per-cell evidence that the money path still refused.
+
+### 🔴 An ask that could not be OBSERVED is `unmeasured`, never `no`
+
+The same hazard as the picker's, one axis over. If the `sendMessage` needle stops
+matching, a consent ask is never recorded, and the unconsented arm reads `no` —
+byte-identical to the verdict the defect earns, attributed to the model. So an
+unconsented run that saw no ask on a bundle carrying the stub message in a
+spelling no needle matched (`messageShim: …,unmatched=N`) exits **2**, which
+`oracle.sh` renders as `RENDER=unmeasured` with no verdict line.
+
+⚠ **Deliberately not "`messageSites === 0`"** — a block that bundles no SDK at all
+is the common, harmless case and must keep its ordinary verdict.
+`TestABlindMessageInstrumentReportsUnmeasuredNotNo` carries **three** rows: the
+refusal, an app on the same unwatchable bundle failing for a reason an unobserved
+message cannot produce, and a no-SDK block that never asks. The third row exists
+because a mutation widening the predicate to `messageSites === 0` **SURVIVED a
+fully green sweep without it** (M5, 2026-09-25): no other fixture separates the
+two predicates.
+
+### The brief text was deliberately NOT reworded
+
+The requirement arguably belongs in `genpost.brief.txt`. It is not there, and the
+reason is mechanical: **rewording either brief file makes every already-run
+fixture ungradeable.** Measured 2026-09-25 by running the real `oracle.sh` over a
+copy of this directory with both brief files reworded:
+
+| fixture | `brief_source` | what rewording does |
+|---|---|---|
+| `ab-genpost-glm-01` | `transcript-text` | `the brief recorded in … matches none of …/briefs/*.brief.txt` → exit 2 |
+| `ab-genpost-mimo-01` | `transcript-text` | same → exit 2 |
+| `ab-genpost-dsv4-01` | `transcript-name` | `is self-inconsistent: it records brief_name='genpost' but its brief TEXT is not the contents of …` → exit 2 |
+| `ab-genpost-dsv4-02` | `transcript-name` | same → exit 2 |
+| `ab-ship-mimo-01` | `transcript-name` | same, for `ship` → exit 2 |
+| `ab-ship-mimo-02` | `transcript-name` | same, for `ship` → exit 2 |
+
+⚠ **Both resolution paths break, not just the text one.** A `brief_name` fixture
+is not safe: `oracle.sh`'s self-consistency check compares the transcript's
+recorded PROSE against the named file and refuses on a mismatch. So 6 of 6
+transcript-bearing fixtures die, and a re-grade — the deliverable — becomes
+impossible.
+
+The alternatives and why they were rejected: a **new brief name** (`genpost2`)
+would leave the existing fixtures ungraded against it, which adds nothing to a
+re-grade; **rewording plus re-running the trials** costs seven real OpenRouter
+trials to restate a requirement the assertion can carry on its own. So the
+requirement lives in the assertion, and the arm is labelled on every cell
+(`arm=`) so no reader mistakes it for the brief's own verdict.
+
+## 🔴 The POST-PATH arm — the half no other arm can reach
+
+`CIVITAI_ASSERT_POST_PATH=1` makes the in-page host shim **answer** four request
+types, so a canned generation completes and a canned post is created, and replaces
+the predicate again:
+
+> Does the Post gate **hold** for a workflow that reached `succeeded` carrying no
+> images, does a workflow that *did* produce an image **actually post**, and does the
+> block render a link to that post that can **actually reach it**?
+
+### Why it exists: the same live app shipped a SECOND user-found defect
+
+`ab-img-poster` was graded green here, deployed, and failed for real users twice:
+
+| version | what the user saw | the fix |
+|---|---|---|
+| `v0.1.1` | Generate → *"Generation failed. Please try again."* | ask for `ai:write:budgeted` instead of spending — the defect the UNCONSENTED arm above exists for |
+| `v0.1.2` | Post → *"Posting failed. Please try again."* | gate Post on `status === 'succeeded'` **and** a non-empty `imageUrls` |
+| `v0.1.2` (again) | the post link went nowhere | render the result's `url` as an **absolute** href — the defect **Phase 3** below exists for |
+
+The `v0.1.2` defect is one expression. `watch()` resolves on **any** terminal
+status (`TERMINAL_STATUSES` is succeeded/failed/canceled/expired) and `imageUrls`
+is **optional even on `succeeded`** — host-side output moderation can empty it — so
+
+```js
+const postable = Boolean(workflowResult);                    // v0.1.1: "it ended"
+const postable = Boolean(workflowResult &&                   // v0.1.2: "it produced something"
+  workflowResult.status === 'succeeded' &&
+  workflowResult.imageUrls?.length > 0);
+```
+
+`v0.1.1` opened Post for a generation that had produced nothing, and the only
+possible outcome was the host refusing with its closed code `no images to post`.
+
+**Neither existing arm can see it**, and not by oversight: both stop on the near
+side of a request. `InlineTransport.sendRequest` rejects every submit and every
+post, so no generation ever reaches a terminal snapshot, no Post gate is ever
+re-evaluated, and *"Post works"* and *"Post fails for every user"* leave the
+identical trace `ready>generating>ready`.
+
+### The real-artifact matrix — measured 2026-09-27
+
+Graded by running `briefs/genpost.assert.mjs` against each bundle copied out of its
+container, presenting the manifest's two scopes.
+
+| bundle | md5 | default arm | unconsented arm | **post arm** |
+|---|---|---|---|---|
+| `v0.1.1` (the defect), image `dogfood-fixture/ab-imgposter:v0.1.1-pre-post-fix` | `b8a1936e5939e39aa3e26f6e9e777113` | `yes` | `yes` | **`no`** |
+| `v0.1.2` (the fix), container `dogfood-ab-imgposter-fixed` | `c603fa854eba4d5206b73e04c14a1f3c` | `yes` | `yes` | **`yes`** |
+
+The two left-hand columns are the blindness, stated as a measurement: every arm
+that existed before this one grades the broken app and the fixed app identically.
+
+The `no` carries its own causal chain:
+
+```
+postGateAfterImagelessRun : false
+postArmQueued             : wf_dogfood_1:succeeded-no-images
+postArmPosts              : refused:image-less-workflow:wf_dogfood_1
+reason                    : the "post" control is OPEN after a workflow that reached
+                            "succeeded" with an EMPTY imageUrls list …
+```
+
+### What the arm answers, and what it still refuses
+
+| answered | why it has to be |
+|---|---|
+| `ESTIMATE_WORKFLOW` | a generate-then-post app prices before it queues; `estimate()` rejects a snapshot with no numeric `cost.total` |
+| `SUBMIT_WORKFLOW` | nothing to post until something is queued |
+| `POLL_WORKFLOW` | `watch()` is built on `poll()` — the SDK's own words: *"the single place that builds a `POLL_WORKFLOW` message, so `poll` and `watch` cannot drift"* |
+| `CREATE_POST_FROM_APP` | the request under test |
+
+Everything else still rejects with the SDK's own
+`InlineTransport.sendRequest is not implemented in v1` — `CANCEL_WORKFLOW`,
+`OPEN_BUZZ_PURCHASE`, `PUBLISH_GENERATION_OUTPUTS`, `REQUEST_TOKEN`, `SAVE_IMAGE`
+and the rest of the vocabulary. A top-up flow and a bare image publish are both
+reachable from a generate-then-post app and neither is needed to reach Post, so
+answering them would widen the arm past the thing it was built to see.
+
+### The canned shapes are `createMockHost`'s, with one deliberate divergence
+
+Every value comes from `@civitai/blocks-react/dist/internal/mockHost.js` (0.57.2)
+field for field — `DEFAULT_CREATE_POST_RESULT` (`postId: 4242`,
+`url: https://civitai.com/posts/4242`, `imageIds: [9101, 9102]`), the `cost` default
+of `8`, the `wf_estimate` sentinel, `spentAccountType` falling back to `yellow` —
+so an app that works in `dev:harness` behaves identically here.
+
+**The one divergence is the image, and it is the network invariant.** The mock
+host's default output is `https://placehold.co/512x512/…?text=MOCK…`; a block that
+renders it makes a real request from the page. This arm serves a `data:` URI
+carrying the same `MOCK` label, so even rendering a result reaches nothing.
+
+### The payload gate is the mock host's, PLUS the half it cannot implement
+
+`createMockHost` refuses a post whose `sources` is not a non-empty array, and says
+why: *"Mirror the real host's payload gate (`resolveCreatePostRequest`) … Without
+this a block bug (an empty selection, say) would WORK in the mock and be refused in
+production — the exact drift a mock exists to prevent."* That rule is mirrored
+exactly.
+
+It is also **not sufficient for this defect**: `v0.1.1` sent
+`sources: [{ kind: 'workflow', workflowId }]` — a perfectly non-empty array —
+naming a workflow that had produced no images. The real host refuses that when it
+*resolves* the workflow, which is a read the mock host has no ledger for. This shim
+does have that ledger (it minted the workflow), so it applies the same refusal with
+the same closed code, and records **which** rule fired on `postArmPosts`
+(`refused:no-sources` vs `refused:image-less-workflow:<id>`).
+
+### 🔴 Nothing spends, and nothing leaves the page
+
+Structurally, not by policy. Every reply is built by the shim **in the browser** —
+there is no host, no parent frame, no `fetch` and no socket on the answering path;
+`token.raw` is still `''`, so no privileged path on the platform would accept
+anything this block sent even if it could send it; and the canned image is a
+`data:` URI. The Buzz "spend" is a number in a JSON object that exists for ~200 ms
+inside a headless Chromium.
+
+### 🔴 Its ceiling, in the arm's own words
+
+A green here proves **the block's post branch exists and its payload satisfies the
+host's payload gate as the SDK's own mock host implements it.** It does **not**
+prove the real host accepts the payload: the platform re-resolves every source
+server-side (a workflow id against the app's own subqueue, image ids against the
+viewer's own rows), re-checks the `posts:write:self` grant, opens a viewer confirm,
+and moderates the outputs. None of that is visible here.
+
+It rides at **three layers**, because the sentence and the row are different surfaces
+and only the short form fits a row:
+
+- the **summary line and the grade row** carry `post_link=` as well, and it is there
+  for a reason the ceiling does not have: **two of its four values pass and they mean
+  different things**, so a green post-arm row without it cannot say whether the link
+  sub-check measured anything (`TestThePostArmGradesTheLinkTheBlockRendersFromTheResult`);
+- the **summary line and the grade row** carry `post_ceiling=mock-host-gate-only`,
+  appended by `oracle.sh` and carried through by `grade.sh` on this arm only — so a
+  reader of a matrix row cannot get this arm's verdict without it
+  (`TestThePostArmStatesItsCeilingOnEveryCell` reads the *summary line*,
+  `TestThePostArmsCeilingReachesTheGradeRow` reads `grade.sh`'s *row*, and
+  `TestANonPostSummaryLineIsByteIdentical` pins that no other arm's line moved);
+- the **assertion's JSON** carries the full sentence as `postArmCeiling`;
+- the **run stream** carries `oracle.sh`'s `⚠ POST-PATH ARM:` banner, naming both the
+  suspended invariant and the ceiling, and `grade.sh` re-prints the whole oracle output
+  so it is in a human's scrollback too.
+
+Because this is the arm whose green is easiest to over-read.
+
+### 🔴 It suspends the invariant every other verdict rests on
+
+**Scopes are seeded, and decide no verdict** above, and the module docblock of
+`scripts/dogfood/briefs/_cdp.mjs`, both state the invariant *for the default and
+unconsented arms*: no generation and no post can complete here, on any machine, with
+or without a credential. **With this flag set that sentence is false** — which is why
+both of those sites now carry the qualifier, and why the exception classes are
+enumerated by `INVARIANT_EXCEPTIONS` in `_cdp.mjs` rather than counted in prose. So:
+
+- The flag is **off by default** and named on the cell (`arm=post`).
+- With it unset, `inlineHostSource()` returns **byte-for-byte** the source it
+  returned before this arm existed (measured against the base commit; the two
+  interpolations are empty strings and the template collapses).
+- Both existing arms' verdicts on both real bundles were re-measured at the base
+  commit and at `HEAD` and are identical, field for field including `hostRefused`.
+- `stubOracleEnv` clears `CIVITAI_ASSERT_POST_PATH`, as it does every other arm
+  knob, so a stale export cannot regrade the Go suite.
+
+### The two phases, and why neither alone is the arm
+
+1. **`succeeded-no-images`.** The Post gate must stay **shut**. If it is open the arm
+   *clicks Post anyway* and records what the host did — the whole causal chain of the
+   reported defect, rather than a claim a reader has to trust.
+2. **`succeeded-with-images`.** The gate must **open**, the click must actually send
+   a `CREATE_POST_FROM_APP`, and the payload must satisfy the gate.
+
+Phase 1 alone is passed by an app with **no Post control at all** — the gate is
+trivially shut. Phase 2 alone is passed by `v0.1.1`, which posts perfectly well
+when there *is* an image and shipped broken anyway.
+
+⚠ **Phase 1 asserts an ABSENCE, and you cannot wait for one.** The sequence is:
+wait for the terminal snapshot to have been delivered (a positive fact on the
+shim's ledger), then wait up to 3 s for the Generate control to come back (the
+positive signal that the block has finished rendering it, where an app offers one),
+then settle 700 ms and read the gate. An app that opens Post *later* than that
+would pass phase 1 here; the settle is sized against the measured shape, not
+against an adversary.
+
+⚠ **An app that will not start a SECOND generation is `unmeasured`, not `no`.** The
+post half needs that run, and an app demanding a fresh prompt has not been shown to
+be wrong about anything.
+
+### 🔴 Phase 3: what the block RENDERS from the answer — a THIRD user-found defect
+
+Both phases above grade the **request leaving the block**. Nothing graded the
+**response coming back** — and `v0.1.2`, the version that *fixed* the gate and grades
+green on all three arms, then failed for a real user on exactly that:
+
+```jsx
+<a href={postResult.url}>View post</a>   // the host's value, verbatim
+```
+
+The real platform returns a **relative** `url`, and a block is served from its own
+`<slug>.civit.ai` subdomain — so the link resolved against the *block's* origin and
+could not reach the post.
+
+🔴 **The arm was blind to it BY CONSTRUCTION, and that is the reusable lesson: the
+harness's canned data was BETTER BEHAVED than production.**
+`createMockHost`'s `DEFAULT_CREATE_POST_RESULT` is
+`{ postId: 4242, url: 'https://civitai.com/posts/4242', imageIds: [9101, 9102] }` —
+an **absolute** url, which the shim mirrors field for field. So every cell had ever
+been handed a well-formed answer and no cell had ever seen a malformed one; a block
+rendering it verbatim produced an absolute link and passed.
+
+`postLink` on the cell is the sub-check, and it has **four outcomes that never
+collapse into one another**:
+
+| `post_link=` | what it means | verdict |
+|---|---|---|
+| `absolute` | a link whose href resolves **off** this block's own host, i.e. it reaches the post | pass |
+| `relative` | a link that resolves back onto the block's own host — **the defect** | **fail** |
+| `none` | the block rendered **no** link to the post. Nothing in this brief asks for one, so this is **not** a failure — it says the sub-check measured nothing | pass |
+| `unmeasured` | the arm never reached a successful post, so nothing was looked at. Distinct from `none`: that is a fact about the block, this is a fact about how far the run got | — |
+
+⚠ **It reads `getAttribute('href')`, never the `.href` property — and the reason is
+the EVIDENCE, not the classification.** The tempting claim is *"`.href` is already
+resolved, so a check reading it would call every link absolute"*; that is **false**
+here, and the mutation battery is what proved it: the classification is host-based, so
+`<a href="/posts/4242">` read through `.href` comes back as
+`http://<the block's own origin>/posts/4242` — whose host is still the block's — and
+is still graded `relative`. What `.href` destroys is `postLinkHref`: the cell would
+report the *harness's* `http://172.x.x.x:PORT/…` address instead of the `/posts/4242`
+the block's source actually wrote, so a reader could not see the defect. The mutant
+`M3-read-resolved-href` is killed by that href assertion, not by a verdict.
+
+⚠ **And it classifies by where the href RESOLVES, not by pattern-matching a scheme.**
+A protocol-relative `//civitai.com/posts/4242` carries no scheme and reaches the post
+perfectly well, so it is `absolute`; an app that ignores the host's `url` and builds
+its own `/posts/4242` from the post id is `relative` — and that one is graded red
+**on the ordinary arm, with no self-test flag involved.**
+
+#### 🔴 How the failing branch is reachable at all: `CIVITAI_ASSERT_POST_MALFORMED_URL=1`
+
+With the canned url absolute, **no fixture could produce the `relative` outcome for a
+block that renders the host's value verbatim** — so a guard for it would pass
+vacuously forever. That flag makes the shim serve the same canned post with the url
+the platform actually sends (`/posts/4242`, derived from the absolute one's pathname
+so the two cannot drift), which is what lets the guard be **watched to fail**:
+
+```bash
+# the SELF-TEST run: the canned post carries a RELATIVE url, so a block that renders
+# it verbatim is graded `relative` — this is how the guard is shown to fail
+CIVITAI_ASSERT_POST_PATH=1 CIVITAI_ASSERT_POST_MALFORMED_URL=1 \
+  bash oracle.sh <trial-id> <container-user>
+```
+
+- **The default is untouched.** With the flag unset, `inlineHostSource()` emits
+  byte-for-byte what it emitted before the flag existed — *on the post arm as well as
+  off it*. Every verdict this arc recorded rests on the absolute shape.
+- **It is not an arm and it is not for grading a matrix.** A run under it grades the
+  *instrument's own* link check, so its row carries
+  `post_ceiling=mock-host-gate-only:malformed-url-fixture` rather than the plain
+  token — the field that already exists to stop this arm's green being over-read is
+  where the self-test shape becomes visible.
+- **On its own it is refused** (exit 2, `RENDER=unmeasured`). Off the post arm the
+  shim serves no post at all, so the flag would change nothing while an operator
+  believed they had measured the malformed shape. `stubOracleEnv` and
+  `fixtures/consent-controls/grade-controls.sh` both clear it.
+- **The server-side url defect is a separate filing** against the platform. This flag
+  only makes the instrument able to *see* the rendering half.
+
+### 🔴 Two arms at once is refused, before a browser is started
+
+`ARM_CONFLICT` in `_cdp.mjs` makes the assertion exit 2 (`RENDER=unmeasured`) for
+`POST_PATH` + `UNCONSENTED` (the post arm drives a generation on a token the other
+arm has emptied — it would fail every *correct* app) and for `POST_PATH` +
+`NO_HOST_PICKS`/`NO_HOST` (those stop the shim being installed at all, so nothing
+would be answered while the cell still said `arm=post`) — and for
+`POST_MALFORMED_URL` without `POST_PATH`, or on a brief with no post arm, where the
+flag can do nothing at all. Every one of them is selected by an ambient environment
+variable, so every combination is one stale export away.
+
+## Run it
+
+```bash
+node briefs/genpost.assert.mjs <dir>              # serves the dir and grades it
+node briefs/genpost.assert.mjs http://host:port   # grades something already served
+node briefs/genpost.assert.mjs <dir> a:b,c:d      # …presenting the scopes a:b and c:d
+bash oracle.sh <trial-id> <container-user>        # brief DERIVED from the trial
+bash grade.sh  <trial-id> <container-user> genpost
+
+# the UNCONSENTED arm — token.scopes seeded EMPTY, verdict = "did the block ask"
+CIVITAI_ASSERT_UNCONSENTED=1 bash oracle.sh <trial-id> <container-user>
+
+# the POST-PATH arm — a canned generation COMPLETES and a canned post IS CREATED,
+# verdict = "does the Post gate hold with no images, and does a postable run post"
+CIVITAI_ASSERT_POST_PATH=1 bash oracle.sh <trial-id> <container-user>
+```
+
+⚠ **`CIVITAI_ASSERT_POST_PATH` suspends this file's own invariant, so it is the one
+arm whose flag you must check before quoting a cell.** With it set, the sentence
+*"no generation and no post can complete here"* is false. `oracle.sh` prints a
+`⚠ POST-PATH ARM:` banner, the cell says `arm=post`, and the assertion's JSON
+carries `postArmCeiling` spelling out what the green does and does not prove. It is
+refused outright alongside `CIVITAI_ASSERT_UNCONSENTED` or
+`CIVITAI_ASSERT_NO_HOST_PICKS` (exit 2, nothing measured).
+
+⚠ **`CIVITAI_ASSERT_UNCONSENTED` is ambient, so check `arm=` on the cell before
+reading a verdict.** A stale export turns a whole matrix into consent verdicts
+that otherwise look like ordinary render verdicts. `oracle.sh` prints a loud
+`⚠ UNCONSENTED ARM:` line and puts `arm=consented|unconsented` on its summary
+line; `grade.sh` carries it onto the cell. The Go suite clears the variable in
+`stubOracleEnv` for the same reason.
+
+⚠ **A hand-run assertion presents NO scopes unless you pass them.** Only
+`oracle.sh` knows the block's manifest; run by hand against a directory, the
+second argument is the only thing that can tell the assertion what the block
+declared, and without it a consent-gated app grades `no` for a reason that is
+about the invocation. Prefer `oracle.sh`, which derives it.
+
+🔴 **`oracle.sh` derives the brief from the trial's own transcript** and refuses
+(exit 2) when a name you pass disagrees with it — the `genpost` argument above
+is a cross-check, not an input. If the trial was driven from another checkout,
+point `DOGFOOD_RUNS` at its `runs/` directory or the oracle has nothing to
+derive from and will say so rather than guess.
+
+Exit `0` = pass, `1` = the assertion failed, `2` = the harness could not run
+(no browser, bad usage) — only the middle one is a statement about the block.
+Set `CIVITAI_CHROME` to a browser binary if none is on `PATH`.

@@ -30,10 +30,27 @@
 // reads it, so it MUST be registered BEFORE the transport's listener — hence
 // `installMockMoneyHost` registers it first, then re-creates the transport.
 
-import { createMockHost, mockParentMessage, type MockHostOptions } from '@civitai/blocks-react/testing';
+import { createMockHost, type MockHostOptions } from '@civitai/blocks-react/testing';
 import type { BuzzBalance } from '@civitai/blocks-react';
 
 import { resetHarnessTransport } from './dev-transport.js';
+
+/**
+ * Build an inbound host message event.
+ *
+ * Inlined deliberately. `@civitai/blocks-react/testing` used to export this as
+ * `mockParentMessage`; 0.55.0 dropped it along with 23 other undocumented
+ * internals, and there is no replacement import path — the upstream changelog's
+ * own guidance for this removal is "it was always a two-line `MessageEvent`
+ * constructor; inline it".
+ *
+ * `origin` is load-bearing: the SDK transport DROPS any inbound message whose
+ * origin is not in its allowlist, so callers pass `window.location.origin` (the
+ * origin `resetHarnessTransport` allows).
+ */
+function mockParentMessage(data: unknown, origin: string): MessageEvent {
+  return new MessageEvent('message', { data, origin, source: null });
+}
 
 /** The server's domain-clamp rejection text (mirrors generation.ts). */
 export const DISALLOWED_ACCOUNT_ERROR =

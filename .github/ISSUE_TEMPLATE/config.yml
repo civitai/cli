@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
+  - name: 🔑 Request Apps access
+    url: https://civitai.com/apps/build?request-access=1
+    about: Access requests are made and reviewed on Civitai itself. Sign in, then use "Request access". Please don't open an issue for it here.
   - name: 📖 Build your first app (walkthrough)
     url: https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md
     about: The end-to-end guide to scaffolding, validating, and running an app locally.

@@ -60,6 +60,25 @@ export interface LoraOption {
   baseModel: string;
   /** The LoRA's weight → its `additionalResources[].strength`. Clamped to [-1, 2]. */
   weight: number;
+  /**
+   * The ecosystem family this LoRA was DISCOVERED under: the exact
+   * `baseModelGroup` the block passed to the host picker when the user added it,
+   * which is the then-current checkpoint's `baseModel`.
+   *
+   * 🔴 THIS IS NOT THE SAME THING AS `baseModel`, and the difference is the whole
+   * reason the field exists. The host COLLAPSES the group it is given to an
+   * ecosystem and offers every family member — asking for `'SDXL 1.0'` returns
+   * SDXL 0.9 / 1.0 / 1.0 LCM / Lightning / Hyper / Turbo (six names, measured) —
+   * and the pick then reports its OWN `baseModel`, e.g. `'SDXL Turbo'`. So
+   * `baseModel` is what the user picked; `requestedFamily` is what we asked for,
+   * and only the latter can be compared against a later checkpoint without
+   * needing the host's ecosystem mapping. See {@link dropIncompatibleLoras}.
+   *
+   * Optional: a LoRA built without it (an older persisted list, a hand-made
+   * fixture) falls back to the exact-`baseModel` comparison, which is what this
+   * helper did before the field existed.
+   */
+  requestedFamily?: string;
 }
 
 /** Clamp a LoRA weight into the server-accepted [-1, 2] range; non-finite → default. */
@@ -87,6 +106,98 @@ export const DEFAULT_CHECKPOINT: CheckpointOption = {
   label: 'SD XL 1.0',
   baseModel: 'SDXL 1.0',
 };
+
+// ---------------------------------------------------------------------------
+// Media-type guard for the UNCONSTRAINED checkpoint pick.
+//
+// 🔴 WHY THIS IS THE BLOCK'S JOB. This app builds a `kind: 'textToImage'` body
+// and renders `snapshot.imageUrls[0]` (see generation.ts) — it is an IMAGE app.
+// The host's checkpoint picker gates on GENERATION COVERAGE, not on media type,
+// and there is no way to ask it for "image checkpoints only": the modal's option
+// object exposes exactly `canGenerate`, `resources[{type, baseModels}]` and
+// `excludeIds`, and the only narrowing the block can send is ONE ecosystem family
+// key. So an unconstrained pick legitimately offers video and audio checkpoints —
+// 31 of the host's 109 base-model records are non-image (27 video, 4 audio).
+//
+// And you cannot wait for the server to refuse it. Verified by reading the host:
+// a textToImage body naming a video checkpoint is NOT rejected — the generation
+// graph finds the workflow unavailable for that ecosystem and silently REWRITES
+// the ecosystem to the txt2img default (SD1) while keeping the video version id.
+// There is no civitai-authored error string for this case to classify, so the
+// outcome is whatever the orchestrator does with a mismatched model, and the
+// viewer would get an unexplained failure — exactly the symptom class
+// dropIncompatibleLoras exists to prevent, one level up.
+//
+// FAILS OPEN BY DESIGN: this is a DENY list, so a base model that is not named
+// here is treated as usable. A new image ecosystem therefore works the day it
+// ships, and a new VIDEO ecosystem is the case that needs the list extended —
+// the safe direction for a scaffold, since the cost is the pre-existing
+// unexplained failure rather than a checkpoint the viewer cannot select.
+//
+// SNAPSHOT, NOT A DERIVATION. Taken from the host's base-model records (the
+// `type: 'video'` / `type: 'audio'` entries) on 2026-09-30. It is data the block
+// cannot read at runtime — nothing in the picker reply or the block context
+// carries a media type. Re-derive it if your app starts seeing a family it
+// should reject, and delete the whole guard if you make this app generate video.
+// ---------------------------------------------------------------------------
+
+/** Base-model families that do NOT produce images (video + audio). See the note above. */
+export const NON_IMAGE_BASE_MODELS: ReadonlySet<string> = new Set([
+  // video
+  'CogVideoX',
+  'Flux 3 Video',
+  'HappyHorse',
+  'Hunyuan Video',
+  'Kling',
+  'LTXV',
+  'LTXV 2.3',
+  'LTXV 2.5',
+  'LTXV2',
+  'MiniMax H3',
+  'Mochi',
+  'Seedance',
+  'Sora 2',
+  'Veo 3',
+  'Vidu Q1',
+  'Wan Video',
+  'Wan Video 1.3B t2v',
+  'Wan Video 14B i2v 480p',
+  'Wan Video 14B i2v 720p',
+  'Wan Video 14B t2v',
+  'Wan Video 2.2 I2V-A14B',
+  'Wan Video 2.2 T2V-A14B',
+  'Wan Video 2.2 TI2V-5B',
+  'Wan Video 2.5 I2V',
+  'Wan Video 2.5 T2V',
+  'Wan Video 2.7',
+  'Wan Video 3.0',
+  // audio
+  'ACE Audio',
+  'MiniMax Music 3',
+  'Sonilo',
+  'YuE2',
+]);
+
+/**
+ * Can this base model be used for the `textToImage` body this app builds?
+ *
+ * TRUE for anything not on the {@link NON_IMAGE_BASE_MODELS} deny list, an empty
+ * name included — an unknown family is assumed usable so a new image ecosystem
+ * is never blocked by a stale list.
+ */
+export function isImageCapableBaseModel(baseModel: string | null | undefined): boolean {
+  return !NON_IMAGE_BASE_MODELS.has((baseModel ?? '').trim());
+}
+
+/**
+ * The viewer-facing reason a picked checkpoint was refused, or `null` when it is
+ * usable. Kept here (not in the component) so the copy is unit-testable and the
+ * caller stays a thin driver.
+ */
+export function checkpointRejectionReason(picked: CheckpointOption): string | null {
+  if (isImageCapableBaseModel(picked.baseModel)) return null;
+  return `${picked.label} is a ${picked.baseModel} model, which doesn't generate images — this app does. Your previous model is still selected; pick an image checkpoint to change it.`;
+}
 
 // ---------------------------------------------------------------------------
 // Pick → option helpers.
@@ -170,14 +281,27 @@ export function loraOption(
   return { ...src, weight: roundLoraWeight(clampLoraWeight(weight)) };
 }
 
-/** Turn a picked resource (`BlockResourceInfo`) into a LoraOption (label-resolved like a checkpoint). */
-export function loraFromPick(picked: PickedResource, weight?: number): LoraOption {
+/**
+ * Turn a picked resource (`BlockResourceInfo`) into a LoraOption (label-resolved
+ * like a checkpoint).
+ *
+ * `requestedFamily` is the `baseModelGroup` the block passed to the picker for
+ * THIS pick. Pass it — the call site already has it, and it is the only thing
+ * that lets {@link dropIncompatibleLoras} compare families rather than exact
+ * base-model names. Omitting it is supported and degrades to the exact match.
+ */
+export function loraFromPick(
+  picked: PickedResource,
+  weight?: number,
+  requestedFamily?: string,
+): LoraOption {
   return loraOption(
     {
       versionId: picked.versionId,
       modelId: picked.modelId,
       label: resourceDisplayName(picked) ?? `LoRA #${picked.versionId} (${picked.baseModel})`,
       baseModel: picked.baseModel,
+      ...(requestedFamily ? { requestedFamily } : {}),
     },
     weight,
   );
@@ -210,6 +334,58 @@ export function setLoraWeight(
 ): LoraOption[] {
   const w = roundLoraWeight(clampLoraWeight(weight));
   return selected.map((l) => (l.versionId === versionId ? { ...l, weight: w } : l));
+}
+
+/**
+ * Drop the LoRAs that cannot work with a newly-chosen checkpoint.
+ *
+ * The checkpoint picker is UNCONSTRAINED (App passes no `baseModelGroup`), so
+ * the user can move between ecosystems. A LoRA is only valid against a
+ * checkpoint in its own family, so a family switch has to take the stranded
+ * LoRAs with it — otherwise the block builds a body carrying incompatible
+ * resources, the server rejects the whole generation at estimate/submit, and the
+ * user sees a failure with nothing on screen explaining it.
+ *
+ * 🔴 IT COMPARES THE FAMILY WE ASKED FOR, NOT THE NAME THE PICK CAME BACK WITH.
+ * An earlier version matched `l.baseModel === nextBaseModel` exactly, on the
+ * reasoning that the host owns the ecosystem mapping and the block cannot see
+ * it. That reasoning is true and beside the point: the block does not need the
+ * mapping, because it already knows the family it ASKED for — the LoRA picker is
+ * opened with `baseModelGroup: checkpoint.baseModel`, and that value is recorded
+ * on each LoRA as {@link LoraOption.requestedFamily}.
+ *
+ * The exact match was measurably wrong. Asking the host for `'SDXL 1.0'` gets
+ * the whole SDXL ecosystem back — SDXL 0.9 / 1.0 / 1.0 LCM / Lightning / Hyper /
+ * Turbo, six names — and each pick reports its OWN `baseModel`. So adding an
+ * `SDXL Turbo` LoRA and then choosing an `SDXL 1.0` checkpoint compared
+ * `'SDXL Turbo' !== 'SDXL 1.0'` and silently deleted a perfectly usable LoRA,
+ * with no notice on screen. Five of the six family members dropped that way.
+ *
+ * A LoRA is therefore KEPT when either is true:
+ *   1. `requestedFamily === nextBaseModel` — the new checkpoint is the very
+ *      family this LoRA was offered under, so the host would offer it again.
+ *   2. `baseModel === nextBaseModel` — the old exact match, retained because it
+ *      can never be wrong and covers a LoRA carrying no `requestedFamily`
+ *      (hand-made fixture, list persisted before the field existed).
+ *
+ * Still deliberately CONSERVATIVE, and still asymmetric in the same direction:
+ * wrongly KEEPING a LoRA costs a rejected generation the user cannot diagnose,
+ * wrongly DROPPING one costs a click to re-add it. What survives is one residual
+ * over-drop — moving between two names inside one ecosystem (`SDXL 1.0` →
+ * `SDXL Turbo` checkpoint) drops LoRAs requested under the other name, because
+ * proving those equivalent needs the host mapping the block genuinely does not
+ * have. That is a strictly smaller set than before, and nothing that was kept
+ * before is dropped now.
+ *
+ * Pure + total: returns a new array and never mutates the input.
+ */
+export function dropIncompatibleLoras(
+  selected: readonly LoraOption[],
+  nextBaseModel: string,
+): LoraOption[] {
+  return selected.filter(
+    (l) => l.requestedFamily === nextBaseModel || l.baseModel === nextBaseModel,
+  );
 }
 
 /** versionIds already selected — drives dedup at the picker callback. */

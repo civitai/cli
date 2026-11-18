@@ -110,8 +110,8 @@ func TestGetForgejoCloneInfoGarbageResponse(t *testing.T) {
 }
 
 // TestCloneInfoErrorMapping pins the status->message mapping AND the tRPC-message
-// extraction ({error:{json:{message}}}), with a raw-body fallback when the body
-// isn't a tRPC error envelope.
+// extraction ({error:{json:{message}}}); a body with no recognised message is
+// reported by its size, never echoed.
 func TestCloneInfoErrorMapping(t *testing.T) {
 	trpcBody := func(msg string) []byte {
 		b, _ := json.Marshal(map[string]any{
@@ -132,7 +132,10 @@ func TestCloneInfoErrorMapping(t *testing.T) {
 		{"403 tRPC message", http.StatusForbidden, trpcBody("not the owner"), "not permitted", "not the owner"},
 		{"404 tRPC message", http.StatusNotFound, trpcBody("App not found"), "no such app", "App not found"},
 		{"500 default", http.StatusInternalServerError, trpcBody("kaboom"), "getMyForgejoCloneInfo failed (HTTP 500)", "kaboom"},
-		{"non-tRPC raw fallback", http.StatusForbidden, []byte("plain text denial"), "not permitted", "plain text denial"},
+		// 🔴 WAS an echo of the raw body. The route's success payload is a push
+		// token, so a body with no recognised message is reported by size only.
+		{"non-tRPC body is withheld", http.StatusForbidden, []byte("plain text denial"), "not permitted", "17-byte response body not shown"},
+		{"plain message field", http.StatusForbidden, []byte(`{"message":"Apps are off"}`), "not permitted", "Apps are off"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

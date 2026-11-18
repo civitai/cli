@@ -109,8 +109,20 @@ func serveOnce(t *testing.T, status int, body string) *Client {
 
 // TestGetIntoErrorSnippetQuotesTheWireBytesNotTheRepairedOnes is finding 2(b).
 //
-// README's Troubleshooting row promises "the text after the colon is the
-// server's own body, truncated". #526's pre-pass reassigned the body to the
+// The published `--json` guide promises "the text after the colon is the server's
+// own body, truncated, with invisible and terminal-controlling characters
+// removed" —
+// developer.civitai.com/site/guide/cli-json#when-a-body-still-will-not-decode.
+//
+// 🔴 THIS USED TO SAY "README's Troubleshooting row promises", AND THAT WAS ALREADY
+// WRONG BEFORE THE TROUBLESHOOTING SECTION WAS CUT. `git log -S"text after the
+// colon" -- README.md` puts its removal in 823fa4f (#721); the row README carried
+// at 7b3be7a said nothing about the colon or truncation, so this quotation was
+// attributed to a surface that did not contain it. Verified against the live page
+// by curl-and-strip rather than a summarizer, per
+// claudedocs/readme-reduction-plan.md.
+//
+// #526's pre-pass reassigned the body to the
 // REPAIRED bytes before the snippet was taken, so a server that sent one CR was
 // reported as having sent a backslash and an `r` — the CLI quoting itself. The
 // fixture decodes to neither shape: `id` is a string where the SDK wants an int,

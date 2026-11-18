@@ -106,11 +106,11 @@ func TestCheckParentOriginsValues(t *testing.T) {
 		{name: "no env files at all", wantWarn: true},
 		{
 			name:     "scaffold default is accepted",
-			envFiles: map[string]string{".env.development": "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5186,https://civitai.com\n"},
+			envFiles: map[string]string{".env.development": "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5186,https://civitai.com,https://civitai.red,https://civitai.green\n"},
 		},
 		{
-			name:     "prod parent alone is accepted",
-			envFiles: map[string]string{".env": "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=https://civitai.com\n"},
+			name:     "every Civitai domain alone is accepted",
+			envFiles: map[string]string{".env": "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=https://civitai.com,https://civitai.red,https://civitai.green\n"},
 		},
 		{
 			name:     "localhost only is flagged",
@@ -129,11 +129,11 @@ func TestCheckParentOriginsValues(t *testing.T) {
 		},
 		{
 			name:     "quoted value is accepted",
-			envFiles: map[string]string{".env": `VITE_BLOCK_ALLOWED_PARENT_ORIGINS="http://localhost:5186,https://civitai.com"` + "\n"},
+			envFiles: map[string]string{".env": `VITE_BLOCK_ALLOWED_PARENT_ORIGINS="http://localhost:5186,https://civitai.com,https://civitai.red,https://civitai.green"` + "\n"},
 		},
 		{
 			name:     "export prefix is accepted",
-			envFiles: map[string]string{".env": "export VITE_BLOCK_ALLOWED_PARENT_ORIGINS=https://civitai.com\n"},
+			envFiles: map[string]string{".env": "export VITE_BLOCK_ALLOWED_PARENT_ORIGINS=https://civitai.com,https://civitai.red,https://civitai.green\n"},
 		},
 		{
 			name:     "commented-out assignment does not count",
@@ -147,7 +147,7 @@ func TestCheckParentOriginsValues(t *testing.T) {
 			name: "mode file overrides base file (good wins)",
 			envFiles: map[string]string{
 				".env":             "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5186\n",
-				".env.development": "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5186,https://civitai.com\n",
+				".env.development": "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5186,https://civitai.com,https://civitai.red,https://civitai.green\n",
 			},
 		},
 		{
@@ -162,13 +162,13 @@ func TestCheckParentOriginsValues(t *testing.T) {
 			name: "development.local overrides development",
 			envFiles: map[string]string{
 				".env.development":       "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5186\n",
-				".env.development.local": "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=https://civitai.com\n",
+				".env.development.local": "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=https://civitai.com,https://civitai.red,https://civitai.green\n",
 			},
 		},
 		{
 			name: "other keys in the file are ignored",
 			envFiles: map[string]string{
-				".env.development": "VITE_OTHER=1\nVITE_BLOCK_ALLOWED_PARENT_ORIGINS=https://civitai.com\nVITE_MORE=2\n",
+				".env.development": "VITE_OTHER=1\nVITE_BLOCK_ALLOWED_PARENT_ORIGINS=https://civitai.com,https://civitai.red,https://civitai.green\nVITE_MORE=2\n",
 			},
 		},
 	}
@@ -191,7 +191,7 @@ func TestCheckParentOriginsValues(t *testing.T) {
 // entirely.
 func TestCheckParentOriginsProcessEnvWins(t *testing.T) {
 	t.Run("exported good value silences bad files", func(t *testing.T) {
-		t.Setenv(ParentOriginsEnvVar, "https://civitai.com")
+		t.Setenv(ParentOriginsEnvVar, "https://civitai.com,https://civitai.red,https://civitai.green")
 		dir := writeAppDir(t, appDirOpts{
 			manifest: true, pkg: sdkPkg,
 			envFiles: map[string]string{".env.development": "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5186\n"},
@@ -205,7 +205,7 @@ func TestCheckParentOriginsProcessEnvWins(t *testing.T) {
 		t.Setenv(ParentOriginsEnvVar, "http://localhost:5186")
 		dir := writeAppDir(t, appDirOpts{
 			manifest: true, pkg: sdkPkg,
-			envFiles: map[string]string{".env.development": "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=https://civitai.com\n"},
+			envFiles: map[string]string{".env.development": "VITE_BLOCK_ALLOWED_PARENT_ORIGINS=https://civitai.com,https://civitai.red,https://civitai.green\n"},
 		})
 		if got := CheckParentOrigins(dir); !hasKind(got, FindingParentOrigins) {
 			t.Fatalf("an exported value must win over .env files; got %v", kinds(got))
@@ -227,7 +227,7 @@ func TestCheckParentOriginsRemediationPreservesExisting(t *testing.T) {
 		t.Fatalf("want 1 finding, got %v", kinds(got))
 	}
 	joined := strings.Join(got[0].Fix, "\n")
-	if !strings.Contains(joined, "http://localhost:5186,"+ProdParentOrigin) {
+	if !strings.Contains(joined, "http://localhost:5186,"+civitaiOriginsCSV) {
 		t.Fatalf("remediation must preserve the existing origins:\n%s", joined)
 	}
 }
@@ -464,7 +464,7 @@ func TestCheckParentOriginsExpandedValue(t *testing.T) {
 	dir := writeAppDir(t, appDirOpts{
 		manifest: true, pkg: sdkPkg,
 		envFiles: map[string]string{
-			".env.development": "PARENT=https://civitai.com\nVITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5186,${PARENT}\n",
+			".env.development": "PARENT=https://civitai.com,https://civitai.red,https://civitai.green\nVITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5186,${PARENT}\n",
 		},
 	})
 	if got := CheckParentOrigins(dir); len(got) != 0 {
@@ -492,7 +492,7 @@ func TestParseDotEnvLongUnrelatedLine(t *testing.T) {
 		manifest: true, pkg: sdkPkg,
 		envFiles: map[string]string{
 			".env.development": "VITE_BLOB=" + strings.Repeat("a", 70*1024) + "\n" +
-				ParentOriginsEnvVar + "=https://civitai.com\n",
+				ParentOriginsEnvVar + "=" + civitaiOriginsCSV + "\n",
 		},
 	})
 	if got := CheckParentOrigins(dir); len(got) != 0 {

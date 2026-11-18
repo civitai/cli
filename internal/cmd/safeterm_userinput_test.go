@@ -109,8 +109,16 @@ var bareIdentArgs = map[string]string{
 	"printDownloadPlan::sha":         "SERVER: a published hash",
 	"printDownloadPlan::w":           "SERVER-derived: a MIXED-TYPE warning (mixedTypeWarning), not a weight — see printImageResources::w, which is a different value under the same name",
 	"warnMixedTypes::w":              "SERVER-derived: the mixed-type warning again, at its own call site",
-	"reportBaseModel::w":             "🔴 MIXED, not SERVER — an earlier draft of this row said SERVER and was wrong. baseModelWarning(have, want) (compat.go:103) interpolates `want`, the USER's --for-base flag. MEASURED: a --for-base carrying a U+2800 renders without it at download.go:336 — the gate rewrites the user's own bytes. Accepted on this path for the same reason the ::target rows are, but the row has to SAY so",
+	"reportBaseModel::w":             "🔴 MIXED, not SERVER — an earlier draft of this row said SERVER and was wrong. baseModelWarning(have, want) (compat.go:103) interpolates `want`, the USER's --for-base flag. MEASURED: a --for-base carrying a U+2800 renders without it at reportBaseModel's warn print (download.go:403; this row cited :336 for months, which is a different branch entirely — cite the FUNCTION, since a line number in prose nothing asserts on drifts every refactor). Now exercised by TestDownloadFiltersRootAndForBase rather than only recorded here. Accepted on this path for the same reason the ::target rows are, but the row has to SAY so",
 	"reportBaseModel::baseModel":     "SERVER: a base-model label",
+
+	// --- app feedback --------------------------------------------------------
+	"feedbackDetailText::s":         "SERVER: one value of a feedback row's diagnostics (source commit, platform sha, fork upstream, environment, recent-error fields); the slug the user typed is never passed here",
+	"feedbackHeader::s":             "SERVER: one header cell of a feedback row — created time, status, app version, build sha, surface, or the reporter's username — handed to the `cell` closure; never the slug the user typed",
+	"feedbackMessageLines::message": "SERVER, and the least trusted text this CLI prints: a feedback message any signed-in site user wrote (appapi.Feedback.Message)",
+
+	// --- feedback (platform) -------------------------------------------------
+	"feedbackServerCell::s": "SERVER: one single-line value platformFeedback.create / getStatus returned — the report ref, the status word, fixedIn.component, fixedIn.version, firstSeenAt, updatedAt. Never the ref the user typed: printFeedbackStatus prints the ASKED-FOR ref raw and passes only the server's fields here",
 
 	// --- read path ----------------------------------------------------------
 	"printImageResources::w":  "SERVER: an image-metadata WEIGHT (r.WeightString()). Nothing to do with the download warnings also spelled `w` — which is exactly why this ledger is keyed per function",
@@ -134,6 +142,9 @@ var bareIdentArgs = map[string]string{
 	"serverReasonSuffix::reason":          "SERVER: an orchestrator failure reason",
 	"printWorkflow::r":                    "SERVER: an orchestrator failure reason (workflows get)",
 	"printWorkflowList::r":                "SERVER: an orchestrator failure reason (workflows list)",
+
+	// --- app submit: App Storage schema-migration notes ---------------------
+	"printStorageMigrationWarnings::warn": "SERVER: one storageMigrationWarnings string from the submit response",
 }
 
 // sanitizerComposers are the functions IN safeterm.go that may call safeTerm on

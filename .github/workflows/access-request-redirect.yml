@@ -1,0 +1,102 @@
+# Apps access requests are made and reviewed ON CIVITAI, not in this repo.
+#
+# A signed-in user opens https://civitai.com/apps/build?request-access=1 and
+# uses "Request access"; the Civitai team reviews it there, and an approval is
+# the grant. The GitHub issue form that used to collect these is gone, but old
+# links, bookmarks and copy-pasted titles still produce issues here that nobody
+# would act on. This workflow answers each one with a pointer to the form and
+# closes it, so the requester is redirected within a minute instead of waiting
+# on an issue that is no longer read.
+#
+# WHAT COUNTS AS AN ACCESS REQUEST: a newly opened issue that carries the
+# `access-request` label, or whose title starts with `[Access request]` (the old
+# form's title prefix; GitHub's startsWith() is case-insensitive). A `labeled`
+# event only counts when it adds `access-request` to an issue opened within the
+# last hour, so a maintainer labelling an OLD issue does not get it auto-closed.
+#
+# SAFETY:
+#   - Minimal token: `issues: write` only, no checkout, no repository contents.
+#   - Script injection: no issue text (title, body, label) is ever expanded with
+#     ${{ }} inside `run:`. The title is only read by the job-level `if:`
+#     expression, which is evaluated by Actions and never reaches a shell; the
+#     values the script needs arrive as environment variables. The body is not
+#     read at all.
+#   - Idempotent: the comment carries a hidden marker, and the job skips the
+#     comment when one is already there. `opened` and `labeled` both fire for an
+#     issue created with a label, and the per-issue concurrency group runs them
+#     one after the other, so the second run finds the marker and only makes
+#     sure the issue is closed.
+
+name: access-request-redirect
+
+on:
+  issues:
+    types: [opened, labeled]
+
+permissions:
+  issues: write
+
+concurrency:
+  group: access-request-redirect-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  redirect:
+    if: >-
+      github.event.issue.state == 'open' &&
+      (
+        (github.event.action == 'opened' &&
+          (contains(github.event.issue.labels.*.name, 'access-request') ||
+           startsWith(github.event.issue.title, '[Access request]'))) ||
+        (github.event.action == 'labeled' && github.event.label.name == 'access-request')
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Point to the onsite form and close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          ACTION: ${{ github.event.action }}
+          CREATED_AT: ${{ github.event.issue.created_at }}
+        run: |
+          set -euo pipefail
+
+          if [ "$ACTION" = "labeled" ]; then
+            created=$(date -u -d "$CREATED_AT" +%s)
+            now=$(date -u +%s)
+            if [ $((now - created)) -gt 3600 ]; then
+              echo "Issue #$NUMBER was opened more than an hour ago; a late label is a maintainer's call, not an auto-close."
+              exit 0
+            fi
+          fi
+
+          marker='<!-- access-request-redirect -->'
+          already=$(gh api --paginate "repos/$GH_REPO/issues/$NUMBER/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\"))] | length" \
+            | awk '{ n += $1 } END { print n + 0 }')
+
+          if [ "$already" -eq 0 ]; then
+            body_file=$(mktemp)
+            {
+              echo "$marker"
+              echo "Thanks for your interest in building Civitai Apps!"
+              echo
+              echo "Access requests are now made and reviewed on Civitai itself, so this repository no longer handles them. To request access:"
+              echo
+              echo "1. Sign in at civitai.com."
+              echo "2. Open **Request access** at https://civitai.com/apps/build?request-access=1 and submit the form."
+              echo
+              echo "The Civitai team reviews requests there. Once you're approved, accept the App Developer Terms at https://civitai.com/apps/submit before your first \`civitai app submit\`."
+              echo
+              echo "In the meantime you can install the CLI, scaffold, validate and run an app locally without access. This issue is being closed because the request needs to go through the form; if you hit a problem with the form or the CLI itself, please open a new issue describing it."
+            } > "$body_file"
+            gh issue comment "$NUMBER" --body-file "$body_file"
+          else
+            echo "Issue #$NUMBER already has the redirect comment; not posting another."
+          fi
+
+          state=$(gh issue view "$NUMBER" --json state --jq .state)
+          if [ "$state" = "OPEN" ]; then
+            gh issue close "$NUMBER" --reason "not planned"
+          fi

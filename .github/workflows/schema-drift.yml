@@ -1,0 +1,57 @@
+name: schema-drift
+
+# Does the `go:embed`ed copy of the App manifest schema still match the canonical
+# the platform publishes? `scripts/check-canonical-schema.sh` answers that by
+# fetching the live URL and diffing it, normalised, against `schema/`.
+#
+# 🔴 WHY THIS IS ITS OWN WORKFLOW, AND NOT A JOB IN `ci.yml`. The question it asks
+# is about an EXTERNAL RESOURCE, not about the diff in front of it — the mirror goes
+# stale because somebody published a new canonical, with no file in anyone's branch
+# changing. As a `pull_request:` job with no path filter it therefore reddened EVERY
+# open PR in the repo, attributing an upstream event to whichever author happened to
+# push next, and staying red until a human re-vendored. Measured on 2026-09-29:
+# five open PRs all carrying the same red for a change none of them made.
+#
+# GitHub's `paths:` filter is WORKFLOW-level, not job-level, so filtering it meant
+# moving it out. Path filters also apply per-EVENT, which is what makes the split
+# below work in one file: `pull_request` is filtered, `push` and the manual trigger
+# are not.
+#
+# 🔴 AND A PATH FILTER ALONE WOULD HAVE BEEN WRONG — it would make the check blind to
+# the only drift that actually happens. An upstream publish touches no file here, so
+# a `paths`-filtered PR run never fires for it. Hence the split:
+#
+#   pull_request + paths   the one case a PR can genuinely cause and be blamed for —
+#                          a human hand-editing the vendored mirror. Attributable.
+#   push to main           main's own mirror is stale. Visible once, in one place,
+#                          against the branch that actually owns the mirror.
+#   workflow_dispatch      the manual read, for when you want to ask right now.
+#
+# ⚠ NO CRON HERE, DELIBERATELY. `revendor-canonical-schema.yml` already fetches the
+# canonical every 6 hours at :37, and it does more than report — it re-vendors and
+# opens the fix PR, and files a `validate-failed` issue when it cannot. A second
+# schedule that only reports would duplicate the detection and remediate nothing.
+# If that workflow is ever retired, add a `schedule:` here.
+#
+# ⚠ This is NOT a required status check on `main` (the required set is
+# pins-vs-published, scaffold-currency, build-test, ready-ack-runtime,
+# template-page-vite) and moving it does not change that. It never blocked a merge;
+# what it did was make every PR look broken.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'schema/**'
+      - 'scripts/check-canonical-schema.sh'
+      - '.github/workflows/schema-drift.yml'
+  workflow_dispatch:
+
+jobs:
+  schema-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check canonical schema
+        run: ./scripts/check-canonical-schema.sh

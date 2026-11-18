@@ -177,7 +177,9 @@ improvement in review because specificity looks like rigour.
 - 🔴 **THE COVERAGE GAP THAT MADE ALL OF THIS POSSIBLE, AND IT IS STILL OPEN.** **No test
   pins the prose of that paragraph or that table row.**
   `TestREADMETroubleshootingSymptomsExistInTheSource` guards only the **left-hand symptom
-  column**. Every behavioural sentence rounds 0–3 rewrote is unguarded, which is exactly how
+  column**. (Renamed `TestPublishedTroubleshootingSymptomsExistInTheSource` when
+  `## Troubleshooting` became a pointer; the old name matches no test and `go test -run` on
+  it exits 0 having measured nothing.) Every behavioural sentence rounds 0–3 rewrote is unguarded, which is exactly how
   each round shipped a defect with the suite green. The arc's phase-1 pattern — pin each
   repaired claim with a guard watched to fail — was **not** applied here, and that is why it
   took four rounds instead of one.

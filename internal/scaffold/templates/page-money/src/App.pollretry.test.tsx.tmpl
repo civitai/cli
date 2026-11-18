@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -60,8 +60,9 @@ async function clickGenerate() {
   render(<App />);
   const generate = await screen.findByTestId('pm-generate');
   await user.type(screen.getByLabelText(/prompt/i), 'a serene mountain lake');
-  // Generate is one click — no confirm modal (the scope is granted in the mock,
-  // so this goes straight to estimate -> submit -> poll).
+  // The scope is granted in the mock, so the request is priced as soon as the
+  // prompt settles; Generate is disabled until then, then submit -> poll.
+  await waitFor(() => expect(generate).toBeEnabled(), { timeout: 3000 });
   await user.click(generate);
 }
 
@@ -96,7 +97,7 @@ describe('App poll loop — transient-error robustness', () => {
   });
 
   it('a GENUINE failed STATUS (a snapshot, not a throw) → terminal failure', async () => {
-    estimateFn.mockResolvedValue(snap({ status: 'processing' }));
+    estimateFn.mockResolvedValue(snap({ status: 'processing', cost: { total: 8 } }));
     submitFn.mockResolvedValue(snap({ status: 'processing' }));
     pollFn.mockResolvedValueOnce(
       snap({ status: 'failed', error: 'NSFW prompt rejected by audit' }),

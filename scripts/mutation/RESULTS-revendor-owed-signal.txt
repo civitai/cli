@@ -1,0 +1,62 @@
+BASELINE: {'PASS': 586, 'FAIL': 6, 'PANIC': 0} total=592 built=True
+   baseline has 6 ALLOWED failure(s) (env gap: no Chromium on PATH). A mutant counts as KILLED only on a failure NOT in this set.
+R1-owed-drop-set-e: KILLED ({'PASS': 584, 'FAIL': 8, 'PANIC': 0}) new_failures=2
+    <- TestRevendorOwedStepRefusesAnUnreadableCount
+       revendor_owed_signal_test.go:331: the `owed` step exited 0 on a count it could not read. That is the defect: the step is the ONLY producer of the gloss-debt signal, and `classify` reads an empty count as "0 owed", which CLOSES the gloss-owed issue while the de
+    <- TestRevendorOwedStepRefusesAnUnreadableCount/ledger_has_no_`owed`_key_—_the_`list`_expression_exits_5
+       revendor_owed_signal_test.go:331: the `owed` step exited 0 on a count it could not read. That is the defect: the step is the ONLY producer of the gloss-debt signal, and `classify` reads an empty count as "0 owed", which CLOSES the gloss-owed issue while the de
+R2-owed-case-drop-empty-alt: KILLED ({'PASS': 583, 'FAIL': 9, 'PANIC': 0}) new_failures=3
+    <- TestRevendorOwedStepRefusesAnUnreadableCount
+       revendor_owed_signal_test.go:331: the `owed` step exited 0 on a count it could not read. That is the defect: the step is the ONLY producer of the gloss-debt signal, and `classify` reads an empty count as "0 owed", which CLOSES the gloss-owed issue while the de
+    <- TestRevendorOwedStepRefusesAnUnreadableCount/ledger_is_zero_bytes_—_jq_exits_0_printing_nothing
+       revendor_owed_signal_test.go:331: the `owed` step exited 0 on a count it could not read. That is the defect: the step is the ONLY producer of the gloss-debt signal, and `classify` reads an empty count as "0 owed", which CLOSES the gloss-owed issue while the de
+    <- TestRevendorOwedStepRefusesAnUnreadableCount/ledger_is_whitespace_only_—_jq_exits_0_printing_nothing
+       revendor_owed_signal_test.go:331: the `owed` step exited 0 on a count it could not read. That is the defect: the step is the ONLY producer of the gloss-debt signal, and `classify` reads an empty count as "0 owed", which CLOSES the gloss-owed issue while the de
+R3-owed-publish-before-assert: KILLED ({'PASS': 582, 'FAIL': 10, 'PANIC': 0}) new_failures=4
+    <- TestRevendorOwedStepRefusesAnUnreadableCount
+       revendor_owed_signal_test.go:338: the `owed` step exited 1 but still published count="" to GITHUB_OUTPUT. A published count is read downstream whatever the exit code, so it must not be written at all when it is not a number.
+    <- TestRevendorOwedStepRefusesAnUnreadableCount/ledger_has_no_`owed`_key_—_the_`list`_expression_exits_5
+       revendor_owed_signal_test.go:338: the `owed` step exited 1 but still published count="" to GITHUB_OUTPUT. A published count is read downstream whatever the exit code, so it must not be written at all when it is not a number.
+    <- TestRevendorOwedStepRefusesAnUnreadableCount/ledger_is_zero_bytes_—_jq_exits_0_printing_nothing
+       revendor_owed_signal_test.go:338: the `owed` step exited 1 but still published count="" to GITHUB_OUTPUT. A published count is read downstream whatever the exit code, so it must not be written at all when it is not a number.
+R4-classify-drop-empty-alt: KILLED ({'PASS': 584, 'FAIL': 8, 'PANIC': 0}) new_failures=2
+    <- TestRevendorClassifyArmLadder
+       revendor_owed_signal_test.go:471: state="gloss-owed", want "owed-failed"
+    <- TestRevendorClassifyArmLadder/unproduced_count,_step_green
+       revendor_owed_signal_test.go:471: state="gloss-owed", want "owed-failed"
+R5-classify-drop-numeric-alt: KILLED ({'PASS': 584, 'FAIL': 8, 'PANIC': 0}) new_failures=2
+    <- TestRevendorClassifyArmLadder
+       revendor_owed_signal_test.go:471: state="gloss-owed", want "owed-failed"
+    <- TestRevendorClassifyArmLadder/unproduced_count,_non-numeric
+       revendor_owed_signal_test.go:471: state="gloss-owed", want "owed-failed"
+R6-classify-drop-R_OWED-half: KILLED ({'PASS': 584, 'FAIL': 8, 'PANIC': 0}) new_failures=2
+    <- TestRevendorClassifyArmLadder
+       revendor_owed_signal_test.go:471: state="gloss-owed", want "owed-failed"
+    <- TestRevendorClassifyArmLadder/owed_step_died
+       revendor_owed_signal_test.go:471: state="gloss-owed", want "owed-failed"
+R7-classify-env-wrong-step: KILLED ({'PASS': 585, 'FAIL': 7, 'PANIC': 0}) new_failures=1
+    <- TestRevendorClassifyEnvNamesEveryStepOutcome
+       revendor_owed_signal_test.go:544: classify's env: R_OWED = "${{ steps.probe.outcome }}", want it to interpolate "steps.owed.outcome" — an env var carrying the WRONG step's outcome reads as coverage and provides none
+R8-signal-drop-owed-failed: KILLED ({'PASS': 585, 'FAIL': 7, 'PANIC': 0}) new_failures=1
+    <- TestRevendorSignalTreatsOwedFailedAsFailing
+       revendor_owed_signal_test.go:593: the `signal` job's `failing:` expression does not name "owed-failed", so a run reaching that verdict on a GREEN job resolves to failing=false and failure-issue.yml CLOSES the issue instead of filing it.
+
+==== TABLE ====
+R1-owed-drop-set-e	KILLED	the script stops carrying its own errexit and depends on the runner's default shell flags — an absent or unparseable ledger then publishes an empty count instead of failing
+	TestRevendorOwedStepRefusesAnUnreadableCount :: revendor_owed_signal_test.go:331: the `owed` step exited 0 on a count it could not read. That is the defect: the step is the ONLY producer of the gloss-debt signal, and `classify` reads an empty count as "0 owed", which CLOSES the gloss-owed issue while the de; TestRevendorOwedStepRefusesAnUnreadableCount/ledger_has_no_`owed`_key_—_the_`list`_expression_exits_5 :: revendor_owed_signal_test.go:331: the `owed` step exited 0 on a count it could not read. That is the defect: the step is the ONLY producer of the gloss-debt signal, and `classify` reads an empty count as "0 owed", which CLOSES the gloss-owed issue while the de
+R2-owed-case-drop-empty-alt	KILLED	🔴 THE LIVE HOLE: a ZERO-BYTE or whitespace-only ledger publishes an empty count, because jq exits 0 printing nothing and errexit has nothing to trip on — this alternative is the only guard in front of it
+	TestRevendorOwedStepRefusesAnUnreadableCount :: revendor_owed_signal_test.go:331: the `owed` step exited 0 on a count it could not read. That is the defect: the step is the ONLY producer of the gloss-debt signal, and `classify` reads an empty count as "0 owed", which CLOSES the gloss-owed issue while the de; TestRevendorOwedStepRefusesAnUnreadableCount/ledger_is_zero_bytes_—_jq_exits_0_printing_nothing :: revendor_owed_signal_test.go:331: the `owed` step exited 0 on a count it could not read. That is the defect: the step is the ONLY producer of the gloss-debt signal, and `classify` reads an empty count as "0 owed", which CLOSES the gloss-owed issue while the de; TestRevendorOwedStepRefusesAnUnreadableCount/ledger_is_whitespace_only_—_jq_exits_0_printing_nothing :: revendor_owed_signal_test.go:331: the `owed` step exited 0 on a count it could not read. That is the defect: the step is the ONLY producer of the gloss-debt signal, and `classify` reads an empty count as "0 owed", which CLOSES the gloss-owed issue while the de
+R3-owed-publish-before-assert	KILLED	the count reaches GITHUB_OUTPUT before it is validated, so a bad value is readable downstream whatever this step's exit code
+	TestRevendorOwedStepRefusesAnUnreadableCount :: revendor_owed_signal_test.go:338: the `owed` step exited 1 but still published count="" to GITHUB_OUTPUT. A published count is read downstream whatever the exit code, so it must not be written at all when it is not a number.; TestRevendorOwedStepRefusesAnUnreadableCount/ledger_has_no_`owed`_key_—_the_`list`_expression_exits_5 :: revendor_owed_signal_test.go:338: the `owed` step exited 1 but still published count="" to GITHUB_OUTPUT. A published count is read downstream whatever the exit code, so it must not be written at all when it is not a number.; TestRevendorOwedStepRefusesAnUnreadableCount/ledger_is_zero_bytes_—_jq_exits_0_printing_nothing :: revendor_owed_signal_test.go:338: the `owed` step exited 1 but still published count="" to GITHUB_OUTPUT. A published count is read downstream whatever the exit code, so it must not be written at all when it is not a number.
+R4-classify-drop-empty-alt	KILLED	an EMPTY count is accepted, restoring the `${R_OWED_COUNT:-0}` behaviour that made an unproduced count read as `0 owed`
+	TestRevendorClassifyArmLadder :: revendor_owed_signal_test.go:471: state="gloss-owed", want "owed-failed"; TestRevendorClassifyArmLadder/unproduced_count,_step_green :: revendor_owed_signal_test.go:471: state="gloss-owed", want "owed-failed"
+R5-classify-drop-numeric-alt	KILLED	a non-empty, non-numeric count is accepted; it is `!= "0"`, so the bot files a gloss-owed issue whose body renders the garbage as the number of patterns owed
+	TestRevendorClassifyArmLadder :: revendor_owed_signal_test.go:471: state="gloss-owed", want "owed-failed"; TestRevendorClassifyArmLadder/unproduced_count,_non-numeric :: revendor_owed_signal_test.go:471: state="gloss-owed", want "owed-failed"
+R6-classify-drop-R_OWED-half	KILLED	a FAILED owed step with a stale-but-well-formed count is judged on that count, so a step that died is reported as `gloss-owed`
+	TestRevendorClassifyArmLadder :: revendor_owed_signal_test.go:471: state="gloss-owed", want "owed-failed"; TestRevendorClassifyArmLadder/owed_step_died :: revendor_owed_signal_test.go:471: state="gloss-owed", want "owed-failed"
+R7-classify-env-wrong-step	KILLED	the arm branches on ANOTHER step's outcome — an env var that reads as coverage and provides none, which is the shape of the original missing-env defect
+	TestRevendorClassifyEnvNamesEveryStepOutcome :: revendor_owed_signal_test.go:544: classify's env: R_OWED = "${{ steps.probe.outcome }}", want it to interpolate "steps.owed.outcome" — an env var carrying the WRONG step's outcome reads as coverage and provides none
+R8-signal-drop-owed-failed	KILLED	`owed-failed` is reachable on a GREEN job, so dropping it from `failing:` makes failure-issue.yml CLOSE the debt's own issue over a correctly-computed verdict
+	TestRevendorSignalTreatsOwedFailedAsFailing :: revendor_owed_signal_test.go:593: the `signal` job's `failing:` expression does not name "owed-failed", so a run reaching that verdict on a GREEN job resolves to failing=false and failure-issue.yml CLOSES the issue instead of filing it.
+
+==== VERDICT ==== defined=8 ran=8 killed=8 survived=0 build_fail=0 not_run=0 truncated=0

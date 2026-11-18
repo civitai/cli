@@ -160,7 +160,8 @@ func decodeBody(path string, status int, raw []byte, out any) ([]byte, error) {
 	if err := json.Unmarshal(raw, out); err != nil {
 		fixed := EscapeJSONStringControlChars(raw)
 		if json.Unmarshal(fixed, out) != nil {
-			return nil, fmt.Errorf("unexpected response from %s (status %d): %s", path, status, snippet(raw))
+			return nil, tag(ErrUnreadableResponse,
+				fmt.Errorf("unexpected response from %s (status %d): %s", path, status, snippet(raw)))
 		}
 		return fixed, nil
 	}

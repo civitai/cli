@@ -60,11 +60,17 @@ reasons, in descending order of how load-bearing they are.
 **(a) The snippet.** `snippet(raw)` is the only thing a user is shown when a
 `200` will not decode, and the pre-pass reassigned `raw` to the repaired bytes
 *before* it ran. So a server that sent one `0x0D` was reported as having sent a
-backslash and an `r`, and README's Troubleshooting row — "the text after the
+backslash and an `r`, and the published promise — "the text after the
 colon is the server's own body, truncated" — was false. Under the retry shape
 the reassignment happens only on the branch that succeeded, so a failure
 message still quotes what actually arrived.
 Pinned by `TestGetIntoErrorSnippetQuotesTheWireBytesNotTheRepairedOnes`.
+⚠ That promise lives at
+[`cli-json#when-a-body-still-will-not-decode`](https://developer.civitai.com/site/guide/cli-json#when-a-body-still-will-not-decode),
+**not** in README's Troubleshooting row, which this paragraph used to name. The
+phrase left `README.md` in `823fa4f` (#721) and the row never carried it — so the
+misattribution predates the `## Troubleshooting` cut rather than being caused by
+it. Corrected here and at the guard, `pkg/civitai/read_repair_test.go`.
 
 **(b) The unrepairable case.** A body invalid for a reason the sanitizer cannot
 fix must reach the same error with the ORIGINAL bytes. Nothing exercised that:
@@ -406,9 +412,13 @@ The delegations, and what each buys:
 
 - `internal/cmd:safeTerm` → `TestSafeTermIsNeverAppliedToUserTypedInput`. This
   site **must not** be classified server-or-user here: `internal/cmd`
-  deliberately routes two non-server values through `safeTerm` — `--input` file
-  content and `download`'s mixed-origin target path — both named in
-  `saferune`'s package doc as documented exceptions.
+  deliberately routes non-server values through `safeTerm`. Two are named in
+  `saferune`'s package doc as documented exceptions — `--input` file content and
+  `download`'s mixed-origin target path — and **that set is not closed**:
+  `--root` and `--for-base` are measured beyond them by `internal/cmd`'s
+  `TestDownloadFiltersRootAndForBase`. No size for the set is stated here,
+  because every copy of this sentence that stated one has gone stale — this was
+  the fifth.
 - `pkg/civitai:snippet` → `TestSnippetArgumentsAreAllServerBytes`, i.e. #557's
   own ledger, now reachable from the module root instead of being a fact about
   one package's test directory.

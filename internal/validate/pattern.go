@@ -34,10 +34,39 @@ import (
 // emits today — terse, never wrong. That is what makes this safe to sit in
 // front of a VENDORED mirror (AGENTS.md item 1): a schema update that adds a
 // pattern degrades to the old output rather than to a stale English claim about
-// a rule that changed. `TestPatternRulesCoverTheVendoredSchema` is the
-// bidirectional ledger that keeps the two in step anyway — it fails when the
-// schema grows a pattern with no gloss AND when a gloss names a pattern the
-// schema no longer has.
+// a rule that changed.
+//
+// So the coverage of this table is a NOTIFICATION concern, not a correctness
+// one, and `TestPatternRulesCoverTheVendoredSchema` is shaped accordingly. It is
+// a TOTAL ledger: every pattern the vendored schema can surface must be either
+// glossed here or recorded as an acknowledged debt in `pattern_gloss_owed.json`.
+//
+//   - A pattern the schema GAINS can be cleared mechanically, by recording the
+//     debt (`go test ./internal/validate -run
+//     TestPatternRulesCoverTheVendoredSchema -update-gloss-ledger -count=1`).
+//     That is what lets `revendor-canonical-schema.yml` land a pattern-adding
+//     canonical change unaided — it runs the suite on its own output before
+//     opening a PR, so an unconditional failure here made the automation whose
+//     job is to land that change unable to land it (#486 and #743). The cost was
+//     not the stalled bot: `ci.yml`'s `schema-drift` job runs on every PR in this
+//     repo with no path filter and stays red while the vendored mirror is stale,
+//     so a blockage here reddens a check on unrelated human PRs until someone
+//     writes a gloss. A human is still told: the debt row is in the bot's PR
+//     diff, and the workflow keeps a `gloss-owed` issue open until it is cleared.
+//     (⚠️ An earlier revision listed "#323, #486, #607, #695, #743" as five
+//     monthly blockages of this guard. Retracted — #323 was a hand-dispatched
+//     fire drill under a different title, #607 was the enum half alone, and #695
+//     was an `internal/pkgzip` test that files under the same headline because
+//     the bot's gate is `go test ./...`. The full table is above the `owed` step
+//     in `.github/workflows/revendor-canonical-schema.yml`.)
+//   - A pattern the schema DROPS while a gloss survives is NOT mechanically
+//     clearable and still fails the suite. A row claiming to explain a rule that
+//     no longer exists reads as coverage, and deleting prose is a human call.
+//
+// 🔴 A ROW IN `pattern_gloss_owed.json` IS A DEBT, NOT A DECISION. Clearing it
+// means writing the gloss here — plus its ledger row in
+// TestPatternGlossesAreTheRightWayRound and its tripping fixture in
+// patternFixtures, both of which are total against this table.
 //
 // The four `not: {"pattern": …}` sub-schemas under `outputDir` are deliberately
 // NOT in this table and cannot be: a failing `not` surfaces as `kind.Not`,
@@ -69,6 +98,16 @@ var patternRules = map[string]patternRule{
 	`^[a-z][a-z0-9-]*[a-z0-9]$`: {
 		rule:    "must be lowercase letters, digits and hyphens only, starting with a letter and ending with a letter or digit",
 		example: "my-first-app",
+	},
+	// goods[].id — the entitlement key. A DIFFERENT alphabet from blockId on
+	// purpose, and the gloss has to say so or an author reads the two failures
+	// as the same rule: underscores are legal here, and there is no
+	// last-character restriction, because a good id is private to one manifest
+	// rather than a public URL segment. What it shares with blockId is that it
+	// is permanent — a purchase and an entitlement are keyed by it.
+	`^[a-z0-9][a-z0-9_-]*$`: {
+		rule:    "must be lowercase letters, digits, underscores and hyphens only, starting with a letter or digit",
+		example: "extra-credits",
 	},
 	// version
 	`^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`: {
@@ -108,6 +147,56 @@ var patternRules = map[string]patternRule{
 	`^/`: {
 		rule:    "must start with a \"/\"",
 		example: "/",
+	},
+	// storage.collections.<name>.ownedModelVersions[] — a path into a stored
+	// document's `data`. Pointer-SHAPED but deliberately narrower than RFC 6901:
+	// no `~` escapes, and a segment cannot start with a digit, so it can never
+	// index into an array. The gloss names those three exclusions because they
+	// are what an author who knows JSON Pointer will try.
+	`^(/[A-Za-z_][A-Za-z0-9_]{0,63}){1,4}$`: {
+		rule:    "must be a field path of 1 to 4 segments, each \"/\" then a letter or _ followed by up to 63 letters, digits or _ — no array indexes, \"~\" escapes or hyphens",
+		example: "/workflow/modelVersionId",
+	},
+	// storage.collections.<name>.migrations[] `path` / `from` / `to` — a real RFC
+	// 6901 JSON Pointer into a stored document's `data`, unlike the narrower
+	// ownedModelVersions path above: any characters are legal in a segment once
+	// `~` and `/` are escaped. The schema's separate `not` that refuses a `*`
+	// segment here surfaces as kind.Not and is not this regex's claim.
+	`^(/([^/~]|~[01])+){1,15}$`: {
+		rule:    "must be a JSON Pointer of 1 to 15 non-empty segments, each \"/\" then a field name, with ~ written as ~0 and / written as ~1",
+		example: "/title",
+	},
+	// storage.collections.<name>.migrations[] acknowledge `path` — the same
+	// pointer shape, but ZERO segments is legal: "" is the document root.
+	`^(/([^/~]|~[01])+){0,15}$`: {
+		rule:    "must be \"\" for the document root, or a JSON Pointer of up to 15 non-empty segments, each \"/\" then a field name, with ~ written as ~0 and / written as ~1",
+		example: "/tags/*",
+	},
+	// storage.collections.<name>.hook.file — a bundle-relative module path. The
+	// first-character rule per segment is what refuses ".", ".." and hidden
+	// files; the schema's separate node_modules `not` is not this regex's claim.
+	`^([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.m?js$`: {
+		rule:    "must be a relative path to a .js or .mjs file: \"/\"-separated segments, each starting with a letter, digit, _ or - and then letters, digits, _, . or - (so no leading \"/\", no \".\" or \"..\" segment, no hidden file)",
+		example: "hooks/check.js",
+	},
+	// storage.collections.<name>.hook.sha256 — uppercase hex is the mistake a
+	// tool that prints digests in capitals walks an author into.
+	`^[0-9a-f]{64}$`: {
+		rule:    "must be exactly 64 lowercase hexadecimal characters (a SHA-256 digest)",
+		example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+	},
+	// storage.imports[].from — ANOTHER app's blockId. Bounded (3 to 40) where
+	// the root blockId pattern is not, so the gloss states the length and avoids
+	// the blockId row's wording, which the two must not share.
+	`^[a-z][a-z0-9-]{1,38}[a-z0-9]$`: {
+		rule:    "must be an app's blockId: 3 to 40 characters of a-z, 0-9 and -, starting with a letter and ending with a letter or digit",
+		example: "parent-app",
+	},
+	// storage collection names (storage.imports[].collections[]) and the
+	// counter and mark names on a shared collection.
+	`^[a-z][a-z0-9_]{0,31}$`: {
+		rule:    "must be a lowercase snake_case name: a letter, then up to 31 of a-z, 0-9 or _",
+		example: "saved_notes",
 	},
 }
 

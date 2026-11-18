@@ -4,6 +4,7 @@ package validate
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
@@ -57,6 +58,74 @@ func (r Result) HasWarnings() bool { return len(r.Warnings) > 0 }
 
 var compiled *jsonschema.Schema
 
+// schemaURL is the id the vendored schema is compiled under; every
+// ValidationError.SchemaURL is rooted at it.
+const schemaURL = "https://civitai.com/schemas/app-block/v1.json"
+
+// surfaceClauseURL is the SchemaURL the validator reports when the schema's
+// surface clause fails — the top-level `allOf` entry whose `anyOf` requires a
+// non-empty `targets` array or a `page` object. Empty when the vendored schema
+// has no such clause. Set by schema(); see surfaceClauseIndex.
+var surfaceClauseURL string
+
+// surfaceMessage replaces the schema's two generic `anyOf` leaves ("missing
+// property 'page'" + "missing property 'targets'" / "targets: minItems") with
+// one sentence that names the fix. The wording follows the platform's own
+// submit-time refusal (manifestSurfaceError in civitai's
+// block-manifest-validator.service.ts), so the CLI and the server say the same
+// thing. The slot id in the example is the platform's first model slot
+// (MODEL_SLOT_IDS[0]); a test pins it as a known, non-page slot here.
+const surfaceMessage = `manifest must declare at least one surface: add a "page" object for a full-page app ` +
+	`(e.g. "page": { "path": "/", "title": "My App" }), or a non-empty "targets" array for a ` +
+	`model-page slot app (e.g. "targets": [{ "slotId": "model.sidebar_top" }])`
+
+// surfaceClauseIndex finds the surface clause in the vendored schema: the
+// index of the top-level `allOf` entry whose `anyOf` has exactly two branches,
+// one requiring only "targets" and one requiring only "page". -1 if absent.
+//
+// The schema stays the single source of the RULE: this only lets
+// schemaErrors recognise that clause's failure so it can reword it. It never
+// adds or removes a failure — when the clause is absent (or reshaped), the
+// schema's own messages pass through unchanged.
+func surfaceClauseIndex(doc any) int {
+	root, ok := doc.(map[string]any)
+	if !ok {
+		return -1
+	}
+	allOf, _ := root["allOf"].([]any)
+	for i, entry := range allOf {
+		e, _ := entry.(map[string]any)
+		anyOf, _ := e["anyOf"].([]any)
+		if len(anyOf) != 2 {
+			continue
+		}
+		seen := map[string]bool{}
+		for _, br := range anyOf {
+			b, _ := br.(map[string]any)
+			req, _ := b["required"].([]any)
+			if len(req) != 1 {
+				break
+			}
+			s, _ := req[0].(string)
+			if s == "targets" {
+				// The message promises "a non-empty targets array"; only
+				// match a clause that actually demands one.
+				props, _ := b["properties"].(map[string]any)
+				tg, _ := props["targets"].(map[string]any)
+				if n, ok := tg["minItems"].(json.Number); !ok || n.String() != "1" {
+					break
+				}
+			}
+			seen[s] = true
+		}
+		// Two branches and both keys seen means one branch each.
+		if seen["targets"] && seen["page"] {
+			return i
+		}
+	}
+	return -1
+}
+
 func schema() (*jsonschema.Schema, error) {
 	if compiled != nil {
 		return compiled, nil
@@ -65,8 +134,11 @@ func schema() (*jsonschema.Schema, error) {
 	if err != nil {
 		return nil, fmt.Errorf("vendored schema is not valid JSON: %w", err)
 	}
+	if i := surfaceClauseIndex(doc); i >= 0 {
+		surfaceClauseURL = fmt.Sprintf("%s#/allOf/%d", schemaURL, i)
+	}
 	c := jsonschema.NewCompiler()
-	const url = "https://civitai.com/schemas/app-block/v1.json"
+	const url = schemaURL
 	if err := c.AddResource(url, doc); err != nil {
 		return nil, fmt.Errorf("add schema resource: %w", err)
 	}
@@ -128,7 +200,9 @@ func validateDir(dir string, projectState bool) (Result, error) {
 	// Structural: server-owned fields must not be set by the developer. The
 	// JSON Schema can express this with `not`, but its error message ("not
 	// failed", no field path) is useless — do it in Go for a clear message.
-	res.Errors = append(res.Errors, serverOwnedFieldChecks(generic)...)
+	ownedErrs, ownedWarns := serverOwnedFieldChecks(generic)
+	res.Errors = append(res.Errors, ownedErrs...)
+	res.Warnings = append(res.Warnings, ownedWarns...)
 
 	// Semantic: the cross-field / tier-gated rules the server runs at approve
 	// time (BlockManifestValidator) that the JSON Schema cannot express —
@@ -137,6 +211,23 @@ func validateDir(dir string, projectState bool) (Result, error) {
 	// green-lights manifests the server rejects. See semantic.go / targets.go.
 	res.Errors = append(res.Errors, semanticChecks(generic)...)
 	res.Errors = append(res.Errors, targetChecks(generic)...)
+
+	// Semantic: the server's storage refusals the schema admits (a counter/mark
+	// name collision), then the storage⇄scopes rules — which the server
+	// evaluates only against a declaration that parsed, so they wait until no
+	// ERROR so far is located under `storage`. The features the server has not
+	// enabled yet are WARNINGS, and deliberately do not hold the scope rules
+	// back. See storagemanifest.go.
+	// A collection's `schema` has its own server-only bounds (size, depth,
+	// pattern count, min above max); a pattern with a JavaScript "u"-mode
+	// syntax error is a WARNING, because the server compiles it and decides. See
+	// storageschema.go and jsregexp.go.
+	res.Errors = append(res.Errors, storageDeclarationChecks(generic)...)
+	res.Errors = append(res.Errors, storageCollectionSchemaChecks(generic)...)
+	res.Errors = append(res.Errors, storageManifestPatternCapChecks(generic, res.Errors)...)
+	res.Errors = append(res.Errors, storageScopeRuleChecks(generic, !hasFindingUnder(res.Errors, "storage"))...)
+	res.Warnings = append(res.Warnings, storageFeatureGateWarnings(generic)...)
+	res.Warnings = append(res.Warnings, storageCollectionSchemaWarnings(generic)...)
 
 	// Structural: buildCommand + outputDir coherence beyond what the schema
 	// can express (the schema enforces "outputDir required when buildCommand
@@ -160,6 +251,13 @@ func validateDir(dir string, projectState bool) (Result, error) {
 		// warningChecks also runs under ManifestOnly, where `civitai app init`
 		// self-checks a template it just wrote. See readyack.go.
 		res.Warnings = append(res.Warnings, readyAckChecks(dir, generic)...)
+
+		// Project state: the app's storage CALLS against its manifest — a
+		// literal collection name the manifest does not declare, the document
+		// store without `apps:storage`, and the deprecated legacy hooks. Same
+		// ADVISORY posture and the same reason for living here rather than in
+		// warningChecks — it reads src/. See storagescope.go.
+		res.Warnings = append(res.Warnings, storageScopeChecks(dir, generic)...)
 	}
 
 	// Non-fatal advisories: real money-path footguns the schema can't catch as
@@ -174,25 +272,51 @@ func validateDir(dir string, projectState bool) (Result, error) {
 	return res, nil
 }
 
+// CanonicalAppsDomain is the production per-app subdomain root. The platform
+// serves every app from https://<blockId>.<CanonicalAppsDomain>/ and stamps
+// exactly that value into iframe.src (civitai/civitai
+// src/server/services/blocks/manifest-normalize.ts canonicalIframeSrc).
+const CanonicalAppsDomain = "civit.ai"
+
+// canonicalIframeSrc is the one iframe.src the platform itself writes.
+func canonicalIframeSrc(blockID string) string {
+	return "https://" + blockID + "." + CanonicalAppsDomain + "/"
+}
+
 // serverOwnedFieldChecks rejects manifest fields the platform assigns. Devs
 // must not set them; doing so is a hard error with a clear, actionable message.
-func serverOwnedFieldChecks(generic any) []Finding {
-	var errs []Finding
+//
+// ONE EXCEPTION, a WARNING: an iframe.src equal to EXACTLY the canonical value
+// for this blockId. The platform writes that value into the repository it
+// serves (`civitai app pull` hands you that tree), so a pulled checkout always
+// carries it; refusing it made pull → edit → validate → submit impossible
+// without hand-editing a file the developer never wrote. The value is inert —
+// submit and approve overwrite iframe.src with the same string — so accepting it
+// cannot change what ships. Any OTHER value is still an error: it is a developer
+// trying to point the app somewhere, which the platform will silently undo.
+func serverOwnedFieldChecks(generic any) (errs []Finding, warns []Finding) {
 	m, ok := generic.(map[string]any)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	if _, set := m["trustTier"]; set {
 		errs = append(errs, newFinding("trustTier",
 			"trustTier is server-owned — remove it from your manifest; the platform assigns the trust tier during review"))
 	}
 	if iframe, ok := m["iframe"].(map[string]any); ok {
-		if _, set := iframe["src"]; set {
-			errs = append(errs, newFinding(childField("iframe", "src"),
-				"iframe.src is server-owned — remove it; the platform stamps the canonical bundle URL during build/approve"))
+		if src, set := iframe["src"]; set {
+			blockID, _ := m["blockId"].(string)
+			if s, isStr := src.(string); isStr && blockID != "" && s == canonicalIframeSrc(blockID) {
+				warns = append(warns, newFinding(childField("iframe", "src"),
+					"iframe.src is the platform-stamped canonical value (a pulled checkout carries it) — accepted; "+
+						"you may remove it, the platform sets it on submit either way"))
+			} else {
+				errs = append(errs, newFinding(childField("iframe", "src"),
+					"iframe.src is server-owned — remove it; the platform stamps the canonical bundle URL during build/approve"))
+			}
 		}
 	}
-	return errs
+	return errs, warns
 }
 
 // buildCoherence checks buildCommand/outputDir.
@@ -266,6 +390,15 @@ func schemaErrors(err error) []Finding {
 	var out []Finding
 	var walk func(e *jsonschema.ValidationError)
 	walk = func(e *jsonschema.ValidationError) {
+		// The surface clause's `anyOf` fails as two leaves that each name one
+		// missing key and neither says "either one will do". Collapse the
+		// branch into one finding that names both fixes. Matched by the
+		// clause's schema location, so only THAT anyOf is reworded; the
+		// failure itself is still the schema's verdict.
+		if _, isAnyOf := e.ErrorKind.(*kind.AnyOf); isAnyOf && surfaceClauseURL != "" && e.SchemaURL == surfaceClauseURL {
+			out = append(out, newFinding(fieldPath(e.InstanceLocation), surfaceMessage))
+			return
+		}
 		// Only emit leaf errors (those with no children carry the concrete
 		// reason); intermediate nodes just describe the path.
 		if len(e.Causes) == 0 {

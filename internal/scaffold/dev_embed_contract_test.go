@@ -32,15 +32,20 @@ import (
 // devEmbedConstants pulls the literal values out of the rendered dev-embed.ts,
 // resolving the one template-literal interpolation it uses.
 type devEmbedConstants struct {
-	parentOrigin string
-	hostSuffix   string
-	csp          string
-	acao         string
+	// parentOrigins is the CIVITAI_PARENT_ORIGINS array, space-joined (a string,
+	// so the struct stays comparable with ==).
+	parentOrigins string
+	hostSuffix    string
+	csp           string
+	acao          string
 }
 
 var (
-	reParentOrigin = regexp.MustCompile(`PROD_PARENT_ORIGIN\s*=\s*'([^']+)'`)
-	reHostSuffix   = regexp.MustCompile(`DEV_TUNNEL_HOST_SUFFIX\s*=\s*'([^']+)'`)
+	// `export const CIVITAI_PARENT_ORIGINS: readonly string[] = [ … ];` (TS) or
+	// `export const CIVITAI_PARENT_ORIGINS = [ … ];` (JS).
+	reParentOrigins = regexp.MustCompile(`CIVITAI_PARENT_ORIGINS(?:\s*:\s*[^=]+)?\s*=\s*\[([^\]]*)\]`)
+	reQuoted        = regexp.MustCompile(`'([^']*)'`)
+	reHostSuffix    = regexp.MustCompile(`DEV_TUNNEL_HOST_SUFFIX\s*=\s*'([^']+)'`)
 	// The header values are matched to END OF LINE, not with a character class:
 	// the CSP value legitimately CONTAINS quotes (`frame-ancestors 'self' …`), and
 	// a `[^']+` class silently truncates it at the first one — yielding a value the
@@ -71,13 +76,17 @@ func extractDevEmbedConstants(t *testing.T, src string) devEmbedConstants {
 		return m[1]
 	}
 	c := devEmbedConstants{
-		parentOrigin: grab(reParentOrigin, "PROD_PARENT_ORIGIN"),
-		hostSuffix:   grab(reHostSuffix, "DEV_TUNNEL_HOST_SUFFIX"),
-		csp:          unquoteTSLiteral(grab(reCSP, "the Content-Security-Policy header")),
-		acao:         unquoteTSLiteral(grab(reACAO, "the Access-Control-Allow-Origin header")),
+		hostSuffix: grab(reHostSuffix, "DEV_TUNNEL_HOST_SUFFIX"),
+		csp:        unquoteTSLiteral(grab(reCSP, "the Content-Security-Policy header")),
+		acao:       unquoteTSLiteral(grab(reACAO, "the Access-Control-Allow-Origin header")),
 	}
-	// Resolve `${PROD_PARENT_ORIGIN}` in the CSP template literal.
-	c.csp = strings.ReplaceAll(c.csp, "${PROD_PARENT_ORIGIN}", c.parentOrigin)
+	var origins []string
+	for _, q := range reQuoted.FindAllStringSubmatch(grab(reParentOrigins, "CIVITAI_PARENT_ORIGINS"), -1) {
+		origins = append(origins, q[1])
+	}
+	c.parentOrigins = strings.Join(origins, " ")
+	// Resolve the one interpolation the CSP template literal uses.
+	c.csp = strings.ReplaceAll(c.csp, "${CIVITAI_PARENT_ORIGINS.join(' ')}", c.parentOrigins)
 	if strings.Contains(c.csp, "${") {
 		t.Fatalf("unresolved interpolation in the CSP value %q — extend the guard", c.csp)
 	}
@@ -87,7 +96,7 @@ func extractDevEmbedConstants(t *testing.T, src string) devEmbedConstants {
 	if !strings.HasPrefix(c.csp, "frame-ancestors ") || len(strings.Fields(c.csp)) < 2 {
 		t.Fatalf("extracted CSP %q does not look like a frame-ancestors directive — fix the extractor, not the template", c.csp)
 	}
-	if c.acao == "" || c.hostSuffix == "" || c.parentOrigin == "" {
+	if c.acao == "" || c.hostSuffix == "" || c.parentOrigins == "" {
 		t.Fatalf("extractor produced an empty value: %+v", c)
 	}
 	return c
@@ -132,16 +141,18 @@ func scaffoldHeaderServer(t *testing.T, c devEmbedConstants, emitHeaders bool) (
 // accepts. It reports a control PAIR — with the headers the preflight must be
 // silent, without them it must complain — so a preflight that degenerated into
 // "always returns nil" fails here instead of passing as a clean bill of health.
+//
+// It runs over EVERY template that renders a Vite config (renderViteTemplates,
+// derived from AllTemplates), not the SDK-only devEmbedTemplates list: page-vite
+// has no SDK but its dev server is tunneled all the same.
 func TestScaffoldHeadersSatisfyDevTunnelPreflight(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := Render(PageMoney, dir, Data{Slug: "my-block", Name: "My Block"}); err != nil {
-		t.Fatalf("render page-money: %v", err)
+	for _, v := range renderViteTemplates(t) {
+		t.Run(string(v.tmpl), func(t *testing.T) { scaffoldHeadersSatisfyPreflight(t, v) })
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "src", "dev-embed.ts"))
-	if err != nil {
-		t.Fatalf("read dev-embed.ts: %v", err)
-	}
-	c := extractDevEmbedConstants(t, string(raw))
+}
+
+func scaffoldHeadersSatisfyPreflight(t *testing.T, v viteTemplate) {
+	c := extractDevEmbedConstants(t, v.read(t, v.devEmbed))
 
 	t.Run("positive: scaffold headers pass the preflight", func(t *testing.T) {
 		host, port := scaffoldHeaderServer(t, c, true)
@@ -152,8 +163,8 @@ func TestScaffoldHeadersSatisfyDevTunnelPreflight(t *testing.T) {
 			}
 			t.Fatalf("the scaffold's own dev-server config must satisfy the CLI preflight, but it reported:\n  %s\n"+
 				"either the template drifted or the preflight no longer recognises it — reconcile "+
-				"internal/scaffold/templates/page-money/src/dev-embed.ts with internal/devtunnel/embedcheck.go",
-				strings.Join(kinds, "\n  "))
+				"the template's %s with internal/devtunnel/embedcheck.go",
+				strings.Join(kinds, "\n  "), v.devEmbed)
 		}
 	})
 
@@ -173,17 +184,22 @@ func TestScaffoldEnvSatisfiesDevTunnelPreflight(t *testing.T) {
 		t.Setenv(devtunnel.ParentOriginsEnvVar, v)
 		_ = os.Unsetenv(devtunnel.ParentOriginsEnvVar)
 	}
+	for _, tmpl := range devEmbedTemplates {
+		t.Run(string(tmpl), func(t *testing.T) { scaffoldEnvSatisfiesPreflight(t, tmpl) })
+	}
+}
 
+func scaffoldEnvSatisfiesPreflight(t *testing.T, tmpl Template) {
 	dir := t.TempDir()
-	if _, err := Render(PageMoney, dir, Data{Slug: "my-block", Name: "My Block"}); err != nil {
-		t.Fatalf("render page-money: %v", err)
+	if _, err := Render(tmpl, dir, Data{Slug: "my-block", Name: "My Block"}); err != nil {
+		t.Fatalf("render %s: %v", tmpl, err)
 	}
 
 	t.Run("positive: the scaffolded project is silent", func(t *testing.T) {
 		if got := devtunnel.CheckParentOrigins(dir); len(got) != 0 {
 			body, _ := os.ReadFile(filepath.Join(dir, ".env.development"))
-			t.Fatalf("a freshly scaffolded page-money app must not trip the parent-origins check.\n"+
-				".env.development:\n%s", body)
+			t.Fatalf("a freshly scaffolded %s app must not trip the parent-origins check.\n"+
+				".env.development:\n%s", tmpl, body)
 		}
 	})
 
