@@ -342,12 +342,10 @@ has to decide which needs both ids. The server's own editTargetId is NOT in
 there: this CLI does not decode that field, and reporting an id it never read
 would be a guess.
 
-🔴 This is not a pure read — with or without --json — so do not poll it in a
-loop: on a LIVE listing it opens the shadow revision described above, so a
-script calling it repeatedly keeps a revision draft open on your listing. That
-holds for an OFFSITE app too, and they are approved in practice.
-civitai/cli#389 settled that a FAILED call writes nothing; a successful one
-still does.`,
+This is a read, with or without --json: it asks for the read-only view, so on
+a LIVE listing it reports an existing shadow revision but never opens one.
+Older servers ignore that and open the shadow revision on a successful call
+(civitai/cli#389: a FAILED call writes nothing), so do not poll those.`,
 		Example: `  civitai app listing status
   civitai app listing status --slug my-app
   civitai app listing status --dir ./my-app
@@ -370,7 +368,7 @@ still does.`,
 			if err != nil {
 				return err
 			}
-			view, err := client.GetMyListingForEdit(ctx, ref.AppListingID)
+			view, err := client.GetMyListingForStatus(ctx, ref.AppListingID)
 			if err != nil {
 				return err
 			}
@@ -387,7 +385,7 @@ still does.`,
 	}
 	lc.bind(cmd)
 	cmd.Flags().BoolVar(&jsonOut, "json", false,
-		"emit the listing as JSON (scriptable) — includes the parent and shadow listing ids; NOT a pure read (see the note in --help)")
+		"emit the listing as JSON (scriptable) — includes the parent and shadow listing ids (see the note in --help)")
 	return cmd
 }
 

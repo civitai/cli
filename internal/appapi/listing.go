@@ -724,10 +724,25 @@ func (c *Client) GetMyListingForApp(ctx context.Context, appBlockID, slug string
 
 // GetMyListingForEdit reads the effective listing media (icon/cover/screenshots)
 // for the given AppListing id. 🔴 Side effect: for an APPROVED parent the server
-// idempotently opens a shadow revision and returns ITS assets.
+// idempotently opens a shadow revision and returns ITS assets. Commands that are
+// about to change the listing use this; a read-only report uses
+// GetMyListingForStatus.
 func (c *Client) GetMyListingForEdit(ctx context.Context, listingID string) (*ListingEditView, error) {
 	var out ListingEditView
-	if err := c.trpcQuery(ctx, trpcGetMyListingForEdit, map[string]string{"listingId": listingID}, &out); err != nil {
+	if err := c.trpcQuery(ctx, trpcGetMyListingForEdit, map[string]any{"listingId": listingID}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetMyListingForStatus is the same read with `readOnly: true`: for an APPROVED
+// parent the server reports an existing shadow revision (shadowId) but never opens
+// one, and with no shadow it returns the live listing with shadowId null. A server
+// that predates the flag ignores the unknown key and behaves as GetMyListingForEdit.
+func (c *Client) GetMyListingForStatus(ctx context.Context, listingID string) (*ListingEditView, error) {
+	var out ListingEditView
+	in := map[string]any{"listingId": listingID, "readOnly": true}
+	if err := c.trpcQuery(ctx, trpcGetMyListingForEdit, in, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
