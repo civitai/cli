@@ -194,8 +194,12 @@ func findingFieldLedger() []fieldExpectation {
 			"the remedy is to delete this key from the collection"},
 		{".registry is not available yet", "storage.collections.cov_registry.registry",
 			"the remedy is to delete this key from the collection"},
-		{".hook is not available yet", "storage.collections.cov_hook.hook",
-			"the remedy is to delete this key from the collection"},
+		{".hook is in a limited rollout", "storage.collections.cov_hook.hook",
+			"the hook as a whole is what the rollout gates; its remedy (keep the approved one, or " +
+				"remove it) is an edit to this key"},
+		{"is inside the build output (outputDir)", "storage.collections.cov_hook_out.hook.file",
+			"the refused VALUE is the hook's file; outputDir is deliberate (the build needs it), so the " +
+				"file is what moves — and the server's message names `.file`"},
 		{"as both a counter and a mark", "storage.collections.cov_dup",
 			"a relationship between two keys OF ONE collection, either of which may be renamed — " +
 				"the collection is the smallest location that holds both"},
