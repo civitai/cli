@@ -1213,13 +1213,16 @@ func fieldCoverageCorpus() []fieldFixture {
 		},
 		{
 			// storageFeatureGateWarnings (every feature the server refuses
-			// today, as WARNINGS) and storageDeclarationChecks (the counter/mark
-			// name collision, an error), one collection each. The collision
+			// today, and the hook rollout, as WARNINGS) and
+			// storageDeclarationChecks (a hook file inside outputDir and the
+			// counter/mark name collision, errors), one collection each. The collision
 			// keeps the scope rules silent here BY DESIGN (an invalid
 			// declaration declares nothing); the next fixture reaches them.
-			name: "storage features not available yet, and a counter/mark collision (storageFeatureGateWarnings, storageDeclarationChecks)",
+			name: "storage features not available yet, the hook rollout, a hook inside outputDir, and a counter/mark collision (storageFeatureGateWarnings, storageDeclarationChecks)",
 			files: map[string]string{"block.manifest.json": `{
 			  "targets": [{"slotId": "model.sidebar_top"}],
+			  "buildCommand": "npm run build",
+			  "outputDir": "dist",
 			  "blockId": "cov-block",
 			  "name": "Coverage Block",
 			  "version": "1.0.0",
@@ -1235,6 +1238,7 @@ func fieldCoverageCorpus() []fieldFixture {
 			    "cov_daily": {"visibility": "shared", "write": "own", "dailyWritesPerAuthor": 10},
 			    "cov_registry": {"visibility": "shared", "write": "own", "registry": "public"},
 			    "cov_hook": {"visibility": "private", "hook": {"file": "hooks/guard.js", "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}},
+			    "cov_hook_out": {"visibility": "private", "hook": {"file": "dist/guard.js", "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}},
 			    "cov_dup": {"visibility": "shared", "write": "none", "counters": ["n"], "marks": ["n"]}
 			  }}
 			}`},

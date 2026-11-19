@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // storagemanifest.go mirrors the server's refusals of a manifest's `storage`
@@ -27,13 +28,16 @@ import (
 // submitted. Messages are the server's text, so the CLI and the 400 agree.
 //
 // 🔴 THE ONE EXCEPTION: THE FEATURE GATES ARE WARNINGS (storageFeatureGateWarnings).
-// The server refuses seven features today, but each is a one-line switch in
+// The server refuses six features today, but each is a one-line switch in
 // APP_STORAGE_ENABLED_FEATURES, and `app submit` blocks on validate ERRORS. A
 // hard error here would outlive the switch in every CLI already installed and
 // refuse manifests the server has started to accept. The warning keeps the
 // server's text and says the server refuses it at submit TODAY. The vendored
 // schema's description is what tells this repository a feature was enabled:
 // TestVendoredSchemaStillStatesTheFeatureGates goes red on the re-vendor PR.
+// The seventh, `hook`, is switched ON (civitai#8126) but rolled out per author
+// (the `app-blocks-storage-hooks` cohort), which the CLI cannot see — so it is a
+// warning too, saying that (storageHookRolloutWarning).
 //
 // THE ONE KNOWN DIVERGENCE: where the server lists collection names in
 // DECLARATION order, this lists them SORTED. The manifest is decoded into a Go
@@ -133,19 +137,40 @@ func storageCollections(generic any) ([]declaredCollection, bool) {
 	return out, true
 }
 
-// storageFeatureGateWarnings reports the seven features switched off in
-// APP_STORAGE_ENABLED_FEATURES, as WARNINGS (see the file comment for why).
+// storageHookRolloutWarning says what civitai.com does with a well-formed hook
+// now that the `hooks` feature is on (civitai#8126): it accepts a NEW or CHANGED
+// hook only from an author in the `app-blocks-storage-hooks` cohort, and refuses
+// it otherwise at submit (storage-hooks.ts, reason `not_in_cohort`). A hook
+// pinned exactly as the approved version pins it skips the cohort.
+//
+// Neither input — the author's cohort, the approved manifest — is visible to the
+// CLI, so this is a WARNING that states the condition rather than a verdict. The
+// wording is the server's: the first sentence is the vendored schema's `hook`
+// description, the remedy is the `not_in_cohort` refusal's.
+func storageHookRolloutWarning(at string) string {
+	return at + " is in a limited rollout: civitai.com accepts a new or changed hook only from " +
+		"authors the rollout includes, and refuses it otherwise. If submit refuses it, keep the " +
+		"approved hook or remove hook (the collection schema still applies). It is a warning here, " +
+		"not an error, because whether this account is in the rollout, and whether the hook is new " +
+		"or changed since the approved version, is known only to civitai.com."
+}
+
+// storageFeatureGateWarnings reports the six features switched off in
+// APP_STORAGE_ENABLED_FEATURES, and the per-author rollout of `hook`, as
+// WARNINGS (see the file comment for why).
 //
 // Each gate fires under exactly the condition the server reaches it: after the
 // visibility parsed, and — for the two numeric keys — only once the value is
 // in range, because an out-of-range value gets the range refusal instead. The
-// same holds for `hook` (only a well-formed hook reaches its gate); `registry`
-// is the opposite, its gate coming before any check of its value.
+// same holds for `hook` (only a hook parseHook accepted reaches the cohort);
+// `registry` is the opposite, its gate coming before any check of its value.
 func storageFeatureGateWarnings(generic any) []Finding {
 	cols, ok := storageCollections(generic)
 	if !ok {
 		return nil
 	}
+	m, _ := generic.(map[string]any)
+	outputDir := m["outputDir"]
 	var out []Finding
 	for _, c := range cols {
 		at := childField("storage.collections", c.name)
@@ -185,13 +210,11 @@ func storageFeatureGateWarnings(generic any) []Finding {
 				at+".registry", "collections published to registries",
 				"remove it to keep the collection on Civitai only")))
 		}
-		// hooks: the server checks the switch only AFTER parseHook accepted the
-		// hook's shape, so a malformed hook gets the shape error (the schema's,
-		// here) and never the gate.
-		if hookShapeAccepted(c.decl["hook"]) {
-			out = append(out, newFinding(childField(at, "hook"), storageNotYet(
-				at+".hook", "permission hooks",
-				"remove hook (the collection schema still applies)")))
+		// hooks: the cohort is consulted only for a hook parseHook accepted, so a
+		// malformed hook gets the shape error (the schema's, or the outputDir
+		// refusal in storageDeclarationChecks) and never this warning.
+		if hookShapeAccepted(c.decl["hook"], outputDir) {
+			out = append(out, newFinding(childField(at, "hook"), storageHookRolloutWarning(at+".hook")))
 		}
 	}
 	return out
@@ -214,16 +237,11 @@ const (
 	appStorageHookTimeoutMaxMs  = 500
 )
 
-// hookShapeAccepted mirrors the shape checks of the server's parseHook: an
-// object holding only file, sha256 and timeoutMs, with each well-formed. It
-// reads no file and checks no digest — whether the file exists in the bundle
-// with that sha256 is the server's, at submit.
-//
-// ONE KNOWN DIVERGENCE: parseHook also refuses a `file` inside `outputDir`,
-// which the schema cannot state. That is not mirrored, so such a hook draws the
-// gate here where the server names outputDir. Both say the hook cannot be
-// submitted, and removing it clears both.
-func hookShapeAccepted(v any) bool {
+// hookShapeAccepted mirrors the server's parseHook accepting a hook: an object
+// holding only file, sha256 and timeoutMs, each well-formed, with `file` outside
+// the manifest's `outputDir`. It reads no file and checks no digest — whether
+// the file exists in the bundle with that sha256 is the server's, at submit.
+func hookShapeAccepted(v any, outputDir any) bool {
 	h, ok := v.(map[string]any)
 	if !ok {
 		return false
@@ -233,9 +251,8 @@ func hookShapeAccepted(v any) bool {
 			return false
 		}
 	}
-	file, ok := h["file"].(string)
-	if !ok || len(file) > appStorageHookFileMaxLength ||
-		!appStorageHookFileRe.MatchString(file) || appStorageHookForbiddenRe.MatchString(file) {
+	file, ok := hookFileShapeAccepted(h["file"])
+	if !ok || isStorageHookFileUnderOutputDir(file, outputDir) {
 		return false
 	}
 	if sha, ok := h["sha256"].(string); !ok || !appStorageHookSHA256Re.MatchString(sha) {
@@ -247,9 +264,105 @@ func hookShapeAccepted(v any) bool {
 	return true
 }
 
-// storageDeclarationChecks reports the declaration refusal the schema admits
-// and the server keeps refusing: a counter and a mark sharing one name (two
-// lists, each `uniqueItems` on its own, so no schema keyword relates them).
+// hookFileShapeAccepted is parseHook's `file` check up to (not including) the
+// outputDir one: a string of at most 200 characters matching the file pattern,
+// with no node_modules segment. Every character the pattern admits is ASCII, so
+// len() counts what JavaScript's `length` does for any file that can pass.
+func hookFileShapeAccepted(v any) (string, bool) {
+	file, ok := v.(string)
+	if !ok || len(file) > appStorageHookFileMaxLength ||
+		!appStorageHookFileRe.MatchString(file) || appStorageHookForbiddenRe.MatchString(file) {
+		return "", false
+	}
+	return file, true
+}
+
+// outputDirPrefix mirrors the server's (block-storage.constants.ts): the
+// manifest's `outputDir` as a bundle-path prefix — "" when it names the project
+// root (every file is inside it), and ok=false when the manifest has none, or
+// one that is not a string.
+func outputDirPrefix(outputDir any) (string, bool) {
+	s, ok := outputDir.(string)
+	if !ok {
+		return "", false
+	}
+	dir := jsTrim(s)
+	for strings.HasPrefix(dir, "./") {
+		dir = dir[2:]
+	}
+	for strings.HasSuffix(dir, "/") {
+		dir = dir[:len(dir)-1]
+	}
+	if dir == "." {
+		return "", true
+	}
+	return dir, true
+}
+
+// isStorageHookFileUnderOutputDir mirrors the server function of the same name:
+// whether a hook `file` lies inside the manifest's `outputDir` (the build's
+// output) — equal to it, or under it at a "/" boundary, so `dist2/hook.js` is
+// NOT inside `dist`.
+func isStorageHookFileUnderOutputDir(file string, outputDir any) bool {
+	dir, ok := outputDirPrefix(outputDir)
+	if !ok {
+		return false
+	}
+	return dir == "" || file == dir || strings.HasPrefix(file, dir+"/")
+}
+
+// jsTrim is JavaScript's String.prototype.trim: it strips WhiteSpace (TAB, VT,
+// FF, U+FEFF and every Zs space) and LineTerminator (LF, CR, U+2028, U+2029).
+// Not strings.TrimSpace, which also strips U+0085 and keeps U+FEFF.
+func jsTrim(s string) string {
+	return strings.TrimFunc(s, func(r rune) bool {
+		switch r {
+		case '\t', '\v', '\f', '\n', '\r', '\uFEFF', '\u2028', '\u2029':
+			return true
+		}
+		return unicode.Is(unicode.Zs, r)
+	})
+}
+
+// storageHookOutputDirChecks reports parseHook's one refusal the schema cannot
+// state: a hook `file` inside the manifest's `outputDir`. The server reaches it
+// for any collection whose visibility parsed and whose `hook` is an object with
+// a `file` that passed the shape and node_modules checks — independently of
+// that hook's sha256, timeoutMs and keys, which it reports beside it. Message is
+// the server's text (quoteName is JSON.stringify of boundKey; every character a
+// passing file may hold is printable ASCII, so %q matches it).
+func storageHookOutputDirChecks(generic any) []Finding {
+	cols, ok := storageCollections(generic)
+	if !ok {
+		return nil
+	}
+	m, _ := generic.(map[string]any)
+	var out []Finding
+	for _, c := range cols {
+		if vis, _ := c.decl["visibility"].(string); vis != "private" && vis != "shared" {
+			continue // the server stops at an invalid visibility
+		}
+		h, ok := c.decl["hook"].(map[string]any)
+		if !ok {
+			continue
+		}
+		file, ok := hookFileShapeAccepted(h["file"])
+		if !ok || !isStorageHookFileUnderOutputDir(file, m["outputDir"]) {
+			continue
+		}
+		at := childField(childField(childField("storage.collections", c.name), "hook"), "file")
+		out = append(out, newFinding(at, fmt.Sprintf(
+			"%s %q is inside the build output (outputDir) — a hook must be a committed source file of "+
+				"the bundle, shipped verbatim, so its sha256 can be checked at submit", at, boundKey(file))))
+	}
+	return out
+}
+
+// storageDeclarationChecks reports the declaration refusals the schema admits
+// and the server keeps refusing: the two import rules (storageImportChecks), a
+// hook file inside outputDir (storageHookOutputDirChecks — the schema sees no
+// other key), and a counter and a mark sharing one name (two lists, each
+// `uniqueItems` on its own, so no schema keyword relates them).
 //
 // The server compares the two lists only as ITS parser left them, and
 // parseTallyNames discards a whole list at its first unusable entry — so a list
@@ -257,6 +370,7 @@ func hookShapeAccepted(v any) bool {
 // and draws no second, collision finding.
 func storageDeclarationChecks(generic any) []Finding {
 	out := storageImportChecks(generic)
+	out = append(out, storageHookOutputDirChecks(generic)...)
 	cols, ok := storageCollections(generic)
 	if !ok {
 		return out
