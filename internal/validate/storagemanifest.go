@@ -161,9 +161,9 @@ func storageHookRolloutWarning(at string) string {
 //
 // Each gate fires under exactly the condition the server reaches it: after the
 // visibility parsed, and — for the two numeric keys — only once the value is
-// in range, because an out-of-range value gets the range refusal instead. The
-// same holds for `hook` (only a hook parseHook accepted reaches the cohort);
+// in range, because an out-of-range value gets the range refusal instead.
 // `registry` is the opposite, its gate coming before any check of its value.
+// `hook` is NOT a mirror of the server's order — see the comment at its call.
 func storageFeatureGateWarnings(generic any) []Finding {
 	cols, ok := storageCollections(generic)
 	if !ok {
@@ -210,9 +210,15 @@ func storageFeatureGateWarnings(generic any) []Finding {
 				at+".registry", "collections published to registries",
 				"remove it to keep the collection on Civitai only")))
 		}
-		// hooks: the cohort is consulted only for a hook parseHook accepted, so a
-		// malformed hook gets the shape error (the schema's, or the outputDir
-		// refusal in storageDeclarationChecks) and never this warning.
+		// hooks: the server's cohort gate (storage-hooks.ts pinStorageHooks) runs
+		// on the RAW declared hooks, BEFORE resolveDeclaredHooks checks their
+		// shape — so at submit a malformed hook from an author outside the
+		// cohort can be refused `not_in_cohort`, not only for its shape. This
+		// warning is deliberately narrower: a malformed hook already draws an
+		// ERROR here (the schema's, or the outputDir refusal in
+		// storageDeclarationChecks) that blocks submit on its own, so the
+		// rollout warning is kept for hooks that error-free validate would
+		// otherwise let through.
 		if hookShapeAccepted(c.decl["hook"], outputDir) {
 			out = append(out, newFinding(childField(at, "hook"), storageHookRolloutWarning(at+".hook")))
 		}
