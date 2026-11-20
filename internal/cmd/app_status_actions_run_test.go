@@ -115,6 +115,15 @@ func TestAppStatusDetailWithoutARunIsUnchanged(t *testing.T) {
 	if empty != absent {
 		t.Errorf("a run with an empty field renders differently from no run.\nabsent:\n%s\nempty:\n%s", absent, empty)
 	}
+	for _, field := range []string{"repository", "sha"} {
+		row := runRow(true, true)
+		run := map[string]any{"repository": "harbor-tools/knot-tier", "tag": "v2.4.0-rc.1", "sha": runSHA}
+		run[field] = ""
+		row["actionsRunSource"] = run
+		if got := statusDetail(t, []map[string]any{row}); got != absent {
+			t.Errorf("a run with an empty %s renders differently from no run.\nabsent:\n%s\ngot:\n%s", field, absent, got)
+		}
+	}
 }
 
 // TestAppStatusJSONActionsRunSource — `--json` carries the object when present

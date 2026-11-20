@@ -74,7 +74,7 @@ client said uncommitted changes went into that bundle.
 
 When the server recorded the GitHub Actions run that sent a submission (public
 repositories only), the detail view says "Submitted by a GitHub Actions run of
-<repository> @ <tag> (<sha>)" and --json carries it as actionsRunSource. That
+<repository> @ <tag> (<sha7>)" and --json carries it as actionsRunSource. That
 names the run that SUBMITTED; it does not show the bundle was built from that
 commit.
 
