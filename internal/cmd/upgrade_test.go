@@ -406,6 +406,49 @@ func TestUpgrade_BrewDetectionDelegates(t *testing.T) {
 	}
 }
 
+// upgradeLongOpening and upgradeLongHomebrewHandoff are what `civitai upgrade
+// --help` must say about WHO upgrades a Homebrew install, pinned as whole
+// normalised strings (civitai/cli#929).
+//
+// 🔴 The help used to open "Download and install the latest civitai release,
+// replacing this binary." and say a Homebrew install "delegates to" `brew
+// upgrade civitai/tap/civitai`. The code does neither on that path: runUpgrade
+// prints the brew command and returns nil — no Homebrew process is started and
+// nothing is downloaded or replaced (TestUpgrade_BrewDetectionDelegates pins
+// that behaviour). A reader of the old text expects the upgrade to have
+// happened. These strings describe what runUpgrade does, and the forbidden
+// list below names the retracted wording so a partial revert is red.
+const upgradeLongOpening = "Download the latest civitai release and replace this binary with it — " +
+	"unless this binary was installed by Homebrew (see below)."
+
+const upgradeLongHomebrewHandoff = "If this binary was installed via Homebrew (on macOS or Linux), " +
+	"upgrade does not replace it and does not run Homebrew: it prints the command for you to run, " +
+	"brew upgrade civitai/tap/civitai and exits without downloading anything, so Homebrew keeps " +
+	"owning the file. --force skips that check and self-replaces the binary anyway."
+
+func TestUpgradeHelpDescribesTheHomebrewHandoff(t *testing.T) {
+	long := flattenWS(newUpgradeCmd().Long)
+	if !strings.HasPrefix(long, upgradeLongOpening) {
+		t.Errorf("`civitai upgrade --help` does not open with the Homebrew-aware summary.\nwant prefix: %s\n got: %s",
+			upgradeLongOpening, long)
+	}
+	if !strings.Contains(long, flattenWS(upgradeLongHomebrewHandoff)) {
+		t.Errorf("`civitai upgrade --help` does not describe the Homebrew handoff as runUpgrade performs it.\n"+
+			"want (normalised): %s\n got: %s", flattenWS(upgradeLongHomebrewHandoff), long)
+	}
+	for _, retracted := range []string{
+		"replacing this binary.",
+		"delegates to",
+		"delegation",
+	} {
+		if strings.Contains(long, retracted) {
+			t.Errorf("`civitai upgrade --help` still says %q — runUpgrade only PRINTS the brew command on a "+
+				"Homebrew install; it neither runs Homebrew nor replaces the binary (civitai/cli#929):\n%s",
+				retracted, long)
+		}
+	}
+}
+
 func TestUpgrade_BrewForceOverrides(t *testing.T) {
 	withParseableVersion(t, "v0.1.10")
 	binContent := []byte("BREW-FORCE-REPLACED")
