@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/civitai/cli/internal/redact"
 	"github.com/civitai/cli/pkg/civitai"
 )
 
@@ -230,11 +231,14 @@ func (c *Client) GetMyAppAnalytics(ctx context.Context, appBlockID, from, to str
 	if err := json.Unmarshal(raw, &env); err != nil ||
 		len(env.Result.Data.JSON) == 0 ||
 		string(bytes.TrimSpace(env.Result.Data.JSON)) == "null" {
-		return nil, nil, fmt.Errorf("unexpected blocks.getMyAppAnalytics response: %s", string(raw))
+		if err == nil {
+			err = errNoTRPCPayload
+		}
+		return nil, nil, redact.CredentialBodyError("unexpected blocks.getMyAppAnalytics response", raw, err)
 	}
 	var out AppAnalytics
 	if err := json.Unmarshal(env.Result.Data.JSON, &out); err != nil {
-		return nil, nil, fmt.Errorf("unexpected blocks.getMyAppAnalytics payload: %s", string(env.Result.Data.JSON))
+		return nil, nil, redact.CredentialBodyError("unexpected blocks.getMyAppAnalytics payload", env.Result.Data.JSON, err)
 	}
 	return &out, env.Result.Data.JSON, nil
 }

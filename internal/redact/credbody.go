@@ -123,8 +123,9 @@ func ServerText(s string) (string, bool) {
 }
 
 // tokenRunMin is the shortest unbroken base64/base64url/hex run hasTokenShape
-// treats as a possible token. 40 is a SHA-1 hex digest, and shorter than every
-// bearer credential this CLI handles.
+// treats as a possible token. 40 is a SHA-1 hex digest. It is NOT below every
+// credential this CLI handles: a Civitai API key is 32 hex characters, so a bare
+// API key inside server text passes this check.
 const tokenRunMin = 40
 
 var (

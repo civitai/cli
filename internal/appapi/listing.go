@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"net/http"
@@ -680,14 +681,25 @@ func decodeTRPCData(raw []byte, out any, route listingRoute) error {
 			} `json:"data"`
 		} `json:"result"`
 	}
+	// Neither failure shows the body: it is unbounded, can carry ESC/newline
+	// bytes that rewrite the terminal, and a body this code could not read is
+	// not known to be free of credentials. Route, size and the decode reason are
+	// what is reported.
 	if err := json.Unmarshal(raw, &env); err != nil || len(env.Result.Data.JSON) == 0 {
-		return fmt.Errorf("unexpected %s response: %s", route.name(), string(raw))
+		if err == nil {
+			err = errNoTRPCPayload
+		}
+		return redact.CredentialBodyError("unexpected "+route.name()+" response", raw, err)
 	}
 	if err := json.Unmarshal(env.Result.Data.JSON, out); err != nil {
-		return fmt.Errorf("unexpected %s payload: %s", route.name(), string(raw))
+		return redact.CredentialBodyError("unexpected "+route.name()+" payload", env.Result.Data.JSON, err)
 	}
 	return nil
 }
+
+// errNoTRPCPayload is the reason given for a tRPC envelope that decoded but
+// carried no usable result.data.json.
+var errNoTRPCPayload = errors.New("no result.data.json payload")
 
 // GetMyListingForApp resolves the caller's own listing to an AppListing id +
 // lifecycle status, by its backing appBlockId and/or its slug. At least one must
@@ -818,9 +830,33 @@ func (c *Client) putPresigned(ctx context.Context, uploadURL string, data []byte
 	defer resp.Body.Close()
 	raw, _ := c.readBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("image upload PUT failed (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return fmt.Errorf("image upload PUT failed (HTTP %d): %s", resp.StatusCode, storageErrorMessage(raw))
 	}
 	return nil
+}
+
+// storageErrorMessage is what a failed presigned PUT may say about the object
+// store's error body: its S3-style <Code> and <Message>, each only when
+// redact.ServerText accepts it, and otherwise only the body's size.
+//
+// 🔴 NEVER THE BODY. A SignatureDoesNotMatch body echoes the signing material
+// back (<AWSAccessKeyId>, <StringToSign>, <CanonicalRequest>), and any body is
+// unbounded and may hold terminal control bytes. The code is kept because it is
+// the diagnosis (an expired URL, a skewed clock).
+func storageErrorMessage(raw []byte) string {
+	var e struct {
+		Code    string `xml:"Code"`
+		Message string `xml:"Message"`
+	}
+	if xml.Unmarshal(raw, &e) == nil {
+		if code, ok := redact.ServerText(e.Code); ok {
+			if msg, ok := redact.ServerText(e.Message); ok {
+				return code + ": " + msg
+			}
+			return code
+		}
+	}
+	return redact.WithheldBody(raw)
 }
 
 // IngestAssetFullRes mints an upload URL, PUTs the raw bytes, then persists the

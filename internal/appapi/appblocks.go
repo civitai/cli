@@ -1096,7 +1096,7 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 	}
 	var out SubmitResult
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("unexpected response (status %d): %s", status, string(raw))
+		return nil, redact.CredentialBodyError(fmt.Sprintf("unexpected response (status %d)", status), raw, err)
 	}
 	return &out, nil
 }
@@ -1449,7 +1449,10 @@ func (c *Client) GetBuzzAccount(ctx context.Context) (*BuzzAccount, error) {
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil || env.Result.Data.JSON == nil {
-		return nil, fmt.Errorf("unexpected buzz.getBuzzAccount response: %s", string(raw))
+		if err == nil {
+			err = errNoTRPCPayload
+		}
+		return nil, redact.CredentialBodyError("unexpected buzz.getBuzzAccount response", raw, err)
 	}
 	return env.Result.Data.JSON, nil
 }
@@ -1487,7 +1490,7 @@ func (c *Client) ListSubmissions(ctx context.Context, blockID string) ([]Submiss
 		Submissions []Submission `json:"submissions"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("unexpected /api/v1/blocks/submissions response: %s", string(raw))
+		return nil, redact.CredentialBodyError("unexpected /api/v1/blocks/submissions response", raw, err)
 	}
 	return out.Submissions, nil
 }
@@ -1572,7 +1575,7 @@ func (c *Client) getSubmissionRows(ctx context.Context, id, blockID string) (*Su
 		Submissions []Submission `json:"submissions"`
 	}
 	if err := json.Unmarshal(raw, &list); err != nil {
-		return nil, nil, fmt.Errorf("unexpected /api/v1/blocks/submissions response: %s", string(raw))
+		return nil, nil, redact.CredentialBodyError("unexpected /api/v1/blocks/submissions response", raw, err)
 	}
 	if len(list.Submissions) == 0 {
 		// A `?blockId=` lookup for an unknown slug answers 200 with an EMPTY list
@@ -2166,10 +2169,13 @@ func (c *Client) StartDevTunnel(ctx context.Context, blockID, sshPublicKey strin
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil || env.Result.Data.JSON == nil {
-		return nil, fmt.Errorf("unexpected blocks.startDevTunnel response: %s", string(raw))
+		if err == nil {
+			err = errNoTRPCPayload
+		}
+		return nil, redact.CredentialBodyError("unexpected blocks.startDevTunnel response", raw, err)
 	}
 	if env.Result.Data.JSON.Host == "" || env.Result.Data.JSON.SessionID == "" {
-		return nil, fmt.Errorf("blocks.startDevTunnel response missing host/sessionId: %s", string(raw))
+		return nil, redact.CredentialBodyError("blocks.startDevTunnel response missing host/sessionId", raw, nil)
 	}
 	return env.Result.Data.JSON, nil
 }
@@ -2211,7 +2217,7 @@ func (c *Client) StopDevTunnel(ctx context.Context, sessionID, blockID string) (
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil {
-		return false, fmt.Errorf("unexpected blocks.stopDevTunnel response: %s", string(raw))
+		return false, redact.CredentialBodyError("unexpected blocks.stopDevTunnel response", raw, err)
 	}
 	return env.Result.Data.JSON.Stopped, nil
 }
