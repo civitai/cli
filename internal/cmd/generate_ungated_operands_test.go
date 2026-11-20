@@ -268,13 +268,14 @@ func TestClassifyGenerateErrorFallThroughCannotForgeALine(t *testing.T) {
 
 // 🔴 THE OTHER RETURN IN THAT FUNCTION HAS NO TEST HERE, AND ITS ABSENCE IS A
 // DECISION RATHER THAN AN OVERSIGHT. classifyGenerateError's
-// `!errors.As(err, &apiErr)` early exit was measured during this work and it
-// carries raw ANSI too: a 200 whose body is not a tRPC envelope reaches genapi's
-// `unexpected %s response: %s`, which interpolates the unparsed HTTP body, and
-// that error has no *genapi.APIError so it leaves by the early return. It is
-// left ungated — see the comment at that return in generate.go for the two
-// reasons, neither of which is "it is safe" — and it is filed separately rather
-// than half-fixed here.
+// `!errors.As(err, &apiErr)` early exit was measured during this work carrying
+// raw ANSI too: a 200 whose body was not a tRPC envelope reached genapi's
+// `unexpected %s response: %s`, which interpolated the unparsed HTTP body, and
+// that error has no *genapi.APIError so it left by the early return. It stays
+// ungated (see the comment at that return in generate.go); the hole was filed as
+// civitai/cli#620 and closed in internal/genapi, where every unparseable-body
+// error now reports the body's size and never the body — pinned there by
+// TestUnexpectedBodyIsNeverEchoed and TestUnexpectedBodySitesAreLedgered.
 
 // TestClassifyGenerateErrorFallThroughPreservesClassification is closing
 // condition 4 of civitai/cli#612, and it is MEASURED rather than assumed.

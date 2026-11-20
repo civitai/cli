@@ -2284,25 +2284,20 @@ func buzzAmount(f float64) string {
 func classifyGenerateError(err error) error {
 	var apiErr *genapi.APIError
 	if !errors.As(err, &apiErr) {
-		// 🔴 DELIBERATELY UNGATED, AND THE HOLE HERE IS MEASURED RATHER THAN
-		// ASSUMED ABSENT (found by civitai/cli#612, filed as civitai/cli#620).
-		// A 200 whose BODY is not a tRPC envelope reaches genapi's
-		// `unexpected %s response: %s`, which interpolates `string(raw)` — the raw
-		// HTTP body, unparsed, with no strip of any kind. Measured: that puts raw
-		// `\x1b[1A\x1b[2K` on stderr through main.go's `Error: <it>`.
+		// 🔴 DELIBERATELY UNGATED. civitai/cli#612 measured raw `\x1b[1A\x1b[2K`
+		// reaching stderr through here: a 200 whose BODY was not a tRPC envelope
+		// reached genapi's `unexpected %s response: %s`, which interpolated the raw
+		// HTTP body. That was filed as civitai/cli#620 and is fixed ONE LAYER DOWN,
+		// for the reason (a) gives: all seven genapi sites that report an
+		// unparseable body or payload now go through redact.CredentialBodyError,
+		// which names the size and the decode error and never the body, and
+		// internal/genapi's TestUnexpectedBodySitesAreLedgered fails if one is
+		// added or reached any other way.
 		//
-		// It is NOT fixed by a safeTermErr here, for two reasons that both point
-		// one layer down.
-		//
-		// (a) THE DEFECT IS NOT IN THIS FUNCTION. Seven sites in internal/genapi
-		// interpolate an unparsed body or payload into an error — blobs.go:73 and
-		// :155, generate.go:214, :265 and :288, status.go:489, workflows.go:221 —
-		// and only some of them come back through here at all: blobs.go's two are
-		// on the reference-image upload path and reach resolveImages instead.
-		// Gating this one return would close a SUBSET of one class and leave the
-		// rest, which is the shape this package keeps re-finding as the reason a
-		// defect regenerates at its ungated members. The fix belongs at those
-		// seven interpolations.
+		// (a) THE DEFECT WAS NOT IN THIS FUNCTION. Only some of those seven sites
+		// come back through here at all — blobs.go's two are on the
+		// reference-image upload path and reach resolveImages instead — so gating
+		// this one return would have closed a SUBSET of one class.
 		//
 		// (b) THIS RETURN IS A PASS-THROUGH BY CONTRACT, not by omission. It is
 		// the classifier's "I do not understand this error" exit, and
@@ -2310,7 +2305,7 @@ func classifyGenerateError(err error) error {
 		// comes back IDENTICAL — not merely carrying the same message. Wrapping it
 		// is a deliberate change to a pinned property, and the errors arriving
 		// here are a mixed bag — transport failures, a missing token, the
-		// body-size cap, genapi's unparsed-body errors — rather than the
+		// body-size cap, genapi's withheld-body errors — rather than the
 		// server-message-bearing set the fall-through below handles. (Graph
 		// marshalling can fail into this seam too, echoing a byte of the user's
 		// OWN --input file into the message; parseGraphInput compacts that file

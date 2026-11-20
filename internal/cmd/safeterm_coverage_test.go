@@ -492,12 +492,11 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"the five arms, since an arm-matching case passes without executing the defective path at all. " +
 			"TestClassifyGenerateErrorFallThroughPreservesClassification pins that errors.Is/As still " +
 			"resolve through the wrapper, so the published exit codes are untouched. 🔴 THE OTHER RETURN — " +
-			"the !errors.As early exit — IS STILL UNGATED AND THAT IS NOT A CLAIM THAT IT IS SAFE: it is " +
-			"MEASURED to carry raw ANSI, because genapi interpolates the unparsed HTTP body into " +
-			"`unexpected %s response: %s` (civitai/cli#620). It is left alone because that same raw body " +
-			"reaches SEVEN " +
-			"genapi sites of which only some come back through here — so a gate here would close a subset " +
-			"of one class — and because this return is a pass-through pinned by identity. Read the " +
+			"the !errors.As early exit — IS STILL UNGATED: it was MEASURED to carry raw ANSI, because " +
+			"genapi interpolated the unparsed HTTP body into `unexpected %s response: %s` (civitai/cli#620). " +
+			"That was fixed at the SEVEN genapi sites rather than here — only some come back through this " +
+			"return, and it is a pass-through pinned by identity — and internal/genapi's " +
+			"TestUnexpectedBodySitesAreLedgered pins that every one withholds the body. Read the " +
 			"comment at that return, not this sentence, before acting on it"},
 	"buildGenerateGraph": {"TestImageDisclosureLineIsGatedAtComposition",
 		"the uploaded image URL echoed back into the img2img disclosure line. It composes the USER's own " +
