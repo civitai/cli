@@ -97,6 +97,8 @@ func WithheldBody(raw []byte) string {
 // caller that classifies on the wording reads ErrorMessage, unfiltered, so the
 // classification is unaffected.
 //
+// Why 40 (tokenRunMin): every bearer credential this CLI handles is longer, and hyphen-free 40+ char slugs are rare.
+//
 // 🔴 THIS IS A SHAPE CHECK, NOT A SECRET DETECTOR. A short token, or a long
 // single-case one broken up by `-`, `_` or `/`, is plain text and passes. It is applied only
 // to a FIELD whose meaning is "error message" (an OAuth

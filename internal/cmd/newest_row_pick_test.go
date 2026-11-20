@@ -948,7 +948,7 @@ func submissionsPkgSources(t *testing.T, prefix string) map[string]string {
 //
 // 🔴 THE QUOTES ARE LOAD-BEARING, AND MATCHING THE BARE PATH DOES NOT WORK. The
 // route path appears inside longer strings all over both packages for entirely
-// correct reasons — `"unexpected /api/v1/blocks/submissions response: %s"` in
+// correct reasons — `"unexpected /api/v1/blocks/submissions response"` in
 // both accessors, and the `GET /api/v1/blocks/submissions` in a Cobra Long
 // description — so a bare-substring match flags three legitimate sites and the
 // guard becomes noise. Requiring the path to BE the whole literal separates
