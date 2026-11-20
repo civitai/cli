@@ -163,6 +163,29 @@ type Submission struct {
 	// 🔴 nil AND false ARE DIFFERENT ANSWERS. Never `?? false`.
 	SourceCommit *string `json:"sourceCommit"`
 	SourceDirty  *bool   `json:"sourceDirty"`
+	// ActionsRunSource is the GitHub Actions run that sent this submit, which
+	// the server recorded from a token GitHub signed — a DIFFERENT trust level
+	// from SourceCommit, so neither is ever derived from the other. The server
+	// returns it only for a public repository; nil when no run was recorded, the
+	// repository was not public, or the server predates the field.
+	//
+	// 🔴 IT NAMES THE RUN, NOT THE BUILD. The developer's own workflow builds and
+	// uploads the bundle, so the only sentence the CLI may print about it is
+	// "Submitted by a GitHub Actions run of <repository> @ <tag> (<sha7>)" —
+	// never "verified" (see actionsRunLine).
+	//
+	// `omitempty` so `--json` against a server without the field, or for a row
+	// with no run, is byte-identical to what it was before the field existed.
+	ActionsRunSource *ActionsRunSource `json:"actionsRunSource,omitempty"`
+}
+
+// ActionsRunSource mirrors the server's `actionsRunSource` object on a
+// submission row: the run's `owner/repo`, the tag it ran for, and that tag's
+// 40-hex commit.
+type ActionsRunSource struct {
+	Repository string `json:"repository"`
+	Tag        string `json:"tag"`
+	SHA        string `json:"sha"`
 }
 
 // Subject identifies the credential behind a token as returned by
