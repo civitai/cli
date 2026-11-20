@@ -24,7 +24,8 @@ import { createLiveHost } from '@civitai/blocks-react/live';
  * `dev:live` npm scripts set it):
  *
  *  - `'mock'`  (default) — the SDK mock host. Synthetic, no real Buzz, no
- *    network. Safe to spam.
+ *    compute. Its result image is fetched from the third-party host
+ *    placehold.co. Safe to spam.
  *  - `'live'`  — talk to a REAL host with a REAL block token (spends REAL Buzz
  *    and real compute) via the SDK's `createLiveHost`, which forwards the
  *    App postMessage protocol to the real Civitai backend (Bearer = the
