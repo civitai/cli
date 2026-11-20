@@ -188,7 +188,10 @@ func TestPresignedPutErrorText(t *testing.T) {
 }
 
 // rawBodyEchoLedger is every error-constructing call in internal/appapi's
-// non-test sources that is handed a byte slice, as "file: func: format".
+// non-test sources that is handed a byte slice, as "file: func: format: arg",
+// where arg is the argument expression holding the byte slice. The argument is
+// part of the key so that putting string(raw) back where a sanitiser call was
+// changes the entry even though the format string did not change.
 //
 // No entry shows a response body:
 //   - WhoAmI hands the /me body to describeMeBody, which reports the keys present
@@ -200,12 +203,12 @@ func TestPresignedPutErrorText(t *testing.T) {
 //     message that redact.ServerText accepts, else the body's size.
 var rawBodyEchoLedger = []string{
 	`appblocks.go: WhoAmI: "unexpected /api/v1/me response (%s) — the server sent a shape this CLI cannot read; try ` +
-		"`civitai upgrade`" + `, and report it at https://github.com/civitai/cli/issues"`,
-	`imageinfo.go: decodeWebPInfo: "unrecognized webp chunk %q"`,
-	`listing.go: putPresigned: "image upload PUT failed (HTTP %d): %s"`,
-	`oauth.go: Refresh: "token refresh failed (status %d): %s"`,
-	`oauth.go: StartDevice: "device init failed (status %d): %s"`,
-	`oauth.go: pollOnce: "device-token poll failed (status %d): %s"`,
+		"`civitai upgrade`" + `, and report it at https://github.com/civitai/cli/issues": describeMeBody(raw)`,
+	`imageinfo.go: decodeWebPInfo: "unrecognized webp chunk %q": string(data[12:16])`,
+	`listing.go: putPresigned: "image upload PUT failed (HTTP %d): %s": storageErrorMessage(raw)`,
+	`oauth.go: Refresh: "token refresh failed (status %d): %s": oauthMsg(raw)`,
+	`oauth.go: StartDevice: "device init failed (status %d): %s": oauthMsg(raw)`,
+	`oauth.go: pollOnce: "device-token poll failed (status %d): %s": oauthMsg(raw)`,
 }
 
 // TestRawBodyEchoSitesAreLedgered is the enumeration control for the class
@@ -239,7 +242,7 @@ func TestRawBodyEchoSitesAreLedgered(t *testing.T) {
 }
 
 // rawBodyEchoSites type-checks the non-test Go files in dir and returns the
-// sorted "file: func: format" of every error-constructing call handed a byte
+// sorted "file: func: format: arg" of every error-constructing call handed a byte
 // slice (see TestRawBodyEchoSitesAreLedgered).
 func rawBodyEchoSites(t *testing.T, dir string) []string {
 	t.Helper()
@@ -323,8 +326,9 @@ func rawBodyEchoSites(t *testing.T, dir string) []string {
 				if !sinks[pkg+"."+name] {
 					return true
 				}
-				found := false
+				var flagged []string
 				for _, arg := range call.Args {
+					found := false
 					ast.Inspect(arg, func(m ast.Node) bool {
 						if found {
 							return false
@@ -344,15 +348,18 @@ func rawBodyEchoSites(t *testing.T, dir string) []string {
 						}
 						return true
 					})
+					if found {
+						flagged = append(flagged, types.ExprString(arg))
+					}
 				}
-				if found {
+				if len(flagged) > 0 {
 					format := "<non-constant>"
 					if len(call.Args) > 0 {
 						if tv := info.Types[call.Args[0]]; tv.Value != nil && tv.Value.Kind() == constant.String {
 							format = strconv.Quote(constant.StringVal(tv.Value))
 						}
 					}
-					got = append(got, file+": "+fd.Name.Name+": "+format)
+					got = append(got, file+": "+fd.Name.Name+": "+format+": "+strings.Join(flagged, ", "))
 				}
 				return true
 			})
