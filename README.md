@@ -1616,11 +1616,13 @@ same choice as the **Pay with** menu in the site's generator. Without it the
 server decides: blue first, then the site's own Buzz. On civitai.red the site
 states that Blue Buzz is limited to safe-for-work results, so a mature result
 paid in blue can come back locked, and unlocking it on the site costs a second
-charge. Pass `--buzz-type yellow` there to pay for it up front. With the flag,
+charge. To pay for it up front, point the CLI at that site
+(`CIVITAI_BASE_URL=https://civitai.red`) and pass `--buzz-type yellow`; the
+default civitai.com offers blue and green only. With the flag,
 the balance check uses that account's balance alone. Two limits: `--dry-run`
 shows the choice but the estimate is priced without it, and a type the site does
 not offer is **not refused** by the server — it pays from its default account
-instead.
+instead (yellow on civitai.com included).
 
 ```bash
 # Price it. Spends nothing.

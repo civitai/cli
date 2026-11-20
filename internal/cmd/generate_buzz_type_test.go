@@ -233,7 +233,7 @@ func TestGenerateBuzzType_UnknownValueIsRefusedBeforeAnyRequest(t *testing.T) {
 		t.Fatalf("control: --buzz-type yellow must submit once, got err=%v submits=%d\nstderr: %s", ok.err, len(ok.submitBodies), ok.stderr)
 	}
 
-	for _, bad := range []string{"yelow", "red", "Yellow Buzz", "blue,yellow", " "} {
+	for _, bad := range []string{"yelow", "red", "Yellow Buzz", "blue,yellow", " ", ""} {
 		t.Run(bad, func(t *testing.T) {
 			r := runBuzzTypeCLI(t, plentyOfEverything, 12, "a cat", "--buzz-type", bad, "--yes", "--no-wait")
 			if !errors.Is(r.err, ErrUsage) {

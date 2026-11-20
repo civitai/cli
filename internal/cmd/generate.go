@@ -278,6 +278,10 @@ type generateOpts struct {
 	// validateGenerateOpts. Empty means "not chosen", and then nothing about the
 	// request changes: the key stays ABSENT from the submit envelope.
 	buzzType string
+	// buzzTypeSet records that --buzz-type was GIVEN, so an explicitly empty
+	// value (an unset shell variable: --buzz-type "$PAY") is refused rather than
+	// read as "not chosen" and billed in the server's default order.
+	buzzTypeSet bool
 	// printInput dumps the assembled graph and exits without submitting.
 	printInput bool
 }
@@ -355,13 +359,16 @@ choice as the "Pay with" menu in the site's generator, and is sent with the
 submit. Without it the server decides: blue first, then the site's own Buzz.
 The account matters beyond the balance — on civitai.red the site states that
 Blue Buzz is limited to safe-for-work results, so a mature result paid in blue
-can come back locked, and unlocking it on the site is a second charge. Choose
-yellow there to pay for a mature result up front. With the flag, the balance
+can come back locked, and unlocking it on the site is a second charge. To pay
+for a mature result up front, point the CLI at that site
+(CIVITAI_BASE_URL=https://civitai.red) and choose yellow. On the default
+civitai.com the server offers blue and green only. With the flag, the balance
 check and the confirmation use that account's balance alone. Two limits: the
 estimate does not take the choice (--dry-run shows it, but prices the job
 without it), and a type the site does not offer is NOT refused by the server —
-it silently pays from its default account instead, so pick one the site's own
-"Pay with" menu shows.
+it silently pays from its default account instead. That includes yellow on
+civitai.com, even though the site's menu there lists a yellow balance (as a
+pointer to civitai.red).
 
 WHAT THE SERVER DOES NOT TELL YOU: the generator is permissive, not a validator.
 An out-of-range --quantity is clamped with no error, and a checkpoint id that
@@ -540,6 +547,7 @@ path that resolves model ids before anything is submitted.`,
 			o.quantitySet = cmd.Flags().Changed("quantity")
 			o.checkpointSet = cmd.Flags().Changed("checkpoint")
 			o.maxCostSet = cmd.Flags().Changed("max-cost")
+			o.buzzTypeSet = cmd.Flags().Changed("buzz-type")
 
 			cfg, err := config.Load()
 			if err != nil {
@@ -880,7 +888,7 @@ var generateBuzzTypes = []string{"blue", "yellow", "green"}
 // validateBuzzType normalises --buzz-type to lower case and refuses a value the
 // server's resolver could never select. Unset stays unset.
 func validateBuzzType(o *generateOpts) error {
-	if o.buzzType == "" {
+	if o.buzzType == "" && !o.buzzTypeSet {
 		return nil
 	}
 	v := strings.ToLower(strings.TrimSpace(o.buzzType))
