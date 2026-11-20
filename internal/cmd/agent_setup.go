@@ -567,8 +567,11 @@ CLI, which is a real gap and not one this command can close on its own.
 because they are about different stores. 'authenticated' is THIS CLI's
 credential — 'civitai login''s config file or CIVITAI_TOKEN — which is what
 'civitai app dev-token', 'civitai app validate' and 'civitai app submit' read.
-'agent-token' is whether CIVITAI_TOKEN is set in the PROCESS environment, which
-is the only place your agent can resolve the reference in its MCP config from.
+'agent-token' is whether your agent's MCP entries CARRY a CIVITAI_TOKEN
+reference and whether CIVITAI_TOKEN is set in the PROCESS environment, which is
+the only place your agent can resolve that reference from. A run with no token
+configured writes the entries without one; exporting the variable alone does
+not add it — re-run 'civitai agent-setup' with a token configured.
 You do NOT need CIVITAI_TOKEN to scaffold, build, dev-run or submit an App; it
 is only for the MCP servers. Neither row can fail the verdict: an
 unauthenticated setup is a success.
@@ -1650,6 +1653,18 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 	case token == "":
 		fmt.Fprintf(w, "  %d. Run %s to authenticate, then re-run %s so the MCP entries pick up the reference.\n",
 			n, st.Code("civitai login"), st.Code("civitai agent-setup"))
+		// 🔴 THE EXPORT IS A SECOND STEP HERE TOO (#933). The re-run writes a
+		// reference the agent resolves from its OWN environment, so `civitai
+		// login` alone leaves it empty — the token-present branch above says so,
+		// and this branch used to be the one that did not.
+		if known && (target.EnvHeaderSyntax != "" || target.EnvBearerKey != "") {
+			fmt.Fprintf(w, "     %s reads the token from %s in its own environment, never from %s's config file, "+
+				"so after the re-run also export it where %s can see it:\n", agent, tokenEnvVar,
+				st.Code("civitai login"), agent)
+			fmt.Fprintf(w, "       %s\n", st.Code("export "+tokenEnvVar+"="+tokenPlaceholder))
+			fmt.Fprintf(w, "     %s\n", st.Dim(appTrackTokenNote))
+			printTokenSourceNote(w, st, "     ")
+		}
 	case !exported:
 		// 🔴 NOT "ALREADY AUTHENTICATED". This CLI is; the agent is not, and this
 		// is the line that used to say otherwise.

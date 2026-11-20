@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/civitai/cli/internal/config/configtest"
 	"github.com/spf13/cobra"
 )
 
@@ -40,7 +41,10 @@ func TestMain(m *testing.M) {
 	}
 	stdinIsTTY = func() bool { return false }
 	latestReleaseURL = "http://127.0.0.1:1/no-release-endpoint-in-tests"
-	os.Exit(m.Run())
+	// HOME, APPDATA and the XDG roots point at a temp tree for the whole run:
+	// most tests here set XDG_CONFIG_HOME only, which os.UserConfigDir ignores on
+	// macOS and Windows (issue #931).
+	os.Exit(configtest.Run(m))
 }
 
 // TestScaffoldNonInteractiveNoPrompt: with no name and a non-TTY stdin (the

@@ -178,6 +178,13 @@ func cliVersionCheck(current string, f versionFreshness) agentCheckJSON {
 // permanently-red row for a correct setup. Presence of the reference is the
 // condition, and it is read from `agentTargets`, not from a list of agent names.
 //
+// 🔴 AND FOR AN AGENT THAT CAN HOLD ONE, `ok: true` NEEDS THE REFERENCE TO BE IN
+// THE FILE. The variable being set resolves nothing when the entries were written
+// header-less (no token configured at setup time), so that state is `false` with
+// a detail saying the entries carry no reference and that re-running setup adds
+// it (#933). Entries carrying only auth this command did not write are `true`:
+// they do not read the variable, so its state cannot break them.
+//
 // 🔴 AND IT IS EXCLUDED FROM THE VERDICT, for the reason `authenticated` is:
 // `agent-setup` stops before auth on purpose, so a setup that did everything this
 // CLI can do is a success even with the export outstanding. The row stays, stays
@@ -188,6 +195,53 @@ func agentTokenCheck(env agentEnv, agent string) agentCheckJSON {
 		return agentCheckJSON{Name: checkAgentToken, OK: true,
 			Detail: "no " + tokenEnvVar + " reference is written for " + agent + " (it documents no way to read " +
 				"one from the environment), so nothing here resolves that variable. " + appTrackTokenNote}
+	}
+	// 🔴 THE ENTRIES ARE READ, NOT ASSUMED (issue #933). A run with no token
+	// configured writes this agent's entries WITHOUT a reference (decision 34),
+	// and this row used to say "the MCP entries reference it by name" about that
+	// file anyway — and turned green the moment CIVITAI_TOKEN was exported,
+	// although nothing in the file reads it. So the reference has to be PRESENT
+	// in what is on disk, as the same parser the write path uses classifies it.
+	path, ok := agentConfigPath(env, agent)
+	var cov mcpAuthCoverage
+	if ok {
+		if raw, _, err := readIfExists(path); err == nil {
+			cov = mcpAuthCoverageOf(raw, t)
+		}
+	}
+	var managed, opaque int
+	for _, name := range cov.With {
+		if cov.kindOf(name) == authManaged {
+			managed++
+		} else {
+			opaque++
+		}
+	}
+	if managed == 0 && opaque > 0 {
+		// The user's own material: not a reference to this variable, so its
+		// state cannot break it — the per-server rows describe what is there.
+		return agentCheckJSON{Name: checkAgentToken, OK: true,
+			Detail: agent + "'s MCP entries in " + path + " reference no " + tokenEnvVar + "; " +
+				strings.Join(cov.With, ", ") + " carry auth this command did not write, so whether " +
+				tokenEnvVar + " is set does not affect them. " + appTrackTokenNote}
+	}
+	if managed == 0 {
+		where := agent + "'s MCP entries"
+		if ok {
+			where += " in " + path
+		}
+		detail := where + " carry no " + tokenEnvVar + " reference — `civitai agent-setup` writes one only " +
+			"when a token is configured — so they connect anonymously and " +
+			strings.Join(authRequiredServerURLs(), ", ") + " 401s. "
+		if tokenIsExported(env) {
+			detail += tokenEnvVar + " IS set in this environment, but nothing in that file reads it: re-run " +
+				"`civitai agent-setup` with it set so the entries gain the reference. "
+		} else {
+			detail += tokenEnvVar + " is NOT set in this environment either. To authenticate them: run " +
+				"`civitai login` (or export " + tokenEnvVar + "), re-run `civitai agent-setup` so the entries " +
+				"gain the reference, and export " + tokenEnvVar + " where " + agent + " can see it. "
+		}
+		return agentCheckJSON{Name: checkAgentToken, OK: false, Detail: detail + appTrackTokenNote}
 	}
 	if tokenIsExported(env) {
 		return agentCheckJSON{Name: checkAgentToken, OK: true,

@@ -7,9 +7,30 @@ import (
 	"testing"
 )
 
+// useTempConfigDir points EVERY variable os.UserConfigDir reads — XDG_CONFIG_HOME
+// on Linux, HOME on macOS, APPDATA on Windows — at a fresh temp dir and returns
+// the resolved config dir (<base>/civitai). XDG_CONFIG_HOME alone is honoured on
+// Linux only, which is how TestSetTokenPersists overwrote a Mac developer's real
+// token (issue #931). TestMain's configtest.Run is the package-wide backstop; this
+// makes each test own its directory so fixtures can be placed in it on any OS.
+func useTempConfigDir(t *testing.T) string {
+	t.Helper()
+	tmp := t.TempDir()
+	for _, k := range []string{"XDG_CONFIG_HOME", "HOME", "APPDATA", "USERPROFILE"} {
+		t.Setenv(k, tmp)
+	}
+	d, err := Dir()
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	if !within(realPath(t, d), realPath(t, tmp)) {
+		t.Fatalf("PREMISE BROKEN: Dir() = %s is outside the test-owned %s", d, tmp)
+	}
+	return d
+}
+
 func TestEnvOverridesToken(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	useTempConfigDir(t)
 	t.Setenv("CIVITAI_TOKEN", "from-env")
 
 	cfg, err := Load()
@@ -25,8 +46,7 @@ func TestEnvOverridesToken(t *testing.T) {
 }
 
 func TestSetTokenPersists(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	cfgDir := useTempConfigDir(t)
 	// Ensure no env override masks the file.
 	os.Unsetenv("CIVITAI_TOKEN")
 
@@ -36,6 +56,10 @@ func TestSetTokenPersists(t *testing.T) {
 	}
 	if err := cfg.SetToken("saved-token"); err != nil {
 		t.Fatalf("SetToken: %v", err)
+	}
+
+	if want := filepath.Join(cfgDir, "config.yaml"); cfg.Path() != want {
+		t.Fatalf("config path = %s, want the test-owned %s", cfg.Path(), want)
 	}
 
 	// Re-load from disk.
@@ -58,11 +82,9 @@ func TestSetTokenPersists(t *testing.T) {
 }
 
 func TestLoadMalformedConfigErrors(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	cfgDir := useTempConfigDir(t)
 	os.Unsetenv("CIVITAI_TOKEN")
 
-	cfgDir := filepath.Join(dir, "civitai")
 	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +98,9 @@ func TestLoadMalformedConfigErrors(t *testing.T) {
 }
 
 func TestDirHonoursXDG(t *testing.T) {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		t.Skip("os.UserConfigDir does not consult XDG_CONFIG_HOME on " + runtime.GOOS)
+	}
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	got, err := Dir()
@@ -91,13 +116,17 @@ func TestSaveErrorOnUnwritableDir(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Getuid() == 0 {
 		t.Skip("permission-based test unreliable as root / on windows")
 	}
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	cfgParent := useTempConfigDir(t)
 	os.Unsetenv("CIVITAI_TOKEN")
 
-	// Make the config parent dir unwritable so MkdirAll/CreateTemp fails.
-	cfgParent := filepath.Join(dir, "civitai")
-	if err := os.MkdirAll(cfgParent, 0o500); err != nil {
+	// Make the config parent dir unwritable so MkdirAll/CreateTemp fails. Its
+	// parents are created writable first: on macOS the config dir sits two levels
+	// down (Library/Application Support/civitai), and MkdirAll applies the mode to
+	// every directory it creates.
+	if err := os.MkdirAll(filepath.Dir(cfgParent), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(cfgParent, 0o500); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(cfgParent, 0o700) })
@@ -112,8 +141,7 @@ func TestSaveErrorOnUnwritableDir(t *testing.T) {
 }
 
 func TestSetBaseURL(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	useTempConfigDir(t)
 	os.Unsetenv("CIVITAI_BASE_URL")
 
 	cfg, _ := Load()
