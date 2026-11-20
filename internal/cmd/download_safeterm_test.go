@@ -464,8 +464,14 @@ func TestTargetPathRefusalSanitizesTheServerName(t *testing.T) {
 
 	t.Run("on stdout via printDownloadPlan", func(t *testing.T) {
 		var out bytes.Buffer
-		if err := printDownloadPlan(&out, []civitai.ModelVersionFile{f}, &downloadOpts{}, "https://civitai.com"); err != nil {
-			t.Fatalf("CONTROL failure, not a finding: printDownloadPlan: %v", err)
+		// The unresolved target makes the plan fail with the real run's refusal
+		// (civitai/cli#941), so the error must be exactly that refusal.
+		err := printDownloadPlan(&out, []civitai.ModelVersionFile{f}, &downloadOpts{}, "https://civitai.com")
+		if err == nil {
+			t.Fatal("CONTROL failure, not a finding: printDownloadPlan did not surface the refusal")
+		}
+		if err.Error() != want {
+			t.Errorf("SAFETERM REGRESSION via printDownloadPlan's error: got\n  %q\nwant\n  %q", err.Error(), want)
 		}
 		plan := out.String()
 		if !strings.Contains(plan, "  target: (unresolved) — "+want+"\n") {
