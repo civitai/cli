@@ -175,6 +175,9 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"URL, and the block id in the not-live sentence and in the not-this-row sentence (#795) — are " +
 			"killed by TestGatedRenderersDoNotForgeOutsideTheirTable instead; the first four were ungated " +
 			"while this row read as coverage of the whole function, which is why both tests are named here"},
+	"actionsRunLine": {"TestActionsRunLineCannotBeForged",
+		"`app status <blockId>`: the recorded GitHub Actions run's repository, tag and abbreviated sha, " +
+			"printed below the detail table"},
 	"printListingStatus": {"TestTabwriterRenderersCannotBeForged",
 		"`app listing status`: the server's listing status, beside the slug the USER typed. The screenshot " +
 			"id and caption printed below the flushed table are NOT cells and are killed by " +

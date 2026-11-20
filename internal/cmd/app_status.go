@@ -72,6 +72,12 @@ reported (a submission from before the CLI sent it, or from a directory that is
 in no git repo), which is NOT the same as a clean build; "(dirty)" means the
 client said uncommitted changes went into that bundle.
 
+When the server recorded the GitHub Actions run that sent a submission (public
+repositories only), the detail view says "Submitted by a GitHub Actions run of
+<repository> @ <tag> (<sha7>)" and --json carries it as actionsRunSource. That
+names the run that SUBMITTED; it does not show the bundle was built from that
+commit.
+
 Note: a submission's <blockId>.civit.ai surface only serves AFTER it is approved
 and deployed (deployState 'live').`,
 		Example: `  civitai app status                 # list all your submissions
@@ -435,6 +441,32 @@ func sourceLabel(commit *string, dirty *bool) string {
 // assert exactly the verification nobody performed.
 const sourceClaimNote = "Reported by the client that submitted it; the server stores it unverified."
 
+// actionsRunLine is the detail view's sentence for a submission the server
+// says came from a GitHub Actions run, or "" when there is no usable run (nil,
+// or any of the three fields empty), in which case the view prints exactly what
+// it printed before the field existed.
+//
+// 🔴 THE WORDING IS THE SERVER'S, AND IT STOPS AT THE RUN. GitHub signed a token
+// for the run, so the server knows which repository, tag and commit SUBMITTED;
+// it does not know the bundle was built from that commit, because the
+// developer's workflow uploads whatever it likes. So the sentence says
+// "Submitted by", never "verified", "built from" or "secure". It replaces
+// sourceClaimNote rather than sitting beside it: with a run recorded, a Source
+// commit line above it, when there is one, is the run's own commit (the server
+// refuses a submit whose claimed commit differs from the token's), so "stores
+// it unverified" would undersell a commit GitHub signed for.
+func actionsRunLine(run *appapi.ActionsRunSource) string {
+	if run == nil || run.Repository == "" || run.Tag == "" || run.SHA == "" {
+		return ""
+	}
+	sha := run.SHA
+	if len(sha) > shortSHALen {
+		sha = sha[:shortSHALen]
+	}
+	return fmt.Sprintf("Submitted by a GitHub Actions run of %s @ %s (%s)",
+		safeTermSingle(run.Repository), safeTermSingle(run.Tag), safeTermSingle(sha))
+}
+
 // sourceDirtySuffix renders the tri-state for the DETAIL view, in words rather
 // than in the table's shorthand. Each of the three says who established what:
 // nothing was said, a client said clean, a client said dirty.
@@ -500,8 +532,12 @@ func printSubmissionDetail(w io.Writer, s *appapi.Submission, live *appapi.Submi
 
 	// Attribution goes with the fact, on the same screen, and only when there is
 	// a fact to attribute — a note under a row that claims nothing would be
-	// noise, and would imply the CLI had checked something.
-	if s.SourceCommit != nil && *s.SourceCommit != "" {
+	// noise, and would imply the CLI had checked something. A recorded Actions
+	// run is the stronger fact and its sentence takes the note's place (see
+	// actionsRunLine); without one the output is what it always was.
+	if line := actionsRunLine(s.ActionsRunSource); line != "" {
+		fmt.Fprintf(w, "  %s\n", line)
+	} else if s.SourceCommit != nil && *s.SourceCommit != "" {
 		fmt.Fprintf(w, "  %s\n", sourceClaimNote)
 	}
 
