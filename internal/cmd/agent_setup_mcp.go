@@ -350,6 +350,13 @@ func jsonEntriesWithAuth(data []byte, t agentTarget) map[string]mcpAuthFinding {
 	if t.HeadersKey == "" {
 		return map[string]mcpAuthFinding{}
 	}
+	// 🔴 JSONC IS BLANKED FIRST, FOR THE TARGETS WHOSE PARSER ACCEPTS IT — the
+	// same gate decodeAgentJSON applies — or a commented .vscode/mcp.json reads
+	// as carrying no header while the mcp-* rows parse it fine. The write path's
+	// rendered output is plain JSON, which blanking leaves unchanged.
+	if t.AllowsComments {
+		data = blankJSONC(data)
+	}
 	root := map[string]any{}
 	if err := json.Unmarshal(data, &root); err != nil {
 		return nil

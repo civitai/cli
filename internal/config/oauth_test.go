@@ -7,8 +7,7 @@ import (
 )
 
 func TestSetOAuthTokensPersists(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	useTempConfigDir(t)
 	os.Unsetenv("CIVITAI_TOKEN")
 
 	cfg, err := Load()
@@ -51,8 +50,7 @@ func TestSetOAuthTokensPersists(t *testing.T) {
 }
 
 func TestSetTokenClearsOAuthState(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	useTempConfigDir(t)
 	os.Unsetenv("CIVITAI_TOKEN")
 
 	cfg, _ := Load()
@@ -75,8 +73,7 @@ func TestSetTokenClearsOAuthState(t *testing.T) {
 }
 
 func TestEnvTokenIsAlwaysPersonalKind(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
+	useTempConfigDir(t)
 	t.Setenv("CIVITAI_TOKEN", "env-key")
 
 	cfg, _ := Load()

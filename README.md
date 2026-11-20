@@ -468,10 +468,14 @@ instruction, which does not live in this repository.
 **The two auth rows are about two different stores.** `authenticated` is *this
 CLI's* credential — `civitai login`'s config file, or `CIVITAI_TOKEN` — which is
 what `civitai app dev-token`, `civitai app validate` and `civitai app submit`
-read. `agent-token` is whether `CIVITAI_TOKEN` is set in the **process
-environment**, which is the only place your agent can resolve the reference in
-its MCP config from. 🔴 **You do not need `CIVITAI_TOKEN` to scaffold, build,
-dev-run or submit an App — it is only for the MCP servers.**
+read. `agent-token` is whether your agent's MCP entries **carry** a
+`CIVITAI_TOKEN` reference and whether `CIVITAI_TOKEN` is set in the **process
+environment**, which is the only place your agent can resolve that reference
+from. A setup run with no token configured writes the entries **without** one,
+and the row says so — exporting the variable alone does not turn it green;
+re-run `civitai agent-setup` with a token configured to add the reference.
+🔴 **You do not need `CIVITAI_TOKEN` to scaffold, build, dev-run or submit an
+App — it is only for the MCP servers.**
 
 🔴 **`ok` is the AND of every check except `cli-version`, `authenticated` and
 `agent-token`, — for any agent other than `claude` — `claude-md`, and — for an
