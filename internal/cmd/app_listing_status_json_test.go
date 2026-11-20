@@ -674,7 +674,7 @@ func TestTheShadowWriteWarningIsOnBothPublishedSurfaces(t *testing.T) {
 	} {
 		if !citationRe.MatchString(s.text) {
 			t.Errorf("%s no longer cites civitai/cli#389 — every surface that documents this command as a "+
-				"read must also say it opens a revision draft on a live listing", s.surface)
+				"read must also say an older server that ignores readOnly still opens a revision draft", s.surface)
 		}
 	}
 }
@@ -718,5 +718,71 @@ func TestAppListingStatusAsksForTheReadOnlyView(t *testing.T) {
 		if editInputs[0]["listingId"] != jsonFixtureParentID {
 			t.Errorf("%v sent listingId %v, want %q", args, editInputs[0]["listingId"], jsonFixtureParentID)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// One account of when `app listing status` can open a draft (civitai/cli#927)
+// ---------------------------------------------------------------------------
+//
+// 🔴 THREE SURFACES, ONE CLAIM. Since #922 status sends `readOnly: true`, so a
+// server that honours it reports an existing shadow revision and never opens
+// one, and only an OLDER server that ignores the flag still opens a draft on a
+// successful call. #922 updated the closing paragraph of the status help and
+// the README bullet, and left three sentences saying the opposite: the status
+// help's "Note: … this opens an in-progress revision draft", doctor's "Unlike
+// `app listing status`, this is a PURE READ — it opens no revision draft", and
+// the README lead-in "One read is not a pure read". Each is pinned here as a
+// whole normalised string, and the retracted wording is forbidden, so the three
+// surfaces can only move together.
+
+const wantStatusLongLiveListingNote = "On a LIVE (approved) listing that has an in-progress revision draft, " +
+	"this reports THAT draft's media; with no draft it reports the live listing's media. Nothing is " +
+	"submitted for moderator review until you run a set-/add- command and confirm."
+
+const wantDoctorLongStatusContrast = "Like `civitai app listing status` against a current server, this is a " +
+	"PURE READ — it opens no revision draft on a live listing, so it is safe to run in a loop. Unlike " +
+	"status, it stays one against an OLDER server too: status's read-only request is ignored there, " +
+	"and a successful status call opens a revision draft."
+
+const wantREADMEListingStatusLeadIn = "One read can still write, depending on the server, and it is the " +
+	"case a script must know:"
+
+func TestListingStatusDraftBehaviourAgreesOnEverySurface(t *testing.T) {
+	statusLong := flattenWS(newAppListingStatusCmd().Long)
+	if !strings.Contains(statusLong, flattenWS(wantStatusLongLiveListingNote)) {
+		t.Errorf("`app listing status --help` does not describe what it reports on a live listing.\n"+
+			"want (normalised): %s\n got: %s", flattenWS(wantStatusLongLiveListingNote), statusLong)
+	}
+	if strings.Contains(statusLong, "this opens an in-progress revision draft") {
+		t.Errorf("`app listing status --help` still says it OPENS a revision draft on a live listing, which "+
+			"contradicts its own read-only paragraph (civitai/cli#927):\n%s", statusLong)
+	}
+
+	doctorLong := flattenWS(newAppDoctorCmd().Long)
+	if !strings.Contains(doctorLong, flattenWS(wantDoctorLongStatusContrast)) {
+		t.Errorf("`app doctor --help` does not contrast itself with status by server version.\n"+
+			"want (normalised): %s\n got: %s", flattenWS(wantDoctorLongStatusContrast), doctorLong)
+	}
+	if strings.Contains(doctorLong, "Unlike `civitai app listing status`, this is a PURE READ") {
+		t.Errorf("`app doctor --help` still implies status always opens a revision draft (civitai/cli#927):\n%s",
+			doctorLong)
+	}
+
+	// The README lead-in is the paragraph immediately before the #389 bullet.
+	md := readREADME(t)
+	i := strings.Index(md, "- **`listing status` is a read")
+	if i < 0 {
+		t.Fatal("CONTROL failure: README.md has no `listing status` read bullet — the lead-in cannot be located")
+	}
+	before := strings.TrimRight(md[:i], "\n")
+	leadIn := before
+	if j := strings.LastIndex(before, "\n\n"); j >= 0 {
+		leadIn = before[j+2:]
+	}
+	if got := flattenWS(leadIn); got != wantREADMEListingStatusLeadIn {
+		t.Errorf("the README lead-in to the `listing status` bullet is not the agreed wording.\nwant: %s\n got: %s\n\n"+
+			"The bullet itself says status is a read on a current server; a lead-in announcing an exception "+
+			"for a read with a side effect contradicts it (civitai/cli#927).", wantREADMEListingStatusLeadIn, got)
 	}
 }
