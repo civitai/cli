@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/genapi"
 )
 
@@ -292,10 +293,12 @@ func TestGenerateInput_EnvelopeKeysNeverReachTheWire(t *testing.T) {
 
 	gen := genapi.New(srv.URL, "test-key")
 	deps := generateDeps{
-		whatIf:      gen.WhatIfFromGraph,
-		submit:      gen.GenerateFromGraph,
-		buzzBalance: func(ctx context.Context) (int64, error) { return 1_000_000, nil },
-		pendingDir:  t.TempDir(),
+		whatIf: gen.WhatIfFromGraph,
+		submit: gen.GenerateFromGraph,
+		buzzBalance: func(ctx context.Context) (*appapi.BuzzAccount, error) {
+			return &appapi.BuzzAccount{Blue: 1_000_000}, nil
+		},
+		pendingDir: t.TempDir(),
 	}
 	// A graph that ALSO happens to name a graph key — the request must still
 	// carry no envelope tip.

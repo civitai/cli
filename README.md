@@ -1611,6 +1611,17 @@ generator.
 > what actually ran. Warned by default; `--fail-on-substitution` refuses on the
 > estimate, before any spend.
 
+**Which Buzz pays.** `--buzz-type blue|yellow|green` picks the account, the
+same choice as the **Pay with** menu in the site's generator. Without it the
+server decides: blue first, then the site's own Buzz. On civitai.red the site
+states that Blue Buzz is limited to safe-for-work results, so a mature result
+paid in blue can come back locked, and unlocking it on the site costs a second
+charge. Pass `--buzz-type yellow` there to pay for it up front. With the flag,
+the balance check uses that account's balance alone. Two limits: `--dry-run`
+shows the choice but the estimate is priced without it, and a type the site does
+not offer is **not refused** by the server — it pays from its default account
+instead.
+
 ```bash
 # Price it. Spends nothing.
 civitai generate "a cat wearing sunglasses" --dry-run
@@ -1621,6 +1632,9 @@ civitai generate "a cat" --quantity 4 --max-cost 50 --yes --out-dir ./out
 # Fire and forget; collect the results later
 civitai generate "a cat" --yes --no-wait
 civitai workflows get <workflow-id>
+
+# Pay with Yellow Buzz instead of the server's default
+civitai generate "a cat" --buzz-type yellow --yes
 ```
 
 **Credential.** Generation needs the AI Services scopes: a full-scope
