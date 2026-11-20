@@ -650,7 +650,7 @@ hosts, with two modes on deliberately separate subexports:
 
 | Command | Mode | What it does |
 |---|---|---|
-| `npm run dev:harness` | **mock** (default; the `/testing` subexport) | Synthetic replies — **no real Buzz, no compute, no network.** Safe to spam. Start here. |
+| `npm run dev:harness` | **mock** (default; the `/testing` subexport) | Synthetic replies — **no real Buzz, no compute.** Not offline: each result image is a placeholder fetched from the third-party host `placehold.co`. Safe to spam. Start here. |
 | `npm run dev:live` | **live** (the `/live` subexport) | Forwards the App protocol to the **real Civitai backend** with a pasted dev token. **Spends REAL Buzz / real compute.** |
 
 Live mode needs a short-lived (~4h) dev block token. Mint it with **`civitai app

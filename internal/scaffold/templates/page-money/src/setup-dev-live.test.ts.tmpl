@@ -18,11 +18,13 @@ import {
 } from './setup-dev-live.js';
 
 describe('mergeEnvFile', () => {
-  const vars = { VITE_LIVE_BLOCK_TOKEN: 'tok123', CIVITAI_HOST_KEY: 'key456' };
+  // Synthetic values, spelled `fake-…` so `civitai app submit`'s credential
+  // advisory reads them as non-real (it deliberately scans test files too).
+  const vars = { VITE_LIVE_BLOCK_TOKEN: 'fake-tok123', CIVITAI_HOST_KEY: 'fake-key456' };
 
   it('writes both vars into an empty/missing file with a single trailing newline', () => {
     const out = mergeEnvFile(undefined, vars);
-    expect(out).toBe('VITE_LIVE_BLOCK_TOKEN=tok123\nCIVITAI_HOST_KEY=key456\n');
+    expect(out).toBe('VITE_LIVE_BLOCK_TOKEN=fake-tok123\nCIVITAI_HOST_KEY=fake-key456\n');
     expect(out.endsWith('\n')).toBe(true);
     expect(out.endsWith('\n\n')).toBe(false);
 
@@ -40,8 +42,8 @@ describe('mergeEnvFile', () => {
     const out = mergeEnvFile(existing, vars);
     expect(out).toContain('# my env');
     expect(out).toContain('VITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5186');
-    expect(out).toContain('VITE_LIVE_BLOCK_TOKEN=tok123');
-    expect(out).toContain('CIVITAI_HOST_KEY=key456');
+    expect(out).toContain('VITE_LIVE_BLOCK_TOKEN=fake-tok123');
+    expect(out).toContain('CIVITAI_HOST_KEY=fake-key456');
     expect(out).not.toContain('old-token');
     expect(out).not.toContain('old-key');
     // No duplicate keys.
@@ -52,8 +54,8 @@ describe('mergeEnvFile', () => {
   it('appends only the missing var, preserving the present one', () => {
     const existing = 'VITE_LIVE_BLOCK_TOKEN=keep-replaced\n';
     const out = mergeEnvFile(existing, vars);
-    expect(out).toContain('VITE_LIVE_BLOCK_TOKEN=tok123');
-    expect(out).toContain('CIVITAI_HOST_KEY=key456');
+    expect(out).toContain('VITE_LIVE_BLOCK_TOKEN=fake-tok123');
+    expect(out).toContain('CIVITAI_HOST_KEY=fake-key456');
     expect(out.match(/CIVITAI_HOST_KEY=/g)).toHaveLength(1);
   });
 
@@ -69,7 +71,7 @@ describe('mergeEnvFile', () => {
     const existing = '# VITE_LIVE_BLOCK_TOKEN=ignored\n';
     const out = mergeEnvFile(existing, vars);
     expect(out).toContain('# VITE_LIVE_BLOCK_TOKEN=ignored');
-    expect(out).toContain('VITE_LIVE_BLOCK_TOKEN=tok123');
+    expect(out).toContain('VITE_LIVE_BLOCK_TOKEN=fake-tok123');
   });
 });
 
