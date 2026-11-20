@@ -1509,12 +1509,15 @@ also takes `--json` to print the **raw API JSON response** for scripting.
 | `civitai collections search` | Search public collections (`GET /api/v1/collections`) | `--query`, `--sort`, `--nsfw`; paging `--limit` (≤100), `--cursor` |
 | `civitai collections get <id>` | Get one collection by id | `--json`, `--anon` |
 
-**Pagination.** List commands print a compact footer with the next-page hint.
+**Pagination.** List commands print a compact footer with the next-page hint,
+which repeats every flag you passed so pasting it continues the same search.
 `models`/`images` support both shallow `--page` and deep `--cursor` paging (the
 API caps `page*limit` at 1000 and 429s beyond it — prefer `--cursor` for deep
 paging); `articles`/`collections` are **cursor-only** (keyset feed — no
 `--page`); `tags`/`creators` are `--page`-only. Each endpoint caps `--limit`
-(models/articles/collections 100; images/tags/creators 200).
+(models/articles/collections 100; images/tags/creators 200). An explicit
+`--page` below the endpoint's first page — 1 for `models`/`images`, 0 for
+`tags`/`creators` — is a usage error (exit `2`), never silently dropped.
 
 ```bash
 civitai models search --query "pony" --limit 5

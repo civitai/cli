@@ -70,9 +70,9 @@ says so on stderr.
 --type, --sort and --period take server-owned value sets.
 ` + serverOwnedEnumNote + `
 
---sort is IGNORED when --model-id is set — the API returns that model's images
-in its own order whatever you ask, so the CLI notes it on stderr rather than
-let you believe the sort took. --model-version-id does honour --sort.
+--sort is IGNORED when --model-id is set alone: the API returns that model's
+images in its own order, so the CLI notes it on stderr rather than let you
+believe the sort took. With --model-version-id also set, --sort is honoured.
 
 --meta adds each image's prompt, sampler, cfg, steps, seed, model and resource
 list, rendered as a per-image block instead of the table (a table cannot hold a
@@ -96,8 +96,10 @@ Paging: ` + limitRule(imagesLimitMax) + `.
 			// The API silently ignores `sort` when `modelId` is set (results come
 			// back in the API's default order regardless), so warn rather than
 			// let the user believe their --sort took effect. Note: --model-version-id
-			// does NOT share this quirk — it honours --sort — so it's excluded here.
-			if cmd.Flags().Changed("model-id") && cmd.Flags().Changed("sort") {
+			// does NOT share this quirk — it honours --sort, even alongside --model-id
+			// (civitai/cli#944) — so a request that SENDS a version id is excluded.
+			// modelVersionID > 0 is the same predicate that puts it on the wire below.
+			if cmd.Flags().Changed("model-id") && cmd.Flags().Changed("sort") && modelVersionID <= 0 {
 				fmt.Fprintln(cmd.ErrOrStderr(),
 					"note: the API ignores --sort when --model-id is set; results are returned in the API's default order.")
 			}
@@ -120,7 +122,9 @@ Paging: ` + limitRule(imagesLimitMax) + `.
 			addIfPositive(q, "modelId", modelID)
 			addIfPositive(q, "modelVersionId", modelVersionID)
 			addIfPositive(q, "limit", limit)
-			addIfPositive(q, "page", page)
+			if err := addPage(cmd, q, page, 1); err != nil {
+				return err
+			}
 			if cmd.Flags().Changed("nsfw") {
 				q.Set("nsfw", strconv.FormatBool(nsfw))
 			}

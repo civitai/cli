@@ -43,7 +43,7 @@ func TestCollectionsSearchNewestPrintsCursorHint(t *testing.T) {
 	if !strings.Contains(out, "next cursor: 3") {
 		t.Errorf("Newest should print the next-cursor footer: %s", out)
 	}
-	if !strings.Contains(out, "next page: civitai collections search --cursor '3'") {
+	if !strings.Contains(out, "next page: civitai collections search --limit=1 --sort=Newest --cursor '3'") {
 		t.Errorf("Newest should print the working next-page hint: %s", out)
 	}
 	if strings.Contains(errOut, noteFragment) {
@@ -87,7 +87,7 @@ func TestCollectionsSearchDefaultSortPageable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collections search (default sort): %v", err)
 	}
-	if !strings.Contains(out, "next page: civitai collections search --cursor '17329876'") {
+	if !strings.Contains(out, "next page: civitai collections search --limit=1 --cursor '17329876'") {
 		t.Errorf("default sort should print the working next-page hint: %s", out)
 	}
 	if strings.Contains(errOut, noteFragment) {
