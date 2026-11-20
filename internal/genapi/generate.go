@@ -131,6 +131,13 @@ type SubmitOptions struct {
 	ExternalID string
 	// Tags are orchestrator workflow tags.
 	Tags []string
+	// BuzzType names the Buzz account the submit is paid from — the value the
+	// site generator's "Pay with" menu sends (civitai/civitai ->
+	// src/server/routers/orchestrator.router.ts, `resolveGenerationCurrencies`).
+	// Empty means "not chosen": the key is then ABSENT from the body and the
+	// server applies its own default spend order, exactly as before the flag
+	// existed. It is set only on the SUBMIT; the cost estimate does not read it.
+	BuzzType string
 }
 
 // whatIfEnvelope is the tRPC input wrapper for the QUERY: the graph sits FLAT
@@ -152,6 +159,9 @@ type generateInput struct {
 	// failure this field exists to prevent.
 	ExternalID string   `json:"externalId"`
 	Tags       []string `json:"tags,omitempty"`
+	// BuzzType is omitempty on purpose (AGENTS.md item 14): an unset flag must
+	// be ABSENT, never an empty string the server would have to interpret.
+	BuzzType string `json:"buzzType,omitempty"`
 }
 
 // NewExternalID mints a RFC 4122 version-4 UUID for use as the orchestrator
@@ -237,6 +247,7 @@ func (c *Client) GenerateFromGraph(ctx context.Context, g Graph, opts SubmitOpti
 		Input:      g,
 		ExternalID: externalID,
 		Tags:       opts.Tags,
+		BuzzType:   opts.BuzzType,
 	}})
 	if err != nil {
 		return nil, externalID, nil, err

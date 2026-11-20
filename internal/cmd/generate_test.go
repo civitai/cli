@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/genapi"
 	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
@@ -54,12 +55,17 @@ type genSeams struct {
 	// be non-empty: the CLI mints it BEFORE the POST so it can be recorded.
 	lastExternalID string
 
-	whatIf      func(ctx context.Context, g genapi.Graph) (*genapi.WhatIfResult, json.RawMessage, error)
-	resolve     func(ctx context.Context, id int) (*genapi.ResolvedVersion, error)
-	balance     func(ctx context.Context) (int64, error)
-	submitErr   error
-	submitReply *genapi.SubmitResult
-	submitRaw   json.RawMessage
+	whatIf  func(ctx context.Context, g genapi.Graph) (*genapi.WhatIfResult, json.RawMessage, error)
+	resolve func(ctx context.Context, id int) (*genapi.ResolvedVersion, error)
+	balance func(ctx context.Context) (int64, error)
+	// account, when set, wins over balance: it returns the per-account split, for
+	// the --buzz-type cases that must tell blue, yellow and green apart.
+	account func(ctx context.Context) (*appapi.BuzzAccount, error)
+	// lastSubmitOpts is the envelope options the submit seam was handed.
+	lastSubmitOpts genapi.SubmitOptions
+	submitErr      error
+	submitReply    *genapi.SubmitResult
+	submitRaw      json.RawMessage
 
 	// getWorkflow is the poll seam; nil leaves it unwired (fine for every test
 	// that stops at --no-wait or never reaches a submit).
@@ -101,6 +107,7 @@ func (s *genSeams) deps(t *testing.T) generateDeps {
 		submit: func(ctx context.Context, g genapi.Graph, opts genapi.SubmitOptions) (*genapi.SubmitResult, string, json.RawMessage, error) {
 			s.submitCalls++
 			s.lastExternalID = opts.ExternalID
+			s.lastSubmitOpts = opts
 			if s.submitObserver != nil {
 				s.submitObserver()
 			}
@@ -136,12 +143,21 @@ func (s *genSeams) deps(t *testing.T) generateDeps {
 			}
 			return "https://orchestration.civitai.com/v2/consumer/blobs/TESTBLOB.png", nil
 		},
-		buzzBalance: func(ctx context.Context) (int64, error) {
+		buzzBalance: func(ctx context.Context) (*appapi.BuzzAccount, error) {
 			s.balanceCalls++
-			if s.balance != nil {
-				return s.balance(ctx)
+			if s.account != nil {
+				return s.account(ctx)
 			}
-			return 1_000_000, nil
+			if s.balance != nil {
+				// A single-number fake is the TOTAL: put it all in one account so
+				// Total() returns it unchanged.
+				n, err := s.balance(ctx)
+				if err != nil {
+					return nil, err
+				}
+				return &appapi.BuzzAccount{Blue: n}, nil
+			}
+			return &appapi.BuzzAccount{Blue: 1_000_000}, nil
 		},
 	}
 }

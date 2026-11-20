@@ -179,16 +179,25 @@ func parseGraphInput(data []byte) (*parsedGraphInput, error) {
 		}
 	}
 	if len(found) > 0 {
+		// The one envelope key with a flag of its own gets pointed at it, so the
+		// refusal names the way to do what the file was trying to do.
+		hint := ""
+		for _, k := range found {
+			if k == "buzzType" {
+				hint = ". To choose the Buzz account, pass --buzz-type instead"
+			}
+		}
 		return nil, asUsageError(fmt.Errorf(
 			"--input contains %s, which %s NOT part of the generation graph: %s %s beside the graph in the request envelope, and this CLI owns %s. "+
 				"Tips (civitaiTip/creatorTip) are real Buzz that the cost estimate cannot see, so a file setting one would charge more than --dry-run showed. "+
-				"Remove %s from the file",
+				"Remove %s from the file%s",
 			joinQuoted(found),
 			plural(len(found), "is", "are"),
 			plural(len(found), "it", "they"),
 			plural(len(found), "belongs", "belong"),
 			plural(len(found), "it", "them"),
-			plural(len(found), "it", "them")))
+			plural(len(found), "it", "them"),
+			hint))
 	}
 
 	// 🔴 txt2img only. See inputWorkflow.
