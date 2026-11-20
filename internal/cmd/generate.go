@@ -198,8 +198,11 @@ type generateDeps struct {
 	submit func(ctx context.Context, g genapi.Graph, opts genapi.SubmitOptions) (*genapi.SubmitResult, string, json.RawMessage, error)
 	// resolveVersion turns a model-version id into its model TYPE + display name.
 	resolveVersion func(ctx context.Context, id int) (*genapi.ResolvedVersion, error)
-	// buzzBalance reads the spendable balance for the cost-vs-balance check.
-	buzzBalance func(ctx context.Context) (int64, error)
+	// buzzBalance reads the per-account Buzz balances for the cost-vs-balance
+	// check. It returns the ACCOUNT, not a total, because --buzz-type pays from
+	// one account alone and must be checked against that account's balance —
+	// see spendableBalance.
+	buzzBalance func(ctx context.Context) (*appapi.BuzzAccount, error)
 	// getWorkflow reads a workflow back. It is the POLL seam, and it spends
 	// nothing.
 	getWorkflow getWorkflowFn
@@ -271,6 +274,14 @@ type generateOpts struct {
 	// inputPath is the `--input` graph file ("-" reads stdin). When set, the
 	// graph is a raw passthrough and every content flag above is REFUSED.
 	inputPath string
+	// buzzType is the --buzz-type value, normalised to lower case by
+	// validateGenerateOpts. Empty means "not chosen", and then nothing about the
+	// request changes: the key stays ABSENT from the submit envelope.
+	buzzType string
+	// buzzTypeSet records that --buzz-type was GIVEN, so an explicitly empty
+	// value (an unset shell variable: --buzz-type "$PAY") is refused rather than
+	// read as "not chosen" and billed in the server's default order.
+	buzzTypeSet bool
 	// printInput dumps the assembled graph and exits without submitting.
 	printInput bool
 }
@@ -342,6 +353,22 @@ believing it caps spend.
 CONFIRMATION: an interactive run prints the estimate and your balance and asks
 before spending. A non-interactive shell (pipe/CI) without --yes is REFUSED
 rather than charged silently.
+
+WHICH BUZZ PAYS: --buzz-type blue|yellow|green picks the account, the same
+choice as the "Pay with" menu in the site's generator, and is sent with the
+submit. Without it the server decides: blue first, then the site's own Buzz.
+The account matters beyond the balance — on civitai.red the site states that
+Blue Buzz is limited to safe-for-work results, so a mature result paid in blue
+can come back locked, and unlocking it on the site is a second charge. To pay
+for a mature result up front, point the CLI at that site
+(CIVITAI_BASE_URL=https://civitai.red) and choose yellow. On the default
+civitai.com the server offers blue and green only. With the flag, the balance
+check and the confirmation use that account's balance alone. Two limits: the
+estimate does not take the choice (--dry-run shows it, but prices the job
+without it), and a type the site does not offer is NOT refused by the server —
+it silently pays from its default account instead. That includes yellow on
+civitai.com, even though the site's menu there lists a yellow balance (as a
+pointer to civitai.red).
 
 WHAT THE SERVER DOES NOT TELL YOU: the generator is permissive, not a validator.
 An out-of-range --quantity is clamped with no error, and a checkpoint id that
@@ -433,7 +460,8 @@ exits without submitting or even pricing anything.
 flags (--negative-prompt, --quantity, --aspect-ratio, --checkpoint, --lora) or
 with a prompt argument; the execution flags all still apply. Keys that belong to
 the request ENVELOPE rather than the graph — civitaiTip, creatorTip, buzzType,
-tags, externalId — are REFUSED in an input file: they are this CLI's to set, and
+tags, externalId — are REFUSED in an input file: they are this CLI's to set (use
+--buzz-type for the Buzz account), and
 a tip in particular is real Buzz that --dry-run structurally cannot see. Keys
 this CLI does not model are passed through exactly as written, with a warning
 that says so and nothing more: what the server does with such a key, including
@@ -490,6 +518,10 @@ path that resolves model ids before anything is submitted.`,
   # Non-interactive (CI): --yes is required, or the run is refused
   civitai generate "a cat" --yes --max-cost 20
 
+  # Pay with Yellow Buzz instead of the server's default (blue first)
+  civitai generate "a cat" --buzz-type yellow --dry-run
+  civitai generate "a cat" --buzz-type yellow --yes
+
   # Graduate from flags to a raw graph: print, edit, send back
   civitai generate "a cat" --quantity 2 --print-input > graph.json
   civitai generate --input graph.json --dry-run
@@ -515,6 +547,7 @@ path that resolves model ids before anything is submitted.`,
 			o.quantitySet = cmd.Flags().Changed("quantity")
 			o.checkpointSet = cmd.Flags().Changed("checkpoint")
 			o.maxCostSet = cmd.Flags().Changed("max-cost")
+			o.buzzTypeSet = cmd.Flags().Changed("buzz-type")
 
 			cfg, err := config.Load()
 			if err != nil {
@@ -587,13 +620,7 @@ path that resolves model ids before anything is submitted.`,
 				uploadImage: func(ctx context.Context, contentType string, body []byte) (string, error) {
 					return gen.UploadImageBlob(ctx, reader, contentType, body)
 				},
-				buzzBalance: func(ctx context.Context) (int64, error) {
-					acct, err := buzz.GetBuzzAccount(ctx)
-					if err != nil {
-						return 0, err
-					}
-					return acct.Total(), nil
-				},
+				buzzBalance: buzz.GetBuzzAccount,
 			}
 			// Bind SIGINT for the whole run: the poll loop, the sleep between
 			// polls and every blob transfer all take this context, so Ctrl-C
@@ -694,6 +721,11 @@ path that resolves model ids before anything is submitted.`,
 	cmd.Flags().StringVar(&o.externalID, "external-id", "",
 		"re-attach to an earlier submit by reusing its idempotency key (the orchestrator dedupes on it and returns the "+
 			"PRE-EXISTING workflow rather than charging again). Use the key recorded before the lost submit")
+	// NOTE: no back-quotes in this usage string — see the note above.
+	cmd.Flags().StringVar(&o.buzzType, "buzz-type", "",
+		"which Buzz account pays: blue, yellow or green — the same choice as the site generator's 'Pay with' menu. "+
+			"Unset, the server picks (blue first, then the site's own Buzz). A type the site does not offer is NOT refused by the "+
+			"server: it falls back to that default. Applied at submit only; --dry-run's estimate does not take it")
 
 	// NOTE: no back-quotes in these usage strings either — see the note above.
 	cmd.Flags().StringVar(&o.inputPath, "input", "",
@@ -783,10 +815,12 @@ func validateGenerateOpts(o *generateOpts) error {
 	if o.maxCostSet && o.maxCost < 0 {
 		return asUsageError(fmt.Errorf("--max-cost must not be negative, got %d", o.maxCost))
 	}
-	if o.jsonOut && !o.dryRun && !o.assumeYes {
+	if o.jsonOut && !o.dryRun && !o.assumeYes && !o.printInput {
 		// --json is a scripting path; pairing it with an interactive money prompt
 		// invites a script that hangs or, worse, one whose operator clicks through.
-		// Say so up front rather than at the prompt.
+		// Say so up front rather than at the prompt. --print-input is exempt: it
+		// already prints JSON and returns before the estimator and the submit, so
+		// there is no prompt and no spend for --yes to confirm (#943).
 		return asUsageError(errors.New(
 			"--json without --dry-run submits and spends Buzz — pass --yes to confirm non-interactively, or --dry-run to only estimate"))
 	}
@@ -829,7 +863,72 @@ func validateGenerateOpts(o *generateOpts) error {
 	if err := validateImageOpts(o); err != nil {
 		return err
 	}
-	return nil
+	return validateBuzzType(o)
+}
+
+// generateBuzzTypes are the values --buzz-type accepts: the Buzz SPEND types the
+// server's generation currency resolver can select (civitai/civitai ->
+// src/server/routers/orchestrator.router.ts `resolveGenerationCurrencies`, over
+// src/server/utils/buzz-helpers.ts `getAllowedAccountTypes`, which only ever
+// yields blue plus green or yellow). They are the site's own words, sent verbatim.
+//
+// 🔴 WHY THIS ONE LIST IS CHECKED LOCALLY, AGAINST AGENTS.md ITEM 13. Item 13
+// forbids vendoring the GRAPH's vocabulary because a wrong local answer there
+// refuses valid input or costs Buzz. This is an ENVELOPE field this CLI owns, and
+// the failure modes run the other way: the server does NOT reject a value it does
+// not recognise — `resolveGenerationCurrencies` silently falls back to its default
+// spend order — so a typo such as "yelow" would be billed to blue, the exact
+// charge the flag exists to avoid (civitai/cli#801). A stale list here can only
+// REFUSE locally, before anything is priced or spent.
+//
+// What is deliberately NOT checked: whether the type is offered on the site the
+// CLI is pointed at. That is server state (the domain's feature flags), and the
+// server answers it by falling back rather than refusing — said in the help and
+// on the quote, never decided here.
+var generateBuzzTypes = []string{"blue", "yellow", "green"}
+
+// validateBuzzType normalises --buzz-type to lower case and refuses a value the
+// server's resolver could never select. Unset stays unset.
+func validateBuzzType(o *generateOpts) error {
+	if o.buzzType == "" && !o.buzzTypeSet {
+		return nil
+	}
+	v := strings.ToLower(strings.TrimSpace(o.buzzType))
+	for _, ok := range generateBuzzTypes {
+		if v == ok {
+			o.buzzType = v
+			return nil
+		}
+	}
+	return asUsageError(fmt.Errorf(
+		"invalid --buzz-type %q — expected one of %s. Nothing was priced or submitted; the server would not refuse an unknown type, it would silently pay from its default account instead",
+		o.buzzType, strings.Join(generateBuzzTypes, ", ")))
+}
+
+// spendableBalance is the balance the cost is compared against. With no
+// --buzz-type it is the total across accounts, as it always was. With one, it is
+// THAT account alone: when the site offers it, the server drains only the chosen
+// account, so a total that includes blue would wave through a yellow job the
+// yellow balance cannot cover. When the site does NOT offer it the server falls
+// back to its default order, and this check can then refuse a job the server
+// would have run from another account — the conservative direction, chosen
+// because it refuses before spending rather than charging an account the user
+// did not pick.
+func spendableBalance(acct *appapi.BuzzAccount, buzzType string) int64 {
+	switch buzzType {
+	case "blue":
+		return acct.Blue
+	case "yellow":
+		return acct.Yellow
+	case "green":
+		return acct.Green
+	}
+	return acct.Total()
+}
+
+// buzzTypeLabel renders the chosen account for the quote and the confirmation.
+func buzzTypeLabel(buzzType string) string {
+	return buzzType + " Buzz"
 }
 
 // validateImageOpts holds the two --image rules that must fire BEFORE any
@@ -1263,7 +1362,12 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 	}
 
 	balance, balanceKnown := int64(0), false
-	if b, berr := deps.buzzBalance(ctx); berr != nil {
+	if acct, berr := deps.buzzBalance(ctx); berr != nil || acct == nil {
+		if berr == nil {
+			// A nil account with no error is a broken seam, not a zero balance —
+			// treat it as unreadable rather than as "you have 0".
+			berr = errors.New("the balance read returned no account")
+		}
 		// Advisory: a balance we cannot read must not block a user who can
 		// generate — but it must never be shown as a number either, or an
 		// unreadable balance reads as "you have 0".
@@ -1341,9 +1445,14 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		fmt.Fprintln(errw, ui.For(errw).Warn(fmt.Sprintf(
 			"could not read your Buzz balance (%v) — continuing without the balance check; verify with `civitai buzz`", safeTermBounded(berr.Error()))))
 	} else {
-		balance, balanceKnown = b, true
+		balance, balanceKnown = spendableBalance(acct, o.buzzType), true
 	}
 	if balanceKnown && cost > float64(balance) {
+		if o.buzzType != "" {
+			return civitai.Tag(ErrInsufficientBuzz, fmt.Errorf(
+				"estimated cost %s Buzz exceeds your %s balance of %d — nothing was submitted. --buzz-type %s pays from that account alone; buy Buzz at %s/purchase/buzz, or choose another account",
+				buzzAmount(cost), buzzTypeLabel(o.buzzType), balance, o.buzzType, strings.TrimRight(o.baseURL, "/")))
+		}
 		return civitai.Tag(ErrInsufficientBuzz, fmt.Errorf(
 			"estimated cost %s Buzz exceeds your balance of %d — nothing was submitted; buy Buzz at %s/purchase/buzz",
 			buzzAmount(cost), balance, strings.TrimRight(o.baseURL, "/")))
@@ -1375,7 +1484,7 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 			stateErr, strings.TrimRight(o.baseURL, "/"), externalID)))
 	}
 
-	result, externalID, rawSubmit, err := deps.submit(ctx, built.graph, genapi.SubmitOptions{ExternalID: externalID})
+	result, externalID, rawSubmit, err := deps.submit(ctx, built.graph, genapi.SubmitOptions{ExternalID: externalID, BuzzType: o.buzzType})
 	if err != nil {
 		if genapi.StatusOf(err) == 0 {
 			// No HTTP status means no interpretable reply: the request may well
@@ -1645,7 +1754,23 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 	}
 
 	if o.noDownload {
-		printOutputURLs(out, errw, kept)
+		// With --json the workflow document owns stdout, so the rows move to
+		// stderr rather than prefixing it (#935).
+		rowsW := out
+		if o.jsonOut {
+			rowsW = errw
+		}
+		if printOutputURLs(rowsW, errw, kept) == 0 {
+			// Every kept output came back without a URL: zero rows is not a
+			// result, so fail the way the download path's "carries no URL"
+			// does (exit 1) rather than exit 0 with nothing (#945). It says the
+			// run was charged, like the zero-deliverables error above, so a
+			// script retrying on exit 1 does not re-submit and pay again. Under
+			// --json stdout stays empty: the failure contract is error on
+			// stderr, nothing on stdout.
+			return fmt.Errorf("the generation succeeded but none of its %d deliverable output(s) came back with a URL, so there is nothing to print — it was charged; inspect it with `civitai workflows get %s` (add --json for the machine-readable record)%s",
+				len(kept), safeTermSingle(workflowID), serverReasonSuffix(wf))
+		}
 	} else {
 		// With --json the machine-readable payload owns stdout, so the "Saved …"
 		// lines move to stderr rather than corrupting it.
@@ -1670,15 +1795,21 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 	return nil
 }
 
-// printOutputURLs renders the --no-download listing.
-func printOutputURLs(out, errw io.Writer, kept []genapi.Output) {
+// printOutputURLs renders the --no-download listing and returns how many rows
+// it wrote. The expiry hint is printed only when at least one row was (#945).
+func printOutputURLs(out, errw io.Writer, kept []genapi.Output) int {
+	n := 0
 	for i, o := range kept {
 		if o.URL != nil {
 			fmt.Fprintf(out, "%d\t%s\n", i+1, safeTermSingle(*o.URL))
+			n++
 		}
 	}
-	fmt.Fprintln(errw, ui.For(errw).Dim(
-		"These URLs are presigned and expire — fetch them promptly, or re-read the workflow for fresh links."))
+	if n > 0 {
+		fmt.Fprintln(errw, ui.For(errw).Dim(
+			"These URLs are presigned and expire — fetch them promptly, or re-read the workflow for fresh links."))
+	}
+	return n
 }
 
 // printSubmitted announces a submitted job on the DEFAULT (waiting) path. It
@@ -1856,7 +1987,12 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 		fmt.Fprintf(errw, "  LoRA:       %s\n", safeTermSingle(loraLabel))
 	}
 	printImageDisclosure(errw, o, built)
-	if balanceKnown {
+	if o.buzzType != "" {
+		fmt.Fprintf(errw, "  Pay with:   %s\n", buzzTypeLabel(o.buzzType))
+	}
+	if balanceKnown && o.buzzType != "" {
+		fmt.Fprintf(errw, "Cost: %s Buzz (%s balance %d).\n", buzzAmount(cost), buzzTypeLabel(o.buzzType), balance)
+	} else if balanceKnown {
 		fmt.Fprintf(errw, "Cost: %s Buzz (balance %d).\n", buzzAmount(cost), balance)
 	} else {
 		fmt.Fprintf(errw, "Cost: %s Buzz (balance unknown).\n", buzzAmount(cost))
@@ -2000,6 +2136,9 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 	// what stops the TRUE direction reading as a guarantee. See AGENTS.md
 	// item 28.
 	fmt.Fprintf(tw, "Resources ready:\t%t\n", q.Ready)
+	if o.buzzType != "" {
+		fmt.Fprintf(tw, "Pay with:\t%s\n", buzzTypeLabel(o.buzzType))
+	}
 	_ = tw.Flush()
 
 	fmt.Fprintf(out, "\n%s\n", ui.For(out).Bold("Estimated cost"))
@@ -2029,6 +2168,17 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 	// reads only the total will otherwise treat it as a quote.
 	fmt.Fprintln(errw, ui.For(errw).Dim(
 		"Estimate only — nothing was submitted and nothing was charged. The server returns no binding quote, enforces no spending ceiling, and the realized charge can exceed this figure."))
+	if o.buzzType != "" {
+		// 🔴 The estimator does not take a Buzz type: the server prices a whatIf
+		// with its default account order whatever the request says, and this CLI
+		// never sends the key on a quote (whatIf spreads every non-graph key it
+		// does not destructure into the GRAPH it validates). So the "Pay with" row
+		// above is the choice the SUBMIT will carry, not an input this estimate
+		// was computed from — and not a promise the site offers that account.
+		fmt.Fprintln(errw, ui.For(errw).Dim(fmt.Sprintf(
+			"--buzz-type %s is sent with the submit, not with this estimate. If this site does not offer %s, the server does not refuse it — it pays from its default account instead.",
+			o.buzzType, buzzTypeLabel(o.buzzType))))
+	}
 }
 
 // printCostMap renders one server-owned cost map with its keys sorted for a
@@ -2092,10 +2242,17 @@ func printSubmitResult(out, errw io.Writer, r *genapi.SubmitResult, externalID, 
 // --input run has no prompt to quote, and printing an empty one would hand the
 // user a command that re-submits a different (and rejected) job.
 func reattachInvocation(o generateOpts) string {
+	inv := fmt.Sprintf("%q", o.prompt)
 	if p := strings.TrimSpace(o.inputPath); p != "" {
-		return fmt.Sprintf("--input %s", p)
+		inv = fmt.Sprintf("--input %s", p)
 	}
-	return fmt.Sprintf("%q", o.prompt)
+	// The re-attach is a re-run of the same submit, so it carries the same
+	// account choice: should the dedupe ever miss, the job it re-submits must be
+	// paid from the account the user chose, not the server's default.
+	if o.buzzType != "" {
+		inv += " --buzz-type " + o.buzzType
+	}
+	return inv
 }
 
 // buzzAmount renders a Buzz figure: whole numbers without a decimal tail, and a
