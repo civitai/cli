@@ -14,15 +14,20 @@
 //
 // 🔴 THE GO TOOLCHAIN'S OWN DIRECTORIES ARE PINNED FIRST. Some of these packages
 // build the CLI with `go build` from a test. GOCACHE, GOMODCACHE, GOPATH and
-// GOENV all default to paths under HOME, so moving HOME without pinning them
+// GOENV can all default to paths under HOME, so moving HOME without pinning them
 // would hand that build a cold cache, an empty module cache (a network fetch)
-// and none of the developer's `go env -w` settings.
+// and none of the developer's `go env -w` settings. The pinned values are the
+// EFFECTIVE ones, read with `go env -json` before HOME moves — so a value the
+// developer set with `go env -w` is exported unchanged rather than replaced by
+// the HOME-derived default (an exported variable beats the GOENV file). If `go`
+// cannot be run, nothing is pinned and the variables are left as they were.
 package configtest
 
 import (
+	"encoding/json"
 	"fmt"
-	"go/build"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -72,25 +77,19 @@ func Isolate(root string) error {
 }
 
 func pinGoDirs() {
-	setIfUnset := func(k, v string) {
-		if os.Getenv(k) == "" && v != "" {
+	out, err := exec.Command("go", "env", "-json", "GOENV", "GOPATH", "GOMODCACHE", "GOCACHE").Output()
+	if err != nil {
+		return
+	}
+	var eff map[string]string
+	if json.Unmarshal(out, &eff) != nil {
+		return
+	}
+	for k, v := range eff {
+		// GOENV=off (or any other non-path) is exported as-is: it is the
+		// effective setting, and re-exporting it changes nothing.
+		if v != "" {
 			_ = os.Setenv(k, v)
 		}
-	}
-	// build.Default.GOPATH was resolved from HOME at package init, i.e. before
-	// anything here moved it.
-	gopath := os.Getenv("GOPATH")
-	if gopath == "" {
-		gopath = build.Default.GOPATH
-	}
-	setIfUnset("GOPATH", gopath)
-	if list := filepath.SplitList(gopath); len(list) > 0 && list[0] != "" {
-		setIfUnset("GOMODCACHE", filepath.Join(list[0], "pkg", "mod"))
-	}
-	if d, err := os.UserCacheDir(); err == nil {
-		setIfUnset("GOCACHE", filepath.Join(d, "go-build"))
-	}
-	if d, err := os.UserConfigDir(); err == nil {
-		setIfUnset("GOENV", filepath.Join(d, "go", "env"))
 	}
 }

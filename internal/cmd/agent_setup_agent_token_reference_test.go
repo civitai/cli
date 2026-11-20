@@ -134,3 +134,84 @@ func TestHeaderlessSetupNextStepsCarryTheExportGuidance(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentTokenRowReadsJSONCLikeTheMCPRows: VS Code's .vscode/mcp.json is
+// JSONC. A `//` comment must not make our own `${env:CIVITAI_TOKEN}` reference
+// invisible to this row while the mcp-* rows parse the same file fine.
+func TestAgentTokenRowReadsJSONCLikeTheMCPRows(t *testing.T) {
+	dir, _ := agentSetupProject(t)
+	t.Setenv(tokenEnvVar, "synthetic-env-only")
+	if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentVSCode); err != nil {
+		t.Fatalf("PREMISE BROKEN: setup: %v", err)
+	}
+	path := filepath.Join(dir, ".vscode", "mcp.json")
+	raw := readFile(t, path)
+	if !strings.Contains(raw, `"Bearer ${env:CIVITAI_TOKEN}"`) {
+		t.Fatalf("PREMISE BROKEN: no reference written:\n%s", raw)
+	}
+	writeFile(t, path, "// my editor's comment\n"+raw)
+	rows, _, _ := checkRows(t, dir, agentVSCode)
+	if site := rowNamed(t, rows, "mcp-site"); !site.OK {
+		t.Fatalf("PREMISE BROKEN: mcp-site does not parse the commented file: %s", site.Detail)
+	}
+	row := rowNamed(t, rows, checkAgentToken)
+	want := "CIVITAI_TOKEN is set in this environment, which is where vscode resolves the reference " +
+		"in its MCP config from"
+	if !row.OK || row.Detail != want {
+		t.Errorf("agent-token = ok:%v %q, want ok:true %q", row.OK, row.Detail, want)
+	}
+}
+
+// TestAgentTokenRowOnUserOwnedAuthSaysItCannotTell: a header this command did
+// not write may still read CIVITAI_TOKEN in another spelling, so the row must
+// not call the variable irrelevant — it says it cannot tell.
+func TestAgentTokenRowOnUserOwnedAuthSaysItCannotTell(t *testing.T) {
+	dir, mcpPath := headerlessClaudeSetup(t)
+	writeFile(t, mcpPath, `{"mcpServers": {`+
+		`"civitai": {"type": "http", "url": "https://mcp.civitai.com/mcp", "headers": {"Authorization": "Bearer $CIVITAI_TOKEN"}},`+
+		`"civitai-orchestration": {"type": "http", "url": "`+issue933OrchURL+`", "headers": {"Authorization": "Bearer $CIVITAI_TOKEN"}}}}`)
+	rows, ok, _ := checkRows(t, dir, agentClaude)
+	row := rowNamed(t, rows, checkAgentToken)
+	want := "claude's MCP entries in " + mcpPath + " carry no CIVITAI_TOKEN reference this command wrote: " +
+		"civitai carries an Authorization header — this command did not write that value and cannot tell " +
+		"whether it resolves to a credential; civitai-orchestration carries an Authorization header — this " +
+		"command did not write that value and cannot tell whether it resolves to a credential. So this row " +
+		"cannot say whether CIVITAI_TOKEN being set matters to them. " + appTrackTokenNote
+	if !row.OK || row.Detail != want {
+		t.Errorf("agent-token:\n got: ok:%v %s\nwant: ok:true %s", row.OK, row.Detail, want)
+	}
+	if !ok {
+		t.Errorf("the overall verdict went false")
+	}
+}
+
+// TestAgentTokenRowSaysWhenItCouldNotLook: a missing or unparseable config is
+// "could not look", not "the entries carry no reference".
+func TestAgentTokenRowSaysWhenItCouldNotLook(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		dir, _ := agentSetupProject(t)
+		path := filepath.Join(dir, ".mcp.json")
+		rows, _, _ := checkRows(t, dir, agentClaude)
+		row := rowNamed(t, rows, checkAgentToken)
+		want := "no " + path + " found, so claude has no MCP entries to reference CIVITAI_TOKEN — run " +
+			"`civitai agent-setup` to write it. " + appTrackTokenNote
+		if row.OK || row.Detail != want {
+			t.Errorf("agent-token:\n got: ok:%v %s\nwant: ok:false %s", row.OK, row.Detail, want)
+		}
+	})
+	t.Run("unparseable", func(t *testing.T) {
+		dir, _ := agentSetupProject(t)
+		path := filepath.Join(dir, ".mcp.json")
+		writeFile(t, path, "{not json")
+		rows, _, _ := checkRows(t, dir, agentClaude)
+		row := rowNamed(t, rows, checkAgentToken)
+		want := "could not read claude's MCP config, so this row cannot tell whether its entries reference " +
+			"CIVITAI_TOKEN: " + path + " does not parse (invalid character 'n' looking for beginning of " +
+			"object key string) — fix or move that file and re-run `civitai agent-setup`; this command will " +
+			"not rewrite a config it cannot read, because a repair here is indistinguishable from deleting " +
+			"whatever you had in it. " + appTrackTokenNote
+		if row.OK || row.Detail != want {
+			t.Errorf("agent-token:\n got: ok:%v %s\nwant: ok:false %s", row.OK, row.Detail, want)
+		}
+	})
+}
