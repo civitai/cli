@@ -36,14 +36,28 @@ import (
 // fails the whole json.Unmarshal while the tokens beside it are intact, and the
 // refresh route has already rotated them — so echoing the body put the only
 // copy of a live refresh token on stderr (civitai/cli#800, which introduced this
-// helper in internal/appapi). decodeErr is safe to show: encoding/json's errors
-// name a type, a field and at most one offending byte, never a string value. It
-// is formatted with %v, not %w, so the error stays unclassified.
+// helper in internal/appapi). decodeErr is shown: encoding/json's errors name a
+// type, a field and one quoted offending byte, never a string value — but an
+// UnmarshalTypeError quotes a NUMBER value whole, so a 50,000-digit number made
+// a 50 KB error. The decode error is therefore cut at decodeErrMax runes. It is
+// formatted as text, not wrapped with %w, so the error stays unclassified.
 func CredentialBodyError(what string, raw []byte, decodeErr error) error {
 	if decodeErr != nil {
-		return fmt.Errorf("%s (%d bytes, not shown because it may carry credentials): %v", what, len(raw), decodeErr)
+		return fmt.Errorf("%s (%d bytes, not shown because it may carry credentials): %s", what, len(raw), capRunes(decodeErr.Error(), decodeErrMax))
 	}
 	return fmt.Errorf("%s (%d bytes, not shown because it may carry credentials)", what, len(raw))
+}
+
+// decodeErrMax bounds the decode error CredentialBodyError shows. encoding/json's
+// own messages run well under it; only a quoted number value reaches it.
+const decodeErrMax = 200
+
+// capRunes returns s cut to at most n runes, marking a cut with "…".
+func capRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n]) + "…"
 }
 
 // WithheldBody describes a credential-route response body without showing it.
@@ -68,15 +82,23 @@ func WithheldBody(raw []byte) string {
 // blockId, and a 200-rune cap made a long slug's 404 read as a slug collision.
 // Branch on ErrorMessage, never on what this returns.
 //
-// In place of the cap it refuses two TOKEN SHAPES, wherever they sit in the
+// In place of the cap it refuses three TOKEN SHAPES, wherever they sit in the
 // text: a JWT (three dot-separated base64url segments opening `eyJ`, the third
-// may be empty), and a run of 40 or more base64/base64url characters that is
-// all hex or mixes upper- and lower-case letters. The second condition is what lets a long lowercase slug or path
-// through — the 30-char-slug 404 above is all lowercase runs — while a random
-// token of that length is, in practice, never single-case.
+// may be empty); a run of 40 or more base64/base64url characters that is all
+// hex or mixes upper- and lower-case letters; and an UNBROKEN run of 40 or more
+// ASCII letters and digits, whatever its case. The third is what refuses a
+// single-case token (a lowercase or base32 key) while still letting a long
+// slug, snake_case name or path through: those break into short pieces at `-`,
+// `_`, `/` and `.` — the 30-char-slug 404 above is all such pieces — and no
+// English word reaches 40 letters without a separator. ACCEPTED FALSE
+// POSITIVE: a run of 40+ letters/digits with no separator is withheld even when
+// it is not a token — notably an app slug of 40+ characters with no hyphen,
+// which the blockId patterns allow. Such a message is reported by its size; a
+// caller that classifies on the wording reads ErrorMessage, unfiltered, so the
+// classification is unaffected.
 //
-// 🔴 THIS IS A SHAPE CHECK, NOT A SECRET DETECTOR. A short token, or a long one
-// that is single-case and not hex, is plain text and passes. It is applied only
+// 🔴 THIS IS A SHAPE CHECK, NOT A SECRET DETECTOR. A short token, or a long
+// single-case one broken up by `-`, `_` or `/`, is plain text and passes. It is applied only
 // to a FIELD whose meaning is "error message" (an OAuth
 // `error`/`error_description`, a tRPC `error.json.message`) or to a body the
 // route documents as error text — never to a body the caller did not
@@ -108,14 +130,16 @@ const tokenRunMin = 40
 var (
 	jwtShape = regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*`)
 	tokenRun = regexp.MustCompile(`[A-Za-z0-9_\-+/=]{` + strconv.Itoa(tokenRunMin) + `,}`)
+	alnumRun = regexp.MustCompile(`[A-Za-z0-9]{` + strconv.Itoa(tokenRunMin) + `,}`)
 	hexRun   = regexp.MustCompile(`^[0-9A-Fa-f]+$`)
 )
 
-// hasTokenShape reports whether s holds a JWT, or a run of tokenRunMin+
-// token characters that is all hex or holds both an upper- and a lower-case
-// letter. See ServerText for why single-case runs pass.
+// hasTokenShape reports whether s holds a JWT, an unbroken run of tokenRunMin+
+// ASCII letters and digits, or a run of tokenRunMin+ token characters that is
+// all hex or holds both an upper- and a lower-case letter. See ServerText for
+// why a single-case run broken by separators passes.
 func hasTokenShape(s string) bool {
-	if jwtShape.MatchString(s) {
+	if jwtShape.MatchString(s) || alnumRun.MatchString(s) {
 		return true
 	}
 	for _, run := range tokenRun.FindAllString(s, -1) {

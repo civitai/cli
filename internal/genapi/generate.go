@@ -5,9 +5,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+
+	"github.com/civitai/cli/internal/redact"
 )
 
 // The two orchestrator generation-graph procedures.
@@ -221,7 +224,7 @@ func (c *Client) WhatIfFromGraph(ctx context.Context, g Graph) (*WhatIfResult, j
 	}
 	var out WhatIfResult
 	if err := json.Unmarshal(payload, &out); err != nil {
-		return nil, nil, fmt.Errorf("unexpected orchestrator.whatIfFromGraph payload: %s", string(payload))
+		return nil, nil, redact.CredentialBodyError("unexpected orchestrator.whatIfFromGraph payload", payload, err)
 	}
 	return &out, payload, nil
 }
@@ -273,7 +276,7 @@ func (c *Client) GenerateFromGraph(ctx context.Context, g Graph, opts SubmitOpti
 	}
 	var out SubmitResult
 	if err := json.Unmarshal(payload, &out); err != nil {
-		return nil, externalID, nil, fmt.Errorf("unexpected orchestrator.generateFromGraph payload: %s", string(payload))
+		return nil, externalID, nil, redact.CredentialBodyError("unexpected orchestrator.generateFromGraph payload", payload, err)
 	}
 	return &out, externalID, payload, nil
 }
@@ -285,6 +288,14 @@ func (c *Client) GenerateFromGraph(ctx context.Context, g Graph, opts SubmitOpti
 // cost estimate would render as "total 0" — a fabricated free quote. Reject it
 // as malformed alongside a missing/undecodable envelope, exactly as the App
 // Blocks analytics reader does.
+//
+// 🔴 THE REJECTED BODY IS REPORTED BY ITS SIZE, NEVER SHOWN. raw is the whole
+// HTTP body before any parsing: it is bounded only by the client's response cap,
+// it can carry raw ESC and newlines that main.go would print as one `Error:`
+// line (the cursor-up + erase-line forgery of civitai/cli#620), and the
+// getWorkflow and queryGeneratedImages replies that pass through here carry blob
+// URLs that can be signed. The decode error is still shown — encoding/json names
+// a type, a field or one quoted byte, never a string value.
 func unwrapTRPC(proc string, raw []byte) (json.RawMessage, error) {
 	var env struct {
 		Result struct {
@@ -293,10 +304,16 @@ func unwrapTRPC(proc string, raw []byte) (json.RawMessage, error) {
 			} `json:"data"`
 		} `json:"result"`
 	}
-	if err := json.Unmarshal(raw, &env); err != nil ||
-		len(env.Result.Data.JSON) == 0 ||
-		string(bytes.TrimSpace(env.Result.Data.JSON)) == "null" {
-		return nil, fmt.Errorf("unexpected %s response: %s", proc, string(raw))
+	err := json.Unmarshal(raw, &env)
+	if err == nil && (len(env.Result.Data.JSON) == 0 || string(bytes.TrimSpace(env.Result.Data.JSON)) == "null") {
+		err = errNoTRPCPayload
+	}
+	if err != nil {
+		return nil, redact.CredentialBodyError("unexpected "+proc+" response", raw, err)
 	}
 	return env.Result.Data.JSON, nil
 }
+
+// errNoTRPCPayload is the reason unwrapTRPC gives for an envelope that decoded
+// but carried no payload, or a null one.
+var errNoTRPCPayload = errors.New("no result.data.json payload")

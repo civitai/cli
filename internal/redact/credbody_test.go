@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -97,6 +98,59 @@ func TestErrorMessageAndWhatMayBeShown(t *testing.T) {
 	}
 }
 
+// TestServerTextRefusesSingleCaseTokens pins the third token shape: an unbroken
+// run of 40 or more ASCII letters and digits, whatever its case. Before it, a
+// lowercase-only (or uppercase-only) non-hex token of any length passed, because
+// the run rule only refused hex or mixed case. English words and identifiers do
+// not reach 40 letters without a separator, and slugs, snake_case names, paths
+// and ids break into shorter pieces at `-`, `_`, `/` and `.`, so the accept rows
+// must still be shown whole. Each fixture is distinct, and the 39/40 pair pins
+// the threshold from both sides for both cases.
+func TestServerTextRefusesSingleCaseTokens(t *testing.T) {
+	lower40 := "qkzvwmxprtnbjhlgfdscyaueoiqpwlzmxkcnvbrt" // letters only, not hex
+	lowerDigits40 := "k7m2p9q4x8w3n6r1t5v0z8c3b6d9f2g4h7j1l5s0"
+	upper40 := "MFRGGZDFMZTWQ2LKNNWG23TPOBYXE43UOV3HO6DZ" // a base32 shape
+	lower39 := "zpxqwmvkrnbtjhlgfdscyaueoimqpwlzmxkcnvb"
+	if len(lower40) != 40 || len(lowerDigits40) != 40 || len(upper40) != 40 || len(lower39) != 39 {
+		t.Fatalf("PREMISE BROKEN: fixture lengths %d/%d/%d/%d", len(lower40), len(lowerDigits40), len(upper40), len(lower39))
+	}
+	refused := []struct{ name, in string }{
+		{"a 40-letter lowercase run", "your token is " + lower40},
+		{"a 40-char lowercase letters-and-digits run", "key " + lowerDigits40 + " was revoked"},
+		{"a 40-char uppercase run", "secret " + upper40},
+		{"a lowercase token behind a prefix", "invalid civitai_" + lowerDigits40},
+		{"a lowercase token in a path", "no blob at /v2/blobs/" + lower40 + ".png"},
+		{"a lowercase run longer than 40", "t=" + lower40 + "abcdefgh"},
+		// ACCEPTED FALSE POSITIVE, pinned so a change to it is deliberate: a
+		// 40-char app slug with no hyphen is a legal blockId and is indistinguishable
+		// from a 40-char lowercase token.
+		{"a 40-char hyphenless slug (accepted false positive)", "block 'myreallylongdevblocknamewithoutdashes123' has no live deployment"},
+	}
+	for _, tc := range refused {
+		t.Run("refused/"+tc.name, func(t *testing.T) {
+			if got, ok := ServerText(tc.in); ok || got != "" {
+				t.Errorf("ServerText(%q) = (%q, %v), want it withheld", tc.in, got, ok)
+			}
+		})
+	}
+	shown := []string{
+		"a 39-char lowercase run " + lower39 + " is below the threshold",
+		"field this_is_a_very_long_snake_case_identifier_for_the_request_body is required",
+		"block 'the-quick-brown-fox-jumps-over-the-lazy-dog-again-and-again' was not found",
+		"the checkpoint models/sdxl/checkpoints/realisticvisionv60b1.safetensors is unavailable",
+		"workflow 0-20261120-clx3k9z0q0000abcd1234efgh is still processing on the orchestrator",
+		"Insufficient Buzz: this generation costs 240 and your account holds 12 (internationalization pending)",
+		"see civitai.com/user/account for your personal API keys and scopes",
+	}
+	for _, in := range shown {
+		t.Run("shown/"+in[:24], func(t *testing.T) {
+			if got, ok := ServerText(in); !ok || got != in {
+				t.Errorf("ServerText(%q) = (%q, %v), want it shown whole", in, got, ok)
+			}
+		})
+	}
+}
+
 // TestServerTextRefusesTokenShapes pins the token shapes ServerText withholds
 // now that it has no length cap: a JWT anywhere in the text, and a run of 40+
 // token characters that is all hex or mixes upper- and lower-case letters. The
@@ -146,5 +200,24 @@ func TestServerTextRefusesTokenShapes(t *testing.T) {
 				t.Errorf("ServerText(%q) = (%q, %v), want it shown whole", in, got, ok)
 			}
 		})
+	}
+}
+
+// TestCredentialBodyErrorBoundsTheDecodeError pins that the decode error is
+// shown whole when short and cut when long: encoding/json quotes a number value
+// whole in an UnmarshalTypeError, so a 50,000-digit number made a 50 KB error.
+func TestCredentialBodyErrorBoundsTheDecodeError(t *testing.T) {
+	short := errors.New("json: cannot unmarshal string into Go value of type int")
+	if got, want := CredentialBodyError("unexpected x response", []byte("abc"), short).Error(),
+		"unexpected x response (3 bytes, not shown because it may carry credentials): json: cannot unmarshal string into Go value of type int"; got != want {
+		t.Errorf("short decode error:\n  got  %q\n  want %q", got, want)
+	}
+	long := errors.New("json: cannot unmarshal number " + strings.Repeat("7", 50000) + " into Go value of type int")
+	got := CredentialBodyError("unexpected x response", []byte("abc"), long).Error()
+	if len(got) > 400 {
+		t.Errorf("a 50,000-digit number made a %d-byte error; the decode error must be cut", len(got))
+	}
+	if !strings.HasSuffix(got, "…") || !strings.Contains(got, "json: cannot unmarshal number 777") {
+		t.Errorf("the cut decode error lost its head or its cut marker: %q", got)
 	}
 }
