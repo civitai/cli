@@ -122,7 +122,7 @@ func TestUsersGetJSONNotFoundMatchesTextMode_940(t *testing.T) {
 				t.Fatalf("stdout is not the API document: %v\n%s", jerr, out)
 			}
 			if len(doc.Items) != 1 || doc.Items[0].ID != 123 || doc.Items[0].Username != tc.want {
-				t.Errorf("stdout document = %+v, want the single item 123/%s", doc.Items, tc.want)
+				t.Errorf("stdout document = %+v, want exactly one entry, id 123 / username %s", doc.Items, tc.want)
 			}
 		})
 	}
@@ -265,6 +265,63 @@ func TestSearchPageBounds_946(t *testing.T) {
 			}
 			if len(*seen) != 1 || (*seen)[0].Has("page") {
 				t.Errorf("%s search with no --page must not send page, got %v", tc.cmd, *seen)
+			}
+		})
+	}
+}
+
+// Review follow-up on #946: page 0 is paged like page 1 by the tags/creators
+// server, so the hint after a page-0 response must be --page 2, not --page 1.
+func TestTagsSearchPageZeroHintSkipsToPageTwo(t *testing.T) {
+	seen := recordReads(t, `{"items":[{"name":"anime","link":"l"}],"metadata":{"currentPage":0,"totalPages":3}}`)
+	out, _, err := run(t, "tags", "search", "--page", "0")
+	if err != nil {
+		t.Fatalf("tags search --page 0: %v", err)
+	}
+	if len(*seen) != 1 || !(*seen)[0].Has("page") || (*seen)[0].Get("page") != "0" {
+		t.Errorf("--page 0 must still send page=0, got %v", *seen)
+	}
+	const want = "next page: civitai tags search --page 2"
+	if !hasLine(out, want) {
+		t.Errorf("page-0 response should hint page 2\nwant line: %s\ngot:\n%s", want, out)
+	}
+}
+
+// The footer prints the server's cursor; an escape sequence in it must not
+// reach the terminal on either the `next cursor:` line or the hint.
+func TestPrintPageFooterStripsCursorEscapes(t *testing.T) {
+	recordReads(t, `{"items":[],"metadata":{"nextCursor":"\u001b[31mX"}}`)
+	out, _, err := run(t, "models", "search")
+	if err != nil {
+		t.Fatalf("models search: %v", err)
+	}
+	if !strings.Contains(out, "next page: civitai models search --cursor") {
+		t.Fatalf("positive control: no next-page hint printed:\n%q", out)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("a raw ESC from the server cursor reached stdout:\n%q", out)
+	}
+}
+
+// The workflows list cursor is server text too, printed from two sites: the
+// empty-page path (#932) and the populated path. Neither may pass ESC through.
+func TestWorkflowsListCursorIsSanitized(t *testing.T) {
+	const hostile = `"\u001b[31mX"`
+	cases := map[string]string{
+		"empty page":     `{"items":[],"nextCursor":` + hostile + `}`,
+		"populated page": `{"items":[{"id":"wf_1","status":"succeeded","steps":[]}],"nextCursor":` + hostile + `}`,
+	}
+	for name, reply := range cases {
+		t.Run(name, func(t *testing.T) {
+			c, out, _ := genCmd("")
+			if err := runWorkflowsList(c, wfListDeps(reply, nil, nil, nil), workflowsListOpts{}); err != nil {
+				t.Fatalf("workflows list: %v", err)
+			}
+			if !strings.Contains(out.String(), "Next cursor:") {
+				t.Fatalf("positive control: no cursor line printed:\n%q", out.String())
+			}
+			if strings.Contains(out.String(), "\x1b") {
+				t.Errorf("a raw ESC from the server cursor reached stdout:\n%q", out.String())
 			}
 		})
 	}

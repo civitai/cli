@@ -265,7 +265,10 @@ func printPageFooter(cmd *cobra.Command, cmdPath string, m civitai.Metadata) {
 		}
 		parts = append(parts, p)
 	}
-	cursor := m.CursorString()
+	// The cursor is SERVER text printed twice to the terminal (the footer and
+	// the paste-ready hint), so it goes through the gate first; single-line,
+	// because a newline would split the hint into two commands.
+	cursor := safeTermSingle(m.CursorString())
 	if cursor != "" {
 		parts = append(parts, "next cursor: "+cursor)
 	}
@@ -280,7 +283,10 @@ func printPageFooter(cmd *cobra.Command, cmdPath string, m civitai.Metadata) {
 		// space and pipes on the `|`. shellQuote (not a bare '%s') so a cursor
 		// carrying a `'` cannot close the quote early.
 		fmt.Fprintf(out, "next page: %s%s --cursor %s\n", cmdPath, replayFlags(cmd), shellQuote(cursor))
-	case m.CurrentPage != nil && (m.TotalPages == nil || *m.CurrentPage < *m.TotalPages):
-		fmt.Fprintf(out, "next page: %s%s --page %d\n", cmdPath, replayFlags(cmd), *m.CurrentPage+1)
+	case m.CurrentPage != nil && (m.TotalPages == nil || max(*m.CurrentPage, 1) < *m.TotalPages):
+		// tags/creators accept page 0, which the server pages exactly like page 1
+		// (it skips nothing) while reporting currentPage 0 — so "current + 1"
+		// would hint --page 1 and hand back the same rows. Count page 0 as 1.
+		fmt.Fprintf(out, "next page: %s%s --page %d\n", cmdPath, replayFlags(cmd), max(*m.CurrentPage, 1)+1)
 	}
 }
