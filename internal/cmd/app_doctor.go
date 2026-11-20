@@ -646,8 +646,11 @@ Every other exit code keeps its usual meaning (3 not authorized, 4 no such app,
 5 transport). --json emits the same verdict as one object and uses the same exit
 codes, so a script must branch on the code before trusting the payload.
 
-Unlike ` + "`civitai app listing status`" + `, this is a PURE READ — it opens no
-revision draft on a live listing, so it is safe to run in a loop.`,
+Like ` + "`civitai app listing status`" + ` against a current server, this is a
+PURE READ — it opens no revision draft on a live listing, so it is safe to run
+in a loop. Unlike status, it stays one against an OLDER server too: status's
+read-only request is ignored there, and a successful status call opens a
+revision draft.`,
 		Example: `  civitai app doctor                 # every app you can work on
   civitai app doctor my-app          # just one
   civitai app doctor --json | jq -e .ok

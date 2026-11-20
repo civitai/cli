@@ -75,7 +75,7 @@ contract, and **packages/submits** it for review.
 - [Using an AI coding agent? Paste this](#using-an-ai-coding-agent-paste-this)
 - [Install](#install)
   - [npm (Node)](#npm-node)
-  - [Homebrew (macOS)](#homebrew-macos)
+  - [Homebrew (macOS and Linux)](#homebrew-macos-and-linux)
   - [Nix flake](#nix-flake)
   - [Prebuilt binary](#prebuilt-binary)
   - [Go install (from source, Go 1.25+)](#go-install-from-source-go-125)
@@ -128,8 +128,8 @@ contract, and **packages/submits** it for review.
 ## Install
 
 Pick whichever fits — **npm** is the most convenient if you already have Node
-(App authors usually do); Homebrew is quickest **on macOS** (it is the only
-platform the tap covers); the prebuilt binary needs no toolchain; `go install`
+(App authors usually do); Homebrew covers **macOS and Linux** (the tap's cask
+carries archives for both); the prebuilt binary needs no toolchain; `go install`
 builds from source.
 
 ### npm (Node)
@@ -146,21 +146,19 @@ npm install -g @civitai/cli
 npx @civitai/cli --help
 ```
 
-### Homebrew (macOS)
+### Homebrew (macOS and Linux)
 
 ```bash
 brew install civitai/tap/civitai
 ```
 
-🔴 **macOS only — there is no Linux Homebrew install.** What lands in
-`civitai/homebrew-tap` is rendered by this repo's release config, and that
-`.goreleaser.yaml` carries no `brews:` (formula) stanza at all — `brews:` and
-`homebrew_casks:` are **goreleaser** stanzas, so that is the file to check, not
-the tap repository. Only a **cask** is ever published, a cask is a macOS-only
-concept, and the rendered one names `darwin` archives; on Linux, Linuxbrew
-included, there is nothing to install. Use [npm](#npm-node), the
-[Nix flake](#nix-flake), a [prebuilt binary](#prebuilt-binary) or
-[`go install`](#go-install-from-source-go-125).
+The tap publishes one Homebrew **cask**, which this repo's `.goreleaser.yaml`
+renders (`homebrew_casks:`) with both `darwin` and `linux` archives (amd64 and
+arm64), so the same command installs on macOS and on Linux. Installing a cask
+on Linux needs a current Homebrew; if yours refuses it, use [npm](#npm-node),
+the [Nix flake](#nix-flake), a [prebuilt binary](#prebuilt-binary) or
+[`go install`](#go-install-from-source-go-125). To update it, see
+[Upgrading](#upgrading).
 
 ### Nix flake
 
@@ -1688,7 +1686,8 @@ Two properties make the output safe to pipe:
 will not parse is **repaired** first (a raw control byte is rewritten as its
 JSON escape). The same strings and characters come out; the bytes do not.
 
-One read is not a pure read, and it is the exception a script must know:
+One read can still write, depending on the server, and it is the case a script
+must know:
 
 - **`listing status` is a read — `--json` or not.** It asks the server for the read-only view of the listing (`getMyListingForEdit` with `readOnly: true`), so on a LIVE (approved) listing it reports an existing revision draft (`shadowId`) but never opens one; with no revision draft, `shadowId` is `null`. The commands that change a listing (`set-`, `add-`, `rm-`, `clear-red`, `reorder`) still open the revision draft when they need one. Older civitai.com servers ignore the read-only request and open the revision draft on every successful call, the behaviour [#389](https://github.com/civitai/cli/issues/389) documented (a call that FAILS never opened one), so against such a server a watch loop is a writer. This holds for OFFSITE apps too, which resolve by slug since [#422](https://github.com/civitai/cli/issues/422).
 
@@ -1702,7 +1701,8 @@ shape, and where the repair never runs):
 [Scripting the CLI with `--json`](https://developer.civitai.com/site/guide/cli-json).**
 ## Upgrading
 
-`civitai upgrade` replaces the running binary with the latest GitHub release:
+`civitai upgrade` replaces the running binary with the latest GitHub release
+(a Homebrew install is the exception — see below):
 
 ```bash
 civitai upgrade           # no-op (and says so) when already current
@@ -1717,10 +1717,12 @@ open, an archive whose binary is larger than the 64 MiB this upgrader will read,
 or a release carrying no `checksums.txt` at all, **aborts and leaves the current
 binary untouched**: it will not upgrade without integrity verification.
 
-If this binary came from Homebrew, `upgrade` does not self-replace it — it tells
-you to run `brew upgrade civitai/tap/civitai`, so the package manager keeps
-owning the file. `--force` overrides that and self-replaces anyway. That path is
-**macOS-only**, because [the tap is macOS-only](#homebrew-macos).
+If this binary came from Homebrew — on macOS or Linux, since
+[the tap's cask covers both](#homebrew-macos-and-linux) — `upgrade` does not
+self-replace it and does not run Homebrew: it prints
+`brew upgrade civitai/tap/civitai` for you to run and exits, so the package
+manager keeps owning the file. `--force` overrides that and self-replaces
+anyway.
 
 The other install paths update the way they normally do — `npm install -g
 @civitai/cli@latest`, `nix profile upgrade`, or re-running `go install …@latest`.

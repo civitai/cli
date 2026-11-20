@@ -126,9 +126,12 @@ model-id check itself fails (rate limited, server or network error), the
 download stops; with --yes it proceeds with the version and says the check
 failed and why.
 
-Use --dry-run to print the resolved plan (files, sizes, SHA256, target paths,
-and whether auth is required) without transferring anything. It creates no
-file at all — not even a ".part".
+Use --dry-run to print the resolved plan (files, file ids, sizes, SHA256,
+target paths, and whether a token will be sent) without transferring anything.
+It creates no file at all — not even a ".part". Whether a file actually needs a
+token is decided by the server, so the plan does not claim it. A dry run whose
+target cannot be resolved fails with the same error and exit code the real run
+would.
 
 When a positional model id is resolved to a version, the note reads:
 
@@ -326,8 +329,9 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	// confident cross-family mismatch before any bytes move.
 	reportBaseModel(out, errW, v.BaseModel, o.forBase)
 
-	// --dry-run: print the resolved plan and exit 0, transferring nothing and
-	// creating no file (not even a ".part").
+	// --dry-run: print the resolved plan, transferring nothing and creating no
+	// file (not even a ".part"). It exits 0 only when every target resolves;
+	// otherwise it returns the error the real run would stop with.
 	if o.dryRun {
 		return printDownloadPlan(out, selected, o, baseURL)
 	}
@@ -650,8 +654,20 @@ func ambiguousStopError(id string, v *civitai.ModelVersionDetail, m *civitai.Mod
 }
 
 // printDownloadPlan renders the --dry-run plan: for each selected file its name,
-// size, SHA256, resolved target path, and whether authentication will be
-// required. It writes NOTHING to disk.
+// numeric file id (the value --file <id> takes), size, SHA256, resolved target
+// path, and whether a token will be sent. It writes NOTHING to disk.
+//
+// The auth line reports what the CLI KNOWS, not a requirement it cannot see
+// (civitai/cli#938): the version metadata carries no per-file auth signal, and
+// DownloadNeedsAuth is a host-trust check (will a token be attached to this
+// URL?), so only the server decides whether a file needs one. A Civitai-hosted
+// file is therefore never labelled "not required" — a gated file must never
+// look anonymous.
+//
+// A file whose target cannot be resolved is marked blocked and, once the whole
+// plan is printed, the FIRST such error is returned — the same error, and so
+// the same exit code, the real run stops with (civitai/cli#941). A dry run that
+// exits 0 is a plan the real run will start.
 func printDownloadPlan(out io.Writer, files []civitai.ModelVersionFile, o *downloadOpts, baseURL string) error {
 	fmt.Fprintf(out, "Dry run — planning %d file(s); nothing will be downloaded.\n", len(files))
 	// Surface the mis-file warning in the plan too when it applies.
@@ -660,16 +676,19 @@ func printDownloadPlan(out io.Writer, files []civitai.ModelVersionFile, o *downl
 			fmt.Fprintf(out, "  note:   %s\n", safeTermSingle(w))
 		}
 	}
+	var firstErr error
 	for i := range files {
 		f := files[i]
 		fmt.Fprintf(out, "\n%s\n", safeTermSingle(f.Name))
+		fmt.Fprintf(out, "  id:     %d\n", f.ID)
 		fmt.Fprintf(out, "  size:   %s\n", humanBytes(int64(f.SizeKB*1024)))
 		sha := strings.TrimSpace(f.Hashes.SHA256)
 		if sha == "" {
 			sha = "(none published)"
 		}
 		fmt.Fprintf(out, "  sha256: %s\n", safeTermSingle(sha))
-		if target, note, terr := targetPath(f, o); terr != nil {
+		target, note, terr := targetPath(f, o)
+		if terr != nil {
 			fmt.Fprintf(out, "  target: (unresolved) — %v\n", terr)
 		} else {
 			fmt.Fprintf(out, "  target: %s\n", safeTermSingle(target))
@@ -677,14 +696,24 @@ func printDownloadPlan(out io.Writer, files []civitai.ModelVersionFile, o *downl
 				fmt.Fprintf(out, "  note:   %s\n", safeTermSingle(note))
 			}
 		}
-		if civitai.DownloadNeedsAuth(f.DownloadURL, baseURL) {
-			fmt.Fprintf(out, "  auth:   required\n")
-		} else {
-			fmt.Fprintf(out, "  auth:   not required\n")
+		switch {
+		case !civitai.DownloadNeedsAuth(f.DownloadURL, baseURL):
+			fmt.Fprintf(out, "  auth:   no token is sent to this host (not Civitai)\n")
+		case o.anon:
+			fmt.Fprintf(out, "  auth:   decided by the server — --anon sends no token, so a gated file will 401\n")
+		default:
+			fmt.Fprintf(out, "  auth:   decided by the server — your login token is sent if you have one; a gated file 401s without it\n")
+		}
+		if terr != nil {
+			fmt.Fprintf(out, "  status: blocked — target unresolved\n")
+			if firstErr == nil {
+				firstErr = terr
+			}
+			continue
 		}
 		fmt.Fprintf(out, "  status: would download\n")
 	}
-	return nil
+	return firstErr
 }
 
 // selectFiles resolves which file(s) of a version to download from the flags:
