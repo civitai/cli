@@ -572,10 +572,12 @@ func (c *Client) doDownload(ctx context.Context, hc *http.Client, fileURL, token
 
 // DownloadNeedsAuth reports whether a bearer token would be attached when
 // downloading fileURL (i.e. it targets a trusted Civitai/base host, so the CLI
-// authenticates the request). It backs the `download --dry-run` plan's
-// "authentication" line. An off-domain signed-storage redirect target reports
-// false — it needs no token — but the initial Civitai download route reports
-// true, which is what the user sees before the transfer.
+// authenticates the request). Despite the name it is a HOST-TRUST check, not
+// the file's real requirement: true means "a token would be sent here", never
+// "the server requires one" — many public files on a trusted host download
+// anonymously (civitai/cli#938). The `download --dry-run` plan uses it only to
+// say whether a token is sent. An off-domain signed-storage redirect target
+// reports false, as does any non-Civitai host.
 func DownloadNeedsAuth(fileURL, baseURL string) bool {
 	return isTrustedDownloadHost(fileURL, baseURL)
 }
