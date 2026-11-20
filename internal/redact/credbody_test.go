@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -120,6 +121,10 @@ func TestServerTextRefusesSingleCaseTokens(t *testing.T) {
 		{"a lowercase token behind a prefix", "invalid civitai_" + lowerDigits40},
 		{"a lowercase token in a path", "no blob at /v2/blobs/" + lower40 + ".png"},
 		{"a lowercase run longer than 40", "t=" + lower40 + "abcdefgh"},
+		// ACCEPTED FALSE POSITIVE, pinned so a change to it is deliberate: a
+		// 40-char app slug with no hyphen is a legal blockId and is indistinguishable
+		// from a 40-char lowercase token.
+		{"a 40-char hyphenless slug (accepted false positive)", "block 'myreallylongdevblocknamewithoutdashes123' has no live deployment"},
 	}
 	for _, tc := range refused {
 		t.Run("refused/"+tc.name, func(t *testing.T) {
@@ -195,5 +200,24 @@ func TestServerTextRefusesTokenShapes(t *testing.T) {
 				t.Errorf("ServerText(%q) = (%q, %v), want it shown whole", in, got, ok)
 			}
 		})
+	}
+}
+
+// TestCredentialBodyErrorBoundsTheDecodeError pins that the decode error is
+// shown whole when short and cut when long: encoding/json quotes a number value
+// whole in an UnmarshalTypeError, so a 50,000-digit number made a 50 KB error.
+func TestCredentialBodyErrorBoundsTheDecodeError(t *testing.T) {
+	short := errors.New("json: cannot unmarshal string into Go value of type int")
+	if got, want := CredentialBodyError("unexpected x response", []byte("abc"), short).Error(),
+		"unexpected x response (3 bytes, not shown because it may carry credentials): json: cannot unmarshal string into Go value of type int"; got != want {
+		t.Errorf("short decode error:\n  got  %q\n  want %q", got, want)
+	}
+	long := errors.New("json: cannot unmarshal number " + strings.Repeat("7", 50000) + " into Go value of type int")
+	got := CredentialBodyError("unexpected x response", []byte("abc"), long).Error()
+	if len(got) > 400 {
+		t.Errorf("a 50,000-digit number made a %d-byte error; the decode error must be cut", len(got))
+	}
+	if !strings.HasSuffix(got, "…") || !strings.Contains(got, "json: cannot unmarshal number 777") {
+		t.Errorf("the cut decode error lost its head or its cut marker: %q", got)
 	}
 }

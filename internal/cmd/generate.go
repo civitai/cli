@@ -2290,9 +2290,10 @@ func classifyGenerateError(err error) error {
 		// HTTP body. That was filed as civitai/cli#620 and is fixed ONE LAYER DOWN,
 		// for the reason (a) gives: all seven genapi sites that report an
 		// unparseable body or payload now go through redact.CredentialBodyError,
-		// which names the size and the decode error and never the body, and
-		// internal/genapi's TestUnexpectedBodySitesAreLedgered fails if one is
-		// added or reached any other way.
+		// which names the size and the decode error and never the body.
+		// internal/genapi's TestUnexpectedBodySitesAreLedgered pins the set of
+		// error literals opening "unexpected " and that each goes through that
+		// helper; a NEW site worded any other way is invisible to it.
 		//
 		// (a) THE DEFECT WAS NOT IN THIS FUNCTION. Only some of those seven sites
 		// come back through here at all — blobs.go's two are on the

@@ -496,7 +496,8 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"genapi interpolated the unparsed HTTP body into `unexpected %s response: %s` (civitai/cli#620). " +
 			"That was fixed at the SEVEN genapi sites rather than here — only some come back through this " +
 			"return, and it is a pass-through pinned by identity — and internal/genapi's " +
-			"TestUnexpectedBodySitesAreLedgered pins that every one withholds the body. Read the " +
+			"TestUnexpectedBodySitesAreLedgered pins that each \"unexpected …\" site withholds the body " +
+			"(a new site worded otherwise is not seen by it). Read the " +
 			"comment at that return, not this sentence, before acting on it"},
 	"buildGenerateGraph": {"TestImageDisclosureLineIsGatedAtComposition",
 		"the uploaded image URL echoed back into the img2img disclosure line. It composes the USER's own " +

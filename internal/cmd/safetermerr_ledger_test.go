@@ -79,8 +79,8 @@ func TestSafeTermErrCallersAreLedgered(t *testing.T) {
 		// (genapi interpolated the unparsed HTTP body into `unexpected %s
 		// response: %s` — civitai/cli#620) and stays ungated, because that body
 		// reached SEVEN genapi sites of which only some come back through this
-		// function — so the fix went there (TestUnexpectedBodySitesAreLedgered),
-		// not here — and because that return is a pass-through pinned by
+		// function — so the fix went there (TestUnexpectedBodySitesAreLedgered
+		// pins the "unexpected …" sites only), not here — and because that return is a pass-through pinned by
 		// identity. Read the comment at that return before "completing" this row.
 		"generate.go": {
 			"buildGenerateGraph",    // --checkpoint %d: %w
