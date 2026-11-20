@@ -403,7 +403,8 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 		fmt.Fprintln(out, ui.Dim("  Prefer React? `--template page-money` scaffolds the React alternative."))
 	case tmpl.NeedsHarness():
 		// LEAD with the free, works-today path: `npm run dev:harness` mounts a
-		// MOCK host (no Buzz, no beta access, no network) so a newcomer can build
+		// MOCK host (no Buzz, no beta access; only its placeholder result image is
+		// fetched, from placehold.co) so a newcomer can build
 		// and iterate immediately. The real-host surfaces — `civitai app submit`
 		// (register) + the DEV TUNNEL (your LOCAL code rendered INSIDE the real
 		// Civitai host, prod-fidelity) — are invite-only beta, so they're demoted

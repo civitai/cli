@@ -174,7 +174,7 @@ const setupWizardMarker = "vite-plugin-civitai-setup.ts"
 // 🔴 THE DESCRIPTIONS ARE THE SCAFFOLDS' MEANING, AND THE TEMPLATE SAYS SO. They
 // are taken from the generated READMEs rather than invented here: page-money's
 // README states `dev:harness` mounts the SDK mock host ("no real Buzz, no
-// compute, no network") and `dev:live` mounts the live host against the real
+// compute", with its result image fetched from placehold.co) and `dev:live` mounts the live host against the real
 // backend ("Spends REAL Buzz / real compute"); page-vite's states there is no
 // host behind `npm run dev`. A project that redefines one of these names under
 // its own meaning is covered by the sentence the template prints under the
@@ -183,7 +183,7 @@ const setupWizardMarker = "vite-plugin-civitai-setup.ts"
 // The safe one is first on purpose: an agent reading top-down reaches the
 // no-Buzz command before the one that spends the user's money.
 var knownDevScripts = []devScriptRow{
-	{"dev:harness", "Local dev against a MOCK host — synthetic replies, no real Buzz, no compute, no network"},
+	{"dev:harness", "Local dev against a MOCK host — synthetic replies, no real Buzz, no compute; the mock result image is fetched from placehold.co"},
 	{"dev", "Plain local preview — there is no host behind it, so nothing sends BLOCK_INIT"},
 	{"dev:live", "Local dev against the REAL Civitai backend with a dev token — spends REAL Buzz"},
 	{"dev:tunnel", "Serve this app so `civitai app dev-tunnel` can reach it (run it in another terminal)"},

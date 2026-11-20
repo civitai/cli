@@ -33,7 +33,9 @@ import './index.css';
 //
 //   VITE_DEV_HARNESS=true   -> mount a harness at all (never in prod).
 //   VITE_HARNESS_MODE=mock  -> (default) the SDK MOCK host. Synthetic, no real
-//                              Buzz, no compute, no network. `npm run dev:harness`.
+//                              Buzz, no compute. Its result image is fetched
+//                              from the third-party host placehold.co.
+//                              `npm run dev:harness`.
 //   VITE_HARNESS_MODE=live  -> the SDK LIVE host (`createLiveHost`): forwards the
 //                              protocol to the REAL Civitai backend with a REAL
 //                              block token — spends REAL Buzz / real compute.

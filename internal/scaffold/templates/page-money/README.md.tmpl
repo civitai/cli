@@ -542,7 +542,7 @@ set it for you):
 
 | Script | Mode | What it does |
 |---|---|---|
-| `npm run dev:harness` | **mock** (default) | The SDK mock host. Synthetic — **no real Buzz, no compute, no network.** Safe to spam. |
+| `npm run dev:harness` | **mock** (default) | The SDK mock host. Synthetic generation — **no real Buzz, no compute, no Civitai backend.** Not offline, though: each result image is a placeholder fetched from the third-party host `placehold.co`, so if that request is blocked the run still shows Done with a broken image. Safe to spam. |
 | `npm run dev:live` | **live** | The SDK **live host** (`createLiveHost`) — forwards the protocol to the **real Civitai backend** with a real dev token. **Spends REAL Buzz / real compute.** |
 
 **How `dev:live` reaches the backend.** `dev:live` mounts `createLiveHost` from
