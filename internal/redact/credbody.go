@@ -85,8 +85,12 @@ func WithheldBody(raw []byte) string {
 // In place of the cap it refuses three TOKEN SHAPES, wherever they sit in the
 // text: a JWT (three dot-separated base64url segments opening `eyJ`, the third
 // may be empty); a run of 40 or more base64/base64url characters that is all
-// hex or mixes upper- and lower-case letters; and an UNBROKEN run of 40 or more
-// ASCII letters and digits, whatever its case. The third is what refuses a
+// hex or mixes upper- and lower-case letters; an UNBROKEN run of 40 or more
+// ASCII letters and digits, whatever its case; and an UNBROKEN run of 32 or more
+// ASCII letters and digits that is all hex — a Civitai API key is 32 hex
+// characters. ACCEPTED FALSE POSITIVE for the fourth: a message quoting a 32+ hex
+// id (an MD5 or SHA digest, a dashless UUID) is reported by its size; a UUID
+// written with its hyphens breaks into short pieces and passes. The third is what refuses a
 // single-case token (a lowercase or base32 key) while still letting a long
 // slug, snake_case name or path through: those break into short pieces at `-`,
 // `_`, `/` and `.` — the 30-char-slug 404 above is all such pieces — and no
@@ -122,26 +126,42 @@ func ServerText(s string) (string, bool) {
 	return s, true
 }
 
-// tokenRunMin is the shortest unbroken base64/base64url/hex run hasTokenShape
-// treats as a possible token. 40 is a SHA-1 hex digest. It is NOT below every
-// credential this CLI handles: a Civitai API key is 32 hex characters, so a bare
-// API key inside server text passes this check.
+// tokenRunMin is the shortest unbroken base64/base64url run, or unbroken
+// letters-and-digits run of any case, hasTokenShape treats as a possible token.
+// 40 is a SHA-1 hex digest. It is NOT below every credential this CLI handles —
+// a Civitai API key is 32 hex characters — so an all-hex run has its own, lower
+// threshold, hexRunMin.
 const tokenRunMin = 40
+
+// hexRunMin is the shortest unbroken all-hex letters-and-digits run
+// hasTokenShape treats as a possible token: 32, the length of a Civitai API key
+// (civitai's generateKey(length = 32)).
+const hexRunMin = 32
 
 var (
 	jwtShape = regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*`)
 	tokenRun = regexp.MustCompile(`[A-Za-z0-9_\-+/=]{` + strconv.Itoa(tokenRunMin) + `,}`)
 	alnumRun = regexp.MustCompile(`[A-Za-z0-9]{` + strconv.Itoa(tokenRunMin) + `,}`)
+	keyRun   = regexp.MustCompile(`[A-Za-z0-9]{` + strconv.Itoa(hexRunMin) + `,}`)
 	hexRun   = regexp.MustCompile(`^[0-9A-Fa-f]+$`)
 )
 
 // hasTokenShape reports whether s holds a JWT, an unbroken run of tokenRunMin+
-// ASCII letters and digits, or a run of tokenRunMin+ token characters that is
-// all hex or holds both an upper- and a lower-case letter. See ServerText for
-// why a single-case run broken by separators passes.
+// ASCII letters and digits, an unbroken all-hex run of hexRunMin+ ASCII letters
+// and digits, or a run of tokenRunMin+ token characters that is all hex or holds
+// both an upper- and a lower-case letter. See ServerText for why a single-case
+// run broken by separators passes.
 func hasTokenShape(s string) bool {
 	if jwtShape.MatchString(s) || alnumRun.MatchString(s) {
 		return true
+	}
+	// keyRun's matches are maximal letters-and-digits runs, so a key behind a
+	// prefix (`civitai_<key>`) is its own run, and a long word that merely holds
+	// 32 hex letters somewhere is not all hex.
+	for _, run := range keyRun.FindAllString(s, -1) {
+		if hexRun.MatchString(run) {
+			return true
+		}
 	}
 	for _, run := range tokenRun.FindAllString(s, -1) {
 		if hexRun.MatchString(run) {

@@ -237,7 +237,9 @@ var rawBodyEchoLedger = []string{
 //
 // 🔴 IT FOLLOWS NO DATA FLOW. A body first copied into a string variable
 // (msg := string(raw); fmt.Errorf("%s", msg)) is not seen, which is how
-// serverMessage's raw-body fallback reaches serverError's messages.
+// serverMessage's old raw-body fallback reached serverError's messages unseen
+// (it now goes through redact.CredentialRouteMessage; see
+// TestServerMessageFallbackNeverEchoesTheBody).
 func TestRawBodyEchoSitesAreLedgered(t *testing.T) {
 	got := rawBodyEchoSites(t, ".")
 	// Positive control: the scan must be able to see a site, or an empty set

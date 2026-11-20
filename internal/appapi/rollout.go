@@ -254,10 +254,11 @@ func (c *Client) CheckAppBlocksRollout(ctx context.Context) Rollout {
 // the strength of a status code any intermediary could have produced.
 //
 // 🔴 IT IS NOT serverMessage, AND THE DIFFERENCE IS A REAL DEFECT THIS CLOSES.
-// serverMessage falls back to the trimmed RAW BODY when the key is absent, which
-// is right for an error mapper — every caller there already holds a refusal —
-// and wrong here, because this probe reads SUCCESS and OUTAGE bodies too.
-// Measured against the fake before the split: the 200 arm reported `The host
+// serverMessage always returns SOMETHING when the key is absent — once the
+// trimmed RAW BODY, now a filtered tRPC message or the body's size — which suits
+// an error mapper, where every caller already holds a refusal, and is wrong here,
+// because this probe reads SUCCESS and OUTAGE bodies too. Measured against the
+// fake before the split, when the fallback was still the raw body: the 200 arm reported `The host
 // said: {"submissions":[]}`, the route's own payload rendered as if it were a
 // sentence from the host. The worse case is the same mechanism on an edge 503,
 // where the fallback would have put a whole HTML outage page on the user's
