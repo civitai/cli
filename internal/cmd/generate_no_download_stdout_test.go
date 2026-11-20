@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/civitai/cli/pkg/civitai"
 )
 
 // generate_no_download_stdout_test.go pins what `generate --no-download` (and
@@ -116,20 +114,22 @@ func TestGenerate_NoDownloadNoURLsIsAnError(t *testing.T) {
 		if err == nil {
 			t.Fatalf("json=%v: zero printable URLs exited 0 — a script checking only the exit status proceeds with nothing", jsonOut)
 		}
-		// Exit 1, the same as the download path's "carries no URL": not a usage,
-		// auth, not-found or rate-limit classification.
-		for _, k := range []error{ErrUsage, civitai.ErrBadRequest, civitai.ErrUnauthorized, civitai.ErrNotFound, civitai.ErrRateLimited} {
-			if errors.Is(err, k) {
-				t.Errorf("json=%v: zero printable URLs is classified %v, want the untagged exit 1: %v", jsonOut, k, err)
-			}
-		}
+		// Exit 1, the same as the download path's "carries no URL": the shared
+		// item-7 sentinel-absence pin. The PROCESS exit status itself is pinned
+		// end to end by cmd/civitai's TestGenerateNoDownloadNoURLsExitsOne.
+		assertGenericExitCode(t, err)
 		// wf_123 is the id the SUBMIT returned (genSeams' default reply) — the one
 		// the CLI tracks — deliberately distinct from the polled document's
 		// wf_nodl so the assertion shows which id is named.
-		const want = "the generation succeeded but none of its 2 deliverable output(s) came back with a URL, so there is nothing to print — inspect it with `civitai workflows get wf_123`"
+		const want = "the generation succeeded but none of its 2 deliverable output(s) came back with a URL, so there is nothing to print — it was charged; inspect it with `civitai workflows get wf_123` (add --json for the machine-readable record) (" + noFailureReasonNote + ")"
 		if err.Error() != want {
 			t.Errorf("json=%v: error = %q\nwant      %q", jsonOut, err.Error(), want)
 		}
+		if !strings.Contains(err.Error(), "charged") {
+			t.Errorf("json=%v: the error must say the run was charged, or a retry-on-exit-1 script pays again: %q", jsonOut, err.Error())
+		}
+		// Both modes: stdout empty. Under --json that is the failure contract —
+		// the error on stderr, nothing on stdout — not a missing document.
 		if stdout != "" {
 			t.Errorf("json=%v: stdout must be empty when nothing is printable, got %q", jsonOut, stdout)
 		}

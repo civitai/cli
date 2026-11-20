@@ -1650,8 +1650,9 @@ Two flags decide what happens after the job is accepted:
   line and one tab-separated field first: a presigned URL cannot add a numbered
   row of its own, or an extra field, to that listing. With `--json` the rows go
   to **stderr** instead, so stdout stays the one workflow document. If no kept
-  output came back with a URL, nothing is printed and the command exits `1`,
-  naming the workflow to inspect.
+  output came back with a URL, nothing is printed — with `--json` too, stdout
+  stays empty — and the command exits `1`, saying the run was charged and
+  naming the workflow to inspect with `civitai workflows get <id> --json`.
 - `--timeout` bounds how long the CLI waits, and defaults to **30m**. It stops
   the WAIT, never the job: the run continues and stays charged, and
   `civitai workflows get <id>` re-attaches to it.

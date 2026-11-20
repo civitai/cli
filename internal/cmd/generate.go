@@ -1656,9 +1656,13 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 		if printOutputURLs(rowsW, errw, kept) == 0 {
 			// Every kept output came back without a URL: zero rows is not a
 			// result, so fail the way the download path's "carries no URL"
-			// does (exit 1) rather than exit 0 with nothing (#945).
-			return fmt.Errorf("the generation succeeded but none of its %d deliverable output(s) came back with a URL, so there is nothing to print — inspect it with `civitai workflows get %s`",
-				len(kept), safeTermSingle(workflowID))
+			// does (exit 1) rather than exit 0 with nothing (#945). It says the
+			// run was charged, like the zero-deliverables error above, so a
+			// script retrying on exit 1 does not re-submit and pay again. Under
+			// --json stdout stays empty: the failure contract is error on
+			// stderr, nothing on stdout.
+			return fmt.Errorf("the generation succeeded but none of its %d deliverable output(s) came back with a URL, so there is nothing to print — it was charged; inspect it with `civitai workflows get %s` (add --json for the machine-readable record)%s",
+				len(kept), safeTermSingle(workflowID), serverReasonSuffix(wf))
 		}
 	} else {
 		// With --json the machine-readable payload owns stdout, so the "Saved …"

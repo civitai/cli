@@ -100,8 +100,9 @@ const wantNoDownloadBullet = "- `--no-download` waits and prints the output URLs
 	"numbering is the CLI's own, not a dropped row. The URL is the **server's**, so it is flattened to " +
 	"one line and one tab-separated field first: a presigned URL cannot add a numbered row of its own, " +
 	"or an extra field, to that listing. With `--json` the rows go to **stderr** instead, so stdout stays " +
-	"the one workflow document. If no kept output came back with a URL, nothing is printed and the " +
-	"command exits `1`, naming the workflow to inspect."
+	"the one workflow document. If no kept output came back with a URL, nothing is printed — with " +
+	"`--json` too, stdout stays empty — and the command exits `1`, saying the run was charged and " +
+	"naming the workflow to inspect with `civitai workflows get <id> --json`."
 
 // TestREADMENoDownloadListingClaimMatchesTheRenderer pins the `--no-download`
 // bullet against what printOutputURLs really writes.
