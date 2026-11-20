@@ -173,6 +173,14 @@ func TestPresignedPutErrorText(t *testing.T) {
 			"image upload PUT failed (HTTP 502): 52-byte response body not shown because it may carry credentials"},
 		{http.StatusInternalServerError, "",
 			"image upload PUT failed (HTTP 500): empty response body"},
+		// The Message is refused by ServerText (it holds a signed URL), so only
+		// the Code is shown.
+		{http.StatusForbidden,
+			`<Error><Code>AccessDenied</Code><Message>denied for https://bucket.example/k?X-Amz-Signature=` + bodyEchoSentinel + `</Message></Error>`,
+			"image upload PUT failed (HTTP 403): AccessDenied"},
+		// The Code itself is refused, so nothing from the body is shown.
+		{http.StatusForbidden, `<Error><Code>see https://x.example/k</Code><Message>m</Message></Error>`,
+			"image upload PUT failed (HTTP 403): 71-byte response body not shown because it may carry credentials"},
 	}
 	for _, tc := range cases {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -213,7 +221,8 @@ var rawBodyEchoLedger = []string{
 
 // TestRawBodyEchoSitesAreLedgered is the enumeration control for the class
 // TestAppapiUnexpectedBodyIsNeverEchoed samples: it type-checks the package and
-// lists every fmt.Errorf / fmt.Sprintf / errors.New call any of whose argument
+// lists every call written directly as fmt.Errorf / fmt.Sprintf / errors.New
+// inside a func declaration, any of whose argument
 // expressions holds a value of byte-slice type ([]byte, json.RawMessage, …) —
 // whatever the variable is called and however it is wrapped (string(raw),
 // strings.TrimSpace(string(raw)), a bare raw for %s). Two forms are not counted:
@@ -222,6 +231,9 @@ var rawBodyEchoLedger = []string{
 // exactly, so the test fails when a site is ADDED (route it through
 // redact.CredentialBodyError, or ledger it with a reason) and when one is
 // REMOVED (drop the entry).
+//
+// It does not see a function-valued alias (errf := fmt.Errorf), a body inside a
+// package-level func literal, or an error struct literal holding the body.
 //
 // 🔴 IT FOLLOWS NO DATA FLOW. A body first copied into a string variable
 // (msg := string(raw); fmt.Errorf("%s", msg)) is not seen, which is how
