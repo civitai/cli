@@ -107,7 +107,9 @@ than an earlier one. The column is labelled DL(all-time) for that reason.
 			addIfSet(q, "period", period)
 			addIfSet(q, "cursor", cursor)
 			addIfPositive(q, "limit", limit)
-			addIfPositive(q, "page", page)
+			if err := addPage(cmd, q, page, 1); err != nil {
+				return err
+			}
 			if cmd.Flags().Changed("nsfw") {
 				q.Set("nsfw", strconv.FormatBool(nsfw))
 			}

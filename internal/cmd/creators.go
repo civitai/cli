@@ -70,7 +70,9 @@ run ` + "`civitai models search --username <name>`" + `.
 			q := url.Values{}
 			addIfSet(q, "query", query)
 			addIfPositive(q, "limit", limit)
-			addIfPositive(q, "page", page)
+			if err := addPage(cmd, q, page, 0); err != nil {
+				return err
+			}
 
 			client, _, err := newReader(o)
 			if err != nil {

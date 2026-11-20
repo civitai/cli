@@ -11,6 +11,7 @@ import (
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // readOpts are the flags shared by every read subcommand.
@@ -164,6 +165,28 @@ func addIfPositive(q interface{ Set(string, string) }, key string, v int) {
 	}
 }
 
+// addPage validates an EXPLICIT --page against the endpoint's minimum and, when
+// it passes, sends it — including a legitimate page 0 on an endpoint whose
+// first page is 0. An omitted --page sends nothing (the server's first page).
+//
+// It needs the flag's Changed state for the same reason the --limit guard in
+// bindReadFlags does: the flag's zero default and an explicit `--page 0` are the
+// same int, so a value test alone (the old addIfPositive) silently dropped
+// `--page 0` and `--page=-1` and answered with page one at exit 0
+// (civitai/cli#946). Below the minimum is a usage error, raised before any
+// request is made.
+func addPage(cmd *cobra.Command, q interface{ Set(string, string) }, page, min int) error {
+	if !cmd.Flags().Changed("page") {
+		return nil
+	}
+	if page < min {
+		return asUsageError(fmt.Errorf(
+			"--page must be at least %d for this endpoint (got %d); omit --page for the first page", min, page))
+	}
+	q.Set("page", strconv.Itoa(page))
+	return nil
+}
+
 // addIfSet sets key=v on q when v is non-empty.
 func addIfSet(q interface{ Set(string, string) }, key, v string) {
 	if v != "" {
@@ -171,8 +194,64 @@ func addIfSet(q interface{ Set(string, string) }, key, v string) {
 	}
 }
 
+// shellWord renders s as one POSIX shell word: bare when every byte is
+// unambiguous to sh, single-quoted (via shellQuote) otherwise.
+func shellWord(s string) string {
+	if s == "" {
+		return shellQuote(s)
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune("@%+=:,./_-", r):
+		default:
+			return shellQuote(s)
+		}
+	}
+	return s
+}
+
+// replayFlags renders the command's OWN flags that the user explicitly set, as
+// shell words, so a next-page hint continues the same search (civitai/cli#942:
+// the hint used to be the bare command path plus --cursor, which dropped
+// --query/--limit/--nsfw/--anon and 400'd on a sort-keyed cursor).
+//
+// Only local flags are replayed — never inherited/global ones — and --cursor and
+// --page are skipped because the hint supplies the next value of whichever one
+// pages. Every flag is written as --name=value so a value that starts with `-`
+// still binds to its flag; a repeatable flag is written once per value. Order is
+// pflag's (lexicographic), not the user's — the API does not care.
+func replayFlags(cmd *cobra.Command) string {
+	var words []string
+	cmd.LocalFlags().VisitAll(func(f *pflag.Flag) {
+		if !f.Changed || f.Name == "cursor" || f.Name == "page" {
+			return
+		}
+		if f.Value.Type() == "bool" {
+			if f.Value.String() == "true" {
+				words = append(words, "--"+f.Name)
+			} else {
+				words = append(words, "--"+f.Name+"="+f.Value.String())
+			}
+			return
+		}
+		if sv, ok := f.Value.(pflag.SliceValue); ok {
+			for _, v := range sv.GetSlice() {
+				words = append(words, "--"+f.Name+"="+shellWord(v))
+			}
+			return
+		}
+		words = append(words, "--"+f.Name+"="+shellWord(f.Value.String()))
+	})
+	if len(words) == 0 {
+		return ""
+	}
+	return " " + strings.Join(words, " ")
+}
+
 // printPageFooter prints a compact pagination footer + a hint for fetching the
-// next page, when the endpoint returned enough to page.
+// next page, when the endpoint returned enough to page. The hint is cmdPath, the
+// flags the user explicitly passed (replayFlags), and the next --cursor/--page.
 func printPageFooter(cmd *cobra.Command, cmdPath string, m civitai.Metadata) {
 	out := cmd.OutOrStdout()
 	var parts []string
@@ -198,9 +277,10 @@ func printPageFooter(cmd *cobra.Command, cmdPath string, m civitai.Metadata) {
 	case cursor != "":
 		// Cursors contain a space and a `|` (e.g. 2026-07-19 00:10:35.891|2788964),
 		// so the value must be single-quoted or a pasted hint word-splits on the
-		// space and pipes on the `|`.
-		fmt.Fprintf(out, "next page: %s --cursor '%s'\n", cmdPath, cursor)
+		// space and pipes on the `|`. shellQuote (not a bare '%s') so a cursor
+		// carrying a `'` cannot close the quote early.
+		fmt.Fprintf(out, "next page: %s%s --cursor %s\n", cmdPath, replayFlags(cmd), shellQuote(cursor))
 	case m.CurrentPage != nil && (m.TotalPages == nil || *m.CurrentPage < *m.TotalPages):
-		fmt.Fprintf(out, "next page: %s --page %d\n", cmdPath, *m.CurrentPage+1)
+		fmt.Fprintf(out, "next page: %s%s --page %d\n", cmdPath, replayFlags(cmd), *m.CurrentPage+1)
 	}
 }
