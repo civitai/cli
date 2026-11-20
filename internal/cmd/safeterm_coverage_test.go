@@ -134,6 +134,8 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	// --- read path: users / tags / creators --------------------------------
 	"printUser": {"TestUsersGetSanitizesControlChars",
 		"`users get`: the username and avatar URL"},
+	"printPageFooter": {"TestPrintPageFooterStripsCursorEscapes",
+		"every search footer: the server's nextCursor on the `next cursor:` line and in the paste-ready hint"},
 	"printTagList": {"TestReadRenderersStripTheInvisibleClass",
 		"`tags search` rows: tag name and link"},
 	"printCreatorList": {"TestReadRenderersStripTheInvisibleClass",

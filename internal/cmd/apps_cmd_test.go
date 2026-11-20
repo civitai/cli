@@ -69,7 +69,7 @@ func TestAppListHumanTable(t *testing.T) {
 	if !strings.Contains(out, "next cursor: cur-2") {
 		t.Errorf("footer should show next cursor: %s", out)
 	}
-	if !strings.Contains(out, "civitai app list --cursor 'cur-2'") {
+	if !strings.Contains(out, "civitai app list --kind=onsite --limit=10 --sort=popular --cursor 'cur-2'") {
 		t.Errorf("footer should show the next-page hint: %s", out)
 	}
 }

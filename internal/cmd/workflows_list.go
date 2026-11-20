@@ -139,7 +139,18 @@ func runWorkflowsList(cmd *cobra.Command, deps workflowsListDeps, o workflowsLis
 // printWorkflowList renders the human table. Every server string goes through
 // safeTerm — ids, statuses and tags are all server-origin text.
 func printWorkflowList(out, errw io.Writer, page *genapi.WorkflowPage, o workflowsListOpts) {
+	hasNext := page != nil && page.NextCursor != nil && *page.NextCursor != ""
 	if page == nil || len(page.Items) == 0 {
+		// An empty PAGE is not an exhausted FEED: the server can return no items
+		// together with a continuation (civitai/cli#932). Printing "No more
+		// workflows" and returning dropped the cursor, so text mode ended the walk
+		// early while --json carried on. Say the page is empty and print the
+		// cursor exactly as a populated page does.
+		if hasNext {
+			fmt.Fprintln(out, "No workflows on this page.")
+			printWorkflowNextCursor(out, errw, safeTerm(*page.NextCursor))
+			return
+		}
 		// An empty feed is a legitimate answer, not an error — but say WHICH
 		// question came back empty, so a mis-typed --tag or an exhausted cursor
 		// does not read as "you have never generated anything".
@@ -261,12 +272,21 @@ func printWorkflowList(out, errw io.Writer, page *genapi.WorkflowPage, o workflo
 	if reported {
 		fmt.Fprintln(errw, st.Dim(listReasonLegend))
 	}
-	if page.NextCursor != nil && *page.NextCursor != "" {
-		// The cursor goes to STDOUT: it is data a pipeline consumes, and this
-		// repo's convention keeps machine-usable values off stderr.
-		fmt.Fprintf(out, "\nNext cursor: %s\n", safeTerm(*page.NextCursor))
-		fmt.Fprintln(errw, st.Dim("More results — re-run with --cursor <next cursor> to continue."))
+	if hasNext {
+		printWorkflowNextCursor(out, errw, safeTerm(*page.NextCursor))
 	}
 	fmt.Fprintln(errw, st.Dim(
 		"OUTPUTS is deliverable/total; they differ when an output was blocked, never landed, or you hid it. `civitai workflows get <id>` shows the reason and the URLs."))
+}
+
+// printWorkflowNextCursor is the one place the continuation is printed, shared by
+// the populated and the empty-page paths. The cursor goes to STDOUT: it is data
+// a pipeline consumes, and this repo's convention keeps machine-usable values
+// off stderr.
+//
+// It takes the cursor ALREADY safeTerm'd: the gate stays at the two call sites
+// in printWorkflowList, the function safeTermCoveredBy ledgers for this surface.
+func printWorkflowNextCursor(out, errw io.Writer, sanitizedCursor string) {
+	fmt.Fprintf(out, "\nNext cursor: %s\n", sanitizedCursor)
+	fmt.Fprintln(errw, ui.For(errw).Dim("More results — re-run with --cursor <next cursor> to continue."))
 }

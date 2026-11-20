@@ -88,9 +88,6 @@ no model list on this route.
 			if err != nil {
 				return err
 			}
-			if o.json {
-				return emitJSON(cmd, res.Raw)
-			}
 			if len(res.Items) == 0 {
 				// "users get" resolves through the public user SEARCH (the per-id
 				// route is an internal webhook), so a missing user comes back as an
@@ -120,6 +117,14 @@ no model list on this route.
 					}
 					return civitai.Tag(civitai.ErrNotFound, fmt.Errorf("no user found with exact username %q; closest matches: %s (use the numeric id for an exact lookup)", arg, strings.Join(names, ", ")))
 				}
+			}
+			// --json is gated on the SAME not-found checks as the human view
+			// (civitai/cli#940): it used to return the raw search document at
+			// exit 0 before them, so a fuzzy-only or empty result read as success
+			// to a script branching on the exit code. A hit still emits the API
+			// document unchanged.
+			if o.json {
+				return emitJSON(cmd, res.Raw)
 			}
 			printUser(cmd, match)
 			if !numeric && len(res.Items) > 1 {
