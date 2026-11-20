@@ -173,8 +173,8 @@ var (
 )
 
 // brewPathMarkers are path fragments that indicate a Homebrew-managed install.
-// If the resolved executable lives under any of these, we delegate to brew
-// instead of self-replacing (unless --force).
+// If the resolved executable lives under any of these, we print the brew
+// upgrade command for the user to run instead of self-replacing (unless --force).
 var brewPathMarkers = []string{
 	"/Cellar/",
 	"/Caskroom/",
@@ -189,17 +189,19 @@ func newUpgradeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "upgrade",
 		Short: "Update the civitai CLI to the latest release",
-		Long: `Download and install the latest civitai release, replacing this binary.
+		Long: `Download the latest civitai release and replace this binary with it — unless
+this binary was installed by Homebrew (see below).
 
 The latest release is resolved from the public GitHub releases API (no token is
 ever sent). The downloaded archive — a .zip on Windows, a .tar.gz everywhere
 else — is verified against its SHA-256 checksum before anything is replaced; a
 mismatch aborts the upgrade and leaves the current binary untouched.
 
-If this binary was installed via Homebrew, upgrade delegates to:
+If this binary was installed via Homebrew (on macOS or Linux), upgrade does not
+replace it and does not run Homebrew: it prints the command for you to run,
     brew upgrade civitai/tap/civitai
-(use --force to self-replace anyway). The release publishes a Homebrew CASK,
-which is macOS-only, so that delegation only leads anywhere on macOS.`,
+and exits without downloading anything, so Homebrew keeps owning the file.
+--force skips that check and self-replaces the binary anyway.`,
 		Example: `  civitai upgrade
   civitai upgrade --force`,
 		Args: cobra.NoArgs,
