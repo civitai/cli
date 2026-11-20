@@ -125,7 +125,7 @@ const featureGateSuffix = " civitai.com refuses this at submit today; it is a wa
 	"error, because the platform enables these features with a server-side switch and a CLI already " +
 	"installed must not refuse a manifest the server has started to accept."
 
-// TestStorageFeaturesNotYetAvailableAreWarnings — the seven features the schema
+// TestStorageFeaturesNotYetAvailableAreWarnings — the six features the schema
 // ADMITS (it carries the whole declaration shape) and the server refuses today
 // through APP_STORAGE_ENABLED_FEATURES.
 //
@@ -201,35 +201,6 @@ func TestStorageFeaturesNotYetAvailableAreWarnings(t *testing.T) {
 			server: `storage.collections.public_recipes.registry is not available yet — collections ` +
 				`published to registries arrive in a later phase of App Storage; remove it to keep the ` +
 				`collection on Civitai only.`,
-		},
-		{
-			name: "hook", collection: "guarded",
-			decl:   `{"visibility":"shared","write":"own","hook":{"file":"hooks/guard.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","timeoutMs":100}}`,
-			twin:   `{"visibility":"shared","write":"own"}`,
-			scopes: []string{"apps:storage", "apps:storage:publish"},
-			field:  "storage.collections.guarded.hook",
-			server: `storage.collections.guarded.hook is not available yet — permission hooks arrive in ` +
-				`a later phase of App Storage; remove hook (the collection schema still applies).`,
-		},
-		// Exactly APP_STORAGE_HOOK_FILE_MAX_LENGTH (200) characters: the bound is inclusive.
-		{
-			name: "hook with a 200-character file", collection: "long_path",
-			decl:   `{"visibility":"private","hook":{"file":"h/` + strings.Repeat("a", 195) + `.js","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}`,
-			twin:   `{"visibility":"private"}`,
-			scopes: []string{"apps:storage"},
-			field:  "storage.collections.long_path.hook",
-			server: `storage.collections.long_path.hook is not available yet — permission hooks arrive in ` +
-				`a later phase of App Storage; remove hook (the collection schema still applies).`,
-		},
-		// The file pattern ends `\.m?js$`: an ES module may be .mjs.
-		{
-			name: "hook with a .mjs file", collection: "esm_hook",
-			decl:   `{"visibility":"private","hook":{"file":"hooks/guard.mjs","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}}`,
-			twin:   `{"visibility":"private"}`,
-			scopes: []string{"apps:storage"},
-			field:  "storage.collections.esm_hook.hook",
-			server: `storage.collections.esm_hook.hook is not available yet — permission hooks arrive in ` +
-				`a later phase of App Storage; remove hook (the collection schema still applies).`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -358,8 +329,12 @@ func TestVendoredSchemaStillStatesTheFeatureGates(t *testing.T) {
 				"not declare it yet."},
 		{"registry", prop("registry"),
 			"RESERVED — civitai.com refuses this field until publishing to registries is enabled, so do not declare it yet."},
+		// Not a gate since civitai#8126: hooks are ON, rolled out per author. The
+		// sentence pins THAT, so a change to the rollout (or a revert to RESERVED)
+		// re-reads storageHookRolloutWarning on the re-vendor PR.
 		{"hook", prop("hook"),
-			"RESERVED — civitai.com refuses this field until permission hooks are enabled, so do not declare it yet."},
+			"Optional, in a limited rollout: civitai.com accepts a new or changed hook only from authors " +
+				"the rollout includes, and refuses it otherwise."},
 	} {
 		if !strings.Contains(tc.text, tc.sentence) {
 			t.Errorf("the vendored schema's %s description no longer says:\n  %s\n"+
@@ -396,7 +371,7 @@ func TestStorageFeatureGateOrderMirrorsTheServer(t *testing.T) {
 				t.Fatal("the schema accepted it — this row no longer exercises the ordering")
 			}
 			for _, f := range append(append([]Finding{}, res.Errors...), res.Warnings...) {
-				if strings.Contains(f.Message, "is not available yet") {
+				if strings.Contains(f.Message, "is not available yet") || strings.Contains(f.Message, "is in a limited rollout") {
 					t.Errorf("feature gate fired on a value the server rejects for another reason first: %s", f.Message)
 				}
 			}
