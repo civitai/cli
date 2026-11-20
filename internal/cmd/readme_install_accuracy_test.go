@@ -127,41 +127,167 @@ func readmeRawSection(t *testing.T, md, heading string) string {
 	return strings.Join(lines[start:], "\n")
 }
 
-// homebrewMacOSOnlyClaim is the README's macOS-only refusal, pinned as a WHOLE
-// normalised sentence rather than as keywords.
+// The README's Homebrew claims, pinned as WHOLE normalised sentences rather
+// than as keywords.
 //
 // 🔴 The artifact under test is PROSE, and a guard on individual words is
 // walkable by rewording: "Homebrew" + "macOS" + "Linux" all appear in a sentence
-// that re-advertises Linux just as readily as in one that refuses it. Pinning
-// the whole string means a cosmetic reword fails this test — that cost is the
-// point, because the claim then has a machine-readable definition.
-const homebrewMacOSOnlyClaim = "🔴 **macOS only — there is no Linux Homebrew install.**"
+// that refuses Linux just as readily as in one that advertises it. Pinning the
+// whole string means a cosmetic reword fails this test — that cost is the point,
+// because the claim then has a machine-readable definition.
 
-// homebrewNoFormulaClaim is the README's statement of WHY, tied to the stanza
-// this guard reads out of `.goreleaser.yaml`.
-//
-// 🔴 It NAMES THE FILE, and that is the correction, not decoration. An earlier
-// wording credited the missing stanza to `civitai/homebrew-tap`; `brews:` and
-// `homebrew_casks:` are goreleaser stanzas in THIS repo's `.goreleaser.yaml`,
-// which is the file this guard parses, so a reader following the "why" was sent
-// to the wrong repository to check it.
-const homebrewNoFormulaClaim = "`.goreleaser.yaml` carries no `brews:` (formula) stanza at all"
+// homebrewHeadingBothPlatforms is the exact `### …` heading text the Homebrew
+// section must carry while the cask covers both darwin and linux. Its anchor
+// (`#homebrew-macos-and-linux`) is linked from §Upgrading.
+const homebrewHeadingBothPlatforms = "Homebrew (macOS and Linux)"
 
-// homebrewMacOSExclusivityIntro is the `## Install` intro's macOS-exclusivity
-// clause, pinned whole and required in the FORWARD direction so that forbidding
-// it in the reverse direction is a real assertion rather than a vacuous one.
-const homebrewMacOSExclusivityIntro = "it is the only platform the tap covers"
+// homebrewCoversLinuxClaim is the section's statement of WHAT the tap installs
+// and WHY, tied to the stanza this guard reads out of `.goreleaser.yaml`.
+const homebrewCoversLinuxClaim = "The tap publishes one Homebrew **cask**, which this repo's " +
+	"`.goreleaser.yaml` renders (`homebrew_casks:`) with both `darwin` and `linux` archives " +
+	"(amd64 and arm64), so the same command installs on macOS and on Linux."
 
-// upgradeLongBrewMacOSScope is the SAME macOS-only fact as it has to appear in
-// what `civitai upgrade --help` prints.
-//
-// 🔴 A THIRD SURFACE, pinned for AGENTS.md's reason: the command's own help
-// text, the README section and the command-reference row each state this
-// contract and each goes stale ALONE. This one did — the README was scoped to
-// macOS while `upgrade --help` still told users on every platform, flat, that a
-// Homebrew install delegates to `brew upgrade civitai/tap/civitai`.
-const upgradeLongBrewMacOSScope = "The release publishes a Homebrew CASK, which is macOS-only, " +
-	"so that delegation only leads anywhere on macOS."
+// homebrewBothPlatformsIntro is the `## Install` intro's Homebrew clause.
+const homebrewBothPlatformsIntro = "Homebrew covers **macOS and Linux** (the tap's cask carries archives for both)"
+
+// The RETRACTED claims (civitai/cli#928, #929). Until v0.1.144 the README and
+// `civitai upgrade --help` said the cask was macOS-only. It never was: the
+// cask has no goos filter, the `civitai` build targets linux, and goreleaser
+// renders an `on_linux` block for every linux tar.gz it archives — the
+// published civitai/homebrew-tap cask carries linux amd64 and arm64 URLs, and
+// `brew install civitai/tap/civitai` installs it on Linux. Each surface must
+// stay free of them while the config says the cask covers linux.
+const (
+	retractedHomebrewMacOSOnlyClaim   = "🔴 **macOS only — there is no Linux Homebrew install.**"
+	retractedHomebrewNoFormulaClaim   = "`.goreleaser.yaml` carries no `brews:` (formula) stanza at all"
+	retractedHomebrewMacOSExclusive   = "it is the only platform the tap covers"
+	retractedUpgradeLongBrewMacOSOnly = "The release publishes a Homebrew CASK, which is macOS-only, " +
+		"so that delegation only leads anywhere on macOS."
+)
+
+// macOSOnlyRe matches any "macOS-only" / "macOS only" scoping, the shape every
+// retracted sentence above shares, so a re-worded copy on a surface this guard
+// reads is caught without being one of the pinned strings.
+var macOSOnlyRe = regexp.MustCompile(`(?i)mac\s*os[\s*-]+only`)
+
+// homebrewPlatforms returns the GOOS values (darwin and/or linux) the release's
+// Homebrew artifacts cover, DERIVED from `.goreleaser.yaml` rather than
+// remembered: each `homebrew_casks:` entry selects archives by `ids` (all
+// archives when unset), each archive selects builds by `ids`/`builds` (all
+// builds when unset), and goreleaser renders an `on_macos` / `on_linux` block
+// for each darwin / linux archive among them. A `brews:` formula covers both.
+// Windows never appears: Homebrew has no Windows target.
+func homebrewPlatforms(t *testing.T, raw []byte) []string {
+	t.Helper()
+	var cfg struct {
+		Builds []struct {
+			ID   string   `yaml:"id"`
+			Goos []string `yaml:"goos"`
+		} `yaml:"builds"`
+		Archives []struct {
+			ID     string   `yaml:"id"`
+			IDs    []string `yaml:"ids"`
+			Builds []string `yaml:"builds"`
+		} `yaml:"archives"`
+		Casks []struct {
+			IDs []string `yaml:"ids"`
+		} `yaml:"homebrew_casks"`
+		Brews []yaml.Node `yaml:"brews"`
+	}
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("parse goreleaser config: %v", err)
+	}
+	set := map[string]bool{}
+	selected := func(want []string, id string) bool {
+		return len(want) == 0 || slicesContains(want, id)
+	}
+	for _, c := range cfg.Casks {
+		for _, a := range cfg.Archives {
+			if !selected(c.IDs, a.ID) {
+				continue
+			}
+			buildIDs := append(append([]string{}, a.IDs...), a.Builds...)
+			for _, b := range cfg.Builds {
+				if !selected(buildIDs, b.ID) {
+					continue
+				}
+				for _, g := range b.Goos {
+					if g == "darwin" || g == "linux" {
+						set[g] = true
+					}
+				}
+			}
+		}
+	}
+	if len(cfg.Brews) > 0 {
+		set["darwin"], set["linux"] = true, true
+	}
+	out := make([]string, 0, len(set))
+	for g := range set {
+		out = append(out, g)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func slicesContains(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// TestHomebrewPlatformsDerivation is the instrument's own control: the
+// derivation must be able to answer BOTH ways, or the README guard below is a
+// constant. Fixtures are pairwise distinct from the real config (build and
+// archive ids differ, and one selects a darwin-only build).
+func TestHomebrewPlatformsDerivation(t *testing.T) {
+	for _, c := range []struct {
+		name, cfg string
+		want      []string
+	}{
+		{"cask selects a darwin-only build's archive", `
+builds:
+  - {id: mac, goos: [darwin]}
+  - {id: lin, goos: [linux, windows]}
+archives:
+  - {id: macarc, ids: [mac]}
+  - {id: linarc, ids: [lin]}
+homebrew_casks:
+  - {name: x, ids: [macarc]}
+`, []string{"darwin"}},
+		{"unfiltered cask over a linux+darwin+windows build", `
+builds:
+  - {id: all, goos: [linux, darwin, windows]}
+archives:
+  - {id: a1}
+homebrew_casks:
+  - {name: x}
+`, []string{"darwin", "linux"}},
+		{"cask selecting a linux-only archive via deprecated builds:", `
+builds:
+  - {id: b1, goos: [darwin]}
+  - {id: b2, goos: [linux]}
+archives:
+  - {id: a2, builds: [b2]}
+homebrew_casks:
+  - {name: x, ids: [a2]}
+`, []string{"linux"}},
+		{"no Homebrew stanza at all", `
+builds:
+  - {id: all, goos: [linux, darwin]}
+archives:
+  - {id: a1}
+`, []string{}},
+	} {
+		got := homebrewPlatforms(t, []byte(c.cfg))
+		if strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("%s: homebrewPlatforms = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
 
 // readUpgradeSource returns internal/cmd/upgrade.go. `Long` is a raw backquoted
 // literal, so its prose appears verbatim in the file and flattenWS makes it
@@ -201,47 +327,43 @@ func upgradeLongText(t *testing.T, src string) string {
 }
 
 // TestREADMEHomebrewSectionMatchesTheReleaseConfig ties the README's Homebrew
-// section to what the release pipeline actually publishes.
+// section — and the two other surfaces that scope the Homebrew install, the
+// `## Install` intro and `civitai upgrade --help` — to the platforms the release
+// config actually publishes a Homebrew artifact for.
 //
-// `.goreleaser.yaml` carries `homebrew_casks:` and NO `brews:` stanza, and a
-// Homebrew *cask* is macOS-only BY DEFINITION — Homebrew implements casks on
-// macOS only, so the artifact type alone settles it. (An earlier version of this
-// comment cited tools/caskcheck/testdata/drill-broken-cask.rb as evidence that
-// the rendered cask names darwin archives. That file is a hand-written FIRE-DRILL
-// FIXTURE whose own header says it is "not the tap, not shipped to anyone", so it
-// evidences nothing about goreleaser's output: right conclusion, wrong witness.)
-// So there is no Linux Homebrew install — yet the README advertised
-// `### Homebrew (macOS / Linux)` and told Linux readers it was "quickest" for
-// them.
+// 🔴 HISTORY (civitai/cli#928). This guard used to reason "no `brews:` formula
+// stanza, and a cask is macOS-only by definition, so there is no Linux Homebrew
+// install", and it pinned that refusal on all three surfaces. The premise was
+// false: goreleaser renders a cask with an `on_linux` block for every linux
+// archive it is given, and the published cask carries linux amd64/arm64 URLs
+// that current Homebrew on Linux installs. The guard was right about keeping
+// the surfaces in step and wrong about the fact it kept them in step with — so
+// the platform set is now DERIVED from `.goreleaser.yaml` (homebrewPlatforms,
+// which has its own two-way control) instead of asserted from a definition.
 //
-// 🔴 IT FAILS IN BOTH DIRECTIONS, AND BOTH DIRECTIONS COVER THE SAME THREE
-// SURFACES. The forward branch used to demand three things (heading, Install
-// intro, section refusal) while the reverse branch checked only that the refusal
-// was gone — so adding a `brews:` stanza AND deleting only the refusal left the
-// suite green with the heading still scoped `(macOS)` and the intro still saying
-// Homebrew is macOS-only, which is the exact steering-Linux-users-away failure
-// this guard's own summary claims to prevent.
-//   - No `brews:` stanza (today): the heading must not name Linux, the Install
-//     intro must carry the macOS-exclusivity clause and must not pitch Homebrew
-//     at Linux, and the section must carry the refusal above plus its reason.
-//   - A `brews:` stanza appears (a real Linux formula is published): the refusal,
-//     its `.goreleaser.yaml` reason, the intro's exclusivity clause and a
-//     macOS-scoped heading must ALL be gone. That is the silent direction — a
-//     stale "Linux is not supported" claim on ANY of those surfaces reads as a
-//     current rule and would send Linux users away from an install that works.
+// Both directions are real assertions:
+//   - The cask covers linux (today): the heading names both platforms, the
+//     section and the intro carry the pinned both-platforms claims, and no
+//     surface carries any retracted macOS-only sentence or a "macOS-only"
+//     re-wording of one.
+//   - The cask stops covering linux: the heading and intro must stop
+//     advertising Linux, and the section must route Linux readers elsewhere.
 func TestREADMEHomebrewSectionMatchesTheReleaseConfig(t *testing.T) {
-	top, _ := readGoreleaserConfig(t)
-	_, hasBrews := top["brews"]
-	_, hasCasks := top["homebrew_casks"]
+	_, raw := readGoreleaserConfig(t)
+	platforms := homebrewPlatforms(t, raw)
 
-	// CONTROL: if BOTH tap stanzas are gone the Homebrew section should not exist
-	// at all, and neither branch below is the right question. Say so rather than
-	// silently taking the "no brews" branch.
-	if !hasCasks && !hasBrews {
-		t.Fatalf("CONTROL failure: .goreleaser.yaml has neither `homebrew_casks:` nor `brews:` (keys: %v). "+
-			"The CLI publishes no Homebrew artifact at all, so the README's Homebrew section documents "+
-			"an install that does not exist — delete it, and this guard with it", sortedYAMLKeys(top))
+	// CONTROL: if the release publishes no Homebrew artifact at all, the
+	// README's Homebrew section documents an install that does not exist.
+	if len(platforms) == 0 {
+		t.Fatalf("CONTROL failure: .goreleaser.yaml publishes no Homebrew artifact for darwin or linux " +
+			"(no `homebrew_casks:` archive and no `brews:` formula). Delete the README's Homebrew section, " +
+			"and this guard with it")
 	}
+	if !slicesContains(platforms, "darwin") {
+		t.Fatalf("CONTROL failure: the Homebrew artifact covers %v but not darwin — the derivation or the "+
+			"config is wrong, and every verdict below would be about the wrong platform set", platforms)
+	}
+	coversLinux := slicesContains(platforms, "linux")
 
 	md := readREADME(t)
 	heading, slug := readmeHomebrewHeading(t, md)
@@ -249,9 +371,7 @@ func TestREADMEHomebrewSectionMatchesTheReleaseConfig(t *testing.T) {
 	// fails here (it Fatals) rather than silently widening the text searched.
 	_ = readmeSectionByAnchor(t, md, slug)
 	body := readmeRawSection(t, md, heading)
-	// POSITIVE CONTROL: the section must really be the Homebrew one. A body that
-	// does not carry the install command is the wrong block, and every verdict
-	// below — in either direction — would be about text this guard is not reading.
+	// POSITIVE CONTROL: the section must really be the Homebrew one.
 	if !strings.Contains(body, "brew install civitai/tap/civitai") {
 		t.Fatalf("CONTROL failure: the README's `### %s` section does not contain "+
 			"`brew install civitai/tap/civitai`:\n%s\n\nThe extractor is reading the wrong block", heading, body)
@@ -266,105 +386,65 @@ func TestREADMEHomebrewSectionMatchesTheReleaseConfig(t *testing.T) {
 		intro = intro[:i]
 	}
 	if !strings.Contains(intro, "Homebrew") {
-		t.Fatalf("CONTROL failure: the `## Install` intro does not mention Homebrew at all:\n%s\n"+
-			"A 'does not pitch Homebrew at Linux' verdict from this text would mean "+
-			"'wrong text read', not 'claim corrected'", intro)
+		t.Fatalf("CONTROL failure: the `## Install` intro does not mention Homebrew at all:\n%s", intro)
 	}
-
 	flatIntro := flattenWS(intro)
 	// The help text itself, not the whole file: a match anywhere in upgrade.go
 	// would count a code comment as a user-facing claim.
 	flatUpgradeLong := flattenWS(upgradeLongText(t, readUpgradeSource(t)))
+	flatUpgrading := flattenWS(readmeUpgradingSection(t, md))
 
-	if hasBrews {
-		// Reverse direction: a Linux formula now exists. Every surface the forward
-		// direction pins has to be un-pinned, not just the refusal sentence.
-		const because = ".goreleaser.yaml now carries a top-level `brews:` stanza — a Homebrew FORMULA, " +
-			"which DOES install on Linux"
-		if strings.Contains(flatBody, flattenWS(homebrewMacOSOnlyClaim)) {
-			t.Errorf("%s — but README's `### %s` section still says %q.\n\n"+
-				"Delete that refusal and re-advertise Linux. A stale 'not supported' paragraph is worse than "+
-				"none: it reads as a current rule and steers Linux users away from an install that works.",
-				because, heading, homebrewMacOSOnlyClaim)
+	if !coversLinux {
+		if regexp.MustCompile(`(?i)linux`).MatchString(heading) {
+			t.Errorf("README's Homebrew heading is `### %s`, but .goreleaser.yaml's Homebrew artifact covers "+
+				"only %v. Name only the platform the tap covers.", heading, platforms)
 		}
-		if strings.Contains(flatBody, homebrewNoFormulaClaim) {
-			t.Errorf("%s — but README's `### %s` section still states the old reason %q, which is now "+
-				"FALSE about the very file this guard just parsed.\n\n"+
-				"The reason is what makes the refusal checkable; leaving it behind gives a reader a "+
-				"verifiable-looking claim that the config contradicts.", because, heading, homebrewNoFormulaClaim)
+		if regexp.MustCompile(`(?i)homebrew[^.]*\blinux\b`).MatchString(flatIntro) {
+			t.Errorf("the `## Install` intro pitches Homebrew at Linux, but the Homebrew artifact covers only %v:\n%s",
+				platforms, flatIntro)
 		}
-		if strings.Contains(flatIntro, homebrewMacOSExclusivityIntro) {
-			t.Errorf("%s — but the `## Install` intro still says %q:\n  %s\n\n"+
-				"The intro and the Homebrew section are separate surfaces and go stale ALONE (AGENTS.md; "+
-				"#371 shipped a two-of-three fix). A reader who never scrolls to the section is told here "+
-				"that Homebrew is macOS-only.", because, homebrewMacOSExclusivityIntro, flatIntro)
-		}
-		if regexp.MustCompile(`(?i)mac\s*os|macos|darwin`).MatchString(heading) &&
-			!regexp.MustCompile(`(?i)linux`).MatchString(heading) {
-			t.Errorf("%s — but README's Homebrew heading is still `### %s`, which scopes the install to "+
-				"macOS and never names Linux.\n\n"+
-				"The heading is the first and most-linked surface (`#homebrew-macos` is referenced from "+
-				"§Upgrading), so a Linux reader stops there. Widen it, or drop the platform from it.",
-				because, heading)
-		}
-		if strings.Contains(flatUpgradeLong, flattenWS(upgradeLongBrewMacOSScope)) {
-			t.Errorf("%s — but `civitai upgrade --help` still says %q.\n\n"+
-				"Help text is the surface a user reads INSTEAD of the README. Delete the macOS scoping "+
-				"there too.", because, upgradeLongBrewMacOSScope)
+		for _, want := range []string{"#npm-node", "#nix-flake", "#prebuilt-binary", "#go-install-from-source-go-125"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("README's `### %s` section must route Linux readers to %q while the tap does not cover Linux",
+					heading, want)
+			}
 		}
 		return
 	}
 
-	// Forward direction: cask only, so macOS only.
-	if regexp.MustCompile(`(?i)linux`).MatchString(heading) {
-		t.Errorf("README's Homebrew heading is `### %s`, but .goreleaser.yaml publishes a Homebrew CASK "+
-			"(`homebrew_casks:`) and NO `brews:` formula stanza. Casks are macOS-only and the rendered cask "+
-			"names darwin archives only, so `brew install civitai/tap/civitai` installs nothing on Linux. "+
-			"Name only the platform the tap covers.", heading)
+	// The cask covers linux.
+	if heading != homebrewHeadingBothPlatforms {
+		t.Errorf("README's Homebrew heading is `### %s`, want `### %s`: .goreleaser.yaml's Homebrew artifact "+
+			"covers %v, and the heading is the first and most-linked surface a Linux reader meets.",
+			heading, homebrewHeadingBothPlatforms, platforms)
 	}
-	if !strings.Contains(flatBody, flattenWS(homebrewMacOSOnlyClaim)) {
-		t.Errorf("README's `### %s` section does not carry the macOS-only refusal.\n\nwant (normalised): %s\n\ngot:\n%s\n\n"+
-			".goreleaser.yaml has no `brews:` stanza, so there is no Linux Homebrew install to advertise — "+
-			"the section must say so, and point Linux readers at npm / Nix / the prebuilt binary / go install.",
-			heading, flattenWS(homebrewMacOSOnlyClaim), flatBody)
+	if !strings.Contains(flatBody, flattenWS(homebrewCoversLinuxClaim)) {
+		t.Errorf("README's `### %s` section does not carry the both-platforms claim.\n\nwant (normalised): %s\n\ngot:\n%s",
+			heading, flattenWS(homebrewCoversLinuxClaim), flatBody)
 	}
-	if !strings.Contains(flatBody, homebrewNoFormulaClaim) {
-		t.Errorf("README's `### %s` section does not state WHY (%q). The reason is the thing this guard reads "+
-			"out of .goreleaser.yaml; without it the refusal is an assertion a reader cannot check.",
-			heading, homebrewNoFormulaClaim)
+	if !strings.Contains(flatIntro, flattenWS(homebrewBothPlatformsIntro)) {
+		t.Errorf("the `## Install` intro does not scope Homebrew to both platforms the cask covers.\n\n"+
+			"want (normalised): %s\n\ngot:\n%s", flattenWS(homebrewBothPlatformsIntro), flatIntro)
 	}
-	// The section must route Linux readers somewhere that works. Anchors are
-	// separately proven to resolve by TestREADMEAnchorLinksResolve.
-	for _, want := range []string{"#npm-node", "#nix-flake", "#prebuilt-binary", "#go-install-from-source-go-125"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("README's `### %s` section refuses Linux but does not link the working alternative %q — "+
-				"a refusal with no next step is where a reader stops", heading, want)
+	for _, s := range []struct{ surface, text string }{
+		{"README.md's `### " + heading + "` section", flatBody},
+		{"the README's `## Install` intro", flatIntro},
+		{"README.md's `## Upgrading` section", flatUpgrading},
+		{"`civitai upgrade --help` (upgrade.go's Long)", flatUpgradeLong},
+	} {
+		for _, retracted := range []string{
+			retractedHomebrewMacOSOnlyClaim, retractedHomebrewNoFormulaClaim,
+			retractedHomebrewMacOSExclusive, retractedUpgradeLongBrewMacOSOnly,
+		} {
+			if strings.Contains(s.text, flattenWS(retracted)) {
+				t.Errorf("%s still carries the retracted claim %q, but the Homebrew cask covers %v (civitai/cli#928)",
+					s.surface, retracted, platforms)
+			}
 		}
-	}
-	if regexp.MustCompile(`(?i)homebrew[^.]*\blinux\b`).MatchString(flatIntro) {
-		t.Errorf("the `## Install` intro still pitches Homebrew at Linux:\n%s\n\n"+
-			"Only a cask is published; there is no Linux Homebrew install.", flatIntro)
-	}
-	// 🔴 The POSITIVE half of the reverse branch's ban. Without this, "the intro
-	// must not claim macOS-exclusivity once a formula exists" is a check on a
-	// string that need never have been there — the shape that reads as coverage
-	// while providing none. Requiring it here makes the pair a real bidirectional
-	// pin on the ONE sentence a reader meets before any heading.
-	if !strings.Contains(flatIntro, homebrewMacOSExclusivityIntro) {
-		t.Errorf("the `## Install` intro does not scope Homebrew to macOS.\n\nwant (normalised, verbatim): %s\n\ngot:\n%s\n\n"+
-			".goreleaser.yaml has no `brews:` stanza, so `brew install civitai/tap/civitai` installs nothing "+
-			"off macOS. The intro is where a reader chooses an install method, and it has to say so there — "+
-			"not only in the section further down, which they may never reach.",
-			homebrewMacOSExclusivityIntro, flatIntro)
-	}
-	// 🔴 THE THIRD SURFACE. `civitai upgrade --help` announces the same Homebrew
-	// delegation and is what a user reads INSTEAD of the README.
-	if !strings.Contains(flatUpgradeLong, flattenWS(upgradeLongBrewMacOSScope)) {
-		t.Errorf("`civitai upgrade --help` announces the `brew upgrade civitai/tap/civitai` delegation "+
-			"without scoping it to macOS.\n\nwant (normalised, verbatim, in upgrade.go's Long): %s\n\n"+
-			".goreleaser.yaml publishes a CASK and no `brews:` formula, so that delegation resolves on "+
-			"macOS only. An unscoped sentence in help text is the version most users see — the README "+
-			"being right does not fix it.", upgradeLongBrewMacOSScope)
+		if m := macOSOnlyRe.FindString(s.text); m != "" {
+			t.Errorf("%s still scopes Homebrew as %q, but the Homebrew cask covers %v (civitai/cli#928):\n%s",
+				s.surface, m, platforms, s.text)
+		}
 	}
 }
 
@@ -583,7 +663,7 @@ func TestREADMEColorEnvValuesMatchTheBooleanParser(t *testing.T) {
 // The two claims below shipped in this same README pass and were NOT pinned by
 // the guards above: reverting either one restored published falsehood with the
 // whole suite still green. Both are pinned as WHOLE NORMALISED STRINGS, for the
-// reason homebrewMacOSOnlyClaim states — the artifact under test is prose, and a
+// reason the Homebrew claims above state — the artifact under test is prose, and a
 // keyword guard is walkable by rewording.
 // ---------------------------------------------------------------------------
 
