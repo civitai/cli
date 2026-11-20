@@ -783,10 +783,12 @@ func validateGenerateOpts(o *generateOpts) error {
 	if o.maxCostSet && o.maxCost < 0 {
 		return asUsageError(fmt.Errorf("--max-cost must not be negative, got %d", o.maxCost))
 	}
-	if o.jsonOut && !o.dryRun && !o.assumeYes {
+	if o.jsonOut && !o.dryRun && !o.assumeYes && !o.printInput {
 		// --json is a scripting path; pairing it with an interactive money prompt
 		// invites a script that hangs or, worse, one whose operator clicks through.
-		// Say so up front rather than at the prompt.
+		// Say so up front rather than at the prompt. --print-input is exempt: it
+		// already prints JSON and returns before the estimator and the submit, so
+		// there is no prompt and no spend for --yes to confirm (#943).
 		return asUsageError(errors.New(
 			"--json without --dry-run submits and spends Buzz — pass --yes to confirm non-interactively, or --dry-run to only estimate"))
 	}
@@ -1645,7 +1647,19 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 	}
 
 	if o.noDownload {
-		printOutputURLs(out, errw, kept)
+		// With --json the workflow document owns stdout, so the rows move to
+		// stderr rather than prefixing it (#935).
+		rowsW := out
+		if o.jsonOut {
+			rowsW = errw
+		}
+		if printOutputURLs(rowsW, errw, kept) == 0 {
+			// Every kept output came back without a URL: zero rows is not a
+			// result, so fail the way the download path's "carries no URL"
+			// does (exit 1) rather than exit 0 with nothing (#945).
+			return fmt.Errorf("the generation succeeded but none of its %d deliverable output(s) came back with a URL, so there is nothing to print — inspect it with `civitai workflows get %s`",
+				len(kept), safeTermSingle(workflowID))
+		}
 	} else {
 		// With --json the machine-readable payload owns stdout, so the "Saved …"
 		// lines move to stderr rather than corrupting it.
@@ -1670,15 +1684,21 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 	return nil
 }
 
-// printOutputURLs renders the --no-download listing.
-func printOutputURLs(out, errw io.Writer, kept []genapi.Output) {
+// printOutputURLs renders the --no-download listing and returns how many rows
+// it wrote. The expiry hint is printed only when at least one row was (#945).
+func printOutputURLs(out, errw io.Writer, kept []genapi.Output) int {
+	n := 0
 	for i, o := range kept {
 		if o.URL != nil {
 			fmt.Fprintf(out, "%d\t%s\n", i+1, safeTermSingle(*o.URL))
+			n++
 		}
 	}
-	fmt.Fprintln(errw, ui.For(errw).Dim(
-		"These URLs are presigned and expire — fetch them promptly, or re-read the workflow for fresh links."))
+	if n > 0 {
+		fmt.Fprintln(errw, ui.For(errw).Dim(
+			"These URLs are presigned and expire — fetch them promptly, or re-read the workflow for fresh links."))
+	}
+	return n
 }
 
 // printSubmitted announces a submitted job on the DEFAULT (waiting) path. It
