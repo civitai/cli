@@ -215,7 +215,7 @@ func TestRollout503FromAnEdgeIsNotAVerdict(t *testing.T) {
 // rolloutEnvelope and serverMessage.
 //
 // 🔴 MEASURED AS A REAL DEFECT, NOT ANTICIPATED. The first version used
-// serverMessage, whose documented fallback is the trimmed RAW BODY, and the 200
+// serverMessage, whose fallback was then the trimmed RAW BODY, and the 200
 // arm reported `The host said: {"submissions":[]}` — the route's own payload
 // rendered as if it were a sentence from the host. The same mechanism on an edge
 // 503 would have put a whole HTML outage page on the user's terminal.

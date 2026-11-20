@@ -79,7 +79,8 @@ func TestEveryMapperAnswers401WithTheHelperText(t *testing.T) {
 	// wording diverged but because they extract the server message differently
 	// (`analyticsError` and `listingError` unwrap the tRPC `error.json.message`
 	// envelope; `devTokenError`, `serverError`, `submissionsError` and
-	// `withdrawError` take `serverMessage(raw)`, which does not). That is a real
+	// `withdrawError` take `serverMessage(raw)`, which reads it only for a body
+	// with no top-level field, and only through redact.ServerText). That is a real
 	// and deliberate difference about the SERVER's text, and reading it as a
 	// wording divergence would have been an instrument fault reported as a defect.
 	//

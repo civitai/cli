@@ -2516,10 +2516,15 @@ func submissionsError(status int, raw []byte, id, blockID string) (err error) {
 	}
 }
 
-// serverMessage extracts the {"message"|"error": ...} field, falling back to the
-// trimmed raw body.
+// serverMessage extracts the {"message"|"error": ...} field. A body with
+// neither goes through redact.CredentialRouteMessage: a tRPC error.json.message
+// that redact.ServerText accepts, else only the body's size.
+//
+// 🔴 NEVER THE RAW BODY. The old fallback was the trimmed body, so an edge 502
+// HTML page was printed whole — newlines included and sized by the page — and a
+// body that was the route's payload under an unexpected status was printed as if
+// the server had said it.
 func serverMessage(raw []byte) string {
-	msg := strings.TrimSpace(string(raw))
 	var wrapped struct {
 		Message string `json:"message"`
 		Error   string `json:"error"`
@@ -2532,7 +2537,7 @@ func serverMessage(raw []byte) string {
 			return wrapped.Error
 		}
 	}
-	return msg
+	return redact.CredentialRouteMessage(raw)
 }
 
 // serverError turns a non-2xx response into a clear, actionable error.
