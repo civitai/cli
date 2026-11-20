@@ -1052,6 +1052,28 @@ type listingRoute struct {
 // name renders the route as its bare proc name for error messages.
 func (r listingRoute) name() string { return trpcName(r.path) }
 
+// ListingScopeError is a listing-media 403 whose cause is the CREDENTIAL'S SCOPE:
+// the token is accepted and lacks the Apps submit scope. It is a type, not only a
+// sentence, so a caller that must word the same refusal differently — `app
+// submit`'s listing gate, which runs unattended in CI where "re-run `civitai
+// login`" is no use — branches on the kind rather than on this message's words.
+// Error() is the interactive remedy every other listing command prints.
+//
+// Who passes the server's check (civitai/civitai enforceTokenScope +
+// app-listings.router's listingMediaCliScope): a `civitai login` token carrying
+// the Apps submit bit, or a personal API key with EXACTLY Full Access (the check
+// early-returns for it). A personal key scoped below Full Access never passes,
+// because the Apps submit bit is excluded from Full and cannot be granted to a
+// personal key at all.
+type ListingScopeError struct {
+	// ServerMsg is the server's words, already filtered for display.
+	ServerMsg string
+}
+
+func (e *ListingScopeError) Error() string {
+	return fmt.Sprintf("listing media needs the Apps submit scope (403): %s — re-run `civitai login` (an old token may predate the scope), or use a full-scope personal API key", e.ServerMsg)
+}
+
 // listingError maps a non-200 listing-media response to an actionable CLI error.
 // tRPC error bodies are {error:{json:{message,code}}}; the HTTP status carries
 // the mapped code (403 scope/cohort, 404 no listing, 400 attach/scan rejection).
@@ -1085,7 +1107,7 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		return unauthorizedError("")
 	case http.StatusForbidden:
 		if isInsufficientScopeMsg(reason) {
-			return fmt.Errorf("listing media needs the Apps submit scope (403): %s — re-run `civitai login` (an old token may predate the scope), or use a full-scope personal API key", msg)
+			return &ListingScopeError{ServerMsg: msg}
 		}
 		// 🔴 A MODERATOR TAKEDOWN IS NOT AN ACCESS PROBLEM, and the fallback
 		// below says it is. That arm answers for every non-scope 403, so it used

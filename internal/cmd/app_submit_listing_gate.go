@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 
@@ -88,6 +89,36 @@ var ErrListingIncomplete = errors.New("store listing is incomplete")
 // interface, matching submissionLister (app_pull.go), so a test fakes the read
 // without a server.
 type myListingLister func(ctx context.Context) ([]appapi.MyListing, error)
+
+// submitIsUnattended reports whether nobody is at a terminal to act on an
+// interactive remedy: a GitHub Actions OIDC submit, any known CI environment, or
+// a stdin that is not a TTY. Each signal is one this command already reads
+// (GitHubOIDCTokenEnv for the verified submit, runningInCI for the update
+// notice, stdinIsTTY for the confirm prompt).
+func submitIsUnattended() bool {
+	return os.Getenv(GitHubOIDCTokenEnv) != "" || runningInCI() || !stdinIsTTY()
+}
+
+// listingScopeSkippedWarning words the listing gate's skip when the listing read
+// was refused for the credential's SCOPE (appapi.ListingScopeError).
+//
+// The cause, stated once for both arms: the read needs the Apps submit scope,
+// which a `civitai login` token carries and a personal API key cannot — a
+// personal key passes only with Full Access, which the server waves through.
+// Unattended, the remedy is a check someone can run elsewhere, never "re-run
+// `civitai login`": a CI job cannot log in, and the run is not blocked anyway.
+func listingScopeSkippedWarning(slug string, unattended bool) string {
+	head := fmt.Sprintf("skipped the store-listing check for %s: this credential cannot read listing media "+
+		"(403, it lacks the Apps submit scope). A personal API key never carries that scope and passes only "+
+		"with Full Access", slug)
+	if unattended {
+		return head + fmt.Sprintf(", so with a scoped key this check is skipped on every unattended submit. "+
+			"Submitting without the listing-completeness gate. To check the listing, run "+
+			"`civitai app doctor %s` from a `civitai login` session, or open the listing in your browser.", slug)
+	}
+	return head + "; a `civitai login` token carries it (re-run `civitai login` if yours predates the scope). " +
+		"Submitting without the listing-completeness gate."
+}
 
 // submitGateBlocks reports whether ONE problem refuses a submit.
 //
@@ -249,6 +280,19 @@ func checkListingComplete(ctx context.Context, list myListingLister, out io.Writ
 	}
 	rows, err := list(ctx)
 	if err != nil {
+		// 🔴 A SCOPE 403 IS NOT A BLIP, AND ITS GENERIC REMEDY IS WRONG IN CI.
+		// The listing read needs the Apps submit scope. A personal API key below
+		// Full Access can never carry it, so a CI submit with such a key reaches
+		// this branch on EVERY run, and the interactive remedy inside the error
+		// ("re-run `civitai login`") is advice a CI job cannot follow. So the
+		// scope case names its cause and, unattended, points at a check that
+		// can work. It stays a warning and the submit still proceeds — the
+		// fail-open reasoning above is unchanged.
+		var scopeErr *appapi.ListingScopeError
+		if errors.As(err, &scopeErr) {
+			warnf(out, "%s", listingScopeSkippedWarning(slug, submitIsUnattended()))
+			return nil
+		}
 		warnf(out, "could not check %s's store listing (%v) — submitting without the listing-completeness gate.", slug, err)
 		return nil
 	}
