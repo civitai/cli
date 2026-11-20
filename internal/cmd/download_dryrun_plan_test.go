@@ -138,6 +138,45 @@ func TestDownloadDryRunUnresolvedTargetFailsLikeRealRun(t *testing.T) {
 	}
 }
 
+// #941, multi-file: with several blocked files the plan must still render
+// EVERY file (a blocked file must not cut the plan short) and return the FIRST
+// blocked file's error, not the last. The two blocked names differ ("." and
+// "..") so first-vs-last is observable, and the good file comes after both so
+// an early return would drop it.
+func TestDownloadDryRunAllPlansEveryFileAndReturnsFirstBlockedError(t *testing.T) {
+	const wantMsg = `server returned an unusable filename "."; pass --out to set the output path`
+
+	d := newDLServer(t, false, []dlFile{
+		{id: 801, name: ".", typ: "Model", primary: true, body: "a"},
+		{id: 802, name: "..", typ: "Model", body: "bb"},
+		{id: 803, name: "good.safetensors", typ: "Model", body: "ccc", withSHA: true},
+	})
+	setupDownloadEnv(t, d, "")
+	dir := t.TempDir()
+
+	out, _, err := run(t, "download", "--version", "123", "--all", "--out-dir", dir, "--dry-run")
+	if err == nil {
+		t.Fatalf("a plan with blocked files must exit nonzero; plan was:\n%s", out)
+	}
+	if err.Error() != wantMsg {
+		t.Errorf("error must name the FIRST blocked file:\n  got  %q\n  want %q", err.Error(), wantMsg)
+	}
+	if got := strings.Count(out, "  status: blocked — target unresolved\n"); got != 2 {
+		t.Errorf("both blocked files should be marked blocked, got %d:\n%s", got, out)
+	}
+	const goodBlock = "\ngood.safetensors\n  id:     803\n"
+	i := strings.Index(out, goodBlock)
+	if i < 0 {
+		t.Fatalf("the good file after the blocked ones must still be planned:\n%s", out)
+	}
+	if !strings.Contains(out[i:], "  status: would download\n") {
+		t.Errorf("the good file should plan as would-download:\n%s", out)
+	}
+	if !dirIsEmpty(t, dir) || d.dlHits != 0 {
+		t.Errorf("dry-run must write and fetch nothing (dlHits=%d)", d.dlHits)
+	}
+}
+
 // Control for #941: an explicit --out resolves the same unusable server name,
 // so the dry run still exits 0 and plans the download.
 func TestDownloadDryRunUnusableNameWithOutStillPlans(t *testing.T) {
