@@ -96,8 +96,10 @@ var snippetArgs = map[string]snippetArgOrigin{
 	"readError:[]byte(msg)": {
 		server: true,
 		why: "the error text unmarshalled out of the non-2xx body — wrapped.Error (string or raw) " +
-			"or wrapped.Message. Note classifyMsg is taken BEFORE this line on purpose: the " +
-			"classifier reads what arrived, only the display reads the stripped copy",
+			"or wrapped.Message — or, when the body has neither, redact.CredentialRouteText(raw), " +
+			"which is the body itself or its size. Note classifyMsg is taken BEFORE this line on " +
+			"purpose: the classifier reads what arrived, only the display reads the redacted, " +
+			"stripped copy",
 	},
 	"badRequestDetail:[]byte(d)": {
 		server: true,

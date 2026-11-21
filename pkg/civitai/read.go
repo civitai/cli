@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/civitai/cli/internal/redact"
 	"github.com/civitai/cli/internal/saferune"
 )
 
@@ -230,8 +231,22 @@ func EscapeJSONStringControlChars(raw []byte) []byte {
 }
 
 // readError turns a non-2xx read response into a clear, actionable error,
-// surfacing the API's own error body ({"error": ...} or {"message": ...})
+// surfacing the API's own error field ({"error": ...} or {"message": ...})
 // rather than a Go struct dump.
+//
+// 🔴 A BODY WITH NEITHER FIELD IS NEVER DISPLAYED RAW. It goes through
+// redact.CredentialRouteText: shown only when it is single-line plain text with
+// no token shape (redact.ServerText), otherwise reported by its size. The old
+// fallback displayed the raw body — cut and control-stripped by snippet, but
+// unredacted — so an edge 502 HTML page was printed as markup and a plain-text
+// body holding a 32-hex API key put the key on stderr. Same class as
+// civitai/cli#959 (appapi) and #960 (genapi). Pinned by
+// TestReadErrorFallbackRedactsTheDisplayedBody.
+//
+// The `error`/`message` field itself is displayed as before, unredacted (only
+// snippet's strip and bound apply): that scope was chosen, and is pinned by
+// TestReadErrorShowsMessageFieldsAndPlainText. The classifier still reads the
+// raw body when there is no field — see classifyMsg below.
 func readError(status int, raw []byte) (err error) {
 	// The classification sentinel attached to the returned error, without
 	// changing its user-visible message. Normally derived purely from the HTTP
@@ -241,6 +256,7 @@ func readError(status int, raw []byte) (err error) {
 	kind := statusKind(status)
 	defer func() { err = tag(kind, err) }()
 	msg := strings.TrimSpace(string(raw))
+	fromField := false
 	var wrapped struct {
 		Error   json.RawMessage `json:"error"`
 		Message string          `json:"message"`
@@ -254,8 +270,10 @@ func readError(status int, raw []byte) (err error) {
 			} else {
 				msg = strings.TrimSpace(string(wrapped.Error))
 			}
+			fromField = true
 		} else if wrapped.Message != "" {
 			msg = wrapped.Message
+			fromField = true
 		}
 	}
 	// 🔴 THE CLASSIFIER READS classifyMsg; ONLY THE DISPLAY READS msg. snippet()
@@ -269,7 +287,15 @@ func readError(status int, raw []byte) (err error) {
 	//
 	// classifyWindow bounds what the classifier scans; it is NOT the display
 	// budget and the two numbers are deliberately separate. See its doc comment.
+	//
+	// 🔴 classifyMsg is taken from msg BEFORE the redact below, so with no field
+	// the classifier still scans the RAW body while the display shows only what
+	// redact.CredentialRouteText allows. Pinned by
+	// TestDeepPagingCapStillReadsTheRawBody.
 	classifyMsg := classifyWindow(msg)
+	if !fromField {
+		msg = redact.CredentialRouteText(raw)
+	}
 	msg = snippet([]byte(msg))
 	switch status {
 	case http.StatusUnauthorized:
