@@ -288,13 +288,23 @@ func readError(status int, raw []byte) (err error) {
 	// classifyWindow bounds what the classifier scans; it is NOT the display
 	// budget and the two numbers are deliberately separate. See its doc comment.
 	//
-	// 🔴 classifyMsg is taken from msg BEFORE the redact below, so with no field
-	// the classifier still scans the RAW body while the display shows only what
-	// redact.CredentialRouteText allows. Pinned by
-	// TestDeepPagingCapStillReadsTheRawBody.
+	// 🔴 classifyMsg is taken from msg BEFORE the redact below, so the classifier
+	// still scans the RAW body or field while the display shows only what the
+	// redact allows. Pinned by TestDeepPagingCapStillReadsTheRawBody.
+	//
+	// With no field the display is redact.CredentialRouteText. A field is shown
+	// unless it holds a token shape (redact.HasTokenShape: a 32-hex API key, a
+	// 40+ run, a JWT), in which case only the body's size is shown, as
+	// CredentialRouteMessage does. Only the token-shape rules apply to a field,
+	// not all of ServerText: snippet strips control runes itself, and a nested
+	// `error` object is still shown. The check reads the STRIPPED text because
+	// that is what is printed — the strip can join two short runs into a key
+	// (TestReadErrorRedactsATokenShapedMessageField).
 	classifyMsg := classifyWindow(msg)
 	if !fromField {
 		msg = redact.CredentialRouteText(raw)
+	} else if redact.HasTokenShape(saferune.Strip(msg)) {
+		msg = redact.WithheldBody(raw)
 	}
 	msg = snippet([]byte(msg))
 	switch status {
@@ -305,7 +315,12 @@ func readError(status int, raw []byte) (err error) {
 		// an invalid enum caught by zod). Surface a CONCISE, actionable message —
 		// naming the offending field/value when the body is a ZodError — instead
 		// of dumping the raw ZodError JSON blob at the user.
+		// badRequestDetail shows a FIELD too (a zod issue, `error`, `message`), so
+		// it gets the same token-shape rule as the other arms.
 		if d := badRequestDetail(raw); d != "" {
+			if redact.HasTokenShape(d) {
+				d = redact.WithheldBody(raw)
+			}
 			return fmt.Errorf("invalid request parameter (400): %s", d)
 		}
 		return errors.New("invalid request parameter (400)")

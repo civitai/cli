@@ -1,6 +1,7 @@
 package civitai
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/civitai/cli/internal/redact"
 )
 
 // Bounded transient-failure retry for the IDEMPOTENT read GET path only
@@ -188,8 +191,11 @@ func retryNote(reason string, attempt, maxN int) string {
 // unambiguous.
 func retryExhaustedError(status, attempts int, raw []byte) error {
 	msg := fmt.Sprintf("Civitai returned HTTP %d after %d attempts — the service is temporarily unavailable, try again shortly", status, attempts)
-	if s := snippet(raw); s != "" {
-		msg += ": " + s
+	// The body is shown only as redact.CredentialRouteText allows, as in
+	// readError's fallback: a server message or single-line plain text with no
+	// token shape, otherwise only its size. An empty body adds nothing.
+	if len(bytes.TrimSpace(raw)) > 0 {
+		msg += ": " + snippet([]byte(redact.CredentialRouteText(raw)))
 	}
 	// Exhausted transient retries against an overloaded backend is a
 	// service-availability failure; classify it so scripts can branch on it.
