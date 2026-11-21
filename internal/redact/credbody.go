@@ -120,21 +120,21 @@ func ServerText(s string) (string, bool) {
 			return "", false
 		}
 	}
-	if hasTokenShape(s) {
+	if HasTokenShape(s) {
 		return "", false
 	}
 	return s, true
 }
 
 // tokenRunMin is the shortest unbroken base64/base64url run, or unbroken
-// letters-and-digits run of any case, hasTokenShape treats as a possible token.
+// letters-and-digits run of any case, HasTokenShape treats as a possible token.
 // 40 is a SHA-1 hex digest. It is NOT below every credential this CLI handles —
 // a Civitai API key is 32 hex characters — so an all-hex run has its own, lower
 // threshold, hexRunMin.
 const tokenRunMin = 40
 
 // hexRunMin is the shortest unbroken all-hex letters-and-digits run
-// hasTokenShape treats as a possible token: 32, the length of a Civitai API key
+// HasTokenShape treats as a possible token: 32, the length of a Civitai API key
 // (civitai's generateKey(length = 32)).
 const hexRunMin = 32
 
@@ -146,12 +146,17 @@ var (
 	hexRun   = regexp.MustCompile(`^[0-9A-Fa-f]+$`)
 )
 
-// hasTokenShape reports whether s holds a JWT, an unbroken run of tokenRunMin+
+// HasTokenShape reports whether s holds a JWT, an unbroken run of tokenRunMin+
 // ASCII letters and digits, an unbroken all-hex run of hexRunMin+ ASCII letters
 // and digits, or a run of tokenRunMin+ token characters that is all hex or holds
 // both an upper- and a lower-case letter. See ServerText for why a single-case
 // run broken by separators passes.
-func hasTokenShape(s string) bool {
+//
+// It is exported for a caller that must apply ONLY these token-shape rules to a
+// message, without ServerText's other refusals: pkg/civitai's readError strips
+// control runes itself and shows nested `error` objects, so it asks this about
+// the text it is about to display.
+func HasTokenShape(s string) bool {
 	if jwtShape.MatchString(s) || alnumRun.MatchString(s) {
 		return true
 	}

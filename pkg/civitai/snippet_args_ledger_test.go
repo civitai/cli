@@ -96,8 +96,11 @@ var snippetArgs = map[string]snippetArgOrigin{
 	"readError:[]byte(msg)": {
 		server: true,
 		why: "the error text unmarshalled out of the non-2xx body — wrapped.Error (string or raw) " +
-			"or wrapped.Message. Note classifyMsg is taken BEFORE this line on purpose: the " +
-			"classifier reads what arrived, only the display reads the stripped copy",
+			"or wrapped.Message, replaced by redact.WithheldBody(raw) (the body's size) when it " +
+			"holds a token shape — or, when the body has neither, redact.CredentialRouteText(raw), " +
+			"which is the body itself or its size. Note classifyMsg is taken BEFORE this line on " +
+			"purpose: the classifier reads what arrived, only the display reads the redacted, " +
+			"stripped copy",
 	},
 	"badRequestDetail:[]byte(d)": {
 		server: true,
@@ -114,9 +117,11 @@ var snippetArgs = map[string]snippetArgOrigin{
 		server: true,
 		why:    "the `message` field of the 400 body",
 	},
-	"retryExhaustedError:raw": {
+	"retryExhaustedError:[]byte(redact.CredentialRouteText(raw))": {
 		server: true,
-		why:    "the response body from the final failed attempt, handed down by the retry loop",
+		why: "redact.CredentialRouteText of the response body from the final failed attempt, " +
+			"handed down by the retry loop: the body's message or plain text when ServerText " +
+			"accepts it, else the body's size",
 	},
 }
 
