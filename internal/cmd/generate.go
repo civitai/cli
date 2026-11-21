@@ -1389,11 +1389,12 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		// THIS COMMENT GOT THE ENUMERATION WRONG IN BOTH DIRECTIONS — first naming
 		// only appapi's non-2xx arm, then naming :1185 as the one uncapped route.
 		// So state the PROPERTY instead of the routes, because the property is
-		// what is actually true: `appapi.serverMessage` ends
-		// `return strings.TrimSpace(string(raw))`, so ANY response lacking a
-		// `message`/`error` key yields the WHOLE BODY — and the non-envelope-200
-		// path interpolates `string(raw)` directly. Every route to `berr` can
-		// therefore carry an arbitrary-length server string. (Bounded only far
+		// what is actually true: `appapi.serverMessage` returns a response's
+		// `message`/`error` field unfiltered and unbounded. (Its old raw-body
+		// fallback, `return strings.TrimSpace(string(raw))`, which yielded the
+		// WHOLE BODY for a response lacking that key, now gives only the body's
+		// size — civitai/cli#959.) Every route to `berr` can therefore carry an
+		// arbitrary-length server string. (Bounded only far
 		// upstream, by transport: readResponseBody caps at 64 MiB.) Do not
 		// re-derive a route list here; read serverMessage.
 		//

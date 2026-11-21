@@ -1,41 +1,34 @@
 package genapi
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
+	"github.com/civitai/cli/internal/redact"
 	"github.com/civitai/cli/pkg/civitai"
 )
 
-// serverMessage extracts a tRPC error body's message
-// ({"error":{"json":{"message":...}}}), falling back to a plain
-// {"message"|"error": ...} body and then to the trimmed raw bytes.
+// serverMessage extracts the server's error MESSAGE: redact.ErrorMessage's
+// tRPC `error.json.message`, else a top-level string `message`, else a top-level
+// string `error`. A body with none of them goes through
+// redact.CredentialRouteMessage, which for such a body is only its size.
+//
+// 🔴 NEVER THE RAW BODY. The old fallback was the trimmed body, so an edge 502
+// HTML page was printed whole — CRLFs and markup included, sized by the page —
+// and a plain-text or JSON body holding an API key put the key on stderr. Same
+// fix as internal/appapi's serverMessage (civitai/cli#959); pinned by
+// TestGenerateErrorFallbackNeverEchoesTheBody.
+//
+// The message field itself is returned unfiltered, as before: generateError's
+// callers classify on it (APIError.ServerMessage). The presentation layer
+// strips terminal control characters from what it prints but redacts nothing,
+// so a credential the server puts in its own message field still reaches the
+// user.
 func serverMessage(raw []byte) string {
-	var trpc struct {
-		Error struct {
-			JSON struct {
-				Message string `json:"message"`
-			} `json:"json"`
-		} `json:"error"`
+	if msg := redact.ErrorMessage(raw); msg != "" {
+		return msg
 	}
-	if json.Unmarshal(raw, &trpc) == nil && trpc.Error.JSON.Message != "" {
-		return trpc.Error.JSON.Message
-	}
-	var plain struct {
-		Message string `json:"message"`
-		Error   string `json:"error"`
-	}
-	if json.Unmarshal(raw, &plain) == nil {
-		if plain.Message != "" {
-			return plain.Message
-		}
-		if plain.Error != "" {
-			return plain.Error
-		}
-	}
-	return strings.TrimSpace(string(raw))
+	return redact.CredentialRouteMessage(raw)
 }
 
 // APIError is the structured form of a non-200 from an orchestrator generation
@@ -60,9 +53,10 @@ type APIError struct {
 	// upstream service used — see the mapping notes in generateError.
 	Status int
 	// ServerMessage is the server's own message, unwrapped from the tRPC error
-	// envelope ({"error":{"json":{"message":…}}}). It is UNTRUSTED, server-origin
-	// text: route it through the presentation layer's terminal sanitiser before
-	// printing it.
+	// envelope ({"error":{"json":{"message":…}}}) or a top-level
+	// `message`/`error`. It is UNTRUSTED, server-origin text: route it through
+	// the presentation layer's terminal sanitiser before printing it. For a body
+	// with no message field it is serverMessage's size-only text, never the body.
 	ServerMessage string
 
 	err error

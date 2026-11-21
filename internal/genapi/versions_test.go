@@ -186,14 +186,15 @@ func TestDisplayName_Fallbacks(t *testing.T) {
 	}
 }
 
-// TestServerMessage covers the three body shapes the CLI sees from this
-// surface: a tRPC error envelope, a plain REST error, and raw bytes.
+// TestServerMessage covers the body shapes the CLI sees from this surface: a
+// tRPC error envelope, a plain REST error, and raw bytes — which are never
+// shown, only sized (see TestGenerateErrorFallbackNeverEchoesTheBody).
 func TestServerMessage(t *testing.T) {
 	cases := []struct{ raw, want string }{
 		{`{"error":{"json":{"message":"Insufficient funds"}}}`, "Insufficient funds"},
 		{`{"message":"nope"}`, "nope"},
 		{`{"error":"Model version not found"}`, "Model version not found"},
-		{`  plain text  `, "plain text"},
+		{`  plain text  `, "14-byte response body not shown because it may carry credentials"},
 	}
 	for _, tc := range cases {
 		if got := serverMessage([]byte(tc.raw)); got != tc.want {
