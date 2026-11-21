@@ -145,6 +145,21 @@ func TestReadErrorRedactsATokenShapedMessageField(t *testing.T) {
 		}
 	}
 
+	// A key straddling snippet's 500-byte cut: it starts at byte 469 of the
+	// field, so the cut leaves its first 31 characters, which no longer match
+	// the 32-hex rule. The check must see the field before the cut. Driven on
+	// the 400 arm (badRequestDetail) and on a non-400 arm.
+	straddle := `{"message":"z` + strings.Repeat(" ", 468) + readErrAPIKey + `"}`
+	for _, status := range []int{http.StatusBadRequest, http.StatusNotFound} {
+		msg := readError(status, []byte(straddle)).Error()
+		if strings.Contains(msg, readErrAPIKey[:24]) {
+			t.Errorf("readError(%d) prints a prefix of a key that straddles the 500-byte cut:\n  %.300q", status, msg)
+		}
+		if !strings.Contains(msg, "response body not shown because it may carry credentials") {
+			t.Errorf("readError(%d): the straddling key's field is not reported by the body's size:\n  %.300q", status, msg)
+		}
+	}
+
 	// End to end: a 404 through a real Client, as `civitai models get` sees it.
 	c := serveOnce(t, http.StatusNotFound, `{"error":"bad key `+readErrAPIKey+`"}`)
 	_, _, err := c.GetModel(context.Background(), "1")

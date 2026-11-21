@@ -243,10 +243,12 @@ func EscapeJSONStringControlChars(raw []byte) []byte {
 // civitai/cli#959 (appapi) and #960 (genapi). Pinned by
 // TestReadErrorFallbackRedactsTheDisplayedBody.
 //
-// The `error`/`message` field itself is displayed as before, unredacted (only
-// snippet's strip and bound apply): that scope was chosen, and is pinned by
+// An `error`/`message` field (and the 400 arm's badRequestDetail) is shown
+// after snippet's strip and bound unless it holds a token shape
+// (redact.HasTokenShape), in which case only the body's size is shown. Pinned by
+// TestReadErrorRedactsATokenShapedMessageField; the positive control is
 // TestReadErrorShowsMessageFieldsAndPlainText. The classifier still reads the
-// raw body when there is no field — see classifyMsg below.
+// raw field or body — see classifyMsg below.
 func readError(status int, raw []byte) (err error) {
 	// The classification sentinel attached to the returned error, without
 	// changing its user-visible message. Normally derived purely from the HTTP
@@ -297,13 +299,16 @@ func readError(status int, raw []byte) (err error) {
 	// 40+ run, a JWT), in which case only the body's size is shown, as
 	// CredentialRouteMessage does. Only the token-shape rules apply to a field,
 	// not all of ServerText: snippet strips control runes itself, and a nested
-	// `error` object is still shown. The check reads the STRIPPED text because
-	// that is what is printed — the strip can join two short runs into a key
-	// (TestReadErrorRedactsATokenShapedMessageField).
+	// `error` object is still shown. The check reads BOTH the displayed text —
+	// snippet's strip can join two short runs into a key
+	// (TestReadErrorRedactsATokenShapedMessageField) — and the raw field, which
+	// still holds a key that snippet's 500-byte cut would shorten. ACCEPTED
+	// RESIDUAL: a key split by an invisible rune AND straddling byte 500 shows its
+	// first <32 characters.
 	classifyMsg := classifyWindow(msg)
 	if !fromField {
 		msg = redact.CredentialRouteText(raw)
-	} else if redact.HasTokenShape(saferune.Strip(msg)) {
+	} else if redact.HasTokenShape(snippet([]byte(msg))) || redact.HasTokenShape(msg) {
 		msg = redact.WithheldBody(raw)
 	}
 	msg = snippet([]byte(msg))
@@ -317,8 +322,8 @@ func readError(status int, raw []byte) (err error) {
 		// of dumping the raw ZodError JSON blob at the user.
 		// badRequestDetail shows a FIELD too (a zod issue, `error`, `message`), so
 		// it gets the same token-shape rule as the other arms.
-		if d := badRequestDetail(raw); d != "" {
-			if redact.HasTokenShape(d) {
+		if d, full := badRequestDetail(raw); d != "" {
+			if redact.HasTokenShape(d) || redact.HasTokenShape(full) {
 				d = redact.WithheldBody(raw)
 			}
 			return fmt.Errorf("invalid request parameter (400): %s", d)
@@ -393,8 +398,8 @@ func isDeepPagingCap(msg string) bool {
 // is the consequence stated below and pinned by
 // TestDeepPagingCapClassificationIsBounded.
 //
-// It does NOT bound this function's footprint, because the very next statement
-// in readError — msg = snippet([]byte(msg)) — converts the whole message and
+// It does NOT bound this function's footprint, because readError's display
+// step — snippet([]byte(msg)), after the redaction below it — converts the whole message and
 // hands every byte of it to saferune.Strip, unconditionally and regardless of
 // this constant, on top of the string(raw) copy readError already made at entry.
 // Measured on this tree (go1.25.14, linux/amd64, `-bench -benchtime=20x
@@ -445,14 +450,17 @@ func classifyWindow(msg string) string {
 // array of issues>"}}` or `{"error":[<issues>]}`; a simpler handler may return
 // `{"error":"..."}` or `{"message":"..."}`. It returns the first issue as
 // `field — message` (or just the message when there is no field path), or the
-// plain string body, or "" when nothing usable can be parsed.
-func badRequestDetail(raw []byte) string {
+// plain string body, or "" when nothing usable can be parsed. shown is that text
+// through snippet, for display; full is the same text before snippet's strip and
+// 500-byte cut, so readError's token-shape check can see a key the cut would
+// shorten below 32 characters.
+func badRequestDetail(raw []byte) (shown, full string) {
 	var wrapped struct {
 		Error   json.RawMessage `json:"error"`
 		Message string          `json:"message"`
 	}
 	if json.Unmarshal(raw, &wrapped) != nil {
-		return ""
+		return "", ""
 	}
 	if len(wrapped.Error) > 0 {
 		// error as a ZodError object: {"name":"ZodError","message":"<issues JSON>"}
@@ -462,12 +470,12 @@ func badRequestDetail(raw []byte) string {
 		}
 		if json.Unmarshal(wrapped.Error, &zerr) == nil && zerr.Name == "ZodError" {
 			if d := firstZodIssue([]byte(zerr.Message)); d != "" {
-				return snippet([]byte(d))
+				return snippet([]byte(d)), d
 			}
 		}
 		// error as a bare array of zod issues.
 		if d := firstZodIssue(wrapped.Error); d != "" {
-			return snippet([]byte(d))
+			return snippet([]byte(d)), d
 		}
 		// error as a FLATTENED zod error: {"formErrors":[...],"fieldErrors":{"<field>":["<msg>"]}}
 		// (the shape zod's .flatten() emits — what the apps store endpoint returns
@@ -475,18 +483,18 @@ func badRequestDetail(raw []byte) string {
 		// message so it names the bad field + constraint, staying in sync with the
 		// backend enum (no client-side allowlist to drift).
 		if d := flattenedZodDetail(wrapped.Error); d != "" {
-			return snippet([]byte(d))
+			return snippet([]byte(d)), d
 		}
 		// error as a plain string.
 		var s string
 		if json.Unmarshal(wrapped.Error, &s) == nil && s != "" {
-			return snippet([]byte(s))
+			return snippet([]byte(s)), s
 		}
 	}
 	if wrapped.Message != "" {
-		return snippet([]byte(wrapped.Message))
+		return snippet([]byte(wrapped.Message)), wrapped.Message
 	}
-	return ""
+	return "", ""
 }
 
 // firstZodIssue parses a JSON array of zod issues and renders the first one that
