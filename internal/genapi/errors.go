@@ -20,8 +20,10 @@ import (
 // TestGenerateErrorFallbackNeverEchoesTheBody.
 //
 // The message field itself is returned unfiltered, as before: generateError's
-// callers classify on it (APIError.ServerMessage), and the presentation layer
-// sanitises what it prints.
+// callers classify on it (APIError.ServerMessage). The presentation layer
+// strips terminal control characters from what it prints but redacts nothing,
+// so a credential the server puts in its own message field still reaches the
+// user.
 func serverMessage(raw []byte) string {
 	if msg := redact.ErrorMessage(raw); msg != "" {
 		return msg
