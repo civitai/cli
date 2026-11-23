@@ -210,12 +210,37 @@ func TestTheRefusedCharacterSetIsExactlyNewlineReturnAndColon(t *testing.T) {
 // directory name is ordinary. That is checked here with a real shell resolving a
 // real executable out of a directory called `a;b` — the difference between a
 // claim and a measurement.
+//
+// 🔴 TWO TMPDIR SHAPES (civitai/cli#966). cliBinDirForPATH resolves symlinks
+// before taking the binary's directory, and macOS's default TMPDIR sits under
+// /var, a symlink to /private/var — so the returned directory is the SAME
+// directory spelled differently. The symlinked-TMPDIR subtest reproduces that
+// shape on Linux, where CI runs.
 func TestFixPathRefusesTheColonAndAcceptsTheSemicolonOnPOSIX(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the emitted block is POSIX `sh`; the refusal's windows behaviour was never measured " +
 			"(no Windows host was available) and this test does not pretend to")
 	}
+	t.Run("default TMPDIR", fixPathSemicolonCase)
+	t.Run("TMPDIR is a symlink", func(t *testing.T) {
+		// Built under the PARENT's temp dir: t.TempDir in this subtest must not
+		// run before TMPDIR points at the link, or it would not go through it.
+		real, err := os.MkdirTemp("", "fixpath-real-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(real) })
+		link := real + "-link"
+		if err := os.Symlink(real, link); err != nil {
+			t.Skipf("NOT A PASS: cannot create a symlink here: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Remove(link) })
+		t.Setenv("TMPDIR", link)
+		fixPathSemicolonCase(t)
+	})
+}
 
+func fixPathSemicolonCase(t *testing.T) {
 	ok := filepath.Join(t.TempDir(), "a;b")
 	if err := os.MkdirAll(ok, 0o755); err != nil {
 		t.Skipf("NOT A PASS: this filesystem will not hold a directory named %q, so the acceptance "+
@@ -231,9 +256,11 @@ func TestFixPathRefusesTheColonAndAcceptsTheSemicolonOnPOSIX(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cliBinDirForPATH refused %q: %v", dir, err)
 	}
-	if got != dir {
-		t.Fatalf("cliBinDirForPATH returned %q, want %q", got, dir)
+	want := dir
+	if got != want {
+		t.Fatalf("cliBinDirForPATH returned %q, want %q", got, want)
 	}
+	dir = got // the block and the shell control use what production would write
 
 	// POSITIVE CONTROL on the premise: a real shell must resolve the binary out of
 	// that directory once the emitted block has been sourced. Without this the

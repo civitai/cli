@@ -49,12 +49,17 @@ type Config struct {
 // ~/Library/Application Support/civitai (XDG_CONFIG_HOME is NOT consulted
 // there); on Windows %AppData%\civitai.
 func Dir() (string, error) {
-	base, err := os.UserConfigDir()
+	base, err := platformConfigDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(base, "civitai"), nil
 }
+
+// platformConfigDir is os.UserConfigDir. It is a variable only so a test on
+// Linux can stand in macOS's rule (XDG_CONFIG_HOME ignored) — see
+// TestDirInATestBinaryHonoursXDGWhereThePlatformDoesNot.
+var platformConfigDir = os.UserConfigDir
 
 // Load reads config from disk + environment. A missing file is not an error.
 func Load() (*Config, error) {
