@@ -131,8 +131,11 @@ target paths, and whether a token will be sent) without transferring anything.
 It creates no file at all — not even a ".part". Whether a file actually needs a
 token is decided by the server, so the plan does not claim it. A dry run whose
 target cannot be resolved, or whose output directory the real run could not
-create (a path component is a regular file, or the nearest existing directory
-is not writable), fails with the same error and exit code the real run would.
+create (a path component is a regular file or a dangling symlink, or the
+nearest existing directory is not writable), fails with the real run's exit
+code and an error naming the directory. Not checked: whether an output
+directory that ALREADY exists is writable — the real run fails that after
+the transfer starts.
 A target the real run would skip as already present is planned as "would skip"
 — checked the way the real run checks it, so with verification on the existing
 file is hashed.

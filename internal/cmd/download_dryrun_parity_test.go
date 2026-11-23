@@ -189,3 +189,30 @@ func TestDownloadHelpNamesNoRedirectStatus(t *testing.T) {
 		t.Error("download --help lost its Transport sentence")
 	}
 }
+
+// TestDownloadDryRunRefusesADanglingSymlinkInThePath: a dangling symlink stats
+// as missing but occupies its name, so the real run's MkdirAll fails on it
+// ("file exists"). The dry run must say so, not plan "would download".
+func TestDownloadDryRunRefusesADanglingSymlinkInThePath(t *testing.T) {
+	d := parityServer(t)
+	tmp := t.TempDir()
+	if err := os.Symlink(filepath.Join(tmp, "nowhere"), filepath.Join(tmp, "dl")); err != nil {
+		t.Skipf("NOT A PASS: cannot create a symlink here: %v", err)
+	}
+	out := filepath.Join(tmp, "dl", "sub", "x.safetensors")
+
+	plan, _, dryErr := run(t, "download", "128713", "--out", out, "--dry-run")
+	if dryErr == nil {
+		t.Fatalf("dry run exited 0 through a dangling symlink:\n%s", plan)
+	}
+	_, _, realErr := run(t, "download", "128713", "--out", out)
+	if realErr == nil {
+		t.Fatal("control: the real run must fail here too")
+	}
+	if dryErr.Error() != realErr.Error() {
+		t.Errorf("dry run error differs from the real run's:\n dry:  %v\n real: %v", dryErr, realErr)
+	}
+	if d.dlHits != 0 {
+		t.Errorf("nothing may be transferred (dlHits=%d)", d.dlHits)
+	}
+}

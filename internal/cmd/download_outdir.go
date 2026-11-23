@@ -18,8 +18,12 @@ func outputDirError(dir string, err error) error {
 }
 
 // checkOutputDir predicts, WITHOUT creating anything, whether the real run's
-// os.MkdirAll(dir) would fail (civitai/cli#963), and returns the error the real
-// run would return — the same wording, the same *fs.PathError shape — or nil.
+// os.MkdirAll(dir) would fail (civitai/cli#963), and returns an error in the
+// real run's wording ("create output directory <dir>: …") — or nil. For a
+// regular file in the path the error is byte-identical to MkdirAll's; for an
+// unwritable directory the errno is access(2)'s PREDICTION, and for an
+// unsearchable ancestor the cause is the stat that failed, so those match the
+// real run's failure and exit code but not always its exact text.
 //
 // It walks up from dir to the nearest path that exists:
 //   - an existing NON-directory there is a path component MkdirAll cannot
@@ -32,7 +36,8 @@ func outputDirError(dir string, err error) error {
 // It is a prediction, not a lock: the filesystem can change between the dry
 // run and the real run. It does not check that the final file can be written
 // into an EXISTING directory — the real run fails that at the ".part" create,
-// after the transfer has started, which is outside what #963 covers.
+// after the transfer has started, which is outside what #963 covers; the help
+// says so.
 func checkOutputDir(dir string) error {
 	if dir == "" || dir == "." {
 		return nil // matches downloadOne, which skips MkdirAll for these
@@ -51,6 +56,11 @@ func checkOutputDir(dir string) error {
 		// error names that file, as MkdirAll's own recursion does.
 		if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
 			return outputDirError(dir, err)
+		}
+		// A DANGLING symlink stats as not-exist, but it occupies the name, so
+		// MkdirAll fails on it with EEXIST rather than creating it.
+		if _, lerr := os.Lstat(p); lerr == nil {
+			return outputDirError(dir, &fs.PathError{Op: "mkdir", Path: p, Err: syscall.EEXIST})
 		}
 		firstMissing = p
 		parent := filepath.Dir(p)
