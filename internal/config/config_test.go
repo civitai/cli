@@ -97,10 +97,9 @@ func TestLoadMalformedConfigErrors(t *testing.T) {
 	}
 }
 
+// TestDirHonoursXDG runs on every OS: inside a test binary Dir() honours an
+// absolute XDG_CONFIG_HOME everywhere (civitai/cli#965), not only on Linux.
 func TestDirHonoursXDG(t *testing.T) {
-	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
-		t.Skip("os.UserConfigDir does not consult XDG_CONFIG_HOME on " + runtime.GOOS)
-	}
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	got, err := Dir()

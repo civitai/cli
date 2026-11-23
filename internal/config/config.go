@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"testing"
 	"time"
 
 	"github.com/spf13/viper"
@@ -48,13 +49,36 @@ type Config struct {
 // other Unix $XDG_CONFIG_HOME/civitai, else ~/.config/civitai; on macOS
 // ~/Library/Application Support/civitai (XDG_CONFIG_HOME is NOT consulted
 // there); on Windows %AppData%\civitai.
+//
+// INSIDE A TEST BINARY ONLY (testing.Testing), an absolute XDG_CONFIG_HOME is
+// honoured on every OS (civitai/cli#965): hundreds of tests give themselves a
+// config dir by setting XDG_CONFIG_HOME alone, and on macOS they otherwise all
+// shared one directory — writing files where the test never looked and leaking
+// tokens between tests. A shipped binary never takes this branch, so a macOS
+// user with XDG_CONFIG_HOME set keeps ~/Library/Application Support/civitai.
 func Dir() (string, error) {
-	base, err := os.UserConfigDir()
+	if inTestBinary() {
+		if x := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(x) {
+			return filepath.Join(x, "civitai"), nil
+		}
+	}
+	base, err := platformConfigDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(base, "civitai"), nil
 }
+
+// platformConfigDir is os.UserConfigDir. It is a variable only so a test on
+// Linux can stand in macOS's rule (XDG_CONFIG_HOME ignored) — see
+// TestDirInATestBinaryHonoursXDGWhereThePlatformDoesNot.
+var platformConfigDir = os.UserConfigDir
+
+// inTestBinary is testing.Testing. It is a variable only so a test can stand
+// in a SHIPPED binary — inside a test binary it is always true, so without the
+// seam nothing could observe the branch being skipped outside `go test`
+// (TestDirInAShippedBinaryIgnoresXDGWhereThePlatformDoes).
+var inTestBinary = testing.Testing
 
 // Load reads config from disk + environment. A missing file is not an error.
 func Load() (*Config, error) {
