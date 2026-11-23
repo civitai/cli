@@ -41,6 +41,17 @@ func TestSnippetCutsOnARuneBoundary(t *testing.T) {
 	}
 }
 
+// TestSnippetBoundsTheBackUpOnInvalidBytes: a server body of bare continuation
+// bytes (invalid UTF-8, which saferune.Strip passes through untouched) must not
+// back the cut all the way to nothing — round-1 audit of #972 measured 0 bytes
+// kept for 600 x 0x80 without the bound.
+func TestSnippetBoundsTheBackUpOnInvalidBytes(t *testing.T) {
+	got := snippet([]byte(strings.Repeat("\x80", 600)))
+	if kept := len(strings.TrimSuffix(got, "…")); kept < 496 {
+		t.Errorf("kept %d bytes of an invalid body; the back-up must stop within utf8.UTFMax of 500", kept)
+	}
+}
+
 // TestSnippetLeavesABodyAtTheBudgetAlone is an invariant guard (green before
 // and after) ON the boundary: a body of exactly 500 bytes is returned whole,
 // with no ellipsis, so an off-by-one in the bound is caught.
