@@ -24,6 +24,10 @@ import (
 //     Hypernetwork    → models/hypernetworks
 //     Controlnet      → models/ControlNet
 //     Upscaler        → models/ESRGAN
+//     Text Encoder    → models/text_encoder (Forge's text-encoder folder)
+//     Config (of a Checkpoint) → models/Stable-diffusion, beside its checkpoint,
+//                       where A1111 reads <checkpoint>.yaml
+//     (no Diffusion Model folder: those files fall back to --root)
 //   (sources: AUTOMATIC1111/stable-diffusion-webui wiki "Command-Line-Arguments-
 //    and-Settings"; the sd-webui-controlnet extension's models/ControlNet default)
 //
@@ -35,11 +39,22 @@ import (
 //     Hypernetwork    → models/hypernetworks
 //     Controlnet      → models/controlnet
 //     Upscaler        → models/upscale_models
-//   (source: docs.comfy.org "Core Concepts › Models" — the models/ subfolders)
+//     Text Encoder    → models/text_encoders
+//     Diffusion Model → models/diffusion_models
+//     Config (of a Checkpoint) → models/configs
+//   (source: docs.comfy.org "Core Concepts › Models" — the models/ subfolders —
+//    and ComfyUI's folder_paths.py for text_encoders / diffusion_models / configs)
 //
-// An unmapped type (Poses, Wildcards, Workflows, Archive, Training Data, Config,
-// Other, or anything unrecognized) is routed to --root itself with a stderr note
-// rather than being silently misplaced.
+// FILE types are routed too, not only model types (civitai/cli#967, #968): a
+// "Pruned Model" file is the same checkpoint's weights, so it routes by the
+// parent model type exactly like "Model"; a "Negative" file is a textual-
+// inversion embedding. "Text Encoder" and "Diffusion Model" have their own app
+// folders. A "Config" file routes only when its parent is a Checkpoint — no
+// app reads a YAML shipped with any other model type.
+//
+// An unmapped type (Poses, Wildcards, Workflows, Archive, Training Data, the
+// Config of a non-checkpoint, Other, or anything unrecognized) is routed to
+// --root itself with a stderr note rather than being silently misplaced.
 
 // resourceCategory is the normalized routing bucket a file belongs to.
 type resourceCategory int
@@ -53,6 +68,11 @@ const (
 	catHypernetwork
 	catControlnet
 	catUpscaler
+	catTextEncoder
+	catDiffusionModel
+	// catCheckpointConfig is a Checkpoint's YAML config. Its folder is chosen so
+	// the app finds it next to (A1111) or alongside (ComfyUI) the weights.
+	catCheckpointConfig
 )
 
 // layoutFolders maps a layout name → per-category subfolder (relative to --root).
@@ -66,15 +86,23 @@ var layoutFolders = map[string]map[resourceCategory]string{
 		catHypernetwork: filepath.Join("models", "hypernetworks"),
 		catControlnet:   filepath.Join("models", "ControlNet"),
 		catUpscaler:     filepath.Join("models", "ESRGAN"),
+		catTextEncoder:  filepath.Join("models", "text_encoder"),
+		// Beside the checkpoint: A1111 reads <checkpoint>.yaml only from there.
+		catCheckpointConfig: filepath.Join("models", "Stable-diffusion"),
+		// No catDiffusionModel: A1111/Forge has no standalone diffusion-model
+		// folder, so those files keep the --root fallback and its note.
 	},
 	"comfyui": {
-		catCheckpoint:   filepath.Join("models", "checkpoints"),
-		catVAE:          filepath.Join("models", "vae"),
-		catLora:         filepath.Join("models", "loras"),
-		catEmbedding:    filepath.Join("models", "embeddings"),
-		catHypernetwork: filepath.Join("models", "hypernetworks"),
-		catControlnet:   filepath.Join("models", "controlnet"),
-		catUpscaler:     filepath.Join("models", "upscale_models"),
+		catCheckpoint:       filepath.Join("models", "checkpoints"),
+		catVAE:              filepath.Join("models", "vae"),
+		catLora:             filepath.Join("models", "loras"),
+		catEmbedding:        filepath.Join("models", "embeddings"),
+		catHypernetwork:     filepath.Join("models", "hypernetworks"),
+		catControlnet:       filepath.Join("models", "controlnet"),
+		catUpscaler:         filepath.Join("models", "upscale_models"),
+		catTextEncoder:      filepath.Join("models", "text_encoders"),
+		catDiffusionModel:   filepath.Join("models", "diffusion_models"),
+		catCheckpointConfig: filepath.Join("models", "configs"),
 	},
 }
 
@@ -111,17 +139,29 @@ func categoryForModelType(modelType string) resourceCategory {
 }
 
 // fileCategory determines the routing bucket for a single file. A file whose
-// own type is an ancillary type with a distinct home (VAE) routes by that type —
-// this is the checkpoint-with-bundled-VAE fix. The main weights file (type
-// "Model") and files with no type route by the PARENT model type instead. Any
-// other explicit ancillary type (Archive, Training Data, Config, …) has no model
-// folder and returns catUnknown (→ routed to --root with a note).
+// own type has a distinct home (VAE, Text Encoder, Diffusion Model, Negative)
+// routes by that type — the checkpoint-with-bundled-VAE fix. The main weights
+// file (type "Model", or its "Pruned Model" copy) and files with no type route
+// by the PARENT model type instead. A "Config" routes only when the parent is a
+// Checkpoint. Any other explicit ancillary type (Archive, Training Data, …) has
+// no model folder and returns catUnknown (→ routed to --root with a note).
 func fileCategory(fileType, modelType string) resourceCategory {
 	switch strings.ToLower(strings.TrimSpace(fileType)) {
 	case "vae":
 		return catVAE
-	case "model", "":
+	case "model", "pruned model", "":
 		return categoryForModelType(modelType)
+	case "negative":
+		return catEmbedding
+	case "text encoder":
+		return catTextEncoder
+	case "diffusion model":
+		return catDiffusionModel
+	case "config":
+		if categoryForModelType(modelType) == catCheckpoint {
+			return catCheckpointConfig
+		}
+		return catUnknown
 	default:
 		// Explicit non-weights deliverable with no standard model folder.
 		return catUnknown
@@ -165,7 +205,7 @@ func mixedTypeWarning(files []fileTypeInfo) string {
 	counts := map[resourceCategory]int{}
 	order := []resourceCategory{}
 	for _, f := range files {
-		if c := fileCategory(f.fileType, f.modelType); c != catUnknown {
+		if c := warnCategory(f); c != catUnknown {
 			if counts[c] == 0 {
 				order = append(order, c)
 			}
@@ -180,7 +220,7 @@ func mixedTypeWarning(files []fileTypeInfo) string {
 	ref := catUnknown
 	for _, f := range files {
 		if f.primary {
-			if c := fileCategory(f.fileType, f.modelType); c != catUnknown {
+			if c := warnCategory(f); c != catUnknown {
 				ref = c
 			}
 			break
@@ -197,7 +237,7 @@ func mixedTypeWarning(files []fileTypeInfo) string {
 	}
 	var off []string
 	for _, f := range files {
-		c := fileCategory(f.fileType, f.modelType)
+		c := warnCategory(f)
 		if c != catUnknown && c != ref {
 			off = append(off, f.name)
 		}
@@ -206,6 +246,16 @@ func mixedTypeWarning(files []fileTypeInfo) string {
 		return ""
 	}
 	return fmt.Sprintf("this version mixes file types — %s would be mis-filed alongside the others; pass --layout <a1111|comfyui> to route each file to its correct folder", strings.Join(off, ", "))
+}
+
+// warnCategory is fileCategory as mixedTypeWarning counts it. A Checkpoint's
+// Config is never "mis-filed alongside" its weights: one directory holding both
+// is exactly where A1111 reads <checkpoint>.yaml, so it is not counted at all.
+func warnCategory(f fileTypeInfo) resourceCategory {
+	if c := fileCategory(f.fileType, f.modelType); c != catCheckpointConfig {
+		return c
+	}
+	return catUnknown
 }
 
 // fileTypeInfo is the minimal per-file view mixedTypeWarning needs.
