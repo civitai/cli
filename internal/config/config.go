@@ -57,7 +57,7 @@ type Config struct {
 // tokens between tests. A shipped binary never takes this branch, so a macOS
 // user with XDG_CONFIG_HOME set keeps ~/Library/Application Support/civitai.
 func Dir() (string, error) {
-	if testing.Testing() {
+	if inTestBinary() {
 		if x := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(x) {
 			return filepath.Join(x, "civitai"), nil
 		}
@@ -73,6 +73,12 @@ func Dir() (string, error) {
 // Linux can stand in macOS's rule (XDG_CONFIG_HOME ignored) — see
 // TestDirInATestBinaryHonoursXDGWhereThePlatformDoesNot.
 var platformConfigDir = os.UserConfigDir
+
+// inTestBinary is testing.Testing. It is a variable only so a test can stand
+// in a SHIPPED binary — inside a test binary it is always true, so without the
+// seam nothing could observe the branch being skipped outside `go test`
+// (TestDirInAShippedBinaryIgnoresXDGWhereThePlatformDoes).
+var inTestBinary = testing.Testing
 
 // Load reads config from disk + environment. A missing file is not an error.
 func Load() (*Config, error) {

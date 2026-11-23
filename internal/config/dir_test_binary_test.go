@@ -36,6 +36,27 @@ func TestDirInATestBinaryHonoursXDGWhereThePlatformDoesNot(t *testing.T) {
 	}
 }
 
+// TestDirInAShippedBinaryIgnoresXDGWhereThePlatformDoes pins the other half of
+// the contract: OUTSIDE a test binary nothing changes, so a macOS user with
+// XDG_CONFIG_HOME set keeps ~/Library/Application Support/civitai.
+func TestDirInAShippedBinaryIgnoresXDGWhereThePlatformDoes(t *testing.T) {
+	home, xdg := t.TempDir(), t.TempDir()
+	prevDir, prevTB := platformConfigDir, inTestBinary
+	platformConfigDir = darwinConfigDir(home)
+	inTestBinary = func() bool { return false }
+	t.Cleanup(func() { platformConfigDir, inTestBinary = prevDir, prevTB })
+
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	got, err := Dir()
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	if want := filepath.Join(home, "Library", "Application Support", "civitai"); got != want {
+		t.Errorf("Dir() = %q, want the platform path %q: a shipped binary must not honour "+
+			"XDG_CONFIG_HOME where the platform does not", got, want)
+	}
+}
+
 // TestDirInATestBinaryFallsBackToThePlatformWithoutXDG: with XDG_CONFIG_HOME
 // unset (or relative, which os.UserConfigDir also refuses) the platform rule
 // still decides, so this is the macOS path a test without XDG sees.
