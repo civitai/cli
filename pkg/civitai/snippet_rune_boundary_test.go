@@ -41,10 +41,14 @@ func TestSnippetCutsOnARuneBoundary(t *testing.T) {
 	}
 }
 
-// TestSnippetLeavesAShortBodyAlone is an invariant guard (green before and
-// after): a body within the budget is returned whole, with no ellipsis.
-func TestSnippetLeavesAShortBodyAlone(t *testing.T) {
-	body := strings.Repeat("模", 166) // 498 bytes
+// TestSnippetLeavesABodyAtTheBudgetAlone is an invariant guard (green before
+// and after) ON the boundary: a body of exactly 500 bytes is returned whole,
+// with no ellipsis, so an off-by-one in the bound is caught.
+func TestSnippetLeavesABodyAtTheBudgetAlone(t *testing.T) {
+	body := "v2" + strings.Repeat("模", 166) // 2 + 498 = 500 bytes
+	if len(body) != 500 {
+		t.Fatalf("fixture is %d bytes, want 500", len(body))
+	}
 	if got := snippet([]byte(body)); got != body {
 		t.Errorf("a %d-byte body was changed: %q", len(body), got)
 	}

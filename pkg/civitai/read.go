@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/civitai/cli/internal/redact"
 	"github.com/civitai/cli/internal/saferune"
@@ -660,7 +661,13 @@ func snippet(raw []byte) string {
 	s := strings.TrimSpace(saferune.Strip(string(raw)))
 	const max = 500
 	if len(s) > max {
-		return s[:max] + "…"
+		// Back up to a rune start: a byte-index cut can land inside a multi-byte
+		// rune and return invalid UTF-8 (civitai/cli#627). Keeps 497–500 bytes.
+		cut := max
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		return s[:cut] + "…"
 	}
 	return s
 }
