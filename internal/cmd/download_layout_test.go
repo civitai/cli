@@ -222,12 +222,18 @@ func TestDownloadLayoutDryRunPlansRoutedTargets(t *testing.T) {
 		{id: 1, name: "style.safetensors", typ: "Model", primary: true, body: "w", withSHA: true},
 	})
 	setupDownloadEnv(t, d, "tok")
+	// A creatable --root: since #963 the plan refuses a directory the real run
+	// could not create, and "/base" needs a writable "/".
+	base := filepath.Join(t.TempDir(), "base")
 
-	out, _, err := run(t, "download", "128713", "--layout", "comfyui", "--root", "/base", "--dry-run")
+	out, _, err := run(t, "download", "128713", "--layout", "comfyui", "--root", base, "--dry-run")
 	if err != nil {
 		t.Fatalf("dry-run --layout: %v", err)
 	}
-	want := filepath.Join("/base", "models", "loras", "style.safetensors")
+	if _, serr := os.Stat(base); serr == nil {
+		t.Errorf("dry-run must not create --root %s", base)
+	}
+	want := filepath.Join(base, "models", "loras", "style.safetensors")
 	if !strings.Contains(out, want) {
 		t.Errorf("plan should show routed target %q:\n%s", want, out)
 	}
