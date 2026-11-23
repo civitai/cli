@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"testing"
 	"time"
 
 	"github.com/spf13/viper"
@@ -48,7 +49,19 @@ type Config struct {
 // other Unix $XDG_CONFIG_HOME/civitai, else ~/.config/civitai; on macOS
 // ~/Library/Application Support/civitai (XDG_CONFIG_HOME is NOT consulted
 // there); on Windows %AppData%\civitai.
+//
+// INSIDE A TEST BINARY ONLY (testing.Testing), an absolute XDG_CONFIG_HOME is
+// honoured on every OS (civitai/cli#965): hundreds of tests give themselves a
+// config dir by setting XDG_CONFIG_HOME alone, and on macOS they otherwise all
+// shared one directory — writing files where the test never looked and leaking
+// tokens between tests. A shipped binary never takes this branch, so a macOS
+// user with XDG_CONFIG_HOME set keeps ~/Library/Application Support/civitai.
 func Dir() (string, error) {
+	if testing.Testing() {
+		if x := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(x) {
+			return filepath.Join(x, "civitai"), nil
+		}
+	}
 	base, err := platformConfigDir()
 	if err != nil {
 		return "", err

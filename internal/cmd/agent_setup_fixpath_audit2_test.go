@@ -256,7 +256,12 @@ func fixPathSemicolonCase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cliBinDirForPATH refused %q: %v", dir, err)
 	}
-	want := dir
+	// cliBinDirForPATH resolves symlinks (a Homebrew opt -> Cellar chain must
+	// yield the directory that holds the file), so compare in that spelling.
+	want, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got != want {
 		t.Fatalf("cliBinDirForPATH returned %q, want %q", got, want)
 	}
