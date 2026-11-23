@@ -30,6 +30,11 @@ import (
 // OS's UserConfigDir reads is test-owned (red at origin/main because APPDATA is
 // unset and HOME is the launching user's), and every package that can reach
 // Dir() installs it (red at origin/main because none did).
+//
+// ⚠ Since civitai/cli#965, inside a TEST BINARY Dir() honours an absolute
+// XDG_CONFIG_HOME on every OS, so an XDG-only test is now isolated on macOS and
+// Windows too. The HOME/APPDATA isolation above still matters for the tests
+// that leave XDG_CONFIG_HOME unset or run a built (non-test) binary.
 
 // TestEveryOSConfigDirIsTestOwned evaluates, from THIS process's environment,
 // the base directory os.UserConfigDir would return on each OS — not only the one

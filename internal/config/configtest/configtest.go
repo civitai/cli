@@ -9,7 +9,9 @@
 // overwrote — the developer's real saved credential, while passing. Fixing each
 // site would leave the next one written the same way; pointing every per-user
 // root at a temp tree once, before any test runs, closes the class for the
-// package. Tests that set XDG_CONFIG_HOME / HOME themselves still win (t.Setenv
+// package. (Since #965 a test binary's Dir() also honours an absolute
+// XDG_CONFIG_HOME on every OS; this isolation still covers the tests that
+// leave it unset and the built binaries some tests run.) Tests that set XDG_CONFIG_HOME / HOME themselves still win (t.Setenv
 // overrides this for the duration of that test).
 //
 // 🔴 THE GO TOOLCHAIN'S OWN DIRECTORIES ARE PINNED FIRST. Some of these packages
