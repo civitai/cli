@@ -173,18 +173,23 @@ instead of polluting the checkpoint folder. --layout is mutually exclusive with
 
   Civitai type                     A1111 / Forge           ComfyUI
   ------------------------------   ---------------------   ---------------------
-  Checkpoint                       models/Stable-diffusion models/checkpoints
+  Checkpoint (Model/Pruned Model)  models/Stable-diffusion models/checkpoints
   VAE (standalone OR bundled)      models/VAE              models/vae
   LORA / LoCon / DoRA              models/Lora             models/loras
-  TextualInversion (embedding)     embeddings              models/embeddings
+  TextualInversion / Negative      embeddings              models/embeddings
   Hypernetwork                     models/hypernetworks    models/hypernetworks
   Controlnet                       models/ControlNet       models/controlnet
   Upscaler                         models/ESRGAN           models/upscale_models
+  Text Encoder file                models/text_encoder     models/text_encoders
+  Diffusion Model file             (--root)                models/diffusion_models
+  Config file of a Checkpoint      models/Stable-diffusion models/configs
 
 Sources: the AUTOMATIC1111 wiki plus the sd-webui-controlnet models/ControlNet
-default, and the ComfyUI models docs (docs.comfy.org). An UNMAPPED type (Poses,
-Wildcards, Archive, …) is written to --root with a stderr note rather than
-silently misplaced.
+default, Forge's models/text_encoder, and the ComfyUI models docs
+(docs.comfy.org). A checkpoint's Config lands beside it under A1111, where
+A1111 reads <checkpoint>.yaml. An UNMAPPED type (Poses, Wildcards, Archive,
+Training Data, a non-checkpoint's Config, …) is written to --root with a stderr
+note rather than silently misplaced.
 
 Mis-file warning, WITHOUT --layout: when --all would place files of differing
 types into one directory, the CLI prints a one-line stderr warning naming the
