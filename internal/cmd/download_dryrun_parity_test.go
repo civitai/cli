@@ -87,12 +87,22 @@ func TestDownloadDryRunRefusesAnUnwritableParent(t *testing.T) {
 	if strings.Contains(plan, "status: would download") {
 		t.Errorf("dry run still planned \"would download\":\n%s", plan)
 	}
+	if !strings.Contains(plan, "status: blocked") {
+		t.Errorf("dry run should mark the file blocked:\n%s", plan)
+	}
 	_, _, realErr := run(t, "download", "128713", "--out", out)
 	if realErr == nil {
 		t.Fatal("control: the real run must fail here too")
 	}
-	if dryErr.Error() != realErr.Error() {
-		t.Errorf("dry run error differs from the real run's:\n dry:  %v\n real: %v", dryErr, realErr)
+	// Not byte-equality with the real run: here the dry run PREDICTS an errno
+	// with access(2), and which one the kernel gives MkdirAll (EACCES, EROFS,
+	// EPERM) varies by platform. What #963 asks for is the same failure, the
+	// same error class and a message naming the directory.
+	wantPrefix := "create output directory " + filepath.Dir(out) + ": mkdir " + filepath.Dir(out) + ": "
+	for _, e := range []error{dryErr, realErr} {
+		if !strings.HasPrefix(e.Error(), wantPrefix) {
+			t.Errorf("error = %q, want it to start %q", e, wantPrefix)
+		}
 	}
 	if d.dlHits != 0 {
 		t.Errorf("nothing may be transferred (dlHits=%d)", d.dlHits)

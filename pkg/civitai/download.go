@@ -20,8 +20,8 @@ type Downloader interface {
 	// DownloadFile issues an authenticated GET to fileURL and returns the open
 	// HTTP response for streaming. The CALLER owns resp.Body and MUST close it.
 	// Redirects are followed automatically; the Civitai `/api/download` route
-	// 302s to signed object storage on a DIFFERENT host, and Go's default client
-	// strips the Authorization header on a cross-host redirect (exactly what we
+	// redirects (307) to signed object storage on a DIFFERENT host, and Go's
+	// default client strips the Authorization header on a cross-host redirect (exactly what we
 	// want — the signed URL needs no bearer). A 401 with a refreshable token
 	// source is retried once after a transparent refresh.
 	DownloadFile(ctx context.Context, fileURL string) (*http.Response, error)

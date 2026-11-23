@@ -130,8 +130,12 @@ Use --dry-run to print the resolved plan (files, file ids, sizes, SHA256,
 target paths, and whether a token will be sent) without transferring anything.
 It creates no file at all — not even a ".part". Whether a file actually needs a
 token is decided by the server, so the plan does not claim it. A dry run whose
-target cannot be resolved fails with the same error and exit code the real run
-would.
+target cannot be resolved, or whose output directory the real run could not
+create (a path component is a regular file, or the nearest existing directory
+is not writable), fails with the same error and exit code the real run would.
+A target the real run would skip as already present is planned as "would skip"
+— checked the way the real run checks it, so with verification on the existing
+file is hashed.
 
 When a positional model id is resolved to a version, the note reads:
 
@@ -200,7 +204,7 @@ Canny, Depth) to derive the control image from your input, and that
 preprocessor is a SEPARATE install, not hosted on Civitai. Informational only;
 it never blocks the download.
 
-Transport: the Civitai download URL 302-redirects to signed storage and the CLI
+Transport: the Civitai download URL redirects to signed storage and the CLI
 follows it. Large files (10+ GB) are never buffered in memory, and TTY-aware
 progress is printed to STDERR.
 
@@ -330,8 +334,9 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	reportBaseModel(out, errW, v.BaseModel, o.forBase)
 
 	// --dry-run: print the resolved plan, transferring nothing and creating no
-	// file (not even a ".part"). It exits 0 only when every target resolves;
-	// otherwise it returns the error the real run would stop with.
+	// file (not even a ".part"). It exits 0 only when every target resolves and
+	// its output directory could be created; otherwise it returns the error the
+	// real run would stop with.
 	if o.dryRun {
 		return printDownloadPlan(out, selected, o, baseURL)
 	}
@@ -664,10 +669,14 @@ func ambiguousStopError(id string, v *civitai.ModelVersionDetail, m *civitai.Mod
 // file is therefore never labelled "not required" — a gated file must never
 // look anonymous.
 //
-// A file whose target cannot be resolved is marked blocked and, once the whole
-// plan is printed, the FIRST such error is returned — the same error, and so
-// the same exit code, the real run stops with (civitai/cli#941). A dry run that
-// exits 0 is a plan the real run will start.
+// A file whose target cannot be resolved (civitai/cli#941), or whose output
+// directory the real run's MkdirAll would fail to create (#963), is marked
+// blocked and, once the whole plan is printed, the FIRST such error is returned
+// — the same error, and so the same exit code, the real run stops with. A dry
+// run that exits 0 is a plan the real run will start.
+//
+// A target the real run would skip as already present is planned as "would
+// skip" (#964), decided by the same presentTarget the real run calls.
 func printDownloadPlan(out io.Writer, files []civitai.ModelVersionFile, o *downloadOpts, baseURL string) error {
 	fmt.Fprintf(out, "Dry run — planning %d file(s); nothing will be downloaded.\n", len(files))
 	// Surface the mis-file warning in the plan too when it applies.
@@ -708,6 +717,24 @@ func printDownloadPlan(out io.Writer, files []civitai.ModelVersionFile, o *downl
 			fmt.Fprintf(out, "  status: blocked — target unresolved\n")
 			if firstErr == nil {
 				firstErr = terr
+			}
+			continue
+		}
+		// Same order as downloadOne: the already-present skip first, then the
+		// output directory.
+		pubSHA := strings.TrimSpace(f.Hashes.SHA256)
+		switch presentTarget(target, pubSHA, !o.noVerify && pubSHA != "", o.force) {
+		case presentVerified:
+			fmt.Fprintf(out, "  status: would skip — already present (SHA256 verified)\n")
+			continue
+		case presentTrusted:
+			fmt.Fprintf(out, "  status: would skip — already present (not hash-checked)\n")
+			continue
+		}
+		if derr := checkOutputDir(filepath.Dir(target)); derr != nil {
+			fmt.Fprintf(out, "  status: blocked — %v\n", derr)
+			if firstErr == nil {
+				firstErr = derr
 			}
 			continue
 		}
@@ -1054,7 +1081,7 @@ func downloadOne(ctx context.Context, dl civitai.Downloader, out, errW io.Writer
 	// is stale.
 	if dir := filepath.Dir(target); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return false, fmt.Errorf("create output directory %s: %w", dir, err)
+			return false, outputDirError(dir, err)
 		}
 	}
 
@@ -1127,22 +1154,44 @@ func emitPreDownloadNotes(errW io.Writer, name, modelType string, noVerify bool,
 // is skipped only on a confirmed SHA256 match. A present-but-wrong/unverifiable
 // file returns false → re-download.
 func presentTargetSatisfies(out io.Writer, target, sha string, verify, force bool) bool {
-	if force {
-		return false
-	}
-	info, statErr := os.Stat(target)
-	if statErr != nil || info.IsDir() {
-		return false
-	}
-	if !verify {
+	switch presentTarget(target, sha, verify, force) {
+	case presentTrusted:
 		fmt.Fprintf(out, "already present: %s\n", safeTermSingle(target))
 		return true
-	}
-	if match, verr := fileSHA256Matches(target, sha); verr == nil && match {
+	case presentVerified:
 		fmt.Fprintf(out, "already present (SHA256 verified): %s\n", safeTermSingle(target))
 		return true
 	}
 	return false
+}
+
+// presentState is presentTarget's verdict on an already-present target.
+type presentState int
+
+const (
+	presentAbsent   presentState = iota // download it (absent, a directory, --force, or a hash mismatch)
+	presentTrusted                      // skip: present and not verifying
+	presentVerified                     // skip: present and its SHA256 matches
+)
+
+// presentTarget is the ONE skip decision, shared by the real run
+// (presentTargetSatisfies) and the dry-run plan (printDownloadPlan), so the
+// plan cannot predict a transfer the real run skips (civitai/cli#964).
+func presentTarget(target, sha string, verify, force bool) presentState {
+	if force {
+		return presentAbsent
+	}
+	info, statErr := os.Stat(target)
+	if statErr != nil || info.IsDir() {
+		return presentAbsent
+	}
+	if !verify {
+		return presentTrusted
+	}
+	if match, verr := fileSHA256Matches(target, sha); verr == nil && match {
+		return presentVerified
+	}
+	return presentAbsent
 }
 
 // writePart streams body into "<target>.part" while updating the progress
