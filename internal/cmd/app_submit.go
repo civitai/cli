@@ -393,6 +393,17 @@ Listing-completeness gate:
   Your FIRST submit is what creates the store listing, so there is nothing to
   check yet and nothing is refused; the gate applies from the second one on.
 
+Source repository:
+  When block.manifest.json has no "repository" key, submit prints an advisory:
+  a public source link helps reviewers check the code. When the git remote
+  origin is an https or ssh remote on github.com, gitlab.com or codeberg.org,
+  the advisory names it as https://<host>/<owner>/<repo>. This CLI does not
+  check that the repository is public. An interactive submit that would upload
+  also asks "Add repository <url> to block.manifest.json? [y/N]" (default No);
+  it never asks under --yes, in CI or GitHub Actions, or without a TTY. On yes
+  it adds the key and STOPS without uploading: the manifest is then
+  uncommitted, so commit it and re-run submit.
+
 GitHub Actions:
   When CIVITAI_GITHUB_OIDC_TOKEN is set (the civitai/app-submit-action Action
   sets it on a tag push), the token is sent with the submit. The server checks
@@ -476,6 +487,12 @@ Defaults to the current directory.`,
 				return err
 			}
 
+			// No `repository` in the manifest: say so on every path, stderr,
+			// never blocking (app_submit_repository.go). The interactive offer
+			// to add it comes later, on the upload path only.
+			repoNudge := checkManifestRepository(gitOutput, dir)
+			printRepositoryAdvisory(cmd.ErrOrStderr(), repoNudge, "it does not block this submit")
+
 			cfg, err := config.Load()
 			if err != nil {
 				return err
@@ -553,6 +570,17 @@ Defaults to the current directory.`,
 				if tok := githubOIDCTokenFromEnv(); tok != "" {
 					prov.GitHubOIDCToken = tok
 					fmt.Fprintf(cmd.ErrOrStderr(), "Sending the GitHub Actions OIDC token from %s with this submit.\n", GitHubOIDCTokenEnv)
+				}
+
+				// 2a''. REPOSITORY OFFER, attended submits only, after the
+				// dirty-tree guard (a tree it refuses is never asked) and before
+				// the confirmation. "Yes" edits the manifest and STOPS this run:
+				// the edit is uncommitted, and the bundle must match the commit
+				// the provenance above claims. See app_submit_repository.go.
+				if repoNudge.missing && repoNudge.suggested != "" && !assumeYes && !submitIsUnattended() {
+					if err := offerRepository(cmd, dir, repoNudge.suggested); err != nil {
+						return err
+					}
 				}
 
 				if err := confirmSubmit(cmd, m, cfg.BaseURL(), assumeYes); err != nil {

@@ -635,6 +635,13 @@ own section, but its blocking problems do NOT set the exit code. The publish
 floor is a statement about a listing that is trying to publish, and a delisted
 one is not — without this, one old removed app would fail every run forever.
 
+SOURCE REPOSITORY: run from an app project directory (with no slug, or that
+app's slug), it also reads block.manifest.json there and, when it has no
+"repository" key, prints an advisory on stderr: a public source link helps
+reviewers check the code, with the git remote origin's https URL when it is on
+github.com, gitlab.com or codeberg.org. It never edits the manifest and never
+changes the exit code; ` + "`civitai app submit`" + ` offers to add the key.
+
 EXIT CODES: 1 when a blocking problem was found on a listing that can still
 publish, 0 otherwise — including when only advisories were found, when the only
 blocking problems are on delisted listings, and when you have no listings at
@@ -685,7 +692,12 @@ revision draft.`,
 			// accepted, because the developer this check is for HAS author
 			// access (their app is approved) and `listMine` succeeds for them.
 			rollout := client.CheckAppBlocksRollout(cmdCtx(cmd))
-			return runAppDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), rows, rollout, slug, cfg.BaseURL(), jsonOut)
+			verdict := runAppDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), rows, rollout, slug, cfg.BaseURL(), jsonOut)
+			// The local manifest's missing `repository`, when the current
+			// directory is an app project this run is about. STDERR and after the
+			// report, so --json stdout and the exit code are untouched.
+			printDoctorRepositoryAdvisory(cmd.ErrOrStderr(), gitOutput, ".", slug)
+			return verdict
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false,
