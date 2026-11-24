@@ -1062,8 +1062,16 @@ An app's store **detail** page can carry a `Source` row linking to the code.
 interchangeable.** An **on-site** app takes it from the `repository` key in
 `block.manifest.json`, re-synced from the manifest on every approved version —
 so `set-source-repo` **refuses an on-site app** (exit `1`) and names that key
-instead, because a write here would be re-synced away. An **off-site** app takes
-it from the listing:
+instead, because a write here would be re-synced away. When an on-site manifest
+has no `repository`, `civitai app submit` (and `civitai app doctor`, run from the
+project directory) prints an advisory on stderr — a public source link helps
+reviewers check the code — naming your git remote `origin` as
+`https://<host>/<owner>/<repo>` when it is on github.com, gitlab.com or
+codeberg.org. The CLI does not check that the repository is public. An
+interactive submit also offers to add the key (default No; never under `--yes`,
+in CI or without a TTY). Saying yes writes it and **stops that submit with exit
+`1` before anything is uploaded**: the manifest is now uncommitted, so commit it
+and submit again. An **off-site** app takes it from the listing:
 
 ```bash
 civitai app listing set-source-repo https://github.com/me/my-app

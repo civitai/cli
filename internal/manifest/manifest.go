@@ -3,6 +3,7 @@
 package manifest
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -257,21 +258,128 @@ func SetBlockID(dir, newBlockID string) error {
 	if !json.Valid(updated) {
 		return fmt.Errorf("refusing to write %s: result is not valid JSON after setting blockId=%q", Filename, newBlockID)
 	}
+	return writeAtomic(dir, info.Mode().Perm(), updated)
+}
 
+// HasKey reports whether the manifest in dir declares the top-level key at all,
+// whatever its value — `"repository": null` and `"repository": ""` are both
+// DECLARED (the server validates any present value, so neither is "missing").
+// A missing, unreadable or malformed manifest is an error, never a false.
+func HasKey(dir, key string) (bool, error) {
+	raw, err := os.ReadFile(Path(dir))
+	if err != nil {
+		return false, err
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return false, invalidJSON(raw, err)
+	}
+	_, ok := top[key]
+	return ok, nil
+}
+
+// SetRepository ADDS a top-level `"repository": "<url>"` to the manifest in dir,
+// immediately after the `blockId` pair, in that pair's own indentation, line
+// ending and key/colon spacing. Every other byte of the file is left as it was,
+// so key order and formatting survive — the same raw-bytes edit SetBlockID makes,
+// and the same atomic write.
+//
+// It REFUSES, writing nothing, when the manifest already declares `repository`
+// (it never overwrites what an author wrote), when there is no `blockId` pair to
+// anchor on, and when the result is not exactly the old top-level object plus
+// that one key — each other key's raw value byte-identical. That last check is
+// what makes a regex anchor safe: a `"blockId"` matched inside a nested object
+// would add the key in the wrong place, and is refused instead.
+//
+// The URL is written as given; choosing one the platform accepts is the caller's
+// job.
+func SetRepository(dir, repoURL string) error {
+	p := Path(dir)
+	info, err := os.Stat(p)
+	if err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		return err
+	}
+	var before map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &before); err != nil {
+		return invalidJSON(raw, err)
+	}
+	if _, ok := before["repository"]; ok {
+		return fmt.Errorf("refusing to edit %s: it already declares \"repository\"", Filename)
+	}
+	loc := blockIDField.FindSubmatchIndex(raw)
+	if loc == nil {
+		return fmt.Errorf("refusing to edit %s: no \"blockId\" to place \"repository\" after", Filename)
+	}
+	value, err := json.Marshal(repoURL)
+	if err != nil {
+		return err
+	}
+
+	// The separator between `"blockId"` and its value (`: `, `:`, ` : ` …), reused
+	// so the new pair is spelled the way the file already spells pairs.
+	colon := raw[loc[2]+len(`"blockId"`) : loc[3]]
+	// The line break and indent in front of the blockId pair, when it starts its
+	// own line; otherwise (a one-line manifest) a single space.
+	lineStart := bytes.LastIndexByte(raw[:loc[0]], '\n') + 1
+	indent := raw[lineStart:loc[0]]
+	sep := []byte(" ")
+	if lineStart > 0 && len(bytes.Trim(indent, " \t")) == 0 {
+		nl := "\n"
+		if lineStart >= 2 && raw[lineStart-2] == '\r' {
+			nl = "\r\n"
+		}
+		sep = append([]byte(nl), indent...)
+	}
+
+	var ins []byte
+	ins = append(ins, ',')
+	ins = append(ins, sep...)
+	ins = append(ins, `"repository"`...)
+	ins = append(ins, colon...)
+	ins = append(ins, value...)
+
+	var updated []byte
+	updated = append(updated, raw[:loc[1]]...)
+	updated = append(updated, ins...)
+	updated = append(updated, raw[loc[1]:]...)
+
+	var after map[string]json.RawMessage
+	if err := json.Unmarshal(updated, &after); err != nil {
+		return fmt.Errorf("refusing to write %s: result is not valid JSON after adding \"repository\"", Filename)
+	}
+	if got, ok := after["repository"]; !ok || !bytes.Equal(got, value) || len(after) != len(before)+1 {
+		return fmt.Errorf("refusing to write %s: \"repository\" would not land as a top-level key", Filename)
+	}
+	for k, v := range before {
+		if !bytes.Equal(after[k], v) {
+			return fmt.Errorf("refusing to write %s: adding \"repository\" would change %q", Filename, k)
+		}
+	}
+	return writeAtomic(dir, info.Mode().Perm(), updated)
+}
+
+// writeAtomic replaces the manifest in dir with data via a temp file + rename,
+// keeping mode, so a failure never leaves a half-written manifest.
+func writeAtomic(dir string, mode os.FileMode, data []byte) error {
+	p := Path(dir)
 	tmp, err := os.CreateTemp(dir, ".block.manifest.*.json")
 	if err != nil {
 		return err
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
-	if _, err := tmp.Write(updated); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmpName, info.Mode().Perm()); err != nil {
+	if err := os.Chmod(tmpName, mode); err != nil {
 		return err
 	}
 	return os.Rename(tmpName, p)
