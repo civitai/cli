@@ -84,7 +84,7 @@ func repositoryFromRemote(remote string) (string, bool) {
 		default:
 			return "", false
 		}
-		if u.Port() != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+		if u.Port() != "" || strings.ContainsAny(remote, "?#") || u.Opaque != "" {
 			return "", false
 		}
 		host, path = u.Hostname(), u.Path

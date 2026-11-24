@@ -487,8 +487,8 @@ Defaults to the current directory.`,
 				return err
 			}
 
-			// No `repository` in the manifest: say so on every path, stderr,
-			// never blocking (app_submit_repository.go). The interactive offer
+			// No `repository` in the manifest: say so on every path that got
+			// past validation, stderr, never blocking (app_submit_repository.go). The interactive offer
 			// to add it comes later, on the upload path only.
 			repoNudge := checkManifestRepository(gitOutput, dir)
 			printRepositoryAdvisory(cmd.ErrOrStderr(), repoNudge, "it does not block this submit")

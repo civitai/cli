@@ -65,6 +65,8 @@ func TestRepositoryFromRemote(t *testing.T) {
 		{"https://github.com/acme", ""},
 		{"https://github.com/acme/my-app/tree/main", ""},
 		{"https://github.com/acme/my-app?x=1", ""},
+		{"https://github.com/acme/my-app?", ""},
+		{"https://github.com/acme/my-app#", ""},
 		{"https://gitlab.com/grp/sub/proj", ""},
 		{"https://github.com/acme/.git", ""},
 		{"https://github.com/-acme/my-app", ""},

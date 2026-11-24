@@ -342,7 +342,7 @@ func SetRepository(dir, repoURL string) error {
 	ins = append(ins, colon...)
 	ins = append(ins, value...)
 
-	updated := make([]byte, 0, len(raw)+len(ins))
+	var updated []byte
 	updated = append(updated, raw[:loc[1]]...)
 	updated = append(updated, ins...)
 	updated = append(updated, raw[loc[1]:]...)
