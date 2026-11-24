@@ -9,10 +9,8 @@ import (
 )
 
 // The page-elements scaffold carries a READY-TO-UNCOMMENT accent block in
-// src/index.css and a note in index.html that the boot skeleton's colours should
-// follow a rebrand. Both are ADVISORY by operator decision (2026-11-24): the
-// scaffold still ships the stock look, so the override must be inside a comment,
-// and the skeleton's colours are unchanged.
+// src/index.css. It is ADVISORY by operator decision (2026-11-24): the scaffold
+// still ships the stock look, so the override must be inside a comment.
 
 // cssCommentRe matches one CSS block comment (non-greedy, across lines).
 var cssCommentRe = regexp.MustCompile(`(?s)/\*.*?\*/`)
@@ -63,34 +61,6 @@ func TestPageElementsOffersACommentedAccentBlockOnTheAppRoot(t *testing.T) {
 	if !strings.Contains(block, "data-block-root>") || !strings.Contains(block, "dataset.blockRoot = ''") {
 		t.Errorf("src/block.ts no longer marks its root with data-block-root, so the accent block's selector " +
 			"matches nothing — update both together")
-	}
-}
-
-func TestPageElementsBootSkeletonNotesItShouldFollowARebrand(t *testing.T) {
-	dir := renderPageElements(t)
-	doc := readOwnLookFile(t, dir, "index.html")
-	i := strings.Index(doc, "REBRANDING?")
-	if i < 0 {
-		t.Fatalf("index.html has no rebranding note for the boot skeleton:\n%s", doc)
-	}
-	// The note sits BEFORE the inline <style>, as an HTML comment, so the boot
-	// skeleton's own stylesheet — which TestBootSkeletonPaintsDarkByDefault parses
-	// — is untouched.
-	if s := strings.Index(doc, "<style>"); s < 0 || i > s {
-		t.Errorf("the rebranding note must precede the inline <style> (note at %d, <style> at %d)", i, s)
-	}
-	note := doc[i:]
-	note = strings.Join(strings.Fields(note[:strings.Index(note, "-->")]), " ")
-	for _, want := range []string{"src/index.css", "make these follow it", "html[data-theme='light']"} {
-		if !strings.Contains(note, want) {
-			t.Errorf("the rebranding note lacks %q: %s", want, note)
-		}
-	}
-	// Behaviour unchanged: the four stock skeleton colours are still there.
-	for _, hex := range []string{"#1a1b1e", "#ffffff", "#2c2e33", "#e9ecef"} {
-		if !strings.Contains(doc, hex) {
-			t.Errorf("index.html lost the stock skeleton colour %s — the note must not change the skeleton", hex)
-		}
 	}
 }
 

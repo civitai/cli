@@ -302,31 +302,6 @@ nothing can recall: +298 bytes on every rendered block** — smallest shape
 `internal/cmd/feedback_hint_test.go`, which also runs both commands as the
 section spells them (decision 41 §7).
 
-#### FOURTH NAMED EXCEPTION — "Give the app its own look (recommended)" (operator decision, 2026-11-24)
-
-Most submitted apps are built by an author's coding agent from the
-`page-elements` scaffold, and many shipped Civitai's stock look: nothing the
-agent read suggested otherwise, and the `### Docs` list had no theming page.
-The operator's decision is that this guidance is **ADVISORY** — recommend a
-distinct look and show how, never make it a requirement; deterministic checks
-warn, never block. So the block gains two things: a Docs-list line for
-`/apps/guide/theming.md` (an ADDRESS, compliant with the rule above) and a
-`### Give the app its own look (recommended)` section that carries CONTENTS —
-the one safe pattern as a single snippet (a `--civitai-color-primary` /
-`-hover` / `-fg` override scoped to the app root, `[data-block-root]` in
-`page-elements`, never `:root`, where it only ties with the token sheet), the
-both-themes check, and a link to the guide's `#give-your-app-its-own-look`
-section for everything else. The argument is the picker gotcha's: the block is
-read on every turn, a hosted page may never be fetched, and the `:root` trap is
-the part an agent gets wrong silently. **Measured cost, paid every turn in a
-file nothing can recall: +581 bytes on every rendered block** (all of it
-outside every `{{ if }}`) — smallest shape 9,200 → 9,781 B, **+6.3%**. Pinned
-whole, per shape × both SDK arms, by `internal/cmd/agent_setup_own_look_test.go`,
-which also ties the snippet's selector and tokens to the `page-elements`
-stylesheet's commented accent block. The tokens are held to the published set by
-`internal/scaffold`'s design-token guard through that stylesheet, and all three
-were confirmed defined in `@civitai/theme@0.5.2`'s `styles.css` on 2026-11-24.
-
 #### NOT an exception — `### Before you submit` is a POINTER (civitai-app-starters#573, Zach, 2026-10-08)
 
 The block's `### Before you submit` section is one sentence and the

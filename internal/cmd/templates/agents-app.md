@@ -54,8 +54,8 @@ the manifest fields and the scopes are documented on the docs site, and the
   https://developer.civitai.com/apps/reference.md
 {{- end }}
 - Guide: https://developer.civitai.com/apps/guide.md
-- Theming (tokens, light/dark, giving the app its own look):
-  https://developer.civitai.com/apps/guide/theming.md
+- Theming — a distinct look (your own accent colour) is recommended, never
+  required: https://developer.civitai.com/apps/guide/theming.md#give-your-app-its-own-look
 - **`https://developer.civitai.com/apps/guide/earning.md`** — the three money
   rails. Fetch it before declaring a `goods` catalog. The three rules below are
   repeated in this file deliberately, because they are the ones a manifest can
@@ -250,14 +250,6 @@ fixed list. As of this CLI version:
   that checkpoint's own `baseModel`.
 - **`civitai app validate` is a local mirror. The server is authoritative.** A
   clean local validate is necessary, never sufficient.
-
-### Give the app its own look (recommended)
-
-Optional, never required for review. Rebrand by overriding the accent tokens on
-the app's ROOT element (`[data-block-root]` in `page-elements`), never `:root`:
-`[data-block-root] { --civitai-color-primary: #7c3aed; --civitai-color-primary-hover: #6d28d9; --civitai-color-primary-fg: #ffffff; }`.
-Check it in BOTH light and dark themes. How:
-https://developer.civitai.com/apps/guide/theming.md#give-your-app-its-own-look
 
 ### Triaging user feedback
 
