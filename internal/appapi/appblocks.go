@@ -512,6 +512,49 @@ type SubmitResult struct {
 	// server could not store them. nil when no token was sent, the server's flag
 	// is off (it then ignores the token), or the server predates the field.
 	ActionsRunSourceRecorded *bool `json:"actionsRunSourceRecorded,omitempty"`
+	// Advisories is the server's optional, non-blocking guidance for an
+	// ACCEPTED submit (`advisories: [{code, message, docsUrl?}]`) — for example
+	// a recommendation to give the app its own look rather than the stock one.
+	// Advisory only: it never refuses and never changes the exit code. Absent (a
+	// server that predates it), null, or malformed decodes to nil rather than
+	// failing the submit — see SubmitAdvisories.UnmarshalJSON.
+	Advisories SubmitAdvisories `json:"advisories,omitempty"`
+}
+
+// SubmitAdvisory is one entry of SubmitResult.Advisories.
+type SubmitAdvisory struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// DocsURL is optional; "" when the server sent none.
+	DocsURL string `json:"docsUrl"`
+}
+
+// SubmitAdvisories is the tolerant decoding of the submit response's
+// `advisories` field.
+//
+// 🔴 IT NEVER FAILS THE DECODE. The submit has already been ACCEPTED by the
+// time this field is read, so a shape this client does not understand must not
+// turn a created publish request into an "unexpected response" error — the
+// user's retry would then hit "you already have a pending submission". A
+// non-array value decodes to nil; an entry that is not an object of strings,
+// or whose message is blank, is dropped and the rest are kept.
+type SubmitAdvisories []SubmitAdvisory
+
+// UnmarshalJSON implements the tolerant decode described on SubmitAdvisories.
+func (a *SubmitAdvisories) UnmarshalJSON(b []byte) error {
+	*a = nil
+	var raw []json.RawMessage
+	if json.Unmarshal(b, &raw) != nil {
+		return nil
+	}
+	for _, r := range raw {
+		var adv SubmitAdvisory
+		if json.Unmarshal(r, &adv) != nil || strings.TrimSpace(adv.Message) == "" {
+			continue
+		}
+		*a = append(*a, adv)
+	}
+	return nil
 }
 
 // SubmitListingReadiness mirrors the server's SubmitListingReadiness

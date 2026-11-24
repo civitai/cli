@@ -882,6 +882,12 @@ Neither has a local counterpart: `civitai app validate` checks only the shape of
 `migrations`, because whether an op covers a change needs the previous approved
 manifest, which only the server has.
 
+An accepted submit may also carry server **advisories** — non-blocking
+suggestions such as giving the app its own look instead of the stock one. Each
+prints under the success line with its code and, when the server sends one, a
+docs link. They never block the submit or change its exit code, and a server
+that sends none (or a shape this CLI does not understand) prints nothing.
+
 Entries are ranked by **compressed** size, because that is what the upload is
 made of — a large text file that deflates to nothing is not what to delete. The
 usual culprit is a directory of screenshots or sample assets that `app submit`

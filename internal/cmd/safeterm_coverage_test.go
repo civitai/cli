@@ -611,6 +611,10 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	"printStorageMigrationWarnings": {"TestSubmitStorageMigrationTextCannotForgeALine",
 		"`app submit` success output: each storageMigrationWarnings string — the named test sends ESC and a " +
 			"newline-led forged line in one"},
+	// --- app submit: non-blocking advisories ---------------------------------
+	"printSubmitAdvisories": {"TestSubmitAdvisoriesCannotForgeALine",
+		"`app submit` success output: each advisory's message, code and docsUrl — the named test sends ESC, " +
+			"CR and a newline-led forged line in every one of the three fields"},
 	"printAppMetrics": {"TestTabwriterRenderersCannotBeForged",
 		"the scope and endpoint tokens — kept RAW on purpose (AGENTS.md item 8), which makes the " +
 			"strip the ONLY thing between an uploader-shaped token and the terminal — plus the window " +
