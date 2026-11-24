@@ -134,3 +134,88 @@ func TestSubmitAdvisoriesThroughClient(t *testing.T) {
 		})
 	}
 }
+
+// TestSubmitAdvisoriesSkipsEntriesBlankAfterSanitising: the decoder drops a
+// blank message BEFORE sanitising, so a message made only of stripped runes (a
+// zero-width space, a lone ESC) reaches the printer non-blank. It must be
+// skipped there, and the header must count only the entries kept.
+func TestSubmitAdvisoriesSkipsEntriesBlankAfterSanitising(t *testing.T) {
+	t.Run("all blank prints nothing", func(t *testing.T) {
+		var b bytes.Buffer
+		printSubmitAdvisories(&b, []appapi.SubmitAdvisory{
+			{Code: "zw", Message: "\u200b"}, {Code: "esc", Message: "\x1b"}, {Code: "mix", Message: "\u200b\x1b \u200b"},
+		})
+		if b.String() != "" {
+			t.Errorf("every message sanitises to empty, so nothing may print, got:\n%q", b.String())
+		}
+	})
+	t.Run("count is of kept entries", func(t *testing.T) {
+		var b bytes.Buffer
+		printSubmitAdvisories(&b, []appapi.SubmitAdvisory{
+			{Code: "zw", Message: "\u200b"}, {Code: "kept", Message: "a real note"}, {Code: "esc", Message: "\x1b"},
+		})
+		s := b.String()
+		assertInOrder(t, s, []string{"1 " + submitAdvisoriesHeaderText, "  - a real note [kept]"})
+		if strings.Contains(s, "[zw]") || strings.Contains(s, "[esc]") || strings.Count(s, "  - ") != 1 {
+			t.Errorf("a blank-after-sanitising entry printed a bullet:\n%s", s)
+		}
+	})
+}
+
+// TestSubmitAdvisoriesAreBounded: at most 5 entries print, then one
+// "(+N more)" line; each message is cut to 500 runes and each docsUrl to 300,
+// each with a trailing ellipsis. Fixture lengths overshoot the bounds rather
+// than land on them, and the runes are multi-byte so a byte-based cut shows.
+func TestSubmitAdvisoriesAreBounded(t *testing.T) {
+	t.Run("count", func(t *testing.T) {
+		var in []appapi.SubmitAdvisory
+		for i := 0; i < 8; i++ {
+			in = append(in, appapi.SubmitAdvisory{Code: "c" + string(rune('a'+i)), Message: "note " + string(rune('a'+i))})
+		}
+		var b bytes.Buffer
+		printSubmitAdvisories(&b, in)
+		s := b.String()
+		if got := strings.Count(s, "  - "); got != 5 {
+			t.Errorf("printed %d advisories, want 5:\n%s", got, s)
+		}
+		assertInOrder(t, s, []string{"8 " + submitAdvisoriesHeaderText, "note a [ca]", "note e [ce]", "(+3 more)"})
+		if strings.Contains(s, "note f") {
+			t.Errorf("the 6th advisory printed:\n%s", s)
+		}
+	})
+	t.Run("exactly five prints no more-line", func(t *testing.T) {
+		var in []appapi.SubmitAdvisory
+		for i := 0; i < 5; i++ {
+			in = append(in, appapi.SubmitAdvisory{Message: "n" + string(rune('a'+i))})
+		}
+		var b bytes.Buffer
+		printSubmitAdvisories(&b, in)
+		if got := strings.Count(b.String(), "  - "); got != 5 || strings.Contains(b.String(), "more)") {
+			t.Errorf("five advisories: want 5 bullets and no more-line, got %d:\n%s", got, b.String())
+		}
+	})
+	t.Run("runes", func(t *testing.T) {
+		msg := strings.Repeat("é", 700)
+		url := "https://docs.example.test/" + strings.Repeat("ü", 400)
+		var b bytes.Buffer
+		printSubmitAdvisories(&b, []appapi.SubmitAdvisory{{Code: "long", Message: msg, DocsURL: url}})
+		s := b.String()
+		// printFinding may wrap the message, so count its runes across the
+		// whole output rather than on one line.
+		if got := strings.Count(s, "é"); got != 500 {
+			t.Errorf("message printed %d runes of its 700, want 500", got)
+		}
+		if !strings.Contains(strings.Join(strings.Fields(s), " "), "é… [long]") {
+			t.Errorf("a truncated message must end with … before its code:\n%s", s)
+		}
+		var see string
+		for _, line := range strings.Split(s, "\n") {
+			if strings.HasPrefix(line, findingIndent+"See: ") {
+				see = strings.TrimPrefix(line, findingIndent+"See: ")
+			}
+		}
+		if got := len([]rune(see)); got != 301 || !strings.HasSuffix(see, "…") {
+			t.Errorf("docsUrl printed as %d runes (want 300 + …): %q", got, see)
+		}
+	})
+}

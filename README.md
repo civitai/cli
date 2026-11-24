@@ -885,7 +885,7 @@ manifest, which only the server has.
 An accepted submit may also carry server **advisories** — non-blocking
 suggestions such as giving the app its own look instead of the stock one. Each
 prints under the success line with its code and, when the server sends one, a
-docs link. They never block the submit or change its exit code, and a server
+docs link; at most five print, then a `(+N more)` line. They never block the submit or change its exit code, and a server
 that sends none (or a shape this CLI does not understand) prints nothing.
 
 Entries are ranked by **compressed** size, because that is what the upload is
