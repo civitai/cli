@@ -54,6 +54,8 @@ the manifest fields and the scopes are documented on the docs site, and the
   https://developer.civitai.com/apps/reference.md
 {{- end }}
 - Guide: https://developer.civitai.com/apps/guide.md
+- Theming — a distinct look (your own accent colour) is recommended, never
+  required: https://developer.civitai.com/apps/guide/theming.md#give-your-app-its-own-look
 - **`https://developer.civitai.com/apps/guide/earning.md`** — the three money
   rails. Fetch it before declaring a `goods` catalog. The three rules below are
   repeated in this file deliberately, because they are the ones a manifest can

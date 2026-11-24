@@ -70,6 +70,8 @@ the manifest fields and the scopes are documented on the docs site, and the
 - Reference (manifest, scopes, hooks, message bridge, CLI):
   https://developer.civitai.com/apps/reference.md
 - Guide: https://developer.civitai.com/apps/guide.md
+- Theming — a distinct look (your own accent colour) is recommended, never
+  required: https://developer.civitai.com/apps/guide/theming.md#give-your-app-its-own-look
 - **` + "`https://developer.civitai.com/apps/guide/earning.md`" + `** — the three money
   rails. Fetch it before declaring a ` + "`goods`" + ` catalog. The three rules below are
   repeated in this file deliberately, because they are the ones a manifest can
@@ -345,6 +347,13 @@ var docsURLSpellingLedger = map[string]string{
 	"internal/scaffold/templates/page-vite/src/index.css.tmpl": "the `@container` block's explanatory comment " +
 		"points at `/apps/guide/responsive`. It is the cheapest spelling in the ledger to overlook and one of " +
 		"the most-read: it sits in the stylesheet an author edits first",
+	"internal/scaffold/templates/page-elements/src/index.css.tmpl": "the commented `Make it yours` accent " +
+		"block points at `/apps/guide/theming.md#give-your-app-its-own-look` for the scoped token-override " +
+		"how-to. A shipped artefact: it sits in the stylesheet a `page-elements` author edits first",
+	"internal/scaffold/page_elements_own_look_test.go": "ownLookGuideURL, the guard that the page-elements " +
+		"accent comment names the theming guide, pins the URL as a const",
+	"internal/cmd/agent_setup_own_look_test.go": "wantThemingPointer, the golden for the `### Docs` list's " +
+		"theming line, spells `/apps/guide/theming.md#give-your-app-its-own-look`",
 	"internal/scaffold/query_prelude_guard_test.go": "a FIXTURE, not a link anybody follows: " +
 		"TestStripCommentsForQueryScan's \"a URL is not a comment start\" case needs a URL containing `//` " +
 		"inside a block comment, and names `/apps/guide/responsive`. Ledgered rather than excluded because " +
