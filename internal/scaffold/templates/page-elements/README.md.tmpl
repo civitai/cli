@@ -109,7 +109,11 @@ document store: declare each collection under the manifest's `storage` key),
 `app.requestGrants(scopes)`, and the host's own UI via `app.host`. The
 `@civitai/sdk` README documents each. Its legacy `app.storage.get/set/…` and
 `app.sharedStorage` stores are shut down: civitai.com refuses every call to them
-with `legacy_store_removed`, so use the document store.
+with `legacy_store_removed`, so use the document store. Because `initialize()`
+is called with no token (transport mode), `@civitai/sdk` 0.32.0 or later lets
+the platform serve this app's own collections through its data service; a
+`where` filter, a sort other than by key, an import and tallies go to
+civitai.com regardless.
 
 `civitai app elements <tag>` prints every attribute (inherited ones included),
 event and slot of a `<civitai-*>` element from the `@civitai/components`

@@ -234,8 +234,12 @@ fixed list. As of this CLI version:
   collection under the manifest's `storage` key, add the `apps:storage` scope
   (and the consent-gated `apps:storage:publish` to create or edit shared
   documents), and call `app.storage.collection<T>(name)` from `@civitai/sdk`
-  0.14.0 or later{{ if not .ElementsSDK }} — `@civitai/blocks-react` has no
-  document-store hook{{ end }}. Test against `createFakeStorage` from
+  0.32.0 or later{{ if not .ElementsSDK }} — `@civitai/blocks-react` has no
+  document-store hook{{ end }}, on the app that `initialize()` returns when
+  called with no token (transport mode). That lets the platform serve the app's
+  own collections through its data service; a `where` filter, a sort other than
+  by key, an import (`{ from }`) and tallies go to civitai.com regardless. Test
+  against `createFakeStorage` from
   `@civitai/sdk/testing`. {{ if .ElementsSDK }}`app.storage.get/set/delete/list`,
   `app.sharedStorage`{{ else }}`useAppStorage()`, `useSharedStorage()` (removed in
   `@civitai/blocks-react` 0.81.0){{ end }} and the `/api/v1/blocks/app-storage/`

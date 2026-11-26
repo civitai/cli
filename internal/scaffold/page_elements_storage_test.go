@@ -20,6 +20,24 @@ const wantPageElementsLegacyStoreSentence = "Its legacy `app.storage.get/set/…
 	"`app.sharedStorage` stores are shut down: civitai.com refuses every call to them " +
 	"with `legacy_store_removed`, so use the document store."
 
+// The sentence after it: why the template's no-token `initialize()` matters for
+// storage. @civitai/sdk 0.32.0 routes a collection to the app-data service only
+// under a block token (no-token `initialize()`), and only for the shapes the
+// service serves. Pinned WHOLE for the same reason as the one above.
+const wantPageElementsDataServiceSentence = "Because `initialize()` is called with no token " +
+	"(transport mode), `@civitai/sdk` 0.32.0 or later lets the platform serve this app's own " +
+	"collections through its data service; a `where` filter, a sort other than by key, an import " +
+	"and tallies go to civitai.com regardless."
+
+func TestPageElementsReadmeExplainsTheDataServiceRoute(t *testing.T) {
+	dir := renderPageElements(t)
+	readme := strings.Join(strings.Fields(readFile(t, filepath.Join(dir, "README.md"))), " ")
+	if !strings.Contains(readme, wantPageElementsDataServiceSentence) {
+		t.Errorf("page-elements README.md does not carry the data-service sentence WHOLE.\nwant: %s",
+			wantPageElementsDataServiceSentence)
+	}
+}
+
 func TestPageElementsReadmeSaysTheLegacyStoresAreShutDown(t *testing.T) {
 	dir := renderPageElements(t)
 	readme := strings.Join(strings.Fields(readFile(t, filepath.Join(dir, "README.md"))), " ")
