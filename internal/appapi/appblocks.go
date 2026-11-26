@@ -781,11 +781,12 @@ const submitBodyEnvelope = `{"bundleBase64":""}`
 // remembering to update an arithmetic term.
 func submitEnvelopeLen(prov Provenance) int {
 	commit, dirty := prov.sanitised()
-	if commit == "" && dirty == nil && prov.GitHubOIDCToken == "" && len(prov.OutdatedSDK) == 0 {
+	override := capSDKFloorOverride(prov.OutdatedSDK)
+	if commit == "" && dirty == nil && prov.GitHubOIDCToken == "" && len(override) == 0 {
 		return len(submitBodyEnvelope)
 	}
 	env, err := json.Marshal(submitBody{SourceCommit: commit, SourceDirty: dirty, GitHubOIDCToken: prov.GitHubOIDCToken,
-		SDKFloorOverride: prov.OutdatedSDK})
+		SDKFloorOverride: override})
 	if err != nil {
 		// Unreachable for these field types; degrade to the no-provenance
 		// envelope rather than reporting a nonsense size.
@@ -1020,11 +1021,13 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 	// stamp must never be able to turn a working submit into a failed one.
 	commit, dirty := prov.sanitised()
 	body, err := json.Marshal(submitBody{
-		BundleBase64:     base64.StdEncoding.EncodeToString(zipBytes),
-		SourceCommit:     commit,
-		SourceDirty:      dirty,
-		GitHubOIDCToken:  prov.GitHubOIDCToken,
-		SDKFloorOverride: prov.OutdatedSDK,
+		BundleBase64:    base64.StdEncoding.EncodeToString(zipBytes),
+		SourceCommit:    commit,
+		SourceDirty:     dirty,
+		GitHubOIDCToken: prov.GitHubOIDCToken,
+		// Capped to the server's schema, so an over-long pre-release string
+		// cannot turn --allow-outdated-sdk into a 400 (capSDKFloorOverride).
+		SDKFloorOverride: capSDKFloorOverride(prov.OutdatedSDK),
 	})
 	if err != nil {
 		// UNREACHABLE for these field types — submitEnvelopeLen says the same of

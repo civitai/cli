@@ -128,14 +128,7 @@ func LockedVersion(dir, buildCommand, name string) (string, bool) {
 // choice LockedVersion reads from.
 func LockfileFor(buildCommand string) (lockfile, addCmd string) {
 	pm := packageManagerFor(strings.TrimSpace(buildCommand))
-	switch pm.name {
-	case pmPnpm.name:
-		return pm.lockfile, "pnpm add"
-	case pmYarn.name:
-		return pm.lockfile, "yarn add"
-	default:
-		return pm.lockfile, "npm install"
-	}
+	return pm.lockfile, pm.addCmd
 }
 
 // VersionBelow reports whether installed orders BELOW minimum under SemVer

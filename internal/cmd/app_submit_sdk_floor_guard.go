@@ -124,7 +124,7 @@ func checkSDKFloor(ctx context.Context, read sdkFloorReader, warn io.Writer, dir
 	return nil, civitai.Tag(ErrOutdatedSDK, fmt.Errorf(
 		"refusing to submit — %s installs SDK packages below the platform minimum:%s\n"+
 			"Upgrade, commit the updated %s, and submit again:\n  %s\n"+
-			"Or pass %s to submit anyway; the moderator who reviews it is shown the versions and the override.",
+			"Or pass %s to submit anyway; the moderator who reviews it is shown the versions and the override",
 		lockfile, list.String(), lockfile, upgrade, AllowOutdatedSDKFlag))
 }
 

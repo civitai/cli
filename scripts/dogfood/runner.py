@@ -659,6 +659,8 @@ GATED_FLAGS = {
     # `app submit`'s waiver for the listing-completeness gate. It consumes
     # nothing, so it can never hide an app name from the prefix cap.
     "allow-incomplete-listing": "bool",
+    # `app submit`'s waiver for the outdated-SDK guard. Consumes nothing.
+    "allow-outdated-sdk": "bool",
     # `app listing set-icon|set-cover --red`: picks the civitai.red override slot.
     # It consumes nothing (the file stays positional).
     "red": "bool",

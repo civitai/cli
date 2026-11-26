@@ -82,7 +82,7 @@ func TestSDKFloorRefusesBelowTheMinimumNamingTheFlag(t *testing.T) {
 		"  @civitai/blocks-react 0.80.2 (platform minimum 0.87.0)\n" +
 		"Upgrade, commit the updated package-lock.json, and submit again:\n" +
 		"  npm install @civitai/sdk@latest @civitai/blocks-react@latest\n" +
-		"Or pass --allow-outdated-sdk to submit anyway; the moderator who reviews it is shown the versions and the override."
+		"Or pass --allow-outdated-sdk to submit anyway; the moderator who reviews it is shown the versions and the override"
 	if err.Error() != want {
 		t.Errorf("refusal text:\n got: %q\nwant: %q", err.Error(), want)
 	}
@@ -395,5 +395,93 @@ func TestAppSubmitHasTheAllowOutdatedSDKFlag(t *testing.T) {
 	}
 	if !strings.Contains(c.Long, "--allow-outdated-sdk") {
 		t.Error("`app submit --help` must document --allow-outdated-sdk")
+	}
+}
+
+// --- THE REAL CLIENT: appapi.GetSDKFloor against a fake server, through the guard ---
+
+// realFloorReader is the production reader (client.GetSDKFloor) pointed at a
+// server answering status/body for the floor route.
+func realFloorReader(t *testing.T, status int, body string) sdkFloorReader {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != appapi.SDKFloorPath {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return appapi.New(srv.URL, "", "").GetSDKFloor
+}
+
+// belowFloorProject is a project the guard refuses under a valid reply, so a
+// read failure that proceeds is visibly not a pass on the merits.
+func belowFloorProject(t *testing.T) string {
+	return sdkProject(t, map[string]string{"@civitai/sdk": "^0.31.0"}, map[string]string{"@civitai/sdk": "0.31.4"})
+}
+
+func TestSDKFloorRealClientValidReplyRefuses(t *testing.T) {
+	read := realFloorReader(t, http.StatusOK, `{"packages":[{"name":"@civitai/sdk","minimum":"0.36.2"}]}`)
+	_, _, err := runSDKGuard(t, read, belowFloorProject(t), "", false)
+	if !errors.Is(err, ErrOutdatedSDK) || !strings.Contains(err.Error(), "@civitai/sdk 0.31.4 (platform minimum 0.36.2)") {
+		t.Fatalf("a parsed 0.36.2 minimum must refuse 0.31.4 naming the server's number, got %v", err)
+	}
+}
+
+func TestSDKFloorRealClient500WarnsAndProceeds(t *testing.T) {
+	read := realFloorReader(t, http.StatusInternalServerError, `boom`)
+	got, warn, err := runSDKGuard(t, read, belowFloorProject(t), "", false)
+	if err != nil || got != nil {
+		t.Fatalf("a 500 must not refuse; got %v, %v", got, err)
+	}
+	if !strings.Contains(warn, "could not read the platform's SDK minimum (server returned 500 for /api/v1/blocks/sdk-floor)") ||
+		!strings.Contains(warn, "submitting without the outdated-SDK check") {
+		t.Errorf("the 500 must be announced, got %q", warn)
+	}
+}
+
+func TestSDKFloorRealClientHTMLWarnsAndProceedsRedacted(t *testing.T) {
+	const marker = "EDGE-PAGE-MARKER-91c2"
+	read := realFloorReader(t, http.StatusOK, "<!doctype html><html><body>"+marker+"</body></html>")
+	got, warn, err := runSDKGuard(t, read, belowFloorProject(t), "", false)
+	if err != nil || got != nil {
+		t.Fatalf("an HTML 200 must not refuse; got %v, %v", got, err)
+	}
+	if !strings.Contains(warn, "could not read the platform's SDK minimum (unexpected /api/v1/blocks/sdk-floor response") {
+		t.Errorf("the bad reply must be announced, got %q", warn)
+	}
+	if strings.Contains(warn, marker) || strings.Contains(warn, "<html>") {
+		t.Errorf("the warning must not echo the response body, got %q", warn)
+	}
+}
+
+func TestSDKFloorRealClientMissingPackagesKeyWarnsAndProceeds(t *testing.T) {
+	read := realFloorReader(t, http.StatusOK, `{"minimums":{"@civitai/sdk":"0.36.2"}}`)
+	got, warn, err := runSDKGuard(t, read, belowFloorProject(t), "", false)
+	if err != nil || got != nil {
+		t.Fatalf("a reply with no packages list must not refuse; got %v, %v", got, err)
+	}
+	if !strings.Contains(warn, "could not read the platform's SDK minimum (unexpected /api/v1/blocks/sdk-floor response: no packages list") {
+		t.Errorf("a reply with no packages list must warn, not pass silently; got %q", warn)
+	}
+}
+
+func TestSDKFloorRealClientEmptyPackagesIsSilentNoFloor(t *testing.T) {
+	read := realFloorReader(t, http.StatusOK, `{"packages":[]}`)
+	got, warn, err := runSDKGuard(t, read, belowFloorProject(t), "", false)
+	if err != nil || got != nil || warn != "" {
+		t.Fatalf("an explicit empty list is no floor: no refusal, nothing printed; got %v, %v, warn %q", got, err, warn)
+	}
+}
+
+func TestSDKFloorRealClient404SkipsWithANote(t *testing.T) {
+	read := realFloorReader(t, http.StatusNotFound, `{"message":"not found"}`)
+	got, warn, err := runSDKGuard(t, read, belowFloorProject(t), "", false)
+	if err != nil || got != nil {
+		t.Fatalf("a 404 must not refuse; got %v, %v", got, err)
+	}
+	if want := "Note: this server publishes no SDK minimum, so the outdated-SDK check is skipped.\n"; warn != want {
+		t.Errorf("note = %q, want %q", warn, want)
 	}
 }
