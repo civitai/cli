@@ -87,13 +87,20 @@ const platformUpdatePathsCap = 20
 // GIT_TERMINAL_PROMPT=0 because an automatic merge must not stop to ask for a
 // password — an unattended pull or submit gets a failed fetch instead.
 //
-// 🔴 A FETCH IS BOUNDED BY gitNetworkTimeout. A source repository that accepts
+// 🔴 A FETCH IS BOUNDED BY platformFetchTimeout. A source repository that accepts
 // the connection and then never answers would otherwise hold `app pull` and
 // `app submit` forever (git sets no read timeout of its own on smart HTTP). A
 // fetch runs in its own session, as gitOutput's ls-remote does, so the timeout
 // kills git's remote helper too rather than leaving it holding the pipe; a
 // fetch that times out is an ordinary failed fetch (nothing merged, nothing
 // reported).
+// platformFetchTimeout bounds one platform-update fetch. It is not
+// gitNetworkTimeout (5s, sized for one ls-remote round trip): a fetch moves
+// objects, and the first one from a source repo forked from the build repo
+// carries the app's whole history, so 5s would fail every pull and submit
+// over a slow link.
+var platformFetchTimeout = 60 * time.Second
+
 var platformGit = func(dir string, args ...string) (string, error) {
 	if _, err := exec.LookPath("git"); err != nil {
 		return "", errGitUnavailable
@@ -102,7 +109,7 @@ var platformGit = func(dir string, args ...string) (string, error) {
 	network := platformGitSubcommand(args) == "fetch"
 	if network {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, gitNetworkTimeout)
+		ctx, cancel = context.WithTimeout(ctx, platformFetchTimeout)
 		defer cancel()
 	}
 	c := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
@@ -117,7 +124,7 @@ var platformGit = func(dir string, args ...string) (string, error) {
 	c.Stderr = &buf
 	err := c.Run()
 	if network && ctx.Err() == context.DeadlineExceeded {
-		return buf.String() + fmt.Sprintf("\nfatal: git fetch timed out after %s", gitNetworkTimeout), err
+		return buf.String() + fmt.Sprintf("\nfatal: git fetch timed out after %s", platformFetchTimeout), err
 	}
 	return buf.String(), err
 }

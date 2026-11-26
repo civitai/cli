@@ -383,7 +383,7 @@ func TestPlatformUpdateDetachedHeadMergesButIsNotReported(t *testing.T) {
 	}
 }
 
-// G4: a fetch is bounded by gitNetworkTimeout. The server accepts the
+// G4: a fetch is bounded by platformFetchTimeout. The server accepts the
 // connection and never answers.
 func TestPlatformGitFetchIsBoundedByTheNetworkTimeout(t *testing.T) {
 	requireGit(t)
@@ -413,9 +413,9 @@ func TestPlatformGitFetchIsBoundedByTheNetworkTimeout(t *testing.T) {
 			c.Close()
 		}
 	})
-	orig := gitNetworkTimeout
-	gitNetworkTimeout = 300 * time.Millisecond
-	t.Cleanup(func() { gitNetworkTimeout = orig })
+	orig := platformFetchTimeout
+	platformFetchTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { platformFetchTimeout = orig })
 	repo := t.TempDir()
 	mustGit(t, "", "init", "-q", repo)
 
@@ -441,7 +441,7 @@ func TestPlatformGitFetchIsBoundedByTheNetworkTimeout(t *testing.T) {
 			t.Fatalf("took %s against a 300ms timeout", el)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("platformGit fetch is not bounded: still running after 10s against a 300ms gitNetworkTimeout")
+		t.Fatal("platformGit fetch is not bounded: still running after 10s against a 300ms platformFetchTimeout")
 	}
 }
 

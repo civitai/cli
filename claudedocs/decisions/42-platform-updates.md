@@ -173,11 +173,12 @@ the next run from a branch that contains it reports it. Pinned by
 
 ## 12. Fetches are bounded, and printed commands are pasteable
 
-Every `platformGit` fetch runs under `gitNetworkTimeout`, in its own session so
-the timeout also kills git's remote helper; a timeout is an ordinary failed
-fetch. Pinned by `TestPlatformGitFetchIsBoundedByTheNetworkTimeout`. 🟡 That
-constant is 5s, sized for `ls-remote`: a large first fetch of the source history
-over a slow link can exceed it and fail every run. The printed hand-merge and
+Every `platformGit` fetch runs under `platformFetchTimeout` (60s), in its own
+session so the timeout also kills git's remote helper; a timeout is an ordinary
+failed fetch. Pinned by `TestPlatformGitFetchIsBoundedByTheNetworkTimeout`. It is
+deliberately not `gitNetworkTimeout` (5s, sized for one `ls-remote`): the first
+fetch from a source repo forked from the build repo carries the app's whole
+history. The printed hand-merge and
 cherry-pick commands single-quote the directory and the URL (`shellQuote`) and
 carry the credential helper as `-c` options, so they work in a checkout
 `civitai app pull` never configured. Pinned literally by
