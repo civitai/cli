@@ -226,6 +226,10 @@ func validateDir(dir string, projectState bool) (Result, error) {
 	res.Errors = append(res.Errors, storageCollectionSchemaChecks(generic)...)
 	res.Errors = append(res.Errors, storageManifestPatternCapChecks(generic, res.Errors)...)
 	res.Errors = append(res.Errors, storageScopeRuleChecks(generic, !hasFindingUnder(res.Errors, "storage"))...)
+	// Counters, marks and write "none" were removed (civitai #10391). Appended
+	// AFTER the scope rules: the server refuses them in its submit-time
+	// migration check, not its parser, so they must not hold the scope rules back.
+	res.Errors = append(res.Errors, storageRemovedPrimitiveChecks(generic)...)
 	res.Warnings = append(res.Warnings, storageFeatureGateWarnings(generic)...)
 	res.Warnings = append(res.Warnings, storageCollectionSchemaWarnings(generic)...)
 

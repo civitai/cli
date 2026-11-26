@@ -35,7 +35,10 @@ const (
 	wantStorageBulletHead = "**Store data in the document store, not the legacy stores.** Declare each " +
 		"collection under the manifest's `storage` key, add the `apps:storage` scope (and the consent-gated " +
 		"`apps:storage:publish` to create or edit shared documents), and call " +
-		"`app.storage.collection<T>(name)` from `@civitai/sdk` 0.32.0 or later"
+		"`app.storage.collection<T>(name)` from `@civitai/sdk` 0.33.0 or later"
+	// The stated minimum is 0.33.0, not 0.32.0 (which added the data-service
+	// route): 0.33.0 removed the tally, publish and legacy key/value methods, so
+	// its typings offer only what civitai.com still serves (SDK CHANGELOG 0.33.0).
 	// wantStorageBulletService follows the per-arm blocks-react clause. @civitai/sdk
 	// 0.32.0 sends a collection to the platform's app-data service only when the
 	// host's BLOCK_INIT carries `appData` AND the frame holds a block token —
@@ -92,7 +95,7 @@ func TestTheBlockPointsStorageAtTheDocumentStore(t *testing.T) {
 					shape.Kind, sdk, want, norm)
 			}
 			for _, retired := range []string{"the one to prefer", "consolidating on them", "they still work",
-				"`@civitai/sdk` 0.14.0 or later", "tallies"} {
+				"`@civitai/sdk` 0.14.0 or later", "`@civitai/sdk` 0.32.0 or later", "tallies"} {
 				if strings.Contains(norm, retired) {
 					t.Errorf("kind %q sdk=%t: the block still says %q about the legacy shared-storage routes",
 						shape.Kind, sdk, retired)

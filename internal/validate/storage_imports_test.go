@@ -25,7 +25,11 @@ import (
 // The fixture is that real fork seed manifest, MINUS its `iframe.src` key:
 // iframe.src is server-owned, the CLI refusing it is intended
 // (TestValidateRejectsDevSetIframeSrc), and the seed carrying it is a separate
-// platform defect. Every expected message below is written out literally, not
+// platform defect. It also carries no `marks`, `counters` or `write: "none"`
+// collection: those were removed (civitai #10391), and the platform's fork seed
+// now strips them (app-fork-start.service.ts stripDeprecatedStoragePrimitives),
+// so `records.marks` and the `generator_marks` collection are gone from the
+// fixture as they are from today's seed. Every expected message below is written out literally, not
 // read from the schema, so a schema that stops describing imports goes red here.
 
 // forkManifest returns the fork fixture decoded, for a test to mutate.

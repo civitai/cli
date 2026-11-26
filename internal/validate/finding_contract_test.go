@@ -1233,7 +1233,7 @@ func fieldCoverageCorpus() []fieldFixture {
 			  "storage": {"collections": {
 			    "cov_log": {"visibility": "private", "kind": "log"},
 			    "cov_anyone": {"visibility": "shared", "write": "anyone"},
-			    "cov_owner": {"visibility": "shared", "write": "owner", "marks": ["star"]},
+			    "cov_owner": {"visibility": "shared", "write": "owner"},
 			    "cov_ttl": {"visibility": "private", "ttlSeconds": 120},
 			    "cov_daily": {"visibility": "shared", "write": "own", "dailyWritesPerAuthor": 10},
 			    "cov_registry": {"visibility": "shared", "write": "own", "registry": "public"},

@@ -141,11 +141,26 @@ func TestCollectionMigrationsRefused(t *testing.T) {
 // TestCollectionMigrationsNotOnWriteNone — no document body is ever written to
 // a write "none" collection, so a migration there would migrate nothing; the
 // vendored schema refuses the key there. The twin is the same collection
-// without it.
+// without it. write "none" and counters were removed (civitai #10391) but a
+// grandfathered collection can keep them, so the rule still matters; their own
+// removed-primitive errors are set aside here.
 func TestCollectionMigrationsNotOnWriteNone(t *testing.T) {
 	const plays = `{"visibility":"shared","write":"none","counters":["plays"]`
-	assertCleanResult(t, "twin without migrations", docManifest(oneCollection("plays", plays+`}`), "apps:storage"))
-	assertRefusedUnderMigrations(t,
-		docManifest(oneCollection("plays", plays+`,"migrations":[{"op":"remove","path":"/x"}]}`), "apps:storage"),
-		"storage.collections.plays.migrations")
+	twin := manifestOnlyResult(t, docManifest(oneCollection("plays", plays+`}`), "apps:storage"))
+	if rest := withoutRemovedPrimitives(twin.Errors); len(rest)+len(twin.Warnings) != 0 {
+		t.Errorf("twin without migrations: want only the removed-primitive errors, got errors:%s\n warnings:%s",
+			describe(rest), describe(twin.Warnings))
+	}
+	fs := withoutRemovedPrimitives(manifestOnlyFindings(t,
+		docManifest(oneCollection("plays", plays+`,"migrations":[{"op":"remove","path":"/x"}]}`), "apps:storage")))
+	const at = "storage.collections.plays.migrations"
+	if len(fs) == 0 {
+		t.Fatalf("want an error at or under %s, got none besides the removed-primitive ones", at)
+	}
+	for _, f := range fs {
+		if f.Field != at && !strings.HasPrefix(f.Field, at+".") && !strings.HasPrefix(f.Field, at+"[") {
+			t.Errorf("error outside %s — the fixture is broken, not the op refused:%s", at, describe(fs))
+			return
+		}
+	}
 }

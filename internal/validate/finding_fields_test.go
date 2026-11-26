@@ -200,6 +200,17 @@ func findingFieldLedger() []fieldExpectation {
 		{"is inside the build output (outputDir)", "storage.collections.cov_hook_out.hook.file",
 			"the refused VALUE is the hook's file; outputDir is deliberate (the build needs it), so the " +
 				"file is what moves — and the server's message names `.file`"},
+		{`cov_dup.marks: marks were removed`, "storage.collections.cov_dup.marks",
+			"counters, marks and write \"none\" were removed (civitai #10391): the remedy is to delete " +
+				"the declaring key, so the finding names that key, as the server's message does"},
+		{`cov_dup.counters: counters were removed`, "storage.collections.cov_dup.counters",
+			"the removed counters: the key to delete"},
+		{`cov_dup.write: "none" was removed`, "storage.collections.cov_dup.write",
+			"the removed write policy: the value to change"},
+		{`cov_schema_none.counters: counters were removed`, "storage.collections.cov_schema_none.counters",
+			"the removed counters: the key to delete"},
+		{`cov_schema_none.write: "none" was removed`, "storage.collections.cov_schema_none.write",
+			"the removed write policy: the value to change"},
 		{"as both a counter and a mark", "storage.collections.cov_dup",
 			"a relationship between two keys OF ONE collection, either of which may be renamed — " +
 				"the collection is the smallest location that holds both"},
