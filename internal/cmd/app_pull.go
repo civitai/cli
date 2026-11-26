@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -175,7 +176,23 @@ rotated by this.
 
 An app with no source repository has a build repository only once its FIRST
 version has been submitted as a ZIP and approved; before then the command tells
-you so instead of failing obscurely.`,
+you so instead of failing obscurely.
+
+PLATFORM UPDATES: Civitai staff can push an update to your app (an SDK bump,
+say) as one commit in its source repository. After syncing, this command asks
+for pending ones and merges each into the checkout, oldest first, with
+` + "`git merge --no-ff <commit>`" + ` — the exact commit Civitai recorded, fetched
+from the source repository by URL (no remote is added), never the branch tip.
+Each merge prints who made it and why: "<user> (verified Civitai staff)
+updated your app: <reason>" when the server confirms the commit, or the same
+line without the badge and a note that it could not be verified. It also lists
+the files it changes, and says so when it changes the manifest or a storage
+hook, which decide what your app is allowed to do. A branch with extra commits
+on top has them left out, and you are told. An update that conflicts is not
+merged: the merge is aborted, the command prints how to merge that commit by
+hand, and it exits non-zero. A checkout with uncommitted changes is never
+merged into; commit or discard them and pull again. A server without platform
+updates prints nothing.`,
 		Example: `  civitai app pull --app my-block               # clone into ./my-block
   civitai app pull ./my-block --app my-block    # clone/sync into ./my-block
   civitai app pull . --app my-block             # sync the current directory`,
@@ -224,7 +241,7 @@ you so instead of failing obscurely.`,
 			}
 
 			client := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
-			return runAppPull(cmd, client.GetForgejoCloneInfo, client.ListSubmissions, app, args)
+			return runAppPull(cmd, client.GetForgejoCloneInfo, client.ListSubmissions, client, app, args)
 		},
 	}
 	cmd.Flags().StringVar(&appFlag, "app", "", "the app slug (repo name) or appBlockId to pull (required)")
@@ -338,7 +355,7 @@ func pullReviewAdvice(app, status string) string {
 // runAppPull is the testable core: resolve the clone info, then clone (fresh
 // dir) or pull (existing checkout). Pure of config/flag plumbing; git runs
 // through gitRunner so tests can stub it.
-func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionLister, app string, args []string) error {
+func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionLister, updates platformUpdateAPI, app string, args []string) error {
 	ctx := context.Background()
 	info, err := fetch(ctx, app)
 	if err != nil {
@@ -430,6 +447,10 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionListe
 			return fmt.Errorf("git merge --ff-only failed: %w", err)
 		}
 		fmt.Fprintln(out, ui.Success(fmt.Sprintf("Synced %s.", info.Slug)))
+		// Staff platform updates merge in AFTER the sync, so they land on top of
+		// the current history (app_platform_updates.go). An error here is returned
+		// after the warnings below, which are about this checkout either way.
+		updErr := pullPlatformUpdates(ctx, updates, out, errOut, dir, info.Slug, sourceURL)
 		if buildCheckout {
 			fmt.Fprintf(errOut, "\n%s\n", ui.For(errOut).Warn(fmt.Sprintf(
 				"%s also has a SOURCE repository with its git history (%s); this checkout tracks the build repository of approved versions. "+
@@ -448,7 +469,7 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionListe
 					"Remove it with `git -C %s remote set-url %s %s`.",
 				l.name, dir, dir, l.name, l.stripped)))
 		}
-		return nil
+		return updErr
 	}
 
 	// Fresh dir → clone. git refuses to clone into a non-empty existing dir, so a
@@ -466,7 +487,28 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionListe
 	}
 	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Cloned %s into %s.", info.Slug, dir)))
 	fmt.Fprintf(out, "git authenticates through `civitai git-credential` (configured in %s/.git/config); no token is stored there.\n", dir)
-	return nil
+	return pullPlatformUpdates(ctx, updates, out, errOut, dir, info.Slug, sourceURL)
+}
+
+// pullPlatformUpdates is `app pull`'s step for staff platform updates: list the
+// app's pending ones and merge them into the checkout (mergePlatformUpdates).
+//
+// No updates — including a server without the procedure and the flag off — is
+// silent. A listing that FAILS is a warning, not an error: the sync itself
+// succeeded, and nothing was merged or lost; `app submit` is where an
+// unverifiable list refuses.
+func pullPlatformUpdates(ctx context.Context, api platformUpdateAPI, out, errOut io.Writer, dir, slug, sourceURL string) error {
+	updates, err := listPendingPlatformUpdates(ctx, api, slug)
+	if err != nil {
+		fmt.Fprintf(errOut, "\n%s\n", ui.For(errOut).Warn("The platform-update check for this app failed: "+puText(err.Error())))
+		return nil
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	fmt.Fprintln(out)
+	_, err = mergePlatformUpdates(ctx, api, out, dir, slug, func(context.Context) (string, error) { return sourceURL, nil }, updates)
+	return err
 }
 
 // pullRepoURL is the repository `app pull` clones for info: the app's SOURCE

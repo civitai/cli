@@ -288,7 +288,15 @@ import (
 // an item number placed immediately before a figure resolves to a nonexistent
 // item and fails this package. Put the figure first, or put the item number last
 // in its clause.
-const agentsMaxBytes = 30_500
+//
+// 🔴 RAISED BY 200, AND THE CEILING RE-DERIVED IN THE SAME COMMIT (2026-11-26).
+// The staff platform-update item added an index clause and a trigger block, 176
+// bytes, taking AGENTS.md from 30,458 to 30,634 — past the old 30,500 and past
+// the 30,600 ceiling as well, so this was a raise of BOTH constants, not an
+// eviction. MEASURED on the branch, not rounded. This constant is now 30,700 (66
+// bytes of headroom, which is under one trigger block: the next item evicts
+// prose or re-derives again). The ceiling's own re-derivation is on it.
+const agentsMaxBytes = 30_700
 
 // agentsMaxBytesCeiling bounds agentsMaxBytes itself, so the budget above cannot
 // be turned into unlimited slack by editing one number.
@@ -313,7 +321,13 @@ const agentsMaxBytes = 30_500
 // and still pass, which is the same "a ceiling nobody bounds" failure one level
 // up. Whoever changes the shape of this file again re-derives this from the new
 // achieved size in the same commit.
-const agentsMaxBytesCeiling = 30_600
+//
+// RE-DERIVED 2026-11-26 from the achieved 30,634 bytes: re-inlining the same
+// three bodies (5,381 net) now lands at 36,015, far above 30,800, so the
+// property above still holds — more strictly than when it was first chosen,
+// because the achieved size moved up by less than the bound did. 30,800 leaves
+// this constant 100 bytes of slack over agentsMaxBytes, as before.
+const agentsMaxBytesCeiling = 30_800
 
 // agentsMinBytes is the POSITIVE CONTROL. A truncated, empty or wrongly-located
 // AGENTS.md is comfortably under any ceiling, and "0 bytes, well within budget"

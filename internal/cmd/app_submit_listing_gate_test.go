@@ -97,6 +97,10 @@ func gateServer(t *testing.T, rows []map[string]any, listMineStatus int) (*httpt
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"result": map[string]any{"data": map[string]any{"json": rows}},
 			})
+		case strings.HasPrefix(r.URL.Path, "/api/trpc/appPlatformUpdates."):
+			// A server without staff platform updates (tRPC's 404): no updates.
+			// Without this arm the read would land in `default` and count as a submit.
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			submitted = true
 			w.Header().Set("Content-Type", "application/json")

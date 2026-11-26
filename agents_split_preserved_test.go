@@ -604,6 +604,10 @@ var bornSplitItems = []string{
 	// against a contract rather than a server; AGENTS.md had 129 bytes of
 	// headroom under agentsMaxBytes when it arrived.
 	"claudedocs/decisions/41-platform-feedback.md",
+	// Item 42 was written straight into claudedocs/decisions/ as well: seven
+	// separate decisions written against a server contract that had not merged,
+	// and AGENTS.md had 42 bytes of headroom under agentsMaxBytes when it arrived.
+	"claudedocs/decisions/42-platform-updates.md",
 }
 
 // splitItemsFloor is the CI-SIDE KEEPER for bornSplitItems: the set of item

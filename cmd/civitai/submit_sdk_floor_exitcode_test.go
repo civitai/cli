@@ -101,6 +101,9 @@ func TestSubmitSDKFloorProcessExitStatusEndToEnd(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]any{
 						"result": map[string]any{"data": map[string]any{"json": []map[string]any{e2eGateRow("onsite")}}},
 					})
+				case strings.HasPrefix(r.URL.Path, "/api/trpc/appPlatformUpdates."):
+					// A server without staff platform updates (tRPC's 404): no updates.
+					w.WriteHeader(http.StatusNotFound)
 				default:
 					submits++
 					_ = json.NewEncoder(w).Encode(map[string]any{

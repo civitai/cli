@@ -243,6 +243,7 @@ Item 38 is what the read path may CLAIM about the bytes it prints.
 Item 39 is the FOURTH half of `agent-setup`: the only thing this CLI writes
 outside the project, in a file the user's login shell executes.
 Items 40–41 are feedback verbs.
+Item 42 is the staff platform-update merge.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -458,6 +459,9 @@ item must carry a trigger that is a routing question rather than a label
 
 41. **Changing or exposing `civitai feedback`?**
     → evidence: claudedocs/decisions/41-platform-feedback.md
+
+42. **Changing what `app pull`/`submit` merge from staff, or when?**
+    → evidence: claudedocs/decisions/42-platform-updates.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

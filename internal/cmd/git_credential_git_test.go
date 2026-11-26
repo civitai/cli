@@ -51,6 +51,9 @@ type gitServer struct {
 	// withSource: the app also has a SOURCE repository, which clone-info returns
 	// as sourceHttpUrl (a different history from the build repository's).
 	withSource atomic.Bool
+	// extra, when set, is offered every request first and answers it by
+	// returning true (the platform-update tests' tRPC and submit routes).
+	extra func(w http.ResponseWriter, r *http.Request) bool
 }
 
 func (g *gitServer) repoURL() string { return g.srv.URL + "/civitai-apps/" + gitSlug + ".git" }
@@ -111,6 +114,9 @@ func newGitServerOpts(t *testing.T, withSource bool) *gitServer {
 		Env:  []string{"GIT_PROJECT_ROOT=" + g.root, "GIT_HTTP_EXPORT_ALL=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_SYSTEM=" + os.DevNull},
 	}
 	g.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if g.extra != nil && g.extra(w, r) {
+			return
+		}
 		if r.URL.Path == "/api/trpc/blocks.getMyForgejoCloneInfo" {
 			g.cloneInfo.Add(1)
 			if r.Header.Get("Authorization") != "Bearer civitai-login-token" {
@@ -130,6 +136,12 @@ func newGitServerOpts(t *testing.T, withSource bool) *gitServer {
 				info["sourceHttpUrl"] = g.sourceURL()
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"result": map[string]any{"data": map[string]any{"json": info}}})
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/trpc/") {
+			// Any other procedure is one this server does not have: tRPC's 404.
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"json": map[string]any{"message": "No procedure found on path", "code": -32004}}})
 			return
 		}
 		u, p, ok := r.BasicAuth()
