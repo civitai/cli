@@ -193,8 +193,15 @@ on top has them left out, and you are told. An update that conflicts is not
 merged: the merge is aborted, the command prints how to merge that commit by
 hand, and it exits non-zero; every later pull retries it, and reports it merged
 once it applies or once you have merged that commit by hand and committed. A
-checkout with uncommitted changes is never merged into; commit or discard them
-and pull again. A server without platform updates prints nothing.`,
+merge git stops without a conflict (a failing commit signer or hook) is aborted
+and reported as that. An app directory with uncommitted changes is never merged
+into; commit or discard them and pull again (changes elsewhere in a larger
+repository do not count unless the merge would touch them). A checkout of the
+build repository, or of any history the source repository does not share, is
+not merged into: the command prints the git fetch + cherry-pick that applies
+the commit there. On a detached HEAD the update is merged but not reported
+merged: the merge commit is on no branch until you push or branch it. A server
+without platform updates prints nothing.`,
 		Example: `  civitai app pull --app my-block               # clone into ./my-block
   civitai app pull ./my-block --app my-block    # clone/sync into ./my-block
   civitai app pull . --app my-block             # sync the current directory`,

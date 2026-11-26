@@ -928,12 +928,17 @@ upload asks for open updates (pending, or not yet merged after a conflict) and
 merges each into the checkout first, the
 same way [`app pull`](#pull-your-apps-repository-app-pull) does, so the bundle
 carries it; push the merge afterwards so your own repository keeps it. Submit
-**refuses** while an update is unmerged (it conflicts, the tree has uncommitted
-changes, or the directory is not a git checkout), because a bundle built
-without it would silently drop it. `--allow-unmerged-platform-update` submits
-without it and lists what it left out; it is not recorded with the submission.
-A server without platform updates prints nothing, and a check that fails warns
-and the submit goes ahead.
+**refuses** while an update is unmerged (it conflicts, the app directory has
+uncommitted changes, the directory is not a git checkout, or the checkout shares
+no history with the source repository), because a bundle built without it would
+silently drop it. The **server checks too**: it refuses any bundle missing a
+staff update that no approved version has shipped yet (`platform_update_missing`;
+the CLI lists the updates it names). `--allow-unmerged-platform-update` submits
+without it, lists what it left out, and is sent with the submission
+(`allowUnmergedPlatformUpdate: true`), where it is **recorded for the moderator**
+who reviews it. A server without platform updates prints nothing, and a client
+check that fails warns and the submit goes ahead (the server's check still
+applies).
 
 That last ceiling is **10485760 bytes** of base64 JSON body, and `app submit`
 refuses **before uploading**, so an oversize bundle costs you nothing. The number
@@ -1293,10 +1298,20 @@ aborted, Civitai is told, and the command prints the `git fetch … && git merge
 <commit>` that merges it by hand, then exits `1`. The update stays open: every
 later pull retries it, re-printing those instructions while it still
 conflicts, and reports it merged once it applies or once you have merged that
-commit by hand and committed. A checkout with uncommitted
-changes is never merged into (exit `1`; commit or discard, then pull again). A
-server without platform updates prints nothing; a server that answers "App not
-found" for the app prints one warning line.
+commit by hand and committed. The printed commands quote the directory and the
+URL and carry the credential helper, so they paste as-is. A merge git stops
+without a conflict (a failing commit signer or hook) is aborted and reported as
+that, not as a conflict. An app directory with uncommitted changes is never
+merged into (exit `1`; commit or discard, then pull again); changes elsewhere
+in a larger repository do not count unless the merge would touch them. A
+checkout of the **build repository**, or of any history the source repository
+does not share, is not merged into: the command says so and prints the `git
+fetch <url> <commit> && git cherry-pick <commit>` that applies it there, or
+pull the source repository into a new directory. On a **detached HEAD** the
+update is merged, but the merge commit is on no branch, so the command says to
+push or branch it and does not report it merged. A server without platform
+updates prints nothing; a server that answers "App not found" for the app
+prints one warning line.
 
 A pulled tree's `block.manifest.json` carries the platform-stamped
 `iframe.src` (`https://<blockId>.civit.ai/`); `civitai app validate` accepts that

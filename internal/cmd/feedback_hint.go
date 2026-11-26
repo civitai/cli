@@ -156,6 +156,11 @@ func submitRefusalIsPlatformFriction(err error) bool {
 	if !errors.As(err, &refused) {
 		return false
 	}
+	// The server's platform-update check is the caller's to fix (merge the
+	// update, or pass the override), whatever status it arrives with.
+	if errors.Is(err, appapi.ErrPlatformUpdateMissing) {
+		return false
+	}
 	s := refused.Status
 	return s == http.StatusBadRequest || s == http.StatusRequestEntityTooLarge || s >= http.StatusInternalServerError
 }

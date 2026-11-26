@@ -46,6 +46,10 @@ type puFake struct {
 	listCalls  int
 	// submitBody records a submit-version body, for the submit tests.
 	submitBody map[string]json.RawMessage
+	// submitStatus, when non-zero, is the submit route's refusal status, with
+	// submitResp as its body (the server's own platform-update check).
+	submitStatus int
+	submitResp   string
 }
 
 func (f *puFake) resolved() []puResolve {
@@ -132,6 +136,11 @@ func (f *puFake) handle(w http.ResponseWriter, r *http.Request) bool {
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &f.submitBody)
 		w.Header().Set("Content-Type", "application/json")
+		if f.submitStatus != 0 {
+			w.WriteHeader(f.submitStatus)
+			_, _ = io.WriteString(w, f.submitResp)
+			return true
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"publishRequestId": "pubreq_pu", "slug": gitSlug, "version": "0.6.1", "status": "pending"})
 		return true
 	}
@@ -189,6 +198,9 @@ func (e *puEnv) staffCommit(t *testing.T, base, branch, msg string, files map[st
 	mustGit(t, "", "clone", "-q", e.srcBare(), work)
 	mustGit(t, work, "checkout", "-q", "-B", branch, "origin/"+base)
 	for p, c := range files {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(work, p)), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(filepath.Join(work, p), []byte(c), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -324,7 +336,7 @@ func TestPlatformUpdateConflictIsAbortedAndReported(t *testing.T) {
 		"  Files: update shared.txt\n" +
 		"  Conflicts in: shared.txt\n" +
 		"To merge it by hand, merge the recorded commit " + sha + " (not the branch):\n" +
-		"  git -C my-block fetch " + e.g.sourceURL() + " " + puBranch + " && git -C my-block merge " + sha + "\n" +
+		"  " + puHandMerge(e, "my-block", sha) + "\n" +
 		"then resolve the conflicts and commit. The next `civitai app pull` reports it merged.\n"
 	if !strings.Contains(out, want) {
 		t.Fatalf("want:\n%s\ngot:\n%s", want, out)
@@ -573,6 +585,10 @@ func TestSubmitOverrideSubmitsWithoutTheUpdate(t *testing.T) {
 	if e.fake.submitBody == nil {
 		t.Fatal("the override did not reach the submit route")
 	}
+	// The override rides the body, for the server's own check and the reviewer.
+	if got := string(e.fake.submitBody["allowUnmergedPlatformUpdate"]); got != "true" {
+		t.Fatalf("allowUnmergedPlatformUpdate = %q, want true", got)
+	}
 	want := "Submitting WITHOUT merging 1 platform update(s) from Civitai staff (--allow-unmerged-platform-update):\n" +
 		"  Platform update " + puID + " from mod-jane: " + puReason + "\n" +
 		"  Files: create UPDATE.md\n"
@@ -606,6 +622,9 @@ func TestSubmitMergesAPendingUpdateIntoTheBundle(t *testing.T) {
 	}
 	if e.fake.submitBody == nil {
 		t.Fatal("the submit route was not reached")
+	}
+	if raw, ok := e.fake.submitBody["allowUnmergedPlatformUpdate"]; ok {
+		t.Fatalf("allowUnmergedPlatformUpdate sent without the flag: %s", raw)
 	}
 	if files := strings.Join(bundleFiles(t, e.fake.submitBody), ","); !strings.Contains(","+files+",", ",UPDATE.md,") {
 		t.Fatalf("the bundle does not carry the merged update; files: %s", files)
@@ -694,7 +713,7 @@ func TestPlatformUpdateConflictedIsRetriedAndReprinted(t *testing.T) {
 		"  Files: update shared.txt\n" +
 		"  Conflicts in: shared.txt\n" +
 		"To merge it by hand, merge the recorded commit " + sha + " (not the branch):\n" +
-		"  git -C my-block fetch " + e.g.sourceURL() + " " + puBranch + " && git -C my-block merge " + sha + "\n"
+		"  " + puHandMerge(e, "my-block", sha) + "\n"
 	if !strings.Contains(out, want) {
 		t.Fatalf("second pull did not re-print the instructions.\nwant:\n%s\ngot:\n%s", want, out)
 	}

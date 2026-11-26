@@ -264,3 +264,111 @@ func platformUpdatesError(path string, status int, raw []byte) error {
 	}
 	return civitai.TagStatus(status, fmt.Errorf("%s failed (HTTP %d): %s", trpcName(path), status, msg))
 }
+
+// PlatformUpdateMissingCode is the submit route's error code for a bundle that
+// lacks a staff platform update not yet shipped in an approved version, sent
+// without `allowUnmergedPlatformUpdate` (the server half of the submit check).
+const PlatformUpdateMissingCode = "platform_update_missing"
+
+// ErrPlatformUpdateMissing classifies the server's platform_update_missing
+// refusal of a submit.
+var ErrPlatformUpdateMissing = errors.New("the server refused the submit: the bundle is missing a staff platform update")
+
+// MissingPlatformUpdate is one entry of the refusal's `details.updates`. Every
+// field is optional and read leniently (decodeMissingPlatformUpdate): the
+// client prints what arrived and nothing else.
+type MissingPlatformUpdate struct {
+	ID     string
+	Reason string
+	By     string   // the staff username, "" when absent
+	Paths  []string // changed paths, "" entries dropped
+}
+
+// decodeMissingPlatformUpdate reads one entry. `by` may be {username} or a bare
+// string; `paths` may be strings or {path, operation} objects. A field in any
+// other shape is left empty rather than dropping the entry.
+func decodeMissingPlatformUpdate(raw json.RawMessage) (MissingPlatformUpdate, bool) {
+	var in struct {
+		ID     string          `json:"id"`
+		Reason string          `json:"reason"`
+		By     json.RawMessage `json:"by"`
+		Paths  json.RawMessage `json:"paths"`
+	}
+	if json.Unmarshal(raw, &in) != nil {
+		return MissingPlatformUpdate{}, false
+	}
+	u := MissingPlatformUpdate{ID: in.ID, Reason: in.Reason}
+	var byObj struct {
+		Username *string `json:"username"`
+	}
+	var byStr string
+	if json.Unmarshal(in.By, &byObj) == nil && byObj.Username != nil {
+		u.By = *byObj.Username
+	} else if json.Unmarshal(in.By, &byStr) == nil {
+		u.By = byStr
+	}
+	var strs []string
+	var objs []PlatformUpdatePath
+	if json.Unmarshal(in.Paths, &strs) == nil {
+		for _, p := range strs {
+			if p != "" {
+				u.Paths = append(u.Paths, p)
+			}
+		}
+	} else if json.Unmarshal(in.Paths, &objs) == nil {
+		for _, p := range objs {
+			if p.Path != "" {
+				u.Paths = append(u.Paths, p.Path)
+			}
+		}
+	}
+	return u, true
+}
+
+// PlatformUpdateMissingError is the server's platform_update_missing refusal.
+// Error() is the same `server returned <status>: <message>` serverError writes,
+// so the text and the status tag are what any other refusal would carry;
+// Updates is what the server listed, nil when it listed nothing this client can
+// read.
+type PlatformUpdateMissingError struct {
+	Status  int
+	Message string
+	Updates []MissingPlatformUpdate
+}
+
+func (e *PlatformUpdateMissingError) Error() string {
+	return fmt.Sprintf("server returned %d: %s", e.Status, e.Message)
+}
+
+// Is makes errors.Is(err, ErrPlatformUpdateMissing) true.
+func (e *PlatformUpdateMissingError) Is(target error) bool { return target == ErrPlatformUpdateMissing }
+
+// submitRefusal is serverError for the submit route, plus the one refusal the
+// CLI explains rather than relays: platform_update_missing. The code is read at
+// the top level of the body (`{code, message, details}`).
+//
+// 🔴 TOLERANT OF THE SHAPE. Only the code decides; `details.updates` is decoded
+// on its own, and a details this client cannot read (absent, another shape, a
+// future one) leaves Updates nil — the refusal is still recognised and the
+// server's message still printed. Any other code, or none, is serverError's.
+func submitRefusal(status int, raw []byte) error {
+	var head struct {
+		Code    string          `json:"code"`
+		Details json.RawMessage `json:"details"`
+	}
+	if json.Unmarshal(raw, &head) != nil || head.Code != PlatformUpdateMissingCode {
+		return serverError(status, raw)
+	}
+	e := &PlatformUpdateMissingError{Status: status, Message: serverMessage(raw)}
+	var details struct {
+		Updates []json.RawMessage `json:"updates"`
+	}
+	if len(head.Details) > 0 && json.Unmarshal(head.Details, &details) == nil {
+		for _, r := range details.Updates {
+			if u, ok := decodeMissingPlatformUpdate(r); ok {
+				e.Updates = append(e.Updates, u)
+			}
+		}
+	}
+	return civitai.TagStatus(status, e)
+}

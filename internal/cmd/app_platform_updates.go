@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/civitai/cli/internal/appapi"
 )
@@ -85,17 +86,63 @@ const platformUpdatePathsCap = 20
 // a relocating variable would point a merge at some other repository.
 // GIT_TERMINAL_PROMPT=0 because an automatic merge must not stop to ask for a
 // password — an unattended pull or submit gets a failed fetch instead.
+//
+// 🔴 A FETCH IS BOUNDED BY gitNetworkTimeout. A source repository that accepts
+// the connection and then never answers would otherwise hold `app pull` and
+// `app submit` forever (git sets no read timeout of its own on smart HTTP). A
+// fetch runs in its own session, as gitOutput's ls-remote does, so the timeout
+// kills git's remote helper too rather than leaving it holding the pipe; a
+// fetch that times out is an ordinary failed fetch (nothing merged, nothing
+// reported).
 var platformGit = func(dir string, args ...string) (string, error) {
 	if _, err := exec.LookPath("git"); err != nil {
 		return "", errGitUnavailable
 	}
-	c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	ctx := context.Background()
+	network := platformGitSubcommand(args) == "fetch"
+	if network {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, gitNetworkTimeout)
+		defer cancel()
+	}
+	c := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	c.Env = append(gitScrubbedEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0")
+	if network {
+		c.Env = append(c.Env, "GIT_ASKPASS=", "SSH_ASKPASS_REQUIRE=never")
+		c.WaitDelay = time.Second
+		detachFromTerminal(c)
+	}
 	var buf bytes.Buffer
 	c.Stdout = &buf
 	c.Stderr = &buf
 	err := c.Run()
+	if network && ctx.Err() == context.DeadlineExceeded {
+		return buf.String() + fmt.Sprintf("\nfatal: git fetch timed out after %s", gitNetworkTimeout), err
+	}
 	return buf.String(), err
+}
+
+// platformGitSubcommand is args' git subcommand: the first argument after any
+// leading `-c key=value` pairs (gitArgs puts the credential helper there).
+func platformGitSubcommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-c" {
+			i++
+			continue
+		}
+		return args[i]
+	}
+	return ""
+}
+
+// platformGitExitCode is the exit status of a git run that failed, or -1 when
+// git did not run to an exit (not found, killed).
+func platformGitExitCode(err error) int {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return -1
 }
 
 // platformUpdateRun is one pass of the flow over one checkout.
@@ -154,16 +201,25 @@ func mergePlatformUpdates(ctx context.Context, api platformUpdateAPI, out io.Wri
 		return 0, fmt.Errorf("%w: %s is not a git checkout, so %d platform update(s) from Civitai staff cannot be merged into it — "+
 			"get a checkout with `civitai app pull --app %s` and work from there", ErrUnmergedPlatformUpdate, dir, n, slug)
 	}
-	// 🔴 NEVER MERGE INTO UNCOMMITTED CHANGES. A merge that conflicts with them
-	// is refused by git, but one that does not would leave the owner's own
-	// unfinished work and the staff change tangled in one working tree, and the
-	// abort path below could not separate them. Untracked files are not counted:
-	// git refuses a merge that would overwrite one, and that refusal is reported.
-	status, err := platformGit(dir, "status", "--porcelain", "--untracked-files=no")
+	// 🔴 NEVER MERGE INTO UNCOMMITTED CHANGES TO THE APP. A merge that conflicts
+	// with them is refused by git, but one that does not would leave the owner's
+	// own unfinished work and the staff change tangled in one working tree, and
+	// the abort path below could not separate them. Untracked files are not
+	// counted: git refuses a merge that would overwrite one, and that refusal is
+	// reported.
+	//
+	// SCOPED TO THE APP DIRECTORY, exactly as `app submit`'s own dirty guard
+	// scopes (uncommittedAppPaths reuses its pathspec, prefix and packager
+	// rules): an app inside a monorepo is not blocked by a sibling package's
+	// unfinished work. A dirty file OUTSIDE the app that the merge would touch —
+	// or a staged change anywhere, since git wants the index to match HEAD — is
+	// still refused, by git itself, before it starts; mergeOne reports that
+	// refusal as uncommitted changes rather than as git's own text.
+	dirty, err := uncommittedAppPaths(dir)
 	if err != nil {
-		return 0, fmt.Errorf("%w: could not read the state of %s (%s); nothing was merged", ErrUnmergedPlatformUpdate, dir, gitErrLine(status))
+		return 0, fmt.Errorf("%w: could not read the state of %s (%s); nothing was merged", ErrUnmergedPlatformUpdate, dir, puText(err.Error()))
 	}
-	if strings.TrimSpace(status) != "" {
+	if len(dirty) > 0 {
 		for _, u := range updates {
 			printPlatformUpdateSummary(out, u, false, false)
 		}
@@ -196,6 +252,26 @@ func mergePlatformUpdates(ctx context.Context, api platformUpdateAPI, out io.Wri
 		}
 	}
 	return merged, nil
+}
+
+// uncommittedAppPaths is the TRACKED half of `app submit`'s dirty-tree verdict
+// for dir: the same `status -- .` pathspec, the same repo-root prefix and the
+// same bundleDirtyPaths filter, with untracked files left out (see the caller).
+// It reads through gitOutput, the read-only seam, because -z output must not
+// have git's stderr mixed into it.
+func uncommittedAppPaths(dir string) ([]gitStatusEntry, error) {
+	pfx, err := gitOutput(dir, "rev-parse", "--show-prefix")
+	if err != nil {
+		return nil, err
+	}
+	// Trim the line ending only: a prefix may begin with a space (see
+	// checkWorkTreeClean).
+	prefix := strings.TrimSuffix(strings.TrimSuffix(pfx, "\n"), "\r")
+	raw, err := gitOutput(dir, "-c", "status.relativePaths=false", "status", "--porcelain", "-z", "--untracked-files=no", "--", ".")
+	if err != nil {
+		return nil, err
+	}
+	return bundleDirtyPaths(raw, prefix, dir), nil
 }
 
 // gitArgs prefixes args with the credential helper, as `-c` options.
@@ -249,18 +325,49 @@ func (r *platformUpdateRun) mergeOne(ctx context.Context, u appapi.PlatformUpdat
 			ErrUnmergedPlatformUpdate, u.ID, sha)
 	}
 
+	// 🔴 A DETACHED HEAD IS NEVER REPORTED `merged`. The merge commit would be on
+	// no branch: the next checkout leaves it behind, and the server would have
+	// been told an update is in the app that is in no branch of it. So a
+	// detached checkout still merges (a submit's bundle then carries the
+	// update), says where the commit lives, and reports nothing; the next pull
+	// or submit from a branch that contains it reports it.
+	_, symErr := platformGit(r.dir, "symbolic-ref", "-q", "HEAD")
+	detached := symErr != nil
+
 	// Already in this history (merged by hand — the way out of a conflict — or
 	// merged by an earlier run whose report did not reach the server): report
 	// it merged with HEAD, merge nothing. HEAD is a commit that contains the
 	// update, which is all mergeCommitSha has to be.
 	if _, err := platformGit(r.dir, "merge-base", "--is-ancestor", sha, "HEAD"); err == nil {
+		fmt.Fprintf(r.out, "Platform update %s (commit %s) is already in %s.\n", u.ID, sha, r.dir)
+		printPlatformUpdateSummary(r.out, u, verified, true)
+		if detached {
+			fmt.Fprintf(r.out, "  HEAD is detached, so Civitai was not told it merged; run the command again from a branch that contains it.\n")
+			return false, nil
+		}
 		head, herr := platformGit(r.dir, "rev-parse", "HEAD")
 		if herr == nil {
 			r.resolve(ctx, u, appapi.PlatformUpdateMerged, strings.TrimSpace(head))
 		}
-		fmt.Fprintf(r.out, "Platform update %s (commit %s) is already in %s.\n", u.ID, sha, r.dir)
-		printPlatformUpdateSummary(r.out, u, verified, true)
 		return false, nil
+	}
+
+	// 🔴 NO COMMON ANCESTOR, NO MERGE. The update is a commit in the SOURCE
+	// repository's history; a checkout of the build repository (which `app
+	// pull` keeps syncing from it) or of any other unrelated history cannot
+	// merge it — git refuses unrelated histories, and forcing it would graft the
+	// whole source history in. That is not a conflict either, so nothing is
+	// reported: the update stays pending, and the owner is told how to get it.
+	// Exit 1 with no output is git's "none found"; any other failure (an unborn
+	// HEAD, say) falls through to the merge, which reports for itself.
+	if mbOut, err := platformGit(r.dir, "merge-base", "HEAD", sha); err != nil && platformGitExitCode(err) == 1 && strings.TrimSpace(mbOut) == "" {
+		fmt.Fprintf(r.out, "Platform update %s (commit %s) is in the history of %s's source repository, which this checkout of %s does not share (git finds no common ancestor), so nothing was merged.\n",
+			u.ID, sha, r.slug, r.dir)
+		printPlatformUpdateSummary(r.out, u, verified, true)
+		fmt.Fprintf(r.out, "  This is a checkout of the build repository, or of another history. Merge the update in a clone of the source repository (`civitai app pull <new dir> --app %s`), or apply it here by its commit:\n", r.slug)
+		fmt.Fprintf(r.out, "  %s\n", r.cherryPickCommand(sha))
+		return false, fmt.Errorf("%w: platform update %s was not merged: this checkout shares no history with %s's source repository, where the update lives (instructions above)",
+			ErrUnmergedPlatformUpdate, u.ID, r.slug)
 	}
 
 	if u.Status == appapi.PlatformUpdateStatusConflicted {
@@ -271,25 +378,39 @@ func (r *platformUpdateRun) mergeOne(ctx context.Context, u appapi.PlatformUpdat
 		"-m", "Merge Civitai platform update "+u.ID, sha)
 	if mergeErr != nil {
 		if _, err := platformGit(r.dir, "rev-parse", "-q", "--verify", "MERGE_HEAD"); err != nil {
-			// git refused before it started (an untracked file in the way, no
-			// committer identity, …): nothing to abort and nothing to report as a
-			// conflict, because the update was never tried against the tree.
+			// git refused before it started (local changes or an untracked file
+			// in the way, no committer identity, …): nothing to abort and nothing
+			// to report as a conflict, because the update was never tried against
+			// the tree.
+			if files := overwrittenByMerge(mergeOut); len(files) > 0 {
+				return false, fmt.Errorf("%w: platform update %s (commit %s) was not merged into %s: it would overwrite uncommitted changes in %s — commit or discard them, then run the command again",
+					ErrUnmergedPlatformUpdate, u.ID, sha, r.dir, strings.Join(files, ", "))
+			}
 			return false, fmt.Errorf("%w: git could not merge platform update %s (commit %s) into %s: %s",
 				ErrUnmergedPlatformUpdate, u.ID, sha, r.dir, puText(strings.TrimSpace(mergeOut)))
 		}
 		conflicted, _ := platformGit(r.dir, "diff", "--name-only", "--diff-filter=U")
 		_, _ = platformGit(r.dir, "merge", "--abort")
+		files := strings.Fields(conflicted)
+		if len(files) == 0 {
+			// 🔴 STOPPED WITH NO CONFLICTED FILE IS NOT A CONFLICT. The tree merged;
+			// git then failed to write the commit (commit.gpgsign with a broken
+			// gpg, a failing pre-merge-commit or commit-msg hook). Reporting it
+			// `conflicted` would tell the owner — and the server — that the
+			// update clashes with their work when it does not. Aborted above, and
+			// nothing is reported: the next run tries again.
+			return false, fmt.Errorf("%w: git could not complete the merge of platform update %s (commit %s) into %s (the merge was aborted): %s",
+				ErrUnmergedPlatformUpdate, u.ID, sha, r.dir, gitErrLine(mergeOut))
+		}
 		r.resolve(ctx, u, appapi.PlatformUpdateConflicted, "") // not again for one already conflicted
 		fmt.Fprintf(r.out, "Platform update %s (commit %s) conflicts with your changes in %s, so nothing was merged (the merge was aborted).\n", u.ID, sha, r.dir)
 		printPlatformUpdateSummary(r.out, u, verified, true)
-		if files := strings.Fields(conflicted); len(files) > 0 {
-			for i := range files {
-				files[i] = puText(files[i])
-			}
-			fmt.Fprintf(r.out, "  Conflicts in: %s\n", strings.Join(files, ", "))
+		for i := range files {
+			files[i] = puText(files[i])
 		}
+		fmt.Fprintf(r.out, "  Conflicts in: %s\n", strings.Join(files, ", "))
 		fmt.Fprintf(r.out, "To merge it by hand, merge the recorded commit %s (not the branch):\n", sha)
-		fmt.Fprintf(r.out, "  git -C %s fetch %s %s && git -C %s merge %s\n", r.dir, puText(r.sourceURL), u.Branch, r.dir, sha)
+		fmt.Fprintf(r.out, "  %s\n", r.handMergeCommand(u.Branch, sha))
 		fmt.Fprintln(r.out, "then resolve the conflicts and commit. The next `civitai app pull` reports it merged.")
 		return false, fmt.Errorf("%w: platform update %s conflicts with your changes — merge %s by hand (instructions above)",
 			ErrUnmergedPlatformUpdate, u.ID, sha)
@@ -300,14 +421,77 @@ func (r *platformUpdateRun) mergeOne(ctx context.Context, u appapi.PlatformUpdat
 		return true, fmt.Errorf("merged platform update %s but could not read the merge commit: %s", u.ID, gitErrLine(head))
 	}
 	mergeSha := strings.TrimSpace(head)
-	r.resolve(ctx, u, appapi.PlatformUpdateMerged, mergeSha)
+	if !detached {
+		r.resolve(ctx, u, appapi.PlatformUpdateMerged, mergeSha)
+	}
 	fmt.Fprintf(r.out, "Merged platform update %s (commit %s) into %s.\n", u.ID, sha, r.dir)
 	printPlatformUpdateSummary(r.out, u, verified, true)
 	if fetchHead != "" && fetchHead != sha {
 		fmt.Fprintf(r.out, "  Its branch %s has commits that are not part of the update (tip %s); they were left out. Only %s was merged.\n",
 			puText(u.Branch), fetchHead, sha)
 	}
+	if detached {
+		fmt.Fprintf(r.out, "  HEAD is detached, so the merge commit %s exists only in this checkout, on no branch: push it or merge it into your branch (e.g. `git -C %s branch <name> %s`). Civitai was not told it merged; the next pull or submit from a branch that contains it reports it.\n",
+			mergeSha, shellQuote(r.dir), mergeSha)
+	}
 	return true, nil
+}
+
+// overwrittenByMerge returns the paths git lists under "Your local changes to
+// the following files would be overwritten by merge:" (sanitised), or nil when
+// git said something else.
+func overwrittenByMerge(out string) []string {
+	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+	var files []string
+	in := false
+	for _, l := range lines {
+		if strings.Contains(l, "would be overwritten by merge:") {
+			in = true
+			continue
+		}
+		if !in {
+			continue
+		}
+		if l == "" || (l[0] != ' ' && l[0] != '\t') {
+			in = false
+			continue
+		}
+		if f := strings.TrimSpace(l); f != "" {
+			files = append(files, puText(f))
+		}
+	}
+	return files
+}
+
+// gitCommandPrefix is `git -C <dir> -c <helper>…`, shell-quoted, for a command
+// line printed for the owner to paste: the credential helper rides along with
+// -c, so it authenticates in a checkout `civitai app pull` never configured.
+func (r *platformUpdateRun) gitCommandPrefix() string {
+	var b strings.Builder
+	b.WriteString("git -C ")
+	b.WriteString(shellQuote(r.dir))
+	for _, kv := range r.helperCfg {
+		b.WriteString(" -c ")
+		b.WriteString(shellQuote(kv[0] + "=" + kv[1]))
+	}
+	return b.String()
+}
+
+// handMergeCommand is the printed hand-merge for a conflicted update: fetch the
+// branch, then merge the recorded sha (never the branch). branch and sha passed
+// the shape regexes in mergePlatformUpdates, so they need no quoting; the
+// directory and the URL do.
+func (r *platformUpdateRun) handMergeCommand(branch, sha string) string {
+	return r.gitCommandPrefix() + " fetch " + shellQuote(puText(r.sourceURL)) + " " + branch +
+		" && git -C " + shellQuote(r.dir) + " merge " + sha
+}
+
+// cherryPickCommand is the printed way to apply an update to a checkout that
+// shares no history with the source repository: fetch the recorded commit by
+// sha and cherry-pick it (one commit, so a cherry-pick is the whole change).
+func (r *platformUpdateRun) cherryPickCommand(sha string) string {
+	return r.gitCommandPrefix() + " fetch " + shellQuote(puText(r.sourceURL)) + " " + sha +
+		" && git -C " + shellQuote(r.dir) + " cherry-pick " + sha
 }
 
 // verify asks the server whether sha is a recorded update. Any failure is
@@ -395,8 +579,16 @@ func gitErrLine(s string) string {
 //
 // allowUnmerged (--allow-unmerged-platform-update) is the way past that. It
 // merges nothing and refuses nothing: it lists what is being left out, on
-// stderr, and the submit carries on. It is recorded nowhere server-side — the
-// submit body has no field for it today.
+// stderr, and the submit carries on. The submit body then carries
+// `allowUnmergedPlatformUpdate: true` (Provenance.AllowUnmergedPlatformUpdate),
+// which the server records for the moderator reviewing the submission.
+//
+// 🔴 THIS CHECK IS THE CLIENT HALF; THE SERVER IS THE BACKSTOP. The server
+// checks the uploaded bundle itself for every staff update not yet shipped in
+// an approved version and refuses the submit (`platform_update_missing`) unless
+// the override was sent — so an older CLI, a hand-built bundle or a checkout
+// this flow could not merge into is caught there too. doUpload explains that
+// refusal (platformUpdateMissingRefusal).
 //
 // A server without the procedure, or with the flag off, has no updates: silent.
 // So is the server's "App not found" (appapi.ErrPlatformUpdatesAppNotFound)
@@ -448,6 +640,49 @@ func submitPlatformUpdates(ctx context.Context, api platformUpdateAPI, cloneInfo
 		fmt.Fprintf(warn, "Merged %d platform update(s) into this checkout; the bundle below includes them. Push the merge so your own repository keeps it.\n", merged)
 	}
 	return merged, nil
+}
+
+// platformUpdateMissingRefusal explains the server's platform_update_missing
+// refusal of a submit: it lists the updates the server named (when it named
+// any in a shape this client reads) on warn, and returns err wrapped with the
+// way out. The server's own message is always in the returned text, so a
+// refusal with an unknown details shape still says what the server said.
+func platformUpdateMissingRefusal(warn io.Writer, missing *appapi.PlatformUpdateMissingError, err error) error {
+	if len(missing.Updates) > 0 {
+		fmt.Fprintf(warn, "Civitai refused this submit: the bundle does not contain %d platform update(s) from Civitai staff that no approved version has shipped yet:\n", len(missing.Updates))
+		for _, u := range missing.Updates {
+			id := puText(strings.TrimSpace(u.ID))
+			if id == "" {
+				id = "(no id)"
+			}
+			line := "  " + id
+			if by := puText(strings.TrimSpace(u.By)); by != "" {
+				line += " from " + by
+			}
+			if reason := puText(strings.TrimSpace(u.Reason)); reason != "" {
+				line += ": " + reason
+			}
+			fmt.Fprintln(warn, line)
+			if len(u.Paths) > 0 {
+				paths := u.Paths
+				more := 0
+				if len(paths) > platformUpdatePathsCap {
+					paths, more = paths[:platformUpdatePathsCap], len(paths)-platformUpdatePathsCap
+				}
+				parts := make([]string, 0, len(paths)+1)
+				for _, p := range paths {
+					parts = append(parts, puText(p))
+				}
+				if more > 0 {
+					parts = append(parts, fmt.Sprintf("and %d more", more))
+				}
+				fmt.Fprintf(warn, "    Files: %s\n", strings.Join(parts, ", "))
+			}
+		}
+	}
+	return fmt.Errorf("%w\nsubmit refused by the server: the bundle is missing a staff platform update. Run `civitai app pull` in a checkout of the app's source repository to merge it, "+
+		"then submit again — or pass %s to submit without it (the override is recorded for the moderator reviewing the submission)",
+		err, allowUnmergedPlatformUpdateFlag)
 }
 
 // puText is the ONE place this flow sanitises text for the terminal: every

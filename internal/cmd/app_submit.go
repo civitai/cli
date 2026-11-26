@@ -436,9 +436,16 @@ Platform updates from Civitai staff:
   hook says it changes what the app is allowed to do. The bundle then includes
   it, and the merge is yours to push.
   Submit REFUSES while one is unmerged — it conflicts (the merge is aborted
-  and the hand-merge command is printed), the tree has uncommitted changes,
-  or the directory is not a git checkout — because a bundle built without it
-  would drop it. Pass --allow-unmerged-platform-update to submit without it.
+  and the hand-merge command is printed), the app directory has uncommitted
+  changes, the directory is not a git checkout, or the checkout shares no
+  history with the source repository (a build-repository checkout: the
+  cherry-pick that applies it is printed) — because a bundle built without it
+  would drop it. From a detached HEAD the update is merged into the bundle,
+  but the merge commit is on no branch, so push or branch it afterwards.
+  The SERVER checks the bundle too, and refuses one missing a staff update
+  that no approved version has shipped (the CLI lists what it names).
+  Pass --allow-unmerged-platform-update to submit without it: the override is
+  sent with the submission and recorded for the moderator who reviews it.
   A server without platform updates prints nothing.
 
 Storage migration notes:
@@ -702,6 +709,11 @@ Defaults to the current directory.`,
 				if err != nil {
 					return err
 				}
+				// The override rides the submit: the server checks the bundle for
+				// every staff update not yet shipped and refuses without it, and
+				// records it for the moderator when it is sent. Sent only when the
+				// flag is passed.
+				prov.AllowUnmergedPlatformUpdate = allowUnmergedPlatformUpdate
 				if merged > 0 {
 					// 🔴 THE TREE MOVED, SO EVERYTHING READ FROM IT IS STALE: the
 					// manifest (an update may change it), the validation verdict,
@@ -796,7 +808,7 @@ Defaults to the current directory.`,
 	cmd.Flags().BoolVar(&allowOutdatedSDK, "allow-outdated-sdk", false,
 		"submit even when the lockfile installs @civitai/sdk or @civitai/blocks-react below the platform minimum (the override is shown to the moderator)")
 	cmd.Flags().BoolVar(&allowUnmergedPlatformUpdate, "allow-unmerged-platform-update", false,
-		"submit without merging pending platform updates from Civitai staff (the bundle will not contain them)")
+		"submit without merging pending platform updates from Civitai staff (the bundle will not contain them; the override is recorded for the moderator)")
 	return cmd
 }
 
@@ -842,6 +854,7 @@ func afterPlatformUpdateMerge(ctx context.Context, cmd *cobra.Command, client *a
 	}
 	fresh.GitHubOIDCToken = prov.GitHubOIDCToken
 	fresh.OutdatedSDK = outdated
+	fresh.AllowUnmergedPlatformUpdate = prov.AllowUnmergedPlatformUpdate
 	return m2, fresh, nil
 }
 
@@ -974,6 +987,12 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 		// the error returned unchanged.
 		if submitRefusalIsPlatformFriction(err) {
 			printFeedbackHint(cmd.ErrOrStderr(), feedbackHintSubmitRefused)
+		}
+		// The server's own platform-update check refused the bundle
+		// (platform_update_missing): list what it named and the way out.
+		var missing *appapi.PlatformUpdateMissingError
+		if errors.As(err, &missing) {
+			return platformUpdateMissingRefusal(cmd.ErrOrStderr(), missing, err)
 		}
 		return err
 	}
