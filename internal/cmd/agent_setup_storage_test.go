@@ -35,7 +35,19 @@ const (
 	wantStorageBulletHead = "**Store data in the document store, not the legacy stores.** Declare each " +
 		"collection under the manifest's `storage` key, add the `apps:storage` scope (and the consent-gated " +
 		"`apps:storage:publish` to create or edit shared documents), and call " +
-		"`app.storage.collection<T>(name)` from `@civitai/sdk` 0.14.0 or later"
+		"`app.storage.collection<T>(name)` from `@civitai/sdk` 0.32.0 or later"
+	// wantStorageBulletService follows the per-arm blocks-react clause. @civitai/sdk
+	// 0.32.0 sends a collection to the platform's app-data service only when the
+	// host's BLOCK_INIT carries `appData` AND the frame holds a block token —
+	// i.e. `initialize()` called with no token. `initialize({ token })` never
+	// does, and `where` / non-key sorts / imports stay on civitai.com (SDK
+	// CHANGELOG 0.32.0). Counters, marks, `update` and document publish/unpublish
+	// are not named: they were removed from App Storage (civitai #10391; the
+	// server answers 410 `removed`), so they go nowhere.
+	wantStorageBulletService = ", on the app that `initialize()` returns when called with no token " +
+		"(transport mode). That lets the platform serve the app's own collections through its data " +
+		"service; a `where` filter, a sort other than by key, and an import (`{ from }`) go to " +
+		"civitai.com regardless"
 	wantStorageBulletTail = "and the `/api/v1/blocks/app-storage/` and `/shared-storage/` routes are " +
 		"shut down: civitai.com refuses every call with `legacy_store_removed`. Any storage scope alongside " +
 		"`auth: \"oauth\"` is refused at submit. Guide: " + storageGuideURL
@@ -47,10 +59,11 @@ const (
 // (TestAgentsBlockPointsAtTheSDKTheProjectInstalled bans blocks-react names there).
 func wantStorageBullet(elementsSDK bool) string {
 	if elementsSDK {
-		return wantStorageBulletHead + ". Test against `createFakeStorage` from `@civitai/sdk/testing`. " +
-			"`app.storage.get/set/delete/list`, `app.sharedStorage` " + wantStorageBulletTail
+		return wantStorageBulletHead + wantStorageBulletService + ". Test against `createFakeStorage` from " +
+			"`@civitai/sdk/testing`. `app.storage.get/set/delete/list`, `app.sharedStorage` " + wantStorageBulletTail
 	}
-	return wantStorageBulletHead + " — `@civitai/blocks-react` has no document-store hook. Test against " +
+	return wantStorageBulletHead + " — `@civitai/blocks-react` has no document-store hook" +
+		wantStorageBulletService + ". Test against " +
 		"`createFakeStorage` from `@civitai/sdk/testing`. `useAppStorage()`, `useSharedStorage()` " +
 		"(removed in `@civitai/blocks-react` 0.81.0) " + wantStorageBulletTail
 }
@@ -78,7 +91,8 @@ func TestTheBlockPointsStorageAtTheDocumentStore(t *testing.T) {
 				t.Errorf("kind %q sdk=%t: the block does not carry the storage bullet WHOLE.\nwant: %s\nblock: %s",
 					shape.Kind, sdk, want, norm)
 			}
-			for _, retired := range []string{"the one to prefer", "consolidating on them", "they still work"} {
+			for _, retired := range []string{"the one to prefer", "consolidating on them", "they still work",
+				"`@civitai/sdk` 0.14.0 or later", "tallies"} {
 				if strings.Contains(norm, retired) {
 					t.Errorf("kind %q sdk=%t: the block still says %q about the legacy shared-storage routes",
 						shape.Kind, sdk, retired)
