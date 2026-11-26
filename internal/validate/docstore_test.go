@@ -321,7 +321,10 @@ func TestVendoredSchemaStillStatesTheFeatureGates(t *testing.T) {
 				"civitai.com refuses \"anyone\" until it is enabled."},
 		{"write (owner)", prop("write"),
 			"RESERVED: civitai.com refuses \"owner\" until owner-written documents are enabled."},
-		{"write (available)", prop("write"), "Available today: \"own\" and \"none\"."},
+		// "none" was removed with counters (civitai #10391): accepted only where an approved
+		// version already declared it, which validate refuses outright (storageRemovedPrimitiveChecks).
+		{"write (available)", prop("write"),
+			"Available today: \"own\" (and \"none\" only where already declared, as above)."},
 		{"ttlSeconds", prop("ttlSeconds"),
 			"RESERVED — civitai.com refuses this field until expiring documents are enabled, so do not declare it yet."},
 		{"dailyWritesPerAuthor", prop("dailyWritesPerAuthor"),
