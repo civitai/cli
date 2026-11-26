@@ -112,7 +112,7 @@ document store: declare each collection under the manifest's `storage` key),
 with `legacy_store_removed`, so use the document store. Because `initialize()`
 is called with no token (transport mode), `@civitai/sdk` 0.32.0 or later lets
 the platform serve this app's own collections through its data service; a
-`where` filter, a sort other than by key, an import and tallies go to
+`where` filter, a sort other than by key, and an import (`{ from }`) go to
 civitai.com regardless.
 
 `civitai app elements <tag>` prints every attribute (inherited ones included),

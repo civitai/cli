@@ -238,8 +238,8 @@ fixed list. As of this CLI version:
   document-store hook{{ end }}, on the app that `initialize()` returns when
   called with no token (transport mode). That lets the platform serve the app's
   own collections through its data service; a `where` filter, a sort other than
-  by key, an import (`{ from }`) and tallies go to civitai.com regardless. Test
-  against `createFakeStorage` from
+  by key, and an import (`{ from }`) go to civitai.com regardless. Test against
+  `createFakeStorage` from
   `@civitai/sdk/testing`. {{ if .ElementsSDK }}`app.storage.get/set/delete/list`,
   `app.sharedStorage`{{ else }}`useAppStorage()`, `useSharedStorage()` (removed in
   `@civitai/blocks-react` 0.81.0){{ end }} and the `/api/v1/blocks/app-storage/`

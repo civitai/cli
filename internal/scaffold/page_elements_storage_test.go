@@ -23,11 +23,14 @@ const wantPageElementsLegacyStoreSentence = "Its legacy `app.storage.get/set/…
 // The sentence after it: why the template's no-token `initialize()` matters for
 // storage. @civitai/sdk 0.32.0 routes a collection to the app-data service only
 // under a block token (no-token `initialize()`), and only for the shapes the
-// service serves. Pinned WHOLE for the same reason as the one above.
+// service serves. Pinned WHOLE for the same reason as the one above. It must
+// not name tallies: counters, marks, `update` and document publish/unpublish
+// were removed from App Storage (civitai #10391; the server answers 410
+// `removed`), so they go nowhere.
 const wantPageElementsDataServiceSentence = "Because `initialize()` is called with no token " +
 	"(transport mode), `@civitai/sdk` 0.32.0 or later lets the platform serve this app's own " +
-	"collections through its data service; a `where` filter, a sort other than by key, an import " +
-	"and tallies go to civitai.com regardless."
+	"collections through its data service; a `where` filter, a sort other than by key, and an " +
+	"import (`{ from }`) go to civitai.com regardless."
 
 func TestPageElementsReadmeExplainsTheDataServiceRoute(t *testing.T) {
 	dir := renderPageElements(t)
@@ -35,6 +38,9 @@ func TestPageElementsReadmeExplainsTheDataServiceRoute(t *testing.T) {
 	if !strings.Contains(readme, wantPageElementsDataServiceSentence) {
 		t.Errorf("page-elements README.md does not carry the data-service sentence WHOLE.\nwant: %s",
 			wantPageElementsDataServiceSentence)
+	}
+	if strings.Contains(strings.ToLower(readme), "tallies") {
+		t.Error("page-elements README.md still mentions tallies, which App Storage no longer has")
 	}
 }
 

@@ -40,11 +40,13 @@ const (
 	// 0.32.0 sends a collection to the platform's app-data service only when the
 	// host's BLOCK_INIT carries `appData` AND the frame holds a block token —
 	// i.e. `initialize()` called with no token. `initialize({ token })` never
-	// does, and `where` / non-key sorts / imports / tallies stay on civitai.com
-	// (SDK CHANGELOG 0.32.0).
+	// does, and `where` / non-key sorts / imports stay on civitai.com (SDK
+	// CHANGELOG 0.32.0). Counters, marks, `update` and document publish/unpublish
+	// are not named: they were removed from App Storage (civitai #10391; the
+	// server answers 410 `removed`), so they go nowhere.
 	wantStorageBulletService = ", on the app that `initialize()` returns when called with no token " +
 		"(transport mode). That lets the platform serve the app's own collections through its data " +
-		"service; a `where` filter, a sort other than by key, an import (`{ from }`) and tallies go to " +
+		"service; a `where` filter, a sort other than by key, and an import (`{ from }`) go to " +
 		"civitai.com regardless"
 	wantStorageBulletTail = "and the `/api/v1/blocks/app-storage/` and `/shared-storage/` routes are " +
 		"shut down: civitai.com refuses every call with `legacy_store_removed`. Any storage scope alongside " +
@@ -90,7 +92,7 @@ func TestTheBlockPointsStorageAtTheDocumentStore(t *testing.T) {
 					shape.Kind, sdk, want, norm)
 			}
 			for _, retired := range []string{"the one to prefer", "consolidating on them", "they still work",
-				"`@civitai/sdk` 0.14.0 or later"} {
+				"`@civitai/sdk` 0.14.0 or later", "tallies"} {
 				if strings.Contains(norm, retired) {
 					t.Errorf("kind %q sdk=%t: the block still says %q about the legacy shared-storage routes",
 						shape.Kind, sdk, retired)
