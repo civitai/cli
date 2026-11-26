@@ -78,6 +78,12 @@ type Provenance struct {
 	// never in an error, never on argv (which is why it is read from the
 	// environment and has no flag).
 	GitHubOIDCToken string
+	// OutdatedSDK is what `--allow-outdated-sdk` overrode: the packages the
+	// lockfile installs below the platform's published minimum. It travels as
+	// `sdkFloorOverride` and the server shows it to the moderator reviewing
+	// the submission, labelled as this CLI's claim. Empty on every submit that
+	// did not override (the key is then omitted).
+	OutdatedSDK []OutdatedSDK
 }
 
 // sourceCommitRe is the server's own validator, mirrored (civitai/civitai#4061,
@@ -748,6 +754,9 @@ type submitBody struct {
 	// GitHubOIDCToken is omitted when empty, so a submit outside GitHub Actions
 	// sends exactly the body it sent before this field existed.
 	GitHubOIDCToken string `json:"githubOidcToken,omitempty"`
+	// SDKFloorOverride is omitted when empty, so a submit that overrode nothing
+	// sends exactly the body it sent before this field existed.
+	SDKFloorOverride []OutdatedSDK `json:"sdkFloorOverride,omitempty"`
 }
 
 // submitBodyEnvelope is the literal JSON document json.Marshal produces for an
@@ -772,10 +781,11 @@ const submitBodyEnvelope = `{"bundleBase64":""}`
 // remembering to update an arithmetic term.
 func submitEnvelopeLen(prov Provenance) int {
 	commit, dirty := prov.sanitised()
-	if commit == "" && dirty == nil && prov.GitHubOIDCToken == "" {
+	if commit == "" && dirty == nil && prov.GitHubOIDCToken == "" && len(prov.OutdatedSDK) == 0 {
 		return len(submitBodyEnvelope)
 	}
-	env, err := json.Marshal(submitBody{SourceCommit: commit, SourceDirty: dirty, GitHubOIDCToken: prov.GitHubOIDCToken})
+	env, err := json.Marshal(submitBody{SourceCommit: commit, SourceDirty: dirty, GitHubOIDCToken: prov.GitHubOIDCToken,
+		SDKFloorOverride: prov.OutdatedSDK})
 	if err != nil {
 		// Unreachable for these field types; degrade to the no-provenance
 		// envelope rather than reporting a nonsense size.
@@ -1010,10 +1020,11 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 	// stamp must never be able to turn a working submit into a failed one.
 	commit, dirty := prov.sanitised()
 	body, err := json.Marshal(submitBody{
-		BundleBase64:    base64.StdEncoding.EncodeToString(zipBytes),
-		SourceCommit:    commit,
-		SourceDirty:     dirty,
-		GitHubOIDCToken: prov.GitHubOIDCToken,
+		BundleBase64:     base64.StdEncoding.EncodeToString(zipBytes),
+		SourceCommit:     commit,
+		SourceDirty:      dirty,
+		GitHubOIDCToken:  prov.GitHubOIDCToken,
+		SDKFloorOverride: prov.OutdatedSDK,
 	})
 	if err != nil {
 		// UNREACHABLE for these field types — submitEnvelopeLen says the same of
