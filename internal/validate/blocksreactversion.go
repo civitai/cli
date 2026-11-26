@@ -81,6 +81,20 @@ func blocksReactPreFix(dir, buildCommand, lastPreFix string) bool {
 // dependency to. The lockfile is chosen exactly as lockfileChecks chooses it
 // (packageManagerFor on buildCommand).
 func lockedBlocksReactVersion(dir, buildCommand string) (string, bool) {
+	return LockedVersion(dir, buildCommand, blockproto.BlocksReactPackage)
+}
+
+// LockedVersion returns the version of the package `name` that the lockfile
+// the platform build installs from resolves the app's DIRECT dependency to —
+// the INSTALLED version, not package.json's range. The lockfile is chosen
+// exactly as lockfileChecks chooses it (packageManagerFor on buildCommand), and
+// every case that cannot name one version (no lockfile, symlinked, over the
+// size cap, unparseable, no entry, or more than one version in a yarn.lock)
+// answers ("", false).
+//
+// `app submit`'s outdated-SDK guard reads it too, so the version that check
+// refuses on is the one this file's SDK-mount gate already reads.
+func LockedVersion(dir, buildCommand, name string) (string, bool) {
 	pm := packageManagerFor(strings.TrimSpace(buildCommand))
 	path := filepath.Join(dir, pm.lockfile)
 	// Same gate as lockfileContentDefect: a symlinked lockfile is not in the
@@ -101,12 +115,33 @@ func lockedBlocksReactVersion(dir, buildCommand string) (string, bool) {
 	}
 	switch pm.name {
 	case pmPnpm.name:
-		return pnpmLockedVersion(body, blockproto.BlocksReactPackage)
+		return pnpmLockedVersion(body, name)
 	case pmYarn.name:
-		return yarnLockedVersion(body, blockproto.BlocksReactPackage)
+		return yarnLockedVersion(body, name)
 	default:
-		return npmLockedVersion(body, blockproto.BlocksReactPackage)
+		return npmLockedVersion(body, name)
 	}
+}
+
+// LockfileFor names the lockfile, and the package-manager command that
+// upgrades a dependency, for a project built by buildCommand — the same
+// choice LockedVersion reads from.
+func LockfileFor(buildCommand string) (lockfile, addCmd string) {
+	pm := packageManagerFor(strings.TrimSpace(buildCommand))
+	return pm.lockfile, pm.addCmd
+}
+
+// VersionBelow reports whether installed orders BELOW minimum under SemVer
+// precedence (a pre-release of the minimum is below it). ok is false when
+// either is not a MAJOR.MINOR.PATCH[-PRE][+BUILD] version, and the caller
+// then judges neither way.
+func VersionBelow(installed, minimum string) (below, ok bool) {
+	have, ok1 := parseSemver(installed)
+	want, ok2 := parseSemver(minimum)
+	if !ok1 || !ok2 {
+		return false, false
+	}
+	return have.less(want), true
 }
 
 // npmLockedVersion reads package-lock.json: `packages["node_modules/<name>"]`

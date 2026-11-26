@@ -297,6 +297,7 @@ func newAppSubmitCmd() *cobra.Command {
 	var allowDirty bool
 	var allowOversize bool
 	var allowIncompleteListing bool
+	var allowOutdatedSDK bool
 
 	cmd := &cobra.Command{
 		Use:   "submit [dir]",
@@ -373,6 +374,16 @@ Build provenance:
   all rather than a guess — and --allow-dirty still stamps, marking the
   submission dirty, because that is the case worth being able to look up.
 
+Outdated-SDK guard:
+  A submit that would really upload also reads the platform's published SDK
+  minimum and REFUSES while the lockfile installs @civitai/sdk or
+  @civitai/blocks-react below it, naming the upgrade command. The version
+  judged is the INSTALLED one from the lockfile, not package.json's range; an
+  app that depends on neither is not checked. Pass --allow-outdated-sdk to
+  submit anyway: the override and the versions are recorded with the
+  submission and shown to the moderator who reviews it. A server that
+  publishes no minimum gets a one-line note and no refusal.
+
 Listing-completeness gate:
   A submit that would really upload also checks the app's STORE LISTING and
   REFUSES while it is missing something you can fix now: a missing icon or
@@ -428,6 +439,7 @@ Defaults to the current directory.`,
   civitai app submit --allow-dirty      # submit uncommitted working-tree changes on purpose
   civitai app submit --allow-oversize   # submit past the vendored body-size ceiling
   civitai app submit --allow-incomplete-listing  # submit before the store listing is finished
+  civitai app submit --allow-outdated-sdk        # submit on an SDK below the platform minimum
   civitai app submit -o my-block.zip ./my-block`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -643,6 +655,20 @@ Defaults to the current directory.`,
 					m.BlockID, m.Tagline, cfg.BaseURL(), allowIncompleteListing); err != nil {
 					return err
 				}
+
+				// 2d. OUTDATED-SDK GUARD, after the listing gate and before any
+				// packaging. It reads the server's published minimum, so it sits
+				// after confirmSubmit for the reason the two guards above do
+				// (TestAppSubmit_NonTTYRefusesWithoutYes_NoNetworkCall), and it
+				// only runs on the upload path, like them. Under
+				// --allow-outdated-sdk it returns what it overrode, and that rides
+				// the submit (Provenance.OutdatedSDK) to the moderator. See
+				// app_submit_sdk_floor_guard.go.
+				outdated, err := checkSDKFloor(ctx, client.GetSDKFloor, cmd.ErrOrStderr(), dir, m.BuildCommand, allowOutdatedSDK)
+				if err != nil {
+					return err
+				}
+				prov.OutdatedSDK = outdated
 			}
 
 			// 3. Package the canonical source tree.
@@ -725,6 +751,8 @@ Defaults to the current directory.`,
 	// to get past this gate is a retry that cannot work.
 	cmd.Flags().BoolVar(&allowIncompleteListing, "allow-incomplete-listing", false,
 		"submit even when the app's store listing is missing media or copy (--yes does NOT waive that gate)")
+	cmd.Flags().BoolVar(&allowOutdatedSDK, "allow-outdated-sdk", false,
+		"submit even when the lockfile installs @civitai/sdk or @civitai/blocks-react below the platform minimum (the override is shown to the moderator)")
 	return cmd
 }
 

@@ -78,6 +78,9 @@ type packageManager struct {
 	installCmd string
 	// refreshCmd is what the author runs LOCALLY to (re)generate the lockfile.
 	refreshCmd string
+	// addCmd is what the author runs to add or upgrade one dependency
+	// (`<addCmd> <pkg>@latest`), named by `app submit`'s outdated-SDK refusal.
+	addCmd string
 	// buildCommand is the manifest buildCommand that selects this manager, used
 	// when suggesting "switch the manifest to match the lockfile you have".
 	buildCommand string
@@ -95,14 +98,14 @@ type packageManager struct {
 var (
 	pmNpm = packageManager{
 		name: "npm", lockfile: "package-lock.json",
-		installCmd: "npm ci", refreshCmd: "npm install", buildCommand: "npm run build",
+		installCmd: "npm ci", refreshCmd: "npm install", addCmd: "npm install", buildCommand: "npm run build",
 		lockfileIsJSON: true,
 		contentRule: "`npm ci` requires a package-lock.json that parses as JSON and declares a " +
 			`numeric "lockfileVersion" of 1 or more`,
 	}
 	pmPnpm = packageManager{
 		name: "pnpm", lockfile: "pnpm-lock.yaml",
-		installCmd: "pnpm install --frozen-lockfile", refreshCmd: "pnpm install", buildCommand: "pnpm run build",
+		installCmd: "pnpm install --frozen-lockfile", refreshCmd: "pnpm install", addCmd: "pnpm add", buildCommand: "pnpm run build",
 		contentRule: "`pnpm install --frozen-lockfile` needs the file `pnpm install` wrote, and that file is never empty",
 	}
 	// The yarn branch of the recipe dispatches on `yarn --version`:
@@ -112,7 +115,7 @@ var (
 	pmYarn = packageManager{
 		name: "yarn", lockfile: "yarn.lock",
 		installCmd: "yarn install --frozen-lockfile (yarn 1) / --immutable (yarn 2+)",
-		refreshCmd: "yarn install", buildCommand: "yarn run build",
+		refreshCmd: "yarn install", addCmd: "yarn add", buildCommand: "yarn run build",
 		contentRule: "a strict `yarn install` needs the file `yarn install` wrote, and that file is never empty",
 	}
 )
