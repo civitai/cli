@@ -924,7 +924,8 @@ itself, as an `sdk-below-floor` advisory under the success line.
 
 **Platform updates from Civitai staff.** Staff can push an update to your app
 (an SDK bump, say) as one commit in its source repository. A submit that would
-upload asks for pending updates and merges each into the checkout first, the
+upload asks for open updates (pending, or not yet merged after a conflict) and
+merges each into the checkout first, the
 same way [`app pull`](#pull-your-apps-repository-app-pull) does, so the bundle
 carries it; push the merge afterwards so your own repository keeps it. Submit
 **refuses** while an update is unmerged (it conflicts, the tree has uncommitted
@@ -1271,7 +1272,7 @@ prints the `git remote set-url` that cleans it. The token itself is not rotated.
 
 **Platform updates from Civitai staff.** Staff can push an update to your app
 (an SDK bump, say) as one commit on its own branch of the source repository.
-After syncing, `app pull` asks for pending updates and merges each, oldest
+After syncing, `app pull` asks for open updates and merges each, oldest
 first, with `git merge --no-ff <commit>`: the **exact commit Civitai recorded**,
 fetched from the source repository by URL (no remote is added), never whatever
 the branch points at now. Each merge prints who made it and why:
@@ -1289,9 +1290,13 @@ says the update could not be verified. An update that changes
 allowed to do. Commits on the branch beyond the recorded one are left out, and
 the command says so. An update that **conflicts** is not merged: the merge is
 aborted, Civitai is told, and the command prints the `git fetch … && git merge
-<commit>` that merges it by hand, then exits `1`. A checkout with uncommitted
+<commit>` that merges it by hand, then exits `1`. The update stays open: every
+later pull retries it, re-printing those instructions while it still
+conflicts, and reports it merged once it applies or once you have merged that
+commit by hand and committed. A checkout with uncommitted
 changes is never merged into (exit `1`; commit or discard, then pull again). A
-server without platform updates prints nothing.
+server without platform updates prints nothing; a server that answers "App not
+found" for the app prints one warning line.
 
 A pulled tree's `block.manifest.json` carries the platform-stamped
 `iframe.src` (`https://<blockId>.civit.ai/`); `civitai app validate` accepts that

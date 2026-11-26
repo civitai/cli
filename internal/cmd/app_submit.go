@@ -427,7 +427,8 @@ GitHub Actions:
 Platform updates from Civitai staff:
   Civitai staff can push an update to your app (a platform update: an SDK
   bump, say) as one commit in the app's source repository. A submit that would
-  really upload first asks the server for pending ones and merges each into
+  really upload first asks the server for open ones (pending, or not yet
+  merged after a conflict) and merges each into
   this checkout with ` + "`git merge --no-ff <commit>`" + ` — the commit Civitai
   recorded, never whatever its branch now points at. Each is printed with who
   made it and why; "(verified Civitai staff)" appears only when the server
@@ -823,7 +824,7 @@ func afterPlatformUpdateMerge(ctx context.Context, cmd *cobra.Command, client *a
 	if err != nil {
 		return nil, prov, err
 	}
-	if m2.BlockID != m.BlockID {
+	if !appapi.SameSlug(m2.BlockID, m.BlockID) {
 		return nil, prov, fmt.Errorf("the platform update changed blockId from %q to %q; refusing to submit — check the merge", m.BlockID, m2.BlockID)
 	}
 	if m2.Version != m.Version {

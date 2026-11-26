@@ -18,8 +18,17 @@ import (
 // "Owner-facing API". Civitai staff can push an update to someone else's app:
 // one commit on its own branch (`platform-update/<id>`) of the app's SOURCE
 // repository (civitai-apps-src/<slug>). `civitai app pull` and `civitai app
-// submit` list the app's pending updates and merge each one, oldest first, into
-// the checkout, then report the outcome to the server.
+// submit` list the app's OPEN updates (pending, and conflicted ones nobody has
+// merged yet) and merge each one, oldest first, into the checkout, then report
+// the outcome to the server.
+//
+// 🔴 A CONFLICTED UPDATE IS RETRIED, NOT FORGOTTEN. The server keeps listing an
+// update reported `conflicted` until it is merged or withdrawn, so every pull
+// tries it again: it now merges cleanly → `resolve merged`; the owner merged it
+// by hand (the sha is already in HEAD's history) → `resolve merged` with HEAD,
+// merging nothing; it still conflicts → abort and re-print the hand-merge
+// instructions, WITHOUT reporting `conflicted` again. And a submit still
+// refuses over it.
 //
 // 🔴 WHAT IS MERGED IS THE RECORDED commitSha, NEVER THE BRANCH. The branch is
 // ordinary git and can move after the push; only the sha is the change the
@@ -220,10 +229,8 @@ func (r *platformUpdateRun) mergeOne(ctx context.Context, u appapi.PlatformUpdat
 	}
 	if !r.hasCommit(sha) && fetchErr != nil {
 		// 🔴 A FETCH THAT FAILED PROVES NOTHING ABOUT THE COMMIT. Network, auth
-		// and a deleted branch all land here, and reporting `conflicted` for any
-		// of them would drop the update off the owner's pending list for good
-		// (listPending returns pending updates only). So: no report, and the next
-		// run tries again.
+		// and a deleted branch all land here, and none of them is a conflict. So:
+		// no report, and the next run tries again.
 		return false, fmt.Errorf("%w: could not fetch platform update %s from %s (%s); nothing was merged or reported — run the command again",
 			ErrUnmergedPlatformUpdate, u.ID, puText(r.sourceURL), gitErrLine(fetchOut))
 	}
@@ -232,15 +239,20 @@ func (r *platformUpdateRun) mergeOne(ctx context.Context, u appapi.PlatformUpdat
 		// The branch WAS fetched and the recorded commit is not on it, nor
 		// reachable by sha: the update as recorded no longer exists there.
 		printPlatformUpdateSummary(r.out, u, verified, true)
-		r.resolve(ctx, u, appapi.PlatformUpdateConflicted, "")
-		fmt.Fprintf(r.out, "Its branch %s no longer holds the recorded commit %s, so nothing was merged; Civitai was told it did not merge.\n",
-			puText(u.Branch), sha)
+		told := "Civitai was told it did not merge"
+		if !r.resolve(ctx, u, appapi.PlatformUpdateConflicted, "") {
+			told = "Civitai already knows it did not merge"
+		}
+		fmt.Fprintf(r.out, "Its branch %s no longer holds the recorded commit %s, so nothing was merged; %s.\n",
+			puText(u.Branch), sha, told)
 		return false, fmt.Errorf("%w: platform update %s was not merged (its recorded commit %s is missing from the source repository)",
 			ErrUnmergedPlatformUpdate, u.ID, sha)
 	}
 
-	// Already in this history (merged by hand, or merged by an earlier run whose
-	// report did not reach the server): report it, merge nothing.
+	// Already in this history (merged by hand — the way out of a conflict — or
+	// merged by an earlier run whose report did not reach the server): report
+	// it merged with HEAD, merge nothing. HEAD is a commit that contains the
+	// update, which is all mergeCommitSha has to be.
 	if _, err := platformGit(r.dir, "merge-base", "--is-ancestor", sha, "HEAD"); err == nil {
 		head, herr := platformGit(r.dir, "rev-parse", "HEAD")
 		if herr == nil {
@@ -251,6 +263,9 @@ func (r *platformUpdateRun) mergeOne(ctx context.Context, u appapi.PlatformUpdat
 		return false, nil
 	}
 
+	if u.Status == appapi.PlatformUpdateStatusConflicted {
+		fmt.Fprintf(r.out, "Retrying platform update %s (commit %s), which did not merge cleanly last time.\n", u.ID, sha)
+	}
 	// 3+4. Merge the recorded sha and nothing else.
 	mergeOut, mergeErr := platformGit(r.dir, "merge", "--no-ff", "--no-edit",
 		"-m", "Merge Civitai platform update "+u.ID, sha)
@@ -264,7 +279,7 @@ func (r *platformUpdateRun) mergeOne(ctx context.Context, u appapi.PlatformUpdat
 		}
 		conflicted, _ := platformGit(r.dir, "diff", "--name-only", "--diff-filter=U")
 		_, _ = platformGit(r.dir, "merge", "--abort")
-		r.resolve(ctx, u, appapi.PlatformUpdateConflicted, "")
+		r.resolve(ctx, u, appapi.PlatformUpdateConflicted, "") // not again for one already conflicted
 		fmt.Fprintf(r.out, "Platform update %s (commit %s) conflicts with your changes in %s, so nothing was merged (the merge was aborted).\n", u.ID, sha, r.dir)
 		printPlatformUpdateSummary(r.out, u, verified, true)
 		if files := strings.Fields(conflicted); len(files) > 0 {
@@ -302,13 +317,21 @@ func (r *platformUpdateRun) verify(ctx context.Context, sha string) bool {
 	return err == nil && ok
 }
 
-// resolve reports an outcome. A failure is printed and does not undo the merge:
-// the merge is local and done, and the next run finds the commit already in the
-// history and reports it again.
-func (r *platformUpdateRun) resolve(ctx context.Context, u appapi.PlatformUpdate, outcome, mergeSha string) {
+// resolve reports an outcome, and says whether it sent one. A failure is printed
+// and does not undo the merge: the merge is local and done, and the next run
+// finds the commit already in the history and reports it again.
+//
+// `conflicted` is never sent for an update the server already lists as
+// conflicted: the server would no-op it, and the one place that decides this is
+// here, so no call site can re-report it.
+func (r *platformUpdateRun) resolve(ctx context.Context, u appapi.PlatformUpdate, outcome, mergeSha string) bool {
+	if outcome == appapi.PlatformUpdateConflicted && u.Status == appapi.PlatformUpdateStatusConflicted {
+		return false
+	}
 	if err := r.api.ResolvePlatformUpdate(ctx, u.ID, outcome, mergeSha); err != nil {
 		fmt.Fprintf(r.out, "Could not report platform update %s as %s to Civitai: %s\n", u.ID, outcome, puText(err.Error()))
 	}
+	return true
 }
 
 // printPlatformUpdateSummary prints who made the update and why, what it
@@ -376,8 +399,14 @@ func gitErrLine(s string) string {
 // submit body has no field for it today.
 //
 // A server without the procedure, or with the flag off, has no updates: silent.
+// So is the server's "App not found" (appapi.ErrPlatformUpdatesAppNotFound)
+// HERE: a first submit of a brand-new slug lands there, the app has no updates
+// to merge, and the submit itself is what tells an owner the app is not theirs.
 func submitPlatformUpdates(ctx context.Context, api platformUpdateAPI, cloneInfo cloneInfoFetcher, warn io.Writer, dir, slug string, allowUnmerged bool) (int, error) {
 	updates, err := listPendingPlatformUpdates(ctx, api, slug)
+	if errors.Is(err, appapi.ErrPlatformUpdatesAppNotFound) {
+		return 0, nil
+	}
 	if allowUnmerged {
 		if err != nil {
 			fmt.Fprintf(warn, "The platform-update check failed (%s); submitting anyway (%s).\n", puText(err.Error()), allowUnmergedPlatformUpdateFlag)

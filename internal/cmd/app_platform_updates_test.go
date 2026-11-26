@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -32,11 +33,14 @@ const (
 
 type puResolve struct{ ID, Outcome, MergeSha string }
 
-// puFake is the server half: listPending, verifyCommit, resolve.
+// puFake is the server half: listPending, verifyCommit, resolve. It keeps the
+// server's state: resolve sets an update's status, and listPending lists only
+// the OPEN ones (pending, conflicted), as the contract says.
 type puFake struct {
 	mu         sync.Mutex
 	pending    []map[string]any
 	listStatus int             // non-zero: listPending answers this status
+	listBody   string          // with listStatus: the body (default: tRPC's own no-procedure envelope)
 	verified   map[string]bool // commitSha → verifyCommit's `verified`
 	resolves   []puResolve
 	listCalls  int
@@ -78,12 +82,20 @@ func (f *puFake) handle(w http.ResponseWriter, r *http.Request) bool {
 		}
 		if f.listStatus != 0 {
 			w.WriteHeader(f.listStatus)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"json": map[string]any{"message": "No procedure found on path"}}})
+			if f.listBody != "" {
+				_, _ = io.WriteString(w, f.listBody)
+				return true
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"json": map[string]any{
+				"message": `No procedure found on path "appPlatformUpdates.listPending"`, "code": -32004,
+				"data": map[string]any{"code": "NOT_FOUND", "httpStatus": 404, "path": "appPlatformUpdates.listPending"}}}})
 			return true
 		}
-		ups := f.pending
-		if ups == nil {
-			ups = []map[string]any{}
+		ups := []map[string]any{}
+		for _, u := range f.pending {
+			if st := u["status"]; st == "pending" || st == "conflicted" {
+				ups = append(ups, u)
+			}
 		}
 		trpcOK(w, map[string]any{"updates": ups})
 		return true
@@ -98,6 +110,11 @@ func (f *puFake) handle(w http.ResponseWriter, r *http.Request) bool {
 		outcome, _ := in["outcome"].(string)
 		ms, _ := in["mergeCommitSha"].(string)
 		f.resolves = append(f.resolves, puResolve{id, outcome, ms})
+		for _, u := range f.pending {
+			if u["id"] == id {
+				u["status"] = outcome
+			}
+		}
 		trpcOK(w, map[string]any{"update": map[string]any{"id": id, "status": outcome}})
 		return true
 	// The routes `app submit` reads besides these.
@@ -632,4 +649,191 @@ func bundleFiles(t *testing.T, body map[string]json.RawMessage) []string {
 		names = append(names, f.Name)
 	}
 	return names
+}
+
+// --- a conflicted update stays open (civitai/civitai#10594: the owner list is
+// pending AND conflicted) ---
+
+// puConflict sets up an update that conflicts with the owner's own commit and
+// runs the first pull, which reports it conflicted. It returns the update's sha
+// and the owner's HEAD.
+func puConflict(t *testing.T, seed map[string]string) (*puEnv, string, string) {
+	t.Helper()
+	if seed == nil {
+		seed = map[string]string{}
+	}
+	seed["shared.txt"] = "base\n"
+	e := newPUEnv(t, seed)
+	sha := e.staffCommit(t, "main", puBranch, "Platform update", map[string]string{"shared.txt": "staff\n"})
+	ownerHead := e.ownerCommit(t, "shared.txt", "owner\n")
+	e.fake.pending = []map[string]any{puUpdate(sha, false, map[string]any{"path": "shared.txt", "operation": "update"})}
+	e.fake.verified[sha] = true
+	if _, _, err := e.pull(t); !errors.Is(err, ErrUnmergedPlatformUpdate) {
+		t.Fatalf("first pull: want ErrUnmergedPlatformUpdate, got %v", err)
+	}
+	if got := e.fake.resolved(); len(got) != 1 || got[0] != (puResolve{puID, "conflicted", ""}) {
+		t.Fatalf("first pull: resolve calls = %+v, want one conflicted", got)
+	}
+	return e, sha, ownerHead
+}
+
+// 🔴 The gap this closes: the update did NOT vanish after the one conflicted
+// report. A second pull retries it, still conflicts, re-prints the hand-merge
+// instructions naming the recorded sha, fails — and does not report
+// `conflicted` a second time.
+func TestPlatformUpdateConflictedIsRetriedAndReprinted(t *testing.T) {
+	e, sha, ownerHead := puConflict(t, nil)
+
+	out, _, err := e.pull(t)
+	if !errors.Is(err, ErrUnmergedPlatformUpdate) {
+		t.Fatalf("second pull: want ErrUnmergedPlatformUpdate, got %v\n%s", err, out)
+	}
+	want := "Retrying platform update " + puID + " (commit " + sha + "), which did not merge cleanly last time.\n" +
+		"Platform update " + puID + " (commit " + sha + ") conflicts with your changes in my-block, so nothing was merged (the merge was aborted).\n" +
+		"  mod-jane (verified Civitai staff) updated your app: " + puReason + "\n" +
+		"  Files: update shared.txt\n" +
+		"  Conflicts in: shared.txt\n" +
+		"To merge it by hand, merge the recorded commit " + sha + " (not the branch):\n" +
+		"  git -C my-block fetch " + e.g.sourceURL() + " " + puBranch + " && git -C my-block merge " + sha + "\n"
+	if !strings.Contains(out, want) {
+		t.Fatalf("second pull did not re-print the instructions.\nwant:\n%s\ngot:\n%s", want, out)
+	}
+	if got := e.fake.resolved(); len(got) != 1 {
+		t.Fatalf("resolve calls = %+v, want still only the first conflicted (no re-report)", got)
+	}
+	if head := e.head(t); head != ownerHead {
+		t.Fatalf("HEAD moved to %s; the aborted retry must leave %s", head, ownerHead)
+	}
+}
+
+// The owner merges the recorded commit by hand and commits: the next pull sees
+// the sha already in HEAD's history and reports `merged` with HEAD, merging
+// nothing again.
+func TestPlatformUpdateConflictedMergedByHandIsReportedMerged(t *testing.T) {
+	e, sha, _ := puConflict(t, nil)
+	mustGit(t, e.dir, "fetch", "-q", e.srcBare(), puBranch)
+	if out, err := exec.Command("git", "-C", e.dir, "merge", "--no-edit", sha).CombinedOutput(); err == nil {
+		t.Fatalf("CONTROL: the hand merge was expected to conflict, it did not:\n%s", out)
+	}
+	if err := os.WriteFile(filepath.Join(e.dir, "shared.txt"), []byte("owner + staff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, e.dir, "add", "--", "shared.txt")
+	mustGit(t, e.dir, "commit", "-q", "--no-edit")
+	handMerge := e.head(t)
+
+	out, errOut, err := e.pull(t)
+	if err != nil {
+		t.Fatalf("pull after the hand merge: %v\n%s\n%s", err, out, errOut)
+	}
+	if !strings.Contains(out, "Platform update "+puID+" (commit "+sha+") is already in my-block.\n") {
+		t.Fatalf("pull did not report the hand merge:\n%s", out)
+	}
+	if strings.Contains(out, "Retrying") || strings.Contains(out, "conflicts with") {
+		t.Fatalf("pull retried a merge that was already in the history:\n%s", out)
+	}
+	if head := e.head(t); head != handMerge {
+		t.Fatalf("HEAD moved %s → %s: nothing should be merged again", handMerge, head)
+	}
+	want := []puResolve{{puID, "conflicted", ""}, {puID, "merged", handMerge}}
+	if got := e.fake.resolved(); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("resolve calls = %+v, want %+v", got, want)
+	}
+	// And it is off the open list: a third pull is silent.
+	out, _, err = e.pull(t)
+	if err != nil || strings.Contains(out, "platform update") {
+		t.Fatalf("third pull: err %v, out:\n%s", err, out)
+	}
+}
+
+// The owner backs out their conflicting change: the retry now merges cleanly
+// and is reported `merged` with the new merge commit (conflicted → merged).
+func TestPlatformUpdateConflictedThatNowMergesCleanlyIsMerged(t *testing.T) {
+	e, sha, _ := puConflict(t, nil)
+	e.ownerCommit(t, "shared.txt", "base\n")
+
+	out, errOut, err := e.pull(t)
+	if err != nil {
+		t.Fatalf("retry pull: %v\n%s\n%s", err, out, errOut)
+	}
+	merge := e.head(t)
+	if !strings.Contains(out, "Merged platform update "+puID+" (commit "+sha+") into my-block.\n") {
+		t.Fatalf("the retry did not merge:\n%s", out)
+	}
+	if got := e.fake.resolved(); len(got) != 2 || got[1] != (puResolve{puID, "merged", merge}) {
+		t.Fatalf("resolve calls = %+v, want conflicted then merged with %s", got, merge)
+	}
+	if b, _ := os.ReadFile(filepath.Join(e.dir, "shared.txt")); string(b) != "staff\n" {
+		t.Fatalf("shared.txt = %q, want the staff change", b)
+	}
+}
+
+// 🔴 Submit still refuses over a conflicted update, naming the override, and
+// never reaches the submit route or re-reports the conflict.
+func TestSubmitRefusesOverAConflictedUpdate(t *testing.T) {
+	e, sha, _ := puConflict(t, map[string]string{"block.manifest.json": manifestText(t, gitSlug, "0.6.1"), "index.html": "<html></html>"})
+
+	_, errOut, err := run(t, "app", "submit", e.dir, "--yes")
+	if !errors.Is(err, ErrUnmergedPlatformUpdate) {
+		t.Fatalf("want ErrUnmergedPlatformUpdate, got %v\n%s", err, errOut)
+	}
+	if !strings.Contains(err.Error(), "pass --allow-unmerged-platform-update to submit without it") ||
+		!strings.Contains(err.Error(), "merge "+sha+" by hand") {
+		t.Fatalf("the refusal must name the sha and the override:\n%s", err)
+	}
+	if e.fake.submitBody != nil {
+		t.Fatal("the submit route was hit despite a conflicted update")
+	}
+	if got := e.fake.resolved(); len(got) != 1 {
+		t.Fatalf("resolve calls = %+v, want only the pull's conflicted", got)
+	}
+}
+
+// The two 404s. An older server's (tRPC's own no-procedure envelope, or a 404
+// with no envelope at all) is silent; the server's "App not found" for the app
+// pull just resolved prints ONE warning line. Submit stays silent on "App not
+// found" (a brand-new slug's first submit lands there) and submits.
+func TestPlatformUpdate404s(t *testing.T) {
+	appNotFound := `{"error":{"json":{"message":"App not found","code":-32004,"data":{"code":"NOT_FOUND","httpStatus":404,"path":"appPlatformUpdates.listPending"}}}}`
+	const warnLine = "Civitai answered \"App not found\" when asked for my-block's platform updates, so none were checked"
+	cases := []struct {
+		name     string
+		body     string
+		wantWarn bool
+	}{
+		{"older server: tRPC's no-procedure envelope", "", false},
+		{"older server: a 404 with no tRPC envelope", "<html>Not Found</html>", false},
+		{"older server: tRPC v10's message", `{"error":{"json":{"message":"No \"query\"-procedure on path \"appPlatformUpdates.listPending\"","code":-32004}}}`, false},
+		{"App not found", appNotFound, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newPUEnv(t, nil)
+			e.fake.listStatus, e.fake.listBody = http.StatusNotFound, tc.body
+			out, errOut, err := e.pull(t)
+			if err != nil {
+				t.Fatalf("pull: %v\n%s", err, errOut)
+			}
+			if n := strings.Count(out+errOut, warnLine); (n == 1) != tc.wantWarn || n > 1 {
+				t.Fatalf("warning lines = %d, want warn=%v\nstdout:\n%s\nstderr:\n%s", n, tc.wantWarn, out, errOut)
+			}
+			if !tc.wantWarn && strings.Contains(strings.ToLower(out+errOut), "platform update") {
+				t.Fatalf("an older server's 404 printed something:\n%s\n%s", out, errOut)
+			}
+		})
+	}
+	t.Run("submit: App not found is silent", func(t *testing.T) {
+		e := newPUEnv(t, nil)
+		e.fake.listStatus, e.fake.listBody = http.StatusNotFound, appNotFound
+		_, errOut, err := run(t, "app", "submit", puSubmitDir(t), "--yes")
+		if err != nil {
+			t.Fatalf("submit: %v\n%s", err, errOut)
+		}
+		if e.fake.submitBody == nil {
+			t.Fatal("the submit route was not reached")
+		}
+		if strings.Contains(strings.ToLower(errOut), "platform") {
+			t.Fatalf("submit printed a platform-update line for App not found:\n%s", errOut)
+		}
+	})
 }

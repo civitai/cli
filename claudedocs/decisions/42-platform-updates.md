@@ -15,7 +15,7 @@ source repository served by `git http-backend` (the `gitServer` of
 the real `civitai git-credential` helper), plus one row each in
 `safeTermCoveredBy` and `bareIdentArgs` for `puText`.
 
-Seven things here look wrong, or look like something to tidy. Each is
+Eight things here look wrong, or look like something to tidy. Each is
 deliberate.
 
 ## 1. It merges a sha, never the branch
@@ -28,8 +28,8 @@ it by sha if not, and runs `git merge --no-ff <commitSha>`. Never `FETCH_HEAD`,
 has commits that are not part of the update: they are left out, and the owner
 is told. A commit the branch no longer holds (the branch was fetched, and the
 sha is not reachable) is reported `conflicted` and not merged. A fetch that
-FAILS — network, auth, a deleted branch — reports nothing: `conflicted` would
-drop the update off the pending list for good (§7), so the next run retries. Pinned by `TestPlatformUpdateLeavesOutCommitsOnTopOfTheBranch` (red
+FAILS — network, auth, a deleted branch — reports nothing: none of those is a
+conflict, so the next run retries. Pinned by `TestPlatformUpdateLeavesOutCommitsOnTopOfTheBranch` (red
 when the merge target is `FETCH_HEAD`) and
 `TestPlatformUpdateMissingCommitIsNotMerged`, and the failed-fetch arm by
 `TestPlatformUpdateFailedFetchIsNotReportedConflicted`.
@@ -68,7 +68,7 @@ that lacks a pending update, or from a directory that is not a checkout at all,
 would publish a version that silently drops it. Every way the update is left
 unmerged therefore refuses, naming `--allow-unmerged-platform-update`.
 
-A `listPending` call that FAILS (anything but a 404, which is "no updates") is a
+A `listPending` call that FAILS (anything but a 404 — §8 — or a 200) is a
 warning and the submit goes ahead, like the listing gate and the SDK-floor read
 beside it: a failed read says nothing about whether an update is pending, and
 refusing every submit while the procedure is broken would block the whole
@@ -86,11 +86,35 @@ that may be strict would risk refusing every submit that uses the flag. So it
 is CLI-only: it merges nothing, refuses nothing, and lists the updates it left
 out on stderr.
 
-## 7. A `conflicted` update is invisible to the next run
+## 7. A `conflicted` update is retried on every run, and reported once
 
-`listPending` returns PENDING updates only, so once a run reports `conflicted`
-the next `app pull` or `app submit` no longer sees it, and submit cannot refuse
-over it. The contract says the owner may report `merged` later; there is no
-owner-side list of conflicted updates to drive that. The conflict output names
-the sha and the hand-merge command, and that is the only place it is said.
-Closing this needs a server change (list conflicted updates to the owner too).
+`listPending` returns OPEN updates — `pending` AND `conflicted` — so an update a
+run reported `conflicted` is still listed on the next `app pull` or `app
+submit` (it used to vanish after that one report, and a stale checkout could
+then submit without it). Each run retries it: already in HEAD's history (the
+owner merged it by hand) → `resolve merged` with HEAD, merging nothing; merges
+cleanly now → `resolve merged` with the merge commit; still conflicts → abort,
+re-print the hand-merge instructions naming the sha, exit non-zero, and submit
+refuses. `conflicted` is NOT sent again for an update already listed
+`conflicted` (the server would no-op it); `platformUpdateRun.resolve` is the one
+place that decides it. Pinned by `TestPlatformUpdateConflictedIsRetriedAndReprinted`
+and `TestSubmitRefusesOverAConflictedUpdate` (both red on the pre-change client:
+it re-reported `conflicted`). `TestPlatformUpdateConflictedMergedByHandIsReportedMerged`
+and `TestPlatformUpdateConflictedThatNowMergesCleanlyIsMerged` are invariant
+guards: the client already handled both once the server lists the update.
+
+## 8. Two 404s, told apart by tRPC's own message
+
+Both arrive as HTTP 404 with a tRPC error envelope and code `NOT_FOUND`: an
+older server's router answers a procedure it lacks with tRPC's own `No
+procedure found on path "…"` (v10: `No "query"-procedure on path "…"`), and the
+server answers "App not found" for an app it does not know or the caller may
+not edit. Measured against `@trpc/server` 11.17.0: the two bodies differ only in
+`message`. So `platformUpdates404` recognises "no such procedure" POSITIVELY —
+that message, or a 404 with no envelope at all — and that alone is silent;
+every other 404 is `appapi.ErrPlatformUpdatesAppNotFound`. If tRPC rewords its
+message, an older server gets a warning line, never a silent "App not found".
+`app pull` has just resolved the app as the caller's, so it prints ONE warning
+line; `app submit` stays silent (a brand-new slug's first submit lands there,
+and the submit itself tells an owner the app is not theirs). `verifyCommit`
+treats any 404 as "not verified". Pinned by `TestPlatformUpdate404s`.

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/civitai/cli/pkg/civitai"
@@ -15,7 +17,8 @@ import (
 // Staff platform updates — the OWNER half (civitai/civitai#10594, "Owner-facing
 // API"). Civitai staff can commit an update to someone else's app, as one commit
 // on its own branch of the app's SOURCE repository; the owner's CLI lists the
-// pending ones, merges each recorded commit, and reports the outcome.
+// OPEN ones (pending, and conflicted ones not yet merged by hand), merges each
+// recorded commit, and reports the outcome.
 //
 // 🔴 THIS FILE IS THE ONE PLACE THE WIRE CONTRACT LIVES: procedure names, field
 // names, the outcome enum and the status mapping. It was written against the
@@ -35,6 +38,74 @@ const (
 	PlatformUpdateMerged     = "merged"
 	PlatformUpdateConflicted = "conflicted"
 )
+
+// The two statuses an OPEN update — one listPending returns — can carry.
+const (
+	PlatformUpdateStatusPending    = "pending"
+	PlatformUpdateStatusConflicted = "conflicted"
+)
+
+// ErrPlatformUpdatesAppNotFound is a NOT_FOUND from a server that HAS the
+// procedure: it does not know the app, or the caller may not edit it ("App not
+// found" — the server answers both the same). It is NOT "no updates": for an app
+// the caller believes it owns, the caller should say so.
+var ErrPlatformUpdatesAppNotFound = errors.New("platform updates: the server does not know this app for this account")
+
+// errPlatformUpdatesNoProcedure is a 404 from a server WITHOUT the procedure (an
+// older server, or a route in front of it that does not know the path).
+var errPlatformUpdatesNoProcedure = errors.New("platform updates: the server has no such procedure")
+
+// trpcNoProcedureRe is tRPC's own message for a path its router does not have:
+// v11 `No procedure found on path "<p>"`, v10 `No "query"-procedure on path "<p>"`.
+var trpcNoProcedureRe = regexp.MustCompile(`^No (?:procedure found|"[a-z]+"-procedure) on path `)
+
+// platformUpdates404 classifies a 404 body.
+//
+// 🔴 BOTH 404s CARRY A tRPC ERROR ENVELOPE WITH code NOT_FOUND. An older server
+// is a tRPC server too: a procedure its router lacks is answered by tRPC itself,
+// `{error:{json:{message:"No procedure found on path \"…\"", data:{code:"NOT_FOUND"}}}}`,
+// exactly the shape of the server's own "App not found". So the code cannot
+// tell them apart; tRPC's fixed message can. "No such procedure" is therefore
+// recognised POSITIVELY — that message, or a 404 with no tRPC envelope at all
+// (something in front of the server answered) — and every other 404 is
+// ErrPlatformUpdatesAppNotFound. The failure direction is deliberate: if tRPC
+// ever rewords its message, an older server produces a warning, never a silent
+// "App not found".
+func platformUpdates404(raw []byte) error {
+	// The superjson-wrapped envelope ({error:{json:{…}}}) the server writes, or a
+	// bare one ({error:{message}}) from a tRPC without a transformer.
+	type shape struct {
+		Message *string `json:"message"`
+		Code    any     `json:"code"`
+	}
+	var env struct {
+		Error *struct {
+			shape
+			JSON *shape `json:"json"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(raw, &env) != nil || env.Error == nil {
+		return errPlatformUpdatesNoProcedure
+	}
+	inner := env.Error.JSON
+	if inner == nil {
+		inner = &env.Error.shape
+	}
+	if inner.Message == nil && inner.Code == nil {
+		return errPlatformUpdatesNoProcedure
+	}
+	msg := ""
+	if inner.Message != nil {
+		msg = strings.TrimSpace(*inner.Message)
+	}
+	if trpcNoProcedureRe.MatchString(msg) {
+		return errPlatformUpdatesNoProcedure
+	}
+	if msg == "" {
+		return ErrPlatformUpdatesAppNotFound
+	}
+	return fmt.Errorf("%w (%s)", ErrPlatformUpdatesAppNotFound, msg)
+}
 
 // PlatformUpdatePath is one entry of PlatformUpdate.Paths: a file the update's
 // commit creates, updates or deletes.
@@ -69,21 +140,25 @@ type PlatformUpdate struct {
 	CreatedAt       string               `json:"createdAt"`
 }
 
-// ListPendingPlatformUpdates returns the app's PENDING platform updates, oldest
-// first (the order to merge them in). `slug` is the app's slug.
+// ListPendingPlatformUpdates returns the app's OPEN platform updates — status
+// `pending` AND `conflicted` (one a client could not merge, which stays listed
+// until it is merged or withdrawn) — oldest first, the order to merge them in.
+// `slug` is the app's slug. The procedure keeps its older name, listPending.
 //
-// 🔴 A 404 IS "NO UPDATES", AND IT IS RETURNED AS AN EMPTY LIST WITH A NIL
-// ERROR. tRPC answers 404 both for a procedure the server does not have (an
-// older server) and for an app the caller cannot reach ("App not found" — a
-// first submit of a brand-new slug lands there). The contract says to treat the
-// first as no updates; the second has nothing to merge either. A flag that is
-// off answers `{updates: []}` in a 200, which needs no special case.
+// Two 404s, two answers (platformUpdates404):
+//   - a server WITHOUT the procedure (older): no updates — empty list, nil error;
+//   - a server that answers NOT_FOUND itself ("App not found"): an error wrapping
+//     ErrPlatformUpdatesAppNotFound, so the caller decides whether that is
+//     expected (a first submit of a brand-new slug) or worth a warning (a pull of
+//     an app the CLI just resolved).
+//
+// A flag that is off answers `{updates: []}` in a 200, which needs no special case.
 func (c *Client) ListPendingPlatformUpdates(ctx context.Context, slug string) ([]PlatformUpdate, error) {
 	var out struct {
 		Updates []PlatformUpdate `json:"updates"`
 	}
-	status, err := c.platformUpdatesQuery(ctx, PlatformUpdatesListPendingPath, map[string]string{"slug": slug}, &out)
-	if status == http.StatusNotFound {
+	_, err := c.platformUpdatesQuery(ctx, PlatformUpdatesListPendingPath, map[string]string{"slug": slug}, &out)
+	if errors.Is(err, errPlatformUpdatesNoProcedure) {
 		return nil, nil
 	}
 	if err != nil {
@@ -94,7 +169,8 @@ func (c *Client) ListPendingPlatformUpdates(ctx context.Context, slug string) ([
 
 // VerifyPlatformUpdateCommit asks whether commitSha is a recorded platform
 // update of the app — the ONLY source of the "verified Civitai staff" badge.
-// A 404 (older server) is `false`, never an error.
+// Any 404 (an older server, or an app the server does not know) is `false`,
+// never an error: the badge is only drawn on a positive answer.
 func (c *Client) VerifyPlatformUpdateCommit(ctx context.Context, slug, commitSha string) (bool, error) {
 	var out struct {
 		Verified bool `json:"verified"`
@@ -156,6 +232,9 @@ func (c *Client) platformUpdatesQuery(ctx context.Context, path string, input an
 	status, raw, err := c.authedDo(ctx, build)
 	if err != nil {
 		return status, err
+	}
+	if status == http.StatusNotFound {
+		return status, platformUpdates404(raw)
 	}
 	if status != http.StatusOK {
 		return status, platformUpdatesError(path, status, raw)

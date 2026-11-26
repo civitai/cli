@@ -180,7 +180,8 @@ you so instead of failing obscurely.
 
 PLATFORM UPDATES: Civitai staff can push an update to your app (an SDK bump,
 say) as one commit in its source repository. After syncing, this command asks
-for pending ones and merges each into the checkout, oldest first, with
+for open ones (pending, or not yet merged after a conflict) and merges each
+into the checkout, oldest first, with
 ` + "`git merge --no-ff <commit>`" + ` — the exact commit Civitai recorded, fetched
 from the source repository by URL (no remote is added), never the branch tip.
 Each merge prints who made it and why: "<user> (verified Civitai staff)
@@ -190,9 +191,10 @@ the files it changes, and says so when it changes the manifest or a storage
 hook, which decide what your app is allowed to do. A branch with extra commits
 on top has them left out, and you are told. An update that conflicts is not
 merged: the merge is aborted, the command prints how to merge that commit by
-hand, and it exits non-zero. A checkout with uncommitted changes is never
-merged into; commit or discard them and pull again. A server without platform
-updates prints nothing.`,
+hand, and it exits non-zero; every later pull retries it, and reports it merged
+once it applies or once you have merged that commit by hand and committed. A
+checkout with uncommitted changes is never merged into; commit or discard them
+and pull again. A server without platform updates prints nothing.`,
 		Example: `  civitai app pull --app my-block               # clone into ./my-block
   civitai app pull ./my-block --app my-block    # clone/sync into ./my-block
   civitai app pull . --app my-block             # sync the current directory`,
@@ -491,14 +493,21 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionListe
 }
 
 // pullPlatformUpdates is `app pull`'s step for staff platform updates: list the
-// app's pending ones and merge them into the checkout (mergePlatformUpdates).
+// app's open ones (pending and conflicted) and merge them into the checkout
+// (mergePlatformUpdates).
 //
 // No updates — including a server without the procedure and the flag off — is
-// silent. A listing that FAILS is a warning, not an error: the sync itself
-// succeeded, and nothing was merged or lost; `app submit` is where an
-// unverifiable list refuses.
+// silent. The server's "App not found" is NOT silent here: pull has just
+// resolved this app as the caller's, so a platform-update listing that does not
+// know it is worth one line. A listing that FAILS is a warning, not an error:
+// the sync itself succeeded, and nothing was merged or lost.
 func pullPlatformUpdates(ctx context.Context, api platformUpdateAPI, out, errOut io.Writer, dir, slug, sourceURL string) error {
 	updates, err := listPendingPlatformUpdates(ctx, api, slug)
+	if errors.Is(err, appapi.ErrPlatformUpdatesAppNotFound) {
+		fmt.Fprintln(errOut, ui.For(errOut).Warn(fmt.Sprintf(
+			"Civitai answered \"App not found\" when asked for %s's platform updates, so none were checked; if you still own or edit this app, try again later.", puText(slug))))
+		return nil
+	}
 	if err != nil {
 		fmt.Fprintf(errOut, "\n%s\n", ui.For(errOut).Warn("The platform-update check for this app failed: "+puText(err.Error())))
 		return nil
