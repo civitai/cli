@@ -260,6 +260,9 @@ func sdkFloorServer(t *testing.T, floorStatus int) (*httptest.Server, *[]byte) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"result": map[string]any{"data": map[string]any{"json": []any{}}},
 			})
+		case strings.HasPrefix(r.URL.Path, "/api/trpc/appPlatformUpdates."):
+			// A server without staff platform updates (tRPC's 404): no updates.
+			w.WriteHeader(http.StatusNotFound)
 		case r.URL.Path == "/api/v1/blocks/submit-version":
 			submitBody, _ = io.ReadAll(r.Body)
 			_ = json.NewEncoder(w).Encode(map[string]any{

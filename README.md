@@ -922,6 +922,24 @@ shown to the moderator who reviews it. A server that publishes no minimum gets
 a one-line note and no refusal. The server also flags a below-minimum lockfile
 itself, as an `sdk-below-floor` advisory under the success line.
 
+**Platform updates from Civitai staff.** Staff can push an update to your app
+(an SDK bump, say) as one commit in its source repository. A submit that would
+upload asks for open updates (pending, or not yet merged after a conflict) and
+merges each into the checkout first, the
+same way [`app pull`](#pull-your-apps-repository-app-pull) does, so the bundle
+carries it; push the merge afterwards so your own repository keeps it. Submit
+**refuses** while an update is unmerged (it conflicts, the app directory has
+uncommitted changes, the directory is not a git checkout, or the checkout shares
+no history with the source repository), because a bundle built without it would
+silently drop it. The **server checks too**: it refuses any bundle missing a
+staff update that no approved version has shipped yet (`platform_update_missing`;
+the CLI lists the updates it names). `--allow-unmerged-platform-update` submits
+without it, lists what it left out, and is sent with the submission
+(`allowUnmergedPlatformUpdate: true`), where it is **recorded for the moderator**
+who reviews it. A server without platform updates prints nothing, and a client
+check that fails warns and the submit goes ahead (the server's check still
+applies).
+
 That last ceiling is **10485760 bytes** of base64 JSON body, and `app submit`
 refuses **before uploading**, so an oversize bundle costs you nothing. The number
 is **vendored, not measured** — it is the platform proxy's framework default, so
@@ -1256,6 +1274,44 @@ URL. Running `civitai app pull` in it removes the token from every remote that
 points at this app's repository and installs the helper, and says so. A remote
 that carries a credential but points somewhere else is left alone, and the command
 prints the `git remote set-url` that cleans it. The token itself is not rotated.
+
+**Platform updates from Civitai staff.** Staff can push an update to your app
+(an SDK bump, say) as one commit on its own branch of the source repository.
+After syncing, `app pull` asks for open updates and merges each, oldest
+first, with `git merge --no-ff <commit>`: the **exact commit Civitai recorded**,
+fetched from the source repository by URL (no remote is added), never whatever
+the branch points at now. Each merge prints who made it and why:
+
+```text
+Merged platform update apu_… (commit 3f9a…) into my-block.
+  mod-jane (verified Civitai staff) updated your app: Bump @civitai/sdk to 0.40
+  Files: update package.json, update package-lock.json
+```
+
+"(verified Civitai staff)" appears only when the server confirms that commit is
+a recorded update by a current moderator; otherwise the line has no badge and
+says the update could not be verified. An update that changes
+`block.manifest.json` or a storage hook says it changes what your app is
+allowed to do. Commits on the branch beyond the recorded one are left out, and
+the command says so. An update that **conflicts** is not merged: the merge is
+aborted, Civitai is told, and the command prints the `git fetch … && git merge
+<commit>` that merges it by hand, then exits `1`. The update stays open: every
+later pull retries it, re-printing those instructions while it still
+conflicts, and reports it merged once it applies or once you have merged that
+commit by hand and committed. The printed commands quote the directory and the
+URL and carry the credential helper, so they paste as-is. A merge git stops
+without a conflict (a failing commit signer or hook) is aborted and reported as
+that, not as a conflict. An app directory with uncommitted changes is never
+merged into (exit `1`; commit or discard, then pull again); changes elsewhere
+in a larger repository do not count unless the merge would touch them. A
+checkout of the **build repository**, or of any history the source repository
+does not share, is not merged into: the command says so and prints the `git
+fetch <url> <commit> && git cherry-pick <commit>` that applies it there, or
+pull the source repository into a new directory. On a **detached HEAD** the
+update is merged, but the merge commit is on no branch, so the command says to
+push or branch it and does not report it merged. A server without platform
+updates prints nothing; a server that answers "App not found" for the app
+prints one warning line.
 
 A pulled tree's `block.manifest.json` carries the platform-stamped
 `iframe.src` (`https://<blockId>.civit.ai/`); `civitai app validate` accepts that

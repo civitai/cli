@@ -298,6 +298,7 @@ func newAppSubmitCmd() *cobra.Command {
 	var allowOversize bool
 	var allowIncompleteListing bool
 	var allowOutdatedSDK bool
+	var allowUnmergedPlatformUpdate bool
 
 	cmd := &cobra.Command{
 		Use:   "submit [dir]",
@@ -423,6 +424,30 @@ GitHub Actions:
   the error says why. It is read from the environment only (there is no flag,
   so it never appears on the command line) and is never printed.
 
+Platform updates from Civitai staff:
+  Civitai staff can push an update to your app (a platform update: an SDK
+  bump, say) as one commit in the app's source repository. A submit that would
+  really upload first asks the server for open ones (pending, or not yet
+  merged after a conflict) and merges each into
+  this checkout with ` + "`git merge --no-ff <commit>`" + ` — the commit Civitai
+  recorded, never whatever its branch now points at. Each is printed with who
+  made it and why; "(verified Civitai staff)" appears only when the server
+  confirms the commit, and an update that changes the manifest or a storage
+  hook says it changes what the app is allowed to do. The bundle then includes
+  it, and the merge is yours to push.
+  Submit REFUSES while one is unmerged — it conflicts (the merge is aborted
+  and the hand-merge command is printed), the app directory has uncommitted
+  changes, the directory is not a git checkout, or the checkout shares no
+  history with the source repository (a build-repository checkout: the
+  cherry-pick that applies it is printed) — because a bundle built without it
+  would drop it. From a detached HEAD the update is merged into the bundle,
+  but the merge commit is on no branch, so push or branch it afterwards.
+  The SERVER checks the bundle too, and refuses one missing a staff update
+  that no approved version has shipped (the CLI lists what it names).
+  Pass --allow-unmerged-platform-update to submit without it: the override is
+  sent with the submission and recorded for the moderator who reviews it.
+  A server without platform updates prints nothing.
+
 Storage migration notes:
   An app that declares App Storage collections is checked by the SERVER
   against the previous approved version. An accepted submit prints the
@@ -440,6 +465,7 @@ Defaults to the current directory.`,
   civitai app submit --allow-oversize   # submit past the vendored body-size ceiling
   civitai app submit --allow-incomplete-listing  # submit before the store listing is finished
   civitai app submit --allow-outdated-sdk        # submit on an SDK below the platform minimum
+  civitai app submit --allow-unmerged-platform-update  # submit without a pending staff update
   civitai app submit -o my-block.zip ./my-block`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -669,6 +695,34 @@ Defaults to the current directory.`,
 					return err
 				}
 				prov.OutdatedSDK = outdated
+
+				// 2e. STAFF PLATFORM UPDATES, last of the network gates and
+				// before any packaging (app_platform_updates.go). A pending
+				// update is merged into the checkout so the bundle carries it;
+				// one that cannot be merged refuses the submit, because a bundle
+				// built without it would silently drop it. After the network
+				// gates for their reason (no network before confirmSubmit), and
+				// after them in order because a refusal there means no submit
+				// at all, so merging first would only leave a merge to explain.
+				merged, err := submitPlatformUpdates(ctx, client, client.GetForgejoCloneInfo, cmd.ErrOrStderr(),
+					dir, m.BlockID, allowUnmergedPlatformUpdate)
+				if err != nil {
+					return err
+				}
+				// The override rides the submit: the server checks the bundle for
+				// every staff update not yet shipped and refuses without it, and
+				// records it for the moderator when it is sent. Sent only when the
+				// flag is passed.
+				prov.AllowUnmergedPlatformUpdate = allowUnmergedPlatformUpdate
+				if merged > 0 {
+					// 🔴 THE TREE MOVED, SO EVERYTHING READ FROM IT IS STALE: the
+					// manifest (an update may change it), the validation verdict,
+					// the lockfile and the commit the provenance names. Re-read
+					// each, and re-run the guards whose input could have changed.
+					if m, prov, err = afterPlatformUpdateMerge(ctx, cmd, client, dir, m, prov, skipValidate, allowDirty, allowDowngrade, allowOutdatedSDK); err != nil {
+						return err
+					}
+				}
 			}
 
 			// 3. Package the canonical source tree.
@@ -753,7 +807,55 @@ Defaults to the current directory.`,
 		"submit even when the app's store listing is missing media or copy (--yes does NOT waive that gate)")
 	cmd.Flags().BoolVar(&allowOutdatedSDK, "allow-outdated-sdk", false,
 		"submit even when the lockfile installs @civitai/sdk or @civitai/blocks-react below the platform minimum (the override is shown to the moderator)")
+	cmd.Flags().BoolVar(&allowUnmergedPlatformUpdate, "allow-unmerged-platform-update", false,
+		"submit without merging pending platform updates from Civitai staff (the bundle will not contain them; the override is recorded for the moderator)")
 	return cmd
+}
+
+// afterPlatformUpdateMerge re-reads what a platform-update merge can have
+// changed, for `app submit`: validation, the manifest, the version guard when
+// the version moved, the SDK floor, and the provenance (HEAD is now the merge).
+// The slug may not change: everything above was asked about the old one.
+func afterPlatformUpdateMerge(ctx context.Context, cmd *cobra.Command, client *appapi.Client, dir string, m *manifest.Manifest, prov appapi.Provenance,
+	skipValidate, allowDirty, allowDowngrade, allowOutdatedSDK bool) (*manifest.Manifest, appapi.Provenance, error) {
+	errw := cmd.ErrOrStderr()
+	if !skipValidate {
+		res, err := validate.Dir(dir)
+		if err != nil {
+			return nil, prov, err
+		}
+		if !res.OK() {
+			fmt.Fprintln(errw, ui.For(errw).ErrorMsg(fmt.Sprintf("validation failed after merging the platform update(s) (%d error(s)):", len(res.Errors))))
+			for _, e := range res.Errors {
+				printFinding(errw, e.Message)
+			}
+			return nil, prov, fmt.Errorf("validation failed after merging the platform update(s) — fix it, commit, and submit again")
+		}
+	}
+	m2, err := manifest.Load(dir)
+	if err != nil {
+		return nil, prov, err
+	}
+	if !appapi.SameSlug(m2.BlockID, m.BlockID) {
+		return nil, prov, fmt.Errorf("the platform update changed blockId from %q to %q; refusing to submit — check the merge", m.BlockID, m2.BlockID)
+	}
+	if m2.Version != m.Version {
+		if err := checkVersionNotRegression(ctx, client.ListSubmissions, errw, m2.BlockID, m2.Version, allowDowngrade); err != nil {
+			return nil, prov, err
+		}
+	}
+	outdated, err := checkSDKFloor(ctx, client.GetSDKFloor, errw, dir, m2.BuildCommand, allowOutdatedSDK)
+	if err != nil {
+		return nil, prov, err
+	}
+	fresh, err := checkWorkTreeClean(gitOutput, io.Discard, dir, m2.BlockID, m2.Version, allowDirty)
+	if err != nil {
+		return nil, prov, err
+	}
+	fresh.GitHubOIDCToken = prov.GitHubOIDCToken
+	fresh.OutdatedSDK = outdated
+	fresh.AllowUnmergedPlatformUpdate = prov.AllowUnmergedPlatformUpdate
+	return m2, fresh, nil
 }
 
 // firstReviewChecklistURL is the docs-site checklist of review feedback that
@@ -885,6 +987,12 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 		// the error returned unchanged.
 		if submitRefusalIsPlatformFriction(err) {
 			printFeedbackHint(cmd.ErrOrStderr(), feedbackHintSubmitRefused)
+		}
+		// The server's own platform-update check refused the bundle
+		// (platform_update_missing): list what it named and the way out.
+		var missing *appapi.PlatformUpdateMissingError
+		if errors.As(err, &missing) {
+			return platformUpdateMissingRefusal(cmd.ErrOrStderr(), missing, err)
 		}
 		return err
 	}

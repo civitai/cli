@@ -573,6 +573,11 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	"terminalSafeReference": {"TestAppElementsTerminalOutputCannotCarryEscapes",
 		"`app elements <tag>`: every string of one element's reference — tag, class chain, descriptions, " +
 			"attribute names/types/defaults, events, slots, parts, CSS properties — gated once before rendering"},
+	// --- staff platform updates: `app pull` / `app submit` -------------------
+	"puText": {"TestPlatformUpdateServerTextCannotForgeALine",
+		"the one sanitiser of the platform-update flow: the moderator's reason, the staff username, the changed " +
+			"paths, the branch, the source URL and server/git error text. The named test serves a reason, a " +
+			"username and a path carrying CSI, OSC-52 and a newline that forges a `Merged …` line"},
 	// --- app feedback: the one surface whose text ANY site user can write -----
 	"feedbackMessageLines": {"TestAppFeedbackMessageEscapeSequencesNeverReachTheTerminal",
 		"`app feedback`: the message body, written by an arbitrary site user and read by the owner's coding " +

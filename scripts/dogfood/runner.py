@@ -661,6 +661,8 @@ GATED_FLAGS = {
     "allow-incomplete-listing": "bool",
     # `app submit`'s waiver for the outdated-SDK guard. Consumes nothing.
     "allow-outdated-sdk": "bool",
+    # `app submit`'s waiver for an unmerged staff platform update. Consumes nothing.
+    "allow-unmerged-platform-update": "bool",
     # `app listing set-icon|set-cover --red`: picks the civitai.red override slot.
     # It consumes nothing (the file stays positional).
     "red": "bool",

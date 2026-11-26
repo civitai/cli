@@ -84,6 +84,13 @@ type Provenance struct {
 	// the submission, labelled as this CLI's claim. Empty on every submit that
 	// did not override (the key is then omitted).
 	OutdatedSDK []OutdatedSDK
+	// AllowUnmergedPlatformUpdate is `--allow-unmerged-platform-update`: the
+	// submit asks the server to accept a bundle that does not contain every
+	// staff platform update not yet shipped in an approved version. It travels
+	// as `allowUnmergedPlatformUpdate: true` and the server records it for the
+	// moderator reviewing the submission. false on every submit that did not
+	// pass the flag (the key is then omitted).
+	AllowUnmergedPlatformUpdate bool
 }
 
 // sourceCommitRe is the server's own validator, mirrored (civitai/civitai#4061,
@@ -757,6 +764,8 @@ type submitBody struct {
 	// SDKFloorOverride is omitted when empty, so a submit that overrode nothing
 	// sends exactly the body it sent before this field existed.
 	SDKFloorOverride []OutdatedSDK `json:"sdkFloorOverride,omitempty"`
+	// AllowUnmergedPlatformUpdate is omitted when false, for the same reason.
+	AllowUnmergedPlatformUpdate bool `json:"allowUnmergedPlatformUpdate,omitempty"`
 }
 
 // submitBodyEnvelope is the literal JSON document json.Marshal produces for an
@@ -782,11 +791,11 @@ const submitBodyEnvelope = `{"bundleBase64":""}`
 func submitEnvelopeLen(prov Provenance) int {
 	commit, dirty := prov.sanitised()
 	override := capSDKFloorOverride(prov.OutdatedSDK)
-	if commit == "" && dirty == nil && prov.GitHubOIDCToken == "" && len(override) == 0 {
+	if commit == "" && dirty == nil && prov.GitHubOIDCToken == "" && len(override) == 0 && !prov.AllowUnmergedPlatformUpdate {
 		return len(submitBodyEnvelope)
 	}
 	env, err := json.Marshal(submitBody{SourceCommit: commit, SourceDirty: dirty, GitHubOIDCToken: prov.GitHubOIDCToken,
-		SDKFloorOverride: override})
+		SDKFloorOverride: override, AllowUnmergedPlatformUpdate: prov.AllowUnmergedPlatformUpdate})
 	if err != nil {
 		// Unreachable for these field types; degrade to the no-provenance
 		// envelope rather than reporting a nonsense size.
@@ -1027,7 +1036,8 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 		GitHubOIDCToken: prov.GitHubOIDCToken,
 		// Capped to the server's schema, so an over-long pre-release string
 		// cannot turn --allow-outdated-sdk into a 400 (capSDKFloorOverride).
-		SDKFloorOverride: capSDKFloorOverride(prov.OutdatedSDK),
+		SDKFloorOverride:            capSDKFloorOverride(prov.OutdatedSDK),
+		AllowUnmergedPlatformUpdate: prov.AllowUnmergedPlatformUpdate,
 	})
 	if err != nil {
 		// UNREACHABLE for these field types — submitEnvelopeLen says the same of
@@ -1149,7 +1159,7 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 		return nil, err
 	}
 	if status != http.StatusOK {
-		return nil, &SubmitRefusedError{Status: status, Err: serverError(status, raw)}
+		return nil, &SubmitRefusedError{Status: status, Err: submitRefusal(status, raw)}
 	}
 	var out SubmitResult
 	if err := json.Unmarshal(raw, &out); err != nil {

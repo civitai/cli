@@ -92,6 +92,8 @@ var userTypedArgs = map[string]string{
 // different function than the one it is filed under. Recorded as the shape to
 // reconsider if a second mixed-origin selector argument ever appears.
 var bareIdentArgs = map[string]string{
+	// --- staff platform updates ---------------------------------------------
+	"puText::s": "SERVER: a platform update's reason, username, paths or branch, the server's source-repository URL, a server error, or git's output from fetching the server's repository; never the slug or a directory the user typed (those are printed unsanitised by the callers)",
 	// --- download path ------------------------------------------------------
 	"checkTargetCollisions::target":  "MIXED: --out verbatim, else filepath.Base(SERVER file name) — see targetPath. The refusal that is the only thing between the user and a silent overwrite",
 	"downloadBlobTo::target":         "MIXED: on generate's `Saved <target>` line. NOT via targetPath — on this path the target comes from planOutputTarget(o.outName,…), so the user half is the --out-name TEMPLATE rather than --out",

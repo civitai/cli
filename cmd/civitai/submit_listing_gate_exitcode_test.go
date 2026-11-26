@@ -155,6 +155,9 @@ func TestSubmitListingGateProcessExitStatusEndToEnd(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]any{
 						"result": map[string]any{"data": map[string]any{"json": rows}},
 					})
+				case strings.HasPrefix(r.URL.Path, "/api/trpc/appPlatformUpdates."):
+					// A server without staff platform updates (tRPC's 404): no updates.
+					w.WriteHeader(http.StatusNotFound)
 				default:
 					_ = json.NewEncoder(w).Encode(map[string]any{
 						"publishRequestId": "pubreq_e2e", "slug": e2eGateSlug,
