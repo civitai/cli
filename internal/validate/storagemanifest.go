@@ -39,6 +39,11 @@ import (
 // (the `app-blocks-storage-hooks` cohort), which the CLI cannot see — so it is a
 // warning too, saying that (storageHookRolloutWarning).
 //
+// REMOVED PRIMITIVES (storageRemovedPrimitiveChecks): counters, marks and
+// write "none" were removed (civitai #10391). The server refuses them at submit
+// unless the previous approved version already declared them; the CLI cannot
+// see that version, so it errors on every declaration and says so.
+//
 // THE ONE KNOWN DIVERGENCE: where the server lists collection names in
 // DECLARATION order, this lists them SORTED. The manifest is decoded into a Go
 // map, which keeps no key order; same names, same rule.
@@ -187,11 +192,11 @@ func storageFeatureGateWarnings(generic any) []Finding {
 		}
 		if shared && write == "anyone" {
 			out = append(out, newFinding(childField(at, "write"), storageNotYet(
-				at+`.write "anyone"`, "documents any viewer may edit", `use "own" or "none" for now`)))
+				at+`.write "anyone"`, "documents any viewer may edit", `use "own" for now`)))
 		}
 		if shared && write == "owner" {
 			out = append(out, newFinding(childField(at, "write"), storageNotYet(
-				at+`.write "owner"`, "owner-written documents", `use "own" or "none" for now`)))
+				at+`.write "owner"`, "owner-written documents", `use "own" for now`)))
 		}
 		if isIntegerIn(c.decl["ttlSeconds"], appStorageTTLMinSeconds, appStorageTTLMaxSeconds) {
 			out = append(out, newFinding(childField(at, "ttlSeconds"), storageNotYet(
@@ -498,6 +503,70 @@ func storageImportSources(generic any) []string {
 			if from, ok := entry["from"].(string); ok {
 				out = append(out, from)
 			}
+		}
+	}
+	return out
+}
+
+// storageRemovedPrimitiveInstead is the server's VIEWER_KEYED_INSTEAD remedy.
+const storageRemovedPrimitiveInstead = `declare a viewer-keyed collection instead (keyedBy "viewer" or ` +
+	`"parent+viewer": each viewer's own document is their vote or entry), and report a document ` +
+	`through the moderation report API — see https://developer.civitai.com/apps/guide/storage`
+
+// storageRemovedPrimitiveGrandfather is the CLI's own addition to the server's
+// first-version message: the one case the server accepts and the CLI cannot see.
+const storageRemovedPrimitiveGrandfather = ` (civitai #10391). civitai.com accepts one only on a ` +
+	`collection whose previous approved version already declares it, where it does nothing; the CLI ` +
+	`cannot see the approved manifest, so it reports every declaration`
+
+// storageRemovedPrimitiveChecks mirrors the server's deprecatedPrimitiveErrors
+// (civitai src/server/services/apps/storage-schema-migrations.ts): counters,
+// marks and `write: "none"` were REMOVED from App Storage (civitai #10391). At
+// submit the server refuses one that the collection's PREVIOUS APPROVED version
+// did not declare, and every one on a first version.
+//
+// 🔴 THE CLI CANNOT SEE THE APPROVED MANIFEST, so it cannot tell a kept
+// (grandfathered, inert) declaration from a new one. These are ERRORS for every
+// declaration — the first-version verdict — because a new declaration is the
+// case that costs an author a refused submit, and a kept one does nothing and
+// can simply be removed. The message says so, so an author of an approved app
+// that keeps one knows civitai.com would accept it.
+//
+// Read as the server's parser leaves the declaration: only on a shared
+// collection (the schema refuses the keys on a private one), and a tally list
+// the parser would discard (tallyNames) declares nothing.
+func storageRemovedPrimitiveChecks(generic any) []Finding {
+	cols, ok := storageCollections(generic)
+	if !ok {
+		return nil
+	}
+	var out []Finding
+	for _, c := range cols {
+		at := childField("storage.collections", c.name)
+		if vis, _ := c.decl["visibility"].(string); vis != "shared" {
+			continue
+		}
+		for _, f := range []struct {
+			field string
+			max   int
+		}{{"marks", appStorageMaxMarks}, {"counters", appStorageMaxCounters}} {
+			names := tallyNames(c.decl[f.field], f.max)
+			if len(names) == 0 {
+				continue
+			}
+			quoted := make([]string, len(names))
+			for i, n := range names {
+				quoted[i] = fmt.Sprintf("%q", n)
+			}
+			out = append(out, newFinding(childField(at, f.field), fmt.Sprintf(
+				"%s.%s: %s were removed and cannot be declared on a new app (declared: %s)%s; %s",
+				at, f.field, f.field, strings.Join(quoted, ", "), storageRemovedPrimitiveGrandfather,
+				storageRemovedPrimitiveInstead)))
+		}
+		if write, _ := c.decl["write"].(string); write == "none" {
+			out = append(out, newFinding(childField(at, "write"), fmt.Sprintf(
+				`%s.write: "none" was removed and cannot be declared on a new app%s; %s`,
+				at, storageRemovedPrimitiveGrandfather, storageRemovedPrimitiveInstead)))
 		}
 	}
 	return out

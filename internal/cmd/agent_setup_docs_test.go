@@ -311,6 +311,11 @@ func sortedKindNames(set map[projectKind]bool) []string {
 // file that spells the URL twice. A sentence cannot notice a fourth; the walk
 // below can.
 var docsURLSpellingLedger = map[string]string{
+	"internal/validate/storagemanifest.go": "storageRemovedPrimitiveInstead, the server's VIEWER_KEYED_INSTEAD " +
+		"remedy (storage-schema-migrations.ts) copied verbatim into the removed counters/marks/write \"none\" " +
+		"errors, so it spells `/apps/guide/storage`. COMPILED INTO the released binary",
+	"internal/validate/storage_removed_primitives_test.go": "the literal golden for those errors, written out " +
+		"rather than built from the constant under test, so it spells the URL too",
 	"internal/cmd/exitcodes_doc.go": "the GENERATED exit-code contract. The front-door reduction " +
 		"moved `## Generate` and `## Validate fidelity` to developer.civitai.com, so exit code 1's and " +
 		"exit code 3's Detail bullets now cross-reference the hosted guides instead of two `###` " +

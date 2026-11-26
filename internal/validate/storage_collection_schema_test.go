@@ -253,10 +253,17 @@ func TestCollectionSchemaLongPropertyNameIsBoundedInTheMessage(t *testing.T) {
 // write "none" collection. The vendored schema refuses the key there too, but
 // its `false` schema reads "false schema", so the server's text stands beside it.
 func TestCollectionSchemaNotOnWriteNone(t *testing.T) {
+	// write "none" and counters were removed (civitai #10391) but a
+	// grandfathered collection can keep them; their own errors are set aside.
 	const plays = `{"visibility":"shared","write":"none","counters":["plays"]`
-	assertCleanResult(t, "twin without a schema", docManifest(oneCollection("plays", plays+`}`), "apps:storage"))
+	twin := manifestOnlyResult(t, docManifest(oneCollection("plays", plays+`}`), "apps:storage"))
+	if rest := withoutRemovedPrimitives(twin.Errors); len(rest)+len(twin.Warnings) != 0 {
+		t.Errorf("twin without a schema: want only the removed-primitive errors, got errors:%s\n warnings:%s",
+			describe(rest), describe(twin.Warnings))
+	}
 
-	fs := manifestOnlyFindings(t, docManifest(oneCollection("plays", plays+`,"schema":{}}`), "apps:storage"))
+	fs := withoutRemovedPrimitives(manifestOnlyFindings(t,
+		docManifest(oneCollection("plays", plays+`,"schema":{}}`), "apps:storage")))
 	const field = "storage.collections.plays.schema"
 	want := field + ` does not apply to write "none" — no document body is ever written to that ` +
 		"collection, so a schema would check nothing"

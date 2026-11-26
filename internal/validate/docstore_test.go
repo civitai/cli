@@ -162,16 +162,16 @@ func TestStorageFeaturesNotYetAvailableAreWarnings(t *testing.T) {
 			scopes: []string{"apps:storage", "apps:storage:publish"},
 			field:  "storage.collections.wiki_pages.write",
 			server: `storage.collections.wiki_pages.write "anyone" is not available yet — documents any ` +
-				`viewer may edit arrive in a later phase of App Storage; use "own" or "none" for now.`,
+				`viewer may edit arrive in a later phase of App Storage; use "own" for now.`,
 		},
 		{
 			name: "write owner", collection: "staff_picks",
-			decl:   `{"visibility":"shared","write":"owner","marks":["star"]}`,
-			twin:   `{"visibility":"shared","write":"none","marks":["star"]}`,
+			decl:   `{"visibility":"shared","write":"owner"}`,
+			twin:   `{"visibility":"private"}`,
 			scopes: []string{"apps:storage"},
 			field:  "storage.collections.staff_picks.write",
 			server: `storage.collections.staff_picks.write "owner" is not available yet — owner-written ` +
-				`documents arrive in a later phase of App Storage; use "own" or "none" for now.`,
+				`documents arrive in a later phase of App Storage; use "own" for now.`,
 		},
 		{
 			name: "ttlSeconds", collection: "drafts",
@@ -405,15 +405,23 @@ func TestStorageRegistryGateFiresOnAPrivateCollection(t *testing.T) {
 
 // TestStorageCounterAndMarkMayNotShareAName — a cross-array rule JSON Schema
 // cannot express (each list is `uniqueItems` on its own).
+//
+// Counters and marks were removed (civitai #10391), so every declaration here
+// also draws the removed-primitive errors (storageRemovedPrimitiveChecks); the
+// server's parser still runs this rule, so it is asserted on what is left.
 func TestStorageCounterAndMarkMayNotShareAName(t *testing.T) {
 	const name = "popular_plays"
-	assertNoErrors(t, "accept twin", docManifest(oneCollection(name,
-		`{"visibility":"shared","write":"none","counters":["plays","likes"],"marks":["liked"]}`), "apps:storage"))
-	assertOnlyError(t,
-		docManifest(oneCollection(name,
-			`{"visibility":"shared","write":"none","counters":["plays","likes"],"marks":["likes"]}`), "apps:storage"),
-		"storage.collections.popular_plays",
-		`storage.collections.popular_plays declares "likes" as both a counter and a mark — use different names`)
+	twin := withoutRemovedPrimitives(manifestOnlyFindings(t, docManifest(oneCollection(name,
+		`{"visibility":"shared","write":"none","counters":["plays","likes"],"marks":["liked"]}`), "apps:storage")))
+	if len(twin) != 0 {
+		t.Errorf("accept twin: want no errors besides the removed-primitive ones, got %d:%s", len(twin), describe(twin))
+	}
+	fs := withoutRemovedPrimitives(manifestOnlyFindings(t, docManifest(oneCollection(name,
+		`{"visibility":"shared","write":"none","counters":["plays","likes"],"marks":["likes"]}`), "apps:storage")))
+	want := `storage.collections.popular_plays declares "likes" as both a counter and a mark — use different names`
+	if len(fs) != 1 || fs[0].Message != want || fs[0].Field != "storage.collections.popular_plays" {
+		t.Errorf("want exactly the collision error\n  want: [storage.collections.popular_plays] %s\n  got:%s", want, describe(fs))
+	}
 }
 
 // TestStorageCounterMarkCollisionSkipsListsTheServerRejects — the server's
@@ -475,7 +483,7 @@ func TestStorageScopeRules(t *testing.T) {
 				`storage.collections, or remove the scope`)
 	})
 	t.Run("apps:storage:publish with no viewer-written collection", func(t *testing.T) {
-		st := oneCollection("vote_tally", `{"visibility":"shared","write":"none","counters":["votes"]}`)
+		st := oneCollection("notes", `{"visibility":"private"}`)
 		assertNoErrors(t, "accept twin", docManifest(st, "apps:storage"))
 		assertOnlyError(t, docManifest(st, "apps:storage", "apps:storage:publish"), "storage",
 			`scopes includes apps:storage:publish but no storage collection is shared with write "own" — `+
@@ -519,14 +527,16 @@ func TestStorageScopeRulesWaitForAValidDeclaration(t *testing.T) {
 	}
 }
 
-// playableManifest is the playable-collections app's real declaration: a
-// per-viewer `kv` and a counters-and-marks `popular_plays`, under `apps:storage`
-// alone (no viewer authors a document, so no publish scope).
+// playableManifest is the playable-collections app's declaration: a per-viewer
+// `kv` and a `popular_plays`. It used to be a counters-and-marks collection;
+// counters and marks were removed (civitai #10391), so it is now the generic
+// replacement, a viewer-keyed collection (one play per viewer per parent,
+// counted by listing), which viewers write, so it needs apps:storage:publish.
 func playableManifest() string {
 	return docManifest(`{"collections":{`+
 		`"kv":{"visibility":"private"},`+
-		`"popular_plays":{"visibility":"shared","write":"none","counters":["plays"],"marks":["played"]}}}`,
-		"user:read:self", "apps:storage")
+		`"popular_plays":{"visibility":"shared","write":"own","keyedBy":"parent+viewer"}}}`,
+		"user:read:self", "apps:storage", "apps:storage:publish")
 }
 
 // storageSourceWarnings returns the warnings this package's source-reading
@@ -687,7 +697,7 @@ func TestDocStorePlayableCollectionsShape(t *testing.T) {
 	got := storageSourceWarnings(t, playableManifest(), map[string]string{
 		"src/lib/kv-store.ts": "export const prefs = () => app.storage.collection('kv').get('playable-collections:browse-prefs');\n",
 		"src/lib/popular.ts": "export const POPULAR_PLAYS_COLLECTION = 'popular_plays';\n" +
-			"export const bump = (key: string) => app.storage.collection('popular_plays').increment(key, 'plays');\n",
+			"export const play = (parent: string) => app.storage.collection('popular_plays').putMine({ at: Date.now() }, { parent });\n",
 		"src/lib/sdk-runtime.ts": "export const store = (name: string) => ({\n" +
 			"  list: async (q?: unknown) => (await app()).storage.collection(name).list(q),\n" +
 			"});\n",

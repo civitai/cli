@@ -142,7 +142,9 @@ func TestOwnedModelVersionsRejectedOutsideSharedOwn(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// (a) accept twin: the collection is fine without the key.
 			twin := manifestOnlyResult(t, tc.manifest(tc.collection))
-			for _, f := range twin.Errors {
+			// write "none" + counters also draw the removed-primitive errors
+			// (civitai #10391); they are not this key's story.
+			for _, f := range withoutRemovedPrimitives(twin.Errors) {
 				t.Errorf("twin without ownedModelVersions: unexpected error on %q: %s", f.Field, f.Message)
 			}
 			if tc.gate != "" {
@@ -153,7 +155,7 @@ func TestOwnedModelVersionsRejectedOutsideSharedOwn(t *testing.T) {
 
 			// (b) the key, with a pointer that is valid on shared/own.
 			with := strings.TrimSuffix(tc.collection, "}") + `,"ownedModelVersions":["/workflow/modelVersionId"]}`
-			fs := manifestOnlyFindings(t, tc.manifest(with))
+			fs := withoutRemovedPrimitives(manifestOnlyFindings(t, tc.manifest(with)))
 			if len(fs) != 1 || fs[0].Field != ownedField {
 				t.Fatalf("want exactly one error located at %q, got %d: %v", ownedField, len(fs), fs)
 			}

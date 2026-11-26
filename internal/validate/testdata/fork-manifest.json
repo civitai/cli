@@ -191,9 +191,6 @@
       "records": {
         "visibility": "shared",
         "write": "own",
-        "marks": [
-          "vote"
-        ],
         "schema": {
           "description": "A published generator: the moderated text in title and body, within the legacy shared store's bounds (200 and 4096), and the generator config in data (lib/generator.ts buildPublishPayload).",
           "type": "object",
@@ -344,16 +341,6 @@
             }
           }
         }
-      },
-      "generator_marks": {
-        "visibility": "shared",
-        "write": "none",
-        "marks": [
-          "downvote"
-        ],
-        "counters": [
-          "anchor"
-        ]
       },
       "generator_media": {
         "visibility": "shared",
