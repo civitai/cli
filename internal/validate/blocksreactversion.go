@@ -36,6 +36,8 @@ package validate
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -168,7 +170,8 @@ func npmLockedVersion(body []byte, name string) (string, bool) {
 	return "", false
 }
 
-// pnpmLockedVersion reads pnpm-lock.yaml. The direct dependency's resolved
+// pnpmLockedVersion reads pnpm-lock.yaml's LAST YAML document (the project
+// lockfile; see the decode loop below). The direct dependency's resolved
 // version sits under `importers["."]` (lockfile v6+ with importers, and v9) or
 // at the top level (single-project v5/v6), either as a bare string (v5) or as
 // `{specifier, version}` (v6+). A peer suffix — `0.71.0(react@19.0.0)` (v6+) or
@@ -183,7 +186,29 @@ func pnpmLockedVersion(body []byte, name string) (string, bool) {
 		DevDependencies map[string]yaml.Node `yaml:"devDependencies"`
 		Importers       map[string]depSets   `yaml:"importers"`
 	}
-	if err := yaml.Unmarshal(body, &lock); err != nil {
+	// pnpm 11+ may write TWO documents: a leading one (pnpm's own version and
+	// config dependencies, which also carries importers["."]) and then the
+	// project lockfile, always LAST. yaml.Unmarshal reads only the first, so
+	// every document is decoded and the last one kept — the same choice the
+	// server-side SDK floor check makes. Broken YAML in any document, or a last
+	// document that is not a mapping, is unreadable; an empty file has no
+	// document and resolves nothing.
+	dec := yaml.NewDecoder(bytes.NewReader(body))
+	var last yaml.Node
+	for {
+		var doc yaml.Node
+		err := dec.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", false
+		}
+		last = doc
+	}
+	// An empty file leaves last as the zero Node, which decodes to an empty
+	// lockfile: no entry, no version.
+	if err := last.Decode(&lock); err != nil {
 		return "", false
 	}
 	sets := []depSets{{lock.Dependencies, lock.DevDependencies}}

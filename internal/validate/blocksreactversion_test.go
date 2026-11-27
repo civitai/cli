@@ -190,3 +190,103 @@ func TestSemverLess(t *testing.T) {
 		}
 	}
 }
+
+// pnpmTwoDocLock is a literal pnpm 11+ lockfile with TWO YAML documents: a
+// leading one (pnpm's own version and config dependencies, which carries its
+// own importers["."]) and then the project lockfile, which pnpm always writes
+// LAST. leadDeps is spliced into the leading document's importers["."] so a
+// case can put a decoy dependency there.
+func pnpmTwoDocLock(leadDeps string) string {
+	return "---\n" +
+		"lockfileVersion: '9.0'\n" +
+		"\n" +
+		"importers:\n" +
+		"\n" +
+		"  .:\n" +
+		"    configDependencies: {}\n" +
+		leadDeps +
+		"    packageManagerDependencies:\n" +
+		"      pnpm:\n" +
+		"        specifier: 12.3.4\n" +
+		"        version: 12.3.4\n" +
+		"\n" +
+		"packages:\n" +
+		"\n" +
+		"  pnpm@12.3.4:\n" +
+		"    resolution: {integrity: sha512-AAAA}\n" +
+		"\n" +
+		"snapshots:\n" +
+		"\n" +
+		"  pnpm@12.3.4: {}\n" +
+		"---\n" +
+		"lockfileVersion: '9.0'\n" +
+		"\n" +
+		"settings:\n" +
+		"  autoInstallPeers: true\n" +
+		"  excludeLinksFromLockfile: false\n" +
+		"\n" +
+		"importers:\n" +
+		"\n" +
+		"  .:\n" +
+		"    dependencies:\n" +
+		"      '@civitai/blocks-react':\n" +
+		"        specifier: ^0.87.0\n" +
+		"        version: 0.81.3(react@19.0.0)\n" +
+		"      '@civitai/sdk':\n" +
+		"        specifier: ^0.33.0\n" +
+		"        version: 0.31.6\n"
+}
+
+// TestPnpmLockfileMultiDocument: a multi-document pnpm-lock.yaml is read from
+// its LAST document (the project lockfile), as the server-side SDK floor check
+// reads it. Reading only the first document found the leading pnpm-config
+// document and silently resolved no SDK version. Single-document files read as
+// before; an empty file resolves nothing; a non-mapping last document, or
+// broken YAML in any document, is unreadable.
+func TestPnpmLockfileMultiDocument(t *testing.T) {
+	// A decoy the leading document cannot hold in a real pnpm lockfile: if a
+	// reader takes the FIRST document, it answers these versions instead of
+	// silence, and each is distinct from the project document's.
+	decoy := "    dependencies:\n" +
+		"      '@civitai/blocks-react':\n" +
+		"        specifier: ^0.60.0\n" +
+		"        version: 0.60.9\n" +
+		"      '@civitai/sdk':\n" +
+		"        specifier: ^0.20.0\n" +
+		"        version: 0.20.7\n"
+	single := "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n" +
+		"      '@civitai/blocks-react':\n        specifier: ^0.71.0\n        version: 0.71.8(react@19.0.0)\n" +
+		"      '@civitai/sdk':\n        specifier: ^0.31.0\n        version: 0.31.2\n"
+	cases := []struct {
+		name, body          string
+		wantBlocks, wantSDK string
+		ok                  bool
+	}{
+		{"two documents: the project (last) document", pnpmTwoDocLock(""), "0.81.3", "0.31.6", true},
+		{"two documents: a leading document holding the packages is not read", pnpmTwoDocLock(decoy), "0.81.3", "0.31.6", true},
+		{"single document, no separator", single, "0.71.8", "0.31.2", true},
+		{"single document behind a leading separator", "---\n" + single, "0.71.8", "0.31.2", true},
+		{"two documents with a BOM", "\xef\xbb\xbf" + pnpmTwoDocLock(""), "0.81.3", "0.31.6", true},
+		{"empty file", "", "", "", false},
+		{"non-mapping last document is unreadable", single + "---\n- just\n- a list\n", "", "", false},
+		{"scalar last document is unreadable", single + "---\nnot a lockfile\n", "", "", false},
+		{"broken YAML in a later document is unreadable", single + "---\nimporters: [unclosed\n", "", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for _, pkg := range []struct{ name, want string }{
+				{"@civitai/blocks-react", tc.wantBlocks},
+				{"@civitai/sdk", tc.wantSDK},
+			} {
+				got, ok := LockedVersion(dir, "pnpm run build", pkg.name)
+				if got != pkg.want || ok != tc.ok {
+					t.Errorf("LockedVersion(%s) = (%q, %v), want (%q, %v)", pkg.name, got, ok, pkg.want, tc.ok)
+				}
+			}
+		})
+	}
+}
