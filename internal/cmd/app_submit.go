@@ -431,8 +431,9 @@ Platform updates from Civitai staff:
   merged after a conflict) and merges each into
   this checkout with ` + "`git merge --no-ff <commit>`" + ` — the commit Civitai
   recorded, never whatever its branch now points at. Each is printed with who
-  made it and why; "(verified Civitai staff)" appears only when the server
-  confirms the commit, and an update that changes the manifest or a storage
+  made it and why (the server names a verified staff update "CivitaiOfficial
+  (App Assistant)"); one the server does not confirm says it could not be
+  verified, and an update that changes the manifest or a storage
   hook says it changes what the app is allowed to do. The bundle then includes
   it, and the merge is yours to push.
   Submit REFUSES while one is unmerged — it conflicts (the merge is aborted

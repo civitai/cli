@@ -38,10 +38,11 @@ import (
 // <commitSha>`. A branch tip that is not commitSha has commits that are not part
 // of the update: they are left out, and the owner is told.
 //
-// 🔴 THE "verified Civitai staff" BADGE COMES ONLY FROM verifyCommit. The
+// 🔴 WHETHER AN UPDATE IS SHOWN AS VERIFIED COMES ONLY FROM verifyCommit. The
 // listing's own `by.verifiedStaff` is not read for it: verifyCommit is the one
-// call the contract names as the source of the badge, and it also answers false
-// for an update a moderator has since withdrawn.
+// call the contract names as the source of that claim, and it also answers
+// false for an update a moderator has since withdrawn. An unconfirmed update
+// prints a could-not-verify note under the sender line.
 //
 // The source repository is fetched BY URL (`git fetch -- <url> <ref>`), never
 // through a remote this code adds: `git remote add` writes the checkout's
@@ -502,7 +503,7 @@ func (r *platformUpdateRun) cherryPickCommand(sha string) string {
 }
 
 // verify asks the server whether sha is a recorded update. Any failure is
-// "not verified": the badge is only ever drawn on a positive answer.
+// "not verified": an update is only ever shown as verified on a positive answer.
 func (r *platformUpdateRun) verify(ctx context.Context, sha string) bool {
 	ok, err := r.api.VerifyPlatformUpdateCommit(ctx, r.slug, sha)
 	return err == nil && ok
@@ -531,20 +532,38 @@ func (r *platformUpdateRun) resolve(ctx context.Context, u appapi.PlatformUpdate
 // verifiedKnown false prints the attribution without any claim about staff
 // status — used where verifyCommit has not been asked (the dirty-tree refusal,
 // which stops before fetching anything).
+//
+// The sender is the server's `by.username`, printed as sent and never
+// suffixed: since civitai/civitai#10717 the owner's record names a verified
+// staff update "CivitaiOfficial (App Assistant)" — the official account itself
+// — and names nobody (null) otherwise, so a " (verified Civitai staff)" suffix
+// would only double the claim. Whether the line may say "verified" at all is
+// still decided by verifyCommit alone: a null sender is "Verified Civitai
+// staff" only when verifyCommit confirmed the commit, else "An unnamed sender".
 func printPlatformUpdateSummary(out io.Writer, u appapi.PlatformUpdate, verified, verifiedKnown bool) {
-	who := "An account with no username"
-	if u.By.Username != nil && strings.TrimSpace(*u.By.Username) != "" {
-		who = puText(strings.TrimSpace(*u.By.Username))
+	name := ""
+	if u.By.Username != nil {
+		name = puText(strings.TrimSpace(*u.By.Username))
+	}
+	who := name
+	if who == "" {
+		who = "An unnamed sender"
+		if verifiedKnown && verified {
+			who = "Verified Civitai staff"
+		}
 	}
 	reason := puText(strings.TrimSpace(u.Reason))
 	switch {
 	case verifiedKnown && verified:
-		fmt.Fprintf(out, "  %s (verified Civitai staff) updated your app: %s\n", who, reason)
+		fmt.Fprintf(out, "  %s updated your app: %s\n", who, reason)
 	case verifiedKnown:
 		fmt.Fprintf(out, "  %s updated your app: %s\n", who, reason)
 		fmt.Fprintf(out, "  Could not verify that this update came from Civitai staff (the server did not confirm commit %s); review it with `git show %s`.\n",
 			u.CommitSha, u.CommitSha)
 	default:
+		if name == "" {
+			who = "an unnamed sender"
+		}
 		fmt.Fprintf(out, "  Platform update %s from %s: %s\n", u.ID, who, reason)
 	}
 	if len(u.Paths) > 0 {

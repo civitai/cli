@@ -44,6 +44,14 @@ Any failure of the call is "not verified": the badge is drawn only on a
 positive answer. Pinned by `TestPlatformUpdateUnverifiedCommitHasNoBadge` (red
 when the badge is drawn from the listing's field).
 
+Since civitai/civitai#10717 there is no badge text: the server's owner view
+names a verified staff update "CivitaiOfficial (App Assistant)" (null
+otherwise), so a " (verified Civitai staff)" suffix doubled the claim and was
+dropped. What `verifyCommit` still decides is the could-not-verify note, and
+the wording for a null sender ("Verified Civitai staff" only on a positive
+answer, else "An unnamed sender"). Pinned whole by
+`TestPlatformUpdateSummarySenderLine`.
+
 ## 3. The source repository is fetched by URL, and no remote is added
 
 `git remote add` writes the checkout's config, and a build-repo checkout

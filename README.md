@@ -1284,13 +1284,14 @@ the branch points at now. Each merge prints who made it and why:
 
 ```text
 Merged platform update apu_… (commit 3f9a…) into my-block.
-  mod-jane (verified Civitai staff) updated your app: Bump @civitai/sdk to 0.40
+  CivitaiOfficial (App Assistant) updated your app: Bump @civitai/sdk to 0.40
   Files: update package.json, update package-lock.json
 ```
 
-"(verified Civitai staff)" appears only when the server confirms that commit is
-a recorded update by a current moderator; otherwise the line has no badge and
-says the update could not be verified. An update that changes
+The sender is the name the server gives the update: "CivitaiOfficial (App
+Assistant)" for an update by a current moderator, nobody ("An unnamed sender")
+otherwise. When the server does not confirm that commit is a recorded update,
+a second line says the update could not be verified. An update that changes
 `block.manifest.json` or a storage hook says it changes what your app is
 allowed to do. Commits on the branch beyond the recorded one are left out, and
 the command says so. An update that **conflicts** is not merged: the merge is

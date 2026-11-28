@@ -184,9 +184,10 @@ for open ones (pending, or not yet merged after a conflict) and merges each
 into the checkout, oldest first, with
 ` + "`git merge --no-ff <commit>`" + ` — the exact commit Civitai recorded, fetched
 from the source repository by URL (no remote is added), never the branch tip.
-Each merge prints who made it and why: "<user> (verified Civitai staff)
-updated your app: <reason>" when the server confirms the commit, or the same
-line without the badge and a note that it could not be verified. It also lists
+Each merge prints who made it and why: "CivitaiOfficial (App Assistant)
+updated your app: <reason>" — the name the server gives a verified staff
+update — and, when the server does not confirm the commit, a note that it
+could not be verified. It also lists
 the files it changes, and says so when it changes the manifest or a storage
 hook, which decide what your app is allowed to do. A branch with extra commits
 on top has them left out, and you are told. An update that conflicts is not

@@ -28,7 +28,9 @@ const (
 	puID     = "apu_01JTESTPLATFORMUPDATE000001"
 	puBranch = "platform-update/apu_01jtestplatformupdate000001"
 	puReason = "Bump @civitai/sdk to 0.40 for the new auth flow"
-	puStaff  = "mod-jane"
+	// puStaff is the sender the server's owner view names a verified staff
+	// update with since civitai/civitai#10717 (its APP_PLATFORM_UPDATE_SENDER).
+	puStaff = "CivitaiOfficial (App Assistant)"
 )
 
 type puResolve struct{ ID, Outcome, MergeSha string }
@@ -248,7 +250,7 @@ func TestPlatformUpdatePullMergesTheRecordedCommit(t *testing.T) {
 	merge := e.head(t)
 	want := "Civitai staff pushed 1 platform update(s) to my-block.\n" +
 		"Merged platform update " + puID + " (commit " + sha + ") into my-block.\n" +
-		"  mod-jane (verified Civitai staff) updated your app: " + puReason + "\n" +
+		"  CivitaiOfficial (App Assistant) updated your app: " + puReason + "\n" +
 		"  Files: create UPDATE.md\n"
 	if !strings.Contains(out, want) {
 		t.Fatalf("stdout does not carry the merge notice.\nwant:\n%s\ngot:\n%s", want, out)
@@ -282,13 +284,10 @@ func TestPlatformUpdateUnverifiedCommitHasNoBadge(t *testing.T) {
 		t.Fatalf("app pull: %v\n%s", err, errOut)
 	}
 	want := "Merged platform update " + puID + " (commit " + sha + ") into my-block.\n" +
-		"  mod-jane updated your app: " + puReason + "\n" +
+		"  CivitaiOfficial (App Assistant) updated your app: " + puReason + "\n" +
 		"  Could not verify that this update came from Civitai staff (the server did not confirm commit " + sha + "); review it with `git show " + sha + "`.\n"
 	if !strings.Contains(out, want) {
 		t.Fatalf("want:\n%s\ngot:\n%s", want, out)
-	}
-	if strings.Contains(out, "verified Civitai staff") {
-		t.Fatalf("the badge was printed for an unverified commit:\n%s", out)
 	}
 }
 
@@ -332,7 +331,7 @@ func TestPlatformUpdateConflictIsAbortedAndReported(t *testing.T) {
 		t.Fatalf("want ErrUnmergedPlatformUpdate, got %v\n%s", err, out)
 	}
 	want := "Platform update " + puID + " (commit " + sha + ") conflicts with your changes in my-block, so nothing was merged (the merge was aborted).\n" +
-		"  mod-jane (verified Civitai staff) updated your app: " + puReason + "\n" +
+		"  CivitaiOfficial (App Assistant) updated your app: " + puReason + "\n" +
 		"  Files: update shared.txt\n" +
 		"  Conflicts in: shared.txt\n" +
 		"To merge it by hand, merge the recorded commit " + sha + " (not the branch):\n" +
@@ -590,7 +589,7 @@ func TestSubmitOverrideSubmitsWithoutTheUpdate(t *testing.T) {
 		t.Fatalf("allowUnmergedPlatformUpdate = %q, want true", got)
 	}
 	want := "Submitting WITHOUT merging 1 platform update(s) from Civitai staff (--allow-unmerged-platform-update):\n" +
-		"  Platform update " + puID + " from mod-jane: " + puReason + "\n" +
+		"  Platform update " + puID + " from CivitaiOfficial (App Assistant): " + puReason + "\n" +
 		"  Files: create UPDATE.md\n"
 	if !strings.Contains(errOut, want) {
 		t.Fatalf("want on stderr:\n%s\ngot:\n%s", want, errOut)
@@ -632,7 +631,7 @@ func TestSubmitMergesAPendingUpdateIntoTheBundle(t *testing.T) {
 	if got := string(e.fake.submitBody["sourceCommit"]); got != `"`+merge+`"` {
 		t.Fatalf("sourceCommit = %s, want the merge commit %s (the pre-merge HEAD was %s)", got, merge, before)
 	}
-	if !strings.Contains(errOut, "mod-jane (verified Civitai staff) updated your app: "+puReason+"\n") {
+	if !strings.Contains(errOut, "\n  CivitaiOfficial (App Assistant) updated your app: "+puReason+"\n") {
 		t.Fatalf("the attribution was not printed:\n%s", errOut)
 	}
 }
@@ -709,7 +708,7 @@ func TestPlatformUpdateConflictedIsRetriedAndReprinted(t *testing.T) {
 	}
 	want := "Retrying platform update " + puID + " (commit " + sha + "), which did not merge cleanly last time.\n" +
 		"Platform update " + puID + " (commit " + sha + ") conflicts with your changes in my-block, so nothing was merged (the merge was aborted).\n" +
-		"  mod-jane (verified Civitai staff) updated your app: " + puReason + "\n" +
+		"  CivitaiOfficial (App Assistant) updated your app: " + puReason + "\n" +
 		"  Files: update shared.txt\n" +
 		"  Conflicts in: shared.txt\n" +
 		"To merge it by hand, merge the recorded commit " + sha + " (not the branch):\n" +
