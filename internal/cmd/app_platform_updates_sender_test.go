@@ -10,8 +10,9 @@ import (
 // The sender line of a platform update, whole. Since civitai/civitai#10717 the
 // owner's record names a verified staff update "CivitaiOfficial (App
 // Assistant)" and names nobody (null) otherwise; the line prints that name as
-// sent — no " (verified Civitai staff)" suffix after it — and a null sender is
-// described from verifyCommit's answer, never from the listing.
+// sent — no " (verified Civitai staff)" suffix after it — a null sender reads
+// "An unnamed sender", and only verifyCommit's answer adds the could-not-verify
+// note.
 func TestPlatformUpdateSummarySenderLine(t *testing.T) {
 	const (
 		id     = "apu_01JSENDERLINE00000000001"
@@ -32,9 +33,9 @@ func TestPlatformUpdateSummarySenderLine(t *testing.T) {
 		{"verified, official sender", &official, true, true,
 			"  CivitaiOfficial (App Assistant) updated your app: " + reason + "\n"},
 		{"verified, null sender", nil, true, true,
-			"  Verified Civitai staff updated your app: " + reason + "\n"},
+			"  An unnamed sender updated your app: " + reason + "\n"},
 		{"verified, blank sender", &blank, true, true,
-			"  Verified Civitai staff updated your app: " + reason + "\n"},
+			"  An unnamed sender updated your app: " + reason + "\n"},
 		{"unverified, null sender", nil, false, true,
 			"  An unnamed sender updated your app: " + reason + "\n" + couldNot},
 		{"unverified, official sender", &official, false, true,

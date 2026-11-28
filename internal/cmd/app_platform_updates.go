@@ -537,9 +537,8 @@ func (r *platformUpdateRun) resolve(ctx context.Context, u appapi.PlatformUpdate
 // suffixed: since civitai/civitai#10717 the owner's record names a verified
 // staff update "CivitaiOfficial (App Assistant)" — the official account itself
 // — and names nobody (null) otherwise, so a " (verified Civitai staff)" suffix
-// would only double the claim. Whether the line may say "verified" at all is
-// still decided by verifyCommit alone: a null sender is "Verified Civitai
-// staff" only when verifyCommit confirmed the commit, else "An unnamed sender".
+// would only double the claim. A null sender reads "An unnamed sender". What
+// verifyCommit still decides, alone, is the could-not-verify note.
 func printPlatformUpdateSummary(out io.Writer, u appapi.PlatformUpdate, verified, verifiedKnown bool) {
 	name := ""
 	if u.By.Username != nil {
@@ -548,18 +547,15 @@ func printPlatformUpdateSummary(out io.Writer, u appapi.PlatformUpdate, verified
 	who := name
 	if who == "" {
 		who = "An unnamed sender"
-		if verifiedKnown && verified {
-			who = "Verified Civitai staff"
-		}
 	}
 	reason := puText(strings.TrimSpace(u.Reason))
 	switch {
-	case verifiedKnown && verified:
-		fmt.Fprintf(out, "  %s updated your app: %s\n", who, reason)
 	case verifiedKnown:
 		fmt.Fprintf(out, "  %s updated your app: %s\n", who, reason)
-		fmt.Fprintf(out, "  Could not verify that this update came from Civitai staff (the server did not confirm commit %s); review it with `git show %s`.\n",
-			u.CommitSha, u.CommitSha)
+		if !verified {
+			fmt.Fprintf(out, "  Could not verify that this update came from Civitai staff (the server did not confirm commit %s); review it with `git show %s`.\n",
+				u.CommitSha, u.CommitSha)
+		}
 	default:
 		if name == "" {
 			who = "an unnamed sender"
