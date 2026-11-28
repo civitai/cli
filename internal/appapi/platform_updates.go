@@ -114,9 +114,12 @@ type PlatformUpdatePath struct {
 	Operation string `json:"operation"`
 }
 
-// PlatformUpdateBy names who pushed the update. Username is null on the wire for
-// an account that no longer has one. VerifiedStaff is the server's read-time
-// answer; the badge is NOT drawn from it — only from verifyCommit's `verified`.
+// PlatformUpdateBy names who pushed the update, as the owner may see it: since
+// civitai/civitai#10717 Username is "CivitaiOfficial (App Assistant)" for a
+// verified staff update and null otherwise (older servers sent the staff
+// member's own username, null for an account without one). VerifiedStaff is the
+// server's read-time answer; the CLI's verified call is NOT drawn from it —
+// only from verifyCommit's `verified`.
 type PlatformUpdateBy struct {
 	Username      *string `json:"username"`
 	VerifiedStaff bool    `json:"verifiedStaff"`
@@ -168,9 +171,9 @@ func (c *Client) ListPendingPlatformUpdates(ctx context.Context, slug string) ([
 }
 
 // VerifyPlatformUpdateCommit asks whether commitSha is a recorded platform
-// update of the app — the ONLY source of the "verified Civitai staff" badge.
+// update of the app — the ONLY source of the CLI's verified/could-not-verify call.
 // Any 404 (an older server, or an app the server does not know) is `false`,
-// never an error: the badge is only drawn on a positive answer.
+// never an error: an update is only shown as verified on a positive answer.
 func (c *Client) VerifyPlatformUpdateCommit(ctx context.Context, slug, commitSha string) (bool, error) {
 	var out struct {
 		Verified bool `json:"verified"`
